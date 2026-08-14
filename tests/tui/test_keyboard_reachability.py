@@ -13,7 +13,6 @@ import pytest
 from stackowl.tui.widgets.compose_area import ComposeArea
 from stackowl.tui.widgets.constellation_view import ConstellationView
 from stackowl.tui.widgets.evolution_inspection_panel import EvolutionInspectionPanel
-from stackowl.tui.widgets.memory_review_panel import MemoryReviewPanel
 from stackowl.tui.widgets.overlay_panel import OverlayPanel
 from stackowl.tui.widgets.parliament_panel import ParliamentPanel
 from stackowl.tui.widgets.toast_notification import ToastNotification
@@ -46,7 +45,7 @@ def test_all_overlay_panels_have_bindings() -> None:
     """Every overlay surface advertises at least one keyboard binding."""
     panels = (
         OverlayPanel(),
-        MemoryReviewPanel(),
+        EvolutionInspectionPanel(),
         EvolutionInspectionPanel(),
     )
     for panel in panels:

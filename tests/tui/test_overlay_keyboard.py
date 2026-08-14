@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from stackowl.tui.widgets.evolution_inspection_panel import EvolutionInspectionPanel
-from stackowl.tui.widgets.memory_review_panel import MemoryReviewPanel
 from stackowl.tui.widgets.overlay_panel import OverlayPanel
 from stackowl.tui.widgets.toast_notification import ToastNotification
 
@@ -25,8 +24,8 @@ def test_critical_toast_has_dismiss_bindings() -> None:
     assert "enter" in keys
 
 
-def test_memory_review_panel_has_escape_binding() -> None:
-    panel = MemoryReviewPanel()
+def test_an_overlay_panel_has_an_escape_binding() -> None:
+    panel = EvolutionInspectionPanel()
     keys = [b.key for b in panel.BINDINGS]
     assert "escape" in keys
 

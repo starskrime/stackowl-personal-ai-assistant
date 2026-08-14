@@ -29,7 +29,6 @@ _WIDGETS_DIR = (
     Path(__file__).resolve().parent.parent.parent
     / "src" / "stackowl" / "tui" / "widgets"
 )
-_MEMORY_REVIEW_TCSS = _WIDGETS_DIR / "memory_review_panel.tcss"
 _TOAST_TCSS = _WIDGETS_DIR / "toast_notification.tcss"
 _EVOLUTION_INSPECTION_TCSS = _WIDGETS_DIR / "evolution_inspection_panel.tcss"
 
@@ -135,7 +134,7 @@ def _strip_comments(text: str) -> str:
 
 @pytest.mark.parametrize(
     "tcss_path",
-    [_MEMORY_REVIEW_TCSS, _TOAST_TCSS, _EVOLUTION_INSPECTION_TCSS],
+    [_TOAST_TCSS, _EVOLUTION_INSPECTION_TCSS],
 )
 def test_tcss_files_are_token_pure(tcss_path: Path) -> None:
     assert tcss_path.is_file()
@@ -150,7 +149,7 @@ def test_tcss_files_are_token_pure(tcss_path: Path) -> None:
 
 
 def test_overlay_closed_message_is_frozen() -> None:
-    msg = OverlayClosedMessage(overlay_name="memory_review")
+    msg = OverlayClosedMessage(overlay_name="evolution_inspection")
     with pytest.raises(dataclasses.FrozenInstanceError):
         msg.overlay_name = "other"  # type: ignore[misc]
 

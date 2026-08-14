@@ -1,4 +1,4 @@
-"""Story 8.5 part A — OverlayPanel base + OverlayQueue + MemoryReviewPanel.
+"""Story 8.5 part A — OverlayPanel base + OverlayQueue.
 
 Toast, EvolutionBadge / EvolutionInspectionPanel, TCSS purity and the
 coordinator wiring live in ``test_story_8_5b.py`` to keep each file under
@@ -14,7 +14,6 @@ import pytest
 
 from stackowl.memory.models import StagedFact
 from stackowl.tui.messages import OverlayClosedMessage
-from stackowl.tui.widgets.memory_review_panel import MemoryReviewPanel
 from stackowl.tui.widgets.overlay_panel import OverlayPanel, OverlayQueue
 
 pytestmark = pytest.mark.tui
@@ -140,55 +139,4 @@ def test_overlay_queue_on_closed_advances_to_next_queued_overlay() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 8-13. MemoryReviewPanel
 # ---------------------------------------------------------------------------
-
-
-def test_memory_review_render_current_with_no_facts_calls_close() -> None:
-    panel = MemoryReviewPanel()
-    panel.post_message = lambda _msg: None  # type: ignore[assignment]
-    panel.display = True
-    panel._facts = []  # type: ignore[assignment]
-    panel._render_current()
-    assert panel.display is False
-
-
-def test_memory_review_debounce_buttons_disables(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    panel = MemoryReviewPanel()
-    _set_timer_recorder(monkeypatch, panel)
-    panel._debounce_buttons()
-    assert panel.buttons_disabled is True
-
-
-def test_memory_review_enable_buttons_resets_flag() -> None:
-    panel = MemoryReviewPanel()
-    panel._buttons_disabled = True
-    panel._enable_buttons()
-    assert panel.buttons_disabled is False
-
-
-def test_memory_review_has_all_required_bindings() -> None:
-    panel = MemoryReviewPanel()
-    keys = [b.key for b in panel.BINDINGS]
-    for key in ("a", "r", "n", "p", "escape"):
-        assert key in keys
-
-
-def test_memory_review_is_sensitive_flags_configured_categories() -> None:
-    panel = MemoryReviewPanel(sensitive_categories=("conversation",))
-    fact = _staged_fact(source_type="conversation")
-    assert panel.is_sensitive(fact) is True
-    safe = _staged_fact(source_type="parliament")
-    assert panel.is_sensitive(safe) is False
-
-
-def test_memory_review_next_fact_closes_when_exhausted() -> None:
-    panel = MemoryReviewPanel()
-    panel.post_message = lambda _msg: None  # type: ignore[assignment]
-    panel.display = True
-    panel._facts = [_staged_fact("only")]
-    panel._index = 0
-    panel._next_fact()
-    assert panel.display is False

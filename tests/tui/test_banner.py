@@ -13,15 +13,6 @@ from stackowl.tui.widgets.banner import Banner
 
 pytestmark = pytest.mark.tui
 
-_HEADER_TS = (
-    Path(__file__).resolve().parents[3]
-    / "src"
-    / "cli"
-    / "v2"
-    / "io"
-    / "header.ts"
-)
-
 _TCSS_PATH = (
     Path(__file__).resolve().parent.parent.parent
     / "src"
@@ -40,12 +31,25 @@ def test_banner_has_six_art_lines() -> None:
     assert len(Banner.LOGO_LINES) == 6
 
 
-def test_banner_art_matches_legacy_header() -> None:
-    raw = _HEADER_TS.read_text(encoding="utf-8")
-    legacy = _LOGO_RE.findall(raw)
-    assert len(legacy) == 6, f"expected 6 logo lines in header.ts, got {len(legacy)}"
-    ours = [line for line, _ in Banner.LOGO_LINES]
-    assert ours == legacy
+#: The wordmark, pinned. This USED to be compared against the TypeScript CLI's
+#: src/cli/v2/io/header.ts — but that file went with the TS codebase in the
+#: v2-to-root migration, and the test had been failing with FileNotFoundError on
+#: a path outside the repo ever since. The comparison can never be restored, so
+#: the invariant it protected — the wordmark does not change by accident — is
+#: pinned here instead of against a file that no longer exists.
+_PINNED_LOGO = (
+    "███████╗████████╗ █████╗  ██████╗██╗  ██╗ ██████╗ ██╗    ██╗██╗     ",
+    "██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝██╔═══██╗██║    ██║██║     ",
+    "███████╗   ██║   ███████║██║     █████╔╝ ██║   ██║██║ █╗ ██║██║     ",
+    "╚════██║   ██║   ██╔══██║██║     ██╔═██╗ ██║   ██║██║███╗██║██║     ",
+    "███████║   ██║   ██║  ██║╚██████╗██║  ██╗╚██████╔╝╚███╔███╔╝███████╗",
+    "╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝ ╚═════╝  ╚══╝╚══╝╚══════╝",
+)
+
+
+def test_banner_art_is_unchanged() -> None:
+    ours = tuple(line for line, _ in Banner.LOGO_LINES)
+    assert ours == _PINNED_LOGO
 
 
 def test_banner_brightness_split() -> None:

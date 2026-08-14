@@ -289,4 +289,4 @@ def test_default_css_references_design_tokens() -> None:
 
 def test_flush_interval_default_is_60fps_window() -> None:
     # Constant must stay aligned with widget docstring guarantees.
-    assert DEFAULT_FLUSH_INTERVAL_SEC == pytest.approx(0.016)
+    assert pytest.approx(0.016) == DEFAULT_FLUSH_INTERVAL_SEC
