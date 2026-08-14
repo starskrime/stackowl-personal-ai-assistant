@@ -73,14 +73,6 @@ def test_the_budget_is_read_from_the_scheduler_timeout():
     assert 0 < _sync_budget_s() < float(_HANDLER_TIMEOUT_SEC)
 
 
-def test_the_budget_is_smaller_than_minings():
-    """This is the LAST dream-worker phase, so it inherits whatever the earlier
-    phases already spent."""
-    from stackowl.memory.dream_worker import _mining_budget_s
-
-    assert _sync_budget_s() < _mining_budget_s()
-
-
 @pytest.mark.asyncio
 async def test_a_slow_batch_RETURNS_instead_of_running_to_completion(monkeypatch):
     """THE FIX. Before, this loop ran all 50 facts however long it took and the
@@ -160,42 +152,3 @@ async def test_an_explicit_budget_overrides_the_default_share():
     await h2.execute(_job(), budget_s=10.0)
 
     assert ex.calls > few, "a larger budget must process more facts"
-
-
-def test_the_dream_worker_gives_kuzu_sync_the_REMAINING_time():
-    """Not a fixed fraction. kuzu_sync is the last phase, so its budget is
-    whatever the earlier work did not use."""
-    import time as _t
-
-    from stackowl.memory.dream_worker import (
-        _KUZU_MIN_BUDGET_S,
-        _RETURN_MARGIN_S,
-        DreamWorkerJobHandler,
-    )
-    from stackowl.scheduler.scheduler import _HANDLER_TIMEOUT_SEC
-
-    h = object.__new__(DreamWorkerJobHandler)
-
-    # Fresh run: nearly the whole window is still available.
-    h._handler_started = _t.monotonic()
-    fresh = h._remaining_budget_s()
-    assert fresh > float(_HANDLER_TIMEOUT_SEC) * 0.5, (
-        f"a fresh run should get most of the window, got {fresh}"
-    )
-    assert fresh <= float(_HANDLER_TIMEOUT_SEC) - _RETURN_MARGIN_S
-
-    # Late run: most of the window is gone.
-    h._handler_started = _t.monotonic() - (float(_HANDLER_TIMEOUT_SEC) - 30.0)
-    late = h._remaining_budget_s()
-    assert late == _KUZU_MIN_BUDGET_S, "a late run still gets the floor, not zero"
-
-
-def test_a_standalone_call_falls_back_to_the_safe_default():
-    """The scheduler calls execute(job) with no budget; there is no run clock."""
-    from stackowl.memory.dream_worker import (
-        _KUZU_FALLBACK_BUDGET_S,
-        DreamWorkerJobHandler,
-    )
-
-    h = object.__new__(DreamWorkerJobHandler)
-    assert h._remaining_budget_s() == _KUZU_FALLBACK_BUDGET_S

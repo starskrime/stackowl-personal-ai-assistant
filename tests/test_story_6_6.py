@@ -13,15 +13,12 @@ from stackowl.memory.contradiction_detector import (
     ContradictionDetector,
     ContradictionReport,
 )
-from stackowl.memory.dream_worker import DreamWorkerCheckpoint
-
 from tests._story_6_6_helpers import (  # noqa: F401 — re-exports
     db,
     no_test_mode_guard,
     record,
     staged,
 )
-
 
 # ---------------------------------------------------------------------------
 # ContradictionDetector
@@ -141,24 +138,3 @@ def test_migration_count_is_17(tmp_path: Path) -> None:
     runner = MigrationRunner(db_path=tmp_path / "count.db")
     results = runner.run()
     assert len(results) == expected
-
-
-def test_dream_worker_checkpoint_field_types() -> None:
-    """T15 — DreamWorkerCheckpoint fields are correctly typed and frozen."""
-    cp = DreamWorkerCheckpoint(
-        run_id="r",
-        started_at="2026-01-01T00:00:00+00:00",
-        phase="contradiction",
-        facts_processed=1,
-        facts_promoted=2,
-        facts_pruned=3,
-        contradictions_found=4,
-    )
-    assert cp.run_id == "r"
-    assert cp.phase == "contradiction"
-    assert cp.facts_processed == 1
-    assert cp.facts_promoted == 2
-    assert cp.facts_pruned == 3
-    assert cp.contradictions_found == 4
-    with pytest.raises(ValidationError):
-        cp.phase = "promotion"  # type: ignore[misc]

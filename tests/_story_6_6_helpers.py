@@ -11,8 +11,6 @@ import pytest
 
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
-from stackowl.memory.contradiction_detector import ContradictionDetector
-from stackowl.memory.dream_worker import DreamWorkerJobHandler
 from stackowl.memory.models import MemoryRecord, StagedFact
 from stackowl.scheduler.job import Job, JobResult
 
@@ -27,7 +25,7 @@ def no_test_mode_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-async def db(tmp_path: Path) -> AsyncGenerator[DbPool, None]:
+async def db(tmp_path: Path) -> AsyncGenerator[DbPool]:
     """Per-test fresh DbPool with every migration applied."""
     db_path = tmp_path / "story66.db"
     MigrationRunner(db_path=db_path).run()
@@ -153,36 +151,12 @@ class FakeKuzu:
         )
 
 
-def make_handler(
-    pool: DbPool,
-    *,
-    promoter: FakePromoter | None = None,
-    pruner: FakePruner | None = None,
-    kuzu: FakeKuzu | None = None,
-    detector: ContradictionDetector | None = None,
-) -> tuple[DreamWorkerJobHandler, FakePromoter, FakePruner, FakeKuzu]:
-    """Build a DreamWorkerJobHandler wired to fakes."""
-    p = promoter or FakePromoter()
-    pr = pruner or FakePruner()
-    k = kuzu or FakeKuzu()
-    d = detector or ContradictionDetector()
-    handler = DreamWorkerJobHandler(
-        bridge=FakeBridge(pool),  # type: ignore[arg-type]
-        promoter=p,  # type: ignore[arg-type]
-        pruner=pr,  # type: ignore[arg-type]
-        kuzu_handler=k,  # type: ignore[arg-type]
-        detector=d,
-    )
-    return handler, p, pr, k
-
-
 __all__: list[str] = [
     "FakeBridge",
     "FakeKuzu",
     "FakePromoter",
     "FakePruner",
     "db",
-    "make_handler",
     "make_job",
     "no_test_mode_guard",
     "record",

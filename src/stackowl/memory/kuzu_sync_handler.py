@@ -23,11 +23,13 @@ processed to completion however long that took. Measured on the live box:
 
 The handler was NOT failing to produce — it synced ~828 facts/day. It was failing
 to RETURN, which pinned the dream worker's checkpoint at this phase and starved
-the three phases after it. Note that ``dream_worker._mining_budget_s`` already
-solved exactly this for mining and its comment says why: the later phases "need
-the other half... starving it would preserve the very ratchet this fixes". Mining
-was budgeted; this phase was not, so it consumed whatever mining left and then
-overran the timeout.
+the three phases after it. The dream worker's own mining budget had already
+solved exactly this for mining — the later phases "need the other half...
+starving it would preserve the very ratchet this fixes" — while this phase was
+unbudgeted, so it consumed whatever mining left and then overran the timeout.
+(That budget and those phases are gone as of D08.2: all five were fact work. The
+history is kept because the DEADLINE below is still live and this is why it
+exists.)
 
 The fix is the same pattern: process facts until a budget expires, then RETURN
 SUCCESS with partial progress. The backlog drains at the same rate — the run just

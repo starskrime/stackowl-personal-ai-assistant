@@ -16,12 +16,7 @@ from stackowl.scheduler.base import HandlerRegistry
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
-    from stackowl.memory.contradiction_detector import ContradictionDetector
     from stackowl.memory.dream_worker import DreamWorkerJobHandler
-    from stackowl.memory.fact_promoter import FactPromoter
-    from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
-    from stackowl.memory.pruner import MemoryPruner
-    from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 
 
 # Default cadence in minutes when a caller doesn't pass an interval. The real
@@ -46,15 +41,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
-def register_dream_worker_handler(
-    bridge: SqliteMemoryBridge,
-    promoter: FactPromoter,
-    pruner: MemoryPruner,
-    kuzu_handler: KuzuSyncJobHandler,
-    detector: ContradictionDetector,
-    ann_k: int = 32,
-    ann_threshold: int = 200,
-) -> DreamWorkerJobHandler:
+def register_dream_worker_handler() -> DreamWorkerJobHandler:
     """Construct and register the :class:`DreamWorkerJobHandler` singleton.
 
     Heavy memory modules are only imported inside the function body so the
@@ -64,15 +51,9 @@ def register_dream_worker_handler(
     log.heartbeat.debug("[scheduler] dream_worker handler: register entry")
     from stackowl.memory.dream_worker import DreamWorkerJobHandler
 
-    handler = DreamWorkerJobHandler(
-        bridge=bridge,
-        promoter=promoter,
-        pruner=pruner,
-        kuzu_handler=kuzu_handler,
-        detector=detector,
-        ann_k=ann_k,
-        ann_threshold=ann_threshold,
-    )
+    # No arguments: the handler is N01 Dreaming's SEAT and has no phases, so it
+    # has no fact-store dependencies to receive (D08.2 slice B seam 3).
+    handler = DreamWorkerJobHandler()
     HandlerRegistry.instance().register(handler)
     # 4. EXIT
     log.heartbeat.info(

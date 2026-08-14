@@ -241,19 +241,12 @@ class MemoryAssembly:
         # the agent doing its own forgetting.
 
         # 6) DreamWorker — register via existing factory (respects B9 boundary).
-        dream_worker = register_dream_worker_handler(
-            bridge=bridge,
-            promoter=promoter,
-            pruner=pruner,
-            kuzu_handler=kuzu_sync_handler,
-            detector=detector,
-            ann_k=mem.contradiction_ann_k,
-            ann_threshold=mem.contradiction_ann_threshold,
-        )
-        # NOT SCHEDULED (D08.1 / N01). The handler stays REGISTERED — it is the
-        # seat for N01 "Dreaming", and its checkpoint/resume machinery was built
-        # for exactly that shape of work — but nothing wakes it, because all five
-        # of its phases were fact work and went with the extraction pipeline.
+        dream_worker = register_dream_worker_handler()
+        # NOT SCHEDULED (D08.1 / N01), and now EMPTY as well (D08.2 seam 3). The
+        # handler stays REGISTERED because it is the seat for N01 "Dreaming";
+        # all five of its phases were fact work and went with the extraction
+        # pipeline, so it takes no arguments any more and reports honestly that
+        # it has nothing to run. N01 gives it phases; the wiring is already here.
         #
         # A job waking every 30 minutes to do nothing is worse than no job: it
         # writes successful run records that read as a healthy loop, which is the
