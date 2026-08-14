@@ -260,7 +260,7 @@ current:
   wave: 4
   item: D08.2
   stage: implement
-  stage_status: "architect DONE. Slice A (the MemoryBridge split) is unblocked and in progress; slice B waits on ESC-1; slice C follows A."
+  stage_status: "slice A in progress — the orphaned agent_self writer is REMOVED and pushed (a4d89954). Slice B waits on ESC-1; slice C follows A."
   previous_item_closed: >-
     D08.1 CLOSED 2026-08-11. All seven stages done, all four acceptance checks proven on
     live traffic, and designs/D08.1.md closed with its own Verification section RUN rather
@@ -493,6 +493,54 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-2026-08-14-miner-cannot-write-skills
+    found: 2026-08-14
+    found_by: "the item-loop, while running D08.2 slice A's regression gate"
+    status: OPEN — root-caused precisely, not yet fixed
+    map_check: "no mapped item matches — evidence-led"
+    what: >
+      FailureOutcomeMiner authors skills that the D10.2 skill standard REJECTS, so it
+      writes none. ADR-19's failure-to-skill learning half may therefore be dead.
+    the_exact_violation: >
+      Captured from the rejection's own _fields, not inferred: 'sections: missing required
+      section(s): When to Use, Prerequisites, How to Run, Quick Reference, Procedure,
+      Pitfalls, Verification.' Logged at skills/authoring.py:216 as
+      '[skills] standard: write rejected', then failure_outcome_miner.py:445
+      '[incident] miner.author_one: gated write refused — skipping'.
+    root_cause: >
+      TWO COPIES OF ONE RULE, drifted. D10.2 introduced a mandatory section list and
+      order for skills; the miner's authoring template was never updated to match. The
+      miner is not asking for anything unreasonable and the standard is not wrong — they
+      simply do not know about each other. Failure mode 3, and the consequence is a
+      capability that stopped working without any error surfacing to the operator.
+    NOT_the_consent_gate: >
+      Checked, because the test name says 'no_prompt' and ESC-1 is open in the same area.
+      The consent gate PASSES — the tests use an auto-tiered identity and the prompter is
+      never consulted. The refusal happens BEFORE consent, in the standard validator, by
+      design: authoring.py's comment says a malformed skill should never reach a human for
+      approval. Unrelated to ESC-1.
+    NOT_the_shell_rule: >
+      Also checked. PROCESS.md records a 2026-08-08 incident where the standard's
+      raw-shell rule matched bare English words. That has since been fixed structurally —
+      standard.py:115 now anchors on '(?:^|[|;&(]\s*)' so a command must be in command
+      position. It is not what is failing here.
+    production_impact_UNPROVEN: >
+      Be honest about the limit of the evidence. The miner IS live — the `tool_outcome_miner`
+      job is enabled and last ran 2026-08-13T10:00, and `incident_escalation` runs every ten
+      minutes. But the live log carries ZERO occurrences of 'standard: write rejected' or
+      'gated write refused' in the current window, so the platform may simply not have hit a
+      qualifying cluster since the last restart. Reproducible in test; production impact
+      likely but NOT measured. Do not write it up as a confirmed outage until that line
+      appears — and note it is a WARNING, so it will appear if it happens.
+    fix_direction: >
+      Generate the miner's template FROM the standard's own section list rather than
+      restating it, so the two cannot drift again. That is the same 'one source, have the
+      other ask it' remedy the programme applies to every instance of this shape. Three red
+      tests in tests/learning/test_failure_outcome_miner.py will go green with it.
+    why_not_fixed_in_this_pass: >
+      It is a separate defect from D08.2 and the loop was mid-slice. Fixing it inside an
+      unrelated item would violate minimal-diffs and make the slice unbisectable.
+
   - id: DEBT-2026-08-11-consent-smoke-red
     found: 2026-08-11
     status: PARTIALLY FIXED — 1 of 3 repaired, 2 open and diagnosed
