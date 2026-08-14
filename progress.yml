@@ -376,6 +376,74 @@ current:
     after a skill write — pass is a prompt reaching the channel, not an auto-allow.
 
   ESCALATIONS:
+  - id: ESC-3-browser-recall-url-tool
+    raised: 2026-08-14
+    blocks: "nothing — one registered tool, everything else in slice A proceeds."
+    question: >-
+      May the `browser_recall_url` TOOL be removed?
+    why_escalated: >-
+      R1Q2 approved removing "the browser recall call site". The call site turned out to
+      be an entire registered, model-facing tool, which is more than was described when
+      the approval was given. Removing a capability from the tool catalogue is a hard stop
+      for the loop however clear the evidence, so it is asked rather than assumed.
+    what_was_measured: >-
+      BrowserRecallUrlTool.execute (tools/browser/tools.py:1038) calls bridge.recall(),
+      which queries committed_facts — 0 rows since migration 0112, no writers left — and
+      then filters those results by source_ref. It can therefore only ever return
+      {"found": false}. The 10 surviving `webpage` rows live in staged_facts, which recall
+      does not read, so they are unreachable too. And web_fetch stopped staging pages
+      entirely in 247d74a5, so nothing will repopulate it.
+    recommendation: >-
+      Remove it. This is the /staged situation exactly — D08.1 deleted that command
+      because "a command that can only report 'nothing here' is worse than none, because
+      it implies the pipeline behind it still works". A tool that always answers
+      "not found" teaches the model that the page it fetched was never remembered, which
+      is true but costs a tool call to discover. Removing it also buys a little of the
+      waist back: 77 tools are registered and every one ships on every API call.
+    if_kept: >-
+      Then it needs repointing at something real, because leaving it as-is is the worst of
+      both — a live tool that is structurally incapable of succeeding.
+
+  - id: ESC-2-brief-memory-sections
+    raised: 2026-08-14
+    raised_by: "the item-loop, continuing D08.2 slice A"
+    blocks: "the brief half of slice A only. The browser recall drop and the I7 bound proceed."
+    why_escalated: >-
+      NEW EVIDENCE CONTRADICTS THE PREMISE OF A RECORDED DECISION, which the loop must
+      surface rather than reconcile. R1Q2 approved dropping the brief's recall and
+      list_staged call sites because they were "a source that returns nothing anyway".
+      That is TRUE for one and FALSE for the other, and the false one is actively
+      showing Bakir a misleading number every morning.
+    what_was_measured: >-
+      morning_brief is ENABLED, last ran 2026-08-13T13:00:05Z, next 2026-08-14T13:00Z —
+      so both sections are live daily.
+      (a) memory_highlights calls bridge.recall() over committed_facts, which has held 0
+      rows since migration 0112 and has no writers left. It therefore renders its F-79
+      "nothing notable" item every single day, structurally, forever. The premise holds.
+      (b) pending_staged calls list_staged(status="staged"), and list_staged filters ONLY
+      on status, never on source_type. staged_facts is no longer a fact queue — D08.1 made
+      it the conversation buffer — so the query now returns 5,719 rows and the section
+      renders "staged_count:5719". It is not empty; it is WRONG, it grows with every
+      normal conversation, and /staged was deleted in D08.1 so nothing can act on it.
+    the_shape: >-
+      Failure mode 1 in a form worth naming: the READER did not change, the MEANING OF THE
+      STORE changed underneath it. Nothing was wired wrong; a query that was correct before
+      D08.1 silently started answering a different question.
+    options:
+      - "A. Drop memory_highlights, and FIX pending_staged to filter source_type so it counts only rows a human could act on (today: zero)."
+      - "B. Drop both sections. The brief loses its memory reporting entirely until there is something real to report."
+      - "C. Drop memory_highlights, drop pending_staged too, and reintroduce a memory section later when curated memory has something worth surfacing (e.g. what was learned about the user this week)."
+    recommendation: >-
+      C. A count of rows nobody can act on is noise whichever way it is filtered, and once
+      filtered it reports zero forever — which is the same permanent-"nothing" problem as
+      memory_highlights. The genuinely useful brief section is about CURATED memory (what
+      the assistant learned about Bakir), and that is a real feature rather than a
+      salvage job. B is the honest minimum if C is too much scope.
+    do_not: >-
+      Do NOT just filter pending_staged and call it fixed without deciding whether a
+      permanently-zero section should exist at all — that repeats the mistake
+      memory_highlights already demonstrates.
+
   - id: ESC-1-skill-manage-autoallow
     raised: 2026-08-11
     RESOLVED: 2026-08-14
@@ -8211,6 +8279,7 @@ items:
     - 'R3Q3 DECLARATION — extend PluginManifest.type''s Literal with ''memory_provider''. MEASURED: it is already Literal[mcp_server, skill_pack, local_plugin], frozen, extra=forbid — so ONE added value makes the existing loader, verifier, index and remote-install path apply unchanged. Footprint ladder rung 1/4, never rung 6. A separate memory-provider registry was explicitly rejected as the parallel-mechanism duplication PROCESS.md forbids.'
     - 'R3Q4 GATE — the two red consent smokes are a HARD GATE on the removal slice. That suite is the only thing that would catch collateral damage to consent and clarify, which share the orchestrator try-block being edited. Diagnose the skill_manage auto-allow branch to green BEFORE the block is opened.'
     - 'R2Q2 UNBOUNDED SOURCE TYPES, found by measurement during the brainstorm and pulled INTO scope: _trim_turns deletes WHERE source_type = ''conversation'' only, so the D08.1 bound covers one of four types living in staged_facts. conversation_summary (6 rows, written 09:03-09:05 on 2026-08-11) and agent_self (4 rows) are actively appending with nothing pruning them. Small today and genuinely unbounded — the same no-decay disease as the 88k store, one layer along from the fix that created it. The bound widens to every source type.'
+    - 'I7 CHANGED CHARACTER, 2026-08-14, and the change is worth recording. When the bound was agreed it was a fix for ACTIVE unbounded growth: agent_self was climbing ~1,400/day. Removing that orphaned writer (a4d89954) stopped the growth at source — agent_self has not gained a row since 02:53Z, and conversation is already bounded at 60/scope. So widening the trim would now mostly DELETE ~2,971 historical rows rather than prevent anything, which makes it a destructive migration and its own hard stop. The invariant still stands; what changed is that it is no longer urgent and is no longer free. Decide it deliberately rather than shipping it as a bound.'
     - 'R2Q4 SEARCH — substring over the curated files, matching what /memory already does. The corpus is ~3.5KB; a vector index over two small text files is machinery without a problem, and D08.1 deleted one of those already.'
     - 'NOT ASKED, DELIBERATELY: the remaining questions of the nominal 25 were answered by MEASUREMENT instead of by Bakir, which the grill rule itself prefers — recall''s real readers, the trim predicate''s scope, the 77-tool count, PluginManifest''s shape, and whether parliament pellets pollute the conversation buffer (they do not: recent_conversation_turns filters source_type=''conversation'').'
     changes:

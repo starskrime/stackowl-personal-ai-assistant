@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from stackowl.infra.observability import log
 from stackowl.memory.trust import Trust
@@ -21,6 +21,46 @@ class HealthReport:
     status: Literal["ok", "degraded", "down"]
     details: dict[str, Any] = field(default_factory=dict)
     latency_ms: float = 0.0
+
+
+@runtime_checkable
+class ConversationStore(Protocol):
+    """The LIVE half of :class:`MemoryBridge` — what a normal turn actually needs.
+
+    D08.2 slice A. ``MemoryBridge`` has served two callers since Epic 6 and says
+    so in its own docstring, but the seam was never drawn as a type, so 31 files
+    outside this package import the whole interface to use a fifth of it.
+
+    That stopped being harmless once the halves stopped being equally alive. The
+    fact half (``stage``/``recall``/``delete``/``list_staged``/
+    ``find_committed_by_prefix``) reads ``committed_facts``, which has held zero
+    rows since D08.1's migration 0112 and has no writers left. This half is
+    load-bearing on every single turn: ``turn_persist`` calls :meth:`store`,
+    ``classify`` calls :meth:`retrieve` and :meth:`recent_conversation_turns`.
+
+    A consumer typed against this cannot reach the dead half by accident, which
+    is the whole point — deliberately ADDITIVE so the 31 importers move one seam
+    at a time. D08.1 measured seam-by-seam at 5 files touched per stage against
+    140 errors across 45 files for a single sweep.
+
+    Structural rather than nominal (``Protocol``, not a base class) so no
+    existing bridge changes its bases to satisfy it, and ``runtime_checkable``
+    so assembly code can assert the seam instead of trusting it.
+    """
+
+    async def retrieve(self, query: str, session_key: str) -> str: ...
+
+    async def store(
+        self, content: str, session_key: str, *, trust: Trust | None = None,
+    ) -> None: ...
+
+    async def recent_conversation_turns(
+        self, session_key: str, limit: int = 6, staged_before: str | None = None,
+    ) -> list[StagedFact]: ...
+
+    async def clear_session(self, session_key: str) -> int: ...
+
+    async def health(self) -> HealthReport: ...
 
 
 class MemoryBridge(ABC):
