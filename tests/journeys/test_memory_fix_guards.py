@@ -83,7 +83,10 @@ class _RememberThenRecallSecretary:
         self.turn += 1
         if self.turn == 1:
             self.mem_out = await tool_dispatcher(
-                "memory", {"action": "add", "content": _REGION_FACT}
+                "memory",
+                    # durability is REQUIRED since D08.1 — a write that cannot say
+                    # how long it stays true has nowhere to go.
+                    {"action": "add", "content": _REGION_FACT, "durability": "permanent"},
             )
             return (
                 "Got it — I'll remember your deploy region.",
@@ -164,44 +167,44 @@ async def test_guard_b_recall_surfaces_committed_fact(tmp_db: DbPool, tmp_path) 
     env = _build_with_provider(
         tmp_db, provider, semantic_bridge_dir=tmp_path / "empty_lancedb"
     )
-    # The reader's LanceDB points at a SEPARATE empty dir (NOT the one the
-    # turn-1 add upserts into), so its semantic path is GUARANTEED to return ``[]``
-    # at recall time → the only way it can surface the fact is the FTS5 fallback
-    # P0-1 fixed. (If it shared the add's dir, the upserted vector could satisfy
-    # the semantic path and never exercise the fallback.)
-    from stackowl.embeddings.registry import EmbeddingRegistry
-    from stackowl.memory.lancedb_adapter import LanceDBAdapter
-
-    reader_bridge = SqliteMemoryBridge(
-        tmp_db,
-        embedding_registry=EmbeddingRegistry(),
-        lancedb=LanceDBAdapter(data_dir=tmp_path / "reader_empty_lancedb"),
-        semantic_search_enabled=True,
-    )
+    # An independent reader bridge with its own empty LanceDB used to stand here,
+    # to force recall() through the FTS5 fallback P0-1 fixed. Both the reader and
+    # the fallback assertion are gone with the committed_facts read path — see
+    # OUTCOME (a) below and ESC-6.
 
     # ---- TURN 1: remember --------------------------------------------------
     delivered1 = await _turn(env, "Remember that my deploy region is eu-west-1.")
-    assert "Remembered" in provider.mem_out, (
+    assert "Saved." in provider.mem_out, (
         f"memory(add) did not confirm a store. Got: {provider.mem_out!r}"
     )
     assert delivered1, f"Turn 1 produced no reply. Delivered: {delivered1!r}"
 
-    # ---- OUTCOME (a): the committed fact is recallable via the REAL bridge --
-    # This is the production read path P0-1 fixed: semantic recall returns []
-    # (no LanceDB table), and recall() must fall through to FTS5. On the OLD
-    # ``if semantic is not None:`` guard, [] short-circuits and this returns [].
-    recalled = await reader_bridge.recall("deploy region", limit=10)
-    assert any(_REGION_VALUE in r.content for r in recalled), (
-        "GUARD B FAIL: the committed deploy-region fact was NOT recallable via the "
-        f"REAL bridge.recall() — P0-1 FTS fallback regressed. recall() returned: "
-        f"{[r.content for r in recalled]!r}"
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory
+
+    # ---- OUTCOME (a): what was remembered is FINDABLE ----------------------
+    # This asserted bridge.recall() falling through to FTS5 (the P0-1 fix, when
+    # semantic returns [] because there is no LanceDB table). That read path is
+    # over committed_facts, which has held 0 rows since D08.1's migration 0112 —
+    # so the assertion could only ever fail once the write moved to curated
+    # memory. The GUARANTEE it protects, that a remembered thing can be found
+    # again, is live and now belongs to curated search.
+    #
+    # Whether the committed_facts read path keeps a guard of its own, given
+    # nothing can write to it, is ESC-6 — deliberately not decided here.
+    found = CuratedMemory().search("deploy region")
+    assert any(_REGION_VALUE in text for _target, text in found), (
+        "GUARD B FAIL: the remembered deploy-region fact was NOT findable via "
+        f"curated search. search() returned: {found!r}"
     )
-    committed = await reader_bridge.list_staged(status="committed")
-    assert any(
-        _REGION_VALUE in f.content and f.source_type == "agent_self" for f in committed
-    ), (
-        "GUARD B FAIL: fact not a committed agent_self fact. committed: "
-        f"{[(f.source_type, f.content) for f in committed]!r}"
+    # The STORE moved, the guarantee did not. memory(add) wrote committed_facts
+    # until D08.1 retargeted the tool at curated memory; what this guard is for —
+    # that the write actually lands somewhere durable rather than the agent merely
+    # saying it remembered — is unchanged, and curated memory is where the system
+    # prompt will read it.
+    profile = [e.text for e in CuratedMemory().entries(USER_TARGET)]
+    assert any(_REGION_VALUE in text for text in profile), (
+        "GUARD B FAIL: fact not persisted to curated memory. profile: "
+        f"{profile!r}"
     )
 
     # ---- TURN 2: recall, over the SAME db/bridge ---------------------------
@@ -211,10 +214,36 @@ async def test_guard_b_recall_surfaces_committed_fact(tmp_db: DbPool, tmp_path) 
         "GUARD B FAIL: the recalled region did NOT reach the user's chat. "
         f"Delivered: {delivered2!r} | turn-2 system_text: {provider.turn2_system_text!r}"
     )
-    # Belt-and-suspenders: the REAL classify→assemble path folded it into system_text.
-    assert provider.turn2_system_text and _REGION_VALUE in provider.turn2_system_text, (
-        "GUARD B FAIL: recall path did not surface the fact into turn-2 system_text. "
-        f"Got: {provider.turn2_system_text!r}"
+    # ---- OUTCOME (b): the prompt does NOT move mid-conversation -------------
+    # INVERTED, deliberately. This used to assert the fact reached turn-2's
+    # system_text. D08.1 made curated memory enter the prompt from a snapshot
+    # frozen per incarnation — `curated.py:290` keys the cache on session_id, so
+    # turn 2 re-reads the snapshot taken BEFORE turn 1's write. That is Law 1:
+    # nothing mutates past context mid-conversation, because doing so would void
+    # the prompt cache for every turn already in the window.
+    #
+    # So the OLD assertion now describes a cache-invalidating bug, and would pass
+    # only if one existed. Asserting the absence is what protects the law.
+    assert provider.turn2_system_text, "turn 2 produced no system_text to check"
+    assert _REGION_VALUE not in provider.turn2_system_text, (
+        "GUARD B FAIL: a mid-conversation write MOVED the frozen prompt — Law 1 "
+        "broken, every cached turn in this window is now invalid. system_text: "
+        f"{provider.turn2_system_text!r}"
+    )
+
+    # ---- OUTCOME (c): and it is not stranded either -------------------------
+    # The other half of the same law, and the one that makes (b) safe rather than
+    # merely quiet: frozen for THIS conversation, present for the next. Without
+    # this, a write that never reaches any prompt would satisfy (b) perfectly —
+    # the write-with-no-reader shape this programme keeps finding.
+    from stackowl.memory.curated import shared_memory
+
+    next_incarnation = shared_memory().snapshot_for_prompt(
+        USER_TARGET, session_id="a-brand-new-session"
+    )
+    assert _REGION_VALUE in next_incarnation, (
+        "GUARD B FAIL: the remembered fact never reaches the prompt at all — "
+        f"a new incarnation's USER block is: {next_incarnation!r}"
     )
 
 
@@ -251,7 +280,10 @@ class _BrowserProfileRememberSecretary:
             str(s.get("name")) for s in (tool_schemas or []) if isinstance(s, dict)
         ]
         self.mem_out = await tool_dispatcher(
-            "memory", {"action": "add", "content": _SECRET_FACT}
+            "memory",
+                # durability is REQUIRED since D08.1 — a write that cannot say
+                # how long it stays true has nowhere to go.
+                {"action": "add", "content": _SECRET_FACT, "durability": "permanent"},
         )
         return (
             "Noted — I've remembered your passphrase.",
@@ -333,20 +365,20 @@ async def test_guard_remember_base_pin_reaches_memory_for_browser_owl(
             capability_profile=["browser"],
         )
     )
-    reader_bridge = SqliteMemoryBridge(db=tmp_db)  # independent reader, same DB
-
     delivered = await _turn_as_owl(env, "Please remember my favorite passphrase.", _BROWSER_OWL)
 
-    # OUTCOME: the passphrase is a committed agent_self fact (the real store ran).
-    committed = await reader_bridge.list_staged(status="committed")
-    assert any(
-        _SECRET_VALUE in f.content and f.source_type == "agent_self" for f in committed
-    ), (
-        "GUARD REMEMBER FAIL: the remembered passphrase is not a committed agent_self "
-        f"fact. committed: {[(f.source_type, f.content) for f in committed]!r} | "
-        f"mem_out={provider.mem_out!r}"
+    # OUTCOME: the passphrase is persisted to CURATED memory (the real store ran).
+    # It was a committed agent_self fact until D08.1 retargeted the tool; the
+    # guarantee under test — a base-pinned owl's remember actually reaches memory
+    # — is the same one.
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory
+
+    profile = [e.text for e in CuratedMemory().entries(USER_TARGET)]
+    assert any(_SECRET_VALUE in text for text in profile), (
+        "GUARD REMEMBER FAIL: the remembered passphrase did not reach curated "
+        f"memory. profile: {profile!r} | mem_out={provider.mem_out!r}"
     )
-    assert "Remembered" in provider.mem_out, (
+    assert "Saved." in provider.mem_out, (
         f"memory(add) did not confirm a store. Got: {provider.mem_out!r}"
     )
     assert delivered, f"browser owl produced no reply. Delivered: {delivered!r}"
@@ -475,13 +507,24 @@ async def test_guard_actions_live_recall_of_recent_action(tmp_db: DbPool) -> Non
 
     # OUTCOME: the recall block + the prior tool name reached the model's prompt.
     sys2 = provider.turn2_system_text or ""
-    assert "What You Did Recently" in sys2, (
-        "GUARD ACTIONS FAIL: the '## What You Did Recently' block was NOT injected into "
-        f"turn-2 system_text — P2 classify wiring regressed. system_text: {sys2!r}"
-    )
-    assert "web_search" in sys2, (
-        "GUARD ACTIONS FAIL: the prior turn's tool name (web_search) was NOT in the "
-        f"recent-actions block. system_text: {sys2!r}"
+    # INVERTED, deliberately. This used to assert the "## What You Did Recently"
+    # block reached turn-2's system_text, and its failure message accused "P2
+    # classify wiring" of regressing. It had not: D01.1 SPLIT the context, and
+    # classify.py says so at the seam — "the STABLE half, carried into the system
+    # prompt while the query-scoped half (recall, graph, actions, per-turn
+    # skills) does not". Recent actions are query-scoped by design, because a
+    # prompt that changes every turn forfeits the provider's prefix cache with no
+    # marker to blame.
+    #
+    # So the guard now protects the CURRENT invariant, which is Law 1: the
+    # actions block must stay OUT of the system prompt. The actions themselves
+    # are still gathered — assemble.py notes memory_context "is still computed by
+    # classify and still read by execute for its grounding haystacks" — they just
+    # do not move the prompt.
+    assert "What You Did Recently" not in sys2, (
+        "LAW 1 REGRESSION: the recent-actions block is back in system_text. "
+        "D01.1 moved it out on purpose; an unstable prompt loses the prefix "
+        f"cache silently. system_text: {sys2!r}"
     )
     assert delivered2, f"Turn 2 produced no reply. Delivered: {delivered2!r}"
 
@@ -648,21 +691,36 @@ async def test_guard_memory_command_registered_via_orchestrator(
 
     from tests._story_6_7_helpers import make_state  # registry dispatch state
 
-    marker = "the deploy bastion host is bastion-prod-7"
+    # A marker that ANNOUNCES ITSELF as test data. The old one — a plausible
+    # "deploy bastion host" fact — escaped into the operator's real USER.md when
+    # this file ran unisolated, and read as a genuine fact about him in every
+    # system prompt until it was found. If isolation ever regresses again, the
+    # leak should be obvious on sight.
+    marker = "TEST-FIXTURE-DO-NOT-TRUST alpha-quebec-7"
     remember_out = (await registry.dispatch("memory", f"remember {marker}", make_state())).text
-    assert remember_out.startswith("✓ Remembered"), remember_out
+    # "Saved.", not "Remembered": D08.1 changed the confirmation when /memory was
+    # retargeted at curated memory, and the second half of that message — when it
+    # reaches the prompt — is the part that matters to the user.
+    assert remember_out.startswith("✓ Saved."), remember_out
 
     # Persistence via an INDEPENDENT bridge over the same tmp DB.
-    independent = SqliteMemoryBridge(db=tmp_db)
-    committed = await independent.list_staged(status="committed")
-    assert any(marker in f.content for f in committed), (
-        f"GUARD P0-5 FAIL: /memory remember did not persist. committed: "
-        f"{[f.content for f in committed]!r}"
+    # Persistence is checked through an INDEPENDENT reader, as before — only the
+    # STORE changed. /memory remember wrote committed_facts until D08.1 retargeted
+    # the command at curated memory (abb08e09); the guard's intent, that the
+    # command is registered AND genuinely persists rather than merely replying,
+    # is unchanged and is what this still proves.
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory
+
+    independent_profile = CuratedMemory()
+    persisted = [e.text for e in independent_profile.entries(USER_TARGET)]
+    assert any(marker in text for text in persisted), (
+        f"GUARD P0-5 FAIL: /memory remember did not persist to curated memory. "
+        f"profile: {persisted!r}"
     )
 
-    search_out = (await registry.dispatch("memory", "search bastion", make_state())).text
-    assert "bastion-prod-7" in search_out, (
-        f"GUARD P0-5 FAIL: /memory search did not recall the fact. Got: {search_out!r}"
+    search_out = (await registry.dispatch("memory", f"search {marker}", make_state())).text
+    assert marker in search_out, (
+        f"GUARD P0-5 FAIL: /memory search did not recall the entry. Got: {search_out!r}"
     )
 
     # Sanity: an UNregistered fresh registry refuses the dispatch (registration is
