@@ -26,6 +26,13 @@ stackowl.yaml
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/tonyStyle/
+# Allow-listed the same way: these two encode the PROGRAMME'S METHOD, not local
+# tooling preferences, so they are versioned with the repo. Everything else under
+# .claude/ stays personal.
+!.claude/skills/item-loop/
+!.claude/commands/
+.claude/commands/*
+!.claude/commands/item-loop.md
 _bmad/
 logs/
 .bmad-loop/runs/

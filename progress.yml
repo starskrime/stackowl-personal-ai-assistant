@@ -340,6 +340,18 @@ current:
     delay; a budget enforcer measuring a table that is always zero. Measure the
     EFFECT, never trust the call.
 
+  ESCALATIONS: []
+  # The item-loop skill (.claude/skills/item-loop/SKILL.md) writes here. One entry per
+  # question the six-lens panel refused to answer because evidence could not settle it:
+  # the question, WHY it is not derivable, the panel's recommendation, and what stays
+  # blocked until it is answered. Bakir clears the queue in one sitting; the loop keeps
+  # working on everything the queue does not block.
+  #
+  # The panel may only answer a question it can name the evidence for — a measurement, a
+  # log line, a file in the tree, the reference platform, or a decision already recorded
+  # here. "The panel agreed" is not evidence. Product intent, priority, risk appetite and
+  # anything user-facing are never derivable and always land here.
+
   WHAT_IS_WAITING_FOR_BAKIR: >-
     D08.2's brainstorm. designs/D08.2.md has the teacher-platform research finished —
     the MemoryProvider ABC, its lifecycle table, and the two decisions worth stealing
