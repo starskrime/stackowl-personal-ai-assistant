@@ -340,6 +340,27 @@ current:
     delay; a budget enforcer measuring a table that is always zero. Measure the
     EFFECT, never trust the call.
 
+  PROVIDER_OUTAGE_ROOT_CAUSE_2026_08_14: >-
+    The "ALL providers unreachable" errors were THE VPN BEING DOWN, not anything in the
+    code. gp-vpn.service had been in `failed` state for ~19h (since 2026-08-13T03:07:59,
+    HTTP 512 from gp.risk.az at getconfig.esp), so llm-gateway.dev.nera.gov — an internal
+    host — had no DNS entry at all. Restarted the unit: tunnel up, "Configured as
+    10.10.100.15", ESP established, session auth valid to 2026-08-16T22:16. The gateway
+    then resolved to 172.30.104.100 and answered HTTP 401 (alive, just unauthenticated
+    from curl).
+    THE PLATFORM DID NOT SELF-HEAL FROM IT. It had booted in degraded mode and cached
+    that verdict — 0 successful calls and 20 unreachable events in the three minutes AFTER
+    the tunnel came up. Only a restart re-probed. Worth an item: a provider marked
+    unreachable at boot stays unreachable for the life of the process, however healthy the
+    network becomes. That is a self-healing gap of exactly the kind the guide-star rule
+    names, and nothing notices it.
+    After restart: 263 INFO / 22 WARNING / 0 ERROR, 2 successful provider calls, 0
+    unreachable in a clean 90-second window.
+    NOTE for later: openconnect warned the server asked for a HIP report and none is
+    submitted ("VPN connectivity may be disabled or limited"). The gateway route works
+    regardless, so HIP is not being enforced on it today — but that is the documented
+    failure mode if internal traffic starts being blocked.
+
   VALIDATE_NOTE_2026_08_14: >-
     ESC-1's fix is proven by 95 consent tests but is NOT validated on live traffic, and
     the reason is recorded rather than glossed: the platform restarted cleanly (core PID
