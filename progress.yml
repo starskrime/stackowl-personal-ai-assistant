@@ -340,6 +340,20 @@ current:
     delay; a budget enforcer measuring a table that is always zero. Measure the
     EFFECT, never trust the call.
 
+  VALIDATE_NOTE_2026_08_14: >-
+    ESC-1's fix is proven by 95 consent tests but is NOT validated on live traffic, and
+    the reason is recorded rather than glossed: the platform restarted cleanly (core PID
+    42123) but is logging intermittent provider failures — "[startup] providers: ALL
+    providers unreachable", 14x "[registry] get_with_cascade: exit — all providers
+    unavailable". Last SUCCESSFUL provider call 2026-08-14T03:13:16Z, first unreachable
+    03:01:23Z, so the two interleave: intermittent, not a clean outage. Unrelated to the
+    change (a consent category cannot affect provider reachability). A sandboxed curl to
+    llm-gateway.dev.nera.gov got no DNS at all, but that probe is NOT authoritative —
+    the platform runs outside the sandbox and succeeded at 03:13. Until a real turn
+    completes, the live half of this check stays OPEN. Close it with:
+      jq -c 'select(.msg | test("consent.decision"))' ~/.stackowl/logs/stackowl.jsonl
+    after a skill write — pass is a prompt reaching the channel, not an auto-allow.
+
   ESCALATIONS:
   - id: ESC-1-skill-manage-autoallow
     raised: 2026-08-11
