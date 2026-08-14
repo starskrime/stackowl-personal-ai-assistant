@@ -602,7 +602,7 @@ async def _gather_history(session_key: str, limit: int) -> list[Message]:
     the model's message history (not folded into the system-prompt text block).
     """
     services = get_services()
-    bridge = services.memory_bridge
+    bridge = services.conversation_store
     if bridge is None or limit <= 0:
         return []
     try:
@@ -621,7 +621,7 @@ async def run(state: PipelineState) -> PipelineState:
         "[pipeline] classify: entry", extra={"_fields": {"trace_id": state.trace_id}}
     )
     services = get_services()
-    bridge = services.memory_bridge
+    bridge = services.conversation_store
     if bridge is None:
         log.engine.debug("[pipeline] classify: no memory_bridge — pass-through")
         return state

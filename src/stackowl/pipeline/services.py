@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from stackowl.learning.failure_outcome_miner import RcaVerdict
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.learning.tool_heuristic_store import ToolHeuristicStore
-    from stackowl.memory.bridge import MemoryBridge
+    from stackowl.memory.bridge import ConversationStore, MemoryBridge
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.message_ledger_store import MessageLedgerStore
     from stackowl.memory.preferences import PreferenceStore
@@ -225,6 +225,24 @@ class StepServices:
     # failure class this turn just hit — reusing the EXISTING cascade/parameter,
     # never a new gate. None → byte-identical (no enrichment, today's text only).
     incident_verdict_lookup: Callable[[str], RcaVerdict | None] | None = field(default=None)
+
+    @property
+    def conversation_store(self) -> ConversationStore | None:
+        """The LIVE half of the memory bridge — what a normal turn needs (D08.2).
+
+        A PROPERTY over :attr:`memory_bridge`, deliberately not a second field:
+        two fields holding one object is two copies of one fact and they drift.
+        One source; this is the narrow view of it.
+
+        Steps that only store, retrieve or read recent turns take the bridge from
+        here instead, so they cannot reach ``stage``/``recall``/``delete``/
+        ``list_staged`` — the retired extraction pipeline's surface, over a table
+        with 0 rows and no writers since D08.1's migration 0112.
+
+        Still ``| None``: memory can be disabled, every live caller already
+        guards on that, and inventing an object here would break the guard.
+        """
+        return self.memory_bridge
 
 
 _ctx: ContextVar[StepServices] = ContextVar("pipeline_services")

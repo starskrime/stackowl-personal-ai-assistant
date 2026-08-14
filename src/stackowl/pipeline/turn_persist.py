@@ -170,7 +170,7 @@ async def persist_turn(state: PipelineState) -> None:
                 extra={"_fields": {"trace_id": state.trace_id, "floored": floored}},
             )
 
-    bridge = services.memory_bridge
+    bridge = services.conversation_store
     if bridge is None:
         log.memory.debug(
             "[pipeline] persist_turn: no memory bridge — skipping",

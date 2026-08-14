@@ -1,5 +1,6 @@
 import pytest
 
+from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.turn_persist import persist_turn
@@ -17,12 +18,12 @@ async def test_floored_turn_creates_retry_queue_row(monkeypatch):
             inserted.update(kwargs)
             return "retry-id-1"
 
-    class FakeServices:
-        memory_bridge = None
-        retry_queue_store = FakeRetryQueueStore()
+    services = StepServices(
+        retry_queue_store=FakeRetryQueueStore(),
+    )
 
     monkeypatch.setattr(
-        "stackowl.pipeline.turn_persist.get_services", lambda: FakeServices()
+        "stackowl.pipeline.turn_persist.get_services", lambda: services
     )
 
     state = PipelineState(
@@ -76,13 +77,13 @@ async def test_floored_turn_supersedes_existing_pending_row(monkeypatch):
             superseded["retry_id"] = retry_id
             superseded.update(kwargs)
 
-    class FakeServices:
-        memory_bridge = None
-        retry_queue_store = FakeRetryQueueStore()
-        sticky_route_cache = None
+    services = StepServices(
+        retry_queue_store=FakeRetryQueueStore(),
+        sticky_route_cache=None,
+    )
 
     monkeypatch.setattr(
-        "stackowl.pipeline.turn_persist.get_services", lambda: FakeServices()
+        "stackowl.pipeline.turn_persist.get_services", lambda: services
     )
 
     state = PipelineState(
@@ -120,13 +121,13 @@ async def test_floored_turn_evicts_sticky_route_cache(monkeypatch):
         def evict(self, session_key):
             evicted.append(session_key)
 
-    class FakeServices:
-        memory_bridge = None
-        retry_queue_store = None
-        sticky_route_cache = FakeStickyRouteCache()
+    services = StepServices(
+        retry_queue_store=None,
+        sticky_route_cache=FakeStickyRouteCache(),
+    )
 
     monkeypatch.setattr(
-        "stackowl.pipeline.turn_persist.get_services", lambda: FakeServices()
+        "stackowl.pipeline.turn_persist.get_services", lambda: services
     )
 
     state = PipelineState(
@@ -155,13 +156,13 @@ async def test_clean_turn_does_not_evict_sticky_route_cache(monkeypatch):
         def evict(self, session_key):
             evicted.append(session_key)
 
-    class FakeServices:
-        memory_bridge = None
-        retry_queue_store = None
-        sticky_route_cache = FakeStickyRouteCache()
+    services = StepServices(
+        retry_queue_store=None,
+        sticky_route_cache=FakeStickyRouteCache(),
+    )
 
     monkeypatch.setattr(
-        "stackowl.pipeline.turn_persist.get_services", lambda: FakeServices()
+        "stackowl.pipeline.turn_persist.get_services", lambda: services
     )
 
     state = PipelineState(
@@ -194,12 +195,12 @@ async def test_retry_replay_floor_does_not_create_new_retry_queue_row(monkeypatc
             inserted.update(kwargs)
             return "retry-id-1"
 
-    class FakeServices:
-        memory_bridge = None
-        retry_queue_store = FakeRetryQueueStore()
+    services = StepServices(
+        retry_queue_store=FakeRetryQueueStore(),
+    )
 
     monkeypatch.setattr(
-        "stackowl.pipeline.turn_persist.get_services", lambda: FakeServices()
+        "stackowl.pipeline.turn_persist.get_services", lambda: services
     )
 
     state = PipelineState(
