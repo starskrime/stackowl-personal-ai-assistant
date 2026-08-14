@@ -371,9 +371,29 @@ current:
     change (a consent category cannot affect provider reachability). A sandboxed curl to
     llm-gateway.dev.nera.gov got no DNS at all, but that probe is NOT authoritative —
     the platform runs outside the sandbox and succeeded at 03:13. Until a real turn
-    completes, the live half of this check stays OPEN. Close it with:
-      jq -c 'select(.msg | test("consent.decision"))' ~/.stackowl/logs/stackowl.jsonl
+    completes, the live half of this check stays OPEN.
+    CLOSING QUERY CORRECTED 2026-08-14 — the one recorded here could NEVER have closed
+    this check, whatever the traffic. It grepped ~/.stackowl/logs/stackowl.jsonl for
+    "consent.decision", but that string is an AUDIT EVENT NAME (consent.py:371), not a log
+    message: it goes to audit_logger.append(), never to the jsonl. Measured: 0 matches in
+    the jsonl ever, while the audit store holds 673 of them. Same shape as D08.1's
+    DEBUG-vs-INFO evidence line — a check whose closing query points at the wrong store is
+    structurally unclosable. THE STORE IS ALSO NOT THE OBVIOUS PATH: the live database is
+    ~/.stackowl/workspace/stackowl.db (879MB); ~/.stackowl/stackowl.db exists and is 0
+    bytes with no tables — the STACKOWL_HOME-vs-STACKOWL_DATA_DIR split again. Close it by
+    reading audit_log in the WORKSPACE db for the newest consent.decision rows:
+      SELECT timestamp, target, details FROM audit_log
+       WHERE event_type = 'consent.decision' ORDER BY rowid DESC LIMIT 5;
     after a skill write — pass is a prompt reaching the channel, not an auto-allow.
+    STILL OPEN, and now for a stated reason rather than an unrunnable one: the newest
+    consent.decision rows are 2026-08-11T03:58Z, three days BEFORE the fix landed
+    (5f58dc50, 2026-08-13T22:12). Nothing has exercised the path since. Those pre-fix rows
+    are a clean BEFORE measurement of exactly what the fix targets — skill_manage from
+    telegram, "category": null, decision "allow", reason "reversible_auto", which is the
+    auto-allow this check exists to forbid. The running core DOES carry the fix: it started
+    2026-08-14 15:54, after the commit. So the next real skill write decides it, and the row
+    to look for is the same tool with category "prompt_surface" and a prompt rather than
+    reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
   - id: ESC-3-browser-recall-url-tool
