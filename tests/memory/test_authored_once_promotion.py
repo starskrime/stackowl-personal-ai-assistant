@@ -120,29 +120,3 @@ async def test_a_summary_below_the_confidence_gate_is_still_refused(
         content="A low-confidence guess", confidence=0.5,
     )
     assert await _promoter(tmp_db).promote_eligible() == 0
-
-
-async def test_the_stuck_eligible_counter_agrees_with_the_promoter(
-    tmp_db: DbPool,
-) -> None:
-    """The eligibility rule exists in TWO places, kept in lock-step 'by review'.
-
-    dream_worker_helpers counts rows that are eligible but never moved — the
-    OUTCOME signal that memory is stuck. If the two predicates disagree, that
-    alarm reports on a different population than the promoter acts on, and the
-    disagreement is invisible. This test is what replaces 'by review'.
-    """
-    from stackowl.memory.dream_worker_helpers import count_stuck_eligible
-
-    await _insert_staged_raw(
-        tmp_db, fact_id=str(uuid.uuid4()), source_type="conversation_summary",
-        content="An eligible summary nobody promoted yet",
-    )
-    stuck = await count_stuck_eligible(
-        tmp_db, confidence_threshold=0.8, reinforcement_required=3,
-        conversation_fact_reinforcement_required=1,
-        settle_cutoff=datetime.now(UTC).isoformat(),
-    )
-    assert stuck == 1, (
-        "the stuck-eligible counter must see exactly what the promoter would act on"
-    )

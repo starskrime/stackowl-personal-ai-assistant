@@ -33,7 +33,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.health.contributors import GraphContributor
     from stackowl.learning.lessons_index import LessonsIndex
-    from stackowl.memory.contradiction_detector import ContradictionDetector
     from stackowl.memory.dream_worker import DreamWorkerJobHandler
     from stackowl.memory.entity_extractor import EntityExtractor
     from stackowl.memory.fact_promoter import FactPromoter
@@ -64,7 +63,6 @@ class MemoryComponents:
     # embeddings degrade-don't-crash policy). classify + kuzu_sync tolerate None.
     kuzu_adapter: KuzuAdapter | None
     promoter: FactPromoter
-    detector: ContradictionDetector
     entity_extractor: EntityExtractor
     kuzu_sync_handler: KuzuSyncJobHandler
     dream_worker: DreamWorkerJobHandler
@@ -101,7 +99,6 @@ class MemoryAssembly:
 
         # Deferred imports keep this module cheap to import in tests.
         from stackowl.embeddings.registry import EmbeddingRegistry
-        from stackowl.memory.contradiction_detector import ContradictionDetector
         from stackowl.memory.entity_extractor import EntityExtractor
         from stackowl.memory.fact_promoter import FactPromoter
         from stackowl.memory.kuzu_adapter import KuzuAdapter
@@ -212,7 +209,6 @@ class MemoryAssembly:
             settle_minutes=mem.dream_worker_settle_minutes,
             embedding_registry=embedding_registry,
         )
-        detector = ContradictionDetector()
         entity_extractor = EntityExtractor(
             provider_registry=provider_registry,
             sensitive_categories=mem.sensitive_categories,
@@ -287,7 +283,6 @@ class MemoryAssembly:
             lancedb=lancedb,
             kuzu_adapter=kuzu_adapter,
             promoter=promoter,
-            detector=detector,
             entity_extractor=entity_extractor,
             lessons_index=lessons_index,
             kuzu_sync_handler=kuzu_sync_handler,

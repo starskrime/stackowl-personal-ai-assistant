@@ -26,25 +26,10 @@ class TestSchedulerWriteAuditChains:
         assert ok is True, f"scheduler write_audit voided the chain at {broken}"
 
 
-class TestDreamWorkerChains:
-    async def test_dream_worker_contradiction_chains(self, tmp_db: Any) -> None:
-        from stackowl.memory.contradiction_detector import ContradictionReport
-        from stackowl.memory.dream_worker_helpers import mark_audit_contradictions
-
-        reports = [
-            ContradictionReport(
-                fact_id_a="a1",
-                fact_id_b="b1",
-                explanation="conflict",
-                confidence=0.9,
-            )
-        ]
-        await mark_audit_contradictions(tmp_db, reports)
-        logger = AuditLogger(tmp_db._path)
-        ok, broken = logger.verify_chain()
-        assert ok is True, f"dream-worker contradiction voided the chain at {broken}"
-
-
+# TestDreamWorkerChains removed with D08.2 seam 3: the dream worker's
+# contradiction pass was one of the three audit_log writers this file checks the
+# hash chain across, and that writer is gone. The other two remain, and so does
+# the property — a writer must not void the chain.
 class TestRetentionPruneChains:
     def test_retention_prune_record_chains(self, tmp_path: Path) -> None:
         import sqlite3
