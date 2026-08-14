@@ -542,39 +542,27 @@ async def _capture_outcome(
         await _update_skill_success_rates(
             services, state, success=trustworthy_success,
         )
-        # Single-failure learning — a novel failure otherwise gets ZERO learning
-        # signal until IncidentEscalationHandler clusters >= 3 occurrences of the
-        # SAME (capability_class, failure_class) within its 10-minute sweep
-        # window (see that handler's memory-write for the cluster-verified,
-        # higher-confidence counterpart). This is the cheap, immediate half:
-        # one LOW-TRUST staged fact per single failure, gated on the SAME
-        # health_loop switch, so recall (classify.py's lesson_context) can
-        # weight it below an RCA-verified skill lesson.
-        if failure_class is not None and services.memory_bridge is not None:
-            try:
-                from stackowl.config.settings import Settings
-
-                if Settings().health_loop:
-                    from stackowl.memory.models import StagedFact
-
-                    await services.memory_bridge.stage(StagedFact(
-                        content=(
-                            f"Attempted {state.input_text[:200]!r} via "
-                            f"{state.owl_name}, failed: {failure_class}"
-                        ),
-                        source_type="agent_self",
-                        source_ref=state.trace_id,
-                        confidence=0.3,
-                        trust="untrusted",
-                    ))
-            except Exception as exc:  # B5 — single-failure learning must not block capture
-                log.engine.debug(
-                    "[outcomes] capture: single-failure memory stage failed",
-                    exc_info=exc,
-                    extra={"_fields": {
-                        "trace_id": state.trace_id, "failure_class": failure_class,
-                    }},
-                )
+        # SINGLE-FAILURE LEARNING lives in `task_outcomes`, written directly
+        # above — not in a second, staged copy.
+        #
+        # There used to be one here: a low-trust `agent_self` StagedFact per
+        # failed turn, so that "recall (classify.py's lesson_context) can weight
+        # it below an RCA-verified skill lesson". That path is severed in three
+        # places, each measured rather than assumed: recall() queries
+        # committed_facts, which has held 0 rows since D08.1's migration 0112;
+        # what moved a row from staged to committed was fact_promoter, which
+        # D08.1 retired, with its DreamWorker unscheduled; and lesson_context is
+        # applied-lesson tracking, which never read these rows at all.
+        #
+        # So the write happened and the effect did not — 2,969 rows at ~1,400 a
+        # day on the live database, unbounded, because every row carries a unique
+        # source_ref (the trace_id) and no per-scope trim can ever match it.
+        #
+        # It was also redundant: it re-recorded as prose the trace_id,
+        # failure_class, input_text and owl_name that store.record() had just
+        # persisted properly. FailureOutcomeMiner — the real single-failure
+        # learner — reads task_outcomes, so nothing measurable is lost.
+        # Pinned by tests/pipeline/test_no_orphan_agent_self_stage.py.
     except Exception as exc:  # B5 — log, never raise from telemetry
         log.engine.warning(
             "[outcomes] capture: write failed — telemetry lost for this turn",
