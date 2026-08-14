@@ -7,9 +7,7 @@ Skill side (``record_skill_mutation``):
   * explicit ``snapshot`` + ``before_hash`` overrides (restore path).
   * the mutate callback actually runs.
 
-Memory side (``remember_fact`` / ``forget_fact``):
-  * remember tags the configurable source_type (manual default, agent_self for
-    the tool) and writes an audit row only when an audit logger is supplied.
+Memory side (``forget_fact``):
   * forget routes the delete through the bridge and audits only when supplied.
   * audit-append failure never aborts the mutation (best-effort).
 """
@@ -20,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.commands.memory_helpers import forget_fact, remember_fact
+from stackowl.commands.memory_helpers import forget_fact
 from stackowl.commands.skill_helpers import record_skill_mutation
 from stackowl.db.pool import DbPool
 from stackowl.memory.models import StagedFact
@@ -211,28 +209,6 @@ class _RecordingAudit:
         })
 
 
-async def test_remember_fact_defaults_to_manual_no_audit() -> None:
-    bridge, promoter = _FakeBridge(), _FakePromoter()
-    fact_id = await remember_fact(bridge, promoter, "hello")  # type: ignore[arg-type]
-    assert bridge.staged[0].source_type == "manual"
-    assert promoter.promoted == [fact_id]
-
-
-async def test_remember_fact_tags_agent_self_and_audits() -> None:
-    bridge, promoter = _FakeBridge(), _FakePromoter()
-    audit = _RecordingAudit()
-    fact_id = await remember_fact(
-        bridge, promoter, "agent wrote this",  # type: ignore[arg-type]
-        source_type="agent_self", source_ref="tool", audit=audit,  # type: ignore[arg-type]
-        actor="agent_self:memory",
-    )
-    assert bridge.staged[0].source_type == "agent_self"
-    assert len(audit.rows) == 1
-    assert audit.rows[0]["event_type"] == "memory.remember"
-    assert audit.rows[0]["target"] == fact_id
-    assert audit.rows[0]["details"]["source_type"] == "agent_self"
-
-
 async def test_forget_fact_deletes_and_audits_when_supplied() -> None:
     bridge = _FakeBridge()
     audit = _RecordingAudit()
@@ -249,14 +225,11 @@ async def test_forget_fact_no_audit_when_none() -> None:
 
 
 async def test_audit_failure_never_aborts_mutation() -> None:
-    bridge, promoter = _FakeBridge(), _FakePromoter()
+    """The remember half of this went with remember_fact in D08.2 slice B — it
+    had no production caller once /memory was retargeted at curated memory. The
+    invariant it shared with forget is unchanged and still asserted here."""
     audit = _RecordingAudit(fail=True)
+    bridge = _FakeBridge()
     # Must NOT raise even though audit.append raises.
-    fact_id = await remember_fact(
-        bridge, promoter, "x", audit=audit,  # type: ignore[arg-type]
-    )
-    assert bridge.staged and promoter.promoted == [fact_id]
-
-    bridge2 = _FakeBridge()
-    await forget_fact(bridge2, "y", audit=audit)  # type: ignore[arg-type]
-    assert bridge2.deleted == ["y"]
+    await forget_fact(bridge, "y", audit=audit)  # type: ignore[arg-type]
+    assert bridge.deleted == ["y"]

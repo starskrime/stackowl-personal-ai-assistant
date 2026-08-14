@@ -5,23 +5,20 @@ from __future__ import annotations
 import csv
 import io
 import json
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.exceptions import CommandParseError, DuplicateFactError
+from stackowl.exceptions import CommandParseError
 from stackowl.infra.observability import log
 from stackowl.memory.models import StagedFact
 from stackowl.memory.sqlite_helpers import unpack_embedding
-from stackowl.memory.trust import trust_for_source
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.audit.logger import AuditLogger
     from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.memory.bridge import MemoryBridge
-    from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.models import MemoryRecord
 
 # Literal of source_type values accepted by ``remember_fact``. The default is
@@ -133,75 +130,6 @@ async def _best_effort_embed(
         )
         return None, None
     return list(vectors[0]), provider.model_name
-
-
-async def remember_fact(
-    bridge: MemoryBridge,
-    promoter: FactPromoter,
-    text: str,
-    *,
-    source_type: RememberSourceType = "manual",
-    source_ref: str = "user_explicit",
-    audit: AuditLogger | None = None,
-    actor: str = "user:remember",
-    embedding_registry: EmbeddingRegistry | None = None,
-) -> str:
-    """Stage ``text`` as an explicit fact, force-promote it, and (optionally) audit.
-
-    This is the shared add-with-provenance chokepoint: BOTH the ``/memory
-    remember`` slash command AND the ``memory`` tool route adds through here.
-
-    Returns the new ``fact_id``. Built with confidence=1.0 and
-    reinforcement_count=3 so it immediately meets the standard promotion
-    gates even if force-promote is later removed from the pipeline.
-
-    ``source_type`` defaults to ``"manual"`` (human-authored). The ``memory``
-    self-mutation tool passes ``"agent_self"`` so tool-authored facts are
-    distinguishable for recall down-ranking + privileged-context exclusion
-    (E4 design change #3). When ``audit`` is supplied, an append-only audit row
-    is written (the tool path supplies it; the slash path leaves it ``None`` to
-    preserve existing behavior).
-    """
-    log.memory.debug(
-        "[memory] memory_helpers.remember_fact: entry",
-        extra={"_fields": {"text_len": len(text), "source_type": source_type}},
-    )
-    # Best-effort embed at remember time so the committed fact carries a vector
-    # (StagedFact is frozen — construct WITH the embedding, never mutate).
-    embedding, embedding_model = await _best_effort_embed(text, embedding_registry)
-    fact = StagedFact(
-        fact_id=str(uuid.uuid4()),
-        content=text,
-        source_type=source_type,
-        source_ref=source_ref,
-        confidence=1.0,
-        reinforcement_count=3,
-        embedding=embedding,
-        embedding_model=embedding_model,
-        trust=trust_for_source(source_type),
-    )
-    try:
-        await bridge.stage(fact)
-    except DuplicateFactError as exc:
-        # B5 — log and re-raise so the caller can surface the failure
-        log.memory.warning(
-            "[memory] memory_helpers.remember_fact: duplicate fact_id collision",
-            exc_info=exc,
-            extra={"_fields": {"fact_id": fact.fact_id}},
-        )
-        raise
-    await promoter.force_promote(fact.fact_id)
-    if audit is not None:
-        _audit_memory_mutation(
-            audit, event_type="memory.remember", actor=actor,
-            target=fact.fact_id,
-            details={"source_type": source_type, "text_len": len(text)},
-        )
-    log.memory.info(
-        "[memory] memory_helpers.remember_fact: exit",
-        extra={"_fields": {"fact_id": fact.fact_id, "source_type": source_type}},
-    )
-    return fact.fact_id
 
 
 def _audit_memory_mutation(

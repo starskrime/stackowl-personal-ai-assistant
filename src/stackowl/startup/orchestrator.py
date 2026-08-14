@@ -1661,7 +1661,6 @@ class StartupOrchestrator:
             # D01.7 — so /new can actually end a conversation.
             session_store=session_store,
             lancedb=memory_components.lancedb,
-            promoter=memory_components.promoter,
             embedding_registry=memory_components.embedding_registry,
             skills_store=skills_components.store,
             skills_loader=skills_components.loader,

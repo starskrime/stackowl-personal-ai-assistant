@@ -28,7 +28,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
     from stackowl.memory.bridge import MemoryBridge
-    from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.pipeline.state import PipelineState
 
@@ -119,7 +118,6 @@ class MemoryCommand(SlashCommand):
         db: DbPool | None = None,
         event_bus: EventBus | None = None,
         lancedb: LanceDBAdapter | None = None,
-        promoter: FactPromoter | None = None,
         embedding_registry: EmbeddingRegistry | None = None,
     ) -> None:
         # 1. ENTRY
@@ -128,7 +126,6 @@ class MemoryCommand(SlashCommand):
             extra={
                 "_fields": {
                     "has_lancedb": lancedb is not None,
-                    "has_promoter": promoter is not None,
                     "has_embeddings": embedding_registry is not None,
                 }
             },
@@ -138,7 +135,6 @@ class MemoryCommand(SlashCommand):
         self._db: DbPool = db  # type: ignore[assignment]  # guarded in handle()
         self._bus: EventBus = event_bus  # type: ignore[assignment]  # guarded in handle()
         self._lancedb = lancedb
-        self._promoter = promoter
         self._embeddings = embedding_registry
         # 4. EXIT
         log.memory.debug("[commands] memory.init: exit")
@@ -354,7 +350,6 @@ class MemoryCommand(SlashCommand):
         db: DbPool,
         event_bus: EventBus,
         lancedb: LanceDBAdapter | None = None,
-        promoter: FactPromoter | None = None,
         embedding_registry: EmbeddingRegistry | None = None,
     ) -> MemoryCommand:
         """Construct a :class:`MemoryCommand` and register it on the singleton."""
@@ -364,7 +359,6 @@ class MemoryCommand(SlashCommand):
             db=db,
             event_bus=event_bus,
             lancedb=lancedb,
-            promoter=promoter,
             embedding_registry=embedding_registry,
         )
         CommandRegistry.instance().register(cmd)

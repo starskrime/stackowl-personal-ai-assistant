@@ -33,7 +33,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only; no runtime cost
     from stackowl.events.bus import EventBus
     from stackowl.integrations.registry import IntegrationRegistry
     from stackowl.memory.bridge import MemoryBridge
-    from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.preferences import PreferenceStore
     from stackowl.notifications.deliverer import ProactiveDeliverer
@@ -78,7 +77,6 @@ class CommandDeps:
     session_store: object | None = None
     preference_store: object | None = None  # PreferenceStore — avoid heavy import
     lancedb: LanceDBAdapter | None = None
-    promoter: FactPromoter | None = None
     embedding_registry: EmbeddingRegistry | None = None
 
     # Skills subsystem
@@ -223,7 +221,6 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
         db=deps.db,
         event_bus=deps.event_bus,
         lancedb=deps.lancedb,
-        promoter=deps.promoter,
         embedding_registry=deps.embedding_registry,
     ))
 
