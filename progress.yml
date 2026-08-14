@@ -340,7 +340,48 @@ current:
     delay; a budget enforcer measuring a table that is always zero. Measure the
     EFFECT, never trust the call.
 
-  ESCALATIONS: []
+  ESCALATIONS:
+  - id: ESC-1-skill-manage-autoallow
+    raised: 2026-08-11
+    blocks: "D08.2 slice B (the orchestrator/removal pass). Slice A is NOT blocked."
+    question: >-
+      Should creating a SKILL be auto-allowed without a consent prompt?
+    why_not_derivable: >-
+      Both behaviours are deliberately recorded in the codebase and they contradict each
+      other. This is risk appetite on a security surface, which is never derivable.
+    what_was_measured: >-
+      All of it, no inference. reversibility_resolver flag = True (ADR-3 resolver ON).
+      skill_manage.manifest.commit_coupling = "transactional", so ToolRegistry._is_reversible
+      returns True. consent_category = None, so it is not in always_ask_categories. The live
+      path is therefore consent.request()'s `reversible_auto` branch: auto-allow with undo, no
+      prompt. Confirmed EMPIRICALLY as well as by reading — the smoke test's own log shows
+      "[consent] policy.request: exit" followed immediately by "skill_manage.execute: entry"
+      with no keyboard ever sent to Telegram.
+    the_contradiction: >-
+      skill_manage.py LINE 20 states: 'Severity (operator decision): consequential — every
+      write is consent-gated.' That is NOT what the running system does; line 170 of the same
+      file declares commit_coupling="transactional", which routes it to ADR-3's auto-allow.
+      An operator decision written in prose is contradicted by the manifest beside it. Two
+      copies of one rule, drifted — and the drift silently removed a consent prompt.
+    why_it_matters: >-
+      skill_manage creates an agent-writable file that becomes part of a prompt. D08.1's own
+      design called this 'a prompt-injection surface' and insisted every curated write be
+      scanned rather than pointing at a later item. Reversible is not the same as harmless:
+      an injected skill can act before anyone exercises the undo.
+    options:
+      - "A. ADR-3 is right — skill creation is reversible, auto-allow stands. Fix LINE 20's stale claim and update the two smoke tests to assert the undo affordance instead of a keyboard."
+      - "B. Line 20 is right — a prompt-injection surface must always ask. Give skill_manage a consent_category that lands it in always_ask, leave the tests as they are. They are currently telling the truth."
+      - "C. Split the difference — auto-allow edits to an existing skill, always ask on CREATE."
+    recommendation: >-
+      B, and it is not a close call. Every other reversible-auto tool changes DATA; this one
+      changes what the agent will DO on later turns. 'Undo is available' assumes someone looks,
+      and nothing currently tells them to. Cheapest correct fix, and it makes two red tests
+      green by making the code match its own stated intent rather than by weakening an
+      assertion.
+    do_not: >-
+      Do NOT loosen the two failing assertions to get green. If B is chosen they were right all
+      along, and editing them would have destroyed the only evidence of a real regression.
+
   # The item-loop skill (.claude/skills/item-loop/SKILL.md) writes here. One entry per
   # question the six-lens panel refused to answer because evidence could not settle it:
   # the question, WHY it is not derivable, the panel's recommendation, and what stays
