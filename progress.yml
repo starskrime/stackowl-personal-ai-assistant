@@ -575,6 +575,11 @@ known_debt:
       22 passed. ruff clean with the src/ baseline holding at 39; mypy clean. Two
       RcaVerdict docstring lines that still promised "Root cause" and "Fix / pattern"
       headings were corrected in the same pass — a doc that lies is worse than none.
+    now_live: >
+      Restarted 2026-08-14 so the fix is actually in the running process — the deletion-is-
+      not-live rule applies to fixes too. Boot clean: 371 INFO / 21 WARNING / 0 ERROR, 10
+      successful provider calls, 0 unreachable. tool_outcome_miner next runs at
+      2026-08-14T10:00Z, which is the first chance for a mined skill to land.
     still_unproven: >
       The PRODUCTION half remains unmeasured, exactly as recorded when this was found.
       No "standard: write rejected" line has yet appeared in the live log, so it was
