@@ -481,6 +481,41 @@ current:
       committed_facts, empty since migration 0112 — and fact_promoter is the ONLY thing
       that could ever put a row there. Remove it and the fencing becomes permanently
       unreachable-with-data, and the guard becomes untestable through its normal path.
+    measured_correction: >-
+      CORRECTION 2026-08-14 — THIS ESCALATION'S OWN what_was_measured IS WRONG on the
+      load-bearing point, found by tracing the path rather than re-reading the note. It says
+      the fencing "is LIVE code in sqlite_bridge.recall() and runs on every `memory` search".
+      Neither half holds. The fence is not in recall() — it is in retrieve()
+      (sqlite_bridge.py:150-180), a DIFFERENT method: recall() returns records, retrieve()
+      renders them into the three trust regions. And the `memory` tool does NOT go through it:
+      memory.py:365 calls bridge.recall() and renders hits with _format_hits (memory.py:487),
+      which emits raw content with NO fence, NO neutralize() and NO trust tier. A `memory`
+      search is precisely the path the fence does not cover.
+      AND THE FENCED PATH NO LONGER REACHES THE PROMPT EITHER, which the options were written
+      without. retrieve() is called once, from classify.py:629, and its output goes into
+      memory_context — which D01.1 removed from the system prompt (assemble.py:354 says so:
+      "still computed by classify and still read by execute for its grounding haystacks; it
+      simply stops being PROMPT text"). Its ONLY live reader is
+      _clarify_question_already_answered at execute.py:2613, a deterministic substring check.
+      So the fence today defends a grounding check, not the model's context.
+      WHICH INVERTS THE RISK THE OPTIONS WERE WEIGHING. The worry behind A and C is that facts
+      might return and find the surface unprotected. Measured, the asymmetry already exists and
+      points the other way: the GUARDED path (retrieve) is the dead one, and the LIVE path (the
+      `memory` tool, a registered model-facing tool) is the unfenced one. If anything ever
+      writes committed_facts again, the tool renders untrusted webpage content raw into the
+      model's context while the fenced renderer sits on a channel that no longer reaches the
+      prompt. That is failure mode 1 — an actuator wired on only some paths — and it is latent
+      rather than live ONLY because the store is empty.
+      NOT A LIVE VULNERABILITY TODAY, measured on the live database 2026-08-14: committed_facts
+      0 rows AND committed_facts_fts 0 rows, so recall() can only return [], retrieve() returns
+      the empty string at its no-matches branch, and the tool's search answers from curated
+      memory alone. Nothing is rendered unfenced right now.
+      WHAT THIS DOES TO THE OPTIONS: it does not decide the question — that is still Bakir's
+      intent about what keeping committed_facts was for — but B gets cheaper (the fencing
+      protects a grounding haystack, not the prompt) and A/C get more expensive than stated,
+      because keeping the fence WITHOUT also fencing the tool's render buys a protection the
+      one live reader bypasses. If the answer is A or C, the honest version routes _format_hits
+      through the same neutralize()+trust rendering, so there is one rule rather than two.
     the_tension: >-
       R1Q2 deliberately KEPT committed_facts and recall — "a table that exists and returns
       nothing is honest while a missing one errors at every call site". That argues the
