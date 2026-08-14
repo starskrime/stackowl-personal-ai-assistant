@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal
 
@@ -54,11 +55,6 @@ class _FakeBridge:
 
     async def list_staged(self, status: Literal["staged", "committed", "rejected"] = "staged") -> list[StagedFact]:
         return [] if status == "rejected" else list(self.facts)
-
-
-class _FakePromoter:
-    async def force_promote(self, fact_id: str) -> None:
-        pass
 
 
 class _FakeBot:
@@ -156,10 +152,20 @@ async def _turn(env: _Env, text: str) -> str:
     return ""
 
 
-async def test_smoke_memory_add_then_search_through_telegram(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "stackowl.tools.knowledge.memory.FactPromoter", lambda *_a, **_k: _FakePromoter()
-    )
+async def test_smoke_memory_add_then_search_through_telegram(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    # ISOLATE THE CURATED FILES FIRST. `memory(action="add")` writes
+    # ~/.stackowl/memory/USER.md since D08.1 retargeted this tool at curated
+    # memory. Without STACKOWL_HOME this smoke would write the test's fact into
+    # the OPERATOR'S REAL profile — which is exactly what the skill_manage smoke
+    # was found doing, having left a real skill behind on 2026-08-07.
+    monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
+    # The FactPromoter patch that used to sit here is GONE, not moved: D08.1's
+    # abb08e09 removed the promoter from this tool when it was retargeted, so
+    # the patch had been raising AttributeError and this smoke — the only
+    # end-to-end proof that `memory` is reachable from a real Telegram message —
+    # had been red ever since.
     bridge = _FakeBridge()
     adapter = TelegramChannelAdapter(TelegramSettings(allowed_user_ids=frozenset({USER_ID})))
     bot = _FakeBot()
@@ -182,10 +188,28 @@ async def test_smoke_memory_add_then_search_through_telegram(monkeypatch: pytest
     )
 
     # Turn 1: the agent remembers a fact (write path, tagged agent_self, visible).
-    provider.script.append(("memory", {"action": "add", "content": "the deploy key is in vault path X"}))
+    provider.script.append((
+        "memory",
+        {
+            "action": "add",
+            "content": "the deploy key is in vault path X",
+            # Durability is REQUIRED since D08.1 — a write that cannot say how
+            # long it stays true has nowhere to go.
+            "durability": "permanent",
+        },
+    ))
     await _turn(env, "remember the deploy key location")
-    assert "Remembered" in provider.results[0], provider.results[0]
-    assert bridge.facts and bridge.facts[0].source_type == "agent_self"  # provenance
+    # The exact contract, not a fuzzy substring: a curated write confirms it
+    # SAVED and tells the user WHEN it reaches the prompt — D08.1 made that
+    # second half mandatory, because the frozen snapshot means a write made now
+    # is not visible to this conversation and the agent must say so.
+    assert "Saved." in provider.results[0], provider.results[0]
+    assert "next /new" in provider.results[0], provider.results[0]
+    # Provenance now lives in the CURATED FILE, not a staged fact: the write
+    # landed where the system prompt will actually read it.
+    profile = tmp_path / "home" / "memory" / "USER.md"
+    assert profile.exists(), f"curated profile not written at {profile}"
+    assert "vault path X" in profile.read_text(encoding="utf-8")
 
     # Turn 2: the agent searches it back through the real pipeline.
     provider.script.append(("memory", {"action": "search", "query": "deploy key"}))
