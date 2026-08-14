@@ -200,11 +200,15 @@ def test_migration_sprint_status_exists_and_complete() -> None:
     """sprint-status.yaml exists and marks all 12 epics complete."""
     import yaml
 
-    # Path from v2/tests/migration/this_file.py → repo root is parents[3]
+    # tests/migration/this_file.py → repo root is parents[2]. It was parents[3]
+    # and "_bmad-output/sprints/" while the project lived under v2/; the
+    # v2-to-root migration (c72a1704 — the same commit that last touched this
+    # file) moved both, and this path was not updated, so the assertion had been
+    # failing on a directory OUTSIDE the repo ever since.
     sprint_yaml = (
-        Path(__file__).parents[3]
+        Path(__file__).parents[2]
         / "_bmad-output"
-        / "sprints"
+        / "implementation-artifacts"
         / "sprint-status.yaml"
     )
     assert sprint_yaml.exists(), f"sprint-status.yaml not found at {sprint_yaml}"

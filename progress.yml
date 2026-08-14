@@ -661,6 +661,35 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-2026-08-14-sprint-status-test-orphaned
+    found: 2026-08-14
+    found_by: "the item-loop, running the migration suite during I7"
+    status: HALF-FIXED — path corrected, schema mismatch needs a decision
+    what: >
+      tests/migration/test_export_import_roundtrip_fresh.py::test_migration_sprint_status_exists_and_complete
+      asserts "sprint-status.yaml exists and marks all 12 epics complete". It has been
+      red since the v2-to-root migration, from TWO separate drifts in the same commit.
+    fixed_here: >
+      The PATH. It looked for parents[3]/_bmad-output/sprints/sprint-status.yaml — a
+      directory OUTSIDE the repo — with a comment literally saying "Path from
+      v2/tests/migration/this_file.py". c72a1704 (the same commit that last touched the
+      file) moved tests to the root, so it is parents[2], and the artifact now lives in
+      _bmad-output/implementation-artifacts/. Corrected.
+    still_open: >
+      The SCHEMA. The file at the corrected path is a DIFFERENT artifact — generated
+      2026-07-12, keyed on `development_status`, with no `epics` list — so the assertion
+      now fails with KeyError: 'epics'. The file recording "12 epics complete" was a v2
+      build-sprint artifact and is gone. The test cannot be repaired without deciding
+      what it should assert INSTEAD, and that is a question about BMAD sprint tracking
+      rather than about this code.
+    options:
+      - "A. Delete it — the milestone it recorded is history and its artifact no longer exists."
+      - "B. Repoint at `development_status` — but that describes different, ongoing work, so the test would be asserting something new rather than being repaired."
+    recommendation: >
+      A. A test that pins a completed historical milestone stops being a test once the
+      record it reads is gone; keeping a reworded version would assert something nobody
+      chose. But deleting a test is not the loop''s call to make unasked.
+
   - id: DEBT-2026-08-14-miner-cannot-write-skills
     found: 2026-08-14
     found_by: "the item-loop, while running D08.2 slice A's regression gate"
@@ -8321,6 +8350,9 @@ items:
     - 'SLICE B OPENED 2026-08-14, and the evidence for it is now COMPLETE rather than assumed. R1Q3 said the three channel approve/reject callbacks can never be populated; that is measured end to end. (1) The `memory_nudge` event that would produce the keyboards has NEVER been emitted — 0 occurrences across every retained log — and NO SOURCE FILE EMITS IT AT ALL; the only references are formatters that would render it and handlers that would handle it. (2) No memory approve/reject callback has ever fired, in any retained log. (3) Telegram''s MemoryCallbackHandler (185 lines) had NO CONSTRUCTOR ANYWHERE — it was never registered, so it could not have fired even if a keyboard had appeared. Slack and Discord ARE wired, at orchestrator.py 3260-3287 and 3455-3488.'
     - 'ESC-2 VALIDATED ON LIVE TRAFFIC 2026-08-14. The morning_brief job ran at 13:00:26Z with the fix deployed: section_count=3 and "staged_count" now appears ZERO times in the log. The misleading number is gone from a real run, not merely from the code path — which is the standard D08.1 taught this programme to insist on. (The third section is the integration one, present when a registry is wired; the log gives the count, not the names, so that part is inference and is labelled as such.)'
     - 'I OVERCLAIMED LAST ITERATION AND IT IS WORTH RECORDING WHY. After removing the TUI panel I wrote that "every surviving FactPromoter reference is inside memory/". FALSE. The grep behind it matched the CLASS NAME (FactPromoter/force_promote/.promoter) and missed MODULE-PATH imports of the form `from stackowl.memory.fact_promoter import ...`. The real count was 7 importers, three of them the /memory command surface. This is the SECOND time in two days a reference count was wrong, and both times the cause was the same: the grep''s shape did not match the thing being counted. The 31-files figure counted mentions where uses were meant; this one counted a symbol where a module was meant. When a number sizes a decision, check what the pattern actually matches before trusting it.'
+    - 'I7 IMPLEMENTED 2026-08-14, as Bakir chose: bound it AND delete the backlog. THE OBVIOUS FIX WOULD HAVE DONE NOTHING, which is why it was measured first — the existing trim is scoped `source_type = ''conversation'' AND source_ref = ?`, and every OTHER type carries a unique source_ref (agent_self uses the turn''s trace_id: 2,971 rows, 2,971 distinct refs, one row each). Widening that predicate would have matched nothing, forever — a write with no effect. So non-conversation types get a per-TYPE cap via a new _trim_source_type, trimming in the SAME PATH as the insert for the same reason the conversation bound does: an actuator watching from elsewhere can stop working unnoticed.'
+    - 'THE CAP IS ONE NUMBER IN TWO PLACES, and that is pinned rather than hoped. SQL cannot import _TURN_HISTORY_FLOOR, so migration 0114 hardcodes 50 — and a test reads the .sql and asserts it equals the constant, failing if either side drifts. That is the "one source, have the other ask it" remedy in the only form a SQL file allows.'
+    - 'MEASURED READ-ONLY BEFORE APPLYING, on the live database: the migration deletes 2,921 agent_self rows and keeps the newest 50; webpage (10) and conversation_summary (6) are under the cap and untouched; conversation (2,741) is not touched at all, staying bounded per session. Backup first as always: ~/.stackowl/backups/pre-i7-staged-bound-20260814-090118.db, 922MB, taken with sqlite3''s online backup API so the running platform was safe. NO VACUUM in the migration — 0112 failed on exactly that.'
     - 'ESC-3 IMPLEMENTED 2026-08-14 — browser_recall_url KEPT and repointed at curated memory, as Bakir chose over the loop''s recommendation to remove it. The substring search MOVED from a private _curated_matches on the memory tool to CuratedMemory.search(), its actual home: copying it into the browser tool would have been two copies of one rule. Both tools now ask one implementation. THE PROMISE NARROWS HONESTLY WITH THE SOURCE: curated memory is two small budgeted text files, not a page cache, so the tool''s description now says it answers "have I noted anything about this URL" and explicitly NOT "here is the page". 7 new tests.'
     - 'AND I BROKE THE TREE MID-ITERATION, BY THE SAME MISTAKE I HAD JUST WRITTEN UP. Part 1 removed remember_fact after checking its callers with a grep piped through `head -6` — which TRUNCATED before showing three more test files that used it. The removal collection-errored tests/memory/test_force_promote_semantic.py and would have needed surgery on test_trust_stamping.py and test_memory_governance_journey.py too. REVERTED rather than pushed through: remember_fact is harmless dead code, reverting un-broke the tree immediately, and its removal belongs in seam 3 part 2''s dedicated pass where all 38 test files are handled together anyway. The lesson is the same one recorded that morning about the 31-files figure and the FactPromoter symbol grep, now with a third instance: A TRUNCATED GREP IS A WRONG ANSWER, not a partial one. Never size a removal from a `head`-limited list.'
     - 'ANOTHER PRE-EXISTING RED FIXED: tests/memory/test_trust_stamping.py::test_web_fetch_stages_untrusted called WebFetchTool._stage_in_memory, removed by D08.1''s 247d74a5. That commit says its test was "INVERTED rather than deleted"; the sibling copy in the trust suite was missed and had been failing with AttributeError ever since. Inverted the same way — it now asserts the method is GONE, so staging cannot quietly come back.'

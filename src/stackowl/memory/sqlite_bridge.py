@@ -299,11 +299,61 @@ class SqliteMemoryBridge(MemoryBridge):
                 extra={"_fields": {"fact_id": fact.fact_id}},
             )
             raise DuplicateFactError(fact.fact_id) from exc
+        # 3. STEP — bound the type IN THE SAME PATH as the insert (I7), for the
+        # same reason the conversation buffer is bounded on write: an actuator
+        # that watches from elsewhere can stop working without anyone noticing.
+        trimmed = await self._trim_source_type(fact.source_type)
         # 4. EXIT
         log.memory.info(
             "[memory] sqlite_bridge.stage: exit",
-            extra={"_fields": {"fact_id": fact.fact_id, "source_type": fact.source_type}},
+            extra={"_fields": {
+                "fact_id": fact.fact_id, "source_type": fact.source_type,
+                "trimmed": trimmed,
+            }},
         )
+
+    async def _trim_source_type(self, source_type: str) -> int:
+        """Cap a NON-conversation source_type at :data:`_TURN_HISTORY_FLOOR`.
+
+        WHY THIS IS NOT JUST A WIDER `_trim_turns` (I7). That trim is scoped
+        ``source_type = 'conversation' AND source_ref = ?`` — correct for
+        conversation, since one session must never evict another's history.
+        Every other type carries a UNIQUE source_ref: ``agent_self`` uses the
+        turn's trace_id, so on the live database 2,971 rows had 2,971 distinct
+        refs, one row each. A per-ref trim keeping the newest N matches nothing,
+        forever. Widening the existing predicate would have been a write with no
+        effect — so these types are capped per TYPE instead.
+
+        The cap reuses the conversation floor rather than inventing a number.
+        These rows have no rich reader: every other staged_facts SELECT in this
+        class filters ``source_type = 'conversation'``, and a non-conversation
+        row surfaces only through ``list_staged`` for an id-prefix lookup. The
+        cap keeps a forensic tail, it does not serve a query.
+
+        Never raises: losing the trim costs disk, and a staging write that
+        already succeeded must not be reported as a failure because the bound
+        tripped.
+        """
+        if source_type == "conversation":
+            return 0  # bounded PER SESSION by _trim_turns, deliberately
+        try:
+            return await self._db.execute_returning_rowcount(
+                """DELETE FROM staged_facts
+                    WHERE source_type = ?
+                      AND fact_id NOT IN (
+                        SELECT fact_id FROM staged_facts
+                         WHERE source_type = ?
+                         ORDER BY staged_at DESC LIMIT ?
+                      )""",
+                (source_type, source_type, _TURN_HISTORY_FLOOR),
+            )
+        except Exception as exc:  # B5 — never cost the turn its write
+            log.memory.error(
+                "[memory] sqlite_bridge._trim_source_type: trim failed — this "
+                "type stays unbounded until the next successful write",
+                exc_info=exc, extra={"_fields": {"source_type": source_type}},
+            )
+            return 0
 
     async def recall(
         self, query: str, limit: int = 10, *, scope_key: str | None = None
