@@ -226,7 +226,7 @@ class SqliteLessonsStore:
                     "rather than wrong ones",
                     extra={"_fields": {
                         "query_dim": dim,
-                        "corpus_dims": {d: len(r) for d, (r, _m) in by_dim.items()},
+                        "corpus_dims": {str(d): len(r) for d, (r, _m) in by_dim.items()},
                     }},
                 )
             else:
@@ -413,13 +413,16 @@ class SqliteLessonsStore:
                 "[learning] lessons_store: the corpus holds MORE THAN ONE embedding "
                 "dimension — it was written by more than one embedder, and a query "
                 "only ever sees the rows matching its own",
-                extra={"_fields": {d: len(r) for d, (r, _m) in cache.items()}},
+                extra={"_fields": {"dims": {str(d): len(r) for d, (r, _m) in cache.items()}}},
             )
         log.memory.info(
             "[learning] lessons_store: corpus loaded",
             extra={"_fields": {
                 "lessons": len(raw),
-                "dims": {d: len(r) for d, (r, _m) in cache.items()},
+                # STRING keys: the log filter lowercases every key it sees, and an
+                # int one raised AttributeError out of the log call and killed the
+                # search this line describes.
+                "dims": {str(d): len(r) for d, (r, _m) in cache.items()},
                 "load_ms": (time.monotonic() - t0) * 1000,
             }},
         )

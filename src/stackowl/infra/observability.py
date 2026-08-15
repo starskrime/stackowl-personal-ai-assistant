@@ -58,8 +58,19 @@ _IDENTIFIER_KEYS = frozenset({
 })
 
 
-def _is_sensitive(key: str) -> bool:
-    k = key.lower()
+def _is_sensitive(key: object) -> bool:
+    """Is this field name one whose VALUE must be redacted?
+
+    TAKES ``object``, not ``str``, and that is load-bearing rather than defensive
+    typing. On 2026-08-14 a caller logged its corpus shape as ``{"dims": {384:
+    3682}}`` — keyed by embedding dimension, an int — and ``key.lower()`` raised
+    ``AttributeError`` from inside ``logging``. It propagated out of the log call
+    into the caller: lessons recall failed on EVERY turn (18 warnings, 9
+    "recall DEGRADED" errors) because of a line whose only job was to describe it.
+    A logging filter that can take down the code it observes is a worse defect
+    than the call site that tripped it, so this coerces instead of assuming.
+    """
+    k = key.lower() if isinstance(key, str) else str(key).lower()
     if k in _IDENTIFIER_KEYS:
         return False
     return any(fnmatch.fnmatch(k, p) for p in _SENSITIVE_PATTERNS)
@@ -96,7 +107,7 @@ def _redact_string(value: str) -> str:
     return redacted
 
 
-def _clean_value(key: str, value: Any) -> Any:
+def _clean_value(key: object, value: Any) -> Any:
     if _is_sensitive(key):
         return "***"
     return _scan_value(value)
