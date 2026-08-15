@@ -874,6 +874,48 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: INCIDENT-2026-08-15-telegram-self-heal-never-wired
+    found: 2026-08-15
+    found_by: "the item-loop, after Bakir picked the chronic boot warning to investigate"
+    status: DIAGNOSED, not yet fixed — two independent defects, both confirmed by reading the code
+    what: >-
+      Telegram has DETECTION but no ACTUATOR. The health sweep can see the channel go
+      unhealthy and can never repair it, so the ADR-6 self-heal loop is open for the
+      primary channel. The symptom is a warning on EVERY boot: "[scheduler] assembly:
+      telegram healer setup failed — health detection via ChannelLivenessContributor only".
+    defect_1_ordering: >-
+      scheduler/assembly.py wires the healer by calling ChannelRegistry.instance().get(
+      "telegram") and testing the result for None. But registry.get() NEVER returns None —
+      it raises ChannelNotFoundError (registry.py:111). So the `if adapter is not None`
+      branch and its `else` are both DEAD CODE, and the miss lands in the except, which
+      logs the warning. It misses on every boot because scheduler assembly runs BEFORE the
+      adapter starts: measured in the live log, "[scheduler] assembly.build: exit" at
+      03:31:19 and "gateway: starting Telegram adapter" at 03:31:45.
+    defect_2_key_mismatch: >-
+      Even with the ordering fixed the heal could not fire, because the healer key and the
+      health-status name are different strings and the sweep does a plain exact-match
+      lookup (health_sweep.py:232, self._healers.get(s.name)). The healer would be keyed
+      "telegram" (TelegramChannelAdapter.contributor_name, adapter.py:142). The statuses
+      that actually report the channel unhealthy are "telegram_receive" and
+      "telegram_canary_send" — ChannelLivenessContributor names itself
+      f"{channel}_{kind}" (contributors.py:299) and is constructed twice at
+      assembly.py:1129 and :1135. Neither name is "telegram".
+    correction_worth_recording: >-
+      My first reading inferred the status name was "telegram_liveness" from the warning
+      TEXT. It is not — the text names the CLASS, not the contributor. Reading the
+      constructors gave the real names. A message that mentions a class is not evidence
+      about the strings that class produces.
+    why_it_hid: >-
+      The failure logs at WARNING, not ERROR, and says "health detection via
+      ChannelLivenessContributor only" — which reads like a graceful degrade rather than a
+      permanently open loop. Detection genuinely does work, so nothing looks broken until
+      you ask what would happen if Telegram actually went down.
+    fix_shape: >-
+      Resolve channel healers AT SWEEP TIME rather than at assembly time (the sweep already
+      consults the map per run), which removes the ordering dependency instead of moving
+      it; and key the healer by the status names that can report that channel unhealthy,
+      not by the adapter own name. Discord, Slack and WhatsApp have the same block and
+      need checking for the same two defects.
   - id: INCIDENT-2026-08-14-tests-wrote-to-the-real-home
     found: 2026-08-14
     found_by: "the item-loop, while repointing survivors for D08.2 seam 3 pass 4"
