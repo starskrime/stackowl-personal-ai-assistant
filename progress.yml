@@ -257,10 +257,27 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  wave: 1
-  item: D01.6
+  wave: 9
+  item: D16.1
   stage: brainstorm
   stage_status: >-
+    D01.6 IS CLOSED (2026-08-15): its live baseline was captured, its brainstorm accepted
+    as a documented pre-process exception, and metric 1 recorded as unmeasurable on this
+    backend after the gateway probe. WAVE 1 IS 7/7.
+    NOW ON THE EXPEDITED CHAIN. Bakir pulled D04.1 "Providers as plugins" forward on
+    2026-08-15 after three live faults in one day were all per-backend facts living as
+    branching inside shared code. The dependency graph made it a THREE-item chain —
+    D16.1 Plugin surface -> D16.3 Category ABCs -> D04.1 — and all three are P0 and
+    flagged EXPEDITED. `current` therefore starts at D16.1, not at the next item by map
+    order. D04.1 also absorbs ESC-14 (the turn context should ride as its own message,
+    which is a prepare_messages() concern) and D07.3 absorbs ESC-15 (delegation becomes
+    non-blocking, so a parent can never kill a healthy child by waiting).
+    LATENCY IS DELIBERATELY NOT THE NEXT ARC. Metric 2 measured p50 TTFT at 13.1s and it
+    is the largest measured problem left now that cost is ~$0 and cache is unmeasurable —
+    but Bakir chose to finish the mapped programme first, on the grounds that much of that
+    13s is a weak local model on a Jetson and may not be ours to fix. Worth confirming
+    that split before anyone opens an arc on it.
+  superseded_stage_status: >-
     D08.2 CLOSED 2026-08-15 and the red-test sweep is fully closed with it — the last
     leftovers went green on 2026-08-15 (see the D08.1 decisions log). Advanced to D01.6,
     which is the earliest incomplete item by wave/order and is P0. It needs ONE stage:
@@ -412,6 +429,7 @@ current:
 
   ESCALATIONS:
   - id: ESC-15-the-delegation-timeout-predates-the-model-it-waits-for
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose MAKE DELEGATION NON-BLOCKING, over deriving the timeout from measured latency (my recommendation), over a configurable larger default, and over measuring child durations first. The parent stops waiting at all: it takes a handle and the child reports back when done, which removes the timeout question rather than tuning it, and fits the durable-task machinery the platform already has. This is a larger change than the one that caused the fault, and deliberately so — a derived timeout would still have been a number that can be wrong, and the failure mode it produces (a healthy child killed mid-work, its parent left with nothing to answer) is exactly what a wait should never be able to cause. FOLDED INTO D07.3 'Background delegation & durability', which already owns this surface; it is a design change needing its own architect stage, not a patch."
     raised: 2026-08-15
     blocks: >-
       nothing, but it is the first domino in a user-visible failure Bakir reported and
@@ -460,6 +478,7 @@ current:
       been able to pay for. A bumped constant would be the same bug with a bigger number
       the next time the model changes.
   - id: ESC-14-the-turn-context-rides-inside-the-users-own-message
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose FOLD IT INTO D04.1, over doing it now standalone and over closing it on the strength of the strip. The reference design already owns the seam: prepare_messages() is a per-provider hook for exactly how messages are composed before a call, so the fix lands once in the layer that should own it instead of as a separate sweep over complete_with_tools / stream / complete on every provider — code D04.1 restructures anyway. The strip stays deployed at all three escaping surfaces until then, and is to be DELETED as part of that item: a net left under a repaired floor teaches the next reader the wrong lesson. Its earlier 'sequence with the cache work' rationale lapsed when the gateway probe closed ESC-12."
     raised: 2026-08-15
     blocks: >-
       nothing today — the two escaping surfaces are patched and deployed. This is the
@@ -7268,9 +7287,41 @@ items:
     domain: D04
     verdict: MISSING
     track: adopt
-    priority: P2
+    priority: P0   # raised from P2 on 2026-08-15 — see EXPEDITED
     wave: 10
     order: 93
+    EXPEDITED:
+      decided: 2026-08-15
+      by: Bakir
+      what: >-
+        PULLED FORWARD, TOGETHER WITH D16.3. To be worked before the remaining wave-2
+        and later items despite its wave/order, which are left untouched: `order` is a
+        thematic position in the map, not the queue — nothing reads it to decide work
+        (map_check sorts by score, wave and id). Renumbering would have cascaded across
+        eight contiguous items to change a number no scheduler consults. What actually
+        moves the work is this flag, the P0, and `current`.
+      why_together: >-
+        D04.1 depends on D16.3 Category ABCs and the dependency is real: the plugin
+        loader already discovers Tool, JobHandler, SlashCommand, ChannelAdapter,
+        OwlSource and MemoryProvider by ABC, so a ProviderProfile must join that table
+        rather than invent a parallel discovery path. Expediting D04.1 alone would have
+        forced exactly the second mechanism the dependency exists to prevent.
+    ABSORBS_ESC_14:
+      decided: 2026-08-15
+      by: Bakir
+      what: >-
+        ESC-14 (the volatile turn context is concatenated onto the user's own message,
+        so a model copies it into tool arguments) is folded into this item rather than
+        run as its own pass. The reference design already owns the seam:
+        `prepare_messages()` is a per-provider hook for exactly how messages are composed
+        before a call. Doing it here lands it once, in the layer that should own it,
+        instead of as a separate sweep over complete_with_tools / stream / complete on
+        every provider — code this item then restructures anyway.
+      until_then: >-
+        The strip stays deployed at all three escaping surfaces (the give-up floor, the
+        delegated child's input, and the provider's own floor synthesis). It is a net,
+        not a repair, and it should be DELETED as part of this item — a net left under a
+        fixed floor is how the next reader learns the wrong lesson.
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d041"
     gap: "Provider breadth is a core-edit operation. This is Law 2 applied to inference backends."
     depends_on: [D16.3]
@@ -8903,6 +8954,26 @@ items:
     wave: 7
     order: 49
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d073"
+    ABSORBS_ESC_15:
+      decided: 2026-08-15
+      by: Bakir
+      what: >-
+        Delegation becomes NON-BLOCKING. The parent takes a handle instead of awaiting a
+        response, and the child reports back when it is done.
+      the_fault_that_caused_it: >-
+        Live 2026-08-15, trace c944548da078401c92461df2f14197d6. headhunter delegated to
+        the owl Brain at 21:10:33. Brain worked — tool_search, two tool_describes, an
+        owl_build correctly denied at depth>0 — and at 21:11:03 the parent gave up:
+        A2ADelegator's hardcoded timeout_seconds=30.0, which orchestrator.py:1506 never
+        overrides. Thirty seconds is about TWO model calls on this deployment (D01.6's
+        metric 2 measured p50 TTFT at 13.1s, p90 44.7s). The parent then had no answer,
+        flailed through ten meta-tool calls, tripped the cycle guard, emitted unparseable
+        tool calls and fell to the give-up floor — burning ~150k tokens on a question
+        that needed a schedule lookup. Everything after the timeout was a CONSEQUENCE.
+      why_not_just_derive_the_timeout: >-
+        That was the recommendation and Bakir went further on purpose. A derived timeout
+        is still a number that can be wrong, and the failure it produces — a healthy
+        child killed mid-work — is one a wait should not be able to cause at all.
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: []
@@ -10623,10 +10694,27 @@ items:
     domain: D16
     verdict: PARTIAL
     track: close_gap
-    priority: P2
+    priority: P0   # raised 2026-08-15 — see EXPEDITED
     wave: 9
     order: 72
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d161"
+    EXPEDITED:
+      decided: 2026-08-15
+      by: Bakir (chain member — see the note)
+      what: >-
+        Pulled forward as part of the D16.1 -> D16.3 -> D04.1 chain. Bakir authorised
+        "pull D04.1 forward WITH D16.3", on the reasoning that a ProviderProfile must
+        join the existing ABC discovery table rather than build a parallel one. The
+        dependency graph makes that a THREE-item chain, not two: D16.3 itself depends on
+        D16.1 and all three are fully not_started, so expediting only the named pair
+        would leave D04.1 blocked behind the very dependency the decision existed to
+        respect. Flagged to him explicitly rather than assumed — if he wants only the
+        two, D04.1 does not become reachable and this flag should come off.
+      why_it_matters: >-
+        Three live faults in one day were per-backend facts living as branching or
+        guesses inside shared code (a tool-call dialect, a token ceiling, a cache-stat
+        field name). D04.1 turns those into declarative data; D16.1 and D16.3 are what
+        make it possible to declare them.
     gap: "(no gap line — see Ask)"
     depends_on: []
     blocks: [D16.3]
@@ -10677,10 +10765,27 @@ items:
     domain: D16
     verdict: PARTIAL
     track: close_gap
-    priority: P2
+    priority: P0   # raised 2026-08-15 — see EXPEDITED
     wave: 9
     order: 74
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d163"
+    EXPEDITED:
+      decided: 2026-08-15
+      by: Bakir (chain member — see the note)
+      what: >-
+        Pulled forward as part of the D16.1 -> D16.3 -> D04.1 chain. Bakir authorised
+        "pull D04.1 forward WITH D16.3", on the reasoning that a ProviderProfile must
+        join the existing ABC discovery table rather than build a parallel one. The
+        dependency graph makes that a THREE-item chain, not two: D16.3 itself depends on
+        D16.1 and all three are fully not_started, so expediting only the named pair
+        would leave D04.1 blocked behind the very dependency the decision existed to
+        respect. Flagged to him explicitly rather than assumed — if he wants only the
+        two, D04.1 does not become reachable and this flag should come off.
+      why_it_matters: >-
+        Three live faults in one day were per-backend facts living as branching or
+        guesses inside shared code (a tool-call dialect, a token ceiling, a cache-stat
+        field name). D04.1 turns those into declarative data; D16.1 and D16.3 are what
+        make it possible to declare them.
     gap: "(no gap line — see Ask)"
     depends_on: [D16.1]
     blocks: [D04.1]
