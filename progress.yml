@@ -463,6 +463,7 @@ current:
       approve button wired to nothing, which is strictly worse than an empty panel.
 
   - id: ESC-6-trust-fencing-guard-outlives-its-data-path
+    RESOLVED: "RESOLVED 2026-08-14 — Bakir chose RELOCATE THE FENCE TO THE LIVE PATHS, over both keep-as-is and remove. The invariant survives; its location changes. neutralize() + trust labelling move onto the memory tool renders the model actually reads (_get at memory.py:439, _format_hits at :487, _forget at :468), and retrieve()'s renderer goes with the fact pipeline. The journey guard is KEPT and repointed at the tool path rather than deleted. Decided with the corrected measurement in hand: the fenced path is dead AND no longer reaches the prompt, while memory(get) renders stored content raw and list_staged filters on status only — so the 10 webpage rows in staged_facts are reachable unfenced TODAY. Narrow (needs an id-prefix lookup) but live, and exactly the threat model the fence exists for."
     raised: 2026-08-14
     blocks: "D08.2 seam 3 pass 4 — the fact_promoter removal, and only that."
     question: >-
@@ -538,6 +539,7 @@ current:
       either way.
 
   - id: ESC-5-db-reindex-memory-cli
+    RESOLVED: "RESOLVED 2026-08-14 — Bakir chose REPOINT AT LESSONS, over remove and over keep-as-is. `db reindex-memory` stays a user-facing command; what it reindexes changes. The committed_facts re-embed goes (0 rows, no writers, and its target store is being removed), and the command becomes the way to re-embed the 3,680 lessons after an embedding-model change. SEQUENCING NOTE, raised rather than reconciled: this answer depends on the SQLite+numpy lessons store that does not exist yet, while Bakir sequenced ESC-5/6 and pass 4 BEFORE the LanceDB removal. So it stages in two: strip the committed_facts re-embed now — the half that unblocks dream_worker_helpers — and land the lessons repoint with the new store."
     raised: 2026-08-14
     blocks: "only the dream_worker_helpers half of seam 3 part 2. Everything else proceeds."
     question: >-
@@ -683,6 +685,35 @@ current:
   # here. "The panel agreed" is not evidence. Product intent, priority, risk appetite and
   # anything user-facing are never derivable and always land here.
 
+  LANCEDB_REMOVAL_DECIDED_2026_08_14: >-
+    NEW ARC, DECIDED AND NOT YET STARTED — Bakir: "I do not want lancedb at all because it
+    is heavy and does not support all platforms." MEASURED, which is what makes the
+    objection concrete: lancedb 100MB + its pyarrow requirement 136MB = 236MB of
+    dependency weight, against kuzu at 19MB and numpy — ALREADY a direct dependency — at
+    30MB. So the complaint lands on LanceDB specifically, not on the wider stack.
+    WHAT IS ACTUALLY STORED, measured on the live store: three tables. committed_facts
+    (4,985 vectors) and committed_facts_meta (1) are ALREADY DEAD — semantic_recall
+    hydrates content via fetch_committed_by_ids from SQLite committed_facts, which has
+    held 0 rows since migration 0112, so 4,985 vector hits hydrate to nothing. They are
+    orphans migration 0112 left behind: it purged the SQL rows and not the vectors.
+    Only `lessons` is live — 3,680 rows at 384 dims (3,429 reflection, 198 skill, 53
+    tool_heuristic). classify.py:40 calls the lessons index "the SOLE surface" and queries
+    it every turn, and lessons are one of the two blocks D01.1 deliberately KEPT in the
+    system prompt. So this is a REPLACEMENT, not a deletion, and LessonsIndex is hard-wired
+    to LessonsLanceAdapter with no FTS alternative behind it.
+    DECIDED (Bakir, 2026-08-14): (1) REPLACEMENT = embeddings as BLOBs in SQLite ranked by
+    a numpy cosine matmul. Zero new dependencies, 5.4MB resident for the whole corpus,
+    ~1.4M FLOPs per query, and EXACT rather than LanceDB's approximate ANN — so recall
+    quality goes up, not down. Rejected: sqlite-vec (a new binary dep with aarch64 wheel
+    risk, the same class of problem being removed) and FTS5-only (would delete semantic
+    matching, and lessons are paraphrase-heavy). (2) DEAD DATA = back up the lancedb
+    directory to ~/.stackowl/backups/ first, then delete the two committed_facts tables.
+    (3) SEQUENCING = ESC-5/6 and seam 3 pass 4 FIRST; this arc after.
+    CONTRADICTS A RECORDED DECISION, raised rather than silently reconciled: the memory
+    storage architecture on record is node-llama-cpp + LanceDB + Kuzu + SQLite. This
+    reverses the LanceDB third of it. Kuzu is NOT affected — at 19MB it is a different
+    scale, and the objection was measured against LanceDB's 236MB. Embeddings themselves
+    are unaffected: what changes is the STORE, not the embedder.
   WHAT_IS_WAITING_FOR_BAKIR: >-
     D08.2's brainstorm. designs/D08.2.md has the teacher-platform research finished —
     the MemoryProvider ABC, its lifecycle table, and the two decisions worth stealing
