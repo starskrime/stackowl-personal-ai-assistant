@@ -4,7 +4,6 @@ Untrusted sources are fenced + neutralized so a skill body cannot inject system
 instructions (the body reaches system role every turn — a prompt-injection surface)."""
 from __future__ import annotations
 
-from collections.abc import Sequence
 from enum import Enum
 from typing import Protocol
 
@@ -64,38 +63,18 @@ def _neutralize(text: str) -> str:
     return _neutralize_shared(text, cap=_PER_SKILL_NEUTRALIZE_CAP)
 
 
-def assign_tiers(
-    owned: Sequence[_SkillLike],
-    scores: dict[str, float] | None,
-    *,
-    pinned: set[str],
-) -> list[tuple[_SkillLike, SkillTier, bool]]:
-    """Map relevance scores -> desired tiers. PURE (no budget math — render enforces budget).
-
-    - scores is None -> FALLBACK: every owned skill -> FULL in manifest order (today's behavior).
-    - pinned skills (owned-only; caller pre-intersects) -> FULL, sorted first.
-    - else: score >= FULL_FLOOR -> FULL; >= SUMMARY_FLOOR -> SUMMARY; else CATALOG; sorted by score desc.
-    """
-    if scores is None:
-        return [(sk, SkillTier.FULL, sk.name in pinned) for sk in owned]
-
-    def tier_of(name: str) -> SkillTier:
-        s = scores.get(name, -1.0)
-        if s >= FULL_FLOOR:
-            return SkillTier.FULL
-        if s >= SUMMARY_FLOOR:
-            return SkillTier.SUMMARY
-        return SkillTier.CATALOG
-
-    pins = [sk for sk in owned if sk.name in pinned]
-    rest = [sk for sk in owned if sk.name not in pinned]
-    rest.sort(key=lambda sk: scores.get(sk.name, -1.0), reverse=True)
-    items: list[tuple[_SkillLike, SkillTier, bool]] = []
-    for sk in pins:
-        items.append((sk, SkillTier.FULL, True))
-    for sk in rest:
-        items.append((sk, tier_of(sk.name), False))
-    return items
+# `assign_tiers` stood here, mapping relevance scores to per-skill tiers (FULL /
+# SUMMARY / CATALOG) with pinned skills forced to FULL and sorted first.
+#
+# It has had NO CALLER since assemble stopped scoring skills per turn. That was a
+# deliberate trade for Law 1: a prompt block that varies by query forfeits the
+# provider's prefix cache on every turn, which costs more than the tokens the
+# tiering saved. assemble now renders one stable SUMMARY catalogue, and depth is
+# reached through `skill_view` instead — slice 4a made that tool independent of
+# this scoring precisely so its focus hysteresis would not silently go to zero.
+#
+# Removed in ESC-10 (2026-08-15) with skills/skill_relevance.py, which fed it.
+# SkillTier stays: assemble uses it to name the tier it renders at.
 
 
 class SkillInstructionInjector:

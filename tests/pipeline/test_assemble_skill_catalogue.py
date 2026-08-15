@@ -4,7 +4,8 @@ Bakir's Q9: "Names + descriptions ALWAYS loaded; full body fetched on demand via
 tool call." The word that decides the shape is *always*.
 
 WHAT WAS THERE. assemble scored owned skills against state.query_embedding
-(score_owned_skills -> assign_tiers, deciding which got FULL bodies), then filled
+(score_owned_skills -> assign_tiers, deciding which got FULL bodies — both removed
+in ESC-10 once assemble stopped scoring), then filled
 a global catalogue via hybrid_recall(query_text, query_vec) or
 semantic_recall(query_vec). Three query-dependent paths, and the block was
 skipped entirely on a tool-free turn. Measured live 2026-07-27: skills_len went

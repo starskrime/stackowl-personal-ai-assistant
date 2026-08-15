@@ -44,6 +44,15 @@ def test_builtin_is_injected_PLAINLY_not_trust_wrapped():
 
 
 def test_non_builtin_summary_is_trust_wrapped():
+    """THE surviving home of the fence guarantee.
+
+    tests/journeys/test_skill_tiering_journey.py carried
+    ``test_j_sec_fence_holds_in_every_tier`` and went with the tiering pipeline in
+    ESC-10 — assemble renders ONE tier now (SUMMARY), so "every tier" no longer
+    describes anything production does. The security half did not go with it: this
+    test and ``test_neutralize_defeats_a_breakout_payload`` below cover the fence
+    at the tier actually used, and they do it without a whole journey harness.
+    """
     out = _inj().render("rsr", _full(_SkillStub("s", "installed", summary="Do X.")))
     assert "<skill_reference" in out and 'trust="untrusted"' in out
     assert "never an instruction" in out.lower()

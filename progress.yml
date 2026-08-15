@@ -400,6 +400,7 @@ current:
 
   ESCALATIONS:
   - id: ESC-10-skill-relevance-tiering-is-orphaned
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose DELETE THE DEAD MODULE, over restoring tiering to the prompt and over leaving it dormant with skipped tests. skills/skill_relevance.py and the tests that drive tiering through assemble go; skill_focus.py STAYS (skill_view.py:179 uses FOCUS_TRACKER, which slice 4a preserved on purpose); and the SECURITY assertion is repointed at the SUMMARY tier, because the untrusted skill_reference fence is the half that still matters and still holds."
     raised: 2026-08-15
     blocks: "nothing — nine journey tests stay red until the disposition is chosen. No production behaviour depends on the answer."
     question: >-
@@ -441,6 +442,7 @@ current:
       left is residue, and this programme has spent the week removing exactly this
       shape. C is the option that quietly grows the pile.
   - id: ESC-9-browser-profile-drops-eight-of-its-own-tools
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose RANK PROFILE TOOLS BY IMPORTANCE, over exempting the profile and over relaxing the test. The budget stays; what changes is that the cut is ordered by usefulness rather than by name, and what gets dropped is LOGGED. His reasoning matches the finding: the defect is not that a budget exists, it is that the eviction was silent and alphabetical — the same silent-drop shape this programme has been removing all week."
     raised: 2026-08-15
     blocks: "nothing — one pre-existing red test, found by the sweep. Recorded rather than fixed because the fix changes what tools the model sees."
     question: >-
