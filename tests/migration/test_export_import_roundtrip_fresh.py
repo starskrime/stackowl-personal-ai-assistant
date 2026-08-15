@@ -196,15 +196,30 @@ def test_backup_manifest_sha256_valid_format() -> None:
             assert isinstance(sha, str) and len(sha) == 64, f"bad hash for {fname}: {sha!r}"
 
 
-def test_migration_sprint_status_exists_and_complete() -> None:
-    """sprint-status.yaml exists and marks all 12 epics complete."""
+def test_migration_sprint_status_artifact_is_present_and_well_formed() -> None:
+    """The sprint artifact exists and every entry carries a known status.
+
+    WHAT THIS USED TO ASSERT, AND WHY IT NO LONGER CAN. It read ``data["epics"]``
+    and required all 12 to be "complete" — evidence that the v2-to-root migration
+    had landed. That key is not in the file: the artifact has since been REUSED
+    for a live sprint (24 entries under ``development_status``, 7 of them still
+    backlog). The assertion was invisible for a long time because the path
+    pointed OUTSIDE the repo; correcting the path is what surfaced that its
+    subject was gone.
+
+    It is deliberately NOT re-pointed at the new entries. Asserting that a board
+    somebody is actively working is "complete" turns the suite red every time a
+    backlog item is added — a test that fails on ordinary planning is noise, and
+    this would be the third time this one failed for a reason having nothing to
+    do with migration.
+
+    What survives is the part that is an invariant: the artifact parses and its
+    statuses come from a known vocabulary. That still catches the file being
+    corrupted, or a tool changing its schema underneath us again — which is
+    precisely the failure that went unnoticed here.
+    """
     import yaml
 
-    # tests/migration/this_file.py → repo root is parents[2]. It was parents[3]
-    # and "_bmad-output/sprints/" while the project lived under v2/; the
-    # v2-to-root migration (c72a1704 — the same commit that last touched this
-    # file) moved both, and this path was not updated, so the assertion had been
-    # failing on a directory OUTSIDE the repo ever since.
     sprint_yaml = (
         Path(__file__).parents[2]
         / "_bmad-output"
@@ -212,6 +227,16 @@ def test_migration_sprint_status_exists_and_complete() -> None:
         / "sprint-status.yaml"
     )
     assert sprint_yaml.exists(), f"sprint-status.yaml not found at {sprint_yaml}"
+
     data = yaml.safe_load(sprint_yaml.read_text())
-    for epic in data["epics"]:
-        assert epic["status"] == "complete", f"Epic {epic['id']} is not complete"
+    assert isinstance(data, dict), f"sprint-status.yaml is not a mapping: {type(data)}"
+
+    statuses = data.get("development_status")
+    assert isinstance(statuses, dict) and statuses, (
+        "sprint-status.yaml has no development_status entries — the schema "
+        f"changed again; top-level keys are {sorted(data)}"
+    )
+
+    known = {"done", "backlog", "optional", "in-progress", "blocked", "review"}
+    unknown = {k: v for k, v in statuses.items() if v not in known}
+    assert not unknown, f"unrecognised sprint statuses: {unknown}"

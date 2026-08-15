@@ -8,6 +8,7 @@ retrofitted, and that a re-run is a clean no-op.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 
@@ -54,6 +55,26 @@ SKIPPED = [
 HAS_VISIBILITY = ["owl_profiles", "skills"]
 
 
+def _deliberately_dropped() -> set[str]:
+    """Tables a LATER migration removes on purpose, read from the migrations.
+
+    0043's retrofit list is a snapshot of what existed in Pass 1, and tables do
+    legitimately go away after it: 0112_drop_the_fact_store removed memory_facts
+    when the dead fact half was deleted, and this list had no way to know. Asking
+    the migrations means the next legitimate drop needs no edit here.
+
+    The half that matters is the one this preserves: a table that vanishes with
+    NO migration dropping it still fails, because absence alone is not a licence.
+    """
+    from stackowl.db import migrations as _migrations
+
+    pattern = re.compile(r"DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?[\"\'`\[]?(\w+)", re.I)
+    dropped: set[str] = set()
+    for sql in sorted(Path(_migrations.__file__).parent.glob("*.sql")):
+        dropped.update(m.group(1) for m in pattern.finditer(sql.read_text()))
+    return dropped
+
+
 def _columns(db_path: Path, table: str) -> dict[str, sqlite3.Row]:
     conn = sqlite3.connect(db_path)
     try:
@@ -67,8 +88,16 @@ def _columns(db_path: Path, table: str) -> dict[str, sqlite3.Row]:
 def test_all_retrofitted_tables_have_owner_id(tmp_path: Path) -> None:
     db_path = tmp_path / "m.db"
     MigrationRunner(db_path=db_path).run()
+    dropped = _deliberately_dropped()
     for table in RETROFITTED:
         cols = _columns(db_path, table)
+        # PRAGMA table_info on a missing table returns no rows at all.
+        if not cols:
+            assert table in dropped, (
+                f"{table} does not exist after migrating, and no migration drops "
+                "it — the table went missing rather than being removed"
+            )
+            continue
         assert "owner_id" in cols, f"{table} missing owner_id"
         notnull = cols["owner_id"][3]
         default = cols["owner_id"][4]
