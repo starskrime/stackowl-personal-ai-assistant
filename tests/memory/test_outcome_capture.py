@@ -291,9 +291,23 @@ class _RecordingBridge:
         self.staged.append(fact)
 
 
-async def test_failed_outcome_stages_a_low_trust_memory_fact_when_health_loop_on(
+async def test_a_failed_outcome_stages_NOTHING_even_with_the_health_loop_on(
     tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """INVERTED. This asserted that a failed turn staged a low-trust agent_self
+    fact — source_type "agent_self", trust "untrusted", confidence 0.3.
+
+    That writer was REMOVED in D08.2 slice A (a4d89954) because it was a write
+    with NO READER: it produced one row per failed turn, about 1,400 a day, into
+    a store whose only consumer had already gone. 2,969 rows had accumulated. The
+    path it was meant to feed was severed in three places — recall queries
+    committed_facts (0 rows since migration 0112), what promoted a row was
+    fact_promoter (now deleted), and lesson_context never read these rows at all.
+
+    So the old assertion now describes a leak, and asserting its ABSENCE is what
+    keeps it removed. The flag is set ON deliberately: OFF would pass whether or
+    not the writer came back.
+    """
     monkeypatch.setattr(settings_mod, "Settings", lambda: SimpleNamespace(health_loop=True))
     bridge = _RecordingBridge()
     services = StepServices(db_pool=tmp_db, memory_bridge=bridge)  # type: ignore[arg-type]
@@ -305,18 +319,19 @@ async def test_failed_outcome_stages_a_low_trust_memory_fact_when_health_loop_on
 
     await _capture_outcome(state, total_ms=15000.0, services=services)
 
-    assert len(bridge.staged) == 1
-    fact = bridge.staged[0]
-    assert fact.source_type == "agent_self"
-    assert fact.trust == "untrusted"
-    assert fact.confidence == pytest.approx(0.3)
-    assert "OwlTimeoutError" in fact.content
-    assert "secretary" in fact.content
+    assert bridge.staged == [], (
+        "a failed turn staged a memory fact again — the orphaned agent_self writer "
+        f"is back, at ~1,400 rows a day into a store with no reader: {bridge.staged!r}"
+    )
 
 
 async def test_failed_outcome_skips_memory_stage_when_health_loop_off(
     tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Kept, though the flag no longer gates anything here — the writer is gone
+    either way. It stays because it is the OFF half of the pair above: if someone
+    reintroduces staging behind the flag, the ON test catches it and this one
+    documents that OFF was never the reason it was quiet."""
     monkeypatch.setattr(settings_mod, "Settings", lambda: SimpleNamespace(health_loop=False))
     bridge = _RecordingBridge()
     services = StepServices(db_pool=tmp_db, memory_bridge=bridge)  # type: ignore[arg-type]
