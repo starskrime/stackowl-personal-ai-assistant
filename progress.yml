@@ -7266,6 +7266,72 @@ items:
     depends_on: [D16.3]
     blocks: []
     dedup_target: null
+    OPERATOR_REQUEST:
+      raised_by: Bakir
+      date: 2026-08-15
+      words: >-
+        "I am thinking we should have hermes like provider integrations, to avoid problems
+        at future. Add it to progress so we can work on it on future sessions."
+      note: >-
+        Already mapped as THIS item, so nothing new was created — what was missing is the
+        evidence that makes it actionable and the reference detail to build against. Both
+        are recorded below. It currently sits at wave 10 / order 93 / P2, which is close to
+        last; the evidence below is an argument for moving it, and that call is his.
+    WHY_IT_EARNED_ITS_PLACE:
+      measured: 2026-08-15
+      what_happened: >-
+        THREE separate live faults in ONE day, all provider-shaped, all after a single model
+        upgrade from qwen 3.6 27b to qwen 3.8 27b:
+          1. The new model emits Hermes/Qwen-style <tool_call><function=...> blocks as
+             CONTENT. Neither the parser nor the delivery guard knew the shape, so the block
+             was shown to Bakir verbatim and the search never ran. FOURTH distinct
+             leaked-tool-call shape this codebase has had to learn.
+          2. The output cap requested 250,000 tokens against a 262,144 window, leaving 12,144
+             for the prompt. 936 ContextWindowExceededError 400s across the logs.
+          3. Zero cache hits across 132.7M input tokens — and the probe showed the gateway
+             does not report cache statistics AT ALL (prompt_tokens_details: null).
+      the_common_shape: >-
+        Every one is a per-backend FACT living as branching or a guess inside shared code:
+        a tool-call dialect matched by a global regex in providers/_react.py, a token ceiling
+        computed in openai_provider._output_cap, a cache-stat field name guessed through a
+        three-way priority chain, an ollama-specific extra_body. The platform has a standing
+        rule against vendor-specific logic and vendor names in code — a declarative
+        per-provider profile is precisely HOW that rule gets honoured instead of worked
+        around, because the specifics stop being branches and become data.
+    REFERENCE_DESIGN:
+      read: 2026-08-15, from the read-only clone
+      shape: >-
+        A thin `providers/base.py` holding ONE `ProviderProfile` dataclass, a registry in
+        `providers/__init__.py` (register_provider / get_provider_profile / list_providers)
+        that lazily discovers plugins on first access, and ONE PLUGIN PER PROVIDER under
+        `plugins/model-providers/<name>/` — about twenty of them (anthropic, bedrock,
+        deepseek, fireworks, gemini, huggingface, minimax, novita, ...), each just an
+        `__init__.py` that registers a profile plus a `plugin.yaml` manifest. User plugins in
+        the home directory OVERRIDE bundled ones by name, last-writer-wins, so a private
+        backend needs no core edit.
+      the_load_bearing_claim: >-
+        "Every other layer — auth resolution, transport kwargs, model listing, runtime
+        routing — reads from these profiles instead of maintaining its own parallel data."
+        That is the sentence that matters. The reference README then lists eight consumers
+        that all read the profile: auth, models, doctor, config wizard, runtime routing,
+        model metadata, the auxiliary client, and the chat-completions transport.
+      hooks_that_map_onto_our_faults: >-
+        prepare_messages()      -> fault 1, the tool-call dialect belongs to the backend
+        get_max_tokens(model)   -> fault 2, the ceiling is a property OF THE MODEL
+        build_extra_body()      -> our ollama special-casing
+        build_api_kwargs_extras / get_hostname / default_vision_model / fetch_models
+        A cache-reporting capability declaration would be the natural home for fault 3, so
+        "this backend cannot report cache hits" becomes a stated fact rather than a zero
+        nobody can interpret.
+    WHAT_TO_DECIDE_WHEN_IT_IS_WORKED: >-
+      Not a port. StackOwl already has three provider classes with real behaviour in them
+      (resilient rounds, escalation, cost recording, the output cap) and the question is
+      which of that is TRANSPORT (stays shared) and which is BACKEND FACT (moves to a
+      profile). The dependency on D16.3 Category ABCs is real: the plugin loader already
+      discovers Tool, JobHandler, SlashCommand, ChannelAdapter, OwlSource and — since D08.2
+      — MemoryProvider by ABC, so a ProviderProfile kind should join that table rather than
+      invent a parallel discovery path.
+
     stages:
       brainstorm: not_started
       architect:  not_started
