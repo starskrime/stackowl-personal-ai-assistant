@@ -35,7 +35,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.memory.dream_worker import DreamWorkerJobHandler
     from stackowl.memory.entity_extractor import EntityExtractor
-    from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
     from stackowl.memory.lancedb_adapter import LanceDBAdapter
@@ -62,7 +61,6 @@ class MemoryComponents:
     # DUR-5 / F069 — None when Kuzu degraded at init (consistent with LanceDB /
     # embeddings degrade-don't-crash policy). classify + kuzu_sync tolerate None.
     kuzu_adapter: KuzuAdapter | None
-    promoter: FactPromoter
     entity_extractor: EntityExtractor
     kuzu_sync_handler: KuzuSyncJobHandler
     dream_worker: DreamWorkerJobHandler
@@ -100,7 +98,6 @@ class MemoryAssembly:
         # Deferred imports keep this module cheap to import in tests.
         from stackowl.embeddings.registry import EmbeddingRegistry
         from stackowl.memory.entity_extractor import EntityExtractor
-        from stackowl.memory.fact_promoter import FactPromoter
         from stackowl.memory.kuzu_adapter import KuzuAdapter
         from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
         from stackowl.memory.lancedb_adapter import LanceDBAdapter
@@ -197,18 +194,9 @@ class MemoryAssembly:
                 )
 
         # 5) Consolidation building blocks.
-        from stackowl.infra.clock import WallClock
-
-        clock = WallClock()
-        promoter = FactPromoter(
-            db=db,
-            confidence_threshold=mem.promotion_confidence_threshold,
-            reinforcement_required=mem.reinforcement_required,
-            conversation_fact_reinforcement_required=mem.conversation_fact_reinforcement_required,
-            clock=clock,
-            settle_minutes=mem.dream_worker_settle_minutes,
-            embedding_registry=embedding_registry,
-        )
+        # The WallClock that stood here existed ONLY to give FactPromoter its settle
+        # window, and went with it in D08.2 seam 3 pass 4 — removing a writer orphans
+        # whatever was feeding it.
         entity_extractor = EntityExtractor(
             provider_registry=provider_registry,
             sensitive_categories=mem.sensitive_categories,
@@ -282,7 +270,6 @@ class MemoryAssembly:
             embedding_registry=embedding_registry,
             lancedb=lancedb,
             kuzu_adapter=kuzu_adapter,
-            promoter=promoter,
             entity_extractor=entity_extractor,
             lessons_index=lessons_index,
             kuzu_sync_handler=kuzu_sync_handler,

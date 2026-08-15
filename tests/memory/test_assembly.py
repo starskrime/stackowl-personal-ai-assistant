@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
@@ -99,29 +100,38 @@ async def test_build_returns_frozen_components(tmp_db: DbPool) -> None:
         db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
     )
     assert isinstance(components, MemoryComponents)
-    # Frozen dataclass — mutation raises.
-    with pytest.raises(Exception):
+    # Frozen dataclass — mutation raises. Tightened from a blind `Exception`,
+    # which would also have passed if the assignment failed for some unrelated
+    # reason and so proved nothing about frozenness.
+    with pytest.raises(dataclasses.FrozenInstanceError):
         components.bridge = None  # type: ignore[misc]
 
 
-async def test_build_wires_all_ten_components(tmp_db: DbPool) -> None:
+async def test_build_wires_every_advertised_component(tmp_db: DbPool) -> None:
+    """Every field MemoryComponents advertises is actually wired.
+
+    Asserted against the DATACLASS rather than a hand-listed set, so the test
+    cannot go stale the way it just did: it named promoter, pruner and detector,
+    all three removed across D08.2 seam 3 passes 2-4, and had been failing since
+    pass 2 without anyone noticing. A hand-maintained list of fields is a second
+    copy of the dataclass; this asks the dataclass instead.
+
+    `kuzu_adapter` is the one legitimate None (DUR-5/F069 — it degrades rather
+    than crashing when Kuzu is unavailable), so it is exempted by name.
+    """
     settings = Settings(memory=MemorySettings())
     components = await MemoryAssembly.build(
         db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
     )
-    # Every advertised attribute is non-None.
-    assert components.bridge is not None
-    assert components.preference_store is not None
-    assert components.kuzu_adapter is not None
-    assert components.promoter is not None
-    assert components.pruner is not None
-    assert components.detector is not None
-    assert components.entity_extractor is not None
-    assert components.kuzu_sync_handler is not None
-    assert components.dream_worker is not None
-    # fact_extractor was the eleventh. It went with the extraction pipeline
-    # (D08.1) — 88,631 facts, 37.1% of them the platform's own telemetry.
-    assert components.rollover_summary_handler is not None
+
+    may_be_none = {"kuzu_adapter"}
+    unwired = [
+        f.name
+        for f in dataclasses.fields(components)
+        if f.name not in may_be_none and getattr(components, f.name) is None
+    ]
+    assert not unwired, f"MemoryComponents advertises fields that build() left None: {unwired}"
+    assert dataclasses.fields(components), "MemoryComponents must advertise something"
 
 
 async def test_build_registers_dream_worker_with_scheduler(tmp_db: DbPool) -> None:
@@ -151,36 +161,42 @@ async def test_build_registers_rollover_summary_handler(tmp_db: DbPool) -> None:
     assert handler.handler_name == "rollover_summary"
 
 
-async def test_build_seeds_dream_worker_schedule(tmp_db: DbPool) -> None:
+async def test_build_registers_the_dream_worker_seat_WITHOUT_scheduling_it(
+    tmp_db: DbPool,
+) -> None:
+    """INVERTED, and deliberately so.
+
+    Two tests stood here asserting that build() SEEDS an ``every 30m``
+    dream_worker job row, and that a second build does not duplicate it. D08.1
+    unscheduled the handler (migration 0113, ``enabled = 0``) and D08.2 seam 3
+    pass 1 stripped it to a bare SEAT for N01 Dreaming — it has no phases and
+    reports ``phases_run=0``. Seeding a schedule would now dispatch an empty
+    handler every thirty minutes forever.
+
+    So the old assertions describe behaviour that was intentionally reversed, and
+    they had been failing since that reversal. Asserting the absence is what keeps
+    it reversed: the seat must be REGISTERED (so N01 inherits the name the job row
+    keys on) and UNSCHEDULED (so nothing dispatches an empty pass).
+
+    ``seed_dream_worker_schedule`` deliberately survives with no production
+    caller — it is how N01 will schedule itself once it has phases — and keeps its
+    own coverage in tests/scheduler/test_dream_worker_seed.py.
+    """
     settings = Settings(memory=MemorySettings())
     await MemoryAssembly.build(
         db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
     )
-    rows = await tmp_db.fetch_all(
-        "SELECT handler_name, schedule FROM jobs WHERE handler_name = ?",
-        ("dream_worker",),
-    )
-    assert len(rows) == 1
-    # Cadence is config-driven (MemorySettings.dream_worker_interval_minutes,
-    # default 30) — the legacy daily@03:00 literal is gone.
-    assert rows[0]["schedule"] == "every 30m"
 
+    handler = HandlerRegistry.instance().get("dream_worker")
+    assert handler is not None, "the seat must stay REGISTERED for N01 to inherit"
 
-async def test_build_is_idempotent_on_schedule_seed(tmp_db: DbPool) -> None:
-    """A second build call must not duplicate the seeded dream_worker job row."""
-    settings = Settings(memory=MemorySettings())
-    await MemoryAssembly.build(
-        db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
-    )
-    HandlerRegistry.reset()  # second call would otherwise re-register
-    await MemoryAssembly.build(
-        db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
-    )
     rows = await tmp_db.fetch_all(
-        "SELECT job_id FROM jobs WHERE handler_name = ?",
-        ("dream_worker",),
+        "SELECT job_id FROM jobs WHERE handler_name = ?", ("dream_worker",)
     )
-    assert len(rows) == 1  # NOT 2
+    assert rows == [], (
+        "build() must NOT schedule the dream worker: it is an empty seat, and a "
+        f"schedule would dispatch a no-op pass on a timer. Found: {rows!r}"
+    )
 
 
 async def test_build_bridge_uses_db_pool(tmp_db: DbPool) -> None:

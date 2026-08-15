@@ -116,9 +116,10 @@ class SqliteMemoryBridge(MemoryBridge):
     def lancedb(self) -> LanceDBAdapter | None:
         """The ANN adapter this bridge writes/reads vectors through (may be None).
 
-        Exposed so write chokepoints (e.g. the ``memory`` tool's FactPromoter) can
-        upsert committed-fact vectors through the SAME adapter the bridge recalls
-        from — keeping the vector store single-sourced.
+        Exposed so write chokepoints can upsert vectors through the SAME adapter
+        the bridge recalls from, keeping the vector store single-sourced. The
+        chokepoint this was written for was the promoter, removed in D08.2 seam 3
+        pass 4; the property stays because recall still reads through the adapter.
         """
         return self._lancedb
 

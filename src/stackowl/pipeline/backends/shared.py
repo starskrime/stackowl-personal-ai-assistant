@@ -551,7 +551,8 @@ async def _capture_outcome(
         # places, each measured rather than assumed: recall() queries
         # committed_facts, which has held 0 rows since D08.1's migration 0112;
         # what moved a row from staged to committed was fact_promoter, which
-        # D08.1 retired, with its DreamWorker unscheduled; and lesson_context is
+        # D08.1 retired and D08.2 seam 3 pass 4 removed outright, with its
+        # DreamWorker unscheduled; and lesson_context is
         # applied-lesson tracking, which never read these rows at all.
         #
         # So the write happened and the effect did not — 2,969 rows at ~1,400 a

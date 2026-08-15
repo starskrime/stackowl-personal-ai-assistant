@@ -202,7 +202,6 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # TODO(Epic 9 multi-user): owner-scope cost_records purge in cost_command
         ("commands/cost_command.py", "cost_records"),
         # TODO(Epic 9 multi-user): owner-scope memory-stat reads in memory_command
-        ("commands/memory_command.py", "committed_facts"),
         # TODO(Epic 9 multi-user): owner-scope memory-stat reads in memory_helpers
         ("commands/memory_helpers.py", "committed_facts"),
         ("commands/memory_helpers.py", "staged_facts"),
@@ -229,18 +228,21 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("memory/budget_enforcer.py", "committed_facts"),
         ("memory/budget_enforcer.py", "staged_facts"),
         ("memory/dream_worker_helpers.py", "committed_facts"),
-        ("memory/dream_worker_helpers.py", "staged_facts"),
         # memory/extraction_handler.py entries removed 2026-07-26: the file was
         # DELETED by D01.7 slice 3b part 5b (c2fc9d32) — it was registered at
         # boot and never enqueued by anything, so the rollover boundary took
         # over its job. An allowlist entry for a file that does not exist is
         # exactly the rot test_allowlist_has_no_stale_entries guards against.
-        ("memory/fact_promoter.py", "committed_facts"),
-        ("memory/fact_promoter.py", "staged_facts"),
+        # Six entries removed 2026-08-14 by D08.2 seam 3, and the removals span
+        # FOUR passes rather than one — which is why this guard earns its keep:
+        # memory/pruner.py (pass 2) and memory/fact_promoter.py (pass 4) are DELETED
+        # files, while commands/memory_command.py (seam 3 part 1) and
+        # memory/dream_worker_helpers.py (pass 3) still exist but no longer carry the
+        # unscoped SQL. Two of the six had been stale since earlier passes and nobody
+        # noticed until this test was run — an allowlist entry for a closed gap is the
+        # rot test_allowlist_has_no_stale_entries exists to catch.
         ("memory/fact_reinforcer.py", "staged_facts"),
         ("memory/kuzu_sync_handler.py", "committed_facts"),
-        ("memory/pruner.py", "committed_facts"),
-        ("memory/pruner.py", "staged_facts"),
         ("memory/sqlite_bridge.py", "committed_facts"),
         ("memory/sqlite_bridge.py", "staged_facts"),
         ("memory/sqlite_helpers.py", "committed_facts"),

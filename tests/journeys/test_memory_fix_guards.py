@@ -560,7 +560,6 @@ async def test_guard_memory_command_registered_via_orchestrator(
          proving the registration is what wires it, not ambient state.
     """
     from stackowl.commands.registry import CommandNotFoundError, CommandRegistry
-    from stackowl.memory.fact_promoter import FactPromoter
     from stackowl.startup import orchestrator as orch_mod
 
     # --- (2) NEGATIVE GUARD FIRST: a fresh registry does NOT resolve /memory ---
@@ -572,10 +571,14 @@ async def test_guard_memory_command_registered_via_orchestrator(
 
     # --- Stub the heavy collaborators _phase_gateway builds BEFORE registration.
     # Each is replaced with the lightest real/fake object the registration needs.
-    # The REAL CommandRegistry + REAL bridge/promoter over tmp_db are used, so the
-    # dispatch assertions exercise genuine persist+recall.
+    # The REAL CommandRegistry + REAL bridge over tmp_db are used, so the dispatch
+    # assertions exercise genuine persist+recall.
+    #
+    # The SimpleNamespace below mirrors MemoryComponents, so it has to TRACK it: the
+    # `promoter` field went with FactPromoter in D08.2 seam 3 pass 4, and a double
+    # still carrying one would describe a shape production no longer has — the
+    # test-doubles-drift failure mode.
     bridge = SqliteMemoryBridge(db=tmp_db)
-    promoter = FactPromoter(db=tmp_db)
 
     memory_components = SimpleNamespace(
         bridge=bridge,
@@ -583,7 +586,6 @@ async def test_guard_memory_command_registered_via_orchestrator(
         kuzu_adapter=SimpleNamespace(),
         embedding_registry=None,
         lancedb=getattr(bridge, "lancedb", None),
-        promoter=promoter,
         lessons_index=SimpleNamespace(),
     )
 

@@ -25,9 +25,11 @@ class StagedFact(BaseModel):
         "conversation",
         "conversation_fact",
         # AUTHORED ONCE, not extracted — the narrative written at a conversation
-        # boundary (D01.7 Q17). Exempt from the promoter's corroboration gate
-        # because nothing ever re-derives it; see
-        # fact_promoter.AUTHORED_ONCE_SOURCE_TYPES.
+        # boundary (D01.7 Q17). It was exempt from the promoter's corroboration
+        # gate because nothing ever re-derives it; the promoter and its
+        # AUTHORED_ONCE_SOURCE_TYPES went in D08.2 seam 3 pass 4, so the exemption
+        # no longer has anything to apply to. The source type itself is still
+        # written and still read as a staged row.
         "conversation_summary",
         "parliament", "manual", "webpage", "screenshot", "agent_self",
     ]

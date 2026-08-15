@@ -51,9 +51,9 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 
 HANDLER_NAME = "rollover_summary"
 
-#: The artifact's source type. Exempt from the promoter's corroboration gate
-#: because nothing ever re-derives it — see
-#: ``fact_promoter.AUTHORED_ONCE_SOURCE_TYPES``.
+#: The artifact's source type. It was exempt from the promoter's corroboration
+#: gate because nothing ever re-derives it; that gate went with the promoter in
+#: D08.2 seam 3 pass 4.
 #:
 #: Typed as the Literal rather than ``str`` so mypy checks it against
 #: ``StagedFact.source_type``: a typo here would otherwise only surface as a CHECK

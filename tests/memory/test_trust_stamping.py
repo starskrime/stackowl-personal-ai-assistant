@@ -6,9 +6,11 @@ Verifies:
   - list_staged() roundtrips trust through row_to_staged
   - web_fetch stages trust="untrusted"
   - pellet_generator stages trust="self"
-  - remember_fact("manual") → trust="trusted"
-  - remember_fact("agent_self") → trust="self"
   - memory tool (agent_self path) yields trust="self"
+
+The two remember_fact cases listed here went with that function in D08.2 seam 3
+pass 4; see the note where they stood for the three ways their invariant is
+still covered.
 """
 
 from __future__ import annotations
