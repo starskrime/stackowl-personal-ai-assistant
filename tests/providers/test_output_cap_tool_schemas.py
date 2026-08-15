@@ -67,14 +67,33 @@ def _tool_schemas(n: int) -> list[dict[str, object]]:
 
 
 def test_tool_schemas_reduce_the_output_cap_versus_messages_alone() -> None:
+    """The 2026-07-23 property, measured where it is still observable.
+
+    This used a 2,000-char prompt, which stopped demonstrating anything on
+    2026-08-15 when the prompt reserve landed: a prompt that small leaves so much
+    headroom that `window - window//8` is the smallest term, so BOTH caps come
+    back as the reserve and the comparison reads 229376 < 229376.
+
+    The property itself is intact — tool schemas still count toward input, and
+    still shrink the cap wherever the input term binds. The test now uses a prompt
+    of the size the original incident actually involved (a tool-loop history, not
+    a one-liner), so it measures the behaviour instead of the ceiling. Sized from
+    the reserve rather than hardcoded: ~30,000 estimated tokens against a
+    32,768-token reserve boundary."""
     provider = _provider()
-    messages = _messages(2000)
+    messages = _messages(120_000)
     schemas = _tool_schemas(60)
 
     cap_without_tools = provider._output_cap(_MODEL, messages)
     cap_with_tools = provider._output_cap(_MODEL, messages, schemas)
 
-    assert cap_with_tools < cap_without_tools
+    assert cap_with_tools < cap_without_tools, (
+        f"tool schemas no longer affect the cap: {cap_with_tools} vs {cap_without_tools}"
+    )
+    assert cap_with_tools < _WINDOW - _WINDOW // 8, (
+        "the reserve is binding, so this test is measuring the ceiling rather "
+        "than the tool-schema accounting it exists to pin"
+    )
 
 
 def test_large_tool_catalog_plus_messages_never_exceeds_the_window() -> None:

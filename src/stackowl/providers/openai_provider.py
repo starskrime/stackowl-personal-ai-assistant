@@ -237,6 +237,36 @@ _ROUND_DEADLINE_FALLBACK_S = 600.0
 # context-shrinking limit: 2000 tokens out of a 262144 window is <1% overhead,
 # same category as _MIN_OUTPUT_TOKENS below.
 _INPUT_TOKEN_SAFETY_MARGIN = 2000
+
+#: The flat margin above is a FLOOR, not the whole reservation. ``estimate_tokens``
+#: is a heuristic, and a heuristic's error scales with the size of what it
+#: estimates — so a fixed 2000-token pad silently stops covering it as prompts
+#: grow. Measured on the live 400 of 2026-08-15: real input 12,145 tokens against
+#: an estimate of at most 10,144, an undercount of >=2,001 — one token more than
+#: the flat margin could absorb, and the request was rejected by exactly 1 token.
+#: 936 ContextWindowExceededError 400s across the logs share this shape.
+#: 25% is deliberately generous: the cost of over-reserving is a shorter maximum
+#: answer, and the cost of under-reserving is a turn that fails outright.
+_INPUT_ESTIMATE_ERROR_RATE = 0.25
+
+#: A floor on the window space kept for the PROMPT, no matter what the configured
+#: ``max_output_tokens`` says. The proportional margin above is not sufficient on
+#: its own: when ``max_output_tokens`` is the binding value, the reservation is
+#: bypassed entirely. With the operator's 250,000 against a 262,144 window, only
+#: 12,144 tokens are left for the prompt — so ANY turn whose prompt exceeds that
+#: is rejected outright, which is why a tool loop (whose history grows with every
+#: result) hits it so reliably. This does NOT overrule the config: it declines to
+#: request output that cannot physically coexist with a prompt, which is the same
+#: rule the rest of this function already applies ("never the whole window").
+#: Costs nothing real — no answer is 229,376 tokens either.
+#:
+#: Expressed as a FRACTION of the window, not an absolute token count. An
+#: absolute 32,768 happens to be right for a 262,144-token model and is fatal for
+#: a small one: 8192 - 32768 is negative, which would hand every small-window
+#: model an impossible budget. Caught by this change's own test. A fraction scales
+#: to whatever hardware the platform is running on, which is the standing rule
+#: here, and lands on the same 32,768 for the model in front of us.
+_PROMPT_RESERVE_DIVISOR = 8
 # _MIN_OUTPUT_TOKENS is kept, but only as a bare technical floor: max_tokens=0
 # or negative is a MALFORMED request the provider rejects outright (every turn
 # fails, not a shorter answer), not a "limit" in the sense the rest of this
@@ -280,8 +310,19 @@ def _message_content_text(message: object) -> str:
     more common in tool-result histories) are flattened to their text parts.
     """
     content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
+    # An assistant message that CALLS a tool carries content=None and puts the
+    # function name plus its JSON arguments in ``tool_calls``. Those are real
+    # input tokens on every subsequent round and were invisible here, so a
+    # tool-using conversation under-counted its own history by exactly the part
+    # that grows fastest. Counted as JSON because that is how it is sent.
+    calls = message.get("tool_calls") if isinstance(message, dict) else getattr(message, "tool_calls", None)
+    call_text = ""
+    if calls:
+        import json as _json
+
+        call_text = _json.dumps(calls, default=str)
     if isinstance(content, str):
-        return content
+        return f"{content} {call_text}" if call_text else content
     if isinstance(content, list):
         parts = []
         for block in content:
@@ -289,8 +330,10 @@ def _message_content_text(message: object) -> str:
                 text = block.get("text") or block.get("content")
                 if isinstance(text, str):
                     parts.append(text)
+        if call_text:
+            parts.append(call_text)
         return " ".join(parts)
-    return ""
+    return call_text
 
 
 class OpenAIProvider(ModelProvider):
@@ -1259,7 +1302,12 @@ class OpenAIProvider(ModelProvider):
         if tool_schemas:
             import json
             input_tokens += estimate_tokens(json.dumps(tool_schemas, default=str))
-        headroom = window - input_tokens - _INPUT_TOKEN_SAFETY_MARGIN
+        # Reserve against the ESTIMATE'S ERROR, not a fixed number of tokens.
+        margin = max(
+            _INPUT_TOKEN_SAFETY_MARGIN,
+            int(input_tokens * _INPUT_ESTIMATE_ERROR_RATE),
+        )
+        headroom = window - input_tokens - margin
         if headroom < _MIN_OUTPUT_TOKENS:
             log.engine.warning(
                 "[openai] _output_cap: prompt leaves little/no headroom for output — "
@@ -1269,11 +1317,16 @@ class OpenAIProvider(ModelProvider):
                     "model": resolved_model,
                     "window": window,
                     "input_tokens": input_tokens,
+                    "margin": margin,
                     "headroom": headroom,
                 }},
             )
             return _MIN_OUTPUT_TOKENS
-        return min(effective_max_output_tokens, headroom)
+        return min(
+            effective_max_output_tokens,
+            headroom,
+            window - window // _PROMPT_RESERVE_DIVISOR,
+        )
 
     async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
         TestModeGuard.assert_not_test_mode("openai.complete")

@@ -565,10 +565,12 @@ async def test_complete_does_not_send_fixed_4096_cap(
 
     await provider.complete([Message(role="user", content="hi")], model="")
 
-    # window (32768) minus "hi"'s ~1 estimated token minus the 2000-token
-    # estimator-error safety margin (re-added 2026-07-22, same day, after
-    # removing it caused a live 400 regression) — window-derived, not 4096.
-    assert completions.calls[0]["max_tokens"] == 30767
+    # window (32768) minus the prompt reserve of window//8 (4096). The reserve
+    # now binds here rather than the old "window - 1 estimated token - 2000
+    # margin" (30767): a tiny prompt leaves so much headroom that the reserve is
+    # the smaller number, which is the point of it. Still window-derived, still
+    # not the flat 4096.
+    assert completions.calls[0]["max_tokens"] == 28672
 
 
 @pytest.mark.asyncio
@@ -590,7 +592,12 @@ async def test_complete_caps_output_at_max_output_tokens_not_the_whole_window(
 
     await provider.complete([Message(role="user", content="hi")], model="")
 
-    assert completions.calls[0]["max_tokens"] == 250000  # capped, not the raw 262144 window
+    # 229376 = 262144 - 262144//8. Was 250000 (the configured max_output_tokens)
+    # until 2026-08-15: requesting the full configured ceiling leaves only 12,144
+    # tokens for the prompt, so ANY turn above that 400s — 936 of them in the
+    # logs. Bakir accepted the reserve. The assertion this test was written to
+    # make is unchanged and still holds: capped, NOT the raw 262144 window.
+    assert completions.calls[0]["max_tokens"] == 229376
 
 
 @pytest.mark.asyncio
@@ -663,9 +670,10 @@ async def test_stream_does_not_send_fixed_max_output_tokens_when_window_resolves
     async for _ in provider.stream([Message(role="user", content="hi")], model=""):
         pass
 
-    # window (32768) minus "hi"'s ~1 estimated token minus the 2000-token
-    # safety margin — window-derived, not the flat config value.
-    assert completions.calls[0]["max_tokens"] == 30767
+    # window (32768) minus the prompt reserve of window//8 (4096) — see the
+    # complete() twin above. A tiny prompt leaves so much headroom that the
+    # reserve binds instead of the margin. Still window-derived, still not flat.
+    assert completions.calls[0]["max_tokens"] == 28672
 
 
 @pytest.mark.asyncio
@@ -686,7 +694,9 @@ async def test_stream_caps_output_at_max_output_tokens_not_the_whole_window(
     async for _ in provider.stream([Message(role="user", content="hi")], model=""):
         pass
 
-    assert completions.calls[0]["max_tokens"] == 250000  # capped, not the raw 262144 window
+    # 229376 = 262144 - 262144//8; see the complete() twin. The claim this test
+    # makes — capped, not the raw window — is unchanged.
+    assert completions.calls[0]["max_tokens"] == 229376
 
 
 class TestResolveModelOverride:
