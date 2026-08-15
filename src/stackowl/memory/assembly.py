@@ -254,9 +254,12 @@ class MemoryAssembly:
         # Shares the embedding registry; subsystems publish into it as they
         # produce learning artifacts (reflections, skills, tool heuristics).
         from stackowl.learning.lessons_index import LessonsIndex
-        from stackowl.learning.lessons_lance import LessonsLanceAdapter
+        from stackowl.learning.lessons_store import SqliteLessonsStore
 
-        lessons_adapter = LessonsLanceAdapter()
+        # D08.2 — the lessons corpus lives in SQLite now, ranked by a numpy scan.
+        # LanceDB was 236MB of dependency (with pyarrow) for a 5.4MB corpus, and
+        # brute force over 3,680 x 384 is one matmul. See learning/lessons_store.py.
+        lessons_adapter = SqliteLessonsStore(db)
         lessons_index = LessonsIndex(
             adapter=lessons_adapter,
             embedding_registry=embedding_registry,

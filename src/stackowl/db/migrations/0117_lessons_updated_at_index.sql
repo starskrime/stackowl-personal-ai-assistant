@@ -1,0 +1,27 @@
+-- Migration 0117 — index `lessons.updated_at`, so the cache-freshness probe is a
+-- lookup instead of a full scan.
+--
+-- MEASURED, and this is why it exists as its own migration rather than as a
+-- guessed-at nicety in 0116. The store caches the corpus in-process because
+-- LOADING it costs 35-70ms against ~7ms of numpy. Freshness is checked per search
+-- with `SELECT COUNT(*), MAX(updated_at)`. On the live 3,679-row corpus:
+--
+--     COUNT(*) + MAX(updated_at)   11.22 ms
+--     COUNT(*) alone                0.21 ms
+--     MAX(updated_at) alone        11.58 ms
+--     MAX(rowid) alone              0.19 ms
+--
+-- So MAX(updated_at) was scanning every row, and the probe meant to make the cache
+-- cheap was itself most of the remaining cost — a guard more expensive than the
+-- thing it guards. With this index SQLite takes the last entry directly.
+--
+-- WHY NOT DROP updated_at AND PROBE MAX(rowid), which is already fast? Because
+-- rowid does not move on an UPDATE. lesson_id is "<source>:<source_ref>", so a
+-- re-mined lesson upserts the SAME row: COUNT and MAX(rowid) both stay put while
+-- the content changes underneath a cached reader. That is precisely the staleness
+-- this stamp exists to catch, so the answer is to make the correct probe fast
+-- rather than to swap in a fast probe that is wrong.
+--
+-- IDEMPOTENT: CREATE INDEX IF NOT EXISTS. No VACUUM.
+
+CREATE INDEX IF NOT EXISTS idx_lessons_updated_at ON lessons(updated_at);

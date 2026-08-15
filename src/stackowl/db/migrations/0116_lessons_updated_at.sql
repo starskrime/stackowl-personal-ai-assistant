@@ -1,0 +1,36 @@
+-- Migration 0116 — give `lessons` an `updated_at` stamp, so a cache can tell
+-- whether it is stale without re-reading the corpus.
+--
+-- WHY THIS IS NEEDED AT ALL. Ranking the corpus is cheap; LOADING it is not.
+-- MEASURED on the live 3,679-row corpus: the numpy work (squared distances +
+-- argsort) is ~7ms, while pulling 3,679 rows out of SQLite is 35-70ms depending on
+-- page-cache warmth — five to ten times the arithmetic it feeds. Fetching only the
+-- vector columns barely helps (35.6ms vs 39.1ms warm) because the cost is
+-- constructing the rows at all, and a two-phase rank-then-hydrate is WORSE (59ms)
+-- since it pays for two queries. So the store caches the matrix in-process.
+--
+-- WHAT THIS COLUMN IS FOR. A cache needs to know when it is stale. Counting rows
+-- catches inserts and deletes but NOT an in-place revision: lesson_id is
+-- "<source>:<source_ref>" by convention, so a re-mined lesson upserts the SAME row
+-- with new content, leaving COUNT(*) and MAX(rowid) unchanged. A process holding a
+-- cache would keep serving the superseded text indefinitely.
+--
+-- With this stamp the validity probe is `SELECT COUNT(*), MAX(updated_at)`, which
+-- catches inserts, deletes AND revisions, and costs one aggregate rather than
+-- thousands of row constructions.
+--
+-- WHY NOT JUST INVALIDATE ON WRITE. That works within one process and this store
+-- does it too. But StackOwl runs a gateway and a core as SEPARATE processes, and a
+-- write in one cannot invalidate a cache in the other. An in-process-only scheme
+-- would be correct on a single process and silently stale on the real deployment —
+-- the kind of gap that only shows up as "the owl keeps quoting an old lesson".
+--
+-- IDEMPOTENT. SQLite has no ADD COLUMN IF NOT EXISTS, so re-running this migration
+-- would error on the duplicate column — the runner's ledger is what prevents that,
+-- exactly as for every other ALTER in this directory. The DEFAULT is a constant
+-- ('' rather than a time expression) because SQLite requires ADD COLUMN defaults to
+-- be non-volatile; existing rows therefore stamp empty and the first write to each
+-- gives it a real value, which is correct: an empty stamp cannot make a cache look
+-- fresher than it is.
+
+ALTER TABLE lessons ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';

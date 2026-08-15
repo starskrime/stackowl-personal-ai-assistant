@@ -1,4 +1,4 @@
-"""LessonsIndex — high-level publish + search over the LanceDB lessons table.
+"""LessonsIndex — high-level publish + search over the SQLite lessons table.
 
 Subsystems publish into it (reflections after write, skills after embed,
 tool heuristics after mining); subsystems also query it (tools after
@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
 from stackowl.learning.lesson import Lesson, LessonHit, LessonSource, make_lesson_id
-from stackowl.learning.lessons_lance import LessonsLanceAdapter
+from stackowl.learning.lessons_store import SqliteLessonsStore
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
@@ -33,11 +33,11 @@ class LessonDraft:
 
 
 class LessonsIndex:
-    """Publish/search facade in front of :class:`LessonsLanceAdapter`."""
+    """Publish/search facade in front of :class:`SqliteLessonsStore`."""
 
     def __init__(
         self,
-        adapter: LessonsLanceAdapter,
+        adapter: SqliteLessonsStore,
         embedding_registry: EmbeddingRegistry | None = None,
     ) -> None:
         log.memory.debug(
