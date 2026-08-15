@@ -21,6 +21,10 @@ _ABC_NAMES = {
     "SlashCommand": "stackowl.commands.base",
     "ChannelAdapter": "stackowl.channels.base",
     "OwlSource": "stackowl.owls.base",
+    # D08.2 slice C. One entry — the loader, verifier, index and remote-install
+    # path all apply unchanged, which is why a separate memory-provider registry
+    # was rejected as duplicated machinery.
+    "MemoryProvider": "stackowl.memory.providers",
 }
 
 

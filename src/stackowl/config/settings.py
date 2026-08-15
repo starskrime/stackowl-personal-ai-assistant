@@ -498,6 +498,12 @@ class MemorySettings(BaseModel):
 
     enabled: bool = True
     semantic_search_enabled: bool = True
+    #: D08.2 slice C — how many tool schemas INSTALLED memory providers may add
+    #: between them. Counts what providers ADD, not the total: 77 tools already
+    #: ship on every API call, and Law 2 keeps that waist narrow. The built-in
+    #: curated memory is exempt and is never counted. 0 means "no third-party
+    #: providers" and never "no memory" — the built-in cannot be deactivated.
+    provider_schema_ceiling: int = Field(default=6, ge=0)
     sensitive_categories: list[str] = Field(
         default_factory=lambda: [
             "password",

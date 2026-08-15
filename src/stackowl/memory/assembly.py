@@ -38,6 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
     from stackowl.memory.preferences import PreferenceStore
+    from stackowl.memory.providers import MemoryProviderRegistry
     from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
     from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
     from stackowl.providers.registry import ProviderRegistry
@@ -64,6 +65,11 @@ class MemoryComponents:
     dream_worker: DreamWorkerJobHandler
     rollover_summary_handler: RolloverSummaryHandler
     lessons_index: LessonsIndex
+    #: D08.2 slice C — the frozen active memory-provider set for this incarnation.
+    #: NOT named `provider_registry`: that name is already taken in this module by
+    #: the AI ProviderRegistry, and shadowing it here cost a mypy error and would
+    #: have been a trap for the next reader.
+    memory_providers: MemoryProviderRegistry
     # Health surface for the knowledge-graph layer (ok / down).
     graph_health: GraphContributor
 
@@ -271,6 +277,17 @@ class MemoryAssembly:
         )
         log.memory.info("[memory] assembly: lessons_index ready")
 
+        # D08.2 slice C — memory providers. Resolved HERE and nowhere else:
+        # assembly runs once per incarnation, which is exactly the freeze Law 1
+        # needs. Any provider a plugin registered is judged against the ceiling
+        # now; the built-in is always present and never counted.
+        from stackowl.memory.providers import MemoryProviderRegistry
+
+        memory_providers = MemoryProviderRegistry(
+            ceiling=mem.provider_schema_ceiling
+        )
+        memory_providers.resolve()
+
         log.memory.info("[memory] assembly.build: exit — all components wired")
         return MemoryComponents(
             bridge=bridge,
@@ -279,6 +296,7 @@ class MemoryAssembly:
             kuzu_adapter=kuzu_adapter,
             entity_extractor=entity_extractor,
             lessons_index=lessons_index,
+            memory_providers=memory_providers,
             kuzu_sync_handler=kuzu_sync_handler,
             dream_worker=dream_worker,
             rollover_summary_handler=rollover_summary_handler,

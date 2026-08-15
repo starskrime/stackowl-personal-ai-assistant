@@ -17,7 +17,11 @@ class PluginManifest(BaseModel):
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]*$")
     version: str
-    type: Literal["mcp_server", "skill_pack", "local_plugin"]
+    #: D08.2 slice C added "memory_provider": a plugin that contributes behind the
+    #: existing `memory` tool. One value added to the Literal — the loader,
+    #: verifier, index and remote-install path all apply unchanged, which is why a
+    #: separate memory-provider registry was rejected as duplicated machinery.
+    type: Literal["mcp_server", "skill_pack", "local_plugin", "memory_provider"]
     entry_point: str
     capabilities: list[str] = Field(default_factory=list)
     config_schema: dict[str, object] | None = None
