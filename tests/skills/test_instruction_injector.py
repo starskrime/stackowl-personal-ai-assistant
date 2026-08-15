@@ -25,10 +25,22 @@ def test_empty_returns_empty_string():
     assert _inj().render("rsr", []) == ""
 
 
-def test_builtin_summary_injected_plainly():
+def test_builtin_is_injected_PLAINLY_not_trust_wrapped():
+    """REPOINTED. This asserted that a builtin's ``summary`` is injected verbatim.
+
+    There is no summary any more: the column went in D09.3 slice 5 (migration
+    0110) and D10.2 made ``description — when_to_use`` the whole story, capping
+    description at 60 chars so when_to_use carries the retrieval signal. The old
+    assertion was checking for a string the injector can no longer emit.
+
+    What the test is FOR is unchanged and still worth pinning: a builtin comes
+    from a trusted source, so it is injected plainly, while anything else is
+    fenced and neutralized. That is the trust boundary, and it is the half that
+    matters — see its sibling below for the untrusted case.
+    """
     out = _inj().render("rsr", _full(_SkillStub("s", "builtin", summary="Do X.")))
-    assert "Do X." in out
-    assert "<skill_reference" not in out
+    assert "desc" in out and "when" in out, out
+    assert "<skill_reference" not in out, "a builtin must not be fenced as untrusted"
 
 
 def test_non_builtin_summary_is_trust_wrapped():

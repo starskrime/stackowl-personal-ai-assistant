@@ -399,6 +399,42 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-9-browser-profile-drops-eight-of-its-own-tools
+    raised: 2026-08-15
+    blocks: "nothing — one pre-existing red test, found by the sweep. Recorded rather than fixed because the fix changes what tools the model sees."
+    question: >-
+      A browser-profiled owl is offered FEWER browser tools than an unprofiled one.
+      Should the profile path be exempt from the tool-count/token budget, should
+      profile-group tools be ranked so the core ones survive, or is the cap correct
+      and the test wrong?
+    why_escalated: >-
+      It changes the toolset the model sees, which is Law 2 territory, and the tool
+      cap has bitten this platform before (the ping/reminder incident where a cap
+      starved a cronjob). Not a call to make inside a test sweep.
+    what_was_measured: >-
+      MEASURED 2026-08-15 on ToolRegistry.with_defaults(). The FULL schema presents
+      77 tools. The browser-profiled schema presents 36 (~6,926 tokens) and contains
+      only 18 of the 26 browser tools. The eight dropped are browser_snapshot,
+      browser_type, browser_upload, browser_wait_for, browser_tab_open,
+      browser_tab_list, browser_tab_close and browser_vision — so a browser-profiled
+      owl can click and navigate but cannot SEE the page (snapshot), type, upload,
+      wait, or manage tabs. The survivors are alphabetically early, which points at
+      an order-dependent truncation rather than a relevance ranking. The count cap
+      (40) is NOT binding at 36, so the token budget is what cuts.
+    the_test_that_found_it: >-
+      tests/tools/browser/test_snapshot.py::TestRegistryIntegration::
+      test_browser_profile_groups_snapshot_and_click — "A browser-profiled owl sees
+      snapshot + click via the shared toolset group". It encodes a real user
+      expectation, so it should NOT be relaxed to match current behaviour.
+    options:
+      - "A. Rank profile-group tools by importance so the core ones survive the cut, and log what was dropped. Keeps the budget honest and stops the silent tail-truncation."
+      - "B. Exempt an explicitly requested profile group from the budget: the operator asked for browser, so give them browser. Simplest, but widens the waist for profiled owls."
+      - "C. Treat the cap as correct and the expectation as wrong. Cheapest, and it leaves an owl that cannot see the page it is told to browse."
+    recommendation: >-
+      A. The defect is not that a budget exists, it is that the eviction is silent and
+      ordered by name rather than by usefulness — the same shape as every other
+      silent-drop this programme has fixed. B is defensible if profiles are meant to
+      be an explicit operator override.
   - id: ESC-7-semantic-search-config-key-now-unread
     RESOLVED: "RESOLVED 2026-08-15 — Bakir chose GIVE IT A NEW MEANING, over keep-as-no-op and remove. `memory.semantic_search_enabled` now gates LESSONS recall, the one place embeddings still rank anything. IMPLEMENTED: LessonsIndex takes the flag and returns [] BEFORE embedding, so switching recall off stops the work rather than discarding its result. It gates READS ONLY — a lesson stored without a vector would be invisible once the flag came back on, so gating writes would cost corpus coverage that only a reindex could restore; reads-only makes the switch reversible in both directions. OFF IS ANNOUNCED ONCE AT INFO, because 'no lessons matched' and 'recall is switched off' are the same empty list to a caller, and that confusion is a shape this programme has already paid for. 4 tests."
     raised: 2026-08-14
