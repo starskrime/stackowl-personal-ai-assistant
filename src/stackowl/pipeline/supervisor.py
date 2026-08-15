@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from stackowl.infra.observability import log
+from stackowl.owls.base_prompt import strip_turn_context
 from stackowl.pipeline.persistence import (
     CAPABILITY_GAP_DIRECTIVE,
     PERSISTENCE_DIRECTIVE,
@@ -205,8 +206,23 @@ def synthesize_floor(
                     extra={"_fields": {"lang": lang}},
                 )
                 return graceful
+        # No capability could be attributed, but the turn DID try things. Render
+        # the variant without the capability and technical-detail sentences
+        # rather than leaving two blanks in the message (live 2026-08-15).
+        template_key = "self_heal_floor"
+        if (
+            not derived_capability
+            and not error
+            and attempts_list
+            and localize("self_heal_floor_unattributed", lang)
+        ):
+            template_key = "self_heal_floor_unattributed"
+            log.engine.debug(
+                "supervisor.synthesize_floor: unattributed (no failing step)",
+                extra={"_fields": {"lang": lang, "n_attempts": len(attempts_list)}},
+            )
         result = localize_format(
-            "self_heal_floor",
+            template_key,
             lang,
             goal=goal or "",
             failed_capability=derived_capability or "",
@@ -273,6 +289,13 @@ def synthesize_from_calls(
             target = str(args.get("name") or "") if isinstance(args, dict) else ""
             last_by_key[(name, target)] = c
 
+        # Stays "" when nothing failed, and that is deliberate. Deriving a name
+        # from attempts[0] here would report a capability that SUCCEEDED as the
+        # one that failed — exactly what
+        # test_synthesize_from_calls_last_outcome_overrides_earlier_retry_failure
+        # exists to prevent (owl_build create->create->edit, edit succeeding).
+        # The empty slot Bakir saw is fixed by omitting the SENTENCE, below, not
+        # by inventing a culprit: this message's only job is to be honest.
         failed_capability = ""
         error = ""
         for c in last_by_key.values():
@@ -282,7 +305,11 @@ def synthesize_from_calls(
                 break
         attempts = [str(c.get("name") or "") for c in calls]
         return synthesize_floor(
-            goal,
+            # The provider hands us the COMPOSED turn text, which carries the
+            # volatile context D01.1 prepends to the user's message. This is the
+            # path that actually reached Bakir on 2026-08-15 — the strips added
+            # to delivery_gate and delegate_task do not cover it.
+            strip_turn_context(goal),
             error,
             attempts,
             partial,

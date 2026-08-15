@@ -28,6 +28,8 @@ from __future__ import annotations
 
 from stackowl.owls.base_prompt import strip_turn_context, volatile_turn_context
 
+_PREFIX = "Right now it is Saturday, August 15, 2026 at 04:10 PM CDT."
+
 LEAKED = (
     "Right now it is Saturday, August 15, 2026 at 04:10 PM CDT.\n\n"
     "Wait i tought headhunter will ping me tomorrow only why he pinged me again?"
@@ -112,3 +114,61 @@ class TestTheSurfacesAreWired:
         assert "input_text=strip_turn_context(sub_task)" in source, (
             "the child's input_text carries whatever the model wrote, prefix included"
         )
+
+
+class TestTheProviderPathThatActuallyReachedTheUser:
+    """The first strip missed this one, which is the path Bakir's message took.
+
+    delivery_gate and delegate_task were patched on the reasonable theory that the
+    child's input_text carried the prefix. It does — but this turn never went
+    through either: the provider hit "persistent tool-call leak, no escalation
+    available" and built the floor itself from the COMPOSED user_text it was
+    called with. Reproducing the reported string is what found it.
+    """
+
+    def _calls(self) -> list[dict[str, object]]:
+        names = ["delegate_task", "tool_search", "tool_describe", "memory",
+                 "tool_describe", "tool_search", "tool_search", "delegate_task",
+                 "tool_describe", "tool_describe"]
+        return [{"name": n, "args": {}, "result": "ok", "failed": False} for n in names]
+
+    def test_the_goal_no_longer_carries_the_prefix(self) -> None:
+        from stackowl.pipeline.supervisor import synthesize_from_calls
+
+        out = synthesize_from_calls(f"{_PREFIX}\n\n{USER_TEXT}", self._calls(), "")
+
+        assert "Right now it is" not in out
+        assert USER_TEXT in out
+
+    def test_the_empty_slots_are_OMITTED_not_filled_with_a_guess(self) -> None:
+        """Every tool in that turn SUCCEEDED — it failed for want of an answer,
+        not a broken tool — so no capability could be attributed and the message
+        rendered "The capability that failed: ." and a dangling "Technical
+        detail: ".
+
+        My first fix derived the name from attempts[0]. That was WRONG and a
+        sibling test caught it: it would report a capability that ultimately
+        SUCCEEDED as the one that failed (owl_build create->create->edit). In a
+        message whose only job is honesty that is a worse bug than a blank slot,
+        so the sentences are omitted instead."""
+        from stackowl.pipeline.supervisor import synthesize_from_calls
+
+        out = synthesize_from_calls(USER_TEXT, self._calls(), "")
+
+        assert "The capability that failed:" not in out
+        assert "Technical detail:" not in out
+        assert "No single step reported a failure" in out
+        assert "delegate_task" in out, "what was tried is still reported"
+
+    def test_a_genuinely_failed_tool_is_still_named_precisely(self) -> None:
+        """The fallback must not shadow a real answer: when a call IS marked
+        failed, that name wins over attempts[0]."""
+        from stackowl.pipeline.supervisor import synthesize_from_calls
+
+        calls = self._calls()
+        calls[4] = {"name": "cronjob", "args": {}, "result": "boom", "failed": True}
+
+        out = synthesize_from_calls(USER_TEXT, calls, "")
+
+        assert "The capability that failed: cronjob" in out
+        assert "boom" in out

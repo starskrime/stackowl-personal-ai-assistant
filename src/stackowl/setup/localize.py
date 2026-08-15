@@ -156,6 +156,36 @@ _STRINGS: dict[tuple[str, str], str] = {
     # Graceful floor for a give-up with NO real capability data (e.g. a bare
     # time/step backstop timeout): warm + honest, NO slots so nothing internal
     # (raw error, blank fields) can leak. Used by synthesize_floor's no-data branch.
+    # Attempts exist but NO step reported a failure. Naming attempts[0] would
+    # claim a capability failed when it may have succeeded, so the capability and
+    # technical-detail sentences are omitted rather than rendered blank (live
+    # 2026-08-15: "The capability that failed: . ... Technical detail: ").
+    ("self_heal_floor_unattributed", "en"): (
+        "I couldn't fully complete this: {goal}. "
+        "What I tried: {attempts}. "
+        "{partial}"
+        "No single step reported a failure, so I can't say which one went wrong."
+    ),
+    ("self_heal_floor_unattributed", "de"): (
+        "Ich konnte dies nicht vollständig erledigen: {goal}. "
+        "Was ich versucht habe: {attempts}. "
+        "{partial}"
+        "Kein einzelner Schritt meldete einen Fehler, daher kann ich nicht sagen, "
+        "welcher schiefging."
+    ),
+    ("self_heal_floor_unattributed", "fr"): (
+        "Je n'ai pas pu terminer ceci : {goal}. "
+        "Ce que j'ai essayé : {attempts}. "
+        "{partial}"
+        "Aucune étape n'a signalé d'échec, je ne peux donc pas dire laquelle a "
+        "posé problème."
+    ),
+    ("self_heal_floor_unattributed", "es"): (
+        "No pude completar esto del todo: {goal}. "
+        "Lo que intenté: {attempts}. "
+        "{partial}"
+        "Ningún paso informó de un fallo, así que no puedo decir cuál salió mal."
+    ),
     ("self_heal_floor_graceful", "en"): (
         "Sorry — I got tangled up working on that and didn't finish cleanly. "
         "Could you tell me a bit more, or say it another way?"
