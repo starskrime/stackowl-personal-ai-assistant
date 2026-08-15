@@ -39,15 +39,33 @@ class LessonsIndex:
         self,
         adapter: SqliteLessonsStore,
         embedding_registry: EmbeddingRegistry | None = None,
+        *,
+        semantic_search_enabled: bool = True,
     ) -> None:
+        """ESC-7 — ``semantic_search_enabled`` gates RECALL, not publishing.
+
+        The flag is ``memory.semantic_search_enabled``. It used to gate the
+        memory bridge's semantic path, which went with LanceDB in D08.2; rather
+        than delete a config key (MemorySettings is ``extra="forbid"``, so a
+        deployment that sets a removed key stops booting), Bakir repointed it at
+        the one place embeddings still rank anything.
+
+        WRITES CONTINUE WHILE IT IS OFF, deliberately: a lesson stored without a
+        vector would be invisible after the flag came back on, so "off" would
+        quietly cost corpus coverage that only a reindex could restore. Gating
+        reads alone makes the switch reversible in both directions.
+        """
         log.memory.debug(
             "[learning] index.init: ready",
             extra={"_fields": {
                 "has_embedding_registry": embedding_registry is not None,
+                "semantic_search_enabled": semantic_search_enabled,
             }},
         )
         self._adapter = adapter
         self._embedder = embedding_registry
+        self._search_enabled = semantic_search_enabled
+        self._off_announced = False
 
     async def publish(self, draft: LessonDraft) -> bool:
         """Embed ``draft.content`` and upsert into the lessons table.
@@ -178,6 +196,21 @@ class LessonsIndex:
                 "query_len": len(query), "limit": limit, "source_filter": source_filter,
             }},
         )
+        # 2. DECISION — recall switched off (ESC-7). Return BEFORE embedding, so
+        # the flag stops the work rather than discarding its result.
+        if not self._search_enabled:
+            if not self._off_announced:
+                # ONCE, at INFO. "no lessons matched" and "recall is switched
+                # off" are the same empty list to a caller, and a silent off is
+                # how a disabled subsystem gets mistaken for a broken one.
+                self._off_announced = True
+                log.memory.info(
+                    "[learning] index.search: recall is OFF — "
+                    "memory.semantic_search_enabled is false, so no lessons will "
+                    "be surfaced this run (publishing continues; no reindex is "
+                    "needed to switch it back on)",
+                )
+            return []
         if self._embedder is None or not query.strip():
             return []
         try:

@@ -310,17 +310,49 @@ class MemoryCommand(SlashCommand):
         mark = "✓" if result.ok else "✗"
         return f"{mark} {result.message} ({result.usage})"
     async def _forget(self, args: str) -> str:
-        """Remove a curated entry by substring."""
+        """Remove a curated entry by substring, confirming a MULTI-entry match."""
         log.memory.debug("[commands] memory.forget: entry",
                          extra={"_fields": {"args_len": len(args)}})
+        out = await self._forget_text(args, self._curated())
+        log.memory.info("[commands] memory.forget: exit",
+                        extra={"_fields": {"chars": len(out)}})
+        return out
+
+    @staticmethod
+    async def _forget_text(args: str, mem: CuratedMemory) -> str:
+        """ESC-8 — immediate for ONE match, confirmation for several.
+
+        D08.1's rewrite dropped the confirmation step entirely. The match is a
+        SUBSTRING, so ``/memory forget deploy`` silently removed every entry
+        mentioning deploy — and the curated files ARE the system prompt, so a line
+        lost that way changes how the owl behaves without saying so.
+
+        Bakir's call was to gate exactly the dangerous case. A single unambiguous
+        match stays immediate: a curated entry is one line in a small text file and
+        trivially re-added, so ceremony there buys nothing. Several matches ask
+        first and SHOW what they would take, because the whole risk is the
+        substring reaching further than the user pictured.
+        """
         text = args.strip()
+        confirmed = False
+        # A trailing YES is the confirmation token, stripped BEFORE matching — a
+        # search for "deploy YES" would otherwise always miss.
+        if text.upper().endswith(" YES"):
+            text, confirmed = text[:-4].strip(), True
         if not text:
             return "Usage: /memory forget <text from the entry>"
-        result = self._curated().remove(USER_TARGET, text)
-        log.memory.info("[commands] memory.forget: exit",
-                        extra={"_fields": {"ok": result.ok}})
-        mark = "✓" if result.ok else "✗"
-        return f"{mark} {result.message}"
+
+        matches = [e for e in mem.entries(USER_TARGET) if text in e.text]
+        if len(matches) > 1 and not confirmed:
+            listed = "\n".join(f"  - {e.text}" for e in matches)
+            return (
+                f"That matches {len(matches)} entries, not one:\n{listed}\n"
+                f"Removing them all: /memory forget {text} YES\n"
+                "Or narrow the text to match a single entry."
+            )
+        result = mem.remove(USER_TARGET, text)
+        return f"{'✓' if result.ok else '✗'} {result.message}"
+
     async def _export(self, args: str) -> str:
         """Print the curated files verbatim.
 

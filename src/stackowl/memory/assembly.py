@@ -126,12 +126,13 @@ class MemoryAssembly:
         # 2) Bridge — primary hot-path read/write surface. Recall is FTS5 over
         # committed_facts; the semantic half went with LanceDB in D08.2.
         #
-        # `mem.semantic_search_enabled` is NO LONGER PASSED, because the bridge has
-        # nothing left to gate with it. The config KEY still exists and is now
-        # unread — raised as ESC-7 rather than removed quietly, because
-        # MemorySettings is `extra="forbid"`, so deleting a key that any deployment
-        # has set turns a no-op toggle into a boot failure. That is a user-facing
-        # call, not one to make inside a refactor.
+        # `mem.semantic_search_enabled` is NOT passed here any more: the bridge has
+        # nothing left to gate with it. The key itself is very much alive — ESC-7
+        # repointed it at LESSONS recall (see the LessonsIndex construction below),
+        # which is the one place embeddings still rank anything. It was repointed
+        # rather than deleted because MemorySettings is `extra="forbid"`, so
+        # removing a key a deployment has set turns a no-op toggle into a hard boot
+        # failure.
         bridge = SqliteMemoryBridge(
             db=db,
             embedding_registry=embedding_registry,
@@ -261,9 +262,12 @@ class MemoryAssembly:
         # LanceDB was 236MB of dependency (with pyarrow) for a 5.4MB corpus, and
         # brute force over 3,680 x 384 is one matmul. See learning/lessons_store.py.
         lessons_adapter = SqliteLessonsStore(db)
+        # ESC-7 — the flag now gates LESSONS recall, the one place embeddings
+        # still rank anything. It gates reads only; see LessonsIndex.__init__.
         lessons_index = LessonsIndex(
             adapter=lessons_adapter,
             embedding_registry=embedding_registry,
+            semantic_search_enabled=mem.semantic_search_enabled,
         )
         log.memory.info("[memory] assembly: lessons_index ready")
 

@@ -397,6 +397,7 @@ current:
 
   ESCALATIONS:
   - id: ESC-7-semantic-search-config-key-now-unread
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose GIVE IT A NEW MEANING, over keep-as-no-op and remove. `memory.semantic_search_enabled` now gates LESSONS recall, the one place embeddings still rank anything. IMPLEMENTED: LessonsIndex takes the flag and returns [] BEFORE embedding, so switching recall off stops the work rather than discarding its result. It gates READS ONLY — a lesson stored without a vector would be invisible once the flag came back on, so gating writes would cost corpus coverage that only a reindex could restore; reads-only makes the switch reversible in both directions. OFF IS ANNOUNCED ONCE AT INFO, because 'no lessons matched' and 'recall is switched off' are the same empty list to a caller, and that confusion is a shape this programme has already paid for. 4 tests."
     raised: 2026-08-14
     blocks: "nothing — one config key; the rest of the LanceDB arc proceeds."
     question: >-
@@ -423,6 +424,7 @@ current:
       and no boot hazard. B is acceptable if lessons recall must stay
       unconditional. C only if no deployment other than this one exists.
   - id: ESC-8-memory-forget-lost-its-confirmation-gate
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose CONFIRM ONLY WHEN THE MATCH TAKES MORE THAN ONE ENTRY, over leave-as-is and confirm-always. IMPLEMENTED in the COMMAND (`_forget_text`), not in CuratedMemory.remove — remove() is a storage primitive with other callers, and an interactive gate does not belong there. A single unambiguous match stays immediate; several list what would be removed, state the count, and require a trailing YES. The token is stripped BEFORE matching, or a search for 'deploy YES' would always miss — pinned by a test. 6 new tests; the older test that pinned immediate removal was RENAMED, since 'without confirmation' is now true only of a single match and a test name that overstates its contract is a lie with a green tick next to it."
     raised: 2026-08-14
     blocks: "nothing — found while repointing tests; current behaviour is pinned by a test either way."
     question: >-

@@ -95,10 +95,10 @@ async def test_memory_command_budget(db: DbPool) -> None:
     assert "%" in out
 
 
-async def test_memory_command_forget_removes_immediately_without_confirmation(
+async def test_memory_command_forget_removes_a_SINGLE_match_immediately(
     db: DbPool,
 ) -> None:
-    """PINS CURRENT BEHAVIOUR, and the behaviour CHANGED — see ESC-8.
+    """PINS CURRENT BEHAVIOUR, and the behaviour CHANGED TWICE — see ESC-8.
 
     Two tests stood here asserting that `/memory forget X` asks for confirmation and
     leaves the entry alone until `YES` is supplied. D08.1 retargeted /memory at
@@ -106,12 +106,14 @@ async def test_memory_command_forget_removes_immediately_without_confirmation(
     `CuratedMemory.remove()` and reports the result. There is no confirmation step
     left to test.
 
-    That is not obviously wrong — a curated entry is one line in a small text file,
-    trivially re-added, where the old target was a durable fact. But it IS a
-    destructive user-facing command that lost its gate, and the removal matches by
-    SUBSTRING and can take several entries at once ("Removed 1 entry/entries"), so
-    `/memory forget deploy` could take more than the user meant. Raised as ESC-8
-    rather than silently blessed by rewriting the test to match.
+    That was not obviously wrong for a SINGLE match — a curated entry is one line
+    in a small text file, trivially re-added, where the old target was a durable
+    fact. It was wrong for the substring case: `/memory forget deploy` took every
+    entry mentioning deploy.
+
+    ESC-8 resolved it by gating exactly that case. One unambiguous match is still
+    immediate, which is what this test pins; more than one asks first and is
+    covered in tests/commands/test_forget_confirms_multi_match.py.
     """
     _reset_registry()
     from stackowl.memory.curated import USER_TARGET, CuratedMemory
