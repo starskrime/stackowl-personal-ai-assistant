@@ -260,12 +260,16 @@ current:
   wave: 4
   item: D08.2
   stage: implement
-  stage_status: "all 4 escalations closed; slice A done, slice B seams 1-2 + 3a done; ONLY seam 3 part 2 remains and needs its own session (38 test files). Was: slice A in progress — the orphaned agent_self writer is REMOVED and pushed (a4d89954). Slice B waits on ESC-1; slice C follows A."
-  previous_item_closed: >-
-    D08.1 CLOSED 2026-08-11. All seven stages done, all four acceptance checks proven on
-    live traffic, and designs/D08.1.md closed with its own Verification section RUN rather
-    than trusted (61 tests, both files present, blocks=2 chars=205 reconciling as 92+61+52,
-    committed_facts at 0 with staged_facts healthy at 42).
+  stage_status: >-
+    CORRECTED 2026-08-15 — the previous text ("ONLY seam 3 part 2 remains") was stale AND the
+    item is less complete than it implied. D08.2 has THREE slices. Slice A (the MemoryBridge
+    split) is DONE. Slice B (the orchestrator block, seams 1-3 including all four passes of
+    seam 3) is DONE, plus an unplanned LanceDB removal arc that fell out of it. Slice C —
+    MemoryProvider as a plugin kind, which is the item's HEADLINE deliverable and the reason
+    it is titled "Memory providers as plugins" — is NOT STARTED: `memory_provider` appears
+    nowhere in src/, and PluginManifest.type is still
+    Literal["mcp_server", "skill_pack", "local_plugin"]. All 8 escalations are resolved.
+    So `implement` is PARTIAL, not done, and the remaining work is slice C alone.
   one_line: >-
     Curated two-file memory is LIVE and the 107k-fact extraction pipeline is gone.
     What remains of the removal is D08.2: one careful orchestrator pass.
