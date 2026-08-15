@@ -45,8 +45,17 @@ _STAGES = (
 #: architect stage needs live interactive traffic). Both are real states, not
 #: typos — the linter's job is to catch a stage value nobody meant to write,
 #: which means the vocabulary has to match what the process actually uses.
+#: ``pre_process_exception`` records a stage that never ran because the item
+#: PREDATES the process that requires it. D01.6 was the first item worked and was
+#: built on 2026-07-25, the same day the grill rule itself was written; its
+#: brainstorm never happened. ``done`` would be a lie and ``no_change_needed``
+#: claims the stage examined the item and found nothing to change, which is also
+#: not what occurred. Bakir accepted it as a documented exception on 2026-08-15,
+#: so the vocabulary gains a word for it rather than an existing word being bent
+#: to cover a case it does not mean.
 _VALID_STAGE_VALUES = frozenset({
     "done", "partial", "not_started", "no_change_needed", "blocked",
+    "pre_process_exception",
 })
 
 

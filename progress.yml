@@ -412,6 +412,7 @@ current:
 
   ESCALATIONS:
   - id: ESC-12-the-prompt-cache-has-never-shown-a-hit-in-production
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose FIX THE INVALIDATION NOW, over probing the gateway first, chasing latency separately, or deferring to a paid provider. The deciding point was that this is likely not a trade against latency but the same fix: the ~13s median TTFT is mostly PREFILL, and a stable prefix is exactly what lets a gateway skip prefill. D01.3''s claim is prompt stability and it is currently not held — one turn in eight invalidates position 0 — so the work stands on its own even if no cache ever reports a hit."
     raised: 2026-08-15
     blocks: >-
       nothing mechanically. It is raised because it changes what D01.6's remaining
@@ -453,6 +454,7 @@ current:
       the invalidation rate is worth fixing for prompt STABILITY (D01.1/D01.3's actual
       claim) whether or not any cache ever reports a hit.
   - id: ESC-13-an-incarnation-outlives-the-prompt-it-froze
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose ROLL THE session_id ON RESTART, over persisting the frozen snapshot and over measuring the remaining five first. A restarted core IS a new incarnation; this makes metric 4 mean what it says by construction and avoids asking a snapshot to outlive the process that owns it. NOTE the caveat stands: this explains 3 of 8 measured violations, and the dual log-writer bug means the other 5 are an upper bound, not a confirmed second mechanism. Closing the log gap remains worth doing to see whether anything is left."
     raised: 2026-08-15
     blocks: >-
       nothing. D01.1 is shipped and closed; this is a violation of its invariant found by
@@ -487,6 +489,7 @@ current:
       which is the heavier promise. Note this does NOT explain all 8; the remaining ones
       need the log-gap caveat closed before anyone concludes they are a second mechanism.
   - id: ESC-11-presented-tools-memo-ignores-a-skill-change
+    RESOLVED: "RESOLVED 2026-08-15 — Bakir chose TREAT A SKILL LIKE A CAPABILITY: reuse the existing _on_capability_change hook rather than adding a second invalidation mechanism. Over leaving it frozen until rollover, and over a narrower clear_owl() path. The reasoning that already sits in that hook''s docstring — a newly-configured thing must not stay invisible until rollover — applies verbatim with skill substituted for capability, and this platform is self-extending by design, so an owl gaining a skill at runtime is the intended path rather than an edge case."
     raised: 2026-08-15
     blocks: >-
       nothing. The test-side leak is fixed (an autouse fixture in tests/conftest.py
@@ -5112,7 +5115,7 @@ items:
     blocks: [D01.1]
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: pre_process_exception   # Bakir's call 2026-08-15 — see process_deviation.resolution
       architect:  done
       implement:  done
       cleanup:    no_change_needed
@@ -5142,6 +5145,21 @@ items:
         but the programme cannot claim a clean wave until this is resolved one way
         or the other. Bakir's call: retro-record the decisions that were actually
         made, or accept it as a documented pre-process exception.
+      resolution:
+        decided: 2026-08-15
+        by: Bakir
+        what: >
+          ACCEPTED AS A DOCUMENTED PRE-PROCESS EXCEPTION. The stage value is now
+          `pre_process_exception`, a word added to progress_lint's vocabulary for
+          exactly this, rather than bending `done` (a lie — no grill happened) or
+          `no_change_needed` (which asserts the stage ran and found nothing).
+          WAVE 1 IS 7/7 with the deviation preserved in the record, not erased.
+        why_not_retro_recorded: >
+          Reconstructing a grill after the fact produces a document that reads like
+          evidence and is actually a reconstruction. The record is more useful saying
+          plainly that the item predates its own process. What the item DID lack — a
+          live reading of its four measures — was captured instead on 2026-08-15; see
+          `live_baseline`. That is the part that had real information in it.
     live_baseline:
       captured: 2026-08-15
       captured_by: "the loop, from ~/.stackowl/workspace/stackowl.db — NOT Bakir at the keyboard"
