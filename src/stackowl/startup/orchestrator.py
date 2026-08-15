@@ -1822,6 +1822,27 @@ class StartupOrchestrator:
             register_socket_channel_proxies(
                 ChannelRegistry.instance(), core_conn, self._settings
             )
+        elif not sys.stdin.isatty():
+            # NO TERMINAL — launched by ./start.sh (nohup), systemd, or any other
+            # detached parent. Building the Textual TUI here cost a WHOLE CORE,
+            # continuously: measured at 100.3% CPU on the live box 2026-08-14, with
+            # a py-spy profile putting ~95% of it in Textual's Linux input driver.
+            # A select() on /dev/null is always ready (instant EOF), so the input
+            # thread woke, read nothing and selected again, forever — while
+            # rendering escape codes into a redirected stdout nobody reads.
+            #
+            # The channel still has to EXIST: "cli" is registered with the clarify
+            # gateway and pre-registered for proactive delivery, so removing it
+            # would turn a clarify question or a scheduled brief into a
+            # ChannelNotFoundError. It just has no terminal, and says so.
+            from stackowl.channels.cli_adapter import HeadlessCliAdapter
+
+            log.info(
+                "[startup] gateway: stdin is not a TTY — starting the CLI channel "
+                "HEADLESS (no Textual TUI). Run `stackowl start` from a terminal "
+                "for the interactive interface."
+            )
+            adapter = HeadlessCliAdapter(session_key=cli_session_key)
         else:
             # Voice dictation (opt-in): build the mic recorder + shared STT selector
             # so the compose ctrl+r push-to-talk works. Disabled → both None and the

@@ -265,3 +265,70 @@ class CLIAdapter(ChannelAdapter):
         else:
             await self._app.run_async()
         log.cli.info("[cli] CLIAdapter.run: exit")
+
+
+class HeadlessCliAdapter(ChannelAdapter):
+    """The "cli" channel when the process has NO TERMINAL. Parks; never polls.
+
+    WHY THIS EXISTS, measured on the live box 2026-08-14: the gateway sat at
+    100.3% CPU — a whole core, continuously — and a py-spy profile put ~95% of it
+    in Textual's Linux input driver (``process_selector_events`` 41.2%,
+    ``run_input_thread`` 15.5%, and the parser tick behind them).
+
+    The mechanism is a busy-wait on end-of-file. ``start.sh`` launches the gateway
+    with ``nohup ... &``, so stdin is ``/dev/null``; a select() on /dev/null is
+    ALWAYS ready because it returns EOF immediately, so the input thread wakes,
+    reads nothing, and selects again without ever blocking. The TUI was not just
+    useless there — writing escape codes into a redirected log and reading
+    keystrokes from /dev/null — it was spending a core to be useless.
+
+    THE CHANNEL STILL HAS TO EXIST. "cli" is registered with the clarify gateway
+    and pre-registered for proactive delivery; removing it would turn a clarify
+    question or a scheduled brief addressed to "cli" into a ChannelNotFoundError.
+    So this keeps the name and the contract, and drops what it is handed — but
+    visibly, at INFO, rather than silently.
+    """
+
+    def __init__(self, session_key: str | None = None) -> None:
+        self._session_key = session_key or str(uuid.uuid4())
+        #: Text this adapter had to drop for want of a terminal. Kept so a test
+        #: can assert the drop happened, and so `dropped` is inspectable in a repl.
+        self.dropped: list[str] = []
+        self._parked = asyncio.Event()
+        log.cli.info(
+            "[cli] headless adapter: no terminal on stdin — the TUI is NOT started",
+            extra={"_fields": {"session_key": self._session_key}},
+        )
+
+    @property
+    def channel_name(self) -> str:
+        return "cli"
+
+    async def run(self) -> None:
+        """Park until cancelled. NOT a poll loop — that would move the spin, not
+        remove it, and would look identical from outside."""
+        log.cli.debug("[cli] headless adapter.run: parked")
+        await self._parked.wait()
+
+    async def receive(self) -> IngressMessage:
+        """Block forever. There is no terminal, so there is no user input.
+
+        Returning an empty message instead would spin the gateway's turn loop —
+        the same defect one layer up.
+        """
+        await self._parked.wait()
+        raise AssertionError("unreachable — headless receive never resolves")
+
+    async def send(self, chunks: AsyncIterator[ResponseChunk]) -> None:
+        """Drain the stream and drop it. Draining matters: a producer writing into
+        a stream nobody reads blocks once the queue fills."""
+        text = "".join([c.content async for c in chunks])
+        await self.send_text(text)
+
+    async def send_text(self, text: str) -> object | None:
+        self.dropped.append(text)
+        log.cli.info(
+            "[cli] headless adapter: dropped a message — no terminal attached",
+            extra={"_fields": {"chars": len(text), "preview": text[:80]}},
+        )
+        return None
