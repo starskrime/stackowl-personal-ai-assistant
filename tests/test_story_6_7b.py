@@ -1,5 +1,12 @@
 """Story 6.7 (part B) — Parliament → Memory wiring + integration marker."""
 
+# PARLIAMENT KEEPS `session_id` — see tests/test_story_5_1.py for the full note.
+# D01.7 slice 3a.1 renamed the CONVERSATION lane's session_id to session_key and
+# swept these along; parliament's session_id is a DEBATE id, a different concept,
+# and it kept its name on purpose. Verified against the live schema before
+# changing: parliament_sessions has session_id and session_store queries it.
+
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,7 +40,7 @@ async def test_pellet_generator_with_real_bridge_calls_stage() -> None:
     bridge = FakeBridge()
     gen = KnowledgePelletGenerator(memory_bridge=bridge)
     session = ParliamentSession(
-        topic="topic", owl_names=["a", "b"], session_key="sess-real"
+        topic="topic", owl_names=["a", "b"], session_id="sess-real"
     )
     synthesis = SynthesisResult(
         consensus="we agree X",
@@ -57,7 +64,7 @@ async def test_pellet_generator_with_none_bridge_uses_null_bridge() -> None:
     """T15 — KnowledgePelletGenerator(memory_bridge=None) does not raise."""
     gen = KnowledgePelletGenerator(memory_bridge=None)
     session = ParliamentSession(
-        topic="topic", owl_names=["a"], session_key="sess-null"
+        topic="topic", owl_names=["a"], session_id="sess-null"
     )
     synthesis = SynthesisResult(
         consensus="x",
@@ -90,7 +97,7 @@ async def test_parliament_orchestrator_passes_bridge_to_pellet_generator(
     assert orch._pellet_gen is not None
     # Confirm dispatch uses the bridge by calling from_parliament directly
     session = ParliamentSession(
-        topic="topic", owl_names=["a"], session_key="sess-orch"
+        topic="topic", owl_names=["a"], session_id="sess-orch"
     )
     synthesis = SynthesisResult(
         consensus="C",

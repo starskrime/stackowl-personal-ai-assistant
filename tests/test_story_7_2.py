@@ -44,7 +44,17 @@ class TestGoalExecutionHandler:
         await handler.execute(job)
 
         assert len(backend.calls) == 1
-        assert backend.calls[0].input_text == "Check the weather"
+        # A scheduled run now carries temporal grounding ahead of the goal —
+        # today's date and the fact that this is a recurring check — so the model
+        # fetches current information instead of answering from training data.
+        # Asserting EQUALITY pinned the absence of that prefix; what the test is
+        # for is that the goal itself reaches the pipeline intact.
+        sent = backend.calls[0].input_text
+        assert "Check the weather" in sent, sent
+        assert "recurring scheduled check" in sent, (
+            "the scheduled-run grounding prefix is missing — the model would answer "
+            f"a recurring check from stale knowledge. got: {sent!r}"
+        )
 
     async def test_execute_writes_row_to_job_results(
         self, monkeypatch: pytest.MonkeyPatch

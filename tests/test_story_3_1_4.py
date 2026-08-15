@@ -179,7 +179,9 @@ class TestTierCommand:
     async def test_no_args_shows_current(self) -> None:
         await TierCommand().handle("standard", _state("sess-Z"))
         out = await TierCommand().handle("", _state("sess-Z"))
-        assert "standard" in out
+        # `handle` returns a structured CommandResponse now, not a bare string —
+        # `in` against the object was always false, never a text mismatch.
+        assert "standard" in out.text
 
 
 # ---------------------------------------------------------------------------
