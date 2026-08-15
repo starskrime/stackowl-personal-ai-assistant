@@ -227,7 +227,6 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # TODO(Epic 9 multi-user): owner-scope committed_facts/staged_facts access
         ("memory/budget_enforcer.py", "committed_facts"),
         ("memory/budget_enforcer.py", "staged_facts"),
-        ("memory/dream_worker_helpers.py", "committed_facts"),
         # memory/extraction_handler.py entries removed 2026-07-26: the file was
         # DELETED by D01.7 slice 3b part 5b (c2fc9d32) — it was registered at
         # boot and never enqueued by anything, so the rollover boundary took
@@ -241,6 +240,12 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # unscoped SQL. Two of the six had been stale since earlier passes and nobody
         # noticed until this test was run — an allowlist entry for a closed gap is the
         # rot test_allowlist_has_no_stale_entries exists to catch.
+        #
+        # The seventh — memory/dream_worker_helpers.py :: committed_facts — was left
+        # behind by MY OWN deletion of that module hours after clearing the other
+        # six, and the guard caught it the same day. Removing a file and leaving its
+        # register entry is evidently the easy half to forget; this test is why it
+        # cost minutes instead of months.
         ("memory/fact_reinforcer.py", "staged_facts"),
         ("memory/kuzu_sync_handler.py", "committed_facts"),
         ("memory/sqlite_bridge.py", "committed_facts"),

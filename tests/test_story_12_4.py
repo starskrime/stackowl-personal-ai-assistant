@@ -329,15 +329,19 @@ class TestDependabotConfig:
         """The repo-root .github/dependabot.yml must exist."""
         # Walk up from this file's location to find the repo root
         here = Path(__file__).resolve()
-        # v2/tests/test_story_12_4.py — repo root is 2 levels up
-        repo_root = here.parent.parent.parent
+        # tests/test_story_12_4.py — the repo root is ONE level above tests/.
+        # This said "v2/tests/..." and walked up three, which was correct while the
+        # Python project lived under v2/. The v2-to-root migration left it pointing
+        # at /ssd/projects — the directory ABOVE the repo — so it looked for
+        # .github/dependabot.yml in a folder that has never had one.
+        repo_root = here.parent.parent
         dep_yml = repo_root / ".github" / "dependabot.yml"
         assert dep_yml.exists(), f"dependabot.yml not found at {dep_yml}"
 
     def test_dependabot_yml_contains_pip_ecosystem(self) -> None:
         """dependabot.yml must configure pip updates."""
         here = Path(__file__).resolve()
-        repo_root = here.parent.parent.parent
+        repo_root = here.parent.parent
         dep_yml = repo_root / ".github" / "dependabot.yml"
         content = dep_yml.read_text(encoding="utf-8")
         assert "package-ecosystem: pip" in content
@@ -345,7 +349,7 @@ class TestDependabotConfig:
     def test_dependabot_yml_targets_v2_directory(self) -> None:
         """dependabot.yml must target the /v2 directory."""
         here = Path(__file__).resolve()
-        repo_root = here.parent.parent.parent
+        repo_root = here.parent.parent
         dep_yml = repo_root / ".github" / "dependabot.yml"
         content = dep_yml.read_text(encoding="utf-8")
         assert 'directory: "/v2"' in content

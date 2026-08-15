@@ -250,7 +250,15 @@ class TestBackupManager:
         manifest = json.loads((output_dir / "backup-manifest.json").read_text(encoding="utf-8"))
         assert manifest["stackowl_version"] == VERSION
 
-    def test_backup_creates_lancedb_and_kuzu_stubs(self, tmp_path: Path) -> None:
+    def test_backup_creates_a_kuzu_stub_and_NO_lancedb_stub(self, tmp_path: Path) -> None:
+        """D08.2 removed the LanceDB stub with LanceDB itself.
+
+        The stub wrote a README saying the vector snapshot was "deferred". There is
+        no vector store any more, and the corpus it held — the lessons — lives in
+        SQLite, so the database copy already captures it. Keeping the stub would
+        promise a gap that no longer exists. Asserting its ABSENCE is what stops it
+        coming back with a copy-paste.
+        """
         from stackowl.export.backup import BackupManager
 
         db_path = tmp_path / "stackowl.db"
@@ -261,8 +269,10 @@ class TestBackupManager:
         manager = BackupManager(db_path=db_path)
         manager.backup(output_dir=output_dir)
 
-        assert (output_dir / "lancedb").is_dir()
         assert (output_dir / "kuzu").is_dir()
+        assert not (output_dir / "lancedb").exists(), (
+            "a LanceDB stub was written for a store that no longer exists"
+        )
 
     def test_restore_from_valid_backup(self, tmp_path: Path) -> None:
         from stackowl.export.backup import BackupManager
