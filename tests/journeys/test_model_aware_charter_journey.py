@@ -232,17 +232,26 @@ def _live_io_and_clear_cache(monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202
 
 
 # ===========================================================================
-# JOURNEY 1 — small-window (2000 tokens ≤ 8192) → lean charter (FR1)
+# JOURNEY 1 — small-window (2000 tokens ≤ 8192) → FULL charter (owner decision)
 # ===========================================================================
 
 
-async def test_small_window_gets_lean_charter(
+async def test_small_window_gets_the_FULL_charter(
     tmp_db: DbPool,
 ) -> None:
-    """Small-window provider (2000-token window) → lean charter in system_prompt.
+    """Small-window provider (2000-token window) → the FULL charter.
 
-    FR1: a small-window/weak model must receive behavioral_charter_lean() — not
-    the full charter that wastes tokens it doesn't have.
+    INVERTED 2026-08-15, and it had been red for over three weeks. FR1 originally
+    said a small-window model must get behavioral_charter_lean() so as not to
+    waste tokens it does not have. That was REVERSED by an owner decision on
+    2026-07-22 — a small-window model most needs the FULL instructions, not a
+    trimmed one — and assemble.py:103 now hardcodes `lean = False` with that
+    decision named in the comment. The test kept asserting the old contract and
+    could not pass: the string it probed for does not exist in src at all.
+
+    It is inverted rather than deleted because the guard is still worth having.
+    It now fails if anyone re-enables the lean path by accident, which is the
+    live risk in the direction the decision went.
 
     Driven through the real gateway → GatewayScanner → AsyncioBackend.
     ONLY the AI provider is mocked.
@@ -283,25 +292,26 @@ async def test_small_window_gets_lean_charter(
     # OUTCOME 3 (FR1) — the lean charter text IS in state.system_prompt.
     # -----------------------------------------------------------------------
     system_prompt = final_state.system_prompt or ""
-    lean_text = behavioral_charter_lean()
-    # Use the first paragraph of the lean charter as the probe (robust to minor
-    # whitespace differences at the join seam).
-    lean_probe = lean_text.split("\n\n")[0]
-    assert lean_probe in system_prompt, (
-        f"CHARTER JOURNEY FAIL (FR1): lean charter opening paragraph not found in "
-        f"system_prompt (window={final_state.model_window} ≤ {LEAN_WINDOW_THRESHOLD}).\n"
-        f"Expected substring: {lean_probe!r}\n"
-        f"system_prompt (first 500 chars): {system_prompt[:500]!r}"
+    # The lean opening must be ABSENT — its presence would mean the lean path is
+    # live again, against the 2026-07-22 decision.
+    lean_probe = behavioral_charter_lean().split("\n\n")[0]
+    assert lean_probe not in system_prompt, (
+        f"CHARTER JOURNEY FAIL: the LEAN charter is in the prompt at "
+        f"window={final_state.model_window}, but assemble hardcodes lean=False "
+        "since the 2026-07-22 owner decision that a small-window model needs the "
+        "FULL instructions.\n"
+        f"system_prompt (first 300 chars): {system_prompt[:300]!r}"
     )
 
     # -----------------------------------------------------------------------
-    # OUTCOME 4 (FR1) — the FULL-charter-only phrase is NOT in the prompt.
-    # "Act over assert: prefer doing the actual work" only appears in full charter.
+    # OUTCOME 4 — the FULL-charter-only phrase IS present. This is the half that
+    # proves a charter was assembled at all, rather than the lean one merely
+    # being absent because the prompt was empty.
     # -----------------------------------------------------------------------
-    assert _FULL_ONLY_PHRASE not in system_prompt, (
-        f"CHARTER JOURNEY FAIL (FR1): full-charter-only phrase {_FULL_ONLY_PHRASE!r} "
-        f"found in system_prompt even though window={final_state.model_window} — "
-        "the lean path is not active."
+    assert _FULL_ONLY_PHRASE in system_prompt, (
+        f"CHARTER JOURNEY FAIL: full-charter phrase {_FULL_ONLY_PHRASE!r} missing "
+        f"at window={final_state.model_window} — a small-window model must get the "
+        "FULL charter, so its absence means no charter was assembled."
     )
 
 

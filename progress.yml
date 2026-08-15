@@ -5317,6 +5317,16 @@ items:
         also exists, is 0 bytes and has no tables — querying it answers "no such table:
         cost_records", which reads like the feature was never built.
       metric_1_cache_hit_ratio:
+        STATUS: >-
+          UNMEASURABLE ON THIS DEPLOYMENT (settled 2026-08-15 by probing the gateway —
+          see ESC-12.PROBE_RESULT). Two identical calls sharing a 3,360-token prefix both
+          returned `prompt_tokens_details: null` — no cached_tokens field, no
+          cache_read_input_tokens, and identical prompt_tokens. The backend does not
+          report cache statistics at all, so this measure cannot read anything but zero
+          no matter what StackOwl does. It is NOT a failing measure and must not be read
+          as one: the instrument is correct and the signal does not exist here.
+          RE-RUN WHEN THE BACKEND CHANGES — the closing evidence is a non-null
+          prompt_tokens_details on a repeated long prefix.
         reading: "0 cached_input_tokens against 132,740,865 input tokens. Zero, across every row."
         instrument_is_NOT_at_fault: >
           Checked before blaming the data: _cached_input_tokens() in openai_provider.py
