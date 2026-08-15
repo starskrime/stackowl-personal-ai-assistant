@@ -176,6 +176,12 @@ def _sanitize_fts_query(query: str) -> str:
 _CURATOR_RAN_KEY = "skill_curator_last_run"
 
 
+#: Sentinel for "the previous coupling could not be read". Distinct from "" (a
+#: genuinely new skill) because an unreadable row must NOT be treated as a change
+#: — that would invalidate every memo on a transient DB hiccup.
+_COUPLING_UNREADABLE = "\x00unreadable"
+
+
 class SkillIndexStore(OwnedRepository):
     """Async SQLite wrapper for the ``skills`` + ``skill_audit`` tables (migration 0031).
 
@@ -209,6 +215,12 @@ class SkillIndexStore(OwnedRepository):
         parent_traces = json.dumps(list(m.parent_traces), separators=(",", ":"))
         now = time.time()
         tool_names_json = json.dumps(list(loaded.tool_names), separators=(",", ":"))
+        # ESC-11 — read the CURRENT coupling before overwriting it, so the memo
+        # invalidation below can fire on a real change rather than on every write.
+        # `tool_names` is the only field here that feeds execute's presented pins:
+        # get_many_by_name selects on owner + name with no `enabled` filter, so
+        # nothing else in this row can change which tools an owl is offered.
+        previous_tool_names = await self._current_tool_names(m.source, m.name)
         await self._db.execute(
             _UPSERT_SQL,
             (
@@ -227,12 +239,76 @@ class SkillIndexStore(OwnedRepository):
         # Keep skills_fts in sync — name/description/when_to_use may have changed.
         if skill_id != -1:
             await self._sync_fts(skill_id)
+        if previous_tool_names != tool_names_json:
+            self._announce_coupling_change(m.name, previous_tool_names, tool_names_json)
         # 4. EXIT
         log.skills.info(
             "[skills] store.upsert: stored",
             extra={"_fields": {"name": m.name, "source": m.source, "skill_id": skill_id}},
         )
         return skill_id
+
+    async def _current_tool_names(self, source: str, name: str) -> str:
+        """The stored ``tool_names`` JSON for this skill, or ``''`` if new.
+
+        Never raises: this exists to decide whether to drop a cache, and failing
+        to read it must not fail the write it precedes.
+        """
+        try:
+            rows = await self._db.fetch_all(
+                "SELECT tool_names FROM skills WHERE owner_id = ? AND source = ? AND name = ?",
+                (self._owner_id, source, name),
+            )
+        except Exception as exc:
+            log.skills.warning(
+                "[skills] store.upsert: could not read the previous coupling — "
+                "the presented-tools memo will not be invalidated for this write",
+                exc_info=exc, extra={"_fields": {"name": name, "source": source}},
+            )
+            return _COUPLING_UNREADABLE
+        return str(rows[0]["tool_names"] or "") if rows else ""
+
+    @staticmethod
+    def _announce_coupling_change(name: str, before: str, after: str) -> None:
+        """ESC-11 — a skill's coupled tools changed, so presented arrays are stale.
+
+        WHY THIS EXISTS. execute() memoizes the tool array a model is shown on
+        (session_key, owl, protocol, window, hydrated). The PINS are deliberately
+        not in that key, because Law 1 wants the array byte-stable for the life of
+        a conversation. The consequence was that installing a skill mid-session
+        never offered the tools it couples until the session rolled over — "I gave
+        my owl a skill and nothing happened".
+
+        It reuses ``capabilities.invalidate_cache`` rather than introducing a
+        second invalidation path (Bakir, 2026-08-15). The argument already written
+        in presented_tools._on_capability_change applies verbatim with "skill"
+        substituted for "capability", and this platform is self-extending, so an
+        owl gaining a skill at runtime is the intended path, not an edge case.
+
+        FIRES ONLY ON A REAL CHANGE. Every startup re-scan calls upsert for every
+        skill; invalidating on all of them would drop every memoized array on each
+        scan and cause exactly the per-turn prefix churn that ESC-12 is open to
+        fix. A no-op re-scan must stay a no-op.
+        """
+        if before == _COUPLING_UNREADABLE:
+            return
+        try:
+            from stackowl.infra import capabilities
+
+            capabilities.invalidate_cache(f"skill:{name}")
+        except Exception as exc:
+            log.skills.error(
+                "[skills] store.upsert: coupling changed but the invalidation FAILED — "
+                "the new tools will not be offered until the session rolls over",
+                exc_info=exc, extra={"_fields": {"skill": name}},
+            )
+            return
+        log.skills.info(
+            "[skills] store.upsert: coupled tools CHANGED — presented arrays dropped",
+            extra={"_fields": {
+                "skill": name, "before": before or "(new skill)", "after": after,
+            }},
+        )
 
     async def list_for_source(self, source: SkillSource) -> list[Skill]:
         """Return every skill in ``source``, ordered by name."""
