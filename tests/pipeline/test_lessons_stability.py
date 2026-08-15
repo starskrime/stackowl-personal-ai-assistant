@@ -13,7 +13,8 @@ them query-INDEPENDENT and keep them.
 DEVIATION, stated deliberately. He phrased the mechanism as "the N most recent or
 highest-weighted". The index is LanceDB and exposes ANN only — a true recency or
 weight ordering needs a new scan path through both LessonsIndex and
-LessonsLanceAdapter. What I1 actually requires is the PROPERTY (identical every
+the lessons store (LanceDB then, SQLite since D08.2). What I1 actually
+requires is the PROPERTY (identical every
 turn of a session), not that particular mechanism, so the selection key is the
 OWL's identity instead of the user's message. Same owl, same index contents, same
 lessons — and "lessons relevant to this owl" is a more defensible selection than

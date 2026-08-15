@@ -117,7 +117,7 @@ async def test_reflect_recall_chain_surfaces_in_live_turn_memory_context(
     reflection's content must reach the tool-loop call's ``system_text``
     (``classify``'s ``memory_context`` folded in by ``assemble``).
     """
-    lessons_index = build_lessons_index(tmp_path)
+    lessons_index = build_lessons_index(tmp_db)
     bridge = SqliteMemoryBridge(db=tmp_db)
     owl_registry = OwlRegistry.with_default_secretary()
     tool_registry = ToolRegistry.with_defaults()

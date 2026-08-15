@@ -465,7 +465,8 @@ async def _gather_lessons(query: str, limit: int = 3, *, owl_name: str = "") -> 
     #
     # DEVIATION from his phrasing ("N most recent or highest-weighted"): the
     # index is LanceDB and exposes ANN only, so recency/weight ordering needs a
-    # new scan path through LessonsIndex AND LessonsLanceAdapter. What I1
+    # new scan path through LessonsIndex AND its store (LanceDB then, SQLite
+    # since D08.2). What I1
     # requires is the PROPERTY — identical every turn of a session — so the key
     # is the OWL's identity. Same owl, same index contents, same lessons; and
     # "lessons relevant to this owl" is a more defensible selection than

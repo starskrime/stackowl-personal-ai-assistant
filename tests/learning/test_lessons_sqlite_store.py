@@ -318,3 +318,68 @@ class TestTheCache:
 
         assert [h.lesson_id for h in await store.search([1.0, 0.0], limit=5)] == ["two"]
         assert [h.lesson_id for h in await store.search([1.0, 0.0, 0.0], limit=5)] == ["three"]
+
+
+class TestSameBatchDuplicates:
+    """Ported from test_lessons_lance_dedup.py, which went with the LanceDB adapter.
+
+    THE BUG IT WAS WRITTEN FOR WAS REAL AND IS RECORDED IN THE DATA. LanceDB's
+    ``merge_insert`` raised "Ambiguous merge inserts are prohibited" when two SOURCE
+    rows in one ``execute()`` matched the same TARGET row, which happens whenever two
+    lessons are synthesized for the same skill in a single flush — observed in
+    production as ``skill:learned/reks-research-specialist``, and that is the very id
+    found FOUR times in the live corpus during the move, residue from before the
+    dedup fix landed.
+
+    The vehicle is gone; the invariant is not. A batch carrying the same lesson_id
+    twice must neither crash nor leave two rows, and last-wins must match what two
+    sequential publish() calls would have done. Here it falls out of the PRIMARY KEY
+    plus an upsert rather than from every writer remembering to dedupe first —
+    which is why the same bug cannot recur in this store.
+    """
+
+    async def test_a_duplicate_id_in_one_batch_does_not_crash(
+        self, tmp_db: DbPool
+    ) -> None:
+        store = _store(tmp_db)
+        dup = "skill:learned/reks-research-specialist"
+
+        n = await store.publish_many([
+            _lesson(dup, [1.0, 0.0, 0.0], source_type="skill"),
+            _lesson(dup, [0.0, 1.0, 0.0], source_type="skill"),
+            _lesson("other", [0.0, 0.0, 1.0], source_type="skill"),
+        ])
+
+        assert n == 3, "every row is offered to the write; the key resolves the clash"
+
+    async def test_a_duplicate_id_in_one_batch_leaves_exactly_one_row(
+        self, tmp_db: DbPool
+    ) -> None:
+        store = _store(tmp_db)
+        dup = "skill:learned/reks-research-specialist"
+        await store.publish_many([
+            _lesson(dup, [1.0, 0.0, 0.0], source_type="skill"),
+            _lesson(dup, [0.0, 1.0, 0.0], source_type="skill"),
+        ])
+
+        rows = await tmp_db.fetch_all(
+            "SELECT COUNT(*) AS n FROM lessons WHERE lesson_id = ?", (dup,)
+        )
+        assert int(rows[0]["n"]) == 1, (
+            "two rows for one lesson_id — the skill would be double-weighted in "
+            "recall, which is exactly what the live corpus had four copies of"
+        )
+
+    async def test_last_wins_matching_sequential_publishes(
+        self, tmp_db: DbPool
+    ) -> None:
+        store = _store(tmp_db)
+        dup = "skill:learned/reks-research-specialist"
+        first = _lesson(dup, [1.0, 0.0, 0.0], source_type="skill")
+        second = _lesson(dup, [0.0, 1.0, 0.0], source_type="skill")
+        object.__setattr__(second, "content", "the later one")
+
+        await store.publish_many([first, second])
+
+        hits = await store.search([0.0, 1.0, 0.0], limit=1)
+        assert hits[0].content == "the later one", hits

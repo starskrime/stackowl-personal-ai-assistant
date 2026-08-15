@@ -56,11 +56,11 @@ async def test_reflect_write_publish_recall_chain_e2e(
     Stage 1 (write): an eligible outcome -> ReflectionWriterHandler.execute()
       -> a durable row in `reflections`.
     Stage 2 (publish): the SAME execute() call -> _publish_to_lessons() ->
-      the REAL LessonsIndex (LanceDB, tmp-dir, hash-fallback embeddings).
+      the REAL LessonsIndex (SQLite, hash-fallback embeddings).
     Stage 3 (recall): a LATER turn's classify._gather_lessons(), against the
       SAME LessonsIndex instance, surfaces the reflection's content.
     """
-    lessons_index = build_lessons_index(tmp_path)
+    lessons_index = build_lessons_index(tmp_db)
     registry = ProviderRegistry()
     registry.register_mock(
         "fast", ScriptedReflectionProvider(_SUMMARY, _STRATEGY), tier="fast",
@@ -127,7 +127,7 @@ async def test_disqualifying_outcome_writes_and_recalls_nothing(
     trigger (a genuine failure, or a low-quality success) must produce no
     reflection and nothing recallable. Guards against the happy-path test
     passing by accident (e.g. an empty-string false positive)."""
-    lessons_index = build_lessons_index(tmp_path)
+    lessons_index = build_lessons_index(tmp_db)
     registry = ProviderRegistry()
     registry.register_mock(
         "fast", ScriptedReflectionProvider(_SUMMARY, _STRATEGY), tier="fast",

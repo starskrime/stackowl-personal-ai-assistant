@@ -16,12 +16,11 @@ existing patterns need to be driven end-to-end instead of in isolation.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from stackowl.db.pool import DbPool
 from stackowl.embeddings.registry import EmbeddingRegistry
 from stackowl.learning.lessons_index import LessonsIndex
-from stackowl.learning.lessons_lance import LessonsLanceAdapter
+from stackowl.learning.lessons_store import SqliteLessonsStore
 from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.scheduler.job import Job, JobResult
@@ -80,16 +79,19 @@ def reflection_job(job_id: str = "reflection_writer-e2e") -> Job:
     )
 
 
-def build_lessons_index(tmp_path: Path) -> LessonsIndex:
-    """Real LessonsIndex over a temp-dir LanceDB + hash-fallback embeddings.
+def build_lessons_index(db: DbPool) -> LessonsIndex:
+    """Real LessonsIndex over the test's SQLite pool + hash-fallback embeddings.
+
+    D08.2 — was a temp-dir LanceDB; the corpus lives in SQLite now, so the index
+    takes the same pool the rest of the test already uses. That is strictly closer
+    to production, which runs both over one database.
 
     ``EmbeddingRegistry()`` with no ``.create()`` call lazily defaults to
     ``HashEmbeddingProvider`` on first ``.get()`` — deterministic, zero
     network/model-download dependency (the Jetson dev box has no local model
     to pull; per project convention, never pull one just for a test).
     """
-    adapter = LessonsLanceAdapter(data_dir=tmp_path / "lessons_lance")
-    return LessonsIndex(adapter, embedding_registry=EmbeddingRegistry())
+    return LessonsIndex(SqliteLessonsStore(db), embedding_registry=EmbeddingRegistry())
 
 
 async def seed_outcome(
