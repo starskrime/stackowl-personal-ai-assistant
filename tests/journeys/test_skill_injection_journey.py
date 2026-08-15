@@ -282,6 +282,17 @@ def _live_io():  # noqa: ANN202
     TestModeGuard._active = prev  # type: ignore[attr-defined]
 
 
+# KNOWN POLLUTION, not yet root-caused. Journey A pollutes Journey B: each passes
+# ALONE and A+C or B+control pass together, but B fails when A runs first
+# (bisected 2026-08-15). B reports the coupled tool "not presented", which made a
+# WORKING feature look broken — coupling is fine, and B passes in isolation.
+#
+# A StepServices reset fixture was tried and did NOT fix it, so the shared state is
+# something else; the guess was removed rather than left in place looking like a
+# solved problem. A test that fails only in company is the worst kind of red: it
+# sends the next reader to fix code that is correct.
+
+
 def _build(provider: _ScriptedSpecialist, *, skill_store: object, owl_registry: OwlRegistry) -> _Env:
     adapter = TelegramChannelAdapter(TelegramSettings(allowed_user_ids=frozenset({USER_ID})))
     bot = _FakeBot()
@@ -398,9 +409,16 @@ def _specialist_manifest(
 async def test_journey_a_owned_skill_summary_trust_wrapped_in_prompt(
     tmp_db: DbPool, tmp_path: Path,
 ) -> None:
-    """An owl owning a NON-builtin (installed) skill with an author summary gets
-    that summary injected into its system prompt INSIDE the
-    ``<skill_reference ... trust="untrusted">`` fence."""
+    """An owl owning a NON-builtin (installed) skill gets its blurb injected into
+    the system prompt INSIDE the ``<skill_reference trust="untrusted">`` fence.
+
+    REPOINTED. This asserted the author-written ``summary`` appears verbatim. There
+    is no summary any more: the column went in D09.3 slice 5 (migration 0110) and
+    D10.2 made ``description — when_to_use`` the whole blurb, capping description
+    at 60 chars so when_to_use carries the retrieval signal. The fence — the part
+    that is a security boundary rather than a formatting choice — is unchanged and
+    is what this still pins.
+    """
     skills_root = tmp_path / "ws" / "skills"
     summary_text = "Resize raster images then re-encode to webp keeping aspect ratio"
     _write_skill_md(
@@ -420,17 +438,21 @@ async def test_journey_a_owned_skill_summary_trust_wrapped_in_prompt(
     _ = await _turn(env, f"@{_OWL} please help")
 
     sys_text = provider.system_text
-    # The owned-skill summary reached the system prompt...
-    assert summary_text in sys_text, (
-        f"owned-skill summary not injected into system prompt; got: {sys_text!r}"
+    # The owned skill's blurb reached the system prompt — description + when_to_use,
+    # which is what the injector composes now.
+    assert "resize and re-encode images" in sys_text, (
+        f"owned-skill description not injected into system prompt; got: {sys_text!r}"
+    )
+    assert "when the user wants smaller images" in sys_text, (
+        "when_to_use carries the retrieval signal since D10.2 and must be injected"
     )
     # ...INSIDE the untrusted fence (presentation-as-untrusted-reference defense).
     assert 'trust="untrusted"' in sys_text, "skill summary not fenced as untrusted"
     fence_open = sys_text.index("<skill_reference")
     fence_close = sys_text.index("</skill_reference>")
     inner = sys_text[fence_open:fence_close]
-    assert summary_text in inner, (
-        "summary text is present but OUTSIDE the <skill_reference> fence — "
+    assert "resize and re-encode images" in inner, (
+        "the skill blurb is present but OUTSIDE the <skill_reference> fence — "
         f"fence body was: {inner!r}"
     )
     assert 'name="image_resize"' in inner
