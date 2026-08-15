@@ -17,7 +17,6 @@ from __future__ import annotations
 import pytest
 
 from stackowl.commands.tier_command import (
-    TierCommand,
     _owner_key_for_state,
     _read_tier,
     _write_tier,

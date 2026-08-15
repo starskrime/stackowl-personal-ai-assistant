@@ -38,7 +38,13 @@ class TestReadTargetProtected:
     # tested that a non-existent path happened to be refused. Both are asserted
     # ABSOLUTELY below, against the accessor that resolves the real location,
     # which is strictly stronger.
-    @pytest.mark.parametrize("p", ["stackowl.db", "lancedb", "lancedb/data.lance"])
+    # "lancedb" and "lancedb/data.lance" were parametrised here too. D08.2 removed
+    # the store, its directory and its entry in the confine deny-list, so those
+    # strings would now pass for the wrong reason — the same trap the note above
+    # describes for kuzu and skills. (I briefly substituted "kuzu" here and it
+    # failed immediately, which is the note earning its keep: kuzu is at
+    # home()/kuzu, not under the workspace, and is asserted ABSOLUTELY below.)
+    @pytest.mark.parametrize("p", ["stackowl.db"])
     def test_internal_store_reads_are_protected(self, p: str) -> None:
         assert read_target_protected({"path": p}) is True
 

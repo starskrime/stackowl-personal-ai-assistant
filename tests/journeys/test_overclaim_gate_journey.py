@@ -42,7 +42,7 @@ from stackowl.pipeline.delivery_gate import (
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps.execute import _run_with_tools
-from stackowl.pipeline.streaming import ResponseChunk, StreamRegistry
+from stackowl.pipeline.streaming import StreamRegistry
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 

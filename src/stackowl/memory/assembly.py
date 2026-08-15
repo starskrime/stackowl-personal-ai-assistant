@@ -37,7 +37,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.memory.entity_extractor import EntityExtractor
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
-    from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.preferences import PreferenceStore
     from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
     from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
@@ -57,7 +56,6 @@ class MemoryComponents:
     bridge: SqliteMemoryBridge
     preference_store: PreferenceStore
     embedding_registry: EmbeddingRegistry
-    lancedb: LanceDBAdapter
     # DUR-5 / F069 — None when Kuzu degraded at init (consistent with LanceDB /
     # embeddings degrade-don't-crash policy). classify + kuzu_sync tolerate None.
     kuzu_adapter: KuzuAdapter | None
@@ -100,7 +98,6 @@ class MemoryAssembly:
         from stackowl.memory.entity_extractor import EntityExtractor
         from stackowl.memory.kuzu_adapter import KuzuAdapter
         from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
-        from stackowl.memory.lancedb_adapter import LanceDBAdapter
         from stackowl.memory.preferences import PreferenceStore
         from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
         from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
@@ -121,19 +118,23 @@ class MemoryAssembly:
             extra={"_fields": {"semantic": embedding_registry.is_semantic}},
         )
 
-        # 1b) LanceDB adapter — HARD-FAIL per operator choice (Commit B vote).
-        # No try/except: if LanceDB can't start, startup must fail so we
-        # don't silently lose the vector-recall layer.
-        lancedb = LanceDBAdapter(embedding_registry=embedding_registry)
-        log.memory.info("[memory] assembly: lancedb adapter ready")
+        # The LanceDB adapter was constructed here and HARD-FAILED startup if it
+        # could not start (Commit B operator vote), because recall depended on it.
+        # D08.2 removed it: the vectors it served hydrated from committed_facts,
+        # which has 0 rows and no writer since seam 3 pass 4.
 
-        # 2) Bridge — primary hot-path read/write surface, now with semantic
-        # search wired through embeddings + LanceDB.
+        # 2) Bridge — primary hot-path read/write surface. Recall is FTS5 over
+        # committed_facts; the semantic half went with LanceDB in D08.2.
+        #
+        # `mem.semantic_search_enabled` is NO LONGER PASSED, because the bridge has
+        # nothing left to gate with it. The config KEY still exists and is now
+        # unread — raised as ESC-7 rather than removed quietly, because
+        # MemorySettings is `extra="forbid"`, so deleting a key that any deployment
+        # has set turns a no-op toggle into a boot failure. That is a user-facing
+        # call, not one to make inside a refactor.
         bridge = SqliteMemoryBridge(
             db=db,
             embedding_registry=embedding_registry,
-            lancedb=lancedb,
-            semantic_search_enabled=mem.semantic_search_enabled,
             # MEM-1 (F073) — config-driven blended recall (N + decay half-life).
             recall_limit=mem.recall_limit,
             recall_candidate_pool=mem.recall_candidate_pool,
@@ -271,7 +272,6 @@ class MemoryAssembly:
             bridge=bridge,
             preference_store=preference_store,
             embedding_registry=embedding_registry,
-            lancedb=lancedb,
             kuzu_adapter=kuzu_adapter,
             entity_extractor=entity_extractor,
             lessons_index=lessons_index,

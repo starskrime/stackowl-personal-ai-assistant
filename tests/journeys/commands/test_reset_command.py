@@ -20,14 +20,13 @@ from stackowl.memory.models import StagedFact
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from tests._story_6_7_helpers import make_state  # noqa: F401
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
-async def memory_db(tmp_path: Path) -> AsyncGenerator[DbPool, None]:
+async def memory_db(tmp_path: Path) -> AsyncGenerator[DbPool]:
     """DbPool with all migrations applied."""
     db_path = tmp_path / "reset_test.db"
     MigrationRunner(db_path=db_path).run()

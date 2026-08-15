@@ -2,7 +2,7 @@
 
 Canonical source of truth for mined patterns linking (tool_name, condition,
 predicted_outcome) → evidence_count. Embeddings of the human-readable
-heuristic content land in the LanceDB lessons table via
+heuristic content land in the SQLite lessons table via
 :class:`stackowl.learning.lessons_index.LessonsIndex`.
 """
 

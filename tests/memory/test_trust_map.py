@@ -1,4 +1,4 @@
-from stackowl.memory.trust import trust_for_source, SAFE_DEFAULT
+from stackowl.memory.trust import SAFE_DEFAULT, trust_for_source
 
 
 def test_external_sources_untrusted():

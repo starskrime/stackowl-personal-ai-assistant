@@ -18,14 +18,12 @@ from stackowl.memory.sqlite_helpers import (
     pack_embedding,
     parse_iso,
     row_to_staged,
-    semantic_recall,
 )
 from stackowl.memory.trust import Trust, trust_for_source
 
 if TYPE_CHECKING:  # pragma: no cover
     from stackowl.db.pool import DbPool
     from stackowl.embeddings.registry import EmbeddingRegistry
-    from stackowl.memory.lancedb_adapter import LanceDBAdapter
 
 
 #: How many conversation turns to keep per owner scope.
@@ -78,8 +76,6 @@ class SqliteMemoryBridge(MemoryBridge):
         self,
         db: DbPool,
         embedding_registry: EmbeddingRegistry | None = None,
-        lancedb: LanceDBAdapter | None = None,
-        semantic_search_enabled: bool = True,
         recall_limit: int = 5,
         recall_candidate_pool: int = 20,
         recall_decay_half_life_days: float = 30.0,
@@ -90,8 +86,6 @@ class SqliteMemoryBridge(MemoryBridge):
             extra={
                 "_fields": {
                     "has_embeddings": embedding_registry is not None,
-                    "has_lancedb": lancedb is not None,
-                    "semantic_enabled": semantic_search_enabled,
                     "recall_limit": recall_limit,
                     "recall_candidate_pool": recall_candidate_pool,
                 }
@@ -99,8 +93,6 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         self._db = db
         self._embeddings = embedding_registry
-        self._lancedb = lancedb
-        self._semantic_enabled = semantic_search_enabled
         # MEM-1 (F073) — blended recall config + the single-policy ranker. The
         # candidate pool is over-fetched (>= the final limit) so recency /
         # reinforcement can promote a fact the raw relevance cut would drop.
@@ -112,16 +104,10 @@ class SqliteMemoryBridge(MemoryBridge):
         # 4. EXIT
         log.memory.debug("[memory] sqlite_bridge.init: exit")
 
-    @property
-    def lancedb(self) -> LanceDBAdapter | None:
-        """The ANN adapter this bridge writes/reads vectors through (may be None).
-
-        Exposed so write chokepoints can upsert vectors through the SAME adapter
-        the bridge recalls from, keeping the vector store single-sourced. The
-        chokepoint this was written for was the promoter, removed in D08.2 seam 3
-        pass 4; the property stays because recall still reads through the adapter.
-        """
-        return self._lancedb
+    # The `lancedb` property stood here, exposing the ANN adapter so write
+    # chokepoints could upsert vectors through the same one recall read from. Both
+    # the chokepoint (fact_promoter, seam 3 pass 4) and the adapter (D08.2) are
+    # gone, and the vectors it served hydrated from a table with 0 rows.
 
     # --- pipeline contract ------------------------------------------------------------
 
@@ -386,59 +372,19 @@ class SqliteMemoryBridge(MemoryBridge):
             "[memory] sqlite_bridge.recall: entry",
             extra={"_fields": {"query_len": len(query), "limit": limit, "scope_key": scope_key}},
         )
-        # 2. DECISION — try the semantic path when wired and embedder available.
-        # F062 — gate on the CORPUS-LEVEL identity (read once), NOT a flappy
-        # per-row count. When the active embedding model no longer matches the
-        # corpus the vectors were written under (or the corpus is untagged/legacy
-        # ⇒ None ⇒ mismatch, never default-to-active), the ANN is poisoned: skip
-        # semantic entirely and fall through to the SAME FTS fallback below — an
-        # honest degrade, never a silent empty or a mismatched "confirmed" hit.
-        if (
-            self._semantic_enabled
-            and self._lancedb is not None
-            and self._embeddings is not None
-        ):
-            corpus_model, corpus_dim = await self._lancedb.corpus_identity()
-            active_model = self._embeddings.active_model
-            if corpus_model is None or corpus_model != active_model:
-                log.memory.warning(
-                    "[memory] sqlite_bridge.recall: embedding model drift — "
-                    "ANN corpus mismatched, degrading to FTS until the dream-worker "
-                    "reindex phase re-embeds from the SQLite SoT (no inline reindex)",
-                    extra={
-                        "_fields": {
-                            "active_embedding_model": active_model,
-                            "corpus_embedding_model": corpus_model,
-                            "corpus_dim": corpus_dim,
-                        }
-                    },
-                )
-                # Fall through to FTS (no early return — preserves the existing
-                # fallback ladder). The dream-worker reindex phase re-embeds from
-                # the SQLite SoT and rewrites the sidecar, curing the drift.
-            else:
-                # Corpus matches: semantic path, with a cheap per-row model filter
-                # as defense-in-depth against any stray mixed rows.
-                escaped = active_model.replace("'", "''")
-                semantic = await semantic_recall(
-                    self._db,
-                    self._embeddings,
-                    self._lancedb,
-                    query,
-                    limit,
-                    filter_expr=f"embedding_model = '{escaped}'",
-                )
-                if semantic:
-                    filtered = filter_by_scope(semantic, scope_key)
-                    log.memory.debug(
-                        "[memory] sqlite_bridge.recall: exit — semantic",
-                        extra={"_fields": {"n_results": len(filtered)}},
-                    )
-                    return filtered
-                log.memory.debug(
-                    "[memory] sqlite_bridge.recall: semantic empty → FTS5 fallback",
-                    extra={"_fields": {"semantic_is_none": semantic is None}},
-                )
+        # THE SEMANTIC PATH WENT WITH LANCEDB in D08.2, and it is worth being exact
+        # about what was lost: nothing that could return a row. It ranked vectors in
+        # the LanceDB `committed_facts` table and then hydrated content from the
+        # SQLite table of the same name — which has held 0 rows since migration
+        # 0112, and whose last writer (fact_promoter) was removed in seam 3 pass 4.
+        # Measured before removing: 4,985 vectors on one side, 0 rows on the other,
+        # so every semantic hit hydrated to nothing and fell through to FTS anyway.
+        #
+        # Keeping a 236MB dependency to serve a query that cannot return a row is
+        # what Bakir's instruction ruled out. If durable facts ever come back, the
+        # replacement pattern is already proven in learning/lessons_store.py:
+        # embeddings as SQLite BLOBs plus a cached numpy scan — exact rather than
+        # approximate, and no new dependency.
         # 3. STEP — FTS5 BM25 fallback
         records = await fts_recall(self._db, query, limit)
         records = filter_by_scope(records, scope_key)
@@ -450,7 +396,7 @@ class SqliteMemoryBridge(MemoryBridge):
         return records
 
     async def delete(self, fact_id: str) -> None:
-        """Delete a fact from all stores (sqlite + lancedb when present)."""
+        """Delete a fact from SQLite — base table, FTS index and staged row."""
         # 1. ENTRY
         log.memory.debug(
             "[memory] sqlite_bridge.delete: entry",
@@ -471,17 +417,10 @@ class SqliteMemoryBridge(MemoryBridge):
                 )
             await tx.execute("DELETE FROM committed_facts WHERE fact_id = ?", (fact_id,))
             await tx.execute("DELETE FROM staged_facts WHERE fact_id = ?", (fact_id,))
-        # 3. STEP — best-effort delete from LanceDB
-        if self._lancedb is not None:
-            try:
-                await self._lancedb.delete(fact_id)
-            except Exception as exc:
-                # B5 — never let ANN failures bubble out of delete()
-                log.memory.warning(
-                    "[memory] sqlite_bridge.delete: lancedb delete failed",
-                    exc_info=exc,
-                    extra={"_fields": {"fact_id": fact_id}},
-                )
+        # A best-effort LanceDB delete followed, so a removed fact could not linger
+        # as a vector. D08.2 removed the vector store; the transaction above is now
+        # the whole deletion, which is strictly simpler to reason about — there is
+        # no second store that can fall out of step with this one.
         # 4. EXIT
         log.memory.info(
             "[memory] sqlite_bridge.delete: exit",

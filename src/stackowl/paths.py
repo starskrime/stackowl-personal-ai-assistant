@@ -63,9 +63,8 @@ class StackowlHome:
         """
         return cls.home() / "kuzu"
 
-    @classmethod
-    def lancedb_dir(cls) -> Path:
-        return cls.workspace() / "lancedb"
+    # `lancedb_dir` stood here. The vector store went in D08.2 and its directory
+    # was removed from disk after the lessons corpus was migrated into SQLite.
 
     @classmethod
     def tools_dir(cls) -> Path:
@@ -178,7 +177,7 @@ class StackowlHome:
 
         Lives UNDER the workspace (not the home root) so ``send_file`` can deliver
         from it, yet is a sibling of — not mixed in with — the persistent stores
-        (stackowl.db / lancedb / kuzu / knowledge) that live at the workspace
+        (stackowl.db / kuzu / knowledge) that live at the workspace
         ROOT. (``skills`` was in that list until D05.1 moved it OUT of the
         workspace entirely — see :meth:`skills_dir`.) That separation lets the downloads janitor prune this
         folder on a schedule without ever touching durable state.
@@ -217,7 +216,6 @@ class StackowlHome:
             cls.secrets_dir(),
             cls.workspace(),
             cls.kuzu_dir(),
-            cls.lancedb_dir(),
             cls.tools_dir(),
             cls.learned_tools_dir(),
             cls.knowledge_dir(),

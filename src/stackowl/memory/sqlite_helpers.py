@@ -13,8 +13,6 @@ from stackowl.memory.models import MemoryRecord, StagedFact
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
-    from stackowl.embeddings.registry import EmbeddingRegistry
-    from stackowl.memory.lancedb_adapter import LanceDBAdapter
 
 
 def pack_embedding(embedding: list[float] | None) -> bytes | None:
@@ -168,53 +166,10 @@ async def fetch_committed_by_ids(
     return [by_id[fid] for fid in fact_ids if fid in by_id]
 
 
-async def semantic_recall(
-    db: DbPool,
-    embeddings: EmbeddingRegistry,
-    lancedb: LanceDBAdapter,
-    query: str,
-    limit: int,
-    filter_expr: str | None = None,
-) -> list[MemoryRecord] | None:
-    """Try LanceDB-backed recall.
-
-    Returns ``None`` on any failure so the caller can fall back to FTS5.
-    Returns ``[]`` when LanceDB returns no hits.
-
-    ``filter_expr`` is an optional per-row LanceDB predicate (F062 cheap
-    defense-in-depth — e.g. ``embedding_model = 'all-MiniLM-L6-v2'``). The
-    authoritative gate is the corpus-level decision in the caller; this filter
-    is a belt-and-suspenders thinning of any stray mixed rows.
-    """
-    try:
-        vectors = await embeddings.get().embed([query])
-    except Exception as exc:
-        # B5
-        log.memory.warning(
-            "[memory] sqlite_helpers.semantic_recall: embed failed",
-            exc_info=exc,
-            extra={"_fields": {"query_len": len(query)}},
-        )
-        return None
-    if not vectors or not vectors[0]:
-        log.memory.warning(
-            "[memory] sqlite_helpers.semantic_recall: empty embedding",
-            extra={"_fields": {"query_len": len(query)}},
-        )
-        return None
-    try:
-        hits = await lancedb.search(vectors[0], limit=limit, filter_expr=filter_expr)
-    except Exception as exc:
-        # B5 — never crash recall on ANN failure
-        log.memory.warning(
-            "[memory] sqlite_helpers.semantic_recall: lancedb search failed",
-            exc_info=exc,
-            extra={"_fields": {"query_len": len(query)}},
-        )
-        return None
-    if not hits:
-        return []
-    return await fetch_committed_by_ids(db, [h.fact_id for h in hits])
+# `semantic_recall` stood here: embed the query, ANN-search LanceDB, then hydrate
+# the hits from SQLite by fact_id. It went with the vector store in D08.2 — the
+# hydration read committed_facts, which has 0 rows and no writer since seam 3
+# pass 4, so every ANN hit resolved to nothing and fell through to FTS anyway.
 
 
 def filter_by_scope(

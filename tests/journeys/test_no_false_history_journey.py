@@ -30,7 +30,6 @@ import pytest
 
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
-from stackowl.gateway.scanner import GatewayScanner, IngressMessage
 from stackowl.memory.reflection_store import ReflectionStore
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry

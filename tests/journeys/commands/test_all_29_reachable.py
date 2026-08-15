@@ -12,10 +12,11 @@ accidentally unwired.
 
 from __future__ import annotations
 
+import pytest
+
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.manifest import SHIPPED_COMMANDS
 from stackowl.commands.registry import CommandRegistry
-import pytest
 
 
 @pytest.fixture(autouse=True)

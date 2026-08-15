@@ -40,7 +40,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.health.contributors import GraphContributor
     from stackowl.infra.resilience import HealableResource
     from stackowl.memory.assembly import MemoryComponents
-    from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.outcome_store import TaskOutcomeStore
     from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
     from stackowl.notifications.deliverer import ProactiveDeliverer
@@ -426,7 +425,6 @@ class SchedulerAssembly:
             settings,
             liveness_store,
             memory_components.embedding_registry,
-            memory_components.lancedb,
             memory_components.graph_health,
             provider_registry,
             owl_registry,
@@ -443,7 +441,9 @@ class SchedulerAssembly:
         healers: dict[str, HealableResource] = {
             "db": db,
             "embedding_registry": memory_components.embedding_registry,
-            "lancedb": memory_components.lancedb,
+            # "lancedb" was a healer key here. Its resource and its health
+            # contributor went with the adapter in D08.2; a key pointing at nothing
+            # would make the sweep look up a resource that cannot be healed.
         }
         # Task 9 — durable-task liveness watchdog. B4 crash-recovery only reaps
         # orphaned tasks at BOOT; a task whose background drive died mid-execution
@@ -1033,7 +1033,6 @@ def _build_health_aggregator(
     settings: Settings,
     liveness_store: ChannelLivenessStore | None = None,
     embedding_registry: EmbeddingRegistry | None = None,
-    lancedb_adapter: LanceDBAdapter | None = None,
     graph_contributor: GraphContributor | None = None,
     provider_registry: ProviderRegistry | None = None,
     owl_registry: OwlRegistry | None = None,
@@ -1061,12 +1060,6 @@ def _build_health_aggregator(
     that hasn't threaded it through) skips registration, same pattern as
     ``liveness_store``.
 
-    ``lancedb_adapter`` (Task 2, ADR-6 self-heal) is the live, in-process
-    :class:`LanceDBAdapter` — same "no extra live-runtime handle needed"
-    situation as ``embedding_registry``, but unlike it LanceDBAdapter's
-    existing ``health()`` returns a ``HealthReport`` (a different shape), so
-    it's wrapped in :class:`LanceDBHealthContributor` rather than registered
-    directly. ``None`` skips registration, same pattern as the others.
 
     ``graph_contributor`` (Task 3, ADR-6 self-heal) is
     ``MemoryComponents.graph_health`` — a :class:`GraphContributor` already
@@ -1086,7 +1079,7 @@ def _build_health_aggregator(
     reports "degraded" when a REAL circuit breaker is OPEN — the actual traffic
     health signal FX-01's cause-aware recovery feeds, not a synthetic ping. Both
     are registered; they check different things. ``None`` skips registration,
-    same pattern as ``embedding_registry``/``lancedb_adapter`` (no live registry
+    same pattern as ``embedding_registry`` (no live registry
     threaded through, e.g. an early-boot caller).
 
     ``owl_registry``/``outcome_store`` register :class:`OwlRatingHealthContributor`
@@ -1104,7 +1097,6 @@ def _build_health_aggregator(
         DbContributor,
         FilesystemContributor,
         GraphContributor,
-        LanceDBHealthContributor,
         OwlRatingHealthContributor,
         ProviderContributor,
     )
@@ -1117,8 +1109,10 @@ def _build_health_aggregator(
     agg.register(graph_contributor if graph_contributor is not None else GraphContributor.probe())
     if embedding_registry is not None:
         agg.register(embedding_registry)
-    if lancedb_adapter is not None:
-        agg.register(LanceDBHealthContributor(lancedb_adapter))
+    # A LanceDBHealthContributor was registered here. Both it and the adapter it
+    # wrapped went in D08.2 — a health surface for a subsystem that no longer
+    # exists reports on nothing, and its "lancedb" healer key would have pointed
+    # the sweep at a resource it could not recycle.
     for provider in settings.providers:
         if provider.enabled:
             agg.register(ProviderContributor(provider))

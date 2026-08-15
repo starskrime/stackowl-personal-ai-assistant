@@ -1,28 +1,32 @@
-"""Regression: recall() must fall back to FTS5 when semantic search yields no hits.
+"""recall() surfaces a committed fact through FTS5.
 
-Bug: ``SqliteMemoryBridge.recall()`` guarded the semantic result with
-``if semantic is not None:`` — but ``semantic_recall`` returns an empty list
-``[]`` (not ``None``) when the LanceDB ``committed_facts`` table does not exist
-(``sync_search`` short-circuits to ``[]``). Since ``[] is not None`` is True,
-recall() returned the empty list and NEVER reached the FTS5 fallback — so a
-fact that IS committed and IS matchable by FTS5 was never surfaced.
+WHAT THIS USED TO BE, and why it shrank rather than went away. The original bug
+(P0-1) was that ``SqliteMemoryBridge.recall()`` guarded its semantic result with
+``if semantic is not None:`` — but ``semantic_recall`` returned an empty LIST when
+the LanceDB ``committed_facts`` table did not exist, and ``[] is not None`` is True,
+so recall returned nothing and never reached the FTS5 fallback. The test wired a
+LanceDB adapter at an empty directory to force that ``[]`` and proved the fallback
+fired.
 
-This test wires the bridge WITH a LanceDB adapter pointed at an EMPTY temp dir
-(table missing → semantic path returns ``[]``) and asserts the committed fact
-is still recalled via FTS5.
+D08.2 removed the semantic path with LanceDB itself: it ranked vectors and then
+hydrated content from ``committed_facts``, which has held 0 rows since migration
+0112 and lost its last writer in seam 3 pass 4. There is no longer a semantic
+result to mis-guard, so the SPECIFIC bug cannot recur — the ladder it fell down is
+now the only rung.
+
+What survives is the GUARANTEE underneath it: a committed fact is findable through
+recall(), which is live code the registered ``memory`` tool calls on every search.
+That is what this now asserts, without the empty-LanceDB scaffolding that existed
+only to defeat a path that no longer exists.
 """
 
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 
 import pytest
 
-from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
-from stackowl.embeddings.registry import EmbeddingRegistry
-from stackowl.memory.lancedb_adapter import LanceDBAdapter
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from tests.memory._committed_fact_fixture import insert_committed
 
@@ -32,57 +36,30 @@ pytestmark = pytest.mark.asyncio
 _FACT_CONTENT = "The Otto Ninja starter robot kit ships with two servos"
 
 
-# D08.2 seam 3 pass 4 — this fixture used the REAL FactPromoter to write both
-# committed_facts and committed_facts_fts "exactly as production does". The promoter
-# is gone; the guard is not, because recall()'s fallback ladder is LIVE — the
-# registered `memory` tool calls recall() on every search. The shared
-# _committed_fact_fixture writes the same two rows from the promoter's own
-# statements, so what production did is still what the fixture does.
-
-
-async def test_recall_falls_back_to_fts5_when_semantic_empty(
-    tmp_db: DbPool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Committed fact is surfaced via FTS5 even when LanceDB returns no hits."""
-    # Allow live LanceDB I/O for this test (adapter gates on TestModeGuard).
-    monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", staticmethod(lambda _op: None))
-
+async def test_recall_surfaces_a_committed_fact_via_fts5(tmp_db: DbPool) -> None:
     fact_id = str(uuid.uuid4())
     await insert_committed(
-        tmp_db, fact_id=fact_id, content=_FACT_CONTENT,
-        source_type="conversation_fact", source_ref="sess-fallback",
-    )
-
-    # LanceDB pointed at an EMPTY dir → committed_facts table does NOT exist →
-    # search() returns [] → semantic_recall() returns [] (the bug trigger).
-    lancedb = LanceDBAdapter(data_dir=tmp_path / "empty_lancedb")
-    # Bare registry: .get() lazily yields the hash provider — deterministic,
-    # no model download, sufficient to drive the semantic path to its [] result.
-    embeddings = EmbeddingRegistry()
-
-    bridge = SqliteMemoryBridge(
         tmp_db,
-        embedding_registry=embeddings,
-        lancedb=lancedb,
-        semantic_search_enabled=True,
+        fact_id=fact_id,
+        content=_FACT_CONTENT,
+        source_type="conversation_fact",
+        source_ref="sess-fallback",
     )
 
-    # Sanity: the semantic path genuinely yields [] (table missing).
-    from stackowl.memory.sqlite_helpers import semantic_recall
+    results = await SqliteMemoryBridge(tmp_db).recall("ninja robot", limit=5)
 
-    semantic = await semantic_recall(tmp_db, embeddings, lancedb, "ninja robot", 5)
-    assert semantic == [], (
-        "precondition: semantic path must return [] (empty LanceDB table), "
-        f"got {semantic!r}"
-    )
-
-    results = await bridge.recall("ninja robot", limit=5)
-
-    assert results, "recall() must fall back to FTS5 and return the committed fact"
+    assert results, "recall() returned nothing for a committed, FTS-matchable fact"
     assert any(r.fact_id == fact_id for r in results), (
-        f"recall() must surface the seeded fact via FTS5; "
-        f"got {[r.fact_id for r in results]}"
+        f"recall() must surface the seeded fact; got {[r.fact_id for r in results]}"
     )
     assert any("Ninja" in r.content for r in results), (
-        "recalled record content must match the seeded fact"
+        "the recalled record's content must match the seeded fact"
     )
+
+
+async def test_recall_returns_empty_rather_than_raising_on_no_match(
+    tmp_db: DbPool,
+) -> None:
+    """The honest empty. A query with no match must be an empty list, not an
+    exception — the `memory` tool reports "no matches" from exactly this."""
+    assert await SqliteMemoryBridge(tmp_db).recall("nothing matches this", limit=5) == []

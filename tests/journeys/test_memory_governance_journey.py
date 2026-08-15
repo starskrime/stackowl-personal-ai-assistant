@@ -119,7 +119,7 @@ async def test_j1_untrusted_web_fact_renders_fenced_not_bare_trusted(
         do not survive, and the fence tags balance — the payload cannot close a fence
         it did not open.
     """
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     fact_id = await _stage(bridge, _PAYLOAD, source_type="webpage", trust="untrusted")
 
     rows = await tmp_db.fetch_all(
@@ -159,7 +159,7 @@ async def test_j2_manual_trusted_fact_renders_bare(tmp_db: DbPool) -> None:
     The fence has to be selective to be worth anything: if everything is fenced, the
     tier carries no information and the model learns to ignore it.
     """
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     fact_id = await _stage(
         bridge,
         "The user prefers dark mode in every application",
@@ -183,7 +183,7 @@ async def test_j2_manual_trusted_fact_renders_bare(tmp_db: DbPool) -> None:
 
 async def test_j3_agent_self_fact_renders_hedged_never_trusted(tmp_db: DbPool) -> None:
     """An agent's own inference renders HEDGED — neither bare-trusted nor fenced."""
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     fact_id = await _stage(
         bridge,
         "The project appears to use the asyncio event loop heavily",
@@ -222,7 +222,7 @@ async def test_a_mistagged_fact_still_cannot_break_out(tmp_db: DbPool) -> None:
     would be a complete bypass: mark the payload 'trusted' and it renders as raw
     markup inside the model's context. This is the case a fence-only test misses.
     """
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     # Deliberately MIS-STAMPED: hostile content wearing the highest tier.
     fact_id = await _stage(bridge, _PAYLOAD, source_type="manual", trust="trusted")
 

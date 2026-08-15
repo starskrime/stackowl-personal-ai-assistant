@@ -1,4 +1,4 @@
-"""BackupManager — atomic SQLite backup and restore with LanceDB/Kuzu stubs."""
+"""BackupManager — atomic SQLite backup and restore, with a Kuzu stub."""
 
 from __future__ import annotations
 
@@ -76,13 +76,11 @@ class BackupManager:
             )
             db_dest.touch()
 
-        # LanceDB stub dir
-        lancedb_stub = output_dir / "lancedb"
-        lancedb_stub.mkdir(exist_ok=True)
-        (lancedb_stub / "README.txt").write_text(
-            "LanceDB snapshot deferred — adapter snapshot() not yet implemented.\n",
-            encoding="utf-8",
-        )
+        # A LanceDB stub directory was written here, carrying a README that said
+        # the snapshot was "deferred". D08.2 removed LanceDB, and the corpus it
+        # held — the lessons — now lives in SQLite, so the database copy above
+        # ALREADY captures it. The stub would now promise a gap that no longer
+        # exists.
 
         # Kuzu stub dir
         kuzu_stub = output_dir / "kuzu"

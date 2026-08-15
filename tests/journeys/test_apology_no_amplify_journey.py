@@ -36,12 +36,11 @@ from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import StepServices
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
-
 from tests.journeys.test_conversational_bypass_journey import (
     _EchoTool,
+    _execute_turn,
     _ScriptedProvider,
     _StandardRouterProvider,
-    _execute_turn,
 )
 
 APOLOGY = "Sorry about that — I've fixed it. Anything else?"

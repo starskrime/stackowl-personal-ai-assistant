@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 
 from stackowl.commands.memory_command import MemoryCommand
@@ -19,7 +18,6 @@ from stackowl.memory.budget_enforcer import MemoryBudgetEnforcer
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.scheduler.job import Job
 from tests._story_6_4_helpers import (  # noqa: F401 — fixtures re-exported
-    FakeLanceDB,
     db,
     insert_committed,
     make_state,
@@ -43,21 +41,28 @@ def _text(out: object) -> str:
 
 
 async def test_memory_command_stats(db: DbPool) -> None:
+    """D08.1 retargeted /memory at CURATED memory, so stats reports the curated
+    files rather than a committed_facts count — a table that has held 0 rows since
+    migration 0112 and would have reported 0 forever."""
     _reset_registry()
-    await insert_committed(db, "stats-1", "x" * 100)
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory
+
+    CuratedMemory().add(USER_TARGET, "the deploy region is eu-west-1", "permanent")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
         bridge=bridge, settings=settings, db=db, event_bus=EventBus()
     )
     out = await cmd.handle("stats", make_state())
-    assert "committed" in out.lower()
-    assert "1" in out
+    assert "curated" in out.lower(), out
+    assert "1 entr" in out.lower(), f"the seeded entry must be counted: {out!r}"
 
 
-async def test_memory_command_search_calls_recall(db: DbPool) -> None:
+async def test_memory_command_search_finds_a_curated_entry(db: DbPool) -> None:
     _reset_registry()
-    await insert_committed(db, "search-1", "alpha bravo charlie")
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory
+
+    CuratedMemory().add(USER_TARGET, "alpha bravo charlie", "permanent")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
@@ -90,32 +95,63 @@ async def test_memory_command_budget(db: DbPool) -> None:
     assert "%" in out
 
 
-async def test_memory_command_forget_requires_confirmation(db: DbPool) -> None:
+async def test_memory_command_forget_removes_immediately_without_confirmation(
+    db: DbPool,
+) -> None:
+    """PINS CURRENT BEHAVIOUR, and the behaviour CHANGED — see ESC-8.
+
+    Two tests stood here asserting that `/memory forget X` asks for confirmation and
+    leaves the entry alone until `YES` is supplied. D08.1 retargeted /memory at
+    curated memory and the rewritten handler removes immediately: `_forget` calls
+    `CuratedMemory.remove()` and reports the result. There is no confirmation step
+    left to test.
+
+    That is not obviously wrong — a curated entry is one line in a small text file,
+    trivially re-added, where the old target was a durable fact. But it IS a
+    destructive user-facing command that lost its gate, and the removal matches by
+    SUBSTRING and can take several entries at once ("Removed 1 entry/entries"), so
+    `/memory forget deploy` could take more than the user meant. Raised as ESC-8
+    rather than silently blessed by rewriting the test to match.
+    """
     _reset_registry()
-    await insert_committed(db, "forget-cmd-1", "to forget")
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory
+
+    CuratedMemory().add(USER_TARGET, "to forget one", "permanent")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
         bridge=bridge, settings=settings, db=db, event_bus=EventBus()
     )
-    out = await cmd.handle("forget forget-cmd-1", make_state())
-    assert "confirm" in out.lower() or "yes" in out.lower()
-    rows = await db.fetch_all("SELECT fact_id FROM committed_facts")
-    assert any(r["fact_id"] == "forget-cmd-1" for r in rows)
+
+    out = await cmd.handle("forget to forget one", make_state())
+
+    assert "✓" in out, out
+    assert not any(
+        "to forget one" in e.text for e in CuratedMemory().entries(USER_TARGET)
+    ), "the entry survived a forget that reported success"
 
 
-async def test_memory_command_forget_with_confirmation(db: DbPool) -> None:
+async def test_memory_command_forget_reports_a_miss_rather_than_a_false_success(
+    db: DbPool,
+) -> None:
+    """A forget that matched nothing must SAY so. Without this, a typo reads as a
+    successful deletion and the user believes something is gone that is not."""
     _reset_registry()
-    await insert_committed(db, "forget-cmd-2", "to forget")
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory
+
+    CuratedMemory().add(USER_TARGET, "keep this one", "permanent")
     bridge = SqliteMemoryBridge(db)
     settings = Settings(memory=MemorySettings())
     cmd = MemoryCommand.create_and_register(
         bridge=bridge, settings=settings, db=db, event_bus=EventBus()
     )
-    out = await cmd.handle("forget forget-cmd-2 YES", make_state())
-    assert "forget-cmd-2" in out or "✓" in out or "removed" in out.lower()
-    rows = await db.fetch_all("SELECT fact_id FROM committed_facts")
-    assert not any(r["fact_id"] == "forget-cmd-2" for r in rows)
+
+    out = await cmd.handle("forget nothing matches this", make_state())
+
+    assert "✗" in out, f"a miss must not report success: {out!r}"
+    assert any(
+        "keep this one" in e.text for e in CuratedMemory().entries(USER_TARGET)
+    ), "an unrelated entry was removed"
 
 
 async def test_memory_command_unknown_subcommand(db: DbPool) -> None:
@@ -129,31 +165,12 @@ async def test_memory_command_unknown_subcommand(db: DbPool) -> None:
     assert "usage" in out.lower()
 
 
-async def test_memory_command_reindex(db: DbPool) -> None:
-    _reset_registry()
-    emb_blob = np.array([0.1, 0.2, 0.3, 0.4], dtype="<f4").tobytes()
-    now = datetime.now(UTC).isoformat()
-    for fid in ["rx-1", "rx-2"]:
-        await db.execute(
-            """INSERT INTO committed_facts
-                   (fact_id, content, embedding, embedding_model, committed_at,
-                    source_type, source_ref, tags)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (fid, f"content-{fid}", emb_blob, "stub", now, "conv", "s", "[]"),
-        )
-    fake = FakeLanceDB()
-    bridge = SqliteMemoryBridge(db, lancedb=fake)  # type: ignore[arg-type]
-    settings = Settings(memory=MemorySettings())
-    cmd = MemoryCommand.create_and_register(
-        bridge=bridge,
-        settings=settings,
-        db=db,
-        event_bus=EventBus(),
-        lancedb=fake,  # type: ignore[arg-type]
-    )
-    out = await cmd.handle("reindex", make_state())
-    assert "2" in out
-    assert len(fake.upserts) == 2
+# test_memory_command_reindex stood here. It drove `/memory reindex` into a fake
+# LanceDB and asserted two vectors were upserted. D08.1 removed that slash
+# subcommand (abb08e09) and D08.2 removed the vector store underneath it, so both
+# the trigger and the effect are gone. The reindex capability itself survives as
+# the `db reindex-memory` CLI command, repointed at the lessons corpus (ESC-5),
+# and is covered by tests/cli/test_reindex_memory.py.
 
 
 # ---------------------------------------------------------------------------

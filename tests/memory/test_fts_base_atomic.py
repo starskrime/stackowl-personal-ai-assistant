@@ -112,7 +112,7 @@ async def test_delete_removes_base_and_fts_together(tmp_db: DbPool) -> None:
         "a delete can prove it removes both"
     )
 
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     await bridge.delete(fid)
     base, fts = await _counts(tmp_db, fid)
     assert base == 0 and fts == 0, f"base+fts must both be gone (base={base}, fts={fts})"

@@ -396,6 +396,61 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-7-semantic-search-config-key-now-unread
+    raised: 2026-08-14
+    blocks: "nothing — one config key; the rest of the LanceDB arc proceeds."
+    question: >-
+      `memory.semantic_search_enabled` no longer gates anything. Remove the key,
+      keep it as a documented no-op, or give it a new meaning?
+    why_escalated: >-
+      Removing a config key is user-facing, and MemorySettings is
+      `extra="forbid"` — so deleting a key that any deployment HAS set turns a
+      harmless no-op toggle into a hard boot failure. That is not a call to make
+      inside a refactor.
+    what_was_measured: >-
+      The setting gated SqliteMemoryBridge's semantic path, which went with
+      LanceDB: it ranked vectors and hydrated content from committed_facts, 0 rows
+      since migration 0112, last writer removed in seam 3 pass 4. The bridge no
+      longer accepts the parameter and assembly no longer passes it, so the key is
+      READ BY NOTHING today. Not set in Bakir's live stackowl.yaml, so it sits at
+      its default and nothing breaks either way for him.
+    options:
+      - "A. Give it a new meaning: gate the LESSONS semantic search with it, which is now the only place embeddings rank anything. Keeps the knob honest — 'does memory use embeddings at all' — but changes lessons behaviour, which is currently unconditional."
+      - "B. Keep the key as an explicitly documented no-op, deprecated, removed in a later release once configs have drifted off it. Safest for existing deployments, dishonest in the meantime."
+      - "C. Remove it now. Cleanest code; breaks boot for any config that sets it."
+    recommendation: >-
+      A, because it is the only option that leaves no write-with-no-reader behind
+      and no boot hazard. B is acceptable if lessons recall must stay
+      unconditional. C only if no deployment other than this one exists.
+  - id: ESC-8-memory-forget-lost-its-confirmation-gate
+    raised: 2026-08-14
+    blocks: "nothing — found while repointing tests; current behaviour is pinned by a test either way."
+    question: >-
+      `/memory forget <text>` deletes immediately. Was dropping the confirmation
+      step intended, and should substring matching be able to remove several
+      entries at once?
+    why_escalated: >-
+      A destructive user-facing command lost a safety gate. Whether that is fine
+      depends on how bad an accidental deletion is, which is a product judgment.
+    what_was_measured: >-
+      The old tests asserted `/memory forget X` returns a confirmation prompt and
+      leaves the entry until `YES` is given. D08.1's rewrite made `_forget` call
+      `CuratedMemory.remove()` directly and report the result; there is no
+      confirmation branch left. The match is a SUBSTRING and the reply reads
+      "Removed 1 entry/entries", so it can take more than one — `/memory forget
+      deploy` would remove every entry mentioning deploy.
+    the_tension: >-
+      A curated entry is one line in a small text file and trivially re-added,
+      where the old target was a durable fact — so the gate may have been
+      deliberately dropped as ceremony. Against that: the curated files ARE the
+      system prompt now, so losing a line silently changes how the owl behaves.
+    options:
+      - "A. Restore confirmation when the match would remove MORE THAN ONE entry, immediate otherwise. Keeps the common case fast and gates only the dangerous case."
+      - "B. Leave as is — deletion of a re-addable line does not warrant ceremony."
+      - "C. Restore confirmation unconditionally, as before D08.1."
+    recommendation: >-
+      A. The measured risk is not deletion, it is the SUBSTRING removing more than
+      the user pictured; gating exactly that case costs nothing in the normal one.
   - id: ESC-3-browser-recall-url-tool
     RESOLVED: "RESOLVED 2026-08-14 — Bakir chose KEEP AND REPOINT, over the loop's recommendation to remove. browser_recall_url stays as a tool and is repointed at curated memory instead of the empty committed_facts. Noted for the implementer: curated memory is not a page cache, so the honest repoint is 'have I written anything about this URL', answered by substring over the two files — NOT a promise that the page content was retained."
     raised: 2026-08-14

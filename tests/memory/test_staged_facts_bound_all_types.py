@@ -62,7 +62,7 @@ async def test_a_unique_ref_type_is_still_bounded(tmp_db: Any) -> None:
     per-ref trim can never match them. They must be capped per TYPE."""
     from stackowl.memory.sqlite_bridge import _TURN_HISTORY_FLOOR, SqliteMemoryBridge
 
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     over = _TURN_HISTORY_FLOOR + 25
     for i in range(over):
         await bridge.stage(_fact("agent_self", f"trace-{i}", i))
@@ -78,7 +78,7 @@ async def test_the_bound_keeps_the_NEWEST_rows(tmp_db: Any) -> None:
     """A forensic tail is only useful if it is the recent end of it."""
     from stackowl.memory.sqlite_bridge import _TURN_HISTORY_FLOOR, SqliteMemoryBridge
 
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     for i in range(_TURN_HISTORY_FLOOR + 10):
         await bridge.stage(_fact("agent_self", f"trace-{i}", i))
 
@@ -97,7 +97,7 @@ async def test_one_type_does_not_evict_another(tmp_db: Any) -> None:
     the conversation buffer, which is the only half anything actually reads."""
     from stackowl.memory.sqlite_bridge import _TURN_HISTORY_FLOOR, SqliteMemoryBridge
 
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     await bridge.stage(_fact("conversation_summary", "sess-a", 1))
     for i in range(_TURN_HISTORY_FLOOR + 20):
         await bridge.stage(_fact("agent_self", f"trace-{i}", 100 + i))
@@ -116,7 +116,7 @@ async def test_conversation_is_still_bounded_per_session_not_per_type(
     global cap."""
     from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     for i in range(30):
         await bridge.store(f"a-{i}", "sess-a")
         await bridge.store(f"b-{i}", "sess-b")

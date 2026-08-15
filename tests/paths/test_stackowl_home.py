@@ -68,7 +68,8 @@ def test_ensure_exists_creates_full_tree_idempotent(tmp_path: Path, monkeypatch:
     # because StackowlHome.kuzu_dir() and MemoryAssembly disagreed about where
     # it was. Unified onto the path that actually holds data.
     assert (home / "kuzu").exists()
-    assert (home / "workspace" / "lancedb").exists()
+    # `workspace/lancedb` was asserted here; the vector store went in D08.2 and
+    # ensure_exists no longer creates the directory.
     assert (home / "workspace" / "tools").exists()
     assert (home / "workspace" / "knowledge").exists()
     assert (home / "logs").exists()

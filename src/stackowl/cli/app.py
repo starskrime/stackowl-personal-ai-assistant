@@ -482,13 +482,19 @@ def db_restore(
 
 @db_app.command("reindex-memory")
 def db_reindex_memory() -> None:
-    """Rebuild the semantic-memory (LanceDB) corpus from the SQLite source of truth.
+    """Re-embed the lessons corpus with the active embedding model.
 
-    Use after an embedding-model change or a corpus-schema break to restore
-    semantic recall immediately instead of waiting for the nightly dream-worker
-    pass. Reuses the same ``reembed_committed_facts`` machinery: it re-embeds every
-    committed fact, drops + recreates the vector table at the active model/dim, and
-    stamps the corpus identity. SQLite is the source of truth, so this is lossless.
+    ESC-5 — this command used to rebuild a LanceDB vector table from
+    ``committed_facts``. Both ends of that were dead: the table has held 0 rows
+    since migration 0112, and LanceDB itself was removed in D08.2. Bakir chose to
+    REPOINT the command rather than delete it, because the need it serves is real
+    and now lives in the lessons corpus.
+
+    Use it after an embedding-model change. New queries are embedded by the new
+    model and cannot be compared with vectors written by the old one; the store
+    degrades honestly in that state (a query only sees rows of its own dimension)
+    but degrading is not curing. This is the cure, and it is lossless — the lesson
+    text is the source of truth and only the vector is rewritten.
     """
     import asyncio
     import sys
@@ -503,46 +509,37 @@ def db_reindex_memory() -> None:
         typer.echo(f"✗ {exc}", err=True)
         sys.exit(1)
 
-    async def _run() -> tuple[int, tuple[str | None, int | None]]:
+    async def _run() -> tuple[int, str]:
         from stackowl.embeddings.registry import EmbeddingRegistry
-        from stackowl.memory.dream_worker_helpers import reembed_committed_facts
-        from stackowl.memory.lancedb_adapter import LanceDBAdapter
+        from stackowl.learning.lessons_store import SqliteLessonsStore
 
         db = DbPool()
         await db.open()
         try:
             registry = await EmbeddingRegistry.create()
-            lancedb = LanceDBAdapter(embedding_registry=registry)
 
             async def _embed(texts: list[str]) -> list[list[float]]:
                 return await registry.get().embed(texts)
 
-            written = await reembed_committed_facts(
-                db,
-                lancedb,
-                embed=_embed,
-                active_model=registry.active_model,
-                active_dim=registry.active_dim,
-            )
-            identity = await lancedb.corpus_identity()
-            return written, identity
+            store = SqliteLessonsStore(db, embedding_model=registry.active_model)
+            written = await store.reembed_all(_embed, model=registry.active_model)
+            return written, registry.active_model
         finally:
             await db.close()
 
     log.info("[db] db_reindex_memory: entry")
     try:
-        written, (model, dim) = asyncio.run(_run())
+        written, model = asyncio.run(_run())
     except Exception as exc:
         log.warning("[db] db_reindex_memory: failed: %s", exc)
         typer.echo(f"✗ Memory reindex failed: {exc}", err=True)
         sys.exit(1)
 
     if written == 0:
-        typer.echo("No committed facts to reindex (0 written)")
+        typer.echo("No lessons to reindex (0 written)")
     else:
         typer.echo(
-            f"✓ Reindexed {written} fact(s) into LanceDB "
-            f"(corpus: {model}, dim {dim})"
+            f"✓ Re-embedded {written} lesson(s) with {model}"
         )
     log.info("[db] db_reindex_memory: exit — written=%d", written)
 

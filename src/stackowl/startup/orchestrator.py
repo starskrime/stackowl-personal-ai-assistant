@@ -1660,7 +1660,6 @@ class StartupOrchestrator:
             bridge=memory_bridge,
             # D01.7 — so /new can actually end a conversation.
             session_store=session_store,
-            lancedb=memory_components.lancedb,
             embedding_registry=memory_components.embedding_registry,
             skills_store=skills_components.store,
             skills_loader=skills_components.loader,

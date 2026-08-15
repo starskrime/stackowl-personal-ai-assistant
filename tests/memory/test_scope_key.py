@@ -68,7 +68,7 @@ async def test_scope_key_carries_into_committed_and_out_through_recall(tmp_db: D
         tmp_db, fact_id=other_fid, content="widget other repo-b note", scope_key="repo-b"
     )
 
-    bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
+    bridge = SqliteMemoryBridge(tmp_db)
     scoped = await bridge.recall("widget", limit=10, scope_key="repo-a")
     ids = {r.fact_id for r in scoped}
     assert repo_fid in ids, "repo-a's own fact must be visible"

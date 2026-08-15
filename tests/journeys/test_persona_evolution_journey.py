@@ -37,8 +37,6 @@ import pytest
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
-from stackowl.memory.lancedb_helpers import SearchResult
-from stackowl.memory.sqlite_helpers import cosine_similarity
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_hydrator import hydrate_dna
 from stackowl.owls.dna_injector import DNAPromptInjector
@@ -61,7 +59,7 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture(autouse=True)
 def _no_test_mode_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Let the real embedder/promoter/lancedb-spy run inside the test process.
+    """Let the real embedder run inside the test process.
 
     Same pattern as story_6_3: the memory I/O paths gate on TestModeGuard, and a
     deterministic stub IS the live replacement, so the guard is neutralized.
@@ -136,45 +134,10 @@ class _StubEmbeddingRegistry:
         return self._provider.dimension
 
 
-class _SpyLanceDB:
-    """In-memory ANN spy with the same async surface the bridge/promoter use.
+# A _SpyLanceDB stood here, ranking vectors deterministically for the promoter
+# journeys. Those tests went with FactPromoter in seam 3 pass 4 and the vector
+# store itself went in D08.2; the spy outlived both.
 
-    Deterministic cosine ranking — no real ``lancedb`` dependency (flaky on the
-    Jetson box per the e4_s1 smoke). It records every upsert so the journey can
-    assert PE5 actually upserted a COMPUTED vector for the miner-staged fact.
-    """
-
-    def __init__(self) -> None:
-        self.upserts: list[tuple[str, list[float]]] = []
-        self._vectors: dict[str, list[float]] = {}
-
-    async def corpus_identity(self) -> tuple[str | None, int | None]:
-        # Matches the stub embedder so the F062 gate routes through the semantic
-        # (spy) path this journey asserts on.
-        return ("stub-embed", 8)
-
-    async def upsert(
-        self, fact_id: str, embedding: list[float], metadata: dict[str, Any]
-    ) -> None:
-        self.upserts.append((fact_id, list(embedding)))
-        self._vectors[fact_id] = list(embedding)
-
-    async def search(
-        self, query_embedding: list[float], limit: int = 10, filter_expr: str | None = None
-    ) -> list[SearchResult]:
-        scored: list[tuple[float, str]] = []
-        for fact_id, vec in self._vectors.items():
-            sim = cosine_similarity(query_embedding, vec)
-            if sim is not None:
-                scored.append((sim, fact_id))
-        scored.sort(key=lambda s: s[0], reverse=True)
-        return [
-            SearchResult(fact_id=fid, score=score, metadata={})
-            for score, fid in scored[:limit]
-        ]
-
-    async def delete(self, fact_id: str) -> None:  # pragma: no cover — unused here
-        self._vectors.pop(fact_id, None)
 
 
 def _manifest(name: str, dna: OwlDNA | None = None) -> OwlAgentManifest:

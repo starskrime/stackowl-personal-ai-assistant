@@ -135,15 +135,13 @@ def _build_with_provider(
     env.backend._services.provider_registry = _FakeProviderRegistry(provider)  # type: ignore[attr-defined]
     env.provider = provider  # type: ignore[assignment]
     if semantic_bridge_dir is not None:
+        # This wired a bridge with a LanceDB adapter at a chosen directory, so a
+        # test could force the semantic path to return []. D08.2 removed that path
+        # entirely; the parameter is kept so callers read unchanged, and now only
+        # swaps in an independent bridge over the same database.
         from stackowl.embeddings.registry import EmbeddingRegistry
-        from stackowl.memory.lancedb_adapter import LanceDBAdapter
 
-        wired = SqliteMemoryBridge(
-            tmp_db,
-            embedding_registry=EmbeddingRegistry(),
-            lancedb=LanceDBAdapter(data_dir=semantic_bridge_dir),
-            semantic_search_enabled=True,
-        )
+        wired = SqliteMemoryBridge(tmp_db, embedding_registry=EmbeddingRegistry())
         env.backend._services.memory_bridge = wired  # type: ignore[attr-defined]
     return env
 
@@ -585,7 +583,6 @@ async def test_guard_memory_command_registered_via_orchestrator(
         preference_store=SimpleNamespace(),
         kuzu_adapter=SimpleNamespace(),
         embedding_registry=None,
-        lancedb=getattr(bridge, "lancedb", None),
         lessons_index=SimpleNamespace(),
     )
 

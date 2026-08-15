@@ -383,3 +383,82 @@ class TestSameBatchDuplicates:
 
         hits = await store.search([0.0, 1.0, 0.0], limit=1)
         assert hits[0].content == "the later one", hits
+
+
+class TestReembed:
+    """ESC-5 — `db reindex-memory` re-embeds LESSONS now.
+
+    Bakir chose REPOINT over remove: the command stays user-facing, and what it
+    reindexes changes. It used to re-embed committed_facts into LanceDB, which was
+    dead on both ends — 0 rows on one side, a store being deleted on the other.
+
+    What it is FOR: an embedding-model change makes every stored vector
+    incomparable with new queries. The store degrades honestly in that state
+    (a query only sees rows of its own dimension), but degrading is not curing.
+    This is the cure, and it has to be a real one — hence the assertions on the
+    stamped model, not just on the count.
+    """
+
+    async def test_it_rewrites_every_vector_and_stamps_the_model(
+        self, tmp_db: DbPool
+    ) -> None:
+        store = _store(tmp_db)
+        await store.publish_many([_lesson(f"l{i}", [1.0, 0.0, 0.0]) for i in range(3)])
+
+        async def _embed(texts: list[str]) -> list[list[float]]:
+            return [[0.0, 1.0, 0.0] for _ in texts]
+
+        n = await store.reembed_all(_embed, model="new-model-v2")
+
+        assert n == 3
+        rows = await tmp_db.fetch_all(
+            "SELECT DISTINCT embedding_model FROM lessons", ()
+        )
+        assert [r["embedding_model"] for r in rows] == ["new-model-v2"]
+        # The new vector is what recall now ranks against.
+        hits = await store.search([0.0, 1.0, 0.0], limit=3)
+        assert all(h.similarity == pytest.approx(1.0) for h in hits), hits
+
+    async def test_it_cures_a_dimension_change(self, tmp_db: DbPool) -> None:
+        """The case that actually matters: a new embedder with a new width.
+
+        Before the reindex the old rows are unreachable from a new-width query —
+        correctly, since comparing across widths is nonsense. After it, they are
+        reachable again. That round trip is the whole point of keeping a command.
+        """
+        store = _store(tmp_db)
+        await store.publish(_lesson("old", [1.0, 0.0, 0.0]))
+        assert await store.search([1.0, 0.0, 0.0, 0.0], limit=5) == []
+
+        async def _embed(texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
+
+        await store.reembed_all(_embed, model="wider-v3")
+
+        hits = await store.search([1.0, 0.0, 0.0, 0.0], limit=5)
+        assert [h.lesson_id for h in hits] == ["old"]
+
+    async def test_an_empty_corpus_reindexes_to_zero_without_erroring(
+        self, tmp_db: DbPool
+    ) -> None:
+        async def _embed(texts: list[str]) -> list[list[float]]:
+            raise AssertionError("must not be called for an empty corpus")
+
+        assert await _store(tmp_db).reembed_all(_embed, model="x") == 0
+
+    async def test_content_is_preserved(self, tmp_db: DbPool) -> None:
+        """A reindex must change the VECTOR and nothing else — it is a re-embed,
+        not a rewrite. Losing content here would be silent: recall would still
+        return the row, just with the wrong text."""
+        store = _store(tmp_db)
+        await store.publish(_lesson("a", [1.0, 0.0, 0.0], source_type="skill"))
+
+        async def _embed(texts: list[str]) -> list[list[float]]:
+            return [[0.0, 1.0, 0.0] for _ in texts]
+
+        await store.reembed_all(_embed, model="m")
+
+        hit = (await store.search([0.0, 1.0, 0.0], limit=1))[0]
+        assert hit.content == "content of a"
+        assert hit.source_type == "skill"
+        assert hit.metadata == {"quality": 0.5}

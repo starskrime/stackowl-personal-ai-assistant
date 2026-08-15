@@ -8,8 +8,6 @@ ships green but is dead on the path users actually run turns the census RED.
 
 from __future__ import annotations
 
-import pytest
-
 # Importing probes self-registers them into the census registry.
 import stackowl.health.reachability.probes  # noqa: F401
 from stackowl.health.reachability import (

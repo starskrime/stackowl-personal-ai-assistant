@@ -28,7 +28,6 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
     from stackowl.memory.bridge import MemoryBridge
-    from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.pipeline.state import PipelineState
 
 
@@ -117,7 +116,6 @@ class MemoryCommand(SlashCommand):
         settings: Settings | None = None,
         db: DbPool | None = None,
         event_bus: EventBus | None = None,
-        lancedb: LanceDBAdapter | None = None,
         embedding_registry: EmbeddingRegistry | None = None,
     ) -> None:
         # 1. ENTRY
@@ -125,7 +123,6 @@ class MemoryCommand(SlashCommand):
             "[commands] memory.init: entry",
             extra={
                 "_fields": {
-                    "has_lancedb": lancedb is not None,
                     "has_embeddings": embedding_registry is not None,
                 }
             },
@@ -134,7 +131,10 @@ class MemoryCommand(SlashCommand):
         self._settings: Settings = settings  # type: ignore[assignment]  # guarded in handle()
         self._db: DbPool = db  # type: ignore[assignment]  # guarded in handle()
         self._bus: EventBus = event_bus  # type: ignore[assignment]  # guarded in handle()
-        self._lancedb = lancedb
+        # `self._lancedb = lancedb` stood here — ASSIGNED AND NEVER READ, wired all
+        # the way from the orchestrator through CommandDeps for nothing. The third
+        # instance of that exact shape in this programme, after MemoryCommand's
+        # `promoter` and MemoryComponents' `promoter`.
         self._embeddings = embedding_registry
         # 4. EXIT
         log.memory.debug("[commands] memory.init: exit")
@@ -349,7 +349,6 @@ class MemoryCommand(SlashCommand):
         settings: Settings,
         db: DbPool,
         event_bus: EventBus,
-        lancedb: LanceDBAdapter | None = None,
         embedding_registry: EmbeddingRegistry | None = None,
     ) -> MemoryCommand:
         """Construct a :class:`MemoryCommand` and register it on the singleton."""
@@ -358,7 +357,6 @@ class MemoryCommand(SlashCommand):
             settings=settings,
             db=db,
             event_bus=event_bus,
-            lancedb=lancedb,
             embedding_registry=embedding_registry,
         )
         CommandRegistry.instance().register(cmd)

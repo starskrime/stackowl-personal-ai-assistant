@@ -5,14 +5,11 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
-from stackowl.memory.bridge import HealthReport
-from stackowl.memory.lancedb_adapter import SearchResult
 from stackowl.pipeline.state import PipelineState
 
 
@@ -26,7 +23,7 @@ def no_test_mode_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture()
-async def db(tmp_path: Path) -> AsyncGenerator[DbPool, None]:
+async def db(tmp_path: Path) -> AsyncGenerator[DbPool]:
     """Per-test fresh DbPool with all migrations applied."""
     db_path = tmp_path / "story64.db"
     MigrationRunner(db_path=db_path).run()
@@ -38,99 +35,11 @@ async def db(tmp_path: Path) -> AsyncGenerator[DbPool, None]:
         await pool.close()
 
 
-class StubEmbeddingProvider:
-    """Deterministic embedder for tests."""
-
-    def __init__(self, dim: int = 4, name: str = "stub-embed") -> None:
-        self._dim = dim
-        self._name = name
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        return [[float(i + 1) / self._dim for i in range(self._dim)] for _ in texts]
-
-    @property
-    def dimension(self) -> int:
-        return self._dim
-
-    @property
-    def model_name(self) -> str:
-        return self._name
-
-    @property
-    def is_local(self) -> bool:
-        return True
-
-
-class StubEmbeddingRegistry:
-    """Registry stub exposing ``.get()`` like the real one."""
-
-    def __init__(self, provider: StubEmbeddingProvider) -> None:
-        self._provider = provider
-
-    def get(self) -> StubEmbeddingProvider:
-        return self._provider
-
-    @property
-    def active_model(self) -> str:
-        return self._provider.model_name
-
-    @property
-    def active_dim(self) -> int:
-        return self._provider.dimension
-
-
-class FakeLanceDB:
-    """In-memory stand-in for :class:`LanceDBAdapter`."""
-
-    def __init__(
-        self,
-        search_results: list[SearchResult] | None = None,
-        raise_on_search: Exception | None = None,
-        corpus_identity: tuple[str | None, int | None] = ("stub-embed", 4),
-    ) -> None:
-        self.upserts: list[tuple[str, list[float], dict[str, Any]]] = []
-        self.deletes: list[str] = []
-        self.searches: list[tuple[list[float], int]] = []
-        self._search_results = search_results or []
-        self._raise_on_search = raise_on_search
-        # F062 — the corpus-identity seam recall now reads BEFORE the semantic
-        # path. Defaults to the stub embedder's identity so these tests exercise
-        # the semantic path (matched corpus); override to force a mismatch.
-        self._corpus_identity = corpus_identity
-
-    async def corpus_identity(self) -> tuple[str | None, int | None]:
-        return self._corpus_identity
-
-    async def upsert(
-        self, fact_id: str, embedding: list[float], metadata: dict[str, Any]
-    ) -> None:
-        self.upserts.append((fact_id, embedding, metadata))
-
-    async def search(
-        self,
-        query_embedding: list[float],
-        limit: int = 10,
-        filter_expr: str | None = None,
-    ) -> list[SearchResult]:
-        self.searches.append((list(query_embedding), limit))
-        if self._raise_on_search is not None:
-            raise self._raise_on_search
-        return self._search_results
-
-    async def delete(self, fact_id: str) -> None:
-        self.deletes.append(fact_id)
-
-    async def health(self) -> HealthReport:
-        return HealthReport(
-            name="memory.lancedb", status="ok", details={}, latency_ms=0.0
-        )
-
-    async def reindex(
-        self, records: list[tuple[str, list[float], dict[str, Any]]]
-    ) -> int:
-        for fid, emb, md in records:
-            self.upserts.append((fid, emb, md))
-        return len(records)
+# StubEmbeddingProvider / StubEmbeddingRegistry / FakeLanceDB stood here. They
+# existed to drive SqliteMemoryBridge's SEMANTIC recall path, which went with
+# LanceDB in D08.2 — the vectors it ranked hydrated from committed_facts, empty
+# since migration 0112. What remains below serves the tests that outlived them:
+# the MemoryCommand suite in test_story_6_4b.py, which is live.
 
 
 async def insert_committed(

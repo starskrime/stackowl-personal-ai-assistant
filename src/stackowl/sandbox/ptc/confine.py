@@ -38,7 +38,7 @@ def _protected_read_roots() -> list[Path]:
     h = StackowlHome
     roots: list[Path] = []
     for getter in (
-        h.db_path, h.lancedb_dir, h.kuzu_dir, h.skills_dir, h.knowledge_dir,
+        h.db_path, h.kuzu_dir, h.skills_dir, h.knowledge_dir,
         h.tools_dir, h.learned_tools_dir, h.providers_dir, h.secrets_dir,
     ):
         try:

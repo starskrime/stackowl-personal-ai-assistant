@@ -1,6 +1,8 @@
 """Dispatch test — /whoami is wired through CommandRegistry."""
 from __future__ import annotations
+
 import pytest
+
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandNotFoundError, CommandRegistry
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401

@@ -17,14 +17,12 @@ from typing import Any
 
 import pytest
 
+from stackowl.brief.models import BriefSection
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandRegistry
-from stackowl.brief.models import BriefSection
-from stackowl.health.status import HealthStatus
 from stackowl.integrations.base import ActionResult, IntegrationAdapter
 from stackowl.integrations.registry import IntegrationRegistry
 from tests._story_6_7_helpers import make_state
-
 
 # ---------------------------------------------------------------------------
 # Fake adapter

@@ -48,14 +48,13 @@ async def test_memory_command_registered_remember_then_search(db: DbPool) -> Non
     never registers the command.
     """
     # Real stores — no AI provider involved (FTS5 recall, no embeddings needed).
-    bridge = SqliteMemoryBridge(db=db, embedding_registry=None, lancedb=None)
+    bridge = SqliteMemoryBridge(db=db)
 
     MemoryCommand.create_and_register(
         bridge=bridge,
         settings=make_settings(),
         db=db,
         event_bus=EventBus(),
-        lancedb=None,
         embedding_registry=None,
     )
 

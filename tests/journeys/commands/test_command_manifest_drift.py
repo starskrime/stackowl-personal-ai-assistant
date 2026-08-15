@@ -13,8 +13,6 @@ from __future__ import annotations
 import importlib
 import pkgutil
 
-import pytest
-
 import stackowl.commands as _pkg
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.manifest import EXEMPT_COMMANDS, SHIPPED_COMMANDS

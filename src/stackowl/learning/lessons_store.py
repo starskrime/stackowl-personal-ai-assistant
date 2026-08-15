@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -299,6 +300,69 @@ class SqliteLessonsStore:
             "[learning] lessons_store.delete: removed",
             extra={"_fields": {"lesson_id": lesson_id}},
         )
+
+    async def reembed_all(
+        self,
+        embed: Callable[[list[str]], Awaitable[list[list[float]]]],
+        *,
+        model: str,
+        batch: int = 64,
+    ) -> int:
+        """Re-embed every lesson with ``embed`` and stamp ``model``. Returns the count.
+
+        ESC-5 — this is what `db reindex-memory` does now. It used to re-embed
+        committed_facts into LanceDB, dead on both ends.
+
+        WHY THE COMMAND IS WORTH KEEPING. When the active embedder changes, every
+        stored vector becomes incomparable with new queries. The store DEGRADES
+        honestly in that state — a query only ever sees rows of its own dimension —
+        but degrading is not curing, and without this the corpus would be
+        permanently unreachable after a model swap. That is the whole reason a
+        user-facing reindex exists rather than a silent fallback.
+
+        BATCHED, and written back in ONE transaction. A half-reindexed corpus is
+        the worst state available: some rows comparable and some not, with no
+        record of which. Either the whole corpus is on the new model or none of it
+        is.
+        """
+        # 1. ENTRY
+        t0 = time.monotonic()
+        rows = await self._db.fetch_all("SELECT lesson_id, content FROM lessons", ())
+        log.memory.info(
+            "[learning] lessons_store.reembed_all: entry",
+            extra={"_fields": {"lessons": len(rows), "model": model}},
+        )
+        # 2. DECISION
+        if not rows:
+            log.memory.info("[learning] lessons_store.reembed_all: exit — empty corpus")
+            return 0
+        # 3. STEP — embed in batches, then write once.
+        vectors: list[list[float]] = []
+        for start in range(0, len(rows), batch):
+            chunk = rows[start : start + batch]
+            vectors.extend(await embed([str(r["content"]) for r in chunk]))
+        if len(vectors) != len(rows):
+            raise ValueError(
+                f"embedder returned {len(vectors)} vectors for {len(rows)} lessons — "
+                "refusing to write a corpus where rows and vectors do not correspond"
+            )
+        async with self._db.transaction() as tx:
+            for row, vec in zip(rows, vectors, strict=True):
+                await tx.execute(
+                    "UPDATE lessons SET embedding = ?, embedding_model = ?, "
+                    "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+                    "WHERE lesson_id = ?",
+                    (pack_embedding(vec), model, row["lesson_id"]),
+                )
+        # 4. EXIT
+        log.memory.info(
+            "[learning] lessons_store.reembed_all: exit — corpus reindexed",
+            extra={"_fields": {
+                "lessons": len(rows), "model": model,
+                "duration_ms": (time.monotonic() - t0) * 1000,
+            }},
+        )
+        return len(rows)
 
     async def count(self) -> int:
         """How many lessons are stored. Used by the reindex command and health."""

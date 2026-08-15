@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from stackowl.channels.liveness import ChannelLivenessStore
     from stackowl.infra.clock import Clock
     from stackowl.memory.kuzu_adapter import KuzuAdapter
-    from stackowl.memory.lancedb_adapter import LanceDBAdapter
     from stackowl.memory.outcome_store import TaskOutcomeStore
     from stackowl.owls.registry import OwlRegistry
 
@@ -27,7 +26,7 @@ class GraphContributor:
 
     With a live ``adapter`` wired (ADR-6 self-heal, Task 3), ``health_check()``
     probes it via its existing ``health()`` (shim'd from ``HealthReport`` to
-    ``HealthStatus``, same pattern as ``LanceDBHealthContributor``) so the
+    ``HealthStatus``) so the
     verdict reflects the REAL live connection — not just whether the process
     imported ``kuzu`` at assembly time. Previously this contributor only
     checked import success and would report ``ok`` even with a dead live
@@ -160,43 +159,11 @@ class DbContributor:
             return HealthStatus(name="db", status="down", message=str(exc), latency_ms=latency_ms)
 
 
-class LanceDBHealthContributor:
-    """Health contributor for the LanceDB ANN vector store (ADR-6 self-heal, Task 2).
-
-    Wraps a live ``LanceDBAdapter`` and shims its existing ``health()`` probe
-    (returns a ``HealthReport``, a DIFFERENT shape used by the memory bridge)
-    into the ``HealthStatus`` the aggregator/health-sweep expect. This is a
-    pure pass-through translation — it must never upgrade a down/degraded
-    ``HealthReport`` into an "ok" ``HealthStatus``. That silent-upgrade is the
-    exact mistake flagged for Kuzu's ``GraphContributor`` in the design doc;
-    ``tests/memory/test_lancedb_adapter_healable.py`` guards against repeating
-    it here.
-
-    ``contributor_name`` is ``"lancedb"`` and MUST match the ``healers`` dict
-    key registered in ``scheduler/assembly.py`` — the health sweep looks up
-    the matching ``HealableResource`` via ``dict.get(status.name)``, a plain
-    exact-string match with no normalization.
-    """
-
-    def __init__(self, adapter: LanceDBAdapter) -> None:
-        self._adapter = adapter
-
-    @property
-    def contributor_name(self) -> str:
-        return "lancedb"
-
-    async def health_check(self) -> HealthStatus:
-        log.debug("[health] lancedb_contributor: entry")
-        report = await self._adapter.health()
-        message = None if report.status == "ok" else str(report.details)
-        log.debug("[health] lancedb_contributor: exit — status=%s", report.status)
-        return HealthStatus(
-            name=self.contributor_name,
-            status=report.status,
-            message=message,
-            latency_ms=report.latency_ms,
-        )
-
+# LanceDBHealthContributor stood here, shimming the adapter's HealthReport into
+# the HealthStatus the aggregator expects — carefully, because a pass-through that
+# upgraded a degraded report into "ok" is the exact silent-upgrade mistake flagged
+# for Kuzu. Both it and the adapter went in D08.2: a health surface for a subsystem
+# that no longer exists reports on nothing.
 
 class FilesystemContributor:
     """Health contributor: data and log directory writability."""
