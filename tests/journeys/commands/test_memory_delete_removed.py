@@ -74,19 +74,29 @@ async def test_memory_delete_no_longer_a_subcommand(db: DbPool) -> None:
 
 
 async def test_memory_forget_still_works(db: DbPool) -> None:
-    """`/memory forget` is untouched by the `delete` removal."""
-    bridge = FakeBridge()
-    fact = make_staged(fact_id="aabbccdd-0000-0000-0000-000000000009", content="still works")
-    bridge.seed("staged", fact)
+    """`/memory forget` is untouched by the `delete` removal.
 
-    deps = _make_deps(bridge, db)
+    REPOINTED. This seeded a staged fact into a fake bridge and asserted the
+    forget reached ``bridge.delete()``. D08.1 retargeted /memory at CURATED
+    memory — `_forget` calls ``CuratedMemory.remove()`` and never touches the
+    bridge — so the seeded fact could not match and the command correctly
+    answered "No entry matching". The guarantee the test is named for is
+    unchanged; only the store it lives in moved.
+    """
+    from stackowl.memory.curated import USER_TARGET, CuratedMemory
+
+    CuratedMemory().add(USER_TARGET, "still works after the delete removal", "permanent")
+
+    deps = _make_deps(FakeBridge(), db)
     register_all_commands(deps, registry=CommandRegistry.instance())
 
     result = (
         await CommandRegistry.instance().dispatch(
-            "memory", "forget aabbccdd YES", make_state()
+            "memory", "forget still works after the delete removal", make_state()
         )
     ).text
 
-    assert "✓" in result
-    assert fact.fact_id in bridge.delete_calls
+    assert "✓" in result, result
+    assert not any(
+        "still works" in e.text for e in CuratedMemory().entries(USER_TARGET)
+    ), "the entry survived a forget that reported success"

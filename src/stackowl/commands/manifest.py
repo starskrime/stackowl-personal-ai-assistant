@@ -29,6 +29,10 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     "tier",
     "browser",
     "explain",
+    # `new` starts a fresh conversation (commands/new_conversation.py, registered
+    # at assembly.py:334). It was live but UNDECLARED — drift in the opposite
+    # direction from "staged", and just as invisible while the guard was red.
+    "new",
     # ── DI commands currently live (Pattern B, Epic A wired) ───────────────
     "skill",
     "memory",
@@ -48,7 +52,11 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     "why",
     "brief",
     "parliament",
-    "staged",
+    # "staged" was here. The command was DELETED in D08.1 when the fact-staging
+    # queue it reviewed stopped having anything to review — committed_facts has
+    # held 0 rows since migration 0112. The entry outlived the command, so this
+    # register promised a command that could never be dispatched, and the
+    # reachability guards that exist to catch exactly that were themselves red.
     "webhook",
     "connect",
     "disconnect",
