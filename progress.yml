@@ -411,6 +411,81 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-12-the-prompt-cache-has-never-shown-a-hit-in-production
+    raised: 2026-08-15
+    blocks: >-
+      nothing mechanically. It is raised because it changes what D01.6's remaining
+      decision is ABOUT, and because the answer is a priority call about where effort
+      goes next — not something evidence settles.
+    question: >-
+      Metric 1 reads ZERO cache hits across 132,740,865 input tokens, and the platform's
+      own instrumentation says the prefix is being invalidated on roughly one turn in
+      eight. Is closing that the next priority, or is it the wrong thing to optimise in
+      a deployment where cost is already effectively zero?
+    what_was_measured: >-
+      MEASURED 2026-08-15 against ~/.stackowl/workspace/stackowl.db and all 31 log files.
+      (1) cached_input_tokens sums to 0 over every one of the 92,292 cost_records rows.
+      (2) The instrument is NOT at fault: _cached_input_tokens() in openai_provider.py
+      walks prompt_tokens_details.cached_tokens -> cache_read_input_tokens ->
+      cached_tokens -> 0 and is wired into all three _record_cost sites (481, 1153, 1455).
+      I had drafted the opposite finding — "the openai path never captures it" — and
+      reading the code corrected me before it was written down.
+      (3) The mechanism is visible in production logs: 360 lines of "[cache] breakpoints:
+      tools array CHANGED — position 0 invalidated this turn" (its own field says
+      "see: D01.3 — per-turn tool-schema selection") and 95 of "prompt part CHANGED — the
+      cached prefix is lost from here". Still live, not historical: 2026-08-15 alone has
+      10 + 4.
+      (4) With a denominator: 86 turns across 5 incarnations that day, 84 turns across 2
+      the day before. So ~14 invalidations per ~85 turns — about one turn in eight, far
+      more than incarnation boundaries can account for.
+    why_escalated: >-
+      Not the diagnosis — the PRIORITY. The other three measures argue against reflex here.
+      Metric 3 says this deployment spends $0.0152 in total, so a cache hit saves nothing
+      real today. Metric 2 says the median streaming call waits 13 seconds for its first
+      token, which is the cost the user actually feels. A cache fix is the kind of work
+      that looks obviously right from metric 1 alone and may be the wrong thing to do
+      first. That trade is Bakir's, and it is exactly the call D01.6 was built to inform.
+    recommendation: >-
+      Treat the zero as a REAL finding rather than a provider quirk — D01.6's own design
+      note records that NeraAiRaw is a LiteLLM-style gateway and that the Anthropic-named
+      cache field is "a live path here, not a hypothetical", so the passthrough is not
+      obviously absent. But sequence it behind latency unless a paid provider is coming:
+      the invalidation rate is worth fixing for prompt STABILITY (D01.1/D01.3's actual
+      claim) whether or not any cache ever reports a hit.
+  - id: ESC-13-an-incarnation-outlives-the-prompt-it-froze
+    raised: 2026-08-15
+    blocks: >-
+      nothing. D01.1 is shipped and closed; this is a violation of its invariant found by
+      D01.6's instrument, which is precisely what that instrument is for.
+    question: >-
+      When the core restarts mid-conversation, should the incarnation roll over to a new
+      session_id, or should the frozen prompt snapshot be persisted so it survives?
+    what_was_measured: >-
+      MEASURED 2026-08-15. Grouped by incarnation, 29 of 37 are byte-stable (78.4%); 8 are
+      not, carrying 2 or 3 distinct prompt hashes. (Grouped by session_key it reads 32.3%,
+      but that is the WRONG grouping and D01.6.md's D01.7 amendment says so explicitly —
+      a lane spans many incarnations and each legitimately freezes its own prompt. Both
+      numbers are recorded so the wrong one is not re-derived.) Every violation has one
+      shape: same owl, same model, two internally-consistent hashes separated by a time
+      gap, with the system prompt changing SIZE across it (11,865->11,200; 11,714->12,418;
+      11,485->11,472) — a snapshot re-minted under a surviving session_id, not per-turn
+      drift. Checked against 493 core starts across all 31 log files: 3 of the 8 have a
+      restart between every consecutive prompt window, including 20260815_092819_4ce6
+      where the 15:17:08 restart sits exactly between windows ending 14:28:23 and starting
+      16:02:38. CAVEAT: the dual log-writer bug means "no restart found" can be a log gap,
+      so 5/8 unexplained is an UPPER bound, not a count.
+    why_escalated: >-
+      Both fixes are coherent and they mean different things. Persisting the snapshot keeps
+      the prompt identical across a restart and preserves a server-side cache that may
+      still be warm. Rolling the session_id makes the invariant true by construction and
+      is honest about the fact that a restarted core is a new incarnation. Choosing is a
+      statement about what an "incarnation" IS, which is D01.1/D01.7 territory and already
+      settled once — re-opening it silently is the thing PROCESS.md forbids.
+    recommendation: >-
+      Roll the session_id on restart. It costs nothing, it makes metric 4 mean what it
+      says, and the alternative asks a snapshot to outlive the process that owns it —
+      which is the heavier promise. Note this does NOT explain all 8; the remaining ones
+      need the log-gap caveat closed before anyone concludes they are a second mechanism.
   - id: ESC-11-presented-tools-memo-ignores-a-skill-change
     raised: 2026-08-15
     blocks: >-
@@ -5044,7 +5119,6 @@ items:
       test:       done
       validate:   done
       document:   done
-      document:   done
     doc: "docs/reference-mapping/designs/D01.6.md"
     doc_last_verified: 2026-07-25  # against commit a717c4e9
     process_deviation:
@@ -5068,6 +5142,72 @@ items:
         but the programme cannot claim a clean wave until this is resolved one way
         or the other. Bakir's call: retro-record the decisions that were actually
         made, or accept it as a documented pre-process exception.
+    live_baseline:
+      captured: 2026-08-15
+      captured_by: "the loop, from ~/.stackowl/workspace/stackowl.db — NOT Bakir at the keyboard"
+      why_it_no_longer_needed_him: >
+        The note said the live baseline capture was the only thing left and that it
+        needed Bakir. It did not: every one of the four Q20 measures is a SQL query
+        against cost_records, and the data has been accumulating since the columns
+        landed. 92,292 rows total, 10,555 of them carrying session_key, spanning
+        2026-06-01 to 2026-08-15. The instrument works — this is it working.
+      DB_PATH_TRAP: >
+        The live database is ~/.stackowl/workspace/stackowl.db. ~/.stackowl/stackowl.db
+        also exists, is 0 bytes and has no tables — querying it answers "no such table:
+        cost_records", which reads like the feature was never built.
+      metric_1_cache_hit_ratio:
+        reading: "0 cached_input_tokens against 132,740,865 input tokens. Zero, across every row."
+        instrument_is_NOT_at_fault: >
+          Checked before blaming the data: _cached_input_tokens() in openai_provider.py
+          walks prompt_tokens_details.cached_tokens -> cache_read_input_tokens ->
+          cached_tokens -> 0, and it is wired into ALL THREE _record_cost call sites
+          (lines 481, 1153, 1455). anthropic_provider.py has its own reader. So this is
+          a real measurement, not a missing writer. I had drafted the opposite finding
+          and the code corrected it.
+        what_it_means: >
+          THE PROMPT-CACHE WORK HAS NEVER SHOWN A MEASURABLE HIT IN PRODUCTION. This is
+          the number D01.6 exists to produce and D01.2 exists to move. It is not proof
+          D01.2 is broken — 100% of traffic is one provider, NeraAiRaw — but D01.6's own
+          design note records that NeraAiRaw is a LiteLLM-style GATEWAY and that the
+          Anthropic-named branch is "a live path here, not a hypothetical". So the
+          passthrough either is not happening or the upstream is not caching. Either way
+          the benefit is unproven where it matters.
+      metric_2_ttft:
+        reading: "n=371 (3.5% of session-keyed calls — streaming only). min=388ms, p50=13,128ms, p90=44,735ms, max=82,000ms."
+        what_it_means: >
+          "Does it feel fast?" is answered NO on the median streaming call: 13 seconds to
+          the first token, 45 at p90. Recorded as a reading, not a diagnosis — this is a
+          weak self-hosted model on a Jetson and the number may be exactly what that costs.
+      metric_3_cost_per_conversation:
+        reading: "664 conversations, $0.0152 total, $0.000001 per call. One conversation (1,223 calls) accounts for the entire spend."
+        what_it_means: >
+          Cost is not the constraint in this deployment; it is self-hosted and effectively
+          free. The measure is live and correct, and would matter immediately against a
+          paid provider. Worth knowing BEFORE optimising for cost rather than latency.
+      metric_4_prompt_stability:
+        reading_by_incarnation: "29 of 37 incarnations byte-stable = 78.4%. 8 violate, with 2 or 3 distinct hashes each."
+        reading_by_lane: "135 of 418 = 32.3% — the WRONG grouping, and the design predicted it."
+        the_grouping_matters_and_the_doc_said_so: >
+          D01.6.md's D01.7 amendment states the invariant wants the incarnation, not the
+          lane: a session_key spans many incarnations and each legitimately freezes its own
+          prompt. Grouping by session_key reports 32.3% and would have been a false alarm.
+          Grouping by session_id reports 78.4%. Both numbers are recorded so nobody
+          re-derives the wrong one.
+        coverage_limit: >
+          Only 401 of 10,555 session-keyed rows carry a session_id, so metric 4 currently
+          sees a small slice. That is the honest bound on the 78.4%.
+        what_the_violations_look_like: >
+          Every one has the same shape: same owl, same model, two internally-consistent
+          hashes separated by a TIME GAP, with the system prompt changing SIZE across it
+          (11,865->11,200; 11,714->12,418; 11,485->11,472). That is a snapshot being
+          re-minted under a surviving session_id, not per-turn drift.
+        restart_correlation: >
+          3 of 8 have a core restart between every consecutive prompt window (checked
+          against 493 "orchestrator.run: entry" events across all 31 log files). For
+          20260815_092819_4ce6 the restart at 15:17:08 sits exactly between windows ending
+          14:28:23 and starting 16:02:38. So a restart is ONE mechanism, not THE mechanism.
+          CAVEAT, not to be read past: the dual log-writer bug means "no restart found" can
+          be a log gap rather than an absence, so 5/8 is an upper bound on the unexplained.
     decisions: []
     changes:
       - date: 2026-07-25
@@ -5173,7 +5313,14 @@ items:
         Measure before concluding, and read the trigger before judging the cost.
     notes: >
       Code complete 2026-07-25. All four Q20 measures have a source and a reader.
-      Only the live baseline capture remains, and it needs Bakir at the keyboard.
+      THE LIVE BASELINE IS CAPTURED (2026-08-15 — see live_baseline) and it did not
+      need Bakir at the keyboard: every measure is a SQL query and the data had been
+      accumulating for weeks. What remains is ONE stage and it genuinely IS his.
+      brainstorm stays not_started because no grill happened, and process_deviation
+      already refuses to backfill it silently. The baseline changed what that decision
+      is worth deciding ON: metric 1 reads ZERO cache hits across 132.7M input tokens,
+      so D01.2's benefit is unproven in production, and metric 4 shows 8 incarnations
+      breaking the byte-identical invariant D01.1 shipped to guarantee.
 
   - id: D01.7
     title: "Session lifecycle — session_key / session_id split"
