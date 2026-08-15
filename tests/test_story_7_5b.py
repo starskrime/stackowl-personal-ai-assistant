@@ -127,31 +127,105 @@ def test_webhook_command_name_is_webhook(tmp_path: Path) -> None:
     assert cmd.command == "webhook"
 
 
-async def test_webhook_command_register_returns_yaml_instructions(
-    tmp_path: Path,
+def _isolate_config(monkeypatch, tmp_path: Path, sources: dict | None = None) -> Path:
+    """Point WebhookCommand's config reads AND WRITES at a throwaway file.
+
+    WebhookCommand deliberately reads ``load_yaml(config_path())`` rather than
+    ``self._settings`` (d71e94ba): it is a singleton built once at startup with a
+    snapshot that is never refreshed, so a frozen-settings read would show stale
+    data right after a live /webhook register or /webhook disable. A Settings
+    double therefore cannot reach it — the injected object is simply not what the
+    command consults.
+
+    Isolating the path is not only about making the assertion pass. ``register``
+    and ``disable`` SAVE the file, so without this the suite edits the operator's
+    real ~/.stackowl/stackowl.yaml and stores a real secret in the OS keyring.
+    """
+    import yaml as _yaml
+
+    from stackowl.commands import webhook_command as _wc
+
+    cfg = tmp_path / "stackowl.yaml"
+    cfg.write_text(_yaml.safe_dump({"webhook": {"enabled": True, "sources": sources or {}}}))
+    monkeypatch.setattr(_wc, "config_path", lambda: cfg)
+    monkeypatch.setattr(_wc, "store_secret", lambda name, secret: ("test store", "env:TEST_SECRET"))
+    return cfg
+
+
+_GITHUB_SOURCE = {
+    "github": {
+        "enabled": True,
+        "secret": "env:WEBHOOK_TEST_SECRET",
+        "delivery_id_header": "X-Delivery-Id",
+    }
+}
+
+
+async def test_webhook_command_register_persists_the_source(
+    tmp_path: Path, monkeypatch,
 ) -> None:
+    """register used to only PRINT yaml to paste; it now performs the write.
+
+    The old assertions ("stackowl.yaml" in out, and "must NOT actually write
+    anything") described the instructions-only version. Register now saves the
+    source and verifies the write by re-reading it, so the test asserts the
+    persisted effect rather than the wording of a message.
+    """
     disable_guard()
+    cfg = _isolate_config(monkeypatch, tmp_path)
     db = await open_db(tmp_path)
     try:
         settings = make_settings_with_webhooks()
         cmd = WebhookCommand(db=db, settings=settings)
-        out = await cmd.handle("register github", _state())
-        assert "stackowl.yaml" in out
-        assert "github:" in out
-        assert "WEBHOOK_GITHUB_SECRET" in out
-        # The command must NOT actually write anything to the config or DB
-        rows = await db.fetch_all(
-            "SELECT COUNT(*) AS n FROM webhook_events_log", ()
+
+        out = await cmd.handle(
+            "register github delivery_id_header=X-Delivery-Id", _state()
         )
+
+        assert "github" in str(out)
+        import yaml as _yaml
+
+        saved = _yaml.safe_load(cfg.read_text())["webhook"]["sources"]
+        assert "github" in saved, saved
+        assert saved["github"]["delivery_id_header"] == "X-Delivery-Id"
+        # Registering configures; it must not fabricate received events.
+        rows = await db.fetch_all("SELECT COUNT(*) AS n FROM webhook_events_log", ())
         assert rows[0]["n"] == 0
     finally:
         await db.close()
 
 
+async def test_webhook_command_register_REFUSES_without_an_antireplay_mechanism(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """C7/F132, pinned. A source with neither a timestamp header nor a
+    delivery-id header cannot be protected against replay, and StackOwl cannot
+    guess the sender's header name. This refusal is why the old register test
+    broke, so it is worth an assertion of its own rather than a silent
+    dependency inside another test."""
+    disable_guard()
+    cfg = _isolate_config(monkeypatch, tmp_path)
+    db = await open_db(tmp_path)
+    try:
+        cmd = WebhookCommand(db=db, settings=make_settings_with_webhooks())
+
+        out = await cmd.handle("register github", _state())
+
+        assert "anti-replay" in str(out)
+        import yaml as _yaml
+
+        assert not _yaml.safe_load(cfg.read_text())["webhook"]["sources"], (
+            "a refused register must not have written the source"
+        )
+    finally:
+        await db.close()
+
+
 async def test_webhook_command_list_shows_configured_sources(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch,
 ) -> None:
     disable_guard()
+    _isolate_config(monkeypatch, tmp_path, _GITHUB_SOURCE)
     db = await open_db(tmp_path)
     try:
         settings = make_settings_with_webhooks(source_name="github")
@@ -163,22 +237,39 @@ async def test_webhook_command_list_shows_configured_sources(
         )
         cmd = WebhookCommand(db=db, settings=settings)
         out = await cmd.handle("list", _state())
-        assert "github" in out
-        assert "enabled" in out
-        assert "events:1" in out
-        assert "2026-05-22T00:00:00+00:00" in out
+        # /webhook list returns a CommandResponse now, not a bare string — the
+        # rows carry per-source buttons (90ec7d40). `in` on the dataclass is
+        # always False, so the old assertions could not see correct output.
+        text = getattr(out, "text", out)
+        assert "github" in text
+        assert "enabled" in text
+        assert "events:1" in text
+        assert "2026-05-22T00:00:00+00:00" in text
+        assert [a.label for a in getattr(out, "actions", ())] == ["github"], (
+            "each listed source should offer a menu button"
+        )
     finally:
         await db.close()
 
 
-async def test_webhook_command_disable_writes_audit_log(tmp_path: Path) -> None:
+async def test_webhook_command_disable_writes_audit_log(
+    tmp_path: Path, monkeypatch,
+) -> None:
     disable_guard()
+    cfg = _isolate_config(monkeypatch, tmp_path, _GITHUB_SOURCE)
     db = await open_db(tmp_path)
     try:
         settings = make_settings_with_webhooks(source_name="github")
         cmd = WebhookCommand(db=db, settings=settings)
         out = await cmd.handle("disable github", _state())
-        assert "enabled: false" in out
+        # The reply used to echo the yaml fragment; it now confirms in prose.
+        # Assert the EFFECT in the file rather than the wording of the message —
+        # a confirmation string is the command's claim, not evidence.
+        assert "disabled" in str(out)
+        import yaml as _yaml
+
+        saved = _yaml.safe_load(cfg.read_text())["webhook"]["sources"]["github"]
+        assert saved["enabled"] is False, saved
         rows = await db.fetch_all(
             "SELECT event_type, target FROM audit_log WHERE event_type = ?",
             ("webhook_disabled",),
