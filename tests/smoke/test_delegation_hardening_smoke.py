@@ -209,11 +209,22 @@ class _FakeProviderRegistry:
     def get_by_tier(self, tier: str) -> _ScriptedProvider:
         return self._p
 
-    def get_with_cascade(self, preferred_tier: str) -> _ScriptedProvider:
-        # D3 resolves the FAST provider once per ladder; returning a live provider
-        # (not None) means the relevance gate's LLM stage genuinely fires — which is
-        # exactly what the per-journey monkeypatched judge then governs.
-        return self._p
+    def get_with_cascade(self, preferred_tier: str) -> tuple[_ScriptedProvider, str]:
+        """Returns (provider, model) — the shape production returns.
+
+        This returned a BARE provider, and the caller does
+        ``fast_provider, fast_model = ...get_with_cascade("fast")``. Unpacking a
+        non-iterable raised TypeError, which delegate_task's deliberate fail-open
+        swallowed into "no fast provider for relevance judge — structural
+        pre-filter only". So the relevance judge never ran, and the journeys that
+        exist to govern it silently tested nothing: 13 skip-warnings in one run.
+
+        The double drifted when get_with_cascade started returning the resolved
+        MODEL alongside the provider (the per-model-config change). Nothing failed
+        loudly because the fail-open is doing its job — it just had nothing left to
+        judge.
+        """
+        return self._p, ""
 
 
 # ---------------------------------------------------------------------------
@@ -315,11 +326,15 @@ def _specialist(name: str, role: str, *, bounds: BoundsSpec | None = None) -> Ow
 
 
 # Deterministic judge stubs (monkeypatch dt.judge_relevance per journey).
-async def _judge_relevant(provider, ask, content):  # noqa: ANN001
+# `model=""` and **_ mirror the real judge_relevance signature: delegate_task calls
+# it with `model=<resolved fast model>` since the per-model-config change. Without
+# them the stub raised TypeError, which the relevance gate's fail-open swallowed —
+# so these journeys ran with NO judge at all and asserted nothing.
+async def _judge_relevant(provider, ask, content, model="", **_):  # noqa: ANN001
     return (True, "on-topic")
 
 
-async def _judge_offtopic(provider, ask, content):  # noqa: ANN001
+async def _judge_offtopic(provider, ask, content, model="", **_):  # noqa: ANN001
     return (False, "off topic: did not address the request")
 
 
