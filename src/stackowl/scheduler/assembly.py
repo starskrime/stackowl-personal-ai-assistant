@@ -431,6 +431,7 @@ class SchedulerAssembly:
             TaskOutcomeStore(db),
         )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
+        from stackowl.health.channel_healers import ChannelHealers
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 
         # ADR-6 F-87 — close the loop: hand the live serve-process HealableResources
@@ -469,184 +470,23 @@ class SchedulerAssembly:
             )
         for provider in provider_registry.all():
             healers[f"provider:{provider.name}"] = provider
-        # ADR-6 Task 4 — Telegram adapter self-heal (thin HealableResource wrapper).
-        # The adapter auto-registers itself with ChannelRegistry on start(); fetch it
-        # and wire it to the health loop if telegram is configured. Gates on both
-        # telegram being enabled AND the adapter being live (registered), so a
-        # missing/unconfigured adapter doesn't block the sweep.
-        if settings.telegram_channel.bot_token:
-            from stackowl.channels.registry import ChannelRegistry
-
-            try:
-                # 1. ENTRY
-                log.scheduler.debug(
-                    "[scheduler] assembly: telegram healer setup — entry",
-                    extra={"_fields": {"telegram_configured": True}},
-                )
-                channel_registry = ChannelRegistry.instance()
-                telegram_adapter = channel_registry.get("telegram")
-                if telegram_adapter is not None:
-                    # 2. DECISION — adapter is registered and ready
-                    # 3. STEP — add to healers and register contributor
-                    healers[telegram_adapter.contributor_name] = telegram_adapter
-                    health_aggregator.register(telegram_adapter)
-                    log.scheduler.debug(
-                        "[scheduler] assembly: telegram healer wired",
-                        extra={
-                            "_fields": {
-                                "key": telegram_adapter.contributor_name,
-                                "adapter": type(telegram_adapter).__name__,
-                            }
-                        },
-                    )
-                else:
-                    # Adapter not yet started (will register itself later)
-                    log.scheduler.debug(
-                        "[scheduler] assembly: telegram adapter not yet registered — "
-                        "health detection via ChannelLivenessContributor only"
-                    )
-            except Exception as exc:
-                # 4. EXIT (error path) — log loudly but don't crash assembly
-                log.scheduler.warning(
-                    "[scheduler] assembly: telegram healer setup failed — "
-                    "health detection via ChannelLivenessContributor only",
-                    exc_info=exc,
-                )
-        # ADR-6 Task 5 — Discord adapter self-heal (thin HealableResource wrapper).
-        # The adapter auto-registers itself with ChannelRegistry on start(); fetch it
-        # and wire it to the health loop if discord is configured. Gates on both
-        # discord being enabled AND the adapter being live (registered), so a
-        # missing/unconfigured adapter doesn't block the sweep.
-        if settings.discord_channel.bot_token:
-            from stackowl.channels.registry import ChannelRegistry
-
-            try:
-                # 1. ENTRY
-                log.scheduler.debug(
-                    "[scheduler] assembly: discord healer setup — entry",
-                    extra={"_fields": {"discord_configured": True}},
-                )
-                channel_registry = ChannelRegistry.instance()
-                discord_adapter = channel_registry.get("discord")
-                if discord_adapter is not None:
-                    # 2. DECISION — adapter is registered and ready
-                    # 3. STEP — add to healers and register contributor
-                    healers[discord_adapter.contributor_name] = discord_adapter
-                    health_aggregator.register(discord_adapter)
-                    log.scheduler.debug(
-                        "[scheduler] assembly: discord healer wired",
-                        extra={
-                            "_fields": {
-                                "key": discord_adapter.contributor_name,
-                                "adapter": type(discord_adapter).__name__,
-                            }
-                        },
-                    )
-                else:
-                    # Adapter not yet started (will register itself later)
-                    log.scheduler.debug(
-                        "[scheduler] assembly: discord adapter not yet registered — "
-                        "no self-heal until adapter starts"
-                    )
-            except Exception as exc:
-                # 4. EXIT (error path) — log loudly but don't crash assembly
-                log.scheduler.warning(
-                    "[scheduler] assembly: discord healer setup failed — "
-                    "no self-heal for discord",
-                    exc_info=exc,
-                )
-        # ADR-6 Task 6 — Slack adapter self-heal (thin HealableResource wrapper).
-        # The adapter auto-registers itself with ChannelRegistry on start(); fetch it
-        # and wire it to the health loop if slack is configured. Gates on both
-        # slack being enabled AND the adapter being live (registered), so a
-        # missing/unconfigured adapter doesn't block the sweep.
-        if settings.slack_channel.bot_token:
-            from stackowl.channels.registry import ChannelRegistry
-
-            try:
-                # 1. ENTRY
-                log.scheduler.debug(
-                    "[scheduler] assembly: slack healer setup — entry",
-                    extra={"_fields": {"slack_configured": True}},
-                )
-                channel_registry = ChannelRegistry.instance()
-                slack_adapter = channel_registry.get("slack")
-                if slack_adapter is not None:
-                    # 2. DECISION — adapter is registered and ready
-                    # 3. STEP — add to healers and register contributor
-                    healers[slack_adapter.contributor_name] = slack_adapter
-                    health_aggregator.register(slack_adapter)
-                    log.scheduler.debug(
-                        "[scheduler] assembly: slack healer wired",
-                        extra={
-                            "_fields": {
-                                "key": slack_adapter.contributor_name,
-                                "adapter": type(slack_adapter).__name__,
-                            }
-                        },
-                    )
-                else:
-                    # Adapter not yet started (will register itself later)
-                    log.scheduler.debug(
-                        "[scheduler] assembly: slack adapter not yet registered — "
-                        "health detection via ChannelLivenessContributor only"
-                    )
-            except Exception as exc:
-                # 4. EXIT (error path) — log loudly but don't crash assembly
-                log.scheduler.warning(
-                    "[scheduler] assembly: slack healer setup failed — "
-                    "no self-heal for slack",
-                    exc_info=exc,
-                )
-        # ADR-6 Task 7 — WhatsApp adapter self-heal. Unlike Telegram/Discord/Slack
-        # (thin reconnector wrappers), WhatsApp owns its Playwright browser driver
-        # directly, so its ensure_available() performs a REAL browser-driver
-        # restart (stop the dead WhatsAppBrowserDriver, construct+start a fresh
-        # one) rather than delegating to an injected callback. The adapter
-        # auto-registers itself with ChannelRegistry on start(); fetch it and wire
-        # it to the health loop if whatsapp is enabled. Gates on both whatsapp
-        # being enabled AND the adapter being live (registered), so a
-        # missing/unconfigured adapter doesn't block the sweep. WhatsApp Web has
-        # no bot token (QR-auth) — ``enabled`` is its gate, mirroring the
-        # orchestrator's own startup gate for this channel.
-        if settings.whatsapp_channel.enabled:
-            from stackowl.channels.registry import ChannelRegistry
-
-            try:
-                # 1. ENTRY
-                log.scheduler.debug(
-                    "[scheduler] assembly: whatsapp healer setup — entry",
-                    extra={"_fields": {"whatsapp_configured": True}},
-                )
-                channel_registry = ChannelRegistry.instance()
-                whatsapp_adapter = channel_registry.get("whatsapp")
-                if whatsapp_adapter is not None:
-                    # 2. DECISION — adapter is registered and ready
-                    # 3. STEP — add to healers and register contributor
-                    healers[whatsapp_adapter.contributor_name] = whatsapp_adapter
-                    health_aggregator.register(whatsapp_adapter)
-                    log.scheduler.debug(
-                        "[scheduler] assembly: whatsapp healer wired",
-                        extra={
-                            "_fields": {
-                                "key": whatsapp_adapter.contributor_name,
-                                "adapter": type(whatsapp_adapter).__name__,
-                            }
-                        },
-                    )
-                else:
-                    # Adapter not yet started (will register itself later)
-                    log.scheduler.debug(
-                        "[scheduler] assembly: whatsapp adapter not yet registered — "
-                        "health detection via ChannelLivenessContributor only"
-                    )
-            except Exception as exc:
-                # 4. EXIT (error path) — log loudly but don't crash assembly
-                log.scheduler.warning(
-                    "[scheduler] assembly: whatsapp healer setup failed — "
-                    "no self-heal for whatsapp",
-                    exc_info=exc,
-                )
+        # ADR-6 Tasks 4-7 — channel self-heal (Telegram, Discord, Slack, WhatsApp).
+        #
+        # These used to be four near-identical blocks that fetched the adapter from
+        # ChannelRegistry HERE and added it to `healers`. That could never work, for
+        # two reasons found on 2026-08-15:
+        #
+        #   1. This assembly runs BEFORE the adapters start (measured: assembly exits
+        #      03:31:19, Telegram starts 03:31:45), and ChannelRegistry.get RAISES for
+        #      an absent channel rather than returning None — so every boot took the
+        #      except branch and logged "telegram healer setup failed", which reads
+        #      like a degrade and was a permanently open loop.
+        #   2. The key would have been "telegram", while the statuses that report the
+        #      channel unhealthy are "telegram_receive" and "telegram_canary_send".
+        #      The sweep's lookup is an exact string match, so it could never hit.
+        #
+        # ChannelHealers resolves adapters AT LOOKUP TIME and maps status names back
+        # to their channel, so no ordering constraint remains to get wrong.
         # ADR-6 Task 8 — MCP servers liveness detection. McpClient itself is a pure
         # no-op HealableResource (fully stateless per-call with bounded retry), so
         # the real value is the McpHealthContributor which aggregates probe results
@@ -709,7 +549,11 @@ class SchedulerAssembly:
             healers["browser"] = browser_runtime
 
         health_sweep_handler = HealthSweepHandler(
-            health_aggregator, alert=health_alert, healers=healers
+            health_aggregator,
+            alert=health_alert,
+            # Wrapped so a channel adapter is resolved WHEN THE SWEEP LOOKS, not
+            # when this assembly runs — the adapters have not started yet.
+            healers=ChannelHealers(healers),
         )
         HandlerRegistry.instance().register(health_sweep_handler)
 

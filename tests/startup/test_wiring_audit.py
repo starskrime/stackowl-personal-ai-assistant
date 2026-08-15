@@ -207,8 +207,24 @@ async def test_real_registry_has_no_unexpected_dangling_handlers(
         tmp_db, reg, allowed_events=frozenset(), declared_publishers=set()
     )
 
-    # check_in is disabled by default → its seed is intentionally absent.
-    EXPECTED_DANGLING = {"check_in"}
+    # Each entry is a handler that is registered and DELIBERATELY not seeded
+    # under default test settings. Every one needs a reason, or this set becomes
+    # a place to hide real regressions.
+    #
+    #   check_in        — disabled by default, so its row is correctly absent.
+    #   telegram_canary — seeded ONLY when a single telegram owner resolves
+    #                     (assembly.py:675). No owner is configured here, and the
+    #                     code refuses to seed a permanently-undeliverable row
+    #                     rather than schedule one that can never deliver.
+    #   dream_worker    — D08.1 UNSCHEDULED it (migration 0113) and D08.2 pass 1
+    #                     stripped it to a seat for N01 Dreaming. Registered so
+    #                     N01 inherits the name its job row keys on; unseeded so
+    #                     nothing dispatches a handler with no phases.
+    #
+    # ADDED 2026-08-15 by the red-test sweep. This test had been failing since
+    # the dream_worker change — which means it could not do its actual job of
+    # catching a NEW dangling handler for as long as it was red.
+    EXPECTED_DANGLING = {"check_in", "telegram_canary", "dream_worker"}
     unexpected = set(report.dangling_handlers) - EXPECTED_DANGLING
     assert unexpected == set(), (
         f"NEW dangling seeded handler(s) registered but never seeded: {unexpected}. "

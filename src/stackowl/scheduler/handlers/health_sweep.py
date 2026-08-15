@@ -18,7 +18,7 @@ detect+alert subset; recycle remains a follow-up.
 from __future__ import annotations
 
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from stackowl.infra.clock import Clock, WallClock
@@ -61,7 +61,10 @@ class HealthSweepHandler(JobHandler):
         aggregator: HealthAggregator,
         *,
         alert: AlertSink | None = None,
-        healers: dict[str, HealableResource] | None = None,
+        # Mapping, not dict: this only ever does `.get()` and a truthiness check,
+        # and ChannelHealers is a Mapping that resolves channel adapters at LOOKUP
+        # time — the ordering fix that closed the never-wired channel self-heal.
+        healers: Mapping[str, HealableResource] | None = None,
         recovery: RecoveryActuator | None = None,
         clock: Clock | None = None,
         realert_backoff_s: float = 3600.0,
