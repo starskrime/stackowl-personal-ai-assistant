@@ -200,8 +200,16 @@ class _FakeProviderRegistry:
     def get_by_tier(self, tier: str) -> _ScriptedProvider:
         return self._p
 
-    def get_with_cascade(self, preferred_tier: str) -> _ScriptedProvider:
-        return self._p
+    def get_with_cascade(self, preferred_tier: str) -> tuple[_ScriptedProvider, str]:
+        """Returns (provider, model) — the shape production returns.
+
+        Returning a bare provider made the caller's
+        `fast_provider, fast_model = ...` raise TypeError, which delegate_task's
+        fail-open swallowed into "no fast provider for relevance judge". The judge
+        then never ran and the secretary-fallback rung this smoke exists to prove
+        was never reached. Same drift as the hardening smoke's double.
+        """
+        return self._p, ""
 
 
 # ---------------------------------------------------------------------------

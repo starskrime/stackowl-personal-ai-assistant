@@ -504,7 +504,11 @@ async def test_j3_read_only_offtopic_fallback_recovers(
     """
     secretary_answer = "Secretary's on-topic answer: the file says 42."
 
-    async def _selective_judge(provider, ask, content):  # noqa: ANN001
+    # `model=""` + **_ mirror the real judge_relevance signature. Without them this
+    # stub raised TypeError into the relevance gate's fail-open, so the judge never
+    # ran, the child was never demoted to off_topic, and the ladder never reached
+    # the secretary fallback this journey exists to prove.
+    async def _selective_judge(provider, ask, content, model="", **_):  # noqa: ANN001
         # The read-only child's answer is off-topic; the secretary's is on-topic.
         return ("on-topic answer" in content, "verdict")
 
