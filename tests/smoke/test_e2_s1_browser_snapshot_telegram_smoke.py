@@ -75,8 +75,15 @@ class _SnapshotThenClickProvider:
 
     protocol = "anthropic"
 
-    def __init__(self, session_key: str, page_handle: str) -> None:
-        self._sid = session_key
+    def __init__(self, browser_session_id: str, page_handle: str) -> None:
+        # NOT the conversation's session_key. This is the BrowserSessionRegistry
+        # id from sessions.open(), and browser_snapshot requires it under its own
+        # name. D01.7 renamed the pipeline's session_id to session_key and this
+        # argument was swept along with it, which made every snapshot call fail
+        # with "missing required parameter(s): session_id" — so the provider
+        # never got a [ref=eN] to click and the click assertion failed one layer
+        # downstream of the actual break.
+        self._sid = browser_session_id
         self._ph = page_handle
         self.calls: list[str] = []
 
@@ -86,7 +93,7 @@ class _SnapshotThenClickProvider:
     ):  # noqa: ANN001
         # Thread session_key + page_handle exactly as a real model would after
         # browser_navigate returned them (so the tools act on the live page).
-        args = {"session_key": self._sid, "page_handle": self._ph}
+        args = {"session_id": self._sid, "page_handle": self._ph}
         snap = await tool_dispatcher("browser_snapshot", dict(args))
         self.calls.append("browser_snapshot")
         m = re.search(r'button[^\n]*\[ref=([A-Za-z0-9]+)\]', snap) or re.search(r"\[ref=([A-Za-z0-9]+)\]", snap)
