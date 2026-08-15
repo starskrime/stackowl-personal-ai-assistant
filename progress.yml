@@ -8632,7 +8632,7 @@ items:
                                    # 4 for providers, explicitly NOT 6), every file listed
                                    # per slice, Laws 1 and 2 stated with their mechanism,
                                    # I1-I7 numbered. ESC-1 blocks slice B only.
-      implement:  not_started
+      implement:  partial      # slices A+B DONE (bridge split, orchestrator seams 1-3, seam 3 passes 1-4, plus the unplanned LanceDB removal). Slice C — MemoryProvider as a plugin kind, the item's headline deliverable — NOT STARTED.
       cleanup:    not_started
       test:       not_started
       validate:   not_started
