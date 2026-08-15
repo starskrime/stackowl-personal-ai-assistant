@@ -4,8 +4,8 @@ Reproduces the production wiring bug: `MemoryCommand.create_and_register` was
 defined but never called by the startup orchestrator, so `/memory remember X`
 silently did nothing. This drives the command through the SAME registration
 path the orchestrator now uses (``create_and_register`` on the real
-:class:`CommandRegistry` singleton, over a real :class:`SqliteMemoryBridge` +
-real :class:`FactPromoter` on a tmp DB), and asserts the user OUTCOME:
+:class:`CommandRegistry` singleton, over a a real
+:class:`SqliteMemoryBridge` on a tmp DB), and asserts the user OUTCOME:
 
   1. ``/memory remember <text>`` persists a committed fact, and
   2. ``/memory search <text>`` recalls it.
@@ -21,7 +21,6 @@ import pytest
 from stackowl.commands.memory_command import MemoryCommand
 from stackowl.commands.registry import CommandNotFoundError, CommandRegistry
 from stackowl.db.pool import DbPool
-from stackowl.memory.fact_promoter import FactPromoter
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from tests._story_6_7_helpers import (  # noqa: F401 — fixture re-exports
     EventBus,
@@ -50,7 +49,6 @@ async def test_memory_command_registered_remember_then_search(db: DbPool) -> Non
     """
     # Real stores — no AI provider involved (FTS5 recall, no embeddings needed).
     bridge = SqliteMemoryBridge(db=db, embedding_registry=None, lancedb=None)
-    promoter = FactPromoter(db=db)
 
     MemoryCommand.create_and_register(
         bridge=bridge,
@@ -58,7 +56,6 @@ async def test_memory_command_registered_remember_then_search(db: DbPool) -> Non
         db=db,
         event_bus=EventBus(),
         lancedb=None,
-        promoter=promoter,
         embedding_registry=None,
     )
 
@@ -69,13 +66,23 @@ async def test_memory_command_registered_remember_then_search(db: DbPool) -> Non
 
     # 1) remember through the registry dispatch path
     remember_out = (await registry.dispatch("memory", f"remember {_MARKER}", make_state())).text
-    assert remember_out.startswith("✓ Remembered"), remember_out
+    # D08.1 retargeted /memory at curated memory and made the reply state WHEN the
+    # write reaches the prompt — "on the next /new" — because the prompt block is a
+    # snapshot frozen per incarnation and a bare "Remembered" implied otherwise.
+    assert remember_out.startswith("✓ Saved."), remember_out
+    assert "next /new" in remember_out, (
+        f"the reply must say when the write reaches the prompt: {remember_out!r}"
+    )
 
-    # 2) verify persistence via an INDEPENDENT bridge over the same DB
-    independent = SqliteMemoryBridge(db=db, embedding_registry=None, lancedb=None)
-    committed = await independent.list_staged(status="committed")
-    assert any(_MARKER in f.content for f in committed), (
-        f"remembered fact not found in committed_facts: {[f.content for f in committed]}"
+    # 2) verify persistence through an INDEPENDENT reader of the real store. The
+    # store moved from committed_facts (0 rows since migration 0112) to the curated
+    # files, which is also where the system prompt reads it — so this is a stronger
+    # check than the old one, not a weaker one.
+    from stackowl.memory.curated import CuratedMemory
+
+    persisted = [text for _target, text in CuratedMemory().search(_MARKER)]
+    assert persisted, (
+        f"remembered fact not found in curated memory. search({_MARKER!r}) -> {persisted!r}"
     )
 
     # 3) search through the registry recalls it
