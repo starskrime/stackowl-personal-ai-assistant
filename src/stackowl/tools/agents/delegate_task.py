@@ -49,6 +49,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.cost_pause import gate_or_continue
+from stackowl.owls.base_prompt import strip_turn_context
 from stackowl.owls.delegation_limits import depth_cap, width_cap
 from stackowl.pipeline.authz_compose import child_floor, resolve_owl_bounds
 from stackowl.pipeline.durable.context import get_active
@@ -526,7 +527,13 @@ class DelegateTaskTool(Tool):
         memo: dict[tuple[str, str], _A2AResult] = {}
         chain = tuple(TraceContext.get().get("delegation_chain") or ())
         parent_state = PipelineState(
-            trace_id=trace_id or "delegate-task", session_key=session_key, input_text=sub_task,
+            trace_id=trace_id or "delegate-task", session_key=session_key,
+            # The sub-task is text the MODEL wrote, and a model that saw the
+            # volatile turn context prepended to the user's message can copy it
+            # in verbatim (live 2026-08-15, qwen 3.8). Strip it here so the child
+            # reasons about the task and its give-up message quotes the user
+            # rather than our scaffolding.
+            input_text=strip_turn_context(sub_task),
             channel=channel, owl_name=caller, pipeline_step="dispatch", delegation_depth=depth,
             delegation_chain=chain, delegation_profile=delegation_profile,
             # E2-S2 delegation floor — clamp to parent EFFECTIVE bounds (owl ∩ ceiling).

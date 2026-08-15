@@ -28,6 +28,7 @@ The ReAct example in the stable tier is kept in lock-step with the parser in
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 # Window at/below which a model gets the lean charter + lean DNA (small/weak local
@@ -233,6 +234,40 @@ def volatile_turn_context(
     if not capabilities_offered:
         parts.append(_NO_CAPABILITIES_THIS_TURN)
     return "\n\n".join(parts)
+
+
+#: Matches the wall-clock sentence :func:`volatile_turn_context` builds, in any
+#: locale-rendered form, when it leads a block of text.
+_TURN_CONTEXT_RE = re.compile(
+    r"\A\s*Right now it is [^\n]*?\.\s*(?:\n\s*\n|\Z)", re.IGNORECASE
+)
+
+
+def strip_turn_context(text: str | None) -> str:
+    """Remove a leading volatile-turn-context block from ``text``.
+
+    WHY THIS IS NEEDED. The context rides the turn by being prepended to the
+    user's message, which means a model can read it as part of what the user
+    SAID — and then copy it into a tool argument. Observed live 2026-08-15 with
+    qwen 3.8: asked why an owl had pinged early, it passed the whole composed
+    message as delegate_task's sub-task, so the child's give-up message opened
+    with "I couldn't fully complete this: Right now it is Saturday, August 15,
+    2026 at 04:10 PM CDT.\n\nWait i tought headhunter...". The user was shown our
+    own scaffolding quoted back at them.
+
+    Use this anywhere composed text can reach a USER-FACING surface or become a
+    tool argument. It is a safety net over a structural weakness, not a fix for
+    it: the durable answer is to stop concatenating the context onto the user's
+    words at all — see the escalation in progress.yml.
+
+    Idempotent, and a no-op on text that never carried a prefix.
+    """
+    if not text:
+        return ""
+    stripped = _TURN_CONTEXT_RE.sub("", text, count=1)
+    if _NO_CAPABILITIES_THIS_TURN in stripped:
+        stripped = stripped.replace(_NO_CAPABILITIES_THIS_TURN, "", 1)
+    return stripped.strip()
 
 
 def build_stable_base_prompt(

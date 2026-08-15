@@ -37,7 +37,7 @@ from urllib.parse import urlsplit, urlunsplit
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.interaction.classifier_base import resolve_cascade_tier, safe_complete
-from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
+from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD, strip_turn_context
 from stackowl.owls.skill_ownership import read_all_skill_ownership
 from stackowl.pipeline.authz_compose import child_floor
 from stackowl.pipeline.delivery_decision import DeliveryDecision
@@ -285,7 +285,10 @@ def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk
         and state.model_window <= LEAN_WINDOW_THRESHOLD
     )
     floor_text = synthesize_floor(
-        goal=state.input_text,
+        # Strip our own scaffolding before quoting the user back at themselves:
+        # a model can copy the volatile turn context into a tool argument, and
+        # the delegated child's input_text then carries it (live 2026-08-15).
+        goal=strip_turn_context(state.input_text),
         error=_error_for_failed_capability(state, failed_name),
         attempts=_attempts_for_state(state) or None,
         partial=None,
