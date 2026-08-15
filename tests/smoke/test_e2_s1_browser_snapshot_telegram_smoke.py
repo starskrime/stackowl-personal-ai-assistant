@@ -188,8 +188,12 @@ class _MultiToolProvider:
 
     protocol = "anthropic"
 
-    def __init__(self, session_key: str, page_handle: str) -> None:
-        self._args = {"session_key": session_key, "page_handle": page_handle}
+    def __init__(self, browser_session_id: str, page_handle: str) -> None:
+        # The BrowserSessionRegistry id, not the conversation's session_key —
+        # see _ScriptedSpecialist. These two providers skip when Camoufox cannot
+        # launch, so the same D01.7 rename damage sat here unexecuted; every one
+        # of their tools requires session_id too.
+        self._args = {"session_id": browser_session_id, "page_handle": page_handle}
         self.results: dict[str, str] = {}
 
     async def complete_with_tools(
@@ -327,8 +331,12 @@ class _ConsoleProvider:
 
     protocol = "anthropic"
 
-    def __init__(self, session_key: str, page_handle: str) -> None:
-        self._args = {"session_key": session_key, "page_handle": page_handle}
+    def __init__(self, browser_session_id: str, page_handle: str) -> None:
+        # The BrowserSessionRegistry id, not the conversation's session_key —
+        # see _ScriptedSpecialist. These two providers skip when Camoufox cannot
+        # launch, so the same D01.7 rename damage sat here unexecuted; every one
+        # of their tools requires session_id too.
+        self._args = {"session_id": browser_session_id, "page_handle": page_handle}
         self.result = ""
 
     async def complete_with_tools(
