@@ -1,26 +1,29 @@
 """Off-path guard (concurrent-msg §4.6 invariant).
 
-LOCKS the invariant that DNA-evolution and memory-promotion are OFF the turn's
-critical path. The recon confirmed:
+LOCKS the invariant that DNA-evolution is OFF the turn's critical path. The recon
+confirmed:
 
   * Evolution = ``owls/evolution.py`` ``EvolutionCoordinator`` — a scheduler
     ``JobHandler`` (``handler_name="evolution_batch"``), driven by the scheduler,
     NOT by a turn.
-  * Promotion = ``FactPromoter.promote_eligible`` — invoked ONLY from
-    ``memory/dream_worker.py`` (the DreamWorker job), NOT by a turn.
   * ``consolidate._persist_turn`` only STAGES a fact (``bridge.store`` → a single
-    INSERT, no embed, no lock). It triggers neither evolution nor promotion.
+    INSERT, no embed, no lock). It triggers no evolution.
 
-Because evolution/promotion are off-path, cross-session concurrency CANNOT create
-concurrent *inline* evolution/promotion (the race Winston feared). This test drives
-two concurrent cross-session turns through the REAL pipeline (mirroring
+D08.2 seam 3 pass 4 — this used to spy a SECOND off-path entrypoint,
+``FactPromoter.promote_eligible``, and assert it too stayed off the turn. The
+promoter is gone, so that half went with it: there is no promotion left to move
+onto the turn path by accident. The evolution half is unchanged and still live.
+
+Because evolution is off-path, cross-session concurrency CANNOT create concurrent
+*inline* evolution (the race Winston feared). This test drives two concurrent
+cross-session turns through the REAL pipeline (mirroring
 ``tests/pipeline/test_plan_a_gateway_integration.py``: real ``ToolRegistry``,
 real ``AsyncioBackend``, a recording provider resolved through the real
-``ProviderRegistry``) with spies on ``EvolutionCoordinator.execute`` and
-``FactPromoter.promote_eligible``, and asserts NEITHER is invoked during the turns.
+``ProviderRegistry``) with a spy on ``EvolutionCoordinator.execute``, and asserts
+it is not invoked during the turns.
 
-If a future change ever moves evolution/promotion ON the turn path, this test
-FAILS LOUDLY — surfacing the concurrency race before it can ship.
+If a future change ever moves evolution ON the turn path, this test FAILS LOUDLY —
+surfacing the concurrency race before it can ship.
 
 NOTE on spy targets: the plan sketch named ``EvolutionCoordinator.handle``/``run``,
 but the LIVE method on the ``JobHandler`` is ``execute`` (verified in
@@ -129,25 +132,19 @@ def _state_from_decision(
     )
 
 
-async def test_concurrent_turns_do_not_inline_evolution_or_promotion(
+async def test_concurrent_turns_do_not_inline_evolution(
     tmp_db: DbPool, monkeypatch
 ) -> None:
-    """Two concurrent cross-session turns must NOT inline evolution/promotion.
+    """Two concurrent cross-session turns must NOT inline evolution.
 
-    Spies record any call to ``EvolutionCoordinator.execute`` (the JobHandler
-    entrypoint) and ``FactPromoter.promote_eligible`` (the DreamWorker entrypoint).
-    Both must stay empty: a turn stages only.
+    A spy records any call to ``EvolutionCoordinator.execute`` (the JobHandler
+    entrypoint). It must stay empty: a turn stages only.
     """
     evo_calls: list[str] = []
-    promo_calls: list[str] = []
 
     async def _spy_evo(self, *a: object, **k: object) -> object:  # noqa: ANN001
         evo_calls.append("evo")
         return None
-
-    async def _spy_promo(self, *a: object, **k: object) -> int:  # noqa: ANN001
-        promo_calls.append("promo")
-        return 0
 
     # Spy the REAL method names (live: JobHandler.execute, not the plan's
     # handle/run). raising=True so a rename of either entrypoint fails this test
@@ -155,12 +152,6 @@ async def test_concurrent_turns_do_not_inline_evolution_or_promotion(
     monkeypatch.setattr(
         "stackowl.owls.evolution.EvolutionCoordinator.execute", _spy_evo, raising=True
     )
-    monkeypatch.setattr(
-        "stackowl.memory.fact_promoter.FactPromoter.promote_eligible",
-        _spy_promo,
-        raising=True,
-    )
-
     # Count staging calls: a turn must STAGE exactly once (no embed, no promote).
     store_calls: list[str] = []
     real_store = SqliteMemoryBridge.store
@@ -215,7 +206,6 @@ async def test_concurrent_turns_do_not_inline_evolution_or_promotion(
 
     # --- LOAD-BEARING: evolution + promotion never ran inline on the turn path ----
     assert evo_calls == [], "evolution must stay off the turn path (§4.6 invariant)"
-    assert promo_calls == [], "promotion must stay off the turn path (§4.6 invariant)"
 
     # --- consolidate only STAGED: exactly one bridge.store per turn ---------------
     assert sorted(store_calls) == sorted(sessions), (

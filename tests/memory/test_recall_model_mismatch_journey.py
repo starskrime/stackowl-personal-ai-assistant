@@ -20,7 +20,6 @@ LanceDB / SQLite / FTS5 throughout.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -30,10 +29,10 @@ from stackowl.db.pool import DbPool
 from stackowl.embeddings.base import EmbeddingProvider
 from stackowl.embeddings.registry import EmbeddingRegistry
 from stackowl.health.status import HealthStatus
-from stackowl.memory.fact_promoter import FactPromoter
 from stackowl.memory.lancedb_adapter import LanceDBAdapter
 from stackowl.memory.lancedb_helpers import read_corpus_identity, write_corpus_identity
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
+from tests.memory._committed_fact_fixture import insert_committed
 
 pytestmark = pytest.mark.asyncio
 
@@ -76,24 +75,21 @@ def _registry_with(provider: EmbeddingProvider) -> EmbeddingRegistry:
 
 
 async def _seed_committed_fact(db: DbPool, *, fact_id: str, content: str, model: str) -> None:
-    await db.execute(
-        """INSERT INTO staged_facts (
-               fact_id, content, source_type, source_ref, confidence,
-               staged_at, reinforcement_count, status, embedding, embedding_model
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            fact_id, content, "conversation_fact", "sess-mismatch", 0.9,
-            datetime.now(UTC).isoformat(), 1, "staged", b"", model,
-        ),
-    )
-    promoter = FactPromoter(
+    """D08.2 seam 3 pass 4 — was a staged insert + a real FactPromoter run.
+
+    The promoter is gone; this journey is not, because recall()'s drift degrade is
+    LIVE code on a path the `memory` tool calls. What the drift turns on is the
+    committed row's ``embedding_model``, which the shared fixture sets directly.
+    """
+    await insert_committed(
         db,
-        confidence_threshold=0.8,
-        reinforcement_required=3,
-        conversation_fact_reinforcement_required=1,
+        fact_id=fact_id,
+        content=content,
+        source_type="conversation_fact",
+        source_ref="sess-mismatch",
+        embedding_model=model,
+        reinforcement_count=1,
     )
-    promoted = await promoter.promote_eligible()
-    assert promoted == 1
 
 
 async def test_model_mismatch_recall_no_poison_fts_honest(

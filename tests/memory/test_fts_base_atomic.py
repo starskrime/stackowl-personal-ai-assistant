@@ -20,9 +20,9 @@ from datetime import UTC, datetime
 import pytest
 
 from stackowl.db.pool import DbPool
-from stackowl.memory.fact_promoter import FactPromoter
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.memory.sqlite_helpers import pack_embedding
+from tests.memory._committed_fact_fixture import insert_committed
 
 pytestmark = pytest.mark.asyncio
 
@@ -94,26 +94,23 @@ async def test_delete_routes_base_and_fts_through_one_transaction(tmp_db: DbPool
 
     src = inspect.getsource(bridge_mod.SqliteMemoryBridge.delete)
     assert "transaction(" in src, "delete() must wrap base+FTS in a transaction"
+    # The matching assertion over FactPromoter._promote_one went with the promoter in
+    # D08.2 seam 3 pass 4. delete() is the half that survives, and it is live — the
+    # `memory` tool's forget path calls it.
 
-    promote_src = inspect.getsource(FactPromoter._promote_one)
-    assert "transaction(" in promote_src, "_promote_one() must wrap base+FTS in a transaction"
 
-
-async def test_promote_commits_base_and_fts_together(tmp_db: DbPool) -> None:
-    fid = str(uuid.uuid4())
-    await _insert_staged(tmp_db, fact_id=fid, content="the user prefers tabs")
-    promoter = FactPromoter(tmp_db)
-    assert await promoter.force_promote(fid) is True
-    base, fts = await _counts(tmp_db, fid)
-    assert base == 1 and fts == 1, f"base+fts must both land (base={base}, fts={fts})"
+# test_promote_commits_base_and_fts_together stood here and went with the promoter:
+# it asserted that a PROMOTE lands base+FTS together. Nothing can promote any more.
+# Its sibling below — that a DELETE removes both together — covers live code and stays.
 
 
 async def test_delete_removes_base_and_fts_together(tmp_db: DbPool) -> None:
     fid = str(uuid.uuid4())
-    await _insert_staged(tmp_db, fact_id=fid, content="ephemeral fact")
-    promoter = FactPromoter(tmp_db)
-    assert await promoter.force_promote(fid) is True
-    assert (await _counts(tmp_db, fid)) == (1, 1)
+    await insert_committed(tmp_db, fact_id=fid, content="ephemeral fact")
+    assert (await _counts(tmp_db, fid)) == (1, 1), (
+        "fixture precondition: the fact must exist in BOTH base and index before "
+        "a delete can prove it removes both"
+    )
 
     bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
     await bridge.delete(fid)

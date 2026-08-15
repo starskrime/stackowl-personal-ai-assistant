@@ -22,9 +22,9 @@ import pytest
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.embeddings.registry import EmbeddingRegistry
-from stackowl.memory.fact_promoter import FactPromoter
 from stackowl.memory.lancedb_adapter import LanceDBAdapter
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
+from tests.memory._committed_fact_fixture import insert_committed
 
 pytestmark = pytest.mark.asyncio
 
@@ -32,41 +32,12 @@ pytestmark = pytest.mark.asyncio
 _FACT_CONTENT = "The Otto Ninja starter robot kit ships with two servos"
 
 
-async def _seed_committed_fact(db: DbPool, *, fact_id: str, content: str) -> None:
-    """Seed one committed fact via the production promotion path.
-
-    Inserts a staged conversation_fact eligible for promotion, then runs the
-    real :class:`FactPromoter` so both ``committed_facts`` AND
-    ``committed_facts_fts`` get written exactly as production does.
-    """
-    from datetime import UTC, datetime
-
-    await db.execute(
-        """INSERT INTO staged_facts (
-               fact_id, content, source_type, source_ref, confidence,
-               staged_at, reinforcement_count, status, embedding, embedding_model
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            fact_id,
-            content,
-            "conversation_fact",
-            "sess-fallback",
-            0.9,
-            datetime.now(UTC).isoformat(),
-            1,
-            "staged",
-            b"",
-            None,
-        ),
-    )
-    promoter = FactPromoter(
-        db,
-        confidence_threshold=0.8,
-        reinforcement_required=3,
-        conversation_fact_reinforcement_required=1,
-    )
-    promoted = await promoter.promote_eligible()
-    assert promoted == 1, "fixture precondition: fact must promote into committed_facts"
+# D08.2 seam 3 pass 4 — this fixture used the REAL FactPromoter to write both
+# committed_facts and committed_facts_fts "exactly as production does". The promoter
+# is gone; the guard is not, because recall()'s fallback ladder is LIVE — the
+# registered `memory` tool calls recall() on every search. The shared
+# _committed_fact_fixture writes the same two rows from the promoter's own
+# statements, so what production did is still what the fixture does.
 
 
 async def test_recall_falls_back_to_fts5_when_semantic_empty(
@@ -77,7 +48,10 @@ async def test_recall_falls_back_to_fts5_when_semantic_empty(
     monkeypatch.setattr(TestModeGuard, "assert_not_test_mode", staticmethod(lambda _op: None))
 
     fact_id = str(uuid.uuid4())
-    await _seed_committed_fact(tmp_db, fact_id=fact_id, content=_FACT_CONTENT)
+    await insert_committed(
+        tmp_db, fact_id=fact_id, content=_FACT_CONTENT,
+        source_type="conversation_fact", source_ref="sess-fallback",
+    )
 
     # LanceDB pointed at an EMPTY dir → committed_facts table does NOT exist →
     # search() returns [] → semantic_recall() returns [] (the bug trigger).

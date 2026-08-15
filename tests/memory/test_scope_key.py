@@ -1,9 +1,16 @@
 """Phase 2 (coding-capability build plan) — memory scope_key.
 
 Covers the pure post-filter (filter_by_scope) and a real round-trip through
-SqliteMemoryBridge.stage()/recall() + FactPromoter, proving migration 0085's
-scope_key column actually carries a fact's scope from staged_facts through
-promotion into committed_facts and back out through recall().
+SqliteMemoryBridge.recall(), proving migration 0085's scope_key column actually
+carries a fact's scope into committed_facts and back out through recall().
+
+D08.2 seam 3 pass 4 — the round-trip used FactPromoter.force_promote() purely to
+get rows INTO committed_facts. The promoter is gone; the guarantee is not, and it
+is a TENANCY one: repo-b's fact must never leak into a repo-a recall, and recall()
+is live (the `memory` tool calls it). So the fixture writes committed rows
+directly through the shared ``_committed_fact_fixture`` helper, which mirrors the
+promoter's own INSERT + FTS-sync statements — the point being that the index and
+the base table stay in step, which is what recall's FTS path depends on.
 """
 
 from __future__ import annotations
@@ -14,10 +21,10 @@ from datetime import UTC, datetime
 import pytest
 
 from stackowl.db.pool import DbPool
-from stackowl.memory.fact_promoter import FactPromoter
 from stackowl.memory.models import MemoryRecord
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.memory.sqlite_helpers import filter_by_scope
+from tests.memory._committed_fact_fixture import insert_committed
 
 
 def _record(fact_id: str, scope_key: str | None) -> MemoryRecord:
@@ -44,43 +51,22 @@ def test_filter_by_scope_keeps_matching_and_global() -> None:
     assert {r.fact_id for r in kept} == {"a", "b"}
 
 
-async def _insert_staged_scoped(
-    db: DbPool, *, fact_id: str, content: str, scope_key: str | None
-) -> None:
-    await db.execute(
-        """INSERT INTO staged_facts (
-               fact_id, content, source_type, source_ref, confidence,
-               staged_at, reinforcement_count, status, embedding, embedding_model,
-               scope_key
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            fact_id, content, "conversation", "sess-x", 0.9,
-            datetime.now(UTC).isoformat(), 0, "staged", None, None, scope_key,
-        ),
-    )
-
-
 @pytest.mark.asyncio
-async def test_scope_key_carries_through_promotion_and_recall(tmp_db: DbPool) -> None:
+async def test_scope_key_carries_into_committed_and_out_through_recall(tmp_db: DbPool) -> None:
     repo_fid = str(uuid.uuid4())
     global_fid = str(uuid.uuid4())
     other_fid = str(uuid.uuid4())
     # All three share the token "widget" (FTS5 MATCH is token-based, not
     # substring — every content string must contain the actual query word).
-    await _insert_staged_scoped(
+    await insert_committed(
         tmp_db, fact_id=repo_fid, content="widget repo-a build command", scope_key="repo-a"
     )
-    await _insert_staged_scoped(
+    await insert_committed(
         tmp_db, fact_id=global_fid, content="widget global preference", scope_key=None
     )
-    await _insert_staged_scoped(
+    await insert_committed(
         tmp_db, fact_id=other_fid, content="widget other repo-b note", scope_key="repo-b"
     )
-
-    promoter = FactPromoter(tmp_db)
-    assert await promoter.force_promote(repo_fid) is True
-    assert await promoter.force_promote(global_fid) is True
-    assert await promoter.force_promote(other_fid) is True
 
     bridge = SqliteMemoryBridge(tmp_db, semantic_search_enabled=False)
     scoped = await bridge.recall("widget", limit=10, scope_key="repo-a")
