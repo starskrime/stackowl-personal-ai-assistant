@@ -399,6 +399,47 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-10-skill-relevance-tiering-is-orphaned
+    raised: 2026-08-15
+    blocks: "nothing — nine journey tests stay red until the disposition is chosen. No production behaviour depends on the answer."
+    question: >-
+      Relevance-based skill TIERING has no production caller any more. Delete the
+      dead module and the tests that drive it, or restore tiering to the prompt?
+    why_escalated: >-
+      It is the removal of a capability, even though the capability is already
+      dormant — and the alternative (restoring it) would deliberately re-introduce
+      the prompt instability D01.1 removed. Either way it is a product call.
+    what_was_measured: >-
+      assemble.py:251 now assigns EVERY skill SkillTier.SUMMARY — a flat catalogue
+      sorted by name — so no skill is ever injected at FULL and the "## ACTIVE
+      SKILLS" section never renders. That is DELIBERATE and documented in place:
+      "a block that vanishes on some turns forfeits the cache on every turn, which
+      costs more than the tokens it saves", with depth preserved through skill_view.
+      Consequently score_owned_skills and assign_tiers (skills/skill_relevance.py,
+      40 lines) appear in src ONLY inside assemble comments — no caller. By
+      contrast skill_focus.py (169 lines) IS live: skill_view.py:179 uses
+      FOCUS_TRACKER to mark viewed skills, which is what slice 4a preserved on
+      purpose so its hysteresis would not silently go to zero.
+    not_a_regression: >-
+      Checked against production before assuming: live turns show skills_len 826 in
+      classify and 4154 in assemble, so skills DO reach the prompt — at SUMMARY.
+      The untrusted <skill_reference> fence also still renders, so the security
+      guarantee those journeys protect is intact at the tier now used.
+    what_is_red: >-
+      Nine tests, all downstream of this one decision: five in
+      test_skill_tiering_journey (fence-in-every-tier, two pinning cases, the
+      no-embedder FULL fallback, hysteresis), three in test_skill_injection_journey,
+      one in test_skill_discovery_journey. Four test files exercise the dead
+      scoring: test_skill_relevance, test_assign_tiers, test_assemble_skill_catalogue
+      and the tiering journey.
+    options:
+      - "A. Delete skills/skill_relevance.py and the tests that drive tiering through assemble; keep skill_focus (live via skill_view) and repoint the SECURITY assertion at the SUMMARY tier, since the fence is the half that still matters."
+      - "B. Restore relevance tiering to the prompt. Gets pinning and hysteresis back into the system prompt, and knowingly re-introduces the per-turn prompt churn D01.1 removed for Law 1."
+      - "C. Leave the module dormant and mark the nine tests skipped with a reason. Cheapest, and leaves 40 lines of code plus four test files describing a path nothing takes."
+    recommendation: >-
+      A. The trade was made deliberately and is documented at the call site; what is
+      left is residue, and this programme has spent the week removing exactly this
+      shape. C is the option that quietly grows the pile.
   - id: ESC-9-browser-profile-drops-eight-of-its-own-tools
     raised: 2026-08-15
     blocks: "nothing — one pre-existing red test, found by the sweep. Recorded rather than fixed because the fix changes what tools the model sees."
