@@ -117,6 +117,78 @@ _NATIVE_CALL_RE_TRAILING = re.compile(r"(?:[a-zA-Z_][a-zA-Z0-9_]*[:.])*([a-zA-Z_
 # unlike the trailing-native-call check above.
 _XML_INVOKE_RE = re.compile(r"<(?:antml:)?(?:function_calls|invoke)\b", re.IGNORECASE)
 
+#: The Hermes/Qwen tool-call shape, emitted as CONTENT by models that were trained
+#: on it but are being served through an OpenAI-protocol gateway that does not
+#: translate it into a native ``tool_calls`` array:
+#:
+#:     <tool_call>
+#:     <function=web_search>
+#:     <parameter=query>
+#:     what to search for
+#:     </parameter>
+#:     </function>
+#:     </tool_call>
+#:
+#: FOUND LIVE 2026-08-15, immediately after the local model was upgraded from
+#: qwen 3.6 27b to qwen 3.8 27b: the block was shown to the user verbatim in
+#: Telegram and the search never ran. This is the FOURTH distinct leaked-call
+#: shape this guard has had to learn, which is why it is PARSED and not merely
+#: suppressed — a model that cannot call tools after an upgrade has lost a
+#: capability, and hiding the evidence would make that loss silent.
+_XML_TOOL_CALL_RE = re.compile(r"<\s*(?:tool_call|function\s*=)", re.IGNORECASE)
+_XML_FN_NAME_RE = re.compile(
+    r"<\s*function\s*(?:=\s*|name\s*=\s*[\"'])\s*([a-zA-Z_][a-zA-Z0-9_.:-]*)",
+    re.IGNORECASE,
+)
+_XML_PARAM_RE = re.compile(
+    r"<\s*parameter\s*(?:=\s*|name\s*=\s*[\"'])\s*([a-zA-Z_][a-zA-Z0-9_.-]*)[\"']?\s*>"
+    r"(.*?)"
+    r"<\s*/\s*parameter\s*>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+_NUMERIC_RE = re.compile(r"^-?\d+(?:\.\d+)?$")
+
+
+def _coerce_param(raw: str) -> Any:
+    """A parameter body is TEXT; give back the value the model plainly meant.
+
+    JSON-decodes only when the text is unambiguously a JSON scalar or container.
+    A search query is left a string — ``json.loads`` on arbitrary prose either
+    raises or, worse, silently turns the bare word ``null`` into ``None``, so the
+    decode is gated on the shape rather than tried on everything.
+    """
+    text = raw.strip()
+    if not text:
+        return ""
+    if text[0] in "{[" or text in ("true", "false", "null") or _NUMERIC_RE.match(text):
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            return text
+    return text
+
+
+
+def _parse_xml_function_call(
+    text: str, known: set[str] | None
+) -> tuple[str, dict[str, Any]] | None:
+    """Parse the Hermes/Qwen ``<tool_call><function=…>`` shape into a real call.
+
+    Returns None when no function name is present or the name does not resolve
+    against the real tool set — an unresolvable name must NOT dispatch, and the
+    caller's guard then suppresses the text rather than showing it.
+    """
+    m = _XML_FN_NAME_RE.search(text)
+    if m is None:
+        return None
+    name = _resolve_name(m.group(1), known)
+    if name is None:
+        return None
+    args = {k: _coerce_param(v) for k, v in _XML_PARAM_RE.findall(text[m.end():])}
+    return (name, args)
+
 
 def _compact_native_call_prefix(text: str) -> str:
     """Collapse whitespace out of the candidate call-NAME prefix only
@@ -199,7 +271,11 @@ def parse_react_action(
         # namespaced "name{...}" native call, so either native shape is
         # dispatched, not bounced (symmetry with looks_like_tool_call, which
         # already flags both shapes).
-        return _parse_bare_json_call(text, known) or _parse_native_call_syntax(text, known)
+        return (
+            _parse_bare_json_call(text, known)
+            or _parse_native_call_syntax(text, known)
+            or _parse_xml_function_call(text, known)
+        )
     name = _resolve_name(m.group(1), known)
     if name is None:
         return None
@@ -239,6 +315,8 @@ def looks_like_tool_call(text: str | None, known: set[str] | None = None) -> boo
     if _ACTION_RE.search(text):
         return True
     if _XML_INVOKE_RE.search(text):
+        return True
+    if _XML_TOOL_CALL_RE.search(text):
         return True
     stripped = text.strip()
     if stripped.startswith("{") and stripped.endswith("}"):
