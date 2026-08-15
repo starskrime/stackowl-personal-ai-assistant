@@ -226,41 +226,16 @@ async def test_pellet_generator_stages_self(tmp_db: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# remember_fact: manual → trusted, agent_self → self
+# remember_fact: REMOVED with the function in D08.2 seam 3 pass 4.
+#
+# Its two tests asserted manual -> trusted and agent_self -> self through
+# remember_fact, which had NO production caller (verified by a complete search,
+# not a truncated one) and staged into a store with no readers left. The
+# INVARIANT they protected is untouched and still covered three ways: the three
+# test_stage_persists_trust_* cases above, tests/memory/test_trust_map.py over
+# trust_for_source itself, and test_agent_memory_tool_source_is_agent_self below
+# for the live agent path.
 # ---------------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_remember_fact_manual_is_trusted(tmp_db: Any) -> None:
-    """remember_fact(source_type='manual') must stamp trust='trusted'."""
-    from stackowl.commands.memory_helpers import remember_fact
-    from stackowl.memory.fact_promoter import FactPromoter
-    from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
-
-    bridge = SqliteMemoryBridge(tmp_db)
-    promoter = FactPromoter(tmp_db)
-
-    await remember_fact(bridge, promoter, "user prefers dark mode", source_type="manual")
-
-    rows = await tmp_db.fetch_all("SELECT trust FROM staged_facts ORDER BY staged_at DESC LIMIT 1")
-    assert rows, "remember_fact must stage a row"
-    assert rows[0]["trust"] == "trusted"
-
-
-@pytest.mark.asyncio
-async def test_remember_fact_agent_self_is_self(tmp_db: Any) -> None:
-    """remember_fact(source_type='agent_self') must stamp trust='self'."""
-    from stackowl.commands.memory_helpers import remember_fact
-    from stackowl.memory.fact_promoter import FactPromoter
-    from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
-
-    bridge = SqliteMemoryBridge(tmp_db)
-    promoter = FactPromoter(tmp_db)
-
-    await remember_fact(bridge, promoter, "user is a Python developer", source_type="agent_self")
-
-    rows = await tmp_db.fetch_all("SELECT trust FROM staged_facts ORDER BY staged_at DESC LIMIT 1")
-    assert rows, "remember_fact must stage a row"
-    assert rows[0]["trust"] == "self"
 
 
 # ---------------------------------------------------------------------------

@@ -1,15 +1,13 @@
 """Persona-evolution journeys (persona-evo T6) — prove the feature end-to-end.
 
-Three user-outcome journeys, mocking ONLY the AI provider + using a
-deterministic embedder.  Everything load-bearing is the REAL production code:
-``FactPromoter`` (+ its PE5 embed-on-promote), ``SqliteMemoryBridge``,
-``EvolutionCoordinator`` (with the REAL ``bound_dna`` governor), ``hydrate_dna``
-and ``DNAPromptInjector``.
+Two user-outcome journeys, mocking ONLY the AI provider. Everything
+load-bearing is the REAL production code: ``EvolutionCoordinator`` (with the
+REAL ``bound_dna`` governor), ``hydrate_dna`` and ``DNAPromptInjector``.
 
-(A) Cross-session recall — session A ``remember``s a fact WITHOUT a vector →
-    a deterministic promote pass → session B recalls it SEMANTICALLY.  Proves
-    capture→promote→recall closes AND regression-guards PE5 (the promoter
-    computes the missing embedding so the fact becomes semantically recallable).
+Journey (A) — cross-session SEMANTIC recall through ``FactPromoter`` — went with
+the promoter in D08.2 seam 3 pass 4. It was the only fact work here; what
+remains touches no fact at all, which was verified before the cut rather than
+assumed, by running the deletion against a scratch copy first.
 
 (B) DNA loop (live + survives restart) — one evolution batch (mocked LLM
     deltas) mutates the live registry DNA bounded by the governor; a FRESH
@@ -23,9 +21,7 @@ and ``DNAPromptInjector``.
 
 Harnesses reused from ``tests/test_story_4_3.py`` (evolution: MockProvider +
 register_mock + OwlRegistry + _seed_messages + EvolutionCoordinator +
-TestModeGuard.deactivate + SQLite asserts) and ``tests/test_story_6_3.py``
-(memory: db fixture + _insert_staged + deterministic embedder stub + FactPromoter
-+ SqliteMemoryBridge).
+TestModeGuard.deactivate + SQLite asserts).
 """
 
 from __future__ import annotations
@@ -41,10 +37,7 @@ import pytest
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
-from stackowl.memory.fact_promoter import FactPromoter
 from stackowl.memory.lancedb_helpers import SearchResult
-from stackowl.memory.models import StagedFact
-from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.memory.sqlite_helpers import cosine_similarity
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_hydrator import hydrate_dna
@@ -263,99 +256,11 @@ async def _run_batch(
 
 
 # ---------------------------------------------------------------------------
-# (A) Cross-session recall — capture → promote → SEMANTIC recall (PE5 guard)
-# ---------------------------------------------------------------------------
-
-
-async def test_cross_session_fact_recall(db: DbPool) -> None:
-    embedder = _StubEmbeddingProvider(dim=8)
-    embed_registry = _StubEmbeddingRegistry(embedder)
-    spy_lance = _SpyLanceDB()
-
-    # --- Session A: stage a fact the miner way — NO vector at staging time.
-    fact_text = "the production deploy key lives in vault path alpha-7"
-    bridge_a = SqliteMemoryBridge(
-        db, embedding_registry=embed_registry, lancedb=spy_lance  # type: ignore[arg-type]
-    )
-    staged = StagedFact(
-        fact_id=str(uuid.uuid4()),
-        content=fact_text,
-        source_type="manual",
-        source_ref="sess-A",
-        confidence=1.0,
-        reinforcement_count=3,
-        embedding=None,          # miner-style: vector missing at stage time
-        embedding_model=None,
-    )
-    await bridge_a.stage(staged)
-    staged_rows = await db.fetch_all(
-        "SELECT embedding FROM staged_facts WHERE fact_id = ?", (staged.fact_id,)
-    )
-    assert staged_rows[0]["embedding"] is None  # confirm: staged WITHOUT a vector
-
-    # --- Deterministic promote pass (NOT the scheduler; settle window = 0).
-    # The promoter holds the embedding_registry → PE5 computes the missing vector
-    # and upserts it into the (spy) ANN store so the fact becomes recallable.
-    promoter = FactPromoter(
-        db,
-        confidence_threshold=0.8,
-        reinforcement_required=3,
-        lancedb=spy_lance,  # type: ignore[arg-type]
-        embedding_registry=embed_registry,  # type: ignore[arg-type]
-        settle_minutes=0,
-    )
-    promoted = await promoter.promote_eligible()
-    assert promoted == 1
-
-    # PE5 proof at the seam: the promoter computed + upserted a real vector.
-    assert spy_lance.upserts, "PE5 regression: promoter never upserted a vector"
-    upserted_id, upserted_vec = spy_lance.upserts[0]
-    assert upserted_id == staged.fact_id
-    expected_vec = (await embedder.embed([fact_text]))[0]
-    assert upserted_vec == pytest.approx(expected_vec)
-
-    # The committed fact also persisted the computed embedding to SQLite.
-    committed_rows = await db.fetch_all(
-        "SELECT embedding, embedding_model FROM committed_facts WHERE fact_id = ?",
-        (staged.fact_id,),
-    )
-    assert committed_rows and committed_rows[0]["embedding"]  # non-empty blob
-    assert committed_rows[0]["embedding_model"] == "stub-embed"
-
-    # --- Session B: a FRESH bridge (new "session") recalls SEMANTICALLY.
-    bridge_b = SqliteMemoryBridge(
-        db, embedding_registry=embed_registry, lancedb=spy_lance  # type: ignore[arg-type]
-    )
-    records = await bridge_b.recall("where is the deploy key stored", limit=5)
-    assert records, "cross-session recall returned nothing"
-    assert any(r.fact_id == staged.fact_id for r in records)
-    assert any("vault path alpha-7" in r.content for r in records)
-
-
-@pytest.mark.asyncio
-async def test_negative_control_no_registry_means_no_vector(db: DbPool) -> None:
-    # Negative control: WITHOUT an embedding_registry, promoting an embedding-less
-    # fact yields ZERO ANN upserts (FTS-only) — proving the PE5 embed in the main
-    # journey is load-bearing, not incidental, AND that promotion is fail-open.
-    spy_lance = _SpyLanceDB()
-    bridge = SqliteMemoryBridge(db, lancedb=spy_lance)  # type: ignore[arg-type]
-    staged = StagedFact(
-        fact_id=str(uuid.uuid4()), content="a fact with no vector", source_type="manual",
-        source_ref="sess-N", confidence=1.0, reinforcement_count=3,
-        embedding=None, embedding_model=None,
-    )
-    await bridge.stage(staged)
-    promoter = FactPromoter(
-        db, confidence_threshold=0.8, reinforcement_required=3,
-        lancedb=spy_lance, embedding_registry=None, settle_minutes=0,  # type: ignore[arg-type]
-    )
-    promoted = await promoter.promote_eligible()
-    assert promoted == 1                 # fail-open: still promotes (FTS-only)
-    assert spy_lance.upserts == []       # no registry → no computed vector → no ANN upsert
-
-
-# ---------------------------------------------------------------------------
-# (B) DNA loop — live mutation (governor-bounded) + survives a restart
+# The two FactPromoter tests that stood here — test_cross_session_fact_recall and
+# test_negative_control_no_registry_means_no_vector — went with the promoter in
+# D08.2 seam 3 pass 4. They were the only fact work in this file; everything below
+# is DNA evolution and touches no fact at all, which was verified before the cut by
+# running it against a scratch copy of exactly this deletion.
 # ---------------------------------------------------------------------------
 
 
