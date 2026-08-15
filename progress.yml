@@ -257,10 +257,22 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  wave: 4
-  item: D08.2
-  stage: implement
+  wave: 1
+  item: D01.6
+  stage: brainstorm
   stage_status: >-
+    D08.2 CLOSED 2026-08-15 and the red-test sweep is fully closed with it — the last
+    leftovers went green on 2026-08-15 (see the D08.1 decisions log). Advanced to D01.6,
+    which is the earliest incomplete item by wave/order and is P0. It needs ONE stage:
+    architect, implement, test, validate and document are all done and cleanup is
+    no_change_needed, but `brainstorm` was never recorded, so the item cannot close.
+    The 25 questions are to be asked against what SHIPPED, not against a blank page.
+    Its gap is the reason it is P0: without cost measurement per conversation there is
+    no way to show D01.1-D01.3 actually worked.
+    NOTE: 92 of 112 items still have incomplete stages — the programme is NOT near done;
+    an earlier count of mine that suggested otherwise was an artifact of filtering on a
+    `status` field that does not exist on these records.
+  D08_2_CLOSED_STATUS: >-
     D08.2 CLOSED 2026-08-15. All seven stages done. Slice A (MemoryBridge split), slice B
     (orchestrator seams 1-3, seam 3 in four passes) and slice C (MemoryProvider as a plugin
     kind) all shipped and were validated on the running platform. Eight escalations raised,
