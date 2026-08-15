@@ -161,6 +161,12 @@ class BrowserSnapshotTool(Tool):
             parameters=self.parameters,
             action_severity="read",
             toolset_group="browser",
+            # ESC-9 — the HIGHEST browser priority. Snapshot is how the model sees
+            # the page: click(ref=...) takes the refs this returns, so losing it
+            # makes every other browser tool guesswork. It was dropped by an
+            # alphabetical tiebreak, which is how a browser owl ended up unable to
+            # see the page it was told to browse.
+            presentation_priority=100,
             # D05.3 — needs the Camoufox runtime. Declared here rather than
             # inherited: this tool subclasses Tool directly, not _BrowserTool.
             requires_capability="browser",

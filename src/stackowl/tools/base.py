@@ -88,6 +88,20 @@ class ToolManifest(BaseModel):
     # self-healing substitution: when a tool in a capability class fails, the
     # supervisor can route to a sibling with the same tag (W3 substitution actuator).
     capability_tag: str | None = None
+    # ESC-9 — cold-start ordering weight for BUDGETED presentation. Higher is kept
+    # first when the token budget cannot fit every eligible tool.
+    #
+    # It exists because the tiebreak underneath was the alphabet: discretionary
+    # tools rank by (-usage_score, name), and with no usage history every score is
+    # 0.0, so a browser-profiled owl lost snapshot/type/upload/wait_for/tab_*/
+    # vision purely for sorting late. It could see nothing and type nothing.
+    #
+    # DECLARATIVE ON PURPOSE, not query-derived: D05.2 removed relevance ranking
+    # because it made the presented array a function of the question, changing every
+    # turn and defeating the position-0 prompt-cache marker. This value is identical
+    # on every turn for every query, so ordering stays stable by construction.
+    # Measured usage still outranks it — this is a default, not an override.
+    presentation_priority: int = 0
     # D05.3 — the SUBSYSTEM this tool cannot work without, by name (e.g.
     # "browser"). Resolved lazily through infra/capabilities.py to one of ADR-6's
     # HealableResource implementations; when that resource reports unavailable,

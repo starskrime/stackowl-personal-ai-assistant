@@ -129,6 +129,20 @@ class PresentationConfig:
     always_present: frozenset[str] = _DEFAULT_ALWAYS
 
 
+def _declared_priority(tool: Tool) -> int:
+    """Declared cold-start ordering weight; an unreadable manifest means 0.
+
+    ONE reader for both presentation paths — `select` (count-capped) and
+    `rank_candidates` (token-budgeted). They cut on different constraints and both
+    used to cut alphabetically; a second copy of this rule is how one of them would
+    silently keep doing so.
+    """
+    try:
+        return int(getattr(tool.manifest, "presentation_priority", 0) or 0)
+    except Exception:  # pragma: no cover — a broken manifest must not stop presentation
+        return 0
+
+
 class ToolPresentation:
     """Selects the per-turn presented tool set from the full catalog."""
 
@@ -197,11 +211,20 @@ class ToolPresentation:
             if n in by_name and n not in taken and _capability_ok(by_name[n])
         )
         taken |= set(hydrated_tier)
+        # ESC-9 — ordered by DECLARED priority, then name. This tier is what the
+        # cap truncates, and sorting it by name alone meant the cut fell on the
+        # alphabet: a browser-profiled owl lost snapshot, type, wait_for, upload,
+        # vision and the tab tools purely for sorting late, leaving it able to
+        # click but not to SEE the page. Priority is a property of the tool, never
+        # of the query, so the presented array stays stable turn to turn (D05.2).
         group_tier = sorted(
-            n for n, t in by_name.items()
-            if t.manifest.toolset_group in profile_groups
-            and n not in taken
-            and _capability_ok(t)
+            (
+                n for n, t in by_name.items()
+                if t.manifest.toolset_group in profile_groups
+                and n not in taken
+                and _capability_ok(t)
+            ),
+            key=lambda n: (-_declared_priority(by_name[n]), n),
         )
 
         # Assemble: guaranteed first (never dropped), then fill discretionary tiers
@@ -216,15 +239,38 @@ class ToolPresentation:
             budget -= len(take)
 
         selected = [by_name[n] for n in ordered_names]
-        # 4. EXIT — surface how many discretionary tools the cap dropped, so an
-        # operator can spot owls hitting the ceiling (they need a tighter profile).
-        discretionary = len(pins_tier) + len(hydrated_tier) + len(group_tier)
-        dropped = discretionary - (len(selected) - len(guaranteed))
+        # 4. EXIT
+        chosen = set(ordered_names)
+        dropped_names = [
+            n for tier in (pins_tier, hydrated_tier, group_tier)
+            for n in tier if n not in chosen
+        ]
+        if dropped_names:
+            # ESC-9 — INFO and NAMED. This was a DEBUG count, so an operator asking
+            # "why can't my browser owl type?" had nothing to read: production runs
+            # at INFO, and a number does not say which tool went.
+            log.tool.info(
+                "[presentation] select: eligible tools NOT presented — the owl's "
+                "tool-count cap could not fit them",
+                extra={"_fields": {
+                    "dropped": dropped_names[:20],
+                    "dropped_count": len(dropped_names),
+                    "presented": len(selected),
+                    "cap": cfg.cap,
+                }},
+            )
         log.tool.debug(
             "[presentation] select: exit",
-            extra={"_fields": {"presented": len(selected), "guaranteed": len(guaranteed), "dropped": dropped}},
+            extra={"_fields": {
+                "presented": len(selected), "guaranteed": len(guaranteed),
+                "dropped": len(dropped_names),
+            }},
         )
         return selected
+
+    @staticmethod
+    def _declared_priority_of(tool: Tool) -> int:
+        return _declared_priority(tool)
 
     def rank_candidates(
         self,
@@ -290,7 +336,15 @@ class ToolPresentation:
         # must not order by list position, or the array would depend on registry
         # iteration order and the stability this exists for would be luck.
         scores = usage_scores or {}
-        ranked = sorted(candidates, key=lambda t: (-scores.get(t.name, 0.0), t.name))
+
+        # ESC-9 — measured usage first (evidence beats a declaration), then the
+        # tool's DECLARED priority, then the name. Before the middle term the key
+        # collapsed to the alphabet whenever an owl had no usage history, which is
+        # how a browser owl lost the tools that let it see and type.
+        ranked = sorted(
+            candidates,
+            key=lambda t: (-scores.get(t.name, 0.0), -_declared_priority(t), t.name),
+        )
 
         log.tool.debug(
             "[presentation] rank_candidates: exit",

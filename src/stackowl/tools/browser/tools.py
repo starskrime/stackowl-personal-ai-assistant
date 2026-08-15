@@ -149,6 +149,12 @@ class _BrowserTool(Tool):
     """
 
     _severity: Literal["read", "write", "consequential"] = "read"
+    # ESC-9 — cold-start presentation weight. Same class-attribute pattern as
+    # _severity so a subclass declares one line rather than overriding manifest.
+    # A browser owl needs to SEE, NAVIGATE and ACT before it needs cookies or
+    # eval_js; without this the budget cut by alphabet and took snapshot, type,
+    # wait_for and the tab tools.
+    _priority: int = 0
     _consent_category: str | None = None
     _commit_coupling: Literal["transactional", "idempotent_keyed", "unconfirmed"] | None = None
 
@@ -159,6 +165,7 @@ class _BrowserTool(Tool):
             description=self.description,
             parameters=self.parameters,
             action_severity=self._severity,
+            presentation_priority=self._priority,
             commit_coupling=self._commit_coupling,
             consent_category=self._consent_category,
             toolset_group="browser",
@@ -172,6 +179,7 @@ class _BrowserTool(Tool):
 
 
 class BrowserNavigateTool(_BrowserTool):
+    _priority = 90
     @property
     def name(self) -> str: return "browser_navigate"
     @property
@@ -264,6 +272,7 @@ class BrowserNavigateTool(_BrowserTool):
 
 
 class BrowserExtractTool(_BrowserTool):
+    _priority = 70
     @property
     def name(self) -> str: return "browser_extract"
     @property
@@ -326,6 +335,7 @@ class BrowserExtractTool(_BrowserTool):
 
 
 class BrowserClickTool(_BrowserTool):
+    _priority = 90
     _severity = "write"
     _commit_coupling = "unconfirmed"
     # Engine-emitted aria refs are opaque alphanumeric tokens (e.g. "e7"). We
@@ -409,6 +419,7 @@ class BrowserClickTool(_BrowserTool):
 
 
 class BrowserTypeTool(_BrowserTool):
+    _priority = 90
     _severity = "write"
     _commit_coupling = "unconfirmed"
     @property
@@ -465,6 +476,7 @@ class BrowserTypeTool(_BrowserTool):
 
 
 class BrowserScreenshotTool(_BrowserTool):
+    _priority = 60
     @property
     def name(self) -> str: return "browser_screenshot"
     @property
@@ -520,6 +532,8 @@ class BrowserScreenshotTool(_BrowserTool):
 
 
 class BrowserScrollTool(_BrowserTool):
+    # Part of SEEING the page: a snapshot only covers what is in view.
+    _priority = 70
     _severity = "write"
     _commit_coupling = "unconfirmed"
     @property
@@ -577,6 +591,7 @@ class BrowserScrollTool(_BrowserTool):
 
 
 class BrowserWaitForTool(_BrowserTool):
+    _priority = 70
     @property
     def name(self) -> str: return "browser_wait_for"
     @property

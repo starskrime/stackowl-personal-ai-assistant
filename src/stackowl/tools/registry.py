@@ -539,6 +539,23 @@ class ToolRegistry:
                 guaranteed=guaranteed, candidates=ranked, budget=b, size_of=_size,
                 hard_cap=hard_cap,
             )
+            # ESC-9 — SAY what was evicted. The budget itself is fine; the defect
+            # was that it dropped tools silently, so an operator asking "why can't
+            # my browser owl type?" had nothing to read. INFO, because production
+            # runs at INFO and a DEBUG line cannot answer that question.
+            kept = {t.name for t in fitted}
+            dropped = [t.name for t in ranked if t.name not in kept]
+            if dropped:
+                log.tool.info(
+                    "registry.to_provider_schema: eligible tools NOT presented — "
+                    "the turn's token budget could not fit them",
+                    extra={"_fields": {
+                        "dropped": dropped[:20],
+                        "dropped_count": len(dropped),
+                        "presented": len(fitted),
+                        "hard_cap": hard_cap,
+                    }},
+                )
             return _emit(fitted)
 
         if profile is None and pins is None and hydrated is None:
