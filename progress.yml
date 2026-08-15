@@ -399,6 +399,45 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-11-presented-tools-memo-ignores-a-skill-change
+    raised: 2026-08-15
+    blocks: >-
+      nothing. The test-side leak is fixed (an autouse fixture in tests/conftest.py
+      clears the process-global memo per test). This is the PRODUCT half of the same
+      finding and is deliberately not decided alone, because it changes what tools the
+      model sees mid-conversation, which is Law 1 territory — the same reason ESC-9 was
+      escalated rather than fixed in a sweep.
+    question: >-
+      When an owl GAINS A SKILL during a live session, should the presented tool array
+      be rebuilt so the skill's coupled tools appear, or should it stay frozen until the
+      next incarnation?
+    what_was_measured: >-
+      MEASURED 2026-08-15 by tracing a turn. execute() memoizes the presented array on
+      (session_key, owl, protocol, window, hydrated) — pins are NOT in the key, so the
+      tools an owned skill couples in cannot change the key. presented_tools already
+      carries an invalidation hook, _on_capability_change, which clears the WHOLE memo
+      when a capability's verdict flips; its docstring gives the reason as D05.3: "a
+      newly-configured capability would not appear until rollover — I added the API key
+      and nothing happened". No equivalent signal exists for a skill being installed or
+      attached to an owl. Consequence: install a skill mid-conversation and the tool it
+      couples is not offered until the session rolls over. Presentation is not
+      authorization — compute_effective_bounds still enforces independently — so this is
+      a capability-visibility gap, NOT an authz hole.
+    why_escalated: >-
+      The two governing rules point opposite ways and both are recorded decisions. Law 1
+      says the toolset must not change mid-conversation or the cached prefix is void, and
+      the memo comment says that byte-stability is the whole point of the branch. D05.3
+      says a human-scale configuration event DOES justify dropping every memoized array,
+      and already spends a full rebuild on exactly that. A skill install is the same class
+      of event as an API key appearing. Choosing between them is a product call about
+      which surprise is worse, not something evidence settles.
+    recommendation: >-
+      Treat a skill change like a capability change — reuse the existing hook rather than
+      adding a second mechanism, since the argument in _on_capability_change's docstring
+      applies verbatim with "skill" substituted for "capability", and this platform is
+      self-extending by design, so owls gaining skills at runtime is the intended path,
+      not an edge case. The cost is one rebuild on a human-scale event, which D05.3
+      already judged acceptable.
   - id: ESC-10-skill-relevance-tiering-is-orphaned
     RESOLVED: "RESOLVED 2026-08-15 — Bakir chose DELETE THE DEAD MODULE, over restoring tiering to the prompt and over leaving it dormant with skipped tests. skills/skill_relevance.py and the tests that drive tiering through assemble go; skill_focus.py STAYS (skill_view.py:179 uses FOCUS_TRACKER, which slice 4a preserved on purpose); and the SECURITY assertion is repointed at the SUMMARY tier, because the untrusted skill_reference fence is the half that still matters and still holds."
     raised: 2026-08-15
