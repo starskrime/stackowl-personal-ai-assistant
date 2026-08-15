@@ -447,6 +447,32 @@ current:
       under the weakness, not a repair of it, and it will silently stop mattering the
       moment the context stops being concatenated.
   - id: ESC-12-the-prompt-cache-has-never-shown-a-hit-in-production
+    CORRECTION: >-
+      MY MEASUREMENT WAS WRONG AND THE DECISION RESTS ON IT (found 2026-08-15, before any
+      of the work was done). I told Bakir the tools array "invalidates position 0 on
+      roughly one turn in eight". That number divided ALL 360 invalidation events by the
+      CHAT turns of one day. It conflated two different kinds of traffic, and splitting
+      them dissolves the finding:
+        - 332 of 360 are OBJECTIVE lanes (goal-*), i.e. autonomous scheduled work
+        - 25 are incident lanes (owl is empty — platform self-analysis)
+        - 3 are USER CHAT lanes, in a MONTH, on 2026-07-29, 08-07 and 08-14
+      And 328 of 360 (91%) carry a small array of <=7 tools, which is the shape of a
+      `restrict_to` task envelope — the path execute.py explicitly does NOT memoize,
+      with the reason written at the call site: "a planned envelope is per-task by
+      construction and already routes through the deterministic select() path". Those
+      are not churn. They are the design working.
+      SO THE CONVERSATIONAL PATH — the one D01.2's cache marker exists to protect — is
+      already stable, and "fix the invalidation" has almost no defect to fix. The 32
+      full-array events are 12 incident lanes plus objective work, none of them a user
+      conversation.
+      WHAT THIS MEANS FOR THE ZERO. Metric 1 reading 0 cached tokens across 132.7M input
+      tokens still stands and is still unexplained — but tools-array churn is no longer
+      a candidate explanation for it. That makes the option Bakir declined ON MY
+      FRAMING — probe the gateway first, to learn whether it can report cache stats at
+      all — the one the evidence now points at. Re-raised rather than silently
+      re-decided: he answered the question I actually asked, and the question was faulty.
+      NOT IMPLEMENTED. Building the fix he approved would be work on a premise I have
+      since disproven, which is worse than doing nothing.
     RESOLVED: "RESOLVED 2026-08-15 — Bakir chose FIX THE INVALIDATION NOW, over probing the gateway first, chasing latency separately, or deferring to a paid provider. The deciding point was that this is likely not a trade against latency but the same fix: the ~13s median TTFT is mostly PREFILL, and a stable prefix is exactly what lets a gateway skip prefill. D01.3''s claim is prompt stability and it is currently not held — one turn in eight invalidates position 0 — so the work stands on its own even if no cache ever reports a hit."
     raised: 2026-08-15
     blocks: >-
