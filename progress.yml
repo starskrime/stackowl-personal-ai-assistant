@@ -447,6 +447,40 @@ current:
       under the weakness, not a repair of it, and it will silently stop mattering the
       moment the context stops being concatenated.
   - id: ESC-12-the-prompt-cache-has-never-shown-a-hit-in-production
+    PROBE_RESULT: >-
+      ANSWERED 2026-08-15 by probing the real gateway, which Bakir chose after the
+      correction below. THE GATEWAY DOES NOT REPORT CACHE STATISTICS AT ALL.
+      Two identical calls sharing a 3,360-token prefix through
+      http://llm-gateway.dev.nera.gov:4000/v1 (LiteLLM — it identifies itself in its
+      own 401: "LiteLLM Virtual Key expected") both returned:
+        {"completion_tokens": 8, "prompt_tokens": 3360, "total_tokens": 3368,
+         "completion_tokens_details": null, "prompt_tokens_details": null}
+      `prompt_tokens_details` is NULL, not a zero-valued object — there is no
+      cached_tokens field, and no cache_read_input_tokens either. `prompt_tokens` was
+      identical on both calls, so no discount is visible by any route.
+      SO METRIC 1 IS STRUCTURALLY UNMEASURABLE ON THIS DEPLOYMENT. The zero across
+      132.7M input tokens is not a StackOwl defect, not a broken capture (our reader
+      was checked against the same response object and correctly returns 0), and not
+      prompt instability. The upstream simply does not tell us. D01.2's benefit can be
+      neither proven nor disproven here with this instrument, and no amount of work on
+      OUR side changes that — it needs either a gateway that reports cache stats or a
+      provider that does.
+      D01.6''s metric 1 should be recorded as UNMEASURABLE-HERE rather than as a
+      failing measure, with this probe as the evidence and the query to re-run when the
+      backend changes.
+    A_SECOND_THING_THE_PROBE_SETTLED: >-
+      The same gateway returns real `prompt_tokens`, which finally allowed the token
+      ESTIMATOR to be checked against ground truth instead of inferred from a failure.
+      Four samples: english prose est 780 / real 652 (over 19.6%), json est 1041 / real
+      764 (over 36.3%), code est 840 / real 861 (UNDER 2.4%), mixed unicode est 700 /
+      real 554 (over 26.4%). The heuristic is CONSERVATIVE on text and only slightly
+      optimistic on code — it is NOT the scaling undercount I asserted in the fix
+      commit. The live 400 came from message STRUCTURE the estimate never saw (chat
+      template markers, tool-call wrappers, tool results — _message_content_text was
+      blind to tool_calls entirely), which grows with the number of tool rounds and is
+      exactly why a tool-using turn hit the ceiling and a one-liner never did. The code
+      comment has been corrected to say this; the 25% rate stands, now on measured
+      grounds, and _PROMPT_RESERVE_DIVISOR remains what actually rescued the case.
     CORRECTION: >-
       MY MEASUREMENT WAS WRONG AND THE DECISION RESTS ON IT (found 2026-08-15, before any
       of the work was done). I told Bakir the tools array "invalidates position 0 on

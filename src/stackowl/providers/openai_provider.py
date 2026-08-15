@@ -238,15 +238,29 @@ _ROUND_DEADLINE_FALLBACK_S = 600.0
 # same category as _MIN_OUTPUT_TOKENS below.
 _INPUT_TOKEN_SAFETY_MARGIN = 2000
 
-#: The flat margin above is a FLOOR, not the whole reservation. ``estimate_tokens``
-#: is a heuristic, and a heuristic's error scales with the size of what it
-#: estimates — so a fixed 2000-token pad silently stops covering it as prompts
-#: grow. Measured on the live 400 of 2026-08-15: real input 12,145 tokens against
-#: an estimate of at most 10,144, an undercount of >=2,001 — one token more than
-#: the flat margin could absorb, and the request was rejected by exactly 1 token.
-#: 936 ContextWindowExceededError 400s across the logs share this shape.
-#: 25% is deliberately generous: the cost of over-reserving is a shorter maximum
-#: answer, and the cost of under-reserving is a turn that fails outright.
+#: The flat margin above is a FLOOR, not the whole reservation.
+#:
+#: MEASURED against the real gateway 2026-08-15 (four samples, comparing
+#: ``estimate_tokens`` with the ``prompt_tokens`` the gateway reported back):
+#:     english prose  est  780 / real  652  -> over-counts 19.6%
+#:     json           est 1041 / real  764  -> over-counts 36.3%
+#:     code           est  840 / real  861  -> UNDER-counts  2.4%
+#:     mixed unicode  est  700 / real  554  -> over-counts 26.4%
+#: So the char heuristic is conservative on text and only slightly optimistic on
+#: code. It is NOT the scaling error I first assumed when writing this.
+#:
+#: The live 400 (real input 12,145 against an estimate of at most 10,144) came
+#: from STRUCTURE the estimate never saw rather than from the heuristic: a
+#: tool-loop history carries chat-template markers, tool-call wrappers and tool
+#: results, and ``_message_content_text`` was blind to tool_calls entirely until
+#: it was fixed alongside this. That blindness grows with the number of rounds,
+#: which is why a tool-using turn hit the ceiling and a one-liner never did.
+#:
+#: The rate stays at 25% because it is measured to cover the worst case with room
+#: (2.4% worst undercount), and because the cost of over-reserving is a shorter
+#: maximum answer while the cost of under-reserving is a turn that fails
+#: outright. _PROMPT_RESERVE_DIVISOR below is what actually rescued the live
+#: case; this is the second line of defence, not the first.
 _INPUT_ESTIMATE_ERROR_RATE = 0.25
 
 #: A floor on the window space kept for the PROMPT, no matter what the configured
