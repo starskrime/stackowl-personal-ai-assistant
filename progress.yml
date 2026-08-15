@@ -411,6 +411,54 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-15-the-delegation-timeout-predates-the-model-it-waits-for
+    raised: 2026-08-15
+    blocks: >-
+      nothing, but it is the first domino in a user-visible failure Bakir reported and
+      it costs a full turn plus ~150k tokens each time it fires.
+    question: >-
+      What should a parent wait for a delegated child? A hardcoded 30s is roughly two
+      model calls on this deployment.
+    what_was_measured: >-
+      ROOT-CAUSED 2026-08-15 from the live trace of Bakir''s "why did headhunter ping me
+      again?" turn (trace c944548da078401c92461df2f14197d6). The order of events:
+        21:10:25  router sends the question ABOUT headhunter TO headhunter
+        21:10:33  headhunter calls delegate_task -> child owl Brain starts
+        21:10:40  Brain: tool_search        (5.3s model call)
+        21:10:45  Brain: tool_describe x2   (4.6s)
+        21:10:47  Brain tries owl_build -> correctly DENIED at depth>0, and the denial
+                  returns a helpful message telling it to finish the task itself
+        21:11:03  [a2a] receive: timeout — THE PARENT GIVES UP, 30s after delegating,
+                  while the child is still working. status=uncertain.
+        21:11:08+ the parent flails: tool_search, tool_describe, memory, tool_describe
+                  ([guardrails] tool-loop warning), tool_search x2, delegate_task again
+                  ("cycle detected — refusing pre-slot"), tool_describe x2
+        21:12:01  "final answer looks like an unparsed tool call — re-prompting" (x2)
+        21:12:12  "persistent tool-call leak, no escalation available" -> give-up floor
+      THE TIMEOUT IS THE FIRST DOMINO, and it is a bare default: A2ADelegator''s
+      timeout_seconds=30.0, and orchestrator.py:1506 constructs it WITHOUT passing one,
+      so nothing configures it. Against this deployment that is about two model calls —
+      D01.6''s metric 2 measured p50 TTFT at 13.1s and p90 at 44.7s on the same box.
+      The child was healthy and mid-work; the parent simply could not wait long enough
+      for a single delegated step to finish.
+      NOT the cause, checked and cleared: the depth>0 denial (it returns a clear
+      instruction, not silence), the cycle guard (it fired correctly), and the tool-call
+      leak (the guard suppressed it — the model was asking for tools it could not have,
+      which is a CONSEQUENCE of having no answer to give).
+    why_escalated: >-
+      Picking a new number is the wrong shape of fix, and this repo has a whole arc
+      about exactly that — the numeric-limits removal walked ~48 constants item by item.
+      A timeout that is right for one model is wrong for the next, and the platform now
+      MEASURES its own latency (cost_records.ttft_ms, per provider and model), so the
+      wait can be derived instead of guessed. That is a design decision about where the
+      derivation lives and what it falls back to on cold start, not a constant to bump.
+    recommendation: >-
+      Derive it: wait a multiple of the measured p90 TTFT for the child''s provider/model,
+      with a floor for cold start and a ceiling so a wedged child cannot hold a turn
+      forever. Bakir''s standing preference is dynamic discovery over hardcoded config,
+      and the measurement already exists — this is the first thing D01.6''s metric 2 has
+      been able to pay for. A bumped constant would be the same bug with a bigger number
+      the next time the model changes.
   - id: ESC-14-the-turn-context-rides-inside-the-users-own-message
     raised: 2026-08-15
     blocks: >-
