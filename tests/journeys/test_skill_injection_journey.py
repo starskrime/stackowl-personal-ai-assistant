@@ -293,6 +293,11 @@ def _live_io():  # noqa: ANN202
 # sends the next reader to fix code that is correct.
 
 
+# The presented-tools memo is cleared per test by an autouse fixture in
+# tests/conftest.py — these journeys reuse session_key 818181 and owl "spec"
+# while giving that owl different owned skills, which is what first exposed it.
+
+
 def _build(provider: _ScriptedSpecialist, *, skill_store: object, owl_registry: OwlRegistry) -> _Env:
     adapter = TelegramChannelAdapter(TelegramSettings(allowed_user_ids=frozenset({USER_ID})))
     bot = _FakeBot()

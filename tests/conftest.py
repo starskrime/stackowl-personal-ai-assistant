@@ -20,6 +20,36 @@ from stackowl.infra.trace import TraceContext
 
 
 @pytest.fixture(autouse=True)
+def _drop_the_presented_tools_memo() -> Generator[None]:
+    """Prevent the process-global presented-tools memo from leaking across tests.
+
+    execute() memoizes the presented tool array on
+    ``(session_key, owl, protocol, window, hydrated)``. The pins are deliberately
+    NOT in that key: Law 1 wants the array byte-stable for the life of a
+    conversation, or the cached prefix is void. In production that is right,
+    because one session's owl does not change its skill set between turns. Across
+    TESTS it is not: two tests that reuse a session key and owl name while
+    building different worlds share one entry, and the second silently receives
+    the first's array.
+
+    MEASURED, not hypothesised. tests/journeys/test_skill_injection_journey.py
+    passed file-by-file and failed as a suite: journey_a's array (no coupled
+    tool) was served to journey_b, so the coupling assertion failed on a memo hit
+    while the coupling itself worked — the trace showed total_pins=1. The
+    dangerous direction is the mirror: a test that asserts a tool is ABSENT would
+    PASS on a stale array that never contained it.
+
+    Only the boundaries are cleared, so a test that populates the memo and then
+    asserts a hit still works.
+    """
+    from stackowl.infra import presented_tools
+
+    presented_tools.clear()
+    yield
+    presented_tools.clear()
+
+
+@pytest.fixture(autouse=True)
 def _restore_test_mode_guard() -> Generator[None]:
     """Prevent the process-global TestModeGuard latch from leaking across tests.
 
