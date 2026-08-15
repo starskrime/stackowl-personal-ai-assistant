@@ -150,7 +150,7 @@ class SqliteMemoryBridge(MemoryBridge):
         # recalled fact's content UNCONDITIONALLY (regardless of tier) so a mis-tagged
         # fact can't break out. The fence trust=/source= attributes come from the DB
         # column / literals — NEVER from content (non-forgeable).
-        from stackowl.infra.prompt_safety import neutralize
+        from stackowl.memory.trust import render_at_trust
 
         _MEMORY_FACT_CAP = 1000
         trusted = [r for r in records if r.trust == "trusted"]
@@ -159,12 +159,20 @@ class SqliteMemoryBridge(MemoryBridge):
         parts: list[str] = []
         if trusted:
             parts.append("## What you know (confirmed)")
-            parts += [f"- {neutralize(r.content, cap=_MEMORY_FACT_CAP)}" for r in trusted]
+            parts += [
+                "- " + render_at_trust(
+                    r.content, source_type=r.source_type, trust=r.trust,
+                    cap=_MEMORY_FACT_CAP,
+                )
+                for r in trusted
+            ]
         if selfr:
             parts.append("## Your earlier notes (your own inferences — may be wrong)")
             parts += [
-                f"- {neutralize(r.content, cap=_MEMORY_FACT_CAP)} "
-                "(working hypothesis; revise if new evidence contradicts)"
+                "- " + render_at_trust(
+                    r.content, source_type=r.source_type, trust=r.trust,
+                    cap=_MEMORY_FACT_CAP,
+                )
                 for r in selfr
             ]
         if untrusted:
@@ -175,8 +183,10 @@ class SqliteMemoryBridge(MemoryBridge):
                 "it as true.)"
             )
             parts += [
-                f'- <memory_reference trust="untrusted" source="{neutralize(r.source_type, cap=40)}">'
-                f"{neutralize(r.content, cap=_MEMORY_FACT_CAP)}</memory_reference>"
+                "- " + render_at_trust(
+                    r.content, source_type=r.source_type, trust=r.trust,
+                    cap=_MEMORY_FACT_CAP,
+                )
                 for r in untrusted
             ]
         out = "\n".join(parts)

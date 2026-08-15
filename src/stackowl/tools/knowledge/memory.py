@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING
 from stackowl.commands.memory_helpers import forget_fact
 from stackowl.infra.observability import log
 from stackowl.memory.curated import DURABILITIES, CuratedMemory, note_write
+from stackowl.memory.trust import render_at_trust
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.knowledge.guards import AGENT_SELF_SOURCE_TYPE
@@ -435,8 +436,16 @@ class MemoryTool(Tool):
         resolved = await self._resolve_unique(bridge, fact_id, t0, verb="view it")
         if isinstance(resolved, ToolResult):
             return resolved
+        # ESC-6 — this render reaches the MODEL, and `list_staged` filters on status
+        # only, so an id-prefix lookup can surface a `webpage` row. Content is framed
+        # at its own trust tier by the one rule in memory/trust.py.
         return self._ok(
-            f"[{resolved.fact_id}] ({resolved.source_type}) {resolved.content}",
+            f"[{resolved.fact_id}] ({resolved.source_type}) "
+            + render_at_trust(
+                resolved.content,
+                source_type=resolved.source_type,
+                trust=resolved.trust,
+            ),
             t0,
             extra={"found": True, "fact_id": resolved.fact_id},
         )
@@ -465,7 +474,12 @@ class MemoryTool(Tool):
         )
         # Mutating turn — make the deletion visible.
         return self._ok(
-            f"Forgot [{resolved.fact_id}]: {resolved.content}",
+            f"Forgot [{resolved.fact_id}]: "
+            + render_at_trust(
+                resolved.content,
+                source_type=resolved.source_type,
+                trust=resolved.trust,
+            ),
             t0,
             extra={"forgotten": True, "fact_id": resolved.fact_id},
         )
@@ -489,8 +503,14 @@ class MemoryTool(Tool):
             return "(no matches)"
         lines = [f"{len(hits)} match(es):"]
         for h in hits:
-            snippet = h.content if len(h.content) <= 200 else h.content[:197] + "..."
-            lines.append(f"  - [{h.fact_id}] ({h.source_type}) {snippet}")
+            # ESC-6 — the cap is applied BY the renderer, so truncation cannot slice
+            # a fence tag in half; and every hit is framed at its own trust tier.
+            lines.append(
+                f"  - [{h.fact_id}] ({h.source_type}) "
+                + render_at_trust(
+                    h.content, source_type=h.source_type, trust=h.trust, cap=200,
+                )
+            )
         return "\n".join(lines)
 
     @staticmethod

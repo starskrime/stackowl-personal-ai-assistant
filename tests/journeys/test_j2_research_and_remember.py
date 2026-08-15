@@ -171,7 +171,7 @@ class _ScriptedSecretary:
         self.turn += 1
         if self.turn == 1:
             return await self._research_and_remember(tool_dispatcher)
-        return await self._recall(system_text, history)
+        return await self._recall(system_text, history, tool_dispatcher)
 
     async def _research_and_remember(self, tool_dispatcher) -> tuple[str, list]:  # noqa: ANN001
         calls: list[dict] = []
@@ -205,7 +205,15 @@ class _ScriptedSecretary:
 
         # 2. Real memory(add) → REAL SqliteMemoryBridge stage + force_promote.
         self.mem_out = await tool_dispatcher(
-            "memory", {"action": "add", "content": self.stored_finding}
+            # D08.1 made `durability` REQUIRED — there is deliberately no
+            # "transient", because a fact that will stop being true needs a date
+            # rather than a tier. A scripted call that omits it is now a tool error.
+            "memory",
+            {
+                "action": "add",
+                "content": self.stored_finding,
+                "durability": "permanent",
+            },
         )
         calls.append({"name": "memory", "args": {"action": "add"}, "result": self.mem_out})
 
@@ -215,15 +223,30 @@ class _ScriptedSecretary:
         )
         return (final, calls)
 
-    async def _recall(self, system_text, history) -> tuple[str, list]:  # noqa: ANN001
-        # A real owl recalls from memory: it does NOT call web_search here. The
-        # REAL classify step has already folded the committed finding into
-        # ``system_text`` (and any session turns into ``history``). Answer from
-        # what the memory system surfaced — never re-search.
+    async def _recall(self, system_text, history, tool_dispatcher) -> tuple[str, list]:  # noqa: ANN001
+        # A real owl recalls from memory: it does NOT call web_search here.
+        #
+        # WHERE IT LOOKS CHANGED WITH D08.1, and this is the whole modern shape of
+        # the journey. Turn 1's write goes to curated memory, whose prompt block is
+        # a snapshot FROZEN per incarnation (curated.py keys the cache on
+        # session_id) — so within THIS conversation it deliberately does not appear
+        # in system_text. That is Law 1: nothing mutates past context mid-
+        # conversation, because it would void the prompt cache for every turn
+        # already in the window.
+        #
+        # The depth is not lost, it MOVED: assemble.py says so explicitly — "the
+        # registered `memory` tool is how the model reaches for it when a
+        # conversation needs more than the profile". So the owl asks the tool. That
+        # is still recall-not-re-search, which is what this journey is named for,
+        # and it exercises the path production actually takes today.
         self.turn2_system_text = system_text
         surfaced = system_text or ""
         if history:
             surfaced += "\n" + "\n".join(getattr(m, "content", "") for m in history)
+        self.recall_out = await tool_dispatcher(
+            "memory", {"action": "search", "query": "ARM64 ML inference"}
+        )
+        surfaced += "\n" + str(self.recall_out)
         # The owl quotes back what recall surfaced. If the finding is NOT in the
         # surfaced context, this answer will not contain it and assertion 2 fails
         # honestly (no re-search rescue).
@@ -236,7 +259,10 @@ class _ScriptedSecretary:
             )
         else:
             answer = "I don't have anything remembered about ARM64 ML inference yet."
-        return (answer, [])
+        return (
+            answer,
+            [{"name": "memory", "args": {"action": "search"}, "result": self.recall_out}],
+        )
 
     async def complete(self, *a, **k) -> CompletionResult:  # noqa: ANN002,ANN003
         # The real triage step CALLS complete() (router reads .input_tokens), so
@@ -378,7 +404,10 @@ def _build(tmp_db: DbPool) -> _Env:
 
 async def test_j2_research_then_recall_without_re_searching(tmp_db: DbPool) -> None:
     env = _build(tmp_db)
-    bridge = SqliteMemoryBridge(db=tmp_db)  # an independent reader over the same db
+    # An independent reader bridge stood here to prove the finding was readable
+    # from a SECOND connection, not just the writer's. Both of its assertions moved
+    # to curated memory with the store, and CuratedMemory() is itself a fresh
+    # reader over the real files, so the independence is preserved.
 
     # ===================================================================
     # TURN 1 — research + remember (real inbound Telegram).
@@ -409,22 +438,35 @@ async def test_j2_research_then_recall_without_re_searching(tmp_db: DbPool) -> N
         f"from the real web_search hit. Finding: {finding!r}"
     )
     # The memory tool reported a successful store.
-    assert "Remembered" in env.provider.mem_out, (
+    # D08.1 retargeted /memory at curated memory and changed the confirmation to
+    # "Saved." + when it reaches the prompt. The GUARANTEE — the tool confirms a
+    # durable store rather than the agent merely claiming it — is unchanged.
+    assert "Saved." in env.provider.mem_out, (
         f"BUSINESS OUTCOME 1 FAIL: memory(add) did not confirm a store. Got: {env.provider.mem_out!r}"
     )
-    # Production read path: hybrid recall surfaces it from the REAL bridge.
-    recalled = await bridge.recall("ARM64 ML inference", limit=10)
-    assert any(_FINDING_PHRASE in r.content for r in recalled), (
-        "BUSINESS OUTCOME 1 FAIL: the ARM64 finding was NOT stored/recallable in the "
-        f"REAL memory_bridge. recall() returned: {[r.content for r in recalled]!r}"
+    # Production read path. This asserted bridge.recall(), which reads
+    # committed_facts — 0 rows since D08.1's migration 0112, and no writers left
+    # once memory(add) was retargeted at curated memory. The STORE moved; the
+    # guarantee this journey is named for — what the agent researched once is
+    # findable later WITHOUT searching again — did not, and curated search is
+    # where it now lives.
+    from stackowl.memory.curated import CuratedMemory
+
+    recalled = [text for _target, text in CuratedMemory().search("ARM64")]
+    assert any(_FINDING_PHRASE in text for text in recalled), (
+        "BUSINESS OUTCOME 1 FAIL: the ARM64 finding was NOT stored/findable in "
+        f"curated memory. search() returned: {recalled!r}"
     )
-    # And it is genuinely persisted as an agent_self fact (committed, not just staged).
-    committed = await bridge.list_staged(status="committed")
-    assert any(
-        _FINDING_PHRASE in f.content and f.source_type == "agent_self" for f in committed
-    ), (
-        "BUSINESS OUTCOME 1 FAIL: the finding is not a committed agent_self fact. "
-        f"committed facts: {[(f.source_type, f.content) for f in committed]!r}"
+    # And it is genuinely PERSISTED, not merely reported. This asserted a committed
+    # agent_self row; committed_facts has held 0 rows since migration 0112, so the
+    # durable home is now the curated OWL file — which is also where the system
+    # prompt reads it, making this a stronger check than the old one rather than a
+    # weaker one. (Provenance moved the same way in the e4_s1 Telegram smoke.)
+    durable = CuratedMemory().search(_FINDING_PHRASE)
+    assert durable, (
+        "BUSINESS OUTCOME 1 FAIL: the finding was not durably written to curated "
+        "memory — the agent reported a store that did not happen. "
+        f"search({_FINDING_PHRASE!r}) returned: {durable!r}"
     )
 
     # ===================================================================
@@ -454,9 +496,31 @@ async def test_j2_research_then_recall_without_re_searching(tmp_db: DbPool) -> N
         f"— web backend calls went from {calls_after_turn1} to {env.web_provider.calls}. "
         "Recall must surface the stored finding WITHOUT hitting the web again."
     )
-    # Belt-and-suspenders: the REAL classify step actually folded the committed
-    # finding into the model's system_text on turn 2 (the recall wiring under test).
-    assert env.provider.turn2_system_text and _FINDING_PHRASE in env.provider.turn2_system_text, (
-        "BUSINESS OUTCOME 2 FAIL: the recall path did not surface the finding into "
-        f"turn-2 system_text. Got: {env.provider.turn2_system_text!r}"
+    # Belt-and-suspenders, INVERTED by D08.1 and kept rather than dropped. This
+    # asserted that classify folded the finding into turn-2's system_text. Curated
+    # memory now enters the prompt from a snapshot FROZEN per incarnation, so a
+    # turn-1 write must NOT move turn-2's prompt — that is Law 1, and the old
+    # assertion would now pass only if the prompt cache were being voided mid-
+    # conversation. Asserting the absence is what protects it.
+    assert env.provider.turn2_system_text, "turn 2 produced no system_text to check"
+    assert _FINDING_PHRASE not in env.provider.turn2_system_text, (
+        "BUSINESS OUTCOME 2 FAIL: a mid-conversation write MOVED the frozen prompt — "
+        "Law 1 broken, and every cached turn in this window is now invalid. "
+        f"system_text: {env.provider.turn2_system_text!r}"
+    )
+    # And it is not stranded either — frozen for THIS conversation, present for the
+    # next. Without this half, a write that reached NO prompt ever would satisfy the
+    # assertion above perfectly: the write-with-no-reader shape.
+    # A FRESH CuratedMemory, not shared_memory(): the shared one is a PROCESS
+    # singleton whose snapshot cache is keyed on session_id, so two tests using the
+    # same session_id literal would serve each other stale snapshots across
+    # different temp homes.
+    from stackowl.memory.curated import USER_TARGET
+
+    next_incarnation = CuratedMemory().snapshot_for_prompt(
+        USER_TARGET, session_id="j2-next-incarnation"
+    )
+    assert _FINDING_PHRASE in next_incarnation, (
+        "BUSINESS OUTCOME 2 FAIL: the researched finding never reaches the prompt at "
+        f"all. A new incarnation's USER block is: {next_incarnation!r}"
     )

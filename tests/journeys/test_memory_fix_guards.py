@@ -236,10 +236,12 @@ async def test_guard_b_recall_surfaces_committed_fact(tmp_db: DbPool, tmp_path) 
     # merely quiet: frozen for THIS conversation, present for the next. Without
     # this, a write that never reaches any prompt would satisfy (b) perfectly —
     # the write-with-no-reader shape this programme keeps finding.
-    from stackowl.memory.curated import shared_memory
-
-    next_incarnation = shared_memory().snapshot_for_prompt(
-        USER_TARGET, session_id="a-brand-new-session"
+    # A FRESH CuratedMemory, not shared_memory(): the shared one is a PROCESS
+    # singleton whose snapshot cache is keyed on session_id, so two tests using the
+    # same session_id literal would serve each other stale snapshots across
+    # different temp homes. A fresh instance reads the current files.
+    next_incarnation = CuratedMemory().snapshot_for_prompt(
+        USER_TARGET, session_id="guard-b-next-incarnation"
     )
     assert _REGION_VALUE in next_incarnation, (
         "GUARD B FAIL: the remembered fact never reaches the prompt at all — "
