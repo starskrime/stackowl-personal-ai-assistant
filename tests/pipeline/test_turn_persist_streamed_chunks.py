@@ -34,7 +34,14 @@ async def test_streamed_token_chunks_persist_as_flowing_text(monkeypatch) -> Non
             stored["session_key"] = session_key
 
     class FakeServices:
-        memory_bridge = FakeBridge()
+        # D08.2 slice A split MemoryBridge into a live ConversationStore half and a
+        # dead fact half; turn_persist writes the turn through `conversation_store`.
+        # The SAME instance is used for both so the assertion below still observes
+        # the write it is checking — a second FakeBridge would make this pass while
+        # recording nothing.
+        _bridge = FakeBridge()
+        memory_bridge = _bridge
+        conversation_store = _bridge
         retry_queue_store = None
 
     monkeypatch.setattr(

@@ -25,6 +25,11 @@ async def test_floored_turn_marks_message_ledger_failed(monkeypatch):
 
     class FakeServices:
         memory_bridge = None
+        # D08.2 slice A split MemoryBridge into a live ConversationStore half and
+        # a dead fact half; turn_persist reads `conversation_store` now. The double
+        # kept only `memory_bridge` and stopped resembling the real thing — the
+        # test-double drift this programme keeps finding.
+        conversation_store = None
         retry_queue_store = None
         message_ledger_store = ledger
 
@@ -57,6 +62,11 @@ async def test_clean_turn_marks_message_ledger_completed(monkeypatch):
 
     class FakeServices:
         memory_bridge = None
+        # D08.2 slice A split MemoryBridge into a live ConversationStore half and
+        # a dead fact half; turn_persist reads `conversation_store` now. The double
+        # kept only `memory_bridge` and stopped resembling the real thing — the
+        # test-double drift this programme keeps finding.
+        conversation_store = None
         retry_queue_store = None
         message_ledger_store = ledger
 
@@ -87,6 +97,11 @@ async def test_missing_message_ledger_store_is_a_noop(monkeypatch):
 
     class FakeServices:
         memory_bridge = None
+        # D08.2 slice A split MemoryBridge into a live ConversationStore half and
+        # a dead fact half; turn_persist reads `conversation_store` now. The double
+        # kept only `memory_bridge` and stopped resembling the real thing — the
+        # test-double drift this programme keeps finding.
+        conversation_store = None
         retry_queue_store = None
         # message_ledger_store deliberately absent — getattr default must apply.
 
