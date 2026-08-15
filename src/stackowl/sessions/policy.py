@@ -138,7 +138,8 @@ def expired_reason(entry: SessionEntry, now: datetime.datetime,
 
 
 def resolve(entry: SessionEntry | None, now: datetime.datetime, policy: ResetPolicy,
-            *, has_active_work: bool = False) -> Resolution:
+            *, has_active_work: bool = False,
+            process_started_at: datetime.datetime | None = None) -> Resolution:
     """Decide what happens to this lane on this message. Exactly one branch (I3).
 
     ``has_active_work`` carries Bakir's Q12 answer, which EXTENDS the reference platform' rule
@@ -171,6 +172,33 @@ def resolve(entry: SessionEntry | None, now: datetime.datetime, policy: ResetPol
         if has_active_work:
             return Resolution(Branch.EXISTING)
         return Resolution(Branch.EXPIRED, reason, mints_new_incarnation=True)
+
+    # 4 — the process that froze this incarnation's prompt is gone (ESC-13).
+    #     Measured 2026-08-15: 8 incarnations carried 2-3 distinct prompt hashes,
+    #     every one of them a snapshot re-minted under a session_id that outlived
+    #     the process holding it. A restarted core IS a new incarnation, so the id
+    #     rolls and the byte-identical invariant becomes true by construction
+    #     rather than by hope.
+    #
+    #     DELIBERATELY AFTER the resume check above. A restart is exactly when
+    #     resume_pending is set, and that branch exists to preserve the
+    #     incarnation so the turn being recovered is not discarded. Rolling first
+    #     would break crash recovery to fix a metric.
+    #
+    #     ``process_started_at`` is passed in rather than read here so this module
+    #     stays pure and the trigger stays testable without a clock.
+    #
+    #     LAST, after the automatic boundaries. A lane can be BOTH due a daily
+    #     rollover and older than this process; reporting that as RESTART would
+    #     swallow the user's 'new conversation' notice and the summary that
+    #     goes with it. A real conversation boundary outranks a process one.
+    if (
+        process_started_at is not None
+        and entry.created_at < process_started_at
+        and not has_active_work
+    ):
+        return Resolution(Branch.EXPIRED, ResetReason.RESTART,
+                          mints_new_incarnation=True)
 
     return Resolution(Branch.EXISTING)
 

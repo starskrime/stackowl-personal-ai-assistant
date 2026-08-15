@@ -44,6 +44,7 @@ class ResetReason(StrEnum):
     EXPLICIT = "explicit"    # the user typed /new
     CONTEXT_FULL = "context_full"  # compression needed the boundary (D03.2)
     SUSPENDED = "suspended"  # hard wipe: /stop, or the stuck-loop escape
+    RESTART = "restart"      # the PROCESS ended, not the conversation (ESC-13)
 
     @property
     def is_automatic(self) -> bool:
@@ -51,8 +52,26 @@ class ResetReason(StrEnum):
 
         Only automatic resets produce the 'new conversation' notice — an explicit
         /new must never be reported back to the user as though it expired.
+
+        RESTART is deliberately absent. It is not the user's business that the
+        core exec-replaced itself, and it is not rare: 29 core starts were logged
+        on 2026-08-15 alone, so announcing it would mean 29 "new conversation"
+        notices in a day for a conversation that never actually ended.
         """
         return self in (ResetReason.DAILY, ResetReason.IDLE, ResetReason.CONTEXT_FULL)
+
+    @property
+    def ends_the_conversation(self) -> bool:
+        """True when the CONVERSATION ended, not merely the process running it.
+
+        The four original reasons all mean the user's thread of talk is over, so a
+        rollover is published and subscribers summarise the incarnation that
+        closed. RESTART means only that the process died and the frozen prompt
+        must be re-derived under a fresh id (ESC-13) — the transcript continues
+        uninterrupted, so publishing would invent a conversation boundary that did
+        not happen, and would do it on every deploy.
+        """
+        return self is not ResetReason.RESTART
 
 
 class Branch(StrEnum):

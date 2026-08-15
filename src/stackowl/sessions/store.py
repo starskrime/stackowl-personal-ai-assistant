@@ -74,6 +74,14 @@ def _to_entry(row: dict[str, Any]) -> SessionEntry:
     )
 
 
+#: When THIS process started. Captured at import, which for the core is boot —
+#: and on the exec-replace restart path the module is imported afresh, so it
+#: re-stamps correctly rather than carrying the dead process's value.
+#:
+#: Read once here and passed INTO `resolve` so the policy module stays pure.
+_PROCESS_STARTED_AT = datetime.datetime.now().astimezone()
+
+
 class SessionStore:
     """Owns lane persistence. One instance, injected — never a module global."""
 
@@ -86,9 +94,16 @@ class SessionStore:
 
     def __init__(self, db: DbPool, policy: ResetPolicy | None = None,
                  mirror_dir: Path | None = None,
-                 event_bus: object | None = None) -> None:
+                 event_bus: object | None = None,
+                 process_started_at: datetime.datetime | None = None) -> None:
         self._db = db
         self._policy = policy or ResetPolicy()
+        # ESC-13 — when the process that could have frozen a prompt started.
+        # Injectable because a test that pins lane behaviour with a fixed clock
+        # would otherwise be comparing its own timestamps against the real wall
+        # clock and silently exercising the restart trigger instead of the
+        # branch it meant to test.
+        self._process_started_at = process_started_at or _PROCESS_STARTED_AT
         self._mirror_dir = mirror_dir
         # Duck-typed to keep sessions/ free of an events/ import. None → the
         # rollover is still logged, just not published; nothing breaks.
@@ -190,7 +205,10 @@ class SessionStore:
             )
 
         existing = await self.get(key)
-        decision = resolve(existing, now, self._policy, has_active_work=has_active_work)
+        decision = resolve(
+            existing, now, self._policy, has_active_work=has_active_work,
+            process_started_at=self._process_started_at,
+        )
 
         # The newest message wins on the send target — a Telegram group upgraded to
         # a supergroup re-keys the chat while staying the SAME lane — but a message
@@ -232,6 +250,21 @@ class SessionStore:
                 identity_key=identity, message_count=1,
                 parent_session_key=parent,
             )
+        elif decision.reason is ResetReason.RESTART:
+            # ESC-13 — the PROCESS ended, not the conversation. A fresh
+            # session_id so the frozen prompt cannot be re-minted under an id
+            # that already has one, and NOTHING else: the counters describe the
+            # user's thread of talk, which did not stop just because the core
+            # was redeployed. Resetting them here would also move the idle and
+            # daily boundaries every time we ship.
+            entry = existing.evolve(
+                session_id=new_session_id(now),
+                updated_at=now,
+                message_count=existing.message_count + 1,
+                auto_reset_reason=ResetReason.RESTART,
+                was_auto_reset=False,
+                is_fresh_reset=False,
+            )
         elif decision.mints_new_incarnation:
             # A rollover ENDS an incarnation; it never destroys a transcript
             # (invariant I6). The old session_id stays referenced by messages/
@@ -271,7 +304,13 @@ class SessionStore:
         # the clock. Announcing again now — possibly hours later, when the user
         # finally speaks — would fire every consumer twice for one boundary.
         already_announced = existing is not None and existing.expiry_finalized
-        if decision.mints_new_incarnation and existing is not None and not already_announced:
+        announces = decision.reason is None or decision.reason.ends_the_conversation
+        if (
+            decision.mints_new_incarnation
+            and existing is not None
+            and not already_announced
+            and announces
+        ):
             log.gateway.info(
                 "session.rollover: old incarnation ended",
                 extra={"_fields": {
