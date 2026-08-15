@@ -87,7 +87,16 @@ class _ScriptedProvider:
         self, *, user_text, system_text, tool_schemas,
         tool_dispatcher, history=None, **_kwargs,
     ):  # noqa: ANN001
-        label = user_text.strip()
+        # The turn's message is NOT the user's text alone: execute prepends the
+        # volatile per-turn context ("Right now it is <time>." plus any nudge),
+        # which D01.1 put on the TURN rather than the frozen system prompt so the
+        # cached prefix stays stable. Taking the whole message made the label
+        # "Right now it is Saturday...\n\nresearcher", so the duplicate- and
+        # cap-label journeys never saw the same label twice.
+        #
+        # The last line is the user's own text — what a real model would pull out
+        # when asked for the label.
+        label = user_text.strip().splitlines()[-1].strip()
         out = await tool_dispatcher("sessions_spawn", {"label": label, "owl": "scout"})
         self.tool_outputs.append(out)
         rec = json.loads(out).get("record", {})

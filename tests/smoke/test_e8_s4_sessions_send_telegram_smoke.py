@@ -101,7 +101,12 @@ class _ScriptedProvider:
             prior = list(history or [])
             return (f"scout answer to {user_text!r} (history={len(prior)})", [])
 
-        parts = user_text.strip().split(maxsplit=2)
+        # The turn's message is NOT the user's text alone: execute prepends the
+        # volatile per-turn context ("Right now it is <time>." plus any nudge),
+        # which D01.1 put on the TURN rather than the frozen system prompt so the
+        # cached prefix stays stable. Parsing the whole message made the verb
+        # "Right", so no branch matched. The last line is the user's own text.
+        parts = user_text.strip().splitlines()[-1].strip().split(maxsplit=2)
         verb = parts[0] if parts else ""
         label = parts[1] if len(parts) > 1 else ""
         if verb == "spawn":
