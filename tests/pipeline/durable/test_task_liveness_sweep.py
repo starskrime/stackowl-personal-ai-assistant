@@ -84,7 +84,14 @@ class _Reg:
         return self._p
 
     def get_with_cascade(self, tier: str) -> object:
-        return self._p
+        # (provider, model) — the shape production returns since the per-model
+        # config change. Returning a bare provider made router.route() fail on
+        # `provider, model = resolved` ("cannot unpack non-iterable _Finishing
+        # object"), so the RESUMED turn died at triage and the reclaimed task fell
+        # straight back to running — which read as "the sweep did not reclaim it".
+        # Third file with this same stale double; the other two were fixed
+        # 2026-08-15 in the delegation smokes.
+        return (self._p, "")
 
 
 @pytest.fixture()
