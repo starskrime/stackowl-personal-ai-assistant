@@ -477,6 +477,41 @@ current:
       and the measurement already exists — this is the first thing D01.6''s metric 2 has
       been able to pay for. A bumped constant would be the same bug with a bigger number
       the next time the model changes.
+  - id: ESC-16-do-plugins-get-lifecycle-hooks
+    raised: 2026-08-15
+    blocks: >-
+      D16.1's architect stage, and only that. Everything else in the item — the two
+      loader defects, and proving the install path with one real plugin — proceeds
+      without an answer.
+    question: >-
+      Should a plugin be able to observe and shape the agent (lifecycle hooks:
+      pre/post tool call, pre/post LLM call, session start/end), or stay limited to
+      registering CLASSES as it is today? And should pip entry points become a
+      discovery source alongside the plugins directory?
+    what_was_measured: >-
+      MEASURED 2026-08-15. StackOwl has SIX extension points (Tool, JobHandler,
+      SlashCommand, ChannelAdapter, OwlSource, MemoryProvider) discovered by issubclass,
+      and ZERO lifecycle hooks — none of the six the reference platform offers exists
+      anywhere in src. No CLI-subcommand registration either. AND ZERO PLUGINS ARE
+      INSTALLED: the directory is empty, the plugins table has 0 rows, so the whole
+      surface has never been exercised by a real plugin.
+    why_escalated: >-
+      It is a product and SECURITY decision, not an evidence one. A lifecycle hook lets
+      third-party code run on every tool call and every model call — that is the largest
+      trust surface in the item, D17 owns security, and this platform's rule is that
+      presentation is never authorization. Pip entry points are the same question in
+      supply-chain form: they let anything pip-installed register itself without the user
+      putting a file anywhere. Neither is mine to decide, and both change what "installing
+      a plugin" MEANS.
+    recommendation: >-
+      Split it. Say yes to hooks as a SEPARATE, capability-gated extension point rather
+      than a property every plugin gets — the existing capabilities.py already models
+      per-plugin permission, so a hook plugin declares what it observes and the user
+      grants it. Say NO to pip entry points for now: the directory is an explicit act by
+      the operator, and nothing about the current pain needs implicit discovery.
+      And whatever is decided, decide it ONCE — D04.1 arrives through D16.3 expecting one
+      discovery table, and a second hook mechanism added later for providers is the exact
+      duplication that dependency exists to prevent.
   - id: ESC-14-the-turn-context-rides-inside-the-users-own-message
     RESOLVED: "RESOLVED 2026-08-15 — Bakir chose FOLD IT INTO D04.1, over doing it now standalone and over closing it on the strength of the strip. The reference design already owns the seam: prepare_messages() is a per-provider hook for exactly how messages are composed before a call, so the fix lands once in the layer that should own it instead of as a separate sweep over complete_with_tools / stream / complete on every provider — code D04.1 restructures anyway. The strip stays deployed at all three escaping surfaces until then, and is to be DELETED as part of that item: a net left under a repaired floor teaches the next reader the wrong lesson. Its earlier 'sequence with the cache work' rationale lapsed when the gateway probe closed ESC-12."
     raised: 2026-08-15
@@ -10698,6 +10733,76 @@ items:
     wave: 9
     order: 72
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d161"
+    BRAINSTORM:
+      ran: 2026-08-15
+      round_0_measured_first:
+        extension_points: >-
+          SIX, discovered by issubclass against _ABC_NAMES in plugins/local_loader.py:
+          Tool, JobHandler, SlashCommand, ChannelAdapter, OwlSource, MemoryProvider
+          (the last added by D08.2 slice C).
+        discovery: >-
+          A manifest's `entry_point` imported via importlib. Plugins live under
+          StackowlHome.plugins() = ~/.stackowl/plugins; remote_install rglobs plugin.yaml.
+          NO pip entry-point discovery, which the reference platform does support.
+        lifecycle_hooks: >-
+          ZERO. Grepped src/ for all six reference hooks — pre_tool_call, post_tool_call,
+          pre_llm_call, post_llm_call, on_session_start, on_session_end — and NONE exists
+          anywhere. This answers the map's own Ask ("do our plugins get lifecycle hooks
+          and CLI commands, or only tools?"): only registrable CLASSES.
+        cli_subcommands: >-
+          None found. SlashCommand is a CHAT command; the reference additionally lets a
+          plugin wire its own argparse tree into the CLI at startup with no core edit.
+        THE_NUMBER_THAT_REFRAMES_THE_ITEM: >-
+          ZERO PLUGINS ARE INSTALLED. ~/.stackowl/plugins is empty and the `plugins` table
+          has 0 rows. The entire surface — loader, registry, manifest, capabilities,
+          verify, remote install — has NEVER been exercised by a real third-party plugin.
+          It works in tests and has never once run in anger. That is the recurring shape
+          this programme keeps paying for (registered != reachable), and it means the
+          verdict PARTIAL understates the risk: the parts that exist are unproven, not
+          merely incomplete.
+      panel:
+        measurement: >-
+          The surface is six ABCs and a manifest loader, with zero real users. The only
+          thing exercising the contract today is BuiltinCuratedProvider, which D08.2
+          deliberately expressed through the interface so that something real would run
+          it on every boot — and that is a BUILT-IN, not a plugin. So even that exercise
+          never touches the loader, the manifest, verify, or remote install.
+        stability: >-
+          FOUND A DEFECT, not a design question. `_register_classes` walks `dir(module)`
+          and registers EVERY class that is a subclass of a known ABC, with no
+          `obj.__module__` guard. A plugin that merely IMPORTS another plugin's Tool
+          subclass — or one of ours — registers it as its own. It also calls `obj()` with
+          no arguments, so any extension point needing constructor args cannot be a
+          plugin at all. Both are cheap to fix and neither needs Bakir.
+        improvement: >-
+          Adding a seventh ABC for D04.1 is nearly free IF this table is the right
+          mechanism. The measurement says the table is fine and the SURROUNDINGS are
+          unproven, so the honest improvement is to make one real plugin exist end to end
+          before widening what a plugin may do.
+        killer_functionality: >-
+          Lifecycle hooks are the difference between "a plugin can add a tool" and "a
+          plugin can observe and shape the agent". They are what the reference platform's
+          own plugins are mostly built on. But they are also the largest security surface
+          in this item, and D17 owns security — so the panel does NOT answer this one.
+        ease_of_use: >-
+          With zero installs there is no evidence the install path works. A first-party
+          example plugin, installed from disk on a real boot, is the cheapest possible
+          proof and doubles as the doc.
+        future_proof: >-
+          D04.1 depends on this via D16.3 precisely so a ProviderProfile joins one
+          discovery table instead of inventing a parallel one. Whatever is decided here
+          about hooks should be decided ONCE — a second hook mechanism added later for
+          providers is the exact duplication D16.3 exists to prevent.
+      contradiction_found: >-
+        The map calls this PARTIAL on the strength of what EXISTS (registry, manifest,
+        capabilities, remote install, verify). The measurement says none of it has ever
+        run. Those are not the same claim, and the record now says both.
+      routed_to_operator: [ESC-16]
+      answered_by_the_panel: >-
+        The map's Ask is settled by evidence: our plugins get registrable CLASSES ONLY —
+        no lifecycle hooks, no CLI subcommands, no pip entry points. The two loader
+        defects above are panel-answered too: they are bugs, not choices, and belong in
+        this item's implement stage.
     EXPEDITED:
       decided: 2026-08-15
       by: Bakir (chain member — see the note)
@@ -10720,7 +10825,7 @@ items:
     blocks: [D16.3]
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
