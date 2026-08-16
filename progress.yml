@@ -477,6 +477,52 @@ current:
       and the measurement already exists — this is the first thing D01.6''s metric 2 has
       been able to pay for. A bumped constant would be the same bug with a bigger number
       the next time the model changes.
+  - id: ESC-17-the-owner-key-is-conditional-and-splits-five-tables
+    raised: 2026-08-16
+    blocks: >-
+      nothing today — the one PROVEN harm (conversation recall) is fixed by the union
+      read. This is about whether to stop the cause instead of patching each reader.
+    question: >-
+      Should the owner key become DETERMINISTIC, or do we keep fixing readers one at a
+      time as each split is found to matter?
+    what_was_measured: >-
+      MEASURED 2026-08-16 by sweeping every table with a key-ish column for BOTH shapes
+      of Bakir''s own key (identity "72055773" vs lane "owl:secretary:telegram:dm:72055773").
+      Five tables carry both:
+        staged_facts.source_ref     identity 29 / lane  8
+        task_outcomes.session_key   identity 734 / lane 93
+        cost_records.session_key    identity 52 / lane 473
+        retry_queue.session_key     identity 68 / lane 15
+        turn_decisions.session_key  identity 1 / lane 1
+      THE SPLIT ALONE IS NOT THE HARM — that depends entirely on whether the READER
+      filters by that column, and checking each one changes the picture:
+        - staged_facts IS read by it -> PROVEN harmful, 8 real messages invisible to
+          short-term recall. Fixed today by reading the union.
+        - task_outcomes is NOT read by it (all four SELECTs filter owner_id), so its
+          734/93 split is a recorded attribute, not a lookup key. HARMLESS.
+        - retry_queue IS read by it (retry_queue_store.py:394,
+          "WHERE owner_id = ? AND session_key = ? AND status = ''pending''"), so a
+          pending retry filed under one key is invisible to a lookup by the other.
+          UNASSESSED whether that path is reached in practice.
+        - cost_records IS read by it (cost_tracker.py:401), which makes per-conversation
+          cost reporting undercount. Reporting only.
+      THE CAUSE IS ONE LINE: owner_scope_key is `identity_key or session_key`, so the key
+      changes shape depending on whether identity resolution happened to succeed on that
+      turn. Every split above is the same conditional, seen from a different table.
+    why_escalated: >-
+      Making the key deterministic changes what every one of those tables is keyed BY,
+      which is a data decision with a migration behind it, not a bug fix. The alternative
+      — fix each reader as it is found to matter — is what was done today for recall and
+      is honest but unbounded: nobody knows which reader matters next until a user
+      reports something odd, which is exactly how this surfaced.
+    recommendation: >-
+      Make it deterministic, and fix the CAUSE of the intermittency first: identity
+      resolution now logs its misses at INFO (added today), so a few days of traffic will
+      say WHY it fails — 4 of the 8 known misses are the retry/redraft path, the other 4
+      are ordinary turns with no explanation yet. Deciding the key shape before knowing
+      that is deciding blind. Meanwhile the union read holds recall together, and
+      retry_queue is the one worth checking by hand because it can change behaviour
+      rather than a number.
   - id: ESC-16-do-plugins-get-lifecycle-hooks
     raised: 2026-08-15
     blocks: >-
