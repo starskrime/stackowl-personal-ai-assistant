@@ -290,6 +290,15 @@ class ProactiveDeliverer:
         # the reads were outside the try below, which is exactly how it broke
         # test_deliver_threads_notification_target_chat_id on a notification
         # shaped without `target`. Remembering must never cost the delivery.
+        # A TURN ANSWER IS ALREADY REMEMBERED. pipeline/steps/deliver.py routes the
+        # stream-miss fallback through this same chokepoint with
+        # category="turn_answer", and that reply is persisted by turn_persist on
+        # the normal path. Recording it here too would put the answer in the
+        # user's history TWICE — and the duplicate would arrive with an empty user
+        # half, so the conversation would read as if the agent had said it
+        # unprompted. This hook is for messages the user never asked for.
+        if str(getattr(notification, "category", "") or "") == "turn_answer":
+            return
         target = getattr(notification, "target", None) or getattr(
             notification, "target_chat_id", None
         )

@@ -116,6 +116,23 @@ class TestItDeclinesToGuess:
         """An unwired deliverer behaves exactly as it did before ESC-19."""
         await _deliverer(None)._remember_what_we_said(_notification())  # noqa: SLF001
 
+    async def test_a_TURN_ANSWER_is_not_recorded_twice(self) -> None:
+        """pipeline/steps/deliver.py routes its stream-miss fallback through this
+        same chokepoint with category="turn_answer". That reply is already
+        persisted by turn_persist, so recording it here would put it in the user's
+        history TWICE — and the duplicate would carry an empty user half, making
+        the conversation read as though the agent had said it unprompted.
+
+        This hook is only for messages the user never asked for.
+        """
+        store = _Store()
+
+        await _deliverer(store)._remember_what_we_said(  # noqa: SLF001
+            _notification(category="turn_answer")
+        )
+
+        assert store.written == []
+
 
 class TestRememberingNeverCostsTheDelivery:
     async def test_a_raising_store_does_not_propagate(self) -> None:
