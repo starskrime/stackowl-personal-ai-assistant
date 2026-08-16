@@ -105,6 +105,15 @@ class _DeletableSender(Protocol):
     async def delete_message(self, chat_id: str | int, message_id: int) -> bool: ...
 
 
+#: Notification categories that are NOT conversation and must never be written
+#: into a user's history (ESC-19). ``canary`` is the synthetic send-path health
+#: probe — sent, then deleted, so the user never sees it. ``turn_answer`` is the
+#: stream-miss fallback for a reply turn_persist has already recorded.
+#: The ``ephemeral`` flag is checked separately and covers the general case; these
+#: names cover a probe that forgets to set it.
+_UNREMEMBERED_CATEGORIES = frozenset({"canary", "turn_answer"})
+
+
 # Urgency an agent-originated notification is permitted to request. ``critical``
 # is reserved for user / job-config / system origin and is clamped down to
 # ``normal`` for agent callers (S2 heartbeat_respond, S3 send_message).
@@ -298,6 +307,18 @@ class ProactiveDeliverer:
         # half, so the conversation would read as if the agent had said it
         # unprompted. This hook is for messages the user never asked for.
         if str(getattr(notification, "category", "") or "") == "turn_answer":
+            return
+        # AND A MESSAGE THE USER NEVER SEES IS NOT CONVERSATION. The telegram
+        # canary is a synthetic 17-character health probe that is SENT and then
+        # DELETED to verify the send path; it is delivered through this same
+        # chokepoint. Caught on live traffic 20 minutes after ESC-19 shipped —
+        # two canaries had already been written into Bakir's history with
+        # category="canary". Anything ephemeral is a probe, not something the
+        # agent said, and remembering it would have the agent "recall" messages
+        # the user was never shown.
+        if bool(getattr(notification, "ephemeral", False)):
+            return
+        if str(getattr(notification, "category", "") or "") in _UNREMEMBERED_CATEGORIES:
             return
         target = getattr(notification, "target", None) or getattr(
             notification, "target_chat_id", None

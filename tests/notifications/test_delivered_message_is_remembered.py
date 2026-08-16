@@ -133,6 +133,34 @@ class TestItDeclinesToGuess:
 
         assert store.written == []
 
+    async def test_the_CANARY_probe_is_not_remembered(self) -> None:
+        """Caught on live traffic 20 minutes after ESC-19 shipped: two telegram
+        canaries had already been written into Bakir's history.
+
+        The canary is a synthetic 17-character health probe — sent, then DELETED,
+        to verify the send path works. The user never sees it. Remembering it
+        would have the agent "recall" messages that were never shown to anyone.
+        """
+        store = _Store()
+
+        await _deliverer(store)._remember_what_we_said(  # noqa: SLF001
+            _notification(category="canary", message="stackowl canary")
+        )
+
+        assert store.written == []
+
+    async def test_ANY_ephemeral_message_is_not_remembered(self) -> None:
+        """The general rule behind the canary case: ephemeral means the user is
+        not meant to keep it, so neither should the conversation. This covers a
+        future probe that forgets to use a known category name."""
+        store = _Store()
+
+        await _deliverer(store)._remember_what_we_said(  # noqa: SLF001
+            _notification(category="something_new", ephemeral=True)
+        )
+
+        assert store.written == []
+
 
 class TestRememberingNeverCostsTheDelivery:
     async def test_a_raising_store_does_not_propagate(self) -> None:
