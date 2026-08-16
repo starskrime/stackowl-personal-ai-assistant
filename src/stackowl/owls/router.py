@@ -172,8 +172,18 @@ class SecretaryRouter:
         # to a known owl instead of silently collapsing to the secretary.
         self._fuzzy = FuzzyMatcher()
 
-    def _build_prompt(self, owls: list[tuple[str, str]], user_text: str) -> str:
-        """Compose the router-glue prompt (English template, user data inlined)."""
+    def _build_prompt(
+        self, owls: list[tuple[str, str]], user_text: str, recent: str = "",
+    ) -> str:
+        """Compose the router-glue prompt (English template, user data inlined).
+
+        ``recent`` is the tail of the conversation, oldest-first. It exists because
+        the router judged a message with NO conversation attached, and a follow-up
+        instruction is unresolvable that way: "B retime it" (live, 2026-08-16) was
+        classified `clarify` and answered with "What does B refer to, and what
+        specifically needs to be retimed?" — a question the previous turn had
+        already answered. Empty string reproduces the old prompt byte for byte.
+        """
         lines = [f"- {name}: {role}" for name, role in owls]
         roster = "\n".join(lines)
         return (
@@ -181,7 +191,13 @@ class SecretaryRouter:
             'this request, or "secretary" if none fits.\n\n'
             "Available owls:\n"
             f"{roster}\n\n"
-            f"User request: {user_text}\n\n"
+            + (
+                f"Recent conversation, oldest first:\n{recent}\n\n"
+                "Use it to resolve what the request refers to — a name, or a word "
+                "like 'it' or 'that' — before judging whether anything is unclear.\n\n"
+                if recent else ""
+            )
+            + f"User request: {user_text}\n\n"
             "Reply with these lines:\n"
             "Line 1: the owl name (required).\n"
             "Line 2: one of 'conversational', 'standard', or 'clarify':\n"
@@ -214,7 +230,10 @@ class SecretaryRouter:
             "or cheap, do NOT clarify: choose 'standard', act on the most likely "
             "interpretation, and state your assumption. When torn between 'standard' "
             "and 'clarify', choose 'standard' and act. Judge by meaning, in any "
-            "language.\n"
+            "language. A SHORT FOLLOW-UP that refers back to the recent "
+            "conversation is not ambiguous: resolve the reference from it and "
+            "choose 'standard'. If the user has already told you to do something, "
+            "do not ask them to confirm it again.\n"
             "Line 3 (ONLY if line 2 is 'clarify'): the single short question to ask "
             "the user, in their language. Omit this line otherwise."
         )
@@ -315,7 +334,7 @@ class SecretaryRouter:
                 return question or None
         return None
 
-    async def route(self, state: PipelineState) -> RouteResult:
+    async def route(self, state: PipelineState, recent: str = "") -> RouteResult:
         """Call the fast-tier provider and return RouteResult(owl_name, intent_class).
 
         Falls back to ``secretary`` / ``standard`` on any provider failure, empty
@@ -346,7 +365,7 @@ class SecretaryRouter:
             extra={"_fields": {"owl_count": len(owl_pairs)}},
         )
 
-        prompt = self._build_prompt(owl_pairs, state.input_text)
+        prompt = self._build_prompt(owl_pairs, state.input_text, recent)
         messages = [Message(role="user", content=prompt)]
 
         resolved = resolve_cascade_tier(

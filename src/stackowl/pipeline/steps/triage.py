@@ -29,6 +29,59 @@ _FALLBACK_OWL = "secretary"
 _STICKY_MAX_CHARS = 200
 
 
+#: Turns of conversation given to the ROUTER, and the per-turn character cap.
+#: Small on purpose: this rides the fast-tier routing call on every message, so it
+#: buys reference-resolution without turning a cheap classification into a big one.
+_ROUTER_CONTEXT_TURNS = 4
+_ROUTER_CONTEXT_CHARS = 240
+
+
+async def _recent_for_router(state: PipelineState) -> str:
+    """The tail of the conversation, oldest-first, for the router to resolve against.
+
+    WHY THIS EXISTS. The router classified `state.input_text` ALONE. `state.history`
+    is populated by the CLASSIFY step, which runs after triage, so at routing time
+    there was nothing to resolve a reference against — and a short follow-up is
+    exactly the shape that needs one. Measured live 2026-08-16: "B retime it" was
+    routed `clarify` and answered "What does B refer to, and what specifically needs
+    to be retimed?", a question the previous turn had already answered. Zero clarifies
+    were routed in the 433 turns of the preceding fortnight, so this is rare and
+    expensive rather than routine: it costs the user a whole turn and makes the agent
+    look like it forgot what they just said.
+
+    Best-effort by construction. Any failure returns "" and the router sees exactly
+    what it saw before — routing must never fail because history could not be read.
+    """
+    if not state.session_key:
+        return ""
+    try:
+        services = get_services()
+        store = services.conversation_store
+        if store is None:
+            return ""
+        turns = await store.recent_conversation_turns(
+            state.session_key, limit=_ROUTER_CONTEXT_TURNS,
+        )
+    except Exception as exc:
+        log.engine.warning(
+            "[triage] router context unavailable — routing on the message alone",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return ""
+    lines = [
+        str(t.content or "").strip().replace("\n", " ")[:_ROUTER_CONTEXT_CHARS]
+        for t in turns
+    ]
+    rendered = "\n".join(ln for ln in lines if ln)
+    log.engine.debug(
+        "[triage] router context assembled",
+        extra={"_fields": {"trace_id": state.trace_id, "turns": len(lines),
+                           "chars": len(rendered)}},
+    )
+    return rendered
+
+
 async def run(state: PipelineState) -> PipelineState:
     """Route incoming request to the target owl."""
     log.engine.info(
@@ -202,7 +255,7 @@ async def run(state: PipelineState) -> PipelineState:
         extra={"_fields": {"trace_id": state.trace_id}},
     )
 
-    result = await router.route(state)
+    result = await router.route(state, await _recent_for_router(state))
     # F089/F098 — stamp the turn's coarse language here (the established evolve
     # seam) so a provider-down honest floor can localize without any model call.
     language = detect_language(state.input_text)
