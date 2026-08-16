@@ -10735,6 +10735,47 @@ items:
     wave: 9
     order: 72
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d161"
+    INSTALL_PATH_PROVEN:
+      ran: 2026-08-16
+      what: >-
+        Drove the REAL LocalPluginLoader against a throwaway plugin (a plugin.yaml
+        plus one module defining a Tool subclass) and carried it all the way
+        through: manifest validated -> module imported -> class registered -> tool
+        EXECUTED and returned its output. The surface works. It had simply never
+        been run — zero plugins are installed and the plugins table has 0 rows, so
+        this is, as far as the record shows, the first time the path has been
+        exercised end to end.
+      the_over_registration_guard_held: >-
+        The probe plugin deliberately also did `from stackowl.tools.base import
+        Tool as _AliasedTool`. Only `hello_probe` registered, confirming the
+        __module__ guard added earlier today does what it claims on a real load
+        rather than only in its unit test.
+      FRICTION_FOUND_BY_BEING_THE_FIRST_USER:
+        - >-
+          Tool requires name, description AND parameters as separate abstract
+          properties. Implementing `manifest` alone — a reasonable guess, since
+          ToolManifest exists and every built-in tool defines one — fails with
+          "Can't instantiate abstract class ... without an implementation for
+          abstract methods 'description', 'name', 'parameters'". That is the first
+          thing a plugin author writes and the first thing that breaks.
+        - >-
+          ToolResult.duration_ms is REQUIRED with no default, sitting between two
+          optional fields, so the obvious `ToolResult(success=True, output=...)`
+          raises a pydantic ValidationError. The author is made to supply a timing
+          number they have not measured — while the platform times calls itself
+          (tools/base.py:268 and execute.py:992 both compute duration_ms). Worth
+          deciding at architect stage whether the author should ever pass it.
+        - >-
+          What worked WELL and should not be lost: a registration failure surfaces
+          as PluginValidationError naming the plugin and the offending class, and
+          the "thin tool description" warning fired on a short description. The
+          errors were the good part of the experience.
+      why_no_example_plugin_shipped_yet: >-
+        The brainstorm's ease-of-use lens argued for a first-party example plugin,
+        and it is still the right idea — but ESC-16 may add lifecycle hooks and
+        change what a plugin IS. Shipping the example first would mean shipping the
+        documentation of a contract that is still open. The probe proves the path
+        without committing to the shape.
     BRAINSTORM:
       ran: 2026-08-15
       round_0_measured_first:
