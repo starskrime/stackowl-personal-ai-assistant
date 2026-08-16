@@ -93,9 +93,15 @@ class TaskLivenessSweepHandler(JobHandler):
         stale_after_s: float = DEFAULT_STALE_AFTER_S,
         clock: Clock | None = None,
     ) -> None:
+        self._db = db
+        self._backend = backend
         self._store = DurableTaskStore(db, owner_id=owner_id)
         self._recoverer = DurableTaskRecoverer(db, backend, owner_id=owner_id)
         self._owner_id = owner_id
+        #: Per-owner store/recoverer pairs, built on demand. This sweep is a
+        #: PLATFORM reaper: a task stuck `running` is stuck whoever owns it, and
+        #: binding the handler to one principal made it blind to every other.
+        self._by_owner: dict[str, tuple[DurableTaskStore, DurableTaskRecoverer]] = {}
         self._stale_after_s = stale_after_s
         self._clock = clock or WallClock()
         # HealableResource cache — refreshed by health_check()/ensure_available(),
@@ -157,7 +163,12 @@ class TaskLivenessSweepHandler(JobHandler):
         #    recovery uses. Fail-open per task (reclaim_one never raises).
         reclaimed = 0
         for task in stale:
-            if await self._recoverer.reclaim_one(task):
+            # Reclaim through the recoverer bound to the TASK'S OWN owner. For
+            # this handler's own principal that is the same object as before, so
+            # the default path is unchanged; a task owned by anyone else is now
+            # reclaimed under its own owner rather than not at all.
+            _, recoverer = self._for_owner(task.owner_id)
+            if await recoverer.reclaim_one(task):
                 reclaimed += 1
         duration_ms = (time.monotonic() - t0) * 1000
         still_stale = len(stale) - reclaimed
@@ -185,9 +196,66 @@ class TaskLivenessSweepHandler(JobHandler):
             metadata={"stale_found": len(stale), "reclaimed": reclaimed},
         )
 
+    async def _other_owners_with_running_tasks(self) -> list[str]:
+        """Owners OTHER than this handler's principal that have running tasks.
+
+        WHY THIS EXISTS. The handler was bound to a single principal, so its query
+        was ``WHERE owner_id = 'principal-default'`` and it could not see a task
+        owned by anyone else. Measured 2026-08-16 on the live database: task
+        ``rollover-f8eee30a16e1`` sat ``status='running'`` for TEN AND A HALF DAYS
+        with ``parent_task_id`` NULL and ``updated_at`` untouched — squarely stale
+        against the 600s threshold — while this sweep ran every minute, found
+        nothing and reported success each time. Its owner was ``72055773``, a user
+        identity, because owner_scope_key files rows under the person whenever
+        identity resolution succeeds (ESC-17).
+
+        Deliberately narrow: returns owner IDs and nothing else, and reclaim still
+        goes through an owner-BOUND store and recoverer. Tenancy isolation is
+        unchanged — this asks "which tenants need sweeping", never "show me their
+        tasks". Never raises: a discovery failure degrades to sweeping this
+        handler's own principal, which is exactly the old behaviour.
+        """
+        try:
+            rows = await self._db.fetch_all(
+                "SELECT DISTINCT owner_id FROM tasks "
+                "WHERE status = 'running' AND owner_id IS NOT NULL "
+                "AND owner_id <> '' AND owner_id <> ?",
+                (self._owner_id,),
+            )
+        except Exception as exc:
+            log.scheduler.warning(
+                "[scheduler] task_liveness_sweep: owner discovery failed — sweeping "
+                "only this principal, as before",
+                exc_info=exc,
+                extra={"_fields": {"owner_id": self._owner_id}},
+            )
+            return []
+        return [str(r["owner_id"]) for r in rows]
+
+    def _for_owner(self, owner_id: str) -> tuple[DurableTaskStore, DurableTaskRecoverer]:
+        """Store + recoverer bound to ``owner_id``, cached for the handler's life."""
+        if owner_id == self._owner_id:
+            return self._store, self._recoverer
+        cached = self._by_owner.get(owner_id)
+        if cached is None:
+            cached = (
+                DurableTaskStore(self._db, owner_id=owner_id),
+                DurableTaskRecoverer(self._db, self._backend, owner_id=owner_id),
+            )
+            self._by_owner[owner_id] = cached
+        return cached
+
     async def _find_stale(self) -> list[DurableTask]:
-        """Root ``running`` tasks whose ``updated_at`` is older than the threshold."""
+        """Root ``running`` tasks whose ``updated_at`` is older than the threshold.
+
+        Sweeps this handler's own principal FIRST and exactly as before, then any
+        other owner that has running work — see
+        :meth:`_other_owners_with_running_tasks`.
+        """
         running = await self._store.list(status="running")
+        for owner_id in await self._other_owners_with_running_tasks():
+            store, _ = self._for_owner(owner_id)
+            running.extend(await store.list(status="running"))
         now = self._clock.now()
         stale = [
             t for t in running
@@ -275,7 +343,12 @@ class TaskLivenessSweepHandler(JobHandler):
         # 3. STEP — reclaim every stale row synchronously, right now.
         reclaimed = 0
         for task in stale:
-            if await self._recoverer.reclaim_one(task):
+            # Reclaim through the recoverer bound to the TASK'S OWN owner. For
+            # this handler's own principal that is the same object as before, so
+            # the default path is unchanged; a task owned by anyone else is now
+            # reclaimed under its own owner rather than not at all.
+            _, recoverer = self._for_owner(task.owner_id)
+            if await recoverer.reclaim_one(task):
                 reclaimed += 1
         still_stale = await self._find_stale()
         self._set_cache(
