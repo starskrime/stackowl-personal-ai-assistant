@@ -630,6 +630,61 @@ class StartupOrchestrator:
             "; ".join(unreachable),
         )
 
+    @staticmethod
+    async def _adopt_sqlite_owls(owl_registry: object, db_pool: object) -> None:
+        """Seed the owls table from the YAML once, then make SQLite the source.
+
+        Bakir, 2026-08-16: an owl lived in four places at once, and that split is
+        what produced the rename bug the same day — display_name written correctly
+        to one store and read by nobody on the path it was supposed to change.
+
+        SEED-THEN-ADOPT, in that order, so the migration cannot lose an owl:
+
+        1. ``seed_from`` populates an EMPTY table from whatever the YAML gave us.
+           Idempotent on the emptiness check, so it can never resurrect an owl the
+           user retired later.
+        2. ``list_all`` then becomes the registry's content. From here the YAML is
+           a stale artefact, not a second source.
+
+        Fails OPEN and loudly (B5): any error leaves the already-built,
+        YAML-derived registry exactly as it was. Booting with the old owls beats
+        booting with none, and the log says which happened rather than leaving it
+        to be inferred.
+        """
+        try:
+            from stackowl.owls.store import OwlStore
+
+            store = OwlStore(db_pool)  # type: ignore[arg-type]
+            before = list(owl_registry.all())  # type: ignore[attr-defined]
+            seeded = await store.seed_from(before)
+            owls = await store.list_all()
+            if not owls:
+                log.warning(
+                    "[startup] owls: sqlite home is empty after seeding — keeping the "
+                    "yaml-derived registry so the platform still has its agents",
+                    extra={"_fields": {"offered": len(before)}},
+                )
+                return
+            adopted = 0
+            for m in owls:
+                try:
+                    owl_registry.replace(m)  # type: ignore[attr-defined]
+                except Exception:
+                    # Not present yet (a row the YAML no longer carries) — register.
+                    owl_registry.register(m)  # type: ignore[attr-defined]
+                adopted += 1
+            log.info(
+                "[startup] owls: sqlite is now the source of record",
+                extra={"_fields": {"seeded": seeded, "adopted": adopted,
+                                   "from_yaml": len(before)}},
+            )
+        except Exception as exc:  # never let a storage change cost the user its owls
+            log.error(
+                "[startup] owls: could not adopt the sqlite home — continuing on the "
+                "yaml-derived registry",
+                exc_info=exc,
+            )
+
     async def _phase_gateway(self) -> None:
         """Start channel adapters and run the main message loop.
 
@@ -778,6 +833,18 @@ class StartupOrchestrator:
             )
         db_pool = DbPool(default_db_path())
         await db_pool.open()
+
+        # An owl's ONE home is SQLite (migration 0118). Bakir, 2026-08-16:
+        # "everything in md or sqlite. No data duplication."
+        #
+        # ORDER IS THE SAFETY PROPERTY. The registry above was already built from
+        # the YAML and cannot fail, so it is the floor. Here the store is seeded
+        # from it ONCE (idempotent on an emptiness check), then the registry is
+        # RE-SYNCED from the store, which is authoritative from that point on. If
+        # anything in this block fails, the YAML-built registry stands and the
+        # platform still boots with every owl — a storage migration must never be
+        # able to cost the user their agents.
+        await self._adopt_sqlite_owls(owl_registry, db_pool)
 
         # WS-D command-sequence learning — durable per-owner "after A you usually
         # do B". Gated by ui.command_suggestions: None when off, so there is no
