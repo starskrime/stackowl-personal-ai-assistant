@@ -29,6 +29,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
+from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.commands.focus_command import FocusCommand
@@ -158,6 +159,12 @@ class NotificationAssembly:
             settings=settings,
             # PA5(b) — the durable NACK store for the transport-failed seam.
             outbox=UndeliveredOutbox(db),
+            # ESC-19 — so a DELIVERED proactive message lands in the RECIPIENT'S
+            # conversation, not only in the goal lane that produced it. Without
+            # this the agent has no record of having spoken to the user: Bakir
+            # asked "What?" three times about a news message it had just sent and
+            # got the answer to a 45-minute-old question each time.
+            conversation_store=SqliteMemoryBridge(db),
         )
 
         # 2) Digest job — register handler + seed 5-minute schedule. The

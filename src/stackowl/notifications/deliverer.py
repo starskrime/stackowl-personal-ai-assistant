@@ -34,6 +34,17 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.notifications.undelivered_outbox import UndeliveredOutbox
 
 
+class _ConversationRecorder(Protocol):
+    """The one method ESC-19 needs from the conversation store.
+
+    Declared here rather than importing ConversationStore so notifications/ does
+    not take a dependency on memory/ — the same reason the undelivered outbox and
+    the summary backstop are injected rather than imported.
+    """
+
+    async def store(self, content: str, session_key: str) -> None: ...
+
+
 class _TargetedSender(Protocol):
     """An adapter whose ``send_text`` accepts an explicit destination ``chat_id``.
 
@@ -127,6 +138,7 @@ class ProactiveDeliverer:
         registry: ChannelRegistry,
         settings: Settings,
         outbox: UndeliveredOutbox | None = None,
+        conversation_store: _ConversationRecorder | None = None,
     ) -> None:
         self._router = router
         self._registry = registry
@@ -135,6 +147,10 @@ class ProactiveDeliverer:
         # construction site byte-identical (no silent-drop persistence, same as
         # today); wired for real at assembly time (notifications/assembly.py).
         self._outbox = outbox
+        # ESC-19 — where a DELIVERED proactive message is recorded so the agent
+        # can talk about what it just said. Optional and duck-typed for the same
+        # reason as the outbox: an unwired deliverer behaves exactly as before.
+        self._conversation_store: _ConversationRecorder | None = conversation_store
 
     @property
     def outbox(self) -> UndeliveredOutbox | None:
@@ -228,8 +244,88 @@ class ProactiveDeliverer:
                 urgency=notification.urgency,
                 job_id=notification.job_id,
             )
+        if result == "delivered":
+            await self._remember_what_we_said(notification)
         self._log_exit(result, channel, t0)
         return result
+
+    async def _remember_what_we_said(self, notification: Notification) -> None:
+        """Record a DELIVERED proactive message in the recipient's conversation.
+
+        ESC-19, reported by Bakir 2026-08-16: a scheduled headhunter run gathered
+        news, delivered it to him on telegram at 14:03:38, and when he replied
+        "What?" three times in the next minute he got the answer to a question he
+        had asked at 13:19 — because the message existed only under the GOAL lane
+        it was generated in (``goal-goal_execution-10da5378``). His own lane had no
+        trace of it. THE AGENT HAD NO RECORD OF HAVING SPOKEN TO HIM.
+
+        A message the agent SENT is part of the conversation by any reasonable
+        reading, and its absence is what produces "it forgot what it just told me".
+
+        FORMAT. Stored as ``"User:\\n\\nAssistant: <text>"`` — an EMPTY user half.
+        classify's ``_parse_turns_to_messages`` partitions on ``"\\n\\nAssistant:"``
+        and skips a blank half, so this reads back as a lone assistant turn, which
+        is exactly what an unprompted message is. Inventing a fake user turn would
+        put words in his mouth.
+
+        KEY. ``notification.target`` — the same identity the undelivered outbox
+        attributes a failed send to, so a delivered and an undelivered message are
+        filed under one key. The conversation reader unions the identity and lane
+        keys (fixed earlier today), so this is visible either way.
+
+        Never raises and never changes delivery: the message HAS been sent by the
+        time this runs. Failing to remember it must not turn a delivered message
+        into a failed one.
+        """
+        # getattr on SELF too. Several tests build this class with
+        # ``ProactiveDeliverer.__new__`` and set only the attributes they need, so
+        # __init__ never runs and the attribute does not exist. More importantly
+        # this method runs AFTER a successful send: an instance shaped differently
+        # than expected must not turn a delivered message into an AttributeError.
+        store = getattr(self, "_conversation_store", None)
+        if store is None:
+            return
+        # getattr, not attribute access. This runs AFTER a successful send, so an
+        # AttributeError here would turn a delivered message into a crash — and
+        # the reads were outside the try below, which is exactly how it broke
+        # test_deliver_threads_notification_target_chat_id on a notification
+        # shaped without `target`. Remembering must never cost the delivery.
+        target = getattr(notification, "target", None) or getattr(
+            notification, "target_chat_id", None
+        )
+        if not target:
+            # No recipient to attribute it to — a broadcast or a single-terminal
+            # channel using the adapter's shared chat. Recording it under a guess
+            # would put the message in somebody else's history.
+            log.notifications.info(
+                "[notifications] deliverer: delivered with no attributable recipient "
+                "— not recorded in a conversation",
+                extra={"_fields": {
+                    "channel": getattr(notification, "channel_name", None),
+                    "category": getattr(notification, "category", None),
+                }},
+            )
+            return
+        body = str(getattr(notification, "message", "") or "").strip()
+        if not body:
+            return
+        try:
+            await store.store(f"User:\n\nAssistant: {body}", str(target))
+        except Exception as exc:
+            log.notifications.error(
+                "[notifications] deliverer: could not record the delivered message — "
+                "the agent will not remember sending it",
+                exc_info=exc,
+                extra={"_fields": {"target": str(target),
+                                   "category": getattr(notification, "category", None)}},
+            )
+            return
+        log.notifications.info(
+            "[notifications] deliverer: recorded the delivered message in the "
+            "recipient's conversation",
+            extra={"_fields": {"target": str(target), "chars": len(body),
+                               "category": getattr(notification, "category", None)}},
+        )
 
     async def _maybe_reroute(
         self, failed_channel: str, notification: Notification, status: DeliveryStatus
