@@ -613,14 +613,22 @@ class SkillManageTool(Tool):
     async def verify(
         self, args: dict[str, object], result: ToolResult, *, started_at: float
     ) -> bool | None:
-        """ADR-T2 / TS2 — MEASURE that a created skill artifact truly exists on disk,
-        by RE-READING it, never trusting the create's ``success`` flag. Only create
-        stamps ``artifact_path`` (the SKILL.md), so edit/patch/delete/enable/disable
-        return ``None`` ⇒ byte-identical. Reuses the shared existence oracle
-        :func:`verify_artifact`: a present, non-empty, this-run file ⇒ ``True``;
-        absent/empty ⇒ ``False``; an unobservable FS ⇒ ``None`` (no opinion)."""
+        """ADR-T2 / TS2 — MEASURE that the claimed effect truly landed, by RE-READING
+        the world, never trusting the call's own ``success`` flag. Reuses the shared
+        existence oracle :func:`verify_artifact`: a present, non-empty, this-run file
+        ⇒ ``True``; absent/empty ⇒ ``False``; an unobservable FS ⇒ ``None``.
+
+        EXTENDED 2026-08-16 to the other five actions. Only ``create`` stamps
+        ``artifact_path``, so edit/patch/delete/enable/disable used to return
+        ``None`` — and this tool declares ``effect_class="creates_persistent_entity"``,
+        which the overclaim gate DEFAULT-DENIES when it cannot confirm. That is the
+        exact shape that made a WORKING owl_build rename report itself to the user
+        as "The capability that failed: owl_build" (fixed same day); this tool had
+        the identical hole in five of its six actions, found by auditing every
+        durable-effect tool rather than waiting for the second report.
+        """
         if not result.artifact_path:
-            return None
+            return await self._verify_by_action(args, started_at=started_at)
         from stackowl.tools.verification import verify_artifact
 
         observed = verify_artifact(result.artifact_path, not_before=started_at)
@@ -630,6 +638,67 @@ class SkillManageTool(Tool):
                 extra={"_fields": {"path": result.artifact_path}},
             )
         return observed
+
+    async def _verify_by_action(
+        self, args: dict[str, object], *, started_at: float
+    ) -> bool | None:
+        """Confirm a non-create action by RE-READING the skill store, and the file.
+
+        ``delete`` is confirmed by ABSENCE; ``enable``/``disable`` by the stored
+        flag; ``edit``/``patch`` by the artifact being freshly written THIS RUN —
+        presence alone would not distinguish an edit that landed from one that did
+        nothing, and the freshness oracle already exists for exactly that.
+
+        Returns ``None`` whenever the read genuinely cannot be made (no store, no
+        name, unreadable path). An inability to look must never flip a real success
+        into a reported failure — that is the mistake this method exists to prevent,
+        and returning ``False`` here would simply relocate it.
+        """
+        action = str(args.get("action") or "").strip().lower()
+        name = str(args.get("name") or "").strip()
+        if not action or not name:
+            return None
+        store = get_services().skill_store
+        if store is None:
+            log.tool.warning(
+                "skill_manage.verify: no skill store to observe — no opinion",
+                extra={"_fields": {"skill": name, "action": action}},
+            )
+            return None
+        try:
+            found = await store.get_many_by_name((name,))
+        except Exception as exc:
+            log.tool.warning(
+                "skill_manage.verify: store unreadable — no opinion",
+                exc_info=exc, extra={"_fields": {"skill": name, "action": action}},
+            )
+            return None
+
+        skill = found[0] if found else None
+        if action == "delete":
+            confirmed: bool | None = skill is None
+        elif skill is None:
+            confirmed = False  # claimed to change it; it is not there
+        elif action == "enable":
+            confirmed = bool(getattr(skill, "enabled", False))
+        elif action == "disable":
+            confirmed = not bool(getattr(skill, "enabled", True))
+        elif action in ("edit", "patch"):
+            path = str(getattr(skill, "path", "") or "")
+            if not path:
+                return None
+            from stackowl.tools.verification import verify_artifact
+
+            confirmed = verify_artifact(path, not_before=started_at)
+        else:
+            return None
+
+        if confirmed is False:
+            log.tool.warning(
+                "skill_manage.verify: claimed but NOT observed",
+                extra={"_fields": {"skill": name, "action": action}},
+            )
+        return confirmed
 
     @staticmethod
     def _ok(
