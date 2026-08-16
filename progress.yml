@@ -561,6 +561,42 @@ current:
       window-relative SHAPE is right, the 10% constant is not — and it should be
       measured against latency, not only tokens, because on this box the round-trip is
       the expensive resource and the tokens are the cheap one.
+  - id: ESC-20-proactive-messages-ignore-the-users-output-style
+    raised: 2026-08-16
+    blocks: >-
+      nothing, but it is why Bakir''s request for shorter replies will look half-done:
+      the messages he actually finds long are the ones style does not reach.
+    question: >-
+      Should a proactive/scheduled message obey the user''s OutputStyle — and if so,
+      does that include the terse compression, which costs one extra fast-tier call per
+      scheduled send?
+    what_was_measured: >-
+      MEASURED 2026-08-16 after setting length=terse at Bakir''s request. The style is
+      enforced in pipeline/steps/deliver.py (line 50, "Enforce the owner''s stored
+      OutputStyle"), which is the TURN delivery path. notifications/deliverer.py — the
+      chokepoint every proactive send goes through — contains NO reference to
+      OutputStyle, load_output_style or apply(). So scheduled messages get no style at
+      all.
+      The sizes say why it matters: his conversational replies that day were 26 and
+      1,422 chars, while Brain''s scheduled Sunday Pulse was 4,396 chars at 16:03 and
+      5,077 at 18:05. The longest things he receives are precisely the ones style
+      cannot reach. His EXISTING `output_tables: off` preference has never applied to
+      them either, which predates any of today''s work.
+    why_escalated: >-
+      Two separable halves with different costs. The SYNC transforms (markdown, tables,
+      emoji, links) are pure deterministic string work — applying them to proactive
+      sends is free and almost certainly just correct. The TERSE compression is an extra
+      fast-tier LLM call per scheduled message, on a box where p50 TTFT is 13s, and it
+      would rewrite an agent''s carefully-formatted briefing. That is a product call
+      about what a scheduled briefing should look like, not a bug fix.
+    recommendation: >-
+      Apply the sync transforms to proactive sends now — a stated formatting preference
+      that silently does not apply to half the messages a user receives is the same
+      "declared but unenforced" shape this programme keeps finding. Hold the terse
+      compression behind an explicit decision: a briefing is a different artifact from a
+      chat reply, and Bakir may well want it complete. If he does want it short, prefer
+      instructing the SENDING owl to write briefly (free, and it keeps the structure
+      coherent) over compressing a finished briefing after the fact.
   - id: ESC-19-the-agent-does-not-remember-what-it-SENT-you
     raised: 2026-08-16
     blocks: >-
