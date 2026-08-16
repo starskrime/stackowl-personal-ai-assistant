@@ -147,11 +147,21 @@ async def test_b2_in_registry_but_not_persisted_yields_false(
     assert verdict is False
 
 
-async def test_c_edit_retire_results_are_not_verified(
+async def test_c_no_artifact_and_no_args_yields_no_opinion(
     tmp_home: Path, tmp_db: DbPool
 ) -> None:
-    """verify() is scoped to create: a result with no stamped artifact (edit/retire)
-    returns None ⇒ byte-identical (falls back to success)."""
+    """With nothing to go on, verify() has NO OPINION.
+
+    Renamed 2026-08-16. This used to read "verify() is scoped to create", and that
+    scope is what caused Bakir's flood of false failures: only `create` stamps
+    artifact_path, so every rename/edit/retire returned None, and the overclaim
+    gate DEFAULT-DENIES a durable effect it cannot confirm — reporting a rename
+    that had worked as "The capability that failed: owl_build".
+
+    What it actually pins, and still should: called with EMPTY args there is no
+    action and no owl name to re-read, so the honest answer is None. An inability
+    to look must never become a False.
+    """
     registry = OwlRegistry.with_default_secretary()
     services = _services(tmp_db, registry)
     token = set_services(services)
@@ -161,3 +171,86 @@ async def test_c_edit_retire_results_are_not_verified(
     finally:
         reset_services(token)
     assert verdict is None
+
+
+# --- the actions that USED to be unverifiable (2026-08-16) --------------------
+
+
+async def _verdict(tmp_db: DbPool, registry: OwlRegistry, args: dict) -> bool | None:
+    services = _services(tmp_db, registry)
+    token = set_services(services)
+    try:
+        claimed = ToolResult(success=True, output="done", duration_ms=1.0)
+        return await OwlBuildTool().verify(args, claimed, started_at=time.time())
+    finally:
+        reset_services(token)
+
+
+async def test_a_rename_that_LANDED_is_verified_true(
+    tmp_home: Path, tmp_db: DbPool
+) -> None:
+    """Bakir's exact case. The rename worked; the platform must be able to say so.
+
+    Live at 03:40:54 the tool exited success=True op=rename and the heuristics
+    ledger recorded outcome=succeeded — then overclaim.detected named owl_build
+    the failed capability, because verify() had no opinion and the gate
+    default-denies a durable effect it cannot confirm.
+    """
+    registry = OwlRegistry.with_default_secretary()
+    current = registry.get("secretary")
+    registry.replace(current.model_copy(update={"display_name": "Friday"}))
+
+    verdict = await _verdict(
+        tmp_db, registry,
+        {"action": "rename", "name": "secretary", "display_name": "Friday"},
+    )
+
+    assert verdict is True
+
+
+async def test_a_rename_that_did_NOT_land_is_verified_false(
+    tmp_home: Path, tmp_db: DbPool
+) -> None:
+    """The half that keeps the check honest: claiming it is not achieving it."""
+    registry = OwlRegistry.with_default_secretary()  # display_name untouched
+
+    verdict = await _verdict(
+        tmp_db, registry,
+        {"action": "rename", "name": "secretary", "display_name": "Friday"},
+    )
+
+    assert verdict is False
+
+
+async def test_a_retire_is_verified_by_ABSENCE(
+    tmp_home: Path, tmp_db: DbPool
+) -> None:
+    """For retire, absence is the confirmation — not a failed read."""
+    registry = OwlRegistry.with_default_secretary()
+
+    verdict = await _verdict(tmp_db, registry, {"action": "retire", "name": "ghost"})
+
+    assert verdict is True
+
+
+async def test_an_edit_is_verified_by_presence(
+    tmp_home: Path, tmp_db: DbPool
+) -> None:
+    registry = OwlRegistry.with_default_secretary()
+
+    verdict = await _verdict(tmp_db, registry, {"action": "edit", "name": "secretary"})
+
+    assert verdict is True
+
+
+async def test_pause_and_resume_still_say_UNVERIFIED(
+    tmp_home: Path, tmp_db: DbPool
+) -> None:
+    """Their effect is a SCHEDULER row, not a registry entry. Claiming a registry
+    read confirms them would be a different lie — they keep saying "no opinion"
+    until someone gives them a real reader."""
+    registry = OwlRegistry.with_default_secretary()
+
+    for action in ("pause", "resume"):
+        verdict = await _verdict(tmp_db, registry, {"action": action, "name": "secretary"})
+        assert verdict is None, action

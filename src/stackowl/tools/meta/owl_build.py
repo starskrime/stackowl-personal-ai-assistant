@@ -431,7 +431,19 @@ class OwlBuildTool(Tool):
         """
         name = result.artifact_path
         if not name:
-            return None  # not a create success — edit/retire are out of TS2 scope
+            # NOT out of scope any more (2026-08-16). Only `create` stamps
+            # artifact_path, so every rename/edit/retire returned None — unknown —
+            # and the overclaim gate DEFAULT-DENIES a durable effect_class it
+            # cannot confirm. The result: a rename that WORKED was reported to the
+            # user as "The capability that failed: owl_build".
+            #
+            # Measured in the live log at 03:40:54: consent allowed the call
+            # (reversible_auto), execute exited success=True op=rename, the
+            # heuristics ledger recorded outcome=succeeded — and five seconds later
+            # overclaim.detected named owl_build the failed capability. The gate was
+            # right to be suspicious and wrong about the facts, because nothing had
+            # ever looked.
+            return await self._verify_by_action(args)
         registry = get_services().owl_registry
         if registry is None:
             log.tool.warning(
@@ -1230,6 +1242,60 @@ class OwlBuildTool(Tool):
         if dropped:
             msg += f" Dropped above your authority: {', '.join(sorted(dropped))}."
         return self._ok(msg, t0, extra={"owl": rebuilt.name, "op": "edit"})
+
+    async def _verify_by_action(self, args: dict[str, object]) -> bool | None:
+        """Confirm a non-create action by RE-READING the registry.
+
+        Same rule as the create path above: observe the world, never trust the
+        call's own success flag, and return ``None`` — no opinion — when the read
+        genuinely cannot be made. An inability to look must never flip a real
+        success into a reported failure; that is the mistake this whole method
+        exists to prevent, and returning False here would just move it.
+
+        ``pause``/``resume`` are deliberately left ``None``: their effect lives on
+        a SCHEDULER row, not in the registry, so claiming a registry check would
+        confirm them is a lie of a different kind. They keep saying "unverified"
+        until someone gives them a real reader.
+        """
+        action = str(args.get("action") or "").strip().lower()
+        owl_name = str(args.get("name") or "").strip()
+        if not action or not owl_name:
+            return None
+        registry = get_services().owl_registry
+        if registry is None:
+            log.tool.warning(
+                "owl_build.verify: no owl registry to observe — no opinion",
+                extra={"_fields": {"owl": owl_name, "action": action}},
+            )
+            return None
+
+        def _present() -> object | None:
+            try:
+                return registry.get(owl_name)
+            except Exception:
+                # OwlNotFoundError — ABSENCE IS AN ANSWER here, not a failed read.
+                return None
+
+        current = _present()
+        if action == "retire":
+            confirmed = current is None
+        elif action == "rename":
+            wanted = str(args.get("display_name") or "").strip()
+            confirmed = (
+                current is not None
+                and str(getattr(current, "display_name", "") or "").strip() == wanted
+            )
+        elif action == "edit":
+            confirmed = current is not None
+        else:
+            return None  # pause / resume — see the docstring.
+
+        if not confirmed:
+            log.tool.warning(
+                "owl_build.verify: claimed but NOT observed in the live registry",
+                extra={"_fields": {"owl": owl_name, "action": action}},
+            )
+        return confirmed
 
     async def _rename(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
         """Change an owl's display_name — cosmetic only, see :func:`can_rename`.
