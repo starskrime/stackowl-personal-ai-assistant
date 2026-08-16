@@ -201,7 +201,24 @@ class NotificationAssembly:
             ]}},
         )
 
-        log.notifications.info("[notifications] assembly.build: exit — all wired")
+        # "all wired" on its own is an unfalsifiable claim — it says the same thing
+        # whether or not the optional seams were actually injected. Each optional
+        # dependency is reported by name so a MISSING one is visible at boot rather
+        # than showing up later as a silent no-op. Precedent:
+        # register_conversation_sweep_handler logs has_summary_backstop the same way.
+        # ESC-20 needed exactly this: the deterministic OutputStyle transform is a
+        # no-op unless a message has something to transform, so an unwired
+        # preference store would look identical to a correctly-wired one in the
+        # delivery logs. This line is the one that can tell them apart.
+        log.notifications.info(
+            "[notifications] assembly.build: exit — all wired",
+            extra={"_fields": {
+                "has_undelivered_outbox": proactive_deliverer.outbox is not None,
+                "has_conversation_store": proactive_deliverer.records_conversation,
+                "has_output_style": proactive_deliverer.applies_output_style,
+                "digest_handler": digest_handler.handler_name,
+            }},
+        )
         return NotificationComponents(
             router=router,
             proactive_deliverer=proactive_deliverer,

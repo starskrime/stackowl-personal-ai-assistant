@@ -234,3 +234,33 @@ class TestTheEscalatedHalfStaysEscalated:
             "terse compression reached the proactive path — that is ESC-20's open "
             "question, not a formatting fix"
         )
+
+
+class TestTheBootLogCanTellWiredFromUnwired:
+    """The boot line must REPORT the wiring, not assert it.
+
+    ESC-20's transform is a no-op on a message with nothing to transform, so an
+    unwired preference store and a correctly-wired one produce identical delivery
+    logs. A hardcoded ``"has_output_style": True`` would say the same thing in both
+    worlds — the exact unfalsifiable-claim shape this programme keeps paying for.
+    These two tests are what make the boot line worth reading.
+    """
+
+    async def test_a_wired_deliverer_reports_both_seams(self) -> None:
+        d = _deliverer(_Prefs(), _Adapter(), conversation_store=_Store())
+        assert d.applies_output_style is True
+        assert d.records_conversation is True
+
+    async def test_an_unwired_deliverer_reports_neither(self) -> None:
+        d = _deliverer(None, _Adapter(), conversation_store=None)
+        assert d.applies_output_style is False
+        assert d.records_conversation is False
+
+    async def test_a_deliverer_built_via_new_does_not_crash_the_boot_line(self) -> None:
+        """Several tests construct this class via ``__new__``; reading the flags
+        must degrade to False rather than raising AttributeError."""
+        from stackowl.notifications.deliverer import ProactiveDeliverer
+
+        d = ProactiveDeliverer.__new__(ProactiveDeliverer)
+        assert d.applies_output_style is False
+        assert d.records_conversation is False

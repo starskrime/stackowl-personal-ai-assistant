@@ -182,6 +182,22 @@ class ProactiveDeliverer:
         """The durable NACK store this deliverer was wired with (PB7b reuse)."""
         return self._outbox
 
+    @property
+    def records_conversation(self) -> bool:
+        """Whether a delivered message is recorded in the conversation (ESC-19)."""
+        return getattr(self, "_conversation_store", None) is not None
+
+    @property
+    def applies_output_style(self) -> bool:
+        """Whether a proactive message obeys the owner's OutputStyle (ESC-20).
+
+        Read at assembly so the boot log states what was ACTUALLY injected. The
+        style transform is a no-op on a message with nothing to transform, so an
+        unwired store and a correctly-wired one produce identical delivery logs —
+        this is the only thing that distinguishes them.
+        """
+        return getattr(self, "_preference_store", None) is not None
+
     async def deliver(
         self, notification: Notification, *, surface_undelivered: bool = True
     ) -> DeliveryStatus:
