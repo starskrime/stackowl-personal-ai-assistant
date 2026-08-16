@@ -79,11 +79,16 @@ async def _recent_for_router(state: PipelineState) -> str:
         for t in turns
     ]
     rendered = "\n".join(ln for ln in lines if ln)
-    log.engine.debug(
-        "[triage] router context assembled",
-        extra={"_fields": {"trace_id": state.trace_id, "turns": len(lines),
-                           "chars": len(rendered)}},
-    )
+    # INFO, not DEBUG. This line is the EVIDENCE that the router saw the
+    # conversation, and production runs at INFO — a DEBUG line does not exist
+    # when you need it (D08.1 paid days for that lesson). Emitted only when
+    # context was actually assembled, so a first turn stays quiet.
+    if rendered:
+        log.engine.info(
+            "[triage] router context assembled — routing WITH the conversation",
+            extra={"_fields": {"trace_id": state.trace_id, "turns": len(lines),
+                               "chars": len(rendered)}},
+        )
     return rendered
 
 

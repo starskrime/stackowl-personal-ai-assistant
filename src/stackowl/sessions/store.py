@@ -242,6 +242,27 @@ class SessionStore:
                                    "inherited": identity is not None}},
             )
 
+        if not identity:
+            # THE MISS THAT SPLITS A CONVERSATION. Turns are filed under
+            # owner_scope_key = `identity_key or session_key`, so a turn with no
+            # identity lands in a different bucket from its neighbours and recall
+            # has to union both keys to stay whole (2026-08-16). Until now this
+            # failed in COMPLETE SILENCE — the only identity line in production is
+            # an alias-map refresh — which is why a month of split conversations
+            # went unnoticed. INFO, because it is the evidence for a real defect
+            # and production runs at INFO.
+            log.gateway.info(
+                "session.resolve: NO identity for this turn — it will be filed "
+                "under the lane, not the person",
+                extra={"_fields": {
+                    "session_key": key,
+                    "channel": source.channel,
+                    "from_source": bool(source.identity_key),
+                    "from_existing_lane": bool(existing.identity_key if existing else False),
+                    "is_runner": bool(source.runner),
+                }},
+            )
+
         if existing is None:
             entry = SessionEntry(
                 session_key=key, session_id=new_session_id(now),
