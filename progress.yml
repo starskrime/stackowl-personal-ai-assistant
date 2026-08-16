@@ -605,6 +605,24 @@ current:
       Evidence: 8 new tests in tests/notifications/test_proactive_message_obeys_
       output_style.py, 128/128 notifications suite green, ruff + mypy clean.
       STILL OPEN: whether a scheduled briefing should be compressed at all.
+    VALIDATED_ON_LIVE_STATE: >-
+      2026-08-16, commit e3e42278. Core ready 17s after the commit (verified from
+      the JSONL log, not a PID), zero errors since. The path was then driven
+      against the LIVE workspace DB rather than a fixture: Bakir''s recipient key
+      holds only provider_tier and preference_notes — no output prefs at all — so
+      the style resolves entirely from GLOBAL {output_style:{"length":"terse"},
+      output_tables:"off"} to {markdown:full, links:inline, tables:off, emoji:on,
+      length:terse}, and a real GFM table in a proactive body was flattened to a
+      plain list. That global-under-owner merge is the ONLY reason his preference
+      reaches a scheduled message; a per-owner-only read would have resolved to
+      defaults and silently done nothing.
+      HONEST LIMIT ON THE LOG EVIDENCE: the INFO line "[notifications] deliverer:
+      output style applied to a proactive message" fires only when styling
+      actually CHANGES the text. Under his current style the sole active transform
+      is tables:off, so the line appears only when a scheduled message contains a
+      table — absence of the line is NOT evidence of a broken path. The closing
+      query is: grep that message in ~/.stackowl/logs/stackowl.jsonl after a
+      briefing that contained a table.
     recommendation: >-
       Apply the sync transforms to proactive sends now — a stated formatting preference
       that silently does not apply to half the messages a user receives is the same
