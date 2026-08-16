@@ -102,10 +102,39 @@ class LocalPluginLoader:
         )
         return manifest
 
+    @staticmethod
+    def _defined_here(obj: type, module: Any) -> bool:
+        """True when ``obj`` is defined by ``module`` rather than imported into it.
+
+        Compares ``__module__`` against the module's own name, and accepts a
+        submodule of a package plugin (``acme.tools`` inside ``acme``) so a plugin
+        may organise itself across files. Anything unreadable is treated as NOT
+        defined here — the safe direction is to under-register a plugin's own class
+        (a visible missing tool) rather than over-register someone else's (a silent
+        duplicate nobody asked for).
+        """
+        try:
+            owner = str(obj.__module__ or "")
+            here = str(getattr(module, "__name__", "") or "")
+        except Exception:  # pragma: no cover — defensive; a class with no __module__
+            return False
+        if not owner or not here:
+            return False
+        return owner == here or owner.startswith(f"{here}.")
+
     def _register_classes(self, module: Any, manifest: PluginManifest) -> None:
         for attr_name in dir(module):
             obj = getattr(module, attr_name)
             if not isinstance(obj, type):
+                continue
+            # Only classes this plugin DEFINES. dir(module) returns imported names
+            # too, so without this a plugin that merely does
+            # `from stackowl.tools.web import WebSearchTool` — or imports another
+            # plugin's Tool — registers that class as its own, twice over if both
+            # plugins load. Found by D16.1's brainstorm, before any real plugin
+            # existed to be bitten by it: zero are installed today, so this is a
+            # trap set for the FIRST one.
+            if not self._defined_here(obj, module):
                 continue
             for abc_name, mod_path in _ABC_NAMES.items():
                 try:
