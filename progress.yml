@@ -257,8 +257,8 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  wave: 9
-  item: D16.1
+  wave: 2
+  item: D05.4
   stage: brainstorm
   stage_status: >-
     D01.6 IS CLOSED (2026-08-15): its live baseline was captured, its brainstorm accepted
@@ -477,6 +477,45 @@ current:
       and the measurement already exists — this is the first thing D01.6''s metric 2 has
       been able to pay for. A bumped constant would be the same bug with a bigger number
       the next time the model changes.
+  - id: ESC-18-progressive-disclosure-would-be-a-no-op-here-today
+    raised: 2026-08-16
+    blocks: >-
+      D05.4''s architect stage. The cheap half — trimming the five verbose tool schemas —
+      is not blocked and can proceed either way.
+    question: >-
+      D05.4 was started because token spend looked high. Measurement says the reference
+      mechanism would change nothing here today. Adopt it anyway as groundwork for
+      plugins/MCP, adopt it with a different trigger that actually fires, or do the
+      cheap schema trim and defer the item until D04.1 creates the problem it solves?
+    what_was_measured: >-
+      MEASURED 2026-08-16, all four numbers independently:
+        - Tools serialise to ~7,524 tokens against a 262,144-token window = 2.87%.
+          The reference trigger is >10% of window (26,214), so IT CANNOT FIRE HERE.
+        - The reference defers only MCP and non-core PLUGIN tools; core tools NEVER
+          defer. Zero plugins are installed (empty directory, 0 rows in the plugins
+          table), so the tools costing us 7,524 tokens are exactly the ones it would
+          leave alone.
+        - The bridge tools already exist and cost ~340 tokens against 7,524 — the
+          payoff is real (95%) but only for a class of tools we do not have.
+        - The trade runs the wrong way on this hardware: input is 92.6% of spend but
+          costs $0.0152 in total, while each deferred lookup adds a round-trip at p50
+          13,088ms / p90 44,735ms. And the failure mode is not hypothetical — in the
+          2026-08-15 headhunter incident the model made TEN meta-tool calls (three
+          tool_search, four tool_describe) and never converged.
+    why_escalated: >-
+      Bakir chose this item on the strength of "it uses a lot of tokens", and the
+      measurement says the item does not address that on this hardware. Continuing
+      without telling him would be building the right thing for the wrong reason at the
+      wrong time. It is also a sequencing question against the expedited chain: D04.1 is
+      what CREATES the tool population this mechanism manages.
+    recommendation: >-
+      Do the schema trim now (cheap, immediate, no behaviour change beyond shorter
+      descriptions — mind that tool_search ranks on description quality), and SEQUENCE
+      the disclosure mechanism after D04.1 rather than before it. If it is adopted
+      earlier, the trigger must be re-expressed so it fires on a 262k window — the
+      window-relative SHAPE is right, the 10% constant is not — and it should be
+      measured against latency, not only tokens, because on this box the round-trip is
+      the expensive resource and the tokens are the cheap one.
   - id: ESC-17-the-owner-key-is-conditional-and-splits-five-tables
     raised: 2026-08-16
     blocks: >-
@@ -8402,8 +8441,82 @@ items:
     depends_on: [D05.2]
     blocks: [D01.3]
     dedup_target: X2
+    BRAINSTORM:
+      ran: 2026-08-16
+      why_now: >-
+        Bakir asked why neraai-v1-raw "uses a lot of tokens" and, given the options,
+        chose to start this item rather than tweak reasoning settings. Measuring the
+        token spend first is what produced everything below.
+      round_0_measured_first:
+        where_the_tokens_go: >-
+          Since 2026-08-15: 5,538,473 input tokens against 441,549 output — 92.6% is
+          INPUT. Reasoning is not the cost. On the 559 tool-loop calls that carry a
+          system prompt the average call sends 9,211 input tokens, of which ~2,958
+          (32%) is the system prompt and the rest is tool schemas, history and results.
+        tool_schema_cost: >-
+          The default registry serialises to ~7,524 tokens. It is lopsided: owl_build
+          1,138, cronjob 865, tool_build 754, shell 708, memory 699 — five tools are
+          over half the budget, against a median tool of 237.
+        THE_REFERENCE_TRIGGER_WOULD_NEVER_FIRE_HERE: >-
+          The reference defers non-core tools when they exceed threshold_pct (default
+          10%) OF THE WINDOW. This deployment''s window is 262,144 tokens, so the
+          threshold is 26,214 — and the whole tool schema is 7,524, i.e. 2.87%.
+          Adopting the mechanism verbatim changes NOTHING on this hardware.
+        AND_IT_DEFERS_A_CLASS_WE_HAVE_NONE_OF: >-
+          The reference is explicit that CORE TOOLS NEVER DEFER — only MCP and non-core
+          PLUGIN tools do. Zero plugins are installed here (measured for D16.1: empty
+          directory, 0 rows in the plugins table). So the tools costing us 7,524 tokens
+          are precisely the ones the reference would never defer. The mechanism is
+          aimed at a problem this deployment does not yet have.
+        the_bridge_already_exists: >-
+          tool_search and tool_describe are registered and cost ~340 tokens together
+          against 7,524 for the full set — a 95% cut IF deferral were applied to the
+          core set, which the reference says not to do.
+      panel:
+        measurement: >-
+          Input dominates and tools are a third of it, but the window is 262k and the
+          spend is $0.0152 total (D01.6 metric 3). The resource this item saves is
+          abundant and free here.
+        stability: >-
+          Deferral trades a cheap resource for an expensive one. Every deferred lookup
+          is at least one more model round-trip, and metric 2 measured p50 TTFT at
+          13,088ms and p90 at 44,735ms. Worse, there is live evidence of the failure
+          mode: in the headhunter incident (2026-08-15) the model made TEN meta-tool
+          calls — three tool_search, four tool_describe — and never converged on an
+          answer. That is what tool discovery looks like on a weak model, and this item
+          would make discovery the normal path rather than the exception.
+        improvement: >-
+          Against the stated goal — Bakir''s "it uses a lot of tokens" — this item as
+          the reference designs it improves nothing today, because it defers a class of
+          tools we have none of and its trigger cannot fire at 2.87% of window.
+        killer_functionality: >-
+          It becomes genuinely important AFTER D04.1: providers as plugins, and any MCP
+          server, are exactly the non-core tools the reference defers. The expedited
+          chain (D16.1 -> D16.3 -> D04.1) is what creates the problem this solves.
+        ease_of_use: >-
+          Trimming the five verbose schemas is the cheap, boring, immediately-useful
+          half — and needs care, because tool_search ranks on description quality and
+          the registry already warns about thin descriptions.
+        future_proof: >-
+          A window-relative threshold is the right shape and the wrong constant for a
+          262k model. Whatever is adopted should express "tools must not crowd out the
+          conversation" without assuming a small window.
+      contradiction_found: >-
+        The map''s gap line calls this "the cache-safe answer to the problem the
+        budgeter solves expensively", which frames it as a replacement for D01.3''s
+        budgeter. The measurement says the budgeter is not currently solving an
+        expensive problem AT ALL on this hardware — tools are 2.87% of the window —
+        so "delete the budgeter" and "adopt disclosure" are two separable questions,
+        and the second does not follow from the first.
+      routed_to_operator: [ESC-18]
+      answered_by_the_panel: >-
+        The map''s Ask ("confirm: adopt disclosure, delete the budgeter?") cannot be
+        answered as posed, because the two halves come apart under measurement. What
+        the panel CAN answer: the reference mechanism, adopted verbatim, is a no-op on
+        this deployment today and becomes valuable only once plugins and MCP tools
+        exist. The trigger constant is wrong for a 262k window regardless.
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
