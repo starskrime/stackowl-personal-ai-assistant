@@ -561,6 +561,47 @@ current:
       window-relative SHAPE is right, the 10% constant is not — and it should be
       measured against latency, not only tokens, because on this box the round-trip is
       the expensive resource and the tokens are the cheap one.
+  - id: ESC-19-the-agent-does-not-remember-what-it-SENT-you
+    raised: 2026-08-16
+    blocks: >-
+      nothing mechanically, but it is a user-facing failure Bakir hit three times in
+      under a minute, and the fix touches the same memory boundary as ESC-17.
+    question: >-
+      When a proactive/scheduled message is DELIVERED to a user, should it be written
+      into that user''s conversation buffer so the agent can discuss what it just said?
+    what_was_measured: >-
+      MEASURED 2026-08-16 from the live log and database, end to end.
+        14:00:30  scheduled run starts under session_key `goal-goal_execution-10da5378`,
+                  routed to headhunter
+        14:00-14:03  a dozen web_search / web_fetch calls (the news gathering)
+        14:03:38  [notifications] router.deliver: delivered {channel: telegram}
+                  -> the message reaches Bakir, and is staged under the GOAL lane
+        14:04:13  Bakir: "What?"    -> "The default gateway is 192.168.1.254"
+        14:04:52  Bakir: "What ?"   -> same
+        14:05:01  Bakir: "What?"    -> same
+      His 13:19:41 turn was "What is gateway ip address?". Asked three times about the
+      news it had JUST sent him, the agent re-answered a question from 45 minutes
+      earlier — because the news message is not in his lane at all. staged_facts holds
+      it under `goal-goal_execution-10da5378`; his lane (`72055773`) has no trace of it.
+      THE AGENT HAS NO RECORD OF HAVING SPOKEN TO HIM.
+    why_escalated: >-
+      The reader and the writer disagree about WHICH conversation a proactive message
+      belongs to, and fixing it means writing into a user''s conversation history from
+      the notification path — which changes what every subsequent prompt contains, and
+      therefore assembly, recall and cost. It also has to choose a KEY, which is the
+      open question in ESC-17: the same conditional identity-or-lane rule decides where
+      the write lands, so deciding this before ESC-17 would bake the ambiguity in.
+      _apply_decision currently logs the delivery and stamps delivered_at; nothing
+      records the content anywhere the recipient''s next turn will read.
+    recommendation: >-
+      Yes — a message the agent SENT is part of the conversation by any reasonable
+      reading, and its absence produces exactly the "it forgot what it just told me"
+      behaviour Bakir reported. Write it as an assistant turn into the RECIPIENT''S
+      buffer at delivery time, in the same "User: ...\n\nAssistant: ..." shape the
+      existing rows use, attributed to the sending owl. TranscriptStore.record_turn is
+      the wrong seam alone — the short-term reader is staged_facts via
+      recent_conversation_turns, so the write has to land there too or the next turn
+      still will not see it. Sequence it WITH ESC-17 so the key is decided once.
   - id: ESC-17-the-owner-key-is-conditional-and-splits-five-tables
     raised: 2026-08-16
     blocks: >-
