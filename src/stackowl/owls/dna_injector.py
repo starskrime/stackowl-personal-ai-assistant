@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import unicodedata
+
 from stackowl.infra.observability import log
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.manifest import OwlAgentManifest
@@ -71,6 +73,43 @@ _LEAN_SUPPRESSED_TRAITS: frozenset[str] = frozenset(
 )
 
 
+def _with_identity(manifest: OwlAgentManifest) -> str:
+    """Prefix the persona with the owl's own SPOKEN name when it has been renamed.
+
+    BAKIR, 2026-08-16: renaming an owl "fails or lies by saying updated".
+    MEASURED: ``owl_build action=rename`` is durable and correct — the live YAML
+    carried ``{name: secretary, display_name: Friday}`` and ``manifest.display``
+    returned ``'Friday'``. But ``display`` — "the name to show/speak" — had exactly
+    two readers in the tree, the spoken-name RESOLVER and the ``owls_list`` tool.
+    Neither is the prompt. The persona handed to the model was 291 chars, opened
+    with "You are the Secretary", and contained "Friday" nowhere, so the model
+    could not possibly answer to its new name. A write with no reader.
+
+    Only fires when a display_name is set AND actually differs from the routing
+    slug (case-insensitively, NFC-normalised): an owl that was never renamed gets a
+    byte-identical prompt, and "secretary"/"Secretary" is not a rename. The slug is
+    stated too — the model is addressed by it internally and needs both halves to
+    self-reference correctly in handoffs.
+
+    LAW 1 SAFE: this lives in the STABLE base prompt and changes only when
+    display_name changes, which already invalidates the frozen prompt. Same event,
+    not a new one.
+    """
+    display = (manifest.display_name or "").strip()
+    slug = (manifest.name or "").strip()
+    if not display:
+        return manifest.system_prompt
+    if unicodedata.normalize("NFC", display).casefold() == unicodedata.normalize(
+        "NFC", slug
+    ).casefold():
+        return manifest.system_prompt
+    return (
+        f"Your name is {display}. Always identify yourself as {display} — "
+        f'"{slug}" is only your internal routing id, not your name.\n\n'
+        f"{manifest.system_prompt}"
+    )
+
+
 class DNAPromptInjector:
     """Append trait-modulated instructions to an owl's system prompt.
 
@@ -96,10 +135,10 @@ class DNAPromptInjector:
         # Fold the behavioural guardrail into the base prompt FIRST (design
         # decision 4), so it survives whether or not DNA also modulates. Empty
         # boundaries → byte-identical to the prior behaviour.
-        base = manifest.system_prompt
+        base = _with_identity(manifest)
         boundaries = (manifest.boundaries or "").strip()
         if boundaries:
-            base = f"{manifest.system_prompt}\n\nBoundaries: {boundaries}"
+            base = f"{base}\n\nBoundaries: {boundaries}"
 
         directives: list[str] = []
         for trait, directive in _HIGH_DIRECTIVES:
