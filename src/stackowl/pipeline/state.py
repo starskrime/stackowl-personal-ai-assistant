@@ -337,6 +337,21 @@ class PipelineState(BaseModel, frozen=True):
     # presence), never on the claim prose. Empty () = byte-identical: no effect-classed
     # tool ran, or every one returned a verified receipt.
     unverified_effects: tuple[str, ...] = ()
+    # The SUBSET of ``unverified_effects`` whose tool ``verify()`` returned a
+    # definite False — the effect was looked for and OBSERVED TO BE ABSENT, as
+    # opposed to ``None``/unknown where nobody could tell.
+    #
+    # The distinction is what makes an actuator safe. ``_try_corrective_rerun``
+    # is documented "skipped for write-effect culprits" because re-running a write
+    # can commit the side effect twice — a real hazard. But you cannot double an
+    # effect that has been MEASURED not to exist, so the overclaim gate may redo
+    # exactly these, and must keep the honest floor for the unknowns.
+    #
+    # Bakir, 2026-08-16: "I do not want agent to record, I want agent to do." Over
+    # the prior 7 days the gate caught 11 false claims, corrected 1 and fulfilled
+    # 0, because only retrieval and scheduling_commit had actuators; 8 of the 11
+    # named owl_build, a write-effect tool. Default () = byte-identical.
+    effects_measured_absent: tuple[str, ...] = ()
     # PBC — overclaim trigger 3 (retrieval-intent). Stamped lazily by
     # surface_overclaim_gate's async wrapper (never inside the pure predicate)
     # via RetrievalIntentClassifier.requires_lookup when a clean, non-delivering,

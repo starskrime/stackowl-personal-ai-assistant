@@ -792,6 +792,27 @@ _LOCAL_FILE_MUTATION_TOOLS = frozenset({
 })
 
 
+def _measured_absent_effects(outcomes: object) -> tuple[str, ...]:
+    """Tools whose durable effect was LOOKED FOR and observed to be ABSENT.
+
+    The strict subset of ``unverified_effects`` where ``verified is False`` — the
+    tool's own ``verify()`` measured that nothing landed — as opposed to ``None``,
+    where nobody could tell.
+
+    Only these are safe for the overclaim gate to redo. Re-running a write whose
+    outcome is UNKNOWN could commit the side effect twice; re-running one measured
+    absent cannot double what demonstrably does not exist. Carries the same
+    ``side_effect_committed`` guard as ``unverified_effects``: an action that
+    committed nothing never claimed an effect, so there is nothing to go and redo.
+    """
+    return tuple(
+        o.name for o in outcomes  # type: ignore[attr-defined]
+        if o.effect_class is not None
+        and o.verified is False
+        and o.side_effect_committed
+    )
+
+
 def _snapshot_consequential(state: PipelineState) -> PipelineState:
     """REACT-7/F099 — stamp the turn's consequential tally + bridged set onto state.
 
@@ -879,6 +900,7 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
             o.effect_class for o in outcomes if o.effect_class is not None
         )
         return state.evolve(
+            effects_measured_absent=_measured_absent_effects(outcomes),
             consequential_failures=failures,
             consequential_failure_errors=failure_errors,
             consequential_successes=successes,

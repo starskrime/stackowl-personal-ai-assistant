@@ -1014,6 +1014,37 @@ async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
                     owl_name=state.owl_name,
                 )
                 return state.evolve(responses=(*state.responses, receipt_chunk))
+        # DO IT, don't confess it. Bakir, 2026-08-16: "I do not want agent to
+        # record, I want agent to do." Over the prior 7 days this gate caught 11
+        # false claims, corrected 1 and fulfilled 0 — every other one became an "I
+        # couldn't fully complete this" message — because only the two culprits
+        # above had an actuator. 8 of the 11 named owl_build, a WRITE-effect tool.
+        #
+        # A write culprit was excluded for a real reason: re-running it could
+        # commit the side effect twice. That hazard is not waived here, it is
+        # MEASURED away. ``effects_measured_absent`` is the strict subset whose own
+        # verify() observed the effect to be ABSENT — redoing those cannot double
+        # anything, because nothing landed. An UNKNOWN outcome still keeps the
+        # floor, so the burden of proof stays on the claim.
+        if culprit and culprit in (state.effects_measured_absent or ()):
+            fulfilled = await _try_corrective_rerun(
+                state,
+                f"it claimed the action succeeded, but `{culprit}` was verified and "
+                f"its effect is NOT present — nothing was actually changed. Perform "
+                f"the action for real now by calling `{culprit}`, then report only "
+                f"what you can observe afterwards.",
+            )
+            if fulfilled is not None:
+                log.engine.info(
+                    "overclaim.refulfilled",
+                    extra={"_fields": {"trace_id": state.trace_id, "culprit": culprit,
+                                       "reason": "effect measured absent — redone"}},
+                )
+                return state.evolve(responses=fulfilled)
+            log.engine.info(
+                "overclaim.refulfil_failed",
+                extra={"_fields": {"trace_id": state.trace_id, "culprit": culprit}},
+            )
         floor = (
             _grounding_floor_chunk(state)
             if culprit == _RETRIEVAL_CULPRIT
