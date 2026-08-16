@@ -605,6 +605,26 @@ current:
       Evidence: 8 new tests in tests/notifications/test_proactive_message_obeys_
       output_style.py, 128/128 notifications suite green, ruff + mypy clean.
       STILL OPEN: whether a scheduled briefing should be compressed at all.
+    WIRING_PROVEN_AT_BOOT: >-
+      2026-08-16, commit 92add824. The earlier live proof used ProactiveDeliverer.
+      __new__ with a hand-attached store, so it proved the FUNCTION and not the
+      WIRING — "registered != reachable" is the recurring root cause in this tree,
+      so that gap was worth closing rather than glossing.
+      The notifications assembly exit line now REPORTS what was injected, read from
+      the deliverer via properties (a hardcoded True would be the same
+      unfalsifiable claim in a new costume). Production evidence, 19:37:27Z:
+      {"has_undelivered_outbox": true, "has_conversation_store": true,
+      "has_output_style": true, "digest_handler": "notification_digest"} — against
+      "fields": {} on the two boots before it.
+      ALSO PROVEN ON LIVE TRAFFIC the same hour: ESC-19''s canary exclusion. Three
+      proactive deliveries after the restart — one real goal_answer of 3,604 chars
+      to Bakir, RECORDED, and two telegram canaries, correctly NOT recorded. That
+      exclusion was previously only test-proven, after two canary rows had already
+      leaked into his history.
+      MEASUREMENT LESSON: matching "assembly.build: exit" alone reads the
+      SCHEDULER''s identically-worded line. At least three modules emit that exact
+      message; a log assertion must anchor on the module tag, or it silently
+      measures somebody else''s component.
     VALIDATED_ON_LIVE_STATE: >-
       2026-08-16, commit e3e42278. Core ready 17s after the commit (verified from
       the JSONL log, not a PID), zero errors since. The path was then driven
