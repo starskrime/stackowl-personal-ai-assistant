@@ -184,6 +184,16 @@ class ConversationSweepHandler(JobHandler):
         """
         if self._enqueue_summary is None:
             return 0
+        if self._db is None:
+            # The backstop needs a db to enqueue against. Say so ONCE per sweep at
+            # WARNING rather than calling with None and failing per lane: an
+            # unwired backstop should look unwired, not broken.
+            log.scheduler.warning(
+                "[scheduler] conversation_sweep: summary backstop wired without a db "
+                "— lost summaries cannot be recovered",
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return 0
         try:
             awaiting = await self._store.lanes_awaiting_summary()
         except Exception as exc:
@@ -196,7 +206,17 @@ class ConversationSweepHandler(JobHandler):
         recovered = 0
         for entry in awaiting:
             try:
+                # `db` is a required POSITIONAL argument of
+                # enqueue_rollover_summary(db, *, lane, ended, ...). Omitting it
+                # raised TypeError on EVERY recovery attempt — the backstop
+                # reported itself wired (has_summary_backstop: true at assembly)
+                # and threw the moment it was actually used. It only surfaced on
+                # 2026-08-16, because that is the first time a lane was found
+                # awaiting a summary: a guard whose first execution is its first
+                # test. Live evidence: conversation_sweep.py:199,
+                # "missing 1 required positional argument: 'db'".
                 queued = await self._enqueue_summary(
+                    self._db,
                     lane=entry.session_key,
                     ended=entry.session_id,
                     identity_key=entry.identity_key,

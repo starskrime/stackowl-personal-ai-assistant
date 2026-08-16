@@ -159,11 +159,21 @@ async def test_the_sweeper_enqueues_for_a_boundary_nobody_heard(
     lane = await _finalise(store)
     enqueued: list[tuple[str, str]] = []
 
-    async def _fake_enqueue(**kwargs: object) -> bool:
+    # The double now has the REAL signature: enqueue_rollover_summary takes `db`
+    # as a required POSITIONAL argument. It used to be `(**kwargs)`, which accepts
+    # anything — and that is exactly why a production TypeError ("missing 1
+    # required positional argument: 'db'") survived here for as long as it did.
+    # The handler is likewise constructed WITH a db, as assembly does in
+    # production (enforces_all_four_i4_conditions: true in the live registration
+    # log), so this test drives the wiring that actually ships.
+    async def _fake_enqueue(db: object, **kwargs: object) -> bool:
+        assert db is not None, "the backstop must be handed a db to enqueue against"
         enqueued.append((str(kwargs["lane"]), str(kwargs["ended"])))
         return True
 
-    handler = ConversationSweepHandler(store, enqueue_summary=_fake_enqueue)
+    handler = ConversationSweepHandler(
+        store, enqueue_summary=_fake_enqueue, db=store._db,  # noqa: SLF001
+    )
     await handler.execute(Job(
         job_id="j", handler_name="conversation_sweep", schedule="every 5m",
         idempotency_key="k", last_run_at=None, next_run_at="", status="pending",
