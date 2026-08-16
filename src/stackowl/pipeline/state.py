@@ -352,6 +352,17 @@ class PipelineState(BaseModel, frozen=True):
     # 0, because only retrieval and scheduling_commit had actuators; 8 of the 11
     # named owl_build, a write-effect tool. Default () = byte-identical.
     effects_measured_absent: tuple[str, ...] = ()
+    # Capabilities this turn may NOT use because a previous attempt at the same
+    # goal already failed with them. Threaded from the retry_queue row so the ban
+    # becomes a real exclusion in tool-selection rather than a sentence in the
+    # prompt asking the model nicely.
+    #
+    # retry_actuator's own docstring called this the upgrade path, conditional on
+    # "if soft steering proves unreliable in practice". MEASURED 2026-08-16: 27
+    # retries against 3 substitutions over 7 days — it repeats the same approach
+    # ~9x for every reroute. Default () = byte-identical, and an empty ban keeps
+    # the MEMOIZED tool path (Law 1) untouched for every ordinary turn.
+    banned_capabilities: tuple[str, ...] = ()
     # PBC — overclaim trigger 3 (retrieval-intent). Stamped lazily by
     # surface_overclaim_gate's async wrapper (never inside the pure predicate)
     # via RetrievalIntentClassifier.requires_lookup when a clean, non-delivering,

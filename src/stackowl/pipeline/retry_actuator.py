@@ -184,6 +184,13 @@ class RetryActuator:
             # correlate attempt N's log lines with attempt N+1's despite
             # each having its own trace_id.
             retry_lineage_id=row.id,
+            # The ban is now ENFORCED, not just narrated in _augment_goal above:
+            # execute excludes these from the presented tool set, so a model that
+            # already failed with a capability cannot simply insist on it. See
+            # this module's docstring — it named this the upgrade path, gated on
+            # soft steering proving unreliable, and 27 retries against 3
+            # substitutions over 7 days is that proof.
+            banned_capabilities=tuple(row.banned_capabilities or ()),
         )
         try:
             # 3. STEP — drive the pipeline exactly like a scheduled goal.

@@ -792,6 +792,48 @@ _LOCAL_FILE_MUTATION_TOOLS = frozenset({
 })
 
 
+def _restrict_to_for_turn(
+    *,
+    envelope_tools: frozenset[str] | None,
+    banned: tuple[str, ...],
+    all_names: tuple[str, ...],
+) -> frozenset[str] | None:
+    """Resolve the turn's tool restriction, subtracting any BANNED capabilities.
+
+    A ban means "a previous attempt at this same goal already failed using this",
+    and until now it was only a sentence in the retry's goal text asking the model
+    not to use it again. retry_actuator's docstring names this the upgrade path,
+    gated on soft steering proving unreliable; 27 retries against 3 substitutions
+    over 7 days is that proof.
+
+    Returns ``None`` when there is nothing to restrict, which is what keeps every
+    ordinary turn on execute's MEMOIZED tool path (Law 1 — the presented array
+    must stay byte-stable across a conversation). A restriction rides the existing
+    non-memoized ``restrict_to`` branch, so a retry child cannot poison the fitted
+    array of the session it shares a key with.
+
+    An envelope is INTERSECTED, never replaced: a task granted three tools must
+    not get the whole registry back because one of them was banned. Banning
+    everything yields ``None`` rather than an empty menu — a model with no tools
+    cannot reroute either, and the ladder's attempt ceiling is the right thing to
+    stop the loop.
+    """
+    banned_set = {b for b in banned if b}
+    if envelope_tools is not None:
+        if not banned_set:
+            return envelope_tools
+        narrowed = envelope_tools - banned_set
+        return narrowed or envelope_tools
+    if not banned_set:
+        return None
+    remaining = frozenset(n for n in all_names if n not in banned_set)
+    if not remaining or len(remaining) == len(all_names):
+        # Nothing was actually removed (a stale ban naming a tool that no longer
+        # exists), or everything was — either way, do not leave the memoized path.
+        return None
+    return remaining
+
+
 def _measured_absent_effects(outcomes: object) -> tuple[str, ...]:
     """Tools whose durable effect was LOOKED FOR and observed to be ABSENT.
 
@@ -1168,6 +1210,21 @@ async def _run_with_tools(
     # envelope, restrict the presented set to plan ∪ discovery (drift
     # prevention). None envelope → restrict_to=None → byte-for-byte S2.
     restrict_to = state.task_envelope.tools if state.task_envelope is not None else None
+    # A capability that already failed this goal is now genuinely UNAVAILABLE, not
+    # merely discouraged in the prompt (see _restrict_to_for_turn). No ban → None →
+    # the memoized path and a byte-identical presented array.
+    if state.banned_capabilities:
+        restrict_to = _restrict_to_for_turn(
+            envelope_tools=restrict_to,
+            banned=state.banned_capabilities,
+            all_names=tuple(t.name for t in tool_registry.all()),
+        )
+        log.engine.info(
+            "[pipeline] execute: banned capabilities excluded from the presented set",
+            extra={"_fields": {"trace_id": state.trace_id,
+                               "banned": list(state.banned_capabilities),
+                               "presented": len(restrict_to) if restrict_to else None}},
+        )
     # A bounded owl (bounds.tools is a real, closed allowlist) with no DNA
     # capability_profile and no task envelope falls through to the full/budget-
     # ranked catalog below — presenting tools the owl can NEVER call (bounds_guard
