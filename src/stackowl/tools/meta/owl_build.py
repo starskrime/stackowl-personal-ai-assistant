@@ -561,15 +561,25 @@ class OwlBuildTool(Tool):
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
         session_key = ctx.get("session_key")
-        if not interactive or not channel or not session_key:
+        if not channel or not session_key:
+            # No LANE to scope a grant or an audit record to — a wiring fault, not
+            # an autonomy case. The absence of a HUMAN is no longer a refusal
+            # (Bakir, 2026-08-16): that check refused before the consent policy was
+            # ever consulted, so an unattended agent was stopped without anyone
+            # being asked, which reads to the user as the agent simply failing.
+            # ConsentPolicy now decides in every context — always-ask tools and
+            # categories first, autonomous grant when nobody is attached.
             log.tool.error(
-                "owl_build.execute: no user present to approve — refused (fail closed)",
+                "owl_build.execute: no channel/session to scope consent — refused",
                 exc_info=None,
-                extra={"_fields": {"owl": name, "interactive": interactive}},
+                extra={"_fields": {
+                    "owl": name, "interactive": interactive,
+                    "channel": channel, "has_session": bool(session_key),
+                }},
             )
             return (
-                f"refused: building owl '{name}' needs your approval and no "
-                "interactive user is present (fail closed)."
+                f"refused: building owl '{name}' needs a conversation to attribute "
+                "the approval to, and this turn has none."
             )
         gate = get_services().consent_gate
         if gate is None:

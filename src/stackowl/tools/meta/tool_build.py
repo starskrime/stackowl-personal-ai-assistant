@@ -364,19 +364,41 @@ class ToolBuildTool(Tool):
             shutil.rmtree(staging_parent, ignore_errors=True)
 
     async def _consent_or_refuse(self, name: str) -> str | None:
-        """Consequential consent, fail-closed off-TTY. Returns a refusal or None."""
+        """Consequential consent. Returns a refusal string, or None to proceed.
+
+        NO LONGER REFUSES FOR WANT OF A HUMAN (Bakir, 2026-08-16). This used to
+        check ``interactive`` and refuse before consulting the consent policy at
+        all — 28 times in the logs, every one of them an unattended run that had
+        decided to build a tool and was stopped without anybody being asked. The
+        refusal was silent to the user by construction: there was no prompt to
+        answer, so it read as the agent simply failing.
+
+        It also short-circuited the reasoning immediately below it, which already
+        argues that creating a learned tool is REVERSIBLE (action='delete' removes
+        the spec and unregisters it) and should auto-proceed with undo rather than
+        prompt every time. That logic never got to run off-TTY.
+
+        The decision now belongs to ConsentPolicy for every context: it honours the
+        always-ask tools and categories first, and falls through to the autonomous
+        grant when no human is attached.
+        """
         ctx = TraceContext.get()
         interactive = bool(ctx.get("interactive", False))
         channel = ctx.get("channel")
         session_key = ctx.get("session_key")
-        if not interactive or not channel or not session_key:
+        if not channel or not session_key:
+            # Not "no human" — no LANE at all, so there is nothing to scope a grant
+            # or an audit record to. That is a wiring fault, not an autonomy case.
             log.tool.error(
-                "tool_build.execute: no user present to approve — refused (fail closed)",
-                extra={"_fields": {"tool": name, "interactive": interactive}},
+                "tool_build.execute: no channel/session to scope consent — refused",
+                extra={"_fields": {
+                    "tool": name, "interactive": interactive,
+                    "channel": channel, "has_session": bool(session_key),
+                }},
             )
             return (
-                f"refused: registering a new tool ('{name}') needs your approval and "
-                "no interactive user is present (fail closed)."
+                f"refused: registering a new tool ('{name}') needs a conversation "
+                "to attribute the approval to, and this turn has none."
             )
         gate = get_services().consent_gate
         if gate is None:

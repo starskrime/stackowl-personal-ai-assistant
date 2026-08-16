@@ -40,6 +40,7 @@ __all__ = [
     "TrustTier",
     "ConsentRequest",
     "ConsentPrompter",
+    "AutonomousPrompter",
     "FailClosedPrompter",
     "RoutingPrompter",
     "TtyConsentPrompter",
@@ -125,6 +126,46 @@ class FailClosedPrompter:
         return ConsentScope.DENY
 
 
+class AutonomousPrompter:
+    """Grants consent when NO human is attached to the turn.
+
+    WHY THIS EXISTS. Bakir, 2026-08-16: "Why agent can not do everything... disable
+    all approvals for agents." The logs named the blocker exactly — 28 refusals of
+    "tool_build.execute: no user present to approve — refused (fail closed)", plus
+    the same shape from owl_build. An unattended run had no prompter, so
+    FailClosedPrompter denied, and the agent could not build the thing it had just
+    decided to build.
+
+    Fail-closed is the right default when a human COULD be asked and the channel UX
+    merely is not wired. It is the wrong default for a platform whose whole purpose
+    is doing work while nobody is watching: there, "ask the user" is not a safer
+    answer, it is NO answer, and the task dies unattended.
+
+    WHAT THIS DOES NOT RELAX. ConsentPolicy applies the always-ask tool and category
+    sets BEFORE any prompter is consulted, so execute_code, computer_use,
+    ha_call_service, browser_dialog and the lock / alarm / destructive /
+    prompt_surface categories are untouched. Those are the classes the E11-E13
+    reviews refused to relax, and the one ESC-1 added because it changes what the
+    agent WILL DO on later turns — where an injected instruction acts before anyone
+    can exercise the undo. Widening this to them is a separate, explicit decision.
+
+    Every grant is INFO, with the tool and category. An approval nobody saw must at
+    least be one anybody can find afterwards.
+    """
+
+    async def prompt(self, req: ConsentRequest) -> ConsentScope:
+        log.tool.info(
+            "[consent] autonomous grant — no human attached to this turn",
+            extra={"_fields": {
+                "tool": req.tool_name,
+                "category": req.category,
+                "channel": req.channel,
+                "reversible": req.reversible,
+            }},
+        )
+        return ConsentScope.ONCE
+
+
 class RoutingPrompter:
     """Multiplexes consent requests to a per-channel prompter; unknown → deny."""
 
@@ -141,11 +182,22 @@ class RoutingPrompter:
     async def prompt(self, req: ConsentRequest) -> ConsentScope:
         prompter = self._by_channel.get(req.channel)
         if prompter is None:
-            log.tool.warning(
-                "[consent] RoutingPrompter: no prompter for channel — fail closed",
+            # No channel UX for this turn means NOBODY CAN BE ASKED — which is the
+            # autonomous case, not a dangerous one. Denying here is what stopped
+            # unattended agents from finishing work they had already decided to do,
+            # and it denied SILENTLY: the user was never asked, so there was nothing
+            # for them to approve or refuse (Bakir, 2026-08-16: "agent was blocked
+            # due to ask permission and permission was never asked from user").
+            #
+            # The always-ask tools and categories never reach here — ConsentPolicy
+            # applies those BEFORE any prompter is consulted — so this grants the
+            # ordinary consequential actions and nothing that the reviews ringfenced.
+            log.tool.info(
+                "[consent] RoutingPrompter: no channel UX — routing to the "
+                "autonomous grant instead of denying unasked",
                 extra={"_fields": {"channel": req.channel, "tool": req.tool_name}},
             )
-            return ConsentScope.DENY
+            return await AutonomousPrompter().prompt(req)
         return await prompter.prompt(req)
 
 
