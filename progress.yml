@@ -508,10 +508,55 @@ current:
       without telling him would be building the right thing for the wrong reason at the
       wrong time. It is also a sequencing question against the expedited chain: D04.1 is
       what CREATES the tool population this mechanism manages.
+    RECOMMENDATION_SUPERSEDED_2026_08_16: >-
+      I proposed trimming the five verbose tool schemas as a cheap immediate win.
+      BAKIR REJECTED THAT FRAMING — "No cheap win always architectural and correct" —
+      and he is right: shorter descriptions treat the symptom and leave the actual
+      defect in place, while degrading the very field tool_search ranks on. The
+      superseding recommendation is THE_ARCHITECTURAL_FINDING below.
+    THE_ARCHITECTURAL_FINDING:
+      measured: 2026-08-16
+      what: >-
+        LAW 2 IS BEING BROKEN EVERY TURN, and the token cost is a symptom of that, not
+        a problem of its own. The law is unambiguous — "Every model tool ships on every
+        API call. Grow the product aggressively, at the edges, never at the waist"
+        (PROCESS.md:23). Live, the presented set was 3, 4, 5, 6, 23, 26, 27 and 30
+        tools on consecutive turns, with eviction events dropping 20 tools at a time.
+      why_it_happens: >-
+        THREE mechanisms decide which tools the model sees, none of them owning the
+        question: (1) `restrict_to`, the task-envelope least-privilege path, which
+        produces the 3-7 tool arrays; (2) the per-turn BUDGETER, which cuts to a token
+        cap and evicted 20 tools; (3) capability gating and profile filtering. They
+        overlap, they disagree, and nothing reconciles them. Progressive disclosure
+        adopted as designed would be a FOURTH unless it replaces them.
+      why_the_budgeter_is_the_anti_pattern: >-
+        It makes the presented array a function of THE TURN. That breaks Law 2 outright,
+        and it breaks the position-0 prompt-cache marker D01.2 places — the same
+        instability D05.2 removed query-relevance ranking to stop. ESC-9''s bug (browser
+        tools silently evicted in alphabetical order, so a browser owl could click but
+        not SEE) was not a bug in the budgeter''s ranking; it was the budgeter existing.
+      the_correct_shape: >-
+        The reference does not cut tools to fit — it keeps the WAIST NARROW so every
+        core tool can ship on every call, and defers only EDGE tools (MCP, non-core
+        plugins) behind the bridge. Two moves, in this order: shrink what is core so
+        Law 2 is affordable, then defer the edges by disclosure. Neither is "send fewer
+        tokens this turn". Both are permanent and cache-stable; the budgeter is neither.
+      LAW_2_IS_AFFORDABLE_TODAY_AND_THE_BUDGETER_CUTS_ANYWAY: >-
+        The decisive number. The entire core waist serialises to 7,505 tokens against a
+        262,144-token window — 2.86%. Every core tool CAN ship on every call, which is
+        exactly what Law 2 demands, and it costs under three percent of the window. Yet
+        the budgeter still evicted 20 tools in a live turn, and the presented set still
+        ranged 3..30 across consecutive turns. The budgeter is not protecting a scarce
+        resource; it is cutting something that already fits. (Six tools carry 4,678 of
+        those 7,505 tokens — 62% — so even the waist''s own weight is concentrated and
+        reducible without touching the other twelve.)
+      what_that_makes_this_item: >-
+        D05.4 is not "add a disclosure mechanism". It is "make ONE mechanism own the
+        presented set, and delete the two that should not exist" — which is what the
+        map''s Ask was reaching for with "delete the budgeter?", and why that half of
+        the Ask is answerable while the other half is not yet.
     recommendation: >-
-      Do the schema trim now (cheap, immediate, no behaviour change beyond shorter
-      descriptions — mind that tool_search ranks on description quality), and SEQUENCE
-      the disclosure mechanism after D04.1 rather than before it. If it is adopted
+      SEQUENCE the disclosure mechanism after D04.1 rather than before it. If it is adopted
       earlier, the trigger must be re-expressed so it fires on a 262k window — the
       window-relative SHAPE is right, the 10% constant is not — and it should be
       measured against latency, not only tokens, because on this box the round-trip is
