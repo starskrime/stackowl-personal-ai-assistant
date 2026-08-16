@@ -56,6 +56,7 @@ class ConversationStore(Protocol):
 
     async def recent_conversation_turns(
         self, session_key: str, limit: int = 6, staged_before: str | None = None,
+        also_refs: tuple[str, ...] = (),
     ) -> list[StagedFact]: ...
 
     async def clear_session(self, session_key: str) -> int: ...

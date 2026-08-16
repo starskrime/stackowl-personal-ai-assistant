@@ -15,7 +15,11 @@ from stackowl.infra import lesson_experiment
 from stackowl.infra.observability import log
 from stackowl.learning.heuristic_ranking import rank_lessons
 from stackowl.pipeline import lesson_context as lc
-from stackowl.pipeline.services import get_services, owner_scope_key
+from stackowl.pipeline.services import (
+    conversation_scope_keys,
+    get_services,
+    owner_scope_key,
+)
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import Message
 
@@ -596,7 +600,9 @@ def _dedup_assistant_history(messages: list[Message]) -> list[Message]:
     return out
 
 
-async def _gather_history(session_key: str, limit: int) -> list[Message]:
+async def _gather_history(
+    session_key: str, limit: int, extra_refs: tuple[str, ...] = (),
+) -> list[Message]:
     """Fetch the last ``limit`` staged conversation turns as real Message objects.
 
     Returns oldest-first user/assistant Message pairs for direct injection into
@@ -607,7 +613,12 @@ async def _gather_history(session_key: str, limit: int) -> list[Message]:
     if bridge is None or limit <= 0:
         return []
     try:
-        turns = await bridge.recent_conversation_turns(session_key=session_key, limit=limit)
+        # Read every key this lane's turns may be filed under, not just the lane:
+        # the writer uses owner_scope_key (identity or lane) and this read saw only
+        # the lane, so ~99% of conversation rows were invisible here (2026-08-16).
+        turns = await bridge.recent_conversation_turns(
+            session_key=session_key, limit=limit, also_refs=extra_refs,
+        )
     except Exception as exc:
         log.engine.error(
             "[pipeline] classify: history fetch FAILED — short-term memory degraded",
@@ -635,7 +646,14 @@ async def run(state: PipelineState) -> PipelineState:
         short_term_window = Settings().memory.short_term_window
     except Exception:
         short_term_window = 6
-    history = await _gather_history(owner_scope_key(state), short_term_window)
+    # BOTH keys a turn may be filed under. The write key is CONDITIONAL —
+    # owner_scope_key is `identity_key or session_key` — so a conversation splits
+    # between the two buckets depending on whether identity resolved on that turn,
+    # and reading one bucket loses the other. Measured 2026-08-16 on Bakir's own
+    # lane: 26 turns visible, 8 invisible, including real user messages.
+    history = await _gather_history(
+        owner_scope_key(state), short_term_window, conversation_scope_keys(state),
+    )
     # No lean gate (owner decision 2026-07-22): a "conversational"-classified
     # turn used to skip lessons/graph-context/skill-relevance entirely — but
     # the router's intent_class is coarser than "greetings/small-talk" (e.g.

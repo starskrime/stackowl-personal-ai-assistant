@@ -17,7 +17,11 @@ from __future__ import annotations
 
 from stackowl.exceptions import OwlNotFoundError
 from stackowl.infra.observability import log
-from stackowl.pipeline.services import get_services
+from stackowl.pipeline.services import (
+    conversation_scope_keys,
+    get_services,
+    owner_scope_key,
+)
 from stackowl.pipeline.state import PipelineState
 from stackowl.setup.lang_detect import detect_language
 
@@ -60,7 +64,8 @@ async def _recent_for_router(state: PipelineState) -> str:
         if store is None:
             return ""
         turns = await store.recent_conversation_turns(
-            state.session_key, limit=_ROUTER_CONTEXT_TURNS,
+            owner_scope_key(state), limit=_ROUTER_CONTEXT_TURNS,
+            also_refs=conversation_scope_keys(state),
         )
     except Exception as exc:
         log.engine.warning(

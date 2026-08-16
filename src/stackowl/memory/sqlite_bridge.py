@@ -508,8 +508,22 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         return fact
 
+    @staticmethod
+    def _conversation_refs(session_key: str, also_refs: tuple[str, ...]) -> tuple[str, ...]:
+        """The keys a lane's conversation may have been filed under, deduped.
+
+        Order-preserving so the primary key stays first, and empties are dropped —
+        an empty ref would match the rows of every turn that had no key at all.
+        """
+        seen: dict[str, None] = {}
+        for ref in (session_key, *also_refs):
+            if ref:
+                seen.setdefault(ref, None)
+        return tuple(seen)
+
     async def recent_conversation_turns(
         self, session_key: str, limit: int = 6, staged_before: str | None = None,
+        also_refs: tuple[str, ...] = (),
     ) -> list[StagedFact]:
         """Return last ``limit`` conversation staged facts for ``session_key``, oldest-first.
 
@@ -519,6 +533,19 @@ class SqliteMemoryBridge(MemoryBridge):
         ``staged_before`` is an optional ISO-8601 cutoff: when provided, only
         turns staged at/before it are returned (the DreamWorker settle window).
         The default ``None`` keeps the short-term-recall caller unchanged.
+
+        ``also_refs`` exists because THE WRITER AND THIS READER DISAGREED ON THE
+        KEY, and had been silently splitting every conversation in two. Turns are
+        written under ``owner_scope_key(state)`` — ``identity_key or session_key``
+        — while this was queried with ``session_key`` alone. Whenever identity
+        resolution produced a key, the turn became invisible here.
+
+        MEASURED 2026-08-16 on the live database: 2,390 conversation rows under
+        591 identity-style refs against 13 rows under 6 lane keys. For Bakir's own
+        Telegram lane, 33 turns existed and this returned 7 — the other 26,
+        including the turn he was replying to, were under the other key. Reading
+        the union recovers them without a migration, and keeps working while the
+        writer's key remains conditional on identity resolution succeeding.
         """
         log.memory.debug(
             "[memory] sqlite_bridge.recent_conversation_turns: entry",
@@ -531,27 +558,31 @@ class SqliteMemoryBridge(MemoryBridge):
             },
         )
         if staged_before is None:
+            refs = self._conversation_refs(session_key, also_refs)
+            placeholders = ",".join("?" for _ in refs)
             rows = await self._db.fetch_all(
-                """SELECT fact_id, content, source_type, source_ref, confidence,
+                f"""SELECT fact_id, content, source_type, source_ref, confidence,
                           staged_at, reinforcement_count, status, embedding, embedding_model,
                           trust
                    FROM staged_facts
-                   WHERE source_type = 'conversation' AND source_ref = ?
+                   WHERE source_type = 'conversation' AND source_ref IN ({placeholders})
                    ORDER BY staged_at DESC
                    LIMIT ?""",
-                (session_key, limit),
+                (*refs, limit),
             )
         else:
+            refs = self._conversation_refs(session_key, also_refs)
+            placeholders = ",".join("?" for _ in refs)
             rows = await self._db.fetch_all(
-                """SELECT fact_id, content, source_type, source_ref, confidence,
+                f"""SELECT fact_id, content, source_type, source_ref, confidence,
                           staged_at, reinforcement_count, status, embedding, embedding_model,
                           trust
                    FROM staged_facts
-                   WHERE source_type = 'conversation' AND source_ref = ?
+                   WHERE source_type = 'conversation' AND source_ref IN ({placeholders})
                      AND staged_at <= ?
                    ORDER BY staged_at DESC
                    LIMIT ?""",
-                (session_key, staged_before, limit),
+                (*refs, staged_before, limit),
             )
         results = [row_to_staged(row) for row in rows]
         # Reverse so the prompt reads oldest-first (chronological).

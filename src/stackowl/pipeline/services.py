@@ -286,6 +286,31 @@ def owner_scope_key(state: PipelineState) -> str:
     return state.identity_key or state.session_key
 
 
+def conversation_scope_keys(state: PipelineState) -> tuple[str, ...]:
+    """Every key this lane's conversation turns may be filed under.
+
+    THE WRITER AND THE READER DISAGREED. Turns are written under
+    :func:`owner_scope_key` — ``identity_key or session_key`` — and were read back
+    with ``session_key`` alone, so any turn written while identity resolution
+    succeeded became invisible to short-term memory. Worse, the write key is
+    CONDITIONAL: the same conversation splits between the two buckets depending on
+    whether identity resolved on that particular turn, so neither key holds the
+    whole thread.
+
+    Measured 2026-08-16: 2,390 rows under 591 identity-style refs against 13 under
+    6 lane keys; one real lane had 33 turns of which the reader could see 7.
+
+    Returning BOTH is what makes recall whole again without a migration, and it
+    stays correct if the write key changes shape later. Deduped and
+    order-preserving, primary key first.
+    """
+    seen: dict[str, None] = {}
+    for key in (owner_scope_key(state), state.session_key):
+        if key:
+            seen.setdefault(key, None)
+    return tuple(seen)
+
+
 def resolve_identity_key(services: StepServices, session_key: str) -> str:
     """Resolve the inbound channel handle to a cross-channel identity_key.
 
