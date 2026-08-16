@@ -165,6 +165,12 @@ class NotificationAssembly:
             # asked "What?" three times about a news message it had just sent and
             # got the answer to a 45-minute-old question each time.
             conversation_store=SqliteMemoryBridge(db),
+            # ESC-20 — so a SCHEDULED message obeys the same formatting
+            # preferences a conversational reply does. Measured 2026-08-16: the
+            # style was enforced only on the turn path, so Bakir's global
+            # output_tables=off had never applied to the 4-5k-char scheduled
+            # briefings that are the longest messages he receives.
+            preference_store=preference_store,
         )
 
         # 2) Digest job — register handler + seed 5-minute schedule. The

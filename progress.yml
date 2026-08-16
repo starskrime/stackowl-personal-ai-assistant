@@ -589,6 +589,22 @@ current:
       fast-tier LLM call per scheduled message, on a box where p50 TTFT is 13s, and it
       would rewrite an agent''s carefully-formatted briefing. That is a product call
       about what a scheduled briefing should look like, not a bug fix.
+    RESOLVED_SYNC_HALF: >-
+      SHIPPED 2026-08-16. ProactiveDeliverer now applies the recipient''s
+      OutputStyle before transport, via the SAME load_output_style the /style
+      command reads through — no second copy of the owner/global precedence rule.
+      Styling happens before transport, so the styled text is what is sent, what an
+      undelivered NACK preserves, and what ESC-19 records in the conversation;
+      styling after any of those would have the agent remember a message it never
+      sent. Ephemeral canaries and empty bodies are excluded, an unwired store is a
+      no-op, and any error sends the original text (B5).
+      DELIBERATELY NOT SHIPPED: the terse LLM compression. OutputStyle.enforce''s
+      length step is a documented sync no-op, so terse does not summarise on this
+      path. A test — test_terse_does_NOT_compress_a_scheduled_briefing — PINS that
+      boundary so the open half cannot be crossed without Bakir answering.
+      Evidence: 8 new tests in tests/notifications/test_proactive_message_obeys_
+      output_style.py, 128/128 notifications suite green, ruff + mypy clean.
+      STILL OPEN: whether a scheduled briefing should be compressed at all.
     recommendation: >-
       Apply the sync transforms to proactive sends now — a stated formatting preference
       that silently does not apply to half the messages a user receives is the same

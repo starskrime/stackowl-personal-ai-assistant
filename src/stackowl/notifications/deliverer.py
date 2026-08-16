@@ -45,6 +45,16 @@ class _ConversationRecorder(Protocol):
     async def store(self, content: str, session_key: str) -> None: ...
 
 
+class _PreferenceReader(Protocol):
+    """The one method ESC-20 needs from the preference store.
+
+    Same reasoning as :class:`_ConversationRecorder`: notifications/ states the
+    narrow shape it depends on rather than importing PreferenceStore.
+    """
+
+    async def list_for_owner(self, owner_key: str) -> dict[str, str]: ...
+
+
 class _TargetedSender(Protocol):
     """An adapter whose ``send_text`` accepts an explicit destination ``chat_id``.
 
@@ -148,10 +158,16 @@ class ProactiveDeliverer:
         settings: Settings,
         outbox: UndeliveredOutbox | None = None,
         conversation_store: _ConversationRecorder | None = None,
+        preference_store: _PreferenceReader | None = None,
     ) -> None:
         self._router = router
         self._registry = registry
         self._settings = settings
+        # ESC-20 — the owner's stored OutputStyle, so a SCHEDULED message obeys
+        # the same formatting preferences a conversational reply does. Optional
+        # and duck-typed for the same reason as the outbox: an unwired deliverer
+        # sends byte-identical text.
+        self._preference_store: _PreferenceReader | None = preference_store
         # PA5(b) — the durable NACK store. None keeps every existing test/
         # construction site byte-identical (no silent-drop persistence, same as
         # today); wired for real at assembly time (notifications/assembly.py).
@@ -209,6 +225,12 @@ class ProactiveDeliverer:
             self._log_exit(status, channel, t0)
             return status
 
+        # ESC-20 — apply the recipient's stored OutputStyle BEFORE transport, so
+        # the styled text is what is sent, what an undelivered NACK preserves, and
+        # what ESC-19 records in the conversation. Styling after any of those would
+        # have the agent remember a message it never sent.
+        notification = await self._styled(notification)
+
         # 3. STEP — resolve adapter + transport. A file notification routes to the
         # adapter's send_file (caption == the router-vetted message body); the pure
         # text path is unchanged when file_path is None.
@@ -257,6 +279,80 @@ class ProactiveDeliverer:
             await self._remember_what_we_said(notification)
         self._log_exit(result, channel, t0)
         return result
+
+    async def _styled(self, notification: Notification) -> Notification:
+        """Return ``notification`` with its body run through the owner's OutputStyle.
+
+        ESC-20, measured 2026-08-16: the style was enforced only in the TURN
+        delivery path (``pipeline/steps/deliver.py``). Every proactive and
+        scheduled message bypassed it, so Bakir's ``output_tables: off`` — set
+        globally, and long predating this — had never once applied to the messages
+        he actually finds long: two Sunday Pulses that day were 4,396 and 5,077
+        chars against conversational replies of 26 and 1,422.
+
+        DETERMINISTIC HALF ONLY. ``OutputStyle.enforce`` applies markdown, links,
+        tables and emoji; its length step is a documented sync no-op, so a
+        ``terse`` style does NOT summarise here. That upgrade costs a fast-tier
+        call per scheduled send and rewrites a briefing an owl deliberately
+        formatted, so it remains ESC-20's open question rather than arriving as a
+        side effect of a formatting fix.
+
+        The owner/global precedence is NOT reimplemented — ``load_output_style``
+        is the single source, shared with the ``/style`` command. The recipient is
+        the owner key, mirroring ``_remember_what_we_said``; with no per-recipient
+        preferences the GLOBAL scope still applies, which is the only reason
+        Bakir's own style reaches anything at all.
+
+        Never raises and never blocks delivery (B5): an unwired store, an absent
+        recipient, an ephemeral probe, or any error returns the notification
+        unchanged. A message that arrives unstyled beats a message that does not
+        arrive.
+        """
+        # getattr, not attribute access: several tests build this class via
+        # ``__new__`` to exercise ``_transport`` in isolation, so the instance may
+        # legitimately have no such attribute. Same guard ``_remember_what_we_said``
+        # uses, and it makes an unwired deliverer degrade rather than crash a send.
+        store = getattr(self, "_preference_store", None)
+        if store is None:
+            return notification
+        # The health canary is sent and then deleted; restyling a synthetic probe
+        # changes what it proves and no human ever reads it. Same exclusion
+        # ESC-19 makes for remembering it.
+        if bool(getattr(notification, "ephemeral", False)):
+            return notification
+        body = str(getattr(notification, "message", "") or "")
+        if not body.strip():
+            return notification
+        target = getattr(notification, "target", None) or getattr(
+            notification, "target_chat_id", None
+        )
+        if target is None:
+            # No recipient → no per-owner scope to read. The GLOBAL scope still
+            # applies, so this is deliberately NOT an early return; the owner key
+            # simply resolves to the default principal.
+            target = DEFAULT_PRINCIPAL_ID
+        try:
+            from stackowl.channels._format import load_output_style
+
+            style = await load_output_style(store, str(target))
+            styled = style.enforce(body)
+        except Exception as exc:  # B5 — styling must never cost a delivery
+            log.notifications.error(
+                "[notifications] deliverer: could not apply the output style — "
+                "sending the message as-is",
+                exc_info=exc,
+                extra={"_fields": {"category": notification.category}},
+            )
+            return notification
+        if styled == body:
+            return notification
+        log.notifications.info(
+            "[notifications] deliverer: output style applied to a proactive message",
+            extra={"_fields": {"category": notification.category,
+                               "channel": notification.channel_name,
+                               "before_len": len(body), "after_len": len(styled)}},
+        )
+        return notification.model_copy(update={"message": styled})
 
     async def _remember_what_we_said(self, notification: Notification) -> None:
         """Record a DELIVERED proactive message in the recipient's conversation.
