@@ -233,12 +233,41 @@ async def test_a_retire_is_verified_by_ABSENCE(
     assert verdict is True
 
 
-async def test_an_edit_is_verified_by_presence(
+async def test_an_edit_that_REQUESTED_NOTHING_has_no_opinion(
     tmp_home: Path, tmp_db: DbPool
 ) -> None:
+    """CONTRACT DELIBERATELY REVERSED 2026-08-16 — this test used to be
+    ``test_an_edit_is_verified_by_presence`` and asserted ``True`` here.
+
+    Presence means "the owl still exists". Under the old contract an edit that
+    changed nothing at all — like this one, which names no field to change —
+    verified as True, the overclaim gate was satisfied, and the agent reported
+    "updated". That is exactly the failure Bakir reported ("he fails or lies by
+    saying updated"), so the old assertion was pinning the bug in place.
+
+    An edit is now confirmed field by field, and an edit that asked for nothing
+    gets NO OPINION (None) rather than a free True. None is the honest verdict:
+    nothing was claimed, so nothing is confirmed.
+    """
     registry = OwlRegistry.with_default_secretary()
 
     verdict = await _verdict(tmp_db, registry, {"action": "edit", "name": "secretary"})
+
+    assert verdict is None
+
+
+async def test_an_edit_whose_FIELD_LANDED_is_verified(
+    tmp_home: Path, tmp_db: DbPool
+) -> None:
+    """The other half of the reversed contract: a real edit still verifies."""
+    registry = OwlRegistry.with_default_secretary()
+    current = registry.get("secretary")
+    registry.replace(current.model_copy(update={"boundaries": "Never spend money."}))
+
+    verdict = await _verdict(
+        tmp_db, registry,
+        {"action": "edit", "name": "secretary", "boundaries": "Never spend money."},
+    )
 
     assert verdict is True
 

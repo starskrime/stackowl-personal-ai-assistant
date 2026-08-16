@@ -1,5 +1,6 @@
 import pytest
 from pydantic import ValidationError
+
 from stackowl.tools.meta.owl_build_spec import OwlBuildSpec, validate_owl_build_spec
 
 

@@ -91,6 +91,88 @@ _FIELD_QUESTIONS: dict[str, str] = {
 _MAX_ELICIT_ROUNDS = 4
 
 
+def _persona_of(manifest: object) -> str:
+    """The persona text the MODEL would actually receive for this owl.
+
+    Isolated so the rename verification observes the same string the turn does,
+    through the same injector, rather than reimplementing prompt assembly.
+    """
+    from stackowl.owls.dna_injector import DNAPromptInjector
+
+    return DNAPromptInjector().inject(
+        manifest,  # type: ignore[arg-type]
+        getattr(manifest, "dna", None),  # type: ignore[arg-type]
+        lean=False,
+    )
+
+
+def _persona_carries(manifest: object, wanted: str) -> bool:
+    """Does the owl's assembled persona actually mention ``wanted``?
+
+    This is the EFFECT of a rename. A read-back of the display_name field only
+    proves the write; the model answers to whatever its prompt says.
+    Never raises — an injector failure means we cannot confirm the effect, which
+    is a False (no claim), not a crash inside verification.
+    """
+    try:
+        return wanted.casefold() in _persona_of(manifest).casefold()
+    except Exception as exc:
+        log.tool.warning(
+            "owl_build.verify: could not build the persona to confirm the rename",
+            exc_info=exc,
+            extra={"_fields": {"wanted": wanted}},
+        )
+        return False
+
+
+# The editable manifest fields, mapped from the tool's argument name to the
+# manifest attribute. Only these are checked, and only when the caller passed one.
+_EDIT_CHECKED_FIELDS: tuple[tuple[str, str], ...] = (
+    ("model_tier", "model_tier"),
+    ("boundaries", "boundaries"),
+    ("specialty", "role"),
+    ("evolution_strategy", "evolution_strategy"),
+    ("display_name", "display_name"),
+)
+
+
+def _edit_landed(current: object | None, args: dict[str, object]) -> bool | None:
+    """Did every field the caller asked to change actually take that value?
+
+    ``None`` when the edit requested no checkable field — no opinion, rather than
+    the free ``True`` that "the owl still exists" used to hand out.
+    """
+    if current is None:
+        return False
+    checked = 0
+    for arg_name, attr in _EDIT_CHECKED_FIELDS:
+        raw = args.get(arg_name)
+        if raw is None or not str(raw).strip():
+            continue
+        checked += 1
+        if str(getattr(current, attr, "") or "").strip() != str(raw).strip():
+            log.tool.warning(
+                "owl_build.verify: an edited field did not take the requested value",
+                extra={"_fields": {"field": arg_name, "wanted": str(raw)[:80],
+                                   "observed": str(getattr(current, attr, ""))[:80]}},
+            )
+            return False
+    tools = args.get("explicit_tools")
+    if isinstance(tools, list) and tools:
+        checked += 1
+        live = {str(t) for t in (getattr(current, "tools", None) or [])}
+        missing = {str(t) for t in tools} - live
+        if missing:
+            log.tool.warning(
+                "owl_build.verify: requested tools are absent from the live owl",
+                extra={"_fields": {"missing": sorted(missing)}},
+            )
+            return False
+    if checked == 0:
+        return None
+    return True
+
+
 def can_modify(manifest: object, *, caller: str, target_name: str) -> str | None:
     """no-edit-your-betters: only an ``origin='agent'`` owl YOU minted may be edited/retired.
 
@@ -1280,13 +1362,29 @@ class OwlBuildTool(Tool):
         if action == "retire":
             confirmed = current is None
         elif action == "rename":
+            # BAKIR, 2026-08-16: "he fails or lies by saying updated."
+            # This used to compare display_name against the row we had just
+            # written, which is true the instant the write lands — and it STAYED
+            # true while the model went on answering to the old name, because
+            # nothing injected the name into the prompt. The record was right and
+            # the behaviour was unchanged, so the tool reported success honestly
+            # and was still wrong.
+            # The EFFECT of a rename is that the owl's assembled persona carries
+            # the new name; that is what makes the model answer to it. Verify THAT.
             wanted = str(args.get("display_name") or "").strip()
-            confirmed = (
-                current is not None
-                and str(getattr(current, "display_name", "") or "").strip() == wanted
+            confirmed = bool(wanted) and current is not None and _persona_carries(
+                current, wanted
             )
         elif action == "edit":
-            confirmed = current is not None
+            # `current is not None` meant "the owl still exists" — an edit that
+            # changed nothing verified as True. Check every field the caller
+            # actually asked to change, and only those: a field left alone must not
+            # fail the edit, and an edit that requested nothing is not an
+            # achievement (None = no opinion, never a free True).
+            landed = _edit_landed(current, args)
+            if landed is None:
+                return None
+            confirmed = landed
         else:
             return None  # pause / resume — see the docstring.
 
