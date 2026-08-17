@@ -38,14 +38,25 @@ class LocalPluginLoader:
         handler_registry: Any = None,
         channel_registry: Any = None,
         owl_registry: Any = None,
+        memory_provider_registry: Any = None,
     ) -> None:
         log.debug("plugins.local_loader.__init__: entry")
+        # EVERY key in _ABC_NAMES must appear here. D08.2 slice C added
+        # MemoryProvider to the ABC table and not to this one, so
+        # `_registries.get("MemoryProvider")` returned None and _register_classes
+        # hit `continue` — SILENTLY. A memory-provider plugin would have loaded,
+        # been discovered by issubclass, and registered nowhere, with the platform
+        # reporting a successful install of a plugin that does nothing.
+        # tests/plugins/test_every_declared_extension_point_can_register.py asserts
+        # the two tables agree, in BOTH directions, so the seventh extension point
+        # (LifecycleHook, designed in designs/D16.1.md) cannot repeat this.
         self._registries = {
             "Tool": tool_registry,
             "JobHandler": handler_registry,
             "SlashCommand": command_registry,
             "ChannelAdapter": channel_registry,
             "OwlSource": owl_registry,
+            "MemoryProvider": memory_provider_registry,
         }
         log.debug("plugins.local_loader.__init__: exit")
 
@@ -150,6 +161,20 @@ class LocalPluginLoader:
                 if issubclass(obj, abc_cls) and obj is not abc_cls:
                     registry = self._registries.get(abc_name)
                     if registry is None:
+                        # NOT silent. This plugin defines a real extension point and
+                        # it will not be active — a fact only visible here. The bare
+                        # `continue` that used to stand alone is how MemoryProvider
+                        # went unregistrable without anyone noticing. WARNING rather
+                        # than raise: a loader constructed with only the registries a
+                        # caller needs is legitimate, so this is a degrade to report,
+                        # not a validation failure to abort on.
+                        log.warning(
+                            "[plugins] local_loader: extension point not wired in this "
+                            "deployment — the class was discovered and will NOT be active",
+                            extra={"_fields": {"plugin": manifest.name,
+                                               "class": attr_name,
+                                               "extension_point": abc_name}},
+                        )
                         continue
                     try:
                         instance = obj()

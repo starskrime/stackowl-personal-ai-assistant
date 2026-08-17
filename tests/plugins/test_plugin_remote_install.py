@@ -19,8 +19,8 @@ import pytest
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.paths import StackowlHome
 from stackowl.plugins.index import PluginIndexEntry
-from stackowl.plugins.verify import PluginVerificationError
 from stackowl.plugins.remote_install import install_remote_plugin
+from stackowl.plugins.verify import PluginVerificationError
 
 
 def _make_plugin_zip(tmp: Path) -> bytes:
