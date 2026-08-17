@@ -11198,6 +11198,43 @@ items:
     wave: 9
     order: 72
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d161"
+    IMPLEMENT_STAGE_REORDERED_2026_08_17:
+      finding: >-
+        NOTHING IN THE RUNNING PLATFORM EVER LOADS A PLUGIN. Boot constructs
+        PluginIndex (a catalogue) and PluginRegistry (a db table); LocalPluginLoader
+        — the only thing that imports a plugin module and registers its classes —
+        has ZERO construction sites anywhere in src/. Verified by source inspection
+        of PluginIndex: it mentions neither LocalPluginLoader, nor import_module,
+        nor register. It reads an index file into PluginIndexEntry records.
+      consequence: >-
+        If a plugin were dropped into ~/.stackowl/plugins/ today, boot would COUNT
+        it ("[startup] gateway: plugin index loaded", which fires on every boot with
+        count 0) and register nothing from it. The 2026-08-16 install-path proof
+        drove LocalPluginLoader MANUALLY; that proved the loader works, not that
+        anything calls it. This is the distinction Bakir corrected me on the same
+        day — do not read a method name and believe the platform has the behaviour.
+      why_it_reorders_the_item: >-
+        The architect stage designed capability-gated lifecycle hooks on top of this
+        surface. Adding hooks to a surface that never loads would be building on
+        nothing — the same registered-but-unreachable shape the brainstorm already
+        found twice in this item. The loading path must run at boot BEFORE hooks are
+        worth writing.
+      second_defect_found_the_same_pass: >-
+        _ABC_NAMES declares SIX extension points; LocalPluginLoader.__init__ builds
+        self._registries with FIVE. MemoryProvider has no slot, so
+        `self._registries.get("MemoryProvider")` returns None and the loop hits
+        `continue` — SILENTLY, with no error and no warning. A MemoryProvider plugin
+        (D08.2 slice C's whole point) can never register even once the loader is
+        wired. Contained fix, but moot until the loader is called at all.
+      NEEDS_BAKIR: >-
+        Wiring the loader into boot means the platform EXECUTES third-party code at
+        startup. That is a security decision, not a bug fix, and it is the same
+        trust surface ESC-16 was raised about — so it is flagged rather than done.
+        Options: (a) load at boot, gated on the plugin's declared capabilities;
+        (b) load on explicit operator command only (/plugin load), never implicitly;
+        (c) leave unwired until a real plugin exists to justify it.
+        Recommend (b): it keeps installing a plugin an explicit act, which is the
+        same principle Bakir already chose when he refused pip entry points.
     INSTALL_PATH_PROVEN:
       ran: 2026-08-16
       what: >-
