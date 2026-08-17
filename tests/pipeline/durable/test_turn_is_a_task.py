@@ -134,3 +134,42 @@ class TestItNeverCostsTheTurn:
         working byte-identically."""
         await enqueue_turn_task(None, trace_id="tr-1", goal="hi", channel="cli")
         await complete_turn_task(None, trace_id="tr-1", result="answered")
+
+
+class TestTheRealChannelTypes:
+    """The types the LIVE adapters actually pass.
+
+    The first live run of this bridge failed on EVERY turn with "'int' object has
+    no attribute 'strip'": Telegram chat ids are ints, and the tests above passed
+    the string "72055773". A double that had stopped resembling the real thing —
+    which is exactly the defect shape this repo warns about, and it survived a
+    green suite until real traffic hit it.
+    """
+
+    async def test_an_INT_chat_id_is_accepted(self) -> None:
+        store = _Store()
+
+        await enqueue_turn_task(
+            store, trace_id="tr-1", goal="hi", channel="telegram", chat_id=72055773,
+        )
+
+        assert store.enqueued, "an int chat id broke the enqueue"
+        assert store.enqueued[0].destination == "telegram:72055773"  # type: ignore[attr-defined]
+
+    async def test_a_None_chat_id_is_accepted(self) -> None:
+        store = _Store()
+
+        await enqueue_turn_task(store, trace_id="tr-1", goal="hi",
+                                channel="telegram", chat_id=None)
+
+        assert store.enqueued[0].destination == "telegram"  # type: ignore[attr-defined]
+
+    async def test_a_non_string_channel_does_not_break_it(self) -> None:
+        """Nothing passes this today; it is asserted so the next type surprise
+        degrades to a usable destination instead of losing the whole row."""
+        store = _Store()
+
+        await enqueue_turn_task(store, trace_id="tr-1", goal="hi",
+                                channel=None, chat_id=123)
+
+        assert store.enqueued[0].destination == "cli:123"  # type: ignore[attr-defined]

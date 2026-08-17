@@ -45,14 +45,21 @@ from stackowl.infra.observability import log
 TURN_LEASE_SECONDS = 900
 
 
-def _destination(channel: str | None, chat_id: str | None) -> str:
+def _destination(channel: object, chat_id: object = None) -> str:
     """Where this turn's answer must land, as ``channel[:address]``.
 
     A channel with no address (CLI, a single-terminal adapter) is still a real
     destination — it addresses its one terminal implicitly.
+
+    EVERYTHING IS COERCED WITH str(), and that is not defensive padding: a Telegram
+    chat id arrives as an INT. The first live run of this code failed on every turn
+    with "'int' object has no attribute 'strip'" because the unit test passed the
+    string "72055773" where the real adapter passes 72055773 — a test double that
+    had stopped resembling the thing it stood in for, which is the defect shape
+    this repo names explicitly. The types are asserted by a test below now.
     """
-    ch = (channel or "cli").strip() or "cli"
-    addr = (chat_id or "").strip()
+    ch = str(channel or "cli").strip() or "cli"
+    addr = "" if chat_id is None else str(chat_id).strip()
     return f"{ch}:{addr}" if addr else ch
 
 
@@ -62,7 +69,7 @@ async def enqueue_turn_task(
     trace_id: str,
     goal: str,
     channel: str | None,
-    chat_id: str | None = None,
+    chat_id: object = None,
     session_key: str | None = None,
     owl_name: str | None = None,
 ) -> None:
