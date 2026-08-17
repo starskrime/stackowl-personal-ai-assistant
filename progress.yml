@@ -258,8 +258,8 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.4
-  stage: brainstorm
+  item: D08.3
+  stage: document
   stage_status: >-
     D01.6 IS CLOSED (2026-08-15): its live baseline was captured, its brainstorm accepted
     as a documented pre-process exception, and metric 1 recorded as unmeasurable on this
@@ -9753,7 +9753,42 @@ items:
       cleanup:    done
       test:       done
       validate:   done
-      document:   partial
+      document:   done             # absorbed into designs/D08.1.md (DOC_STANDARD
+                                   # rule 1); its D08.3 check re-run 2026-08-17
+    document_closed:
+      date: 2026-08-17
+      commit: 5fdb53e0
+      doc: docs/reference-mapping/designs/D08.1.md
+      why_no_own_doc: >-
+        D08.1 ABSORBS D08.3 and says so in its header, with a dedicated section
+        ("D08.3 comes with it") and the item listed under Related. One subsystem,
+        one document — DOC_STANDARD rule 1, the same arrangement D09.3 and D10.2
+        share. The stage was partial because the item doc was never pointed at.
+      verified: >-
+        The turn-counter nudge is WIRED and has FIRED. note_turn() is called from
+        pipeline/steps/execute.py:1102 on every turn and note_write() from
+        tools/knowledge/memory.py:351 on a write; threshold NUDGE_INTERVAL_TURNS=10.
+        4 firings on live traffic (08-11 x2, 08-12 x1, 08-16 x1).
+      measurement_lesson: >-
+        The first query returned 0 firings and read as "this never worked" — it
+        searched only ~/.stackowl/logs/stackowl.jsonl, which ROTATES DAILY. The
+        firings were in the archived stackowl-2026-08-*.jsonl files. Any log-based
+        acceptance check on this platform must glob the rotated files.
+      known_limit_measured: >-
+        _TURNS_SINCE_WRITE is an in-memory dict (memory/curated.py:531, a deliberate
+        call at the time), so every restart resets it. Turns per process lifetime
+        against a threshold of 10: 08-11 = 5 boots/10 turns/max 4 -> 2 nudges;
+        08-15 = 24 boots/14 turns/max 5 -> 0 nudges; 08-16 = 34 boots/46 turns/
+        max 12 -> 1 nudge. On 08-15 the busiest lane took 14 turns, past the
+        threshold in aggregate, and fired nothing because it never reached 10
+        inside one process. The nudge WORKS; its RATE is throttled by restart
+        frequency, not by conversation volume. Recorded as debt rather than fixed
+        here: this is the document stage, and persisting the counter is a code
+        change to an item whose implement stage is already closed.
+      next_small_win: >-
+        Persist the counter (sqlite), per Bakir's 2026-08-16 rule that nothing
+        durable lives in memory. Small, and it converts a feature that fires
+        occasionally into one that fires as designed.
     doc: null
     doc_last_verified: null
     decisions: []
