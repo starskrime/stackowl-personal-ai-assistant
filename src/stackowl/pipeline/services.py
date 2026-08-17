@@ -70,6 +70,12 @@ class StepServices:
     kuzu_adapter: KuzuAdapter | None = field(default=None)
     tool_registry: ToolRegistry | None = field(default=None)
     db_pool: DbPool | None = field(default=None)
+    #: The ONE loop's durable store (Bakir, 2026-08-17). Present ⇒ every chat turn
+    #: is recorded as a task and completes only when its reply is DELIVERED, so a
+    #: turn the fast path drops is recoverable. None ⇒ byte-identical to before the
+    #: loop existed: no rows, no recovery, and every existing construction site
+    #: (tests included) keeps working untouched.
+    durable_task_store: object | None = field(default=None)
     browser_runtime: CamoufoxRuntime | None = field(default=None)
     browser_sessions: BrowserSessionRegistry | None = field(default=None)
     audit_logger: AuditLogger | None = field(default=None)

@@ -123,6 +123,20 @@ async def run(state: PipelineState) -> PipelineState:
         await writer.write(chunk)
     await writer.close()
 
+    # THE ONE LOOP's completion seam. The reply has now crossed the writer to the
+    # user, which is the only thing that counts as done — Bakir, 2026-08-17: "if
+    # it's delivered to me, it means loop is completed." Marking it anywhere
+    # earlier would record a success the user never saw, the overclaim shape this
+    # platform keeps finding. Best-effort by construction: complete_turn_task never
+    # raises, so the durable bookkeeping cannot cost a delivered turn.
+    from stackowl.pipeline.durable.turn_task import complete_turn_task
+
+    await complete_turn_task(
+        getattr(services, "durable_task_store", None),
+        trace_id=state.trace_id,
+        result="".join(c.content for c in state.responses if c.content),
+    )
+
     log.gateway.info(
         "[pipeline] deliver: exit",
         extra={"_fields": {"session_key": state.session_key, "chunks_written": len(state.responses)}},

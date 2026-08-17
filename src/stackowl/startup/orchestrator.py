@@ -846,6 +846,8 @@ class StartupOrchestrator:
                 "[startup] gateway: owl wiring audit failed — starting anyway",
                 exc_info=exc,
             )
+        from stackowl.pipeline.durable.store import DurableTaskStore
+
         db_pool = DbPool(default_db_path())
         await db_pool.open()
 
@@ -1541,6 +1543,10 @@ class StartupOrchestrator:
             kuzu_adapter=kuzu_adapter,
             tool_registry=tool_registry,
             db_pool=db_pool,
+            # THE ONE LOOP. Present ⇒ every chat turn is recorded and completes
+            # only when its reply is delivered, so a turn the fast path drops is
+            # recoverable rather than lost.
+            durable_task_store=DurableTaskStore(db_pool),
             browser_runtime=browser_runtime,
             browser_sessions=browser_sessions,
             audit_logger=audit_logger,
@@ -2203,6 +2209,26 @@ class StartupOrchestrator:
                     # WS-D issue 3 — carry the scanner's fuzzy routing correction so
                     # the pre-delivery hint surfacer can show it (else it's dead).
                     route_suggestion=decision.suggestion,
+                )
+                # THE ONE LOOP's ingress (Bakir, 2026-08-17: "if I am pinging in
+                # the Telegram chat about some question, that's also task").
+                # Recorded HERE and not on the other routes because this is the
+                # only branch that reaches deliver.py, which is what COMPLETES the
+                # row — enqueuing a command or parliament turn would create a task
+                # nothing ever closes, and the loop would dutifully re-drive it.
+                # Born running-with-a-lease so the loop cannot answer a turn the
+                # fast path is already handling; only an EXPIRED lease hands it
+                # over. Best-effort: never raises, never delays the turn.
+                from stackowl.pipeline.durable.turn_task import enqueue_turn_task
+
+                await enqueue_turn_task(
+                    getattr(services, "durable_task_store", None),
+                    trace_id=msg.trace_id,
+                    goal=input_text,
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    session_key=lane,
+                    owl_name=decision.target,
                 )
                 producer = asyncio.create_task(backend.run(state))
             producer.add_done_callback(_log_pipeline_crash)
