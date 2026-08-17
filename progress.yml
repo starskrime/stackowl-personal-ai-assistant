@@ -258,8 +258,8 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D08.3
-  stage: document
+  item: D16.1
+  stage: architect
   stage_status: >-
     D01.6 IS CLOSED (2026-08-15): its live baseline was captured, its brainstorm accepted
     as a documented pre-process exception, and metric 1 recorded as unmeasurable on this
@@ -478,6 +478,24 @@ current:
       been able to pay for. A bumped constant would be the same bug with a bigger number
       the next time the model changes.
   - id: ESC-18-progressive-disclosure-would-be-a-no-op-here-today
+    DECIDED_BY_BAKIR:
+      date: 2026-08-17
+      answer: >-
+        DEFER D05.4 until after D04.1. The measurement stands: the reference
+        mechanism cannot fire on this hardware (tools are 2.87% of a 262k window
+        against a >10% trigger), and it defers only MCP/plugin tools while zero
+        plugins are installed. D04.1 is what CREATES the tool population the
+        mechanism manages, so it is built when it has a job.
+      consequence: >-
+        D05.4's architect stage stays open and is now blocked BY SEQUENCE rather
+        than by an unanswered question. The cheap schema trim was NOT taken —
+        Bakir 2026-08-16: "No cheap win always architectural and correct."
+      when_resumed: >-
+        Re-express the trigger before building: keep the window-relative SHAPE,
+        drop the 10% constant, and measure against LATENCY not tokens — on this
+        box a deferred lookup costs p50 13,088ms / p90 44,735ms while the whole
+        input side costs $0.0152. The 2026-08-15 headhunter incident (ten
+        meta-tool calls, never converged) is the failure mode to design against.
     raised: 2026-08-16
     blocks: >-
       D05.4''s architect stage. The cheap half — trimming the five verbose tool schemas —
@@ -739,6 +757,25 @@ current:
       retry_queue is the one worth checking by hand because it can change behaviour
       rather than a number.
   - id: ESC-16-do-plugins-get-lifecycle-hooks
+    DECIDED_BY_BAKIR:
+      date: 2026-08-17
+      answer: >-
+        YES to lifecycle hooks, but as a SEPARATE capability-gated extension point
+        rather than a property every plugin gets. NO to pip entry points.
+      consequence: >-
+        D16.1's architect stage is UNBLOCKED and is now the highest-priority
+        actionable item on the board (P0, wave 9, expedited chain to D16.3/D04.1).
+      design_constraints_from_the_answer: >-
+        A hook plugin DECLARES what it observes and the user GRANTS it, through
+        capabilities.py, which already models per-plugin permission — so a hook is
+        authorised, never merely presented (this platform's rule: presentation is
+        never authorization; D17 owns security). Installing a plugin stays an
+        EXPLICIT act by the operator: the directory is the only discovery source,
+        so nothing pip-installed can register itself.
+      decide_once: >-
+        Whatever shape the hook table takes, D04.1 arrives through D16.3 expecting
+        ONE discovery mechanism. A second hook path added later for providers is
+        exactly the duplication that dependency exists to prevent.
     raised: 2026-08-15
     blocks: >-
       D16.1's architect stage, and only that. Everything else in the item — the two

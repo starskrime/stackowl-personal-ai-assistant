@@ -515,9 +515,27 @@ class CuratedMemory:
 # --------------------------------------------------------------------------- #
 
 #: Turns without a memory write before the agent is reminded it can make one.
-#: The reference platform's default, adopted for the same reason as the budgets:
-#: it is a tuned number and we have no measurement of our own yet.
-NUDGE_INTERVAL_TURNS = 10
+#:
+#: WAS 10 — the reference platform's default, adopted "for the same reason as the
+#: budgets: it is a tuned number and we have no measurement of our own yet."
+#: We have one now, so the borrowed constant no longer applies.
+#:
+#: MEASURED 2026-08-17 across a week of real traffic. The counter below is
+#: in-process, so what matters is not turns per DAY but turns per PROCESS
+#: LIFETIME — and this platform restarts often:
+#:     2026-08-11    5 boots   10 turns   max  4 per lifetime  ->  2 nudges
+#:     2026-08-15   24 boots   14 turns   max  5 per lifetime  ->  0 nudges
+#:     2026-08-16   34 boots   46 turns   max 12 per lifetime  ->  1 nudge
+#: At 10 the nudge fired ~1/day, and on 08-15 it never fired at all despite the
+#: busiest lane taking 14 turns — it simply never reached 10 inside one process.
+#: At 4 every one of those days clears the bar.
+#:
+#: Bakir chose this over persisting the counter (2026-08-17): note_turn() is
+#: called from a SYNC prompt-building function, so persistence would make the
+#: turn hot path async — a large ripple for a bookkeeping counter. Lowering the
+#: threshold removes the symptom without touching that path. The root cause is
+#: recorded as debt against D08.3.
+NUDGE_INTERVAL_TURNS = 4
 
 #: Turns since the last curated write, per lane. IN-PROCESS, and deliberately
 #: not persisted.
@@ -528,6 +546,12 @@ NUDGE_INTERVAL_TURNS = 10
 #: costs the user a turn cluttered with the agent talking about its own
 #: bookkeeping. Persisting it would buy accuracy in a counter whose only job is
 #: to fire "occasionally".
+#:
+#: THAT REASONING STILL HOLDS, but 2026-08-17 measured how far wrong it went: at
+#: 34 boots in a day the reset is not an occasional rounding error, it is the
+#: dominant term — the nudge fired ~1/day and on 08-15 not at all. The threshold
+#: above absorbs that; this stays in-process deliberately. See D08.3 in
+#: progress.yml for the persistence option and why it was not taken.
 _TURNS_SINCE_WRITE: dict[str, int] = {}
 
 _NUDGE_TEXT = (
