@@ -13,14 +13,14 @@ to the executor and are intentionally NOT implemented here.
 from __future__ import annotations
 
 import builtins
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from stackowl.authz.bounds import BoundsSpec
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
-from stackowl.pipeline.durable.task import DurableTask, TaskStatus
+from stackowl.pipeline.durable.task import DEFAULT_MAX_ATTEMPTS, DurableTask, TaskStatus
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _SELECT_FIELDS = (
@@ -34,6 +34,53 @@ _SELECT_FIELDS = (
 # only the blob is needed (future optimisation hook; currently the full row is
 # fetched and the checkpoint_blob column is read off it).
 _CHECKPOINT_BLOB_FIELD = "checkpoint_blob"
+
+
+# =============================================================================
+# THE ONE LOOP (migration 0119) — Bakir's loop+graph architecture, 2026-08-17.
+#
+# "whatever triggering in the platform, it's a task which should be part of the
+# loop and be delivered."
+#
+# These methods are the durable half. The loop that drives them lives in
+# pipeline/durable/loop.py; keeping the claim semantics here means they can be
+# proven without a running event loop, and means there is exactly ONE place that
+# knows how a task moves between states.
+#
+# WHY EXTEND `tasks` RATHER THAN ADD A TABLE. The tree already carried FOUR
+# overlapping work engines. CLAUDE.md's rule — earned, not aspirational — is to
+# find the existing loop and extend it. `tasks` was chosen because it already owns
+# leasing, checkpoints, parent/child links and cost.
+# =============================================================================
+
+#: How long a claim is good for before another worker may take the row. Long
+#: enough that a slow-but-live task is not stolen mid-flight; short enough that a
+#: crashed worker's row comes back quickly.
+DEFAULT_LEASE_SECONDS = 900
+
+#: Backoff after a failure, in seconds, indexed by attempt. Capped rather than
+#: unbounded-exponential: at 30 attempts a doubling schedule would put the last
+#: retry weeks out, which for the user is indistinguishable from "it gave up".
+_BACKOFF_SECONDS = (5, 15, 60, 300, 900)
+
+#: Failure classes that are NOT worth 30 attempts. A missing API key fails the
+#: same way every time; retrying it is 30 guaranteed-wasted model calls.
+_PERMANENT_CLASSES = frozenset({"permanent", "auth", "not_found", "refused"})
+
+
+def _backoff_for(attempt: int) -> int:
+    idx = min(max(attempt - 1, 0), len(_BACKOFF_SECONDS) - 1)
+    return _BACKOFF_SECONDS[idx]
+
+
+def _split(raw: Any) -> tuple[str, ...]:
+    """Parse a stored comma-list. Total: bad data reads as empty, never raises."""
+    if not raw:
+        return ()
+    try:
+        return tuple(p for p in str(raw).split(",") if p)
+    except Exception:  # pragma: no cover — defensive
+        return ()
 
 
 class DurableTaskStore(OwnedRepository):
@@ -585,6 +632,248 @@ class DurableTaskStore(OwnedRepository):
         )
 
 
+    # ---- the ONE loop ---------------------------------------------------
+
+    async def enqueue(self, task: DurableTask) -> None:
+        """Write a task the loop may pick up. The universal ingress.
+
+        Bakir: "whatever triggering in the platform, it's a task." A chat message,
+        a schedule firing, an agent's own sub-goal — all become a row here, and the
+        loop is what runs them. Stamps this store's principal so a caller states
+        what the work MEANS, not which tenant it belongs to.
+        """
+        row = task.model_copy(update={"owner_id": self._owner_id})
+        await self.create(row)
+        await self._db.execute(
+            f"UPDATE {self._table} SET destination=?, achievement=?, max_attempts=?, "  # noqa: S608
+            "depends_on=?, trigger_kind=?, idempotency_key=? "
+            "WHERE task_id=? AND owner_id=?",
+            (task.destination, task.achievement, int(task.max_attempts),
+             ",".join(task.depends_on) or None, task.trigger_kind,
+             task.idempotency_key, task.task_id, self._owner_id),
+        )
+        log.tasks.info(
+            "[loop] task enqueued",
+            extra={"_fields": {"task_id": task.task_id, "trigger": task.trigger_kind,
+                               "destination": task.destination,
+                               "depends_on": list(task.depends_on)}},
+        )
+
+    async def claimable(
+        self, *, limit: int = 10, now: datetime | None = None
+    ) -> builtins.list[DurableTask]:
+        """Rows the loop may run RIGHT NOW, newest-blocking-rules applied.
+
+        A row qualifies when it is ``pending``, not superseded, its backoff has
+        elapsed, and EVERY id in ``depends_on`` has been delivered. The dependency
+        check is what makes the graph real: a parent that ran before its child
+        would be answering with information it does not have yet.
+
+        Deliberately returns them UNORDERED beyond the query's own ordering —
+        Bakir: "five pending, five loops parallel... there's no ordering."
+        """
+        stamp = (now or datetime.now(UTC)).isoformat()
+        rows = await self._db.fetch_all(
+            f"SELECT {_SELECT_FIELDS}, destination, achievement, delivered_at, "  # noqa: S608
+            "attempt_count, max_attempts, last_error, last_failure_class, "
+            "banned_capabilities, next_attempt_at, lease_expires_at, depends_on, "
+            "trigger_kind, idempotency_key "
+            f"FROM {self._table} WHERE owner_id = ? AND status = 'pending' "
+            "AND COALESCE(superseded, 0) = 0 "
+            "AND (next_attempt_at IS NULL OR next_attempt_at <= ?) "
+            "ORDER BY created_at LIMIT ?",
+            (self._owner_id, stamp, int(limit)),
+        )
+        out: builtins.list[DurableTask] = []
+        for r in rows:
+            deps = _split(r.get("depends_on"))
+            if deps and not await self._deps_satisfied(r["task_id"], deps):
+                continue
+            out.append(_row_to_task(r))
+        return out
+
+    async def _deps_satisfied(self, task_id: str, deps: tuple[str, ...]) -> bool:
+        """True when every dependency DELIVERED. A dead-lettered dependency
+        dead-letters this row too, rather than leaving it blocked forever — a
+        parent waiting on work that will never land is leaked work wearing a
+        different hat, and leaked work is invisible."""
+        marks = ",".join("?" for _ in deps)
+        rows = await self._db.fetch_all(
+            f"SELECT task_id, status FROM {self._table} "  # noqa: S608
+            f"WHERE owner_id = ? AND task_id IN ({marks})",
+            (self._owner_id, *deps),
+        )
+        by_id = {str(r["task_id"]): str(r["status"]) for r in rows}
+        if any(by_id.get(d) in ("dead_letter", "failed") for d in deps):
+            await self._db.execute(
+                f"UPDATE {self._table} SET status='dead_letter', "  # noqa: S608
+                "last_error='a dependency will never land', "
+                "updated_at=? WHERE task_id=? AND owner_id=?",
+                (datetime.now(UTC).isoformat(), task_id, self._owner_id),
+            )
+            log.tasks.warning(
+                "[loop] task dead-lettered — a dependency failed permanently",
+                extra={"_fields": {"task_id": task_id, "depends_on": list(deps)}},
+            )
+            return False
+        return all(by_id.get(d) == "completed" for d in deps)
+
+    async def claim(
+        self, task_id: str, *, worker: str, lease_seconds: int = DEFAULT_LEASE_SECONDS
+    ) -> bool:
+        """Take the row for THIS worker. Returns whether this caller won.
+
+        A compare-and-set — ``WHERE status='pending'`` — so under concurrency
+        exactly one caller can win, which is what makes parallel workers safe. The
+        same shape scheduler.py already runs in production for jobs. A SELECT
+        followed by an UPDATE would double-run, and double-running a task that
+        sends a message sends it twice.
+        """
+        now = datetime.now(UTC)
+        expires = now + timedelta(seconds=lease_seconds)
+        affected = await self._db.execute_returning_rowcount(
+            f"UPDATE {self._table} SET status='running', lease_owner=?, "  # noqa: S608
+            "lease_expires_at=?, updated_at=? "
+            "WHERE task_id=? AND owner_id=? AND status='pending'",
+            (worker, expires.isoformat(), now.isoformat(), task_id, self._owner_id),
+        )
+        won = affected == 1
+        log.tasks.info(
+            "[loop] claim",
+            extra={"_fields": {"task_id": task_id, "worker": worker, "won": won}},
+        )
+        return won
+
+    async def reclaim_expired(self, *, now: datetime | None = None) -> int:
+        """Return rows whose worker died to ``pending``. The crash-safety net.
+
+        Without this a worker that dies mid-task leaves the row ``running``
+        forever: no loop would ever pick it up again, and the work would be lost
+        with nothing reporting it. Counts the attempt — a task that reliably kills
+        its worker must still reach the ceiling rather than cycle for ever.
+        """
+        stamp = (now or datetime.now(UTC)).isoformat()
+        affected = await self._db.execute_returning_rowcount(
+            f"UPDATE {self._table} SET status='pending', lease_owner=NULL, "  # noqa: S608
+            "lease_expires_at=NULL, attempt_count=COALESCE(attempt_count,0)+1, "
+            "last_error='worker lease expired (crash or hang)', "
+            "last_failure_class='lease_expired', updated_at=? "
+            "WHERE owner_id=? AND status='running' "
+            "AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?",
+            (stamp, self._owner_id, stamp),
+        )
+        if affected:
+            log.tasks.warning(
+                "[loop] reclaimed tasks whose worker never came back",
+                extra={"_fields": {"reclaimed": affected}},
+            )
+        return int(affected)
+
+    async def fail_and_requeue(
+        self, task_id: str, *, error: str, failure_class: str = "",
+        banned: tuple[str, ...] = (),
+    ) -> str:
+        """Record the failure ON the row and put it back — or stop for good.
+
+        Bakir: "if it fails, again moving back to pending and adding previous
+        failure or action details. So next loop when it picks it, it also looks: is
+        any previous one? Yes — learn from that experience."
+
+        The learning is STRUCTURED, not narrated. ``banned_capabilities``
+        ACCUMULATES so attempt three knows what one and two burned; pasting error
+        prose forward instead would grow without bound and drown the goal by
+        attempt ten.
+
+        Returns the new status. Stops at the ceiling, or immediately for a failure
+        class that cannot improve by being repeated.
+        """
+        row = await self.get(task_id)
+        attempts = row.attempt_count + 1
+        merged = tuple(sorted(set(row.banned_capabilities) | set(banned)))
+        permanent = failure_class in _PERMANENT_CLASSES
+        exhausted = attempts >= row.max_attempts
+        now = datetime.now(UTC)
+
+        if permanent or exhausted:
+            await self._db.execute(
+                f"UPDATE {self._table} SET status='dead_letter', attempt_count=?, "  # noqa: S608
+                "last_error=?, last_failure_class=?, banned_capabilities=?, "
+                "lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+                "WHERE task_id=? AND owner_id=?",
+                (attempts, error[:2000], failure_class or None,
+                 ",".join(merged) or None, now.isoformat(), task_id, self._owner_id),
+            )
+            log.tasks.error(
+                "[loop] task DEAD-LETTERED — it will not be retried",
+                extra={"_fields": {"task_id": task_id, "attempts": attempts,
+                                   "max_attempts": row.max_attempts,
+                                   "failure_class": failure_class,
+                                   "reason": "permanent" if permanent else "ceiling",
+                                   "error": error[:200]}},
+            )
+            return "dead_letter"
+
+        retry_at = now + timedelta(seconds=_backoff_for(attempts))
+        await self._db.execute(
+            f"UPDATE {self._table} SET status='pending', attempt_count=?, "  # noqa: S608
+            "last_error=?, last_failure_class=?, banned_capabilities=?, "
+            "next_attempt_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+            "WHERE task_id=? AND owner_id=?",
+            (attempts, error[:2000], failure_class or None, ",".join(merged) or None,
+             retry_at.isoformat(), now.isoformat(), task_id, self._owner_id),
+        )
+        log.tasks.info(
+            "[loop] task requeued with what failed — the next attempt is constrained",
+            extra={"_fields": {"task_id": task_id, "attempt": attempts,
+                               "max_attempts": row.max_attempts,
+                               "failure_class": failure_class,
+                               "banned": list(merged),
+                               "retry_at": retry_at.isoformat()}},
+        )
+        return "pending"
+
+    async def mark_delivered(self, task_id: str, *, result: str) -> None:
+        """The ONLY way a task completes. Bakir: "if it's delivered to me, it means
+        loop is completed."
+
+        ``delivered_at`` is the proof. A row that reached ``completed`` without it
+        would be a self-report — the same overclaim shape this platform already
+        pays for when a tool asserts success it never observed.
+        """
+        now = datetime.now(UTC)
+        await self._db.execute(
+            f"UPDATE {self._table} SET status='completed', result=?, "  # noqa: S608
+            "delivered_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
+            "WHERE task_id=? AND owner_id=?",
+            (result, now.isoformat(), now.isoformat(), task_id, self._owner_id),
+        )
+        log.tasks.info(
+            "[loop] task COMPLETE — its outcome reached its destination",
+            extra={"_fields": {"task_id": task_id, "delivered_at": now.isoformat()}},
+        )
+
+    async def prune_completed(self, *, older_than_days: int = 1) -> int:
+        """Delete COMPLETED rows past the window. Bakir asked for this explicitly.
+
+        Scoped to ``completed`` on purpose. A ``dead_letter`` is never pruned: it is
+        the one record of work that failed permanently, and it is precisely what the
+        operator needs to see. The per-turn learning corpus lives in
+        ``task_outcomes``, a separate table this never touches, so pruning a
+        delivered task costs no experience.
+        """
+        affected = await self._db.execute_returning_rowcount(
+            f"DELETE FROM {self._table} WHERE owner_id=? AND status='completed' "  # noqa: S608
+            f"AND updated_at < datetime('now', ?)",
+            (self._owner_id, f"-{int(older_than_days)} day"),
+        )
+        if affected:
+            log.tasks.info(
+                "[loop] pruned delivered tasks",
+                extra={"_fields": {"pruned": affected, "older_than_days": older_than_days}},
+            )
+        return int(affected)
+
+
 def _row_to_task(row: dict[str, Any]) -> DurableTask:
     """Map one ``tasks`` row dict to a :class:`DurableTask`."""
     raw_thread = row.get("thread_id")
@@ -608,7 +897,33 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
     raw_delegate_key = row.get("delegate_key")
     raw_lease = row.get("lease_owner")
     raw_superseded = row.get("superseded")
+    def _dt(key: str) -> Any:
+        raw = row.get(key)
+        return None if raw is None else datetime.fromisoformat(str(raw))
+
     return DurableTask(
+        # ---- the ONE loop (0119). .get() throughout: every reader of this
+        # function predates these columns, and several select a narrower field
+        # list, so a missing key must mean "default", never KeyError.
+        destination=(None if row.get("destination") is None
+                     else str(row["destination"])),
+        achievement=(None if row.get("achievement") is None
+                     else str(row["achievement"])),
+        delivered_at=_dt("delivered_at"),
+        attempt_count=int(row.get("attempt_count") or 0),
+        max_attempts=int(row.get("max_attempts") or DEFAULT_MAX_ATTEMPTS),
+        last_error=(None if row.get("last_error") is None
+                    else str(row["last_error"])),
+        last_failure_class=(None if row.get("last_failure_class") is None
+                            else str(row["last_failure_class"])),
+        banned_capabilities=_split(row.get("banned_capabilities")),
+        next_attempt_at=_dt("next_attempt_at"),
+        lease_expires_at=_dt("lease_expires_at"),
+        depends_on=_split(row.get("depends_on")),
+        trigger_kind=(None if row.get("trigger_kind") is None
+                      else str(row["trigger_kind"])),
+        idempotency_key=(None if row.get("idempotency_key") is None
+                         else str(row["idempotency_key"])),
         task_id=str(row["task_id"]),
         owner_id=str(row["owner_id"]),
         goal=str(row["goal"]),

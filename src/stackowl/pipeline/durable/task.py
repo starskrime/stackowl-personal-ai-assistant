@@ -11,7 +11,7 @@ executor/graph wiring is explicitly out of scope for this pass.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -30,16 +30,28 @@ from stackowl.authz.bounds import BoundsSpec
 #: ``parked``     suspended awaiting an external signal (e.g. human/approval).
 #: ``completed``  finished successfully (``result`` populated).
 #: ``failed``     terminated with an unrecoverable error (``result`` = reason).
+#: ``dead_letter`` the ONE loop's ending that is not success (migration 0119). The
+#:                 attempt ceiling was hit, or the failure was permanent. The row
+#:                 STAYS, visible and explained, and is escalated — a loop that
+#:                 silently drops work is worse than one that fails loudly.
 TaskStatus = Literal[
-    "pending", "running", "recovering", "parked", "completed", "failed"
+    "pending", "running", "recovering", "parked", "completed", "failed", "dead_letter"
 ]
+
+#: A task never retried more times than this unless its row says otherwise.
+#: Bakir, 2026-08-17: "each task we may have around thirty limit to try. And this
+#: thirty can be in configuration" — so it is a per-row column with this default,
+#: not a constant compiled into the loop.
+DEFAULT_MAX_ATTEMPTS = 30
 
 
 class DurableTask(BaseModel):
     """A single durable goal tracked across the agent's lifetime."""
 
     task_id: str = Field(..., min_length=1)
-    owner_id: str = Field(..., min_length=1)
+    #: Defaulted so enqueue() can stamp the store's own principal; a caller
+    #: states what the task MEANS, not which tenant bookkeeping it belongs to.
+    owner_id: str = Field(default="principal-default", min_length=1)
     goal: str = Field(..., min_length=1)
     status: TaskStatus
     current_step: int = 0
@@ -77,5 +89,50 @@ class DurableTask(BaseModel):
     #: True when a timed-out child was tombstoned so a slow eventual commit is
     #: neutralized and the next ladder rung gets a fresh id (D1 §9).
     superseded: bool = False
-    created_at: datetime
-    updated_at: datetime
+    # ---- the ONE loop (migration 0119) -----------------------------------
+    #: WHERE the outcome must land for this task to be done — "telegram:72055773",
+    #: "cli", a channel and address. Bakir, 2026-08-17: "if it's delivered to me,
+    #: it means loop is completed." NULL ⇒ the task has no destination of its own
+    #: (a pure sub-goal whose parent delivers), and completion is then the parent's.
+    destination: str | None = None
+    #: What "done" MEANS for this task, in words the loop can check against. The
+    #: achievement condition, distinct from the goal: the goal is what to do, this
+    #: is how you know it happened.
+    achievement: str | None = None
+    #: Proof the outcome reached ``destination``. Set ONLY by mark_delivered.
+    #: A ``completed`` row without this is a self-report, not a delivery.
+    delivered_at: datetime | None = None
+    #: How many times this has been tried, and the per-task ceiling.
+    attempt_count: int = 0
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS
+    #: What went wrong LAST time, so the next attempt is constrained rather than
+    #: blind. Bakir: "adding previous failure details... next loop learns from that
+    #: experience."
+    last_error: str | None = None
+    last_failure_class: str | None = None
+    #: The STRUCTURED half of that learning: capabilities already proven not to work
+    #: for this goal. Accumulates across attempts — attempt three must know what
+    #: attempts one and two burned. A list stays bounded where pasted error prose
+    #: does not.
+    banned_capabilities: tuple[str, ...] = ()
+    #: Backoff. Without it a failed row is re-claimed on the next tick, turning one
+    #: broken task into a hot loop.
+    next_attempt_at: datetime | None = None
+    #: When this row's lease dies. ``lease_owner`` alone cannot tell "a worker holds
+    #: this" from "a worker DIED holding this", so without an expiry the row would
+    #: sit claimed forever and the work would leak silently.
+    lease_expires_at: datetime | None = None
+    #: The graph. Task ids that must have landed before this one may be claimed.
+    #: Bakir: "one loop may need small other loops" — a sub-task is another ROW, so
+    #: the graph is edges between rows rather than a second system.
+    depends_on: tuple[str, ...] = ()
+    #: What triggered this — chat / schedule / subgoal / incident. Recorded so the
+    #: loop can be asked what it is serving instead of that being inferred.
+    trigger_kind: str | None = None
+    #: Thirty retries must not mean thirty side effects.
+    idempotency_key: str | None = None
+
+    # Defaulted so a caller enqueuing a task states only what it MEANS, not the
+    # bookkeeping. The store still stamps updated_at on every transition.
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
