@@ -10165,7 +10165,32 @@ items:
                                    # test_standard_migration.py, 6 in the brief
       validate:   done             # 154/154 learned skills migrated, 0 failures;
                                    # conformance 157/168 -> 13/166, all 13 builtins (19 of 168 at last check)
-      document:   partial          # designs/D09.3.md covers both; item doc pending
+      document:   done             # designs/D09.3.md (shared, DOC_STANDARD rule 1)
+    document_closed:
+      date: 2026-08-17
+      commit: 5fdb53e0
+      doc: docs/reference-mapping/designs/D09.3.md
+      why_shared: >-
+        D10.2 and D09.3 are one subsystem and share one document per
+        DOC_STANDARD rule 1; the doc's header names both. The standard itself is
+        fully specified there — the frontmatter table (authored fields only, with
+        success_rate/n_executions/parent_traces/embedding_model moved out because
+        the database already owns them) and the fixed seven-section body order.
+        The stage was partial because that doc was not closed; it was closed and
+        re-verified earlier the same day.
+      live_conformance_measured: >-
+        Measured on the live catalog (168 skills) rather than asserted:
+        numbered '-N' suffixes 0/168 — the rule with a migration behind it holds
+        PERFECTLY, and corroborates this item's own recorded 'numbered:0/166';
+        body carrying >=4 of the 7 sections 153/168 (91%); missing when_to_use 1.
+      partial_conformance_recorded: >-
+        15 of 168 descriptions EXCEED the 60-char rule (longest 235: deep-research,
+        chunked-pdf-summary 190, channel-fallback 139, code-exec-sandboxed 112).
+        Recorded rather than smoothed over: the standard is documented and largely
+        enforced, NOT universally met. The 60-char rule exists so a description is
+        readable at a glance (it is why `summary` was removed), so these 15 defeat
+        the reason the rule exists. Left as debt — trimming them is authoring work
+        on shipped skills, not a document stage.
     doc: docs/reference-mapping/designs/D09.3.md
     doc_last_verified: null
     changes:
