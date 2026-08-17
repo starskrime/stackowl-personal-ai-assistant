@@ -309,3 +309,118 @@ class TestCompletedWorkIsPruned:
 def _later() -> datetime.datetime:
     """Past any backoff the store applies."""
     return datetime.datetime.now(UTC) + datetime.timedelta(hours=1)
+
+
+class TestTheThreeAdditionsAreHONEST:
+    """These three were DESCRIBED as finished before they were. Each test pins the
+    claim the design made, so the description and the behaviour cannot drift again.
+    """
+
+    async def test_a_dead_letter_is_ESCALATED_not_merely_logged(
+        self, store: DurableTaskStore, monkeypatch
+    ) -> None:
+        """The design said dead letters are "visible and escalated". They were only
+        LOGGED — and a log line nobody tails is the silent give-up this loop exists
+        to prevent, wearing the word "visible"."""
+        from types import SimpleNamespace
+
+        sent: list[object] = []
+
+        class _Deliverer:
+            async def deliver(self, notification: object, **_: object) -> str:
+                sent.append(notification)
+                return "delivered"
+
+        from stackowl.config.settings import Settings
+        from stackowl.pipeline.services import reset_services, set_services
+
+        token = set_services(SimpleNamespace(
+            settings=Settings(), proactive_deliverer=_Deliverer(),
+        ))
+        try:
+            await _pending(store, "t1", max_attempts=1,
+                           destination="telegram:72055773", goal="find my keys")
+            await store.fail_and_requeue("t1", error="nowhere to look",
+                                         failure_class="permanent")
+        finally:
+            reset_services(token)
+
+        assert sent, "the task stopped for good and nobody was told"
+        msg = str(getattr(sent[0], "message", ""))
+        assert "find my keys" in msg, "the escalation does not say WHICH task"
+        assert "nowhere to look" in msg, "the escalation does not say why"
+        assert getattr(sent[0], "target", None) == "72055773"
+
+    async def test_escalation_failure_never_changes_the_outcome(
+        self, store: DurableTaskStore
+    ) -> None:
+        """The task has already stopped. Failing to ANNOUNCE it must not also crash
+        the caller — but it is logged, because an escalation that fails silently is
+        the original bug one level up."""
+        from types import SimpleNamespace
+
+        class _Boom:
+            async def deliver(self, *_: object, **__: object) -> str:
+                raise RuntimeError("channel down")
+
+        from stackowl.config.settings import Settings
+        from stackowl.pipeline.services import reset_services, set_services
+
+        token = set_services(SimpleNamespace(
+            settings=Settings(), proactive_deliverer=_Boom(),
+        ))
+        try:
+            await _pending(store, "t1", max_attempts=1)
+            status = await store.fail_and_requeue("t1", error="x",
+                                                  failure_class="permanent")
+        finally:
+            reset_services(token)
+
+        assert status == "dead_letter"
+        assert (await store.get("t1")).status == "dead_letter"
+
+    async def test_permanent_classes_come_from_CONFIG_not_a_constant(
+        self, store: DurableTaskStore
+    ) -> None:
+        """"which failures are truly permanent" is deployment-specific. A class the
+        operator has NOT declared permanent must be retried, even if the default
+        list would have stopped it."""
+        from types import SimpleNamespace
+
+        from stackowl.config.settings import Settings
+        from stackowl.pipeline.services import reset_services, set_services
+
+        cfg = Settings()
+        narrowed = cfg.model_copy(update={
+            "task_loop": cfg.task_loop.model_copy(
+                update={"permanent_failure_classes": ("only_this",)}
+            )
+        })
+        token = set_services(SimpleNamespace(settings=narrowed,
+                                             proactive_deliverer=None))
+        try:
+            await _pending(store, "t1", max_attempts=10)
+            # 'auth' is permanent by DEFAULT but not in this deployment's list.
+            await store.fail_and_requeue("t1", error="x", failure_class="auth")
+        finally:
+            reset_services(token)
+
+        assert (await store.get("t1")).status == "pending", (
+            "a class the operator did not declare permanent was treated as fatal"
+        )
+
+    async def test_a_cascaded_dead_letter_NAMES_the_child_that_failed(
+        self, store: DurableTaskStore
+    ) -> None:
+        """A parent that reads "a dependency will never land" leaves the operator to
+        work out WHICH one across a graph. It names it."""
+        await _pending(store, "child", max_attempts=1)
+        await _pending(store, "parent", depends_on=("child",))
+        await store.fail_and_requeue("child", error="x", failure_class="permanent")
+
+        await store.claimable(limit=10, now=_later())  # drives the cascade
+
+        parent = await store.get("parent")
+        assert parent.status == "dead_letter"
+        assert "child" in (parent.last_error or ""), parent.last_error
+        assert parent.last_failure_class == "dependency_failed"

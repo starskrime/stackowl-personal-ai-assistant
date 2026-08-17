@@ -24,6 +24,7 @@ from stackowl.config.progress_settings import ProgressSettings
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.provider_tier_migration import migrate_legacy_tier_field
 from stackowl.config.runtime_settings import RuntimeSettings
+from stackowl.config.task_loop_settings import TaskLoopSettings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.config.ui_settings import UISettings
 from stackowl.config.webhook_settings import (
@@ -1009,6 +1010,9 @@ class Settings(BaseSettings):
     ui: UISettings = Field(default_factory=UISettings)
     progress: ProgressSettings = Field(default_factory=ProgressSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
+    #: The ONE durable task loop (Bakir's architecture, 2026-08-17). Its own file
+    #: because this module is already ~1,000 lines; same shape as notifications/ui.
+    task_loop: TaskLoopSettings = Field(default_factory=TaskLoopSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     discord_channel: DiscordSettings = Field(default_factory=DiscordSettings)
     slack_channel: SlackSettings = Field(default_factory=SlackSettings)

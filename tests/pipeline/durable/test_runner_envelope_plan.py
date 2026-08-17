@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,7 +21,7 @@ from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
-    from stackowl.pipeline.backends.base import OrchestratorBackend
+    pass
 
 # ---------------------------------------------------------------------------
 # Minimal doubles

@@ -63,14 +63,52 @@ DEFAULT_LEASE_SECONDS = 900
 #: retry weeks out, which for the user is indistinguishable from "it gave up".
 _BACKOFF_SECONDS = (5, 15, 60, 300, 900)
 
-#: Failure classes that are NOT worth 30 attempts. A missing API key fails the
-#: same way every time; retrying it is 30 guaranteed-wasted model calls.
-_PERMANENT_CLASSES = frozenset({"permanent", "auth", "not_found", "refused"})
+#: Fallback when no settings are wired. The REAL list is
+#: ``settings.task_loop.permanent_failure_classes`` — which failures are truly
+#: permanent is deployment-specific (what is unrecoverable behind one gateway is a
+#: transient blip behind another), so it must not be a constant compiled in here.
+_PERMANENT_CLASSES_FALLBACK = frozenset({"permanent", "auth", "not_found", "refused"})
+
+
+def _permanent_classes() -> frozenset[str]:
+    """The configured permanent-failure classes, or the fallback.
+
+    Read at call time, not import time, so a settings change takes effect without
+    a redeploy — and never raises: an unreadable config degrades to the fallback
+    rather than making every failure look retryable.
+    """
+    try:
+        from stackowl.pipeline.services import get_services
+
+        cfg = getattr(get_services(), "settings", None)
+        if cfg is not None:
+            return frozenset(cfg.task_loop.permanent_failure_classes)
+    except Exception as exc:
+        log.tasks.warning(
+            "[loop] could not read permanent_failure_classes — using the fallback",
+            exc_info=exc,
+        )
+    return _PERMANENT_CLASSES_FALLBACK
 
 
 def _backoff_for(attempt: int) -> int:
     idx = min(max(attempt - 1, 0), len(_BACKOFF_SECONDS) - 1)
     return _BACKOFF_SECONDS[idx]
+
+
+def _channel_of(destination: str | None) -> str | None:
+    """"telegram:72055773" -> "telegram". None when there is no destination."""
+    if not destination:
+        return None
+    return destination.split(":", 1)[0] or None
+
+
+def _address_of(destination: str | None) -> str | None:
+    """"telegram:72055773" -> "72055773". None for a channel-only destination
+    like "cli", which addresses its single terminal implicitly."""
+    if not destination or ":" not in destination:
+        return None
+    return destination.split(":", 1)[1] or None
 
 
 def _split(raw: Any) -> tuple[str, ...]:
@@ -707,9 +745,11 @@ class DurableTaskStore(OwnedRepository):
         if any(by_id.get(d) in ("dead_letter", "failed") for d in deps):
             await self._db.execute(
                 f"UPDATE {self._table} SET status='dead_letter', "  # noqa: S608
-                "last_error='a dependency will never land', "
+                "last_error=?, last_failure_class='dependency_failed', "
                 "updated_at=? WHERE task_id=? AND owner_id=?",
-                (datetime.now(UTC).isoformat(), task_id, self._owner_id),
+                (f"a dependency will never land: "
+                 f"{','.join(d for d in deps if by_id.get(d) in ('dead_letter','failed'))}",
+                 datetime.now(UTC).isoformat(), task_id, self._owner_id),
             )
             log.tasks.warning(
                 "[loop] task dead-lettered — a dependency failed permanently",
@@ -790,7 +830,7 @@ class DurableTaskStore(OwnedRepository):
         row = await self.get(task_id)
         attempts = row.attempt_count + 1
         merged = tuple(sorted(set(row.banned_capabilities) | set(banned)))
-        permanent = failure_class in _PERMANENT_CLASSES
+        permanent = failure_class in _permanent_classes()
         exhausted = attempts >= row.max_attempts
         now = datetime.now(UTC)
 
@@ -811,6 +851,8 @@ class DurableTaskStore(OwnedRepository):
                                    "reason": "permanent" if permanent else "ceiling",
                                    "error": error[:200]}},
             )
+            await self._escalate(row, attempts=attempts, error=error,
+                                 permanent=permanent)
             return "dead_letter"
 
         retry_at = now + timedelta(seconds=_backoff_for(attempts))
@@ -831,6 +873,71 @@ class DurableTaskStore(OwnedRepository):
                                "retry_at": retry_at.isoformat()}},
         )
         return "pending"
+
+    async def _escalate(
+        self, row: DurableTask, *, attempts: int, error: str, permanent: bool
+    ) -> None:
+        """TELL the operator a task stopped for good.
+
+        This method exists because the design claimed dead letters were "visible
+        and escalated" when they were only LOGGED. A log line in a file nobody is
+        tailing is not an escalation — it is the silent give-up this whole loop was
+        built to prevent, wearing the word "visible".
+
+        Routed through the EXISTING ProactiveDeliverer rather than a new notifier:
+        it already owns the transport, the undelivered outbox for when the channel
+        is down, and (since ESC-19/ESC-20) recording what was said and styling it.
+        A second send path would be the duplication CLAUDE.md forbids.
+
+        Never raises and never changes the dead-letter outcome. The task has
+        already stopped; failing to announce it must not also crash the caller —
+        but the failure to announce is itself logged, because an escalation that
+        silently fails is the original bug again one level up.
+        """
+        try:
+            from stackowl.pipeline.services import get_services
+
+            svc = get_services()
+            cfg = getattr(svc, "settings", None)
+            if cfg is not None and not cfg.task_loop.escalate_dead_letters:
+                return
+            deliverer = getattr(svc, "proactive_deliverer", None)
+            if deliverer is None:
+                log.tasks.warning(
+                    "[loop] dead letter NOT escalated — no deliverer wired; the "
+                    "task stopped and only this log says so",
+                    extra={"_fields": {"task_id": row.task_id}},
+                )
+                return
+            from stackowl.notifications.router import Notification
+
+            why = "it cannot succeed by retrying" if permanent else (
+                f"it used all {row.max_attempts} attempts"
+            )
+            target = _address_of(row.destination)
+            await deliverer.deliver(Notification(
+                message=(
+                    f"I stopped working on: {row.goal[:200]}\n\n"
+                    f"Why: {why}. Last failure: {error[:300]}\n"
+                    f"Task {row.task_id} is kept as a dead letter, so nothing is "
+                    f"lost — tell me to retry it and I will."
+                ),
+                urgency="normal",
+                category="task_dead_letter",
+                channel_name=_channel_of(row.destination) or row.channel,
+                target=target,
+                job_id=row.task_id,
+            ))
+            log.tasks.info(
+                "[loop] dead letter escalated to the operator",
+                extra={"_fields": {"task_id": row.task_id, "attempts": attempts}},
+            )
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not escalate a dead letter — the task is stopped and "
+                "the operator has NOT been told",
+                exc_info=exc, extra={"_fields": {"task_id": row.task_id}},
+            )
 
     async def mark_delivered(self, task_id: str, *, result: str) -> None:
         """The ONLY way a task completes. Bakir: "if it's delivered to me, it means
