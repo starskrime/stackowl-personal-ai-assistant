@@ -11332,12 +11332,56 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  done             # designs/D16.1.md — hook contract decided
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
+    architect_closed:
+      date: 2026-08-17
+      doc: docs/reference-mapping/designs/D16.1.md
+      unblocked_by: ESC-16 (Bakir, 2026-08-17)
+      ladder_rung: >-
+        6 — a new core extension point, and it is justified rather than assumed:
+        rungs 1-4 cannot express "observe every tool call" because no seam exists
+        for a plugin to attach to. That absence is what the brainstorm measured.
+      shape: >-
+        ONE new ABC (LifecycleHook, a 7th _ABC_NAMES entry) and ONE new capability
+        (lifecycle_hooks), riding the existing PluginContext._require gate that
+        already raises PluginCapabilityDeniedError. Six hook points ported as
+        SHAPES: on_session_start, pre/post_tool_call, pre/post_llm_call,
+        on_session_end. One capability rather than six because the manifest already
+        names the points implemented — six would state the same fact twice.
+      the_decision_that_keeps_it_small: >-
+        OBSERVE ONLY. A hook returns None and its return value is discarded: no
+        veto, no argument rewriting, no tool substitution. A pre_tool_call veto is
+        the largest trust surface in the item (third-party code deciding whether the
+        agent may act, while D17 owns security), nothing in flight needs it, and
+        zero plugins exist — inventing a control surface for a population of zero is
+        the over-architecting Bakir ruled out the same day. Recorded as a v1
+        NON-GOAL to be raised as its own escalation if a real plugin needs it.
+      laws: >-
+        LAW 1 holds because hooks cannot change the presented tool array — a hook
+        that could add or remove a tool mid-conversation would invalidate the frozen
+        per-incarnation prompt on every turn (invariant I1, with a prompt_hash check
+        in the doc's Verification). LAW 2 holds because a hook is not a model tool
+        and costs ZERO tokens in the waist — this is growth at the edges exactly as
+        Law 2 permits (I2).
+      self_healing: >-
+        I5 — a repeatedly failing hook is DISABLED for the process and the operator
+        told, not merely logged. Per the standing rule: build the actuator, do not
+        file the debt. I3/I4 keep a failing or hanging hook from ever costing a turn.
+      scope_carried_into_implement: >-
+        Three items found by being the FIRST user of this surface (2026-08-16):
+        (1) _register_classes calls obj() with no arguments, so an extension point
+        needing constructor args cannot be a plugin at all — now load-bearing since a
+        hook may need config; (2) Tool requires name/description/parameters as
+        separate abstract properties, so implementing manifest alone fails — the
+        first thing an author writes and the first thing that breaks; (3)
+        ToolResult.duration_ms is required with no default — RECOMMEND defaulting it
+        to 0.0 and letting the platform's own timing win, since an author-supplied
+        duration is a second writer to a fact the platform already owns.
     doc: null
     doc_last_verified: null
     decisions: []
