@@ -39,7 +39,18 @@ class ToolResult(BaseModel):
     success: bool
     output: str
     error: str | None = None
-    duration_ms: float
+    # OPTIONAL since D16.1: a tool author should not have to time their own call.
+    # Found by being the first real user of the plugin surface (2026-08-16) — this
+    # field sat REQUIRED between two optional ones, so the obvious
+    # ``ToolResult(success=True, output=...)`` raised a ValidationError and the
+    # author was asked for a number they had not measured.
+    #
+    # The default is 0.0 ONLY because ``Tool.__call__`` stamps its own measurement
+    # over it (see the stamp below). A bare default would feed zeros into latency
+    # metrics and the cost tracker — silently wrong data, which is worse than the
+    # loud error it replaced. The platform already times every call; asking the
+    # author too is a second writer to a fact it owns.
+    duration_ms: float = 0.0
     # VERIFICATION (the reality check, distinct from `success` the self-report).
     # None  ⇒ not checked — falls back to `success` (byte-identical to pre-
     #         verification behavior; the default for the ~92 un-migrated tools).
@@ -289,6 +300,16 @@ class Tool(ABC):
                         result = _wrap_failure(exc2)
                 else:
                     result = _wrap_failure(exc)
+        # D16.1 — fill in the timing the author did not measure. Only when it is
+        # absent (0.0): a tool that supplies its own duration keeps it, because a
+        # tool may be reporting something more meaningful than our wall clock (an
+        # upstream API's own latency). We fill a GAP, we do not overrule a
+        # measurement. Every existing tool sets this, so this is byte-identical
+        # for all of them.
+        if not result.duration_ms:
+            result = result.model_copy(
+                update={"duration_ms": (time.monotonic() - t0) * 1000}
+            )
         # VERIFICATION seam — only after a success the tool ASSERTED. A tool-supplied
         # verified=True is a CLAIM, never proof: the seam still runs and its verdict
         # takes precedence (B1/F-25 — a self-asserted verification must never be trusted

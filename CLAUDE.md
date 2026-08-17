@@ -32,6 +32,33 @@ A hanging test is a failing test.
 PID.** A deletion is not live until the process holding the old code is gone. Check the
 core's start time against your last commit before believing anything you measure.
 
+## Loop-oriented, and never a second engine
+
+**Bakir's standing rule, 2026-08-17: everything the platform does is a TASK on ONE loop,
+and no implementation may duplicate logic or code that already runs work.**
+
+Every trigger is a task — a chat question, a scheduled run, a sub-goal an agent creates for
+itself. One table, one loop, claimed atomically and run in PARALLEL (five pending rows =
+five concurrent workers, no ordering). A failure returns the row to pending *with what
+failed*, so the next attempt is constrained rather than blind.
+
+**A task is complete when its outcome reached its DESTINATION, not when the function
+returned.** Ask a question on Telegram and the task is done only once the answer is
+delivered there. Every task therefore carries a destination and an achievement condition.
+This is the same rule as "measure the EFFECT" below, applied to work instead of tools.
+
+**Before building anything that runs, retries, schedules or tracks work: find the existing
+loop and extend it.** This rule is earned — the tree already accumulated FOUR overlapping
+engines: `tasks` (live), `retry_queue` (live), `objectives`/`objective_subgoals` (~2,400
+lines, driver firing every 60s against an empty table), and `job_queue` (**zero references
+anywhere in `src/`**). Never add a second queue, a second retry path, or a second status
+column. Sub-tasks are rows with a parent and `depends_on`, so a graph is edges between
+rows — not a second system.
+
+The one place the claim-and-dispatch is already correct is `scheduler.py`: `asyncio.gather`
+over due rows behind a CAS claim (`UPDATE … SET status='running' WHERE status='pending'`)
+so concurrent dispatchers can never double-run. Copy that shape; do not invent another.
+
 ## Logging
 
 Named loggers via `stackowl.infra.observability` (`log.tool`, `log.engine`,
