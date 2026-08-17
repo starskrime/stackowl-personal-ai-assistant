@@ -9897,7 +9897,33 @@ items:
                                    # +6 brief, +4 manifest, +8 standard regressions
       validate:   done             # catalog 437->168 live; migration complete
                                    # 154/154; conformance numbered:0/166
-      document:   partial          # docs/adr-19-closed-loop-autonomy.md, not the item doc
+      document:   done             # designs/D09.3.md CLOSED 2026-08-17 @0fbe3ecf —
+                                   # its own 4 Verification checks RE-RUN, all PASS
+    document_closed:
+      date: 2026-08-17
+      commit: 0fbe3ecf
+      what: >-
+        The stage was partial because the item doc itself was never closed — the
+        pointer went to docs/adr-19-closed-loop-autonomy.md. Ran all four of the
+        doc's OWN Verification checks rather than trusting its 2026-08-05/08-08
+        stamps. All PASS. (1) lifecycle {active 84, archived 2, stale 82} — decay
+        has acted. (2) curator dry run "scanned 168, would change 0" — CONVERGED.
+        (3) 15 tests pass (the doc said 14; the suite grew). (4) ruff 39 = baseline
+        HELD, mypy 65 against a baseline of 78 — IMPROVED by 13.
+      honest_note: >-
+        The catalog SHRANK 437 -> 168 rows between the 08-08 and 08-17 runs (the
+        LanceDB->SQLite move and the fact purges — the same 437->168 this item's
+        own validate stage already records), so 297 -> 82 stale is NOT a time
+        series and must not be read as skills being revived. The comparable claim
+        is that both runs show a non-empty stale bucket: decay ACTS, it is not
+        merely installed.
+      corroboration: >-
+        Independently confirmed the same day while diagnosing Bakir's separate
+        complaint that the agent "cannot improve itself": 0 skills were OVERDUE
+        for demotion — every active-but-unused skill sat inside the 30-day window,
+        oldest bucket 25-30 days. That complaint was measured and found NOT to be a
+        decay defect. The real weakness is generation PRECISION: 27 of 155 learned
+        skills have ever been used.
     doc: docs/reference-mapping/designs/D09.3.md
     doc_last_verified: null
     decisions:
