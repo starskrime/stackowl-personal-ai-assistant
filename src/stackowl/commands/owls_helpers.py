@@ -8,7 +8,7 @@ total and side-effect-free.
 from __future__ import annotations
 
 import shlex
-from typing import Any, get_args
+from typing import Any, cast, get_args
 
 from stackowl.exceptions import CommandParseError
 from stackowl.infra.observability import log
@@ -367,3 +367,150 @@ def manifest_to_yaml_entry(manifest: OwlAgentManifest) -> dict[str, Any]:
             ceiling["tools"] = sorted(ceiling["tools"])
         entry["creation_ceiling"] = ceiling
     return entry
+
+
+async def persist_owl(manifest: OwlAgentManifest) -> bool:
+    """Write an owl to its ONE home (SQLite, migration 0118).
+
+    THE SINGLE FUNNEL. Every mutation path — owl_build's create/edit/rename and
+    ``/owls edit`` — goes through here, so there is one place that knows where an
+    owl is stored. Before this there were five call sites writing YAML directly.
+
+    WHY THIS EXISTS AT ALL. Once the boot path adopted SQLite as the source of
+    record, a write that still went only to the YAML would be silently discarded
+    at the next restart: the read moved and the write did not. That is the same
+    write-with-no-reader shape, inverted, and it would have looked exactly like
+    the rename bug it came from — "I renamed it and it came back".
+
+    Returns whether the write landed. Never raises: an owl change that cannot be
+    persisted must still be reported honestly by its caller (owl_build.verify now
+    measures the effect), not crash the turn.
+    """
+    from stackowl.infra.observability import log
+
+    try:
+        from stackowl.owls.store import OwlStore
+        from stackowl.pipeline.services import get_services
+
+        db = getattr(get_services(), "db_pool", None) or getattr(
+            get_services(), "db", None
+        )
+        if db is None:
+            log.tool.error(
+                "[owls] persist_owl: no db wired — the owl change was NOT persisted",
+                extra={"_fields": {"name": manifest.name}},
+            )
+            return False
+        await OwlStore(db).upsert(manifest)
+        log.tool.info(
+            "[owls] persist_owl: stored",
+            extra={"_fields": {"name": manifest.name,
+                               "display_name": manifest.display_name or ""}},
+        )
+        return True
+    except Exception as exc:
+        log.tool.error(
+            "[owls] persist_owl: could not persist the owl change",
+            exc_info=exc, extra={"_fields": {"name": getattr(manifest, "name", "?")}},
+        )
+        return False
+
+
+async def _owl_store() -> object | None:
+    """The OwlStore for the wired db, or None when nothing is wired."""
+    from stackowl.owls.store import OwlStore
+    from stackowl.pipeline.services import get_services
+
+    db = getattr(get_services(), "db_pool", None)
+    return OwlStore(db) if db is not None else None
+
+
+async def snapshot_owl(name: str) -> OwlAgentManifest | None:
+    """The owl's CURRENT persisted state, for rollback. ``None`` = not present.
+
+    The SQLite counterpart of the yaml-bytes snapshot this replaced. The old code
+    captured the whole file so a failed registration could restore the exact prior
+    bytes; a row-scoped snapshot is strictly better — it cannot clobber a
+    concurrent change to a DIFFERENT owl the way restoring whole-file bytes could.
+
+    ``None`` is a meaningful snapshot, not an error: it means "this owl did not
+    exist", and restoring to it means deleting the row.
+    """
+    store = await _owl_store()
+    if store is None:
+        return None
+    try:
+        for m in await store.list_all():  # type: ignore[attr-defined]
+            if m.name == name:
+                return cast("OwlAgentManifest", m)
+    except Exception as exc:
+        from stackowl.infra.observability import log
+
+        log.tool.error(
+            "[owls] snapshot_owl: could not read prior state — rollback will be a "
+            "delete rather than a restore",
+            exc_info=exc, extra={"_fields": {"name": name}},
+        )
+    return None
+
+
+async def restore_owl(name: str, prior: OwlAgentManifest | None) -> None:
+    """Undo a failed write: put ``prior`` back, or remove the row if there was none.
+
+    Never raises — a rollback that throws would replace one failure with two, and
+    the caller is already returning an error to the user.
+    """
+    from stackowl.infra.observability import log
+
+    store = await _owl_store()
+    if store is None:
+        log.tool.error(
+            "[owls] restore_owl: no db wired — could NOT roll back",
+            extra={"_fields": {"name": name}},
+        )
+        return
+    try:
+        if prior is None:
+            await store.delete(name)  # type: ignore[attr-defined]
+        else:
+            await store.upsert(prior)  # type: ignore[attr-defined]
+        log.tool.info(
+            "[owls] restore_owl: rolled back",
+            extra={"_fields": {"name": name, "restored": prior is not None}},
+        )
+    except Exception as exc:
+        log.tool.error(
+            "[owls] restore_owl: rollback FAILED — the owl store may be inconsistent",
+            exc_info=exc, extra={"_fields": {"name": name}},
+        )
+
+
+async def owl_is_persisted(name: str) -> bool:
+    """Read-back: does the owl store carry a row named ``name``?
+
+    The verification counterpart of :func:`persist_owl` — it must read the same
+    home the write goes to, or verify() measures the wrong world. That is exactly
+    the defect this whole change came out of.
+    """
+    return await snapshot_owl(name) is not None
+
+
+async def delete_owl(name: str) -> bool:
+    """Remove an owl from its durable home. Returns whether a row went away.
+
+    The retire path's durable step. It leads the in-memory deregister for the same
+    reason the yaml remove used to: if the durable delete fails nothing has changed
+    in memory (clean error), and if the deregister fails afterwards the next boot
+    simply does not re-register it — consistent, never a store-present /
+    registry-absent zombie that resurrects.
+    """
+    from stackowl.infra.observability import log
+
+    store = await _owl_store()
+    if store is None:
+        log.tool.error(
+            "[owls] delete_owl: no db wired — the owl was NOT retired durably",
+            extra={"_fields": {"name": name}},
+        )
+        return False
+    return bool(await store.delete(name))  # type: ignore[attr-defined]

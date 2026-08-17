@@ -28,7 +28,13 @@ from typing import TYPE_CHECKING
 
 from stackowl.commands.config_helpers import config_path
 from stackowl.commands.owls_command import OwlsCommand
-from stackowl.commands.owls_helpers import manifest_to_yaml_entry
+from stackowl.commands.owls_helpers import (
+    delete_owl,
+    owl_is_persisted,
+    persist_owl,
+    restore_owl,
+    snapshot_owl,
+)
 from stackowl.infra import presented_tools
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
@@ -543,7 +549,7 @@ class OwlBuildTool(Tool):
             )
             return False
         # READ 2 — the durable YAML record exists + parses + carries this owl.
-        if not self._yaml_has_owl(name):
+        if not await owl_is_persisted(name):
             log.tool.warning(
                 "owl_build.verify: claimed created but owl absent from persisted yaml",
                 extra={"_fields": {"owl": name}},
@@ -937,16 +943,16 @@ class OwlBuildTool(Tool):
 
         # 7. Persist with rollback. Snapshot the yaml first so a failed register can
         #    restore the exact prior bytes (10k-DB-safe: never leave a half state).
-        snapshot = self._yaml_snapshot()
+        snapshot = await snapshot_owl(manifest.name)
         try:
-            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(manifest))  # noqa: SLF001
+            await persist_owl(manifest)
         except Exception as exc:  # B5 — no-hidden-errors
             log.tool.error(
                 "owl_build.execute: persist failed — nothing registered",
                 exc_info=exc,
                 extra={"_fields": {"owl": manifest.name}},
             )
-            self._yaml_restore(snapshot)
+            await restore_owl(manifest.name, snapshot)
             return self._err(f"failed to persist owl '{manifest.name}': {exc}", t0)
 
         await self._audit("create", manifest.name, creator)
@@ -960,7 +966,7 @@ class OwlBuildTool(Tool):
                 exc_info=exc,
                 extra={"_fields": {"owl": manifest.name}},
             )
-            self._yaml_restore(snapshot)
+            await restore_owl(manifest.name, snapshot)
             await self._audit("delete", manifest.name, creator)
             return self._err(
                 f"failed to register owl '{manifest.name}' ({exc}) — rolled back.", t0
@@ -1185,9 +1191,9 @@ class OwlBuildTool(Tool):
         if spec.specialty is not None:
             updates["system_prompt"] = spec.specialty
         rebuilt = current.model_copy(update=updates) if updates else current
-        snapshot = self._yaml_snapshot()
+        snapshot = await snapshot_owl(rebuilt.name)
         try:
-            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
+            await persist_owl(rebuilt)
             registry.replace(rebuilt)
             await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
         except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
@@ -1195,7 +1201,7 @@ class OwlBuildTool(Tool):
                 "owl_build.execute: builtin/human edit persist failed — rolling back yaml",
                 exc_info=exc, extra={"_fields": {"owl": rebuilt.name}},
             )
-            self._yaml_restore(snapshot)
+            await restore_owl(rebuilt.name, snapshot)
             return self._err(f"failed to edit owl '{rebuilt.name}' ({exc}) — rolled back.", t0)
         await self._audit("edit", rebuilt.name, creator)
         # 4. EXIT
@@ -1297,9 +1303,9 @@ class OwlBuildTool(Tool):
                 return self._err(refusal, t0)
 
         # 6. Persist + register with snapshot rollback (atomic — never a half state).
-        snapshot = self._yaml_snapshot()
+        snapshot = await snapshot_owl(rebuilt.name)
         try:
-            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
+            await persist_owl(rebuilt)
             registry.replace(rebuilt)
             await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
         except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
@@ -1308,7 +1314,7 @@ class OwlBuildTool(Tool):
                 exc_info=exc,
                 extra={"_fields": {"owl": rebuilt.name}},
             )
-            self._yaml_restore(snapshot)
+            await restore_owl(rebuilt.name, snapshot)
             return self._err(
                 f"failed to edit owl '{rebuilt.name}' ({exc}) — rolled back.", t0
             )
@@ -1424,9 +1430,9 @@ class OwlBuildTool(Tool):
         new_display = (spec.display_name or "").strip()
         rebuilt = current.model_copy(update={"display_name": new_display})
 
-        snapshot = self._yaml_snapshot()
+        snapshot = await snapshot_owl(rebuilt.name)
         try:
-            OwlsCommand()._upsert_to_yaml(manifest_to_yaml_entry(rebuilt))  # noqa: SLF001
+            await persist_owl(rebuilt)
             registry.replace(rebuilt)
             await self._invalidate_prompt(rebuilt.name, cause="owl_build_edit")
         except Exception as exc:  # B5 — no-hidden-errors, roll back the yaml
@@ -1435,7 +1441,7 @@ class OwlBuildTool(Tool):
                 exc_info=exc,
                 extra={"_fields": {"owl": rebuilt.name}},
             )
-            self._yaml_restore(snapshot)
+            await restore_owl(rebuilt.name, snapshot)
             return self._err(
                 f"failed to rename owl '{rebuilt.name}' ({exc}) — rolled back.", t0
             )
@@ -1561,9 +1567,9 @@ class OwlBuildTool(Tool):
         #    memory → clean error. If deregister fails after a successful yaml remove, the
         #    next boot simply won't re-register it (consistent — the durable store already
         #    dropped it), never a yaml-present/registry-absent zombie that resurrects.
-        snapshot = self._yaml_snapshot()
+        snapshot = await snapshot_owl(spec.name)
         try:
-            OwlsCommand()._remove_from_yaml(spec.name)  # noqa: SLF001  # durable first
+            await delete_owl(spec.name)  # durable first — the sqlite home
             if current.origin == "builtin":
                 # Tombstone it — register_builtin_personas() re-adds any factory
                 # persona absent from the registry, so without this a retired
@@ -1576,7 +1582,7 @@ class OwlBuildTool(Tool):
                 exc_info=exc,
                 extra={"_fields": {"owl": spec.name}},
             )
-            self._yaml_restore(snapshot)
+            await restore_owl(spec.name, snapshot)
             return self._err(
                 f"failed to retire owl '{spec.name}' ({exc}) — rolled back.", t0
             )

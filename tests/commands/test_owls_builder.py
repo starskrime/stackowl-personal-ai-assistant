@@ -63,16 +63,41 @@ def _seed_bounded(reg: OwlRegistry, name: str = "rsr", tier: str = "fast") -> No
 
 
 @pytest.mark.asyncio
-async def test_edit_changes_field_and_repersists(tmp_yaml: Path):
+async def test_edit_changes_field_and_repersists(tmp_yaml: Path, tmp_path: Path):
+    """STORAGE MOVED 2026-08-16 (migration 0118): an owl's durable home is the
+    `owls` table, not stackowl.yaml, so "repersists" is now checked against the
+    store. The edit is wired to a REAL db here rather than dropping the durability
+    half of this test — an edit that changes memory and persists nothing is
+    exactly the bug this arc came out of.
+    """
+    from stackowl.db.migrations.runner import MigrationRunner
+    from stackowl.db.pool import DbPool
+    from stackowl.owls.store import OwlStore
+    from stackowl.pipeline.services import (
+        StepServices,
+        reset_services,
+        set_services,
+    )
+
+    db = DbPool(db_path=tmp_path / "owls.db")
+    await db.open()
+    MigrationRunner(tmp_path / "owls.db").run()
     reg = OwlRegistry()
     cmd = OwlsCommand(owl_registry=reg)
     _seed_bounded(reg)
-    out = await cmd.handle("edit rsr --tier powerful", _state())
+    token = set_services(StepServices(owl_registry=reg, db_pool=db))
+    try:
+        out = await cmd.handle("edit rsr --tier powerful", _state())
+    finally:
+        reset_services(token)
+
     assert "✓" in out
     assert reg.get("rsr").model_tier == "powerful"
     assert reg.get("rsr").bounds is not None and "delegate_task" in reg.get("rsr").bounds.tools
-    entry = next(e for e in _load(tmp_yaml)["owls"] if e["name"] == "rsr")
-    assert entry["model_tier"] == "powerful"
+    persisted = {m.name: m for m in await OwlStore(db).list_all()}
+    assert "rsr" in persisted, f"the edit was not persisted: {sorted(persisted)}"
+    assert persisted["rsr"].model_tier == "powerful"
+    await db.close()
 
 
 @pytest.mark.asyncio

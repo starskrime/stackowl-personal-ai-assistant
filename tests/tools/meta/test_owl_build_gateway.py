@@ -153,14 +153,26 @@ async def test_j1_root_mints_persists_survives_restart(tmp_home: Path, tmp_db: D
     assert live.origin == "agent"
     assert live.created_by == "secretary"
 
-    # OUTCOME — persisted to disk (the durable record at the tmp-home yaml).
-    from stackowl.commands.config_helpers import config_path
+    # OUTCOME — persisted durably. STORAGE MOVED 2026-08-16 (migration 0118): an
+    # owl's home is the `owls` table, not stackowl.yaml. The yaml is no longer
+    # written at all by a create, so the old `config_path().exists()` assertion
+    # would now fail — and asserting on that file would in any case pass whenever
+    # ANY provider/system config existed, whether or not the owl was saved.
+    from stackowl.owls.store import OwlStore
 
-    assert config_path().exists(), "owl was not persisted to yaml"
+    persisted = {m.name for m in await OwlStore(tmp_db).list_all()}
+    assert "scout" in persisted, f"owl absent from its sqlite home: {persisted}"
 
-    # OUTCOME — survives a simulated restart: fresh registry from the SAME yaml +
-    # the boot re-clamp pass. Bounds remain a subset of SAFE_DEFAULT_CEILING.
-    reloaded = OwlRegistry.from_settings(_settings_for_reload())
+    # OUTCOME — survives a simulated restart. A restart now rehydrates from the
+    # STORE (orchestrator._adopt_sqlite_owls), so the reload reads the table the
+    # write went to. Reading settings here would test a path production no longer
+    # takes, and would pass for the wrong reason.
+    reloaded = OwlRegistry.with_default_secretary()
+    for m in await OwlStore(tmp_db).list_all():
+        try:
+            reloaded.replace(m)
+        except Exception:
+            reloaded.register(m, source_name="agent_owls")
     revalidate_agent_owls(reloaded)
     survived = reloaded.get("scout")
     assert survived.origin == "agent"

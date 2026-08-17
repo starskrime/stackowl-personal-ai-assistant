@@ -22,9 +22,9 @@ from stackowl.commands.owls_helpers import (
     format_dna_display,
     format_dry_run_report,
     format_owl_roster,
-    manifest_to_yaml_entry,
     parse_edit_args,
     parse_owl_build_flags,
+    persist_owl,
 )
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.response import Action, CommandResponse
@@ -406,7 +406,7 @@ class OwlsCommand(SlashCommand):
         # over unchanged while enforcing every field constraint (e.g. the tier Literal).
         updated = type(current).model_validate({**current.model_dump(), **changes})
         self._registry.replace(updated)
-        self._upsert_to_yaml(manifest_to_yaml_entry(updated))
+        await persist_owl(updated)
         # D01.4 — clear this owl's frozen prompt on EVERY lane, so the edit
         # reaches the very next turn instead of waiting for a rollover that
         # D01.7 may not perform until 04:00. Awaited HERE, before the

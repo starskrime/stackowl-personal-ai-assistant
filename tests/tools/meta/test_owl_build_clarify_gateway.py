@@ -171,9 +171,13 @@ async def test_c1_underspecified_create_asks_then_mints(
     assert "role" in adapter.calls[0][1].lower()  # the specialty question
     live = registry.get("scout")
     assert live.origin == "agent"
-    from stackowl.commands.config_helpers import config_path
+    # STORAGE MOVED 2026-08-16 (migration 0118): an owl's durable home is the
+    # `owls` table. A create no longer writes stackowl.yaml at all, so the old
+    # config_path() assertion tested a file the tool has stopped touching.
+    from stackowl.owls.store import OwlStore
 
-    assert config_path().exists(), "minted owl was not persisted"
+    persisted = {m.name for m in await OwlStore(tmp_db).list_all()}
+    assert persisted, f"minted owl was not persisted: {persisted}"
 
 
 # --- C2: off-TTY underspecified FAILS CLOSED (no hang) ----------------------

@@ -91,12 +91,17 @@ async def test_a_create_success_is_verified_via_world_reads(
 
     assert result.success, result.error
     assert result.verified is True, "a real create must MEASURE verified=True"
-    # The reads verify() consulted are genuinely satisfied:
-    from stackowl.commands.config_helpers import config_path, load_yaml
+    # The reads verify() consulted are genuinely satisfied. STORAGE MOVED
+    # 2026-08-16 (migration 0118): an owl's durable home is the `owls` table, not
+    # stackowl.yaml, so the read-back that proves persistence moved with it. This
+    # assertion previously read the yaml; asserting the OLD home would now pass
+    # while the owl was stored somewhere else entirely — the exact
+    # measure-the-wrong-world defect this arc came out of.
+    from stackowl.owls.store import OwlStore
 
     assert registry.get("scout").origin == "agent"          # live registry read
-    owls = load_yaml(config_path()).get("owls") or []        # persisted yaml read
-    assert any(e.get("name") == "scout" for e in owls)
+    persisted = {m.name for m in await OwlStore(tmp_db).list_all()}
+    assert "scout" in persisted, f"owl absent from its sqlite home: {persisted}"
 
 
 async def test_b_success_but_owl_absent_yields_verified_false(
