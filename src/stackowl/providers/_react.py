@@ -15,6 +15,9 @@ import json
 import re
 from typing import Any
 
+from stackowl.infra.observability import log
+from stackowl.providers._wrapup import LOOP_REPEAT_DIRECTIVE
+
 # NOTE: no trailing `$` anchor. A weak model often FLATTENS newlines (its `\n`
 # arrive as a literal `n`), so `ACTION: skill_managen{...}` runs onto one physical
 # line; a `$`-anchored regex missed it and the raw tool call leaked to the user.
@@ -384,11 +387,30 @@ class LoopGuard:
             self._counts[sig] = self._counts.get(sig, 0) + 1
             count = self._counts[sig]
             if count == self._warn_at and sig not in self._warned:
+                # ORDER IS LOAD-BEARING. The directive is a ONE-SHOT: marking the
+                # signature warned before it has been handed back means any failure
+                # in between burns the only warning this signature will ever get,
+                # and the model is never told to change approach — not now, and not
+                # on any later repeat. LOOP_REPEAT_DIRECTIVE used to be imported
+                # HERE, inside the try, so an import error did exactly that,
+                # silently. It is now a module-level import (_wrapup imports nothing
+                # but __future__, so there was never a cycle to avoid) and the mark
+                # happens last.
+                directive = LOOP_REPEAT_DIRECTIVE
                 self._warned.add(sig)
-                from stackowl.providers._wrapup import LOOP_REPEAT_DIRECTIVE
-                return LOOP_REPEAT_DIRECTIVE
-        except Exception:
-            pass
+                return directive
+        except Exception as exc:
+            # Never let a bookkeeping failure cost the turn — but never hide it
+            # either. This guard is what stops a model looping on one tool call
+            # (live incident 2026-08-15: ten meta-tool calls, no convergence), so a
+            # guard that quietly stops counting is worse than no guard at all,
+            # because nothing reports that it has gone.
+            log.engine.error(
+                "[react] loop guard: observe failed — repeat detection DEGRADED "
+                "for this call",
+                exc_info=exc,
+                extra={"_fields": {"tool": name}},
+            )
         return None
 
     def tripped(self) -> bool:

@@ -665,13 +665,28 @@ class StartupOrchestrator:
                     extra={"_fields": {"offered": len(before)}},
                 )
                 return
+            from stackowl.exceptions import OwlNotFoundError
+
             adopted = 0
             for m in owls:
                 try:
                     owl_registry.replace(m)  # type: ignore[attr-defined]
-                except Exception:
-                    # Not present yet (a row the YAML no longer carries) — register.
+                except OwlNotFoundError:
+                    # The ONLY expected miss: a row the yaml no longer carries, so
+                    # there is nothing to replace. Caught narrowly on purpose — this
+                    # was `except Exception`, which would have swallowed a genuine
+                    # replace failure and then counted the owl as adopted anyway.
                     owl_registry.register(m)  # type: ignore[attr-defined]
+                except Exception as exc:
+                    # Any other failure means this owl is NOT adopted. Say so and
+                    # keep going: one bad row must not cost the user the others.
+                    log.error(
+                        "[startup] owls: could not adopt an owl from sqlite — it "
+                        "keeps whatever the yaml-derived registry held",
+                        exc_info=exc,
+                        extra={"_fields": {"owl": getattr(m, "name", "?")}},
+                    )
+                    continue
                 adopted += 1
             log.info(
                 "[startup] owls: sqlite is now the source of record",
