@@ -1630,6 +1630,48 @@ class StartupOrchestrator:
         )
         register_retry_sweep_handler(actuator=retry_actuator, retry_store=retry_queue_store)
 
+        # THE ONE LOOP (Bakir, 2026-08-17). Started HERE because this is the first
+        # point where its runner's dependency — the retry actuator, which already
+        # re-drives a goal and delivers it — actually exists. Reusing that is the
+        # platform rule, not a shortcut: a second re-drive path is how the tree
+        # accumulated four overlapping work engines.
+        #
+        # What it does once running: claims pending tasks in PARALLEL behind a CAS
+        # claim, re-drives each carrying what already failed, marks a task complete
+        # ONLY when its outcome was delivered, dead-letters at the ceiling and tells
+        # the operator, reclaims rows whose worker died, and prunes delivered rows.
+        #
+        # Gated on settings.task_loop.enabled so it can be turned off without a
+        # deploy — a loop that runs unattended is the thing an operator most needs
+        # to be able to stop.
+        task_loop = None
+        _loop_cfg = self._settings.task_loop
+        if _loop_cfg.enabled:
+            from stackowl.pipeline.durable.loop import TaskLoop
+            from stackowl.pipeline.durable.task_loop_runner import build_task_runner
+
+            task_loop = TaskLoop(
+                store=DurableTaskStore(db_pool),
+                runner=build_task_runner(retry_actuator),
+                max_parallel=_loop_cfg.max_parallel,
+                tick_seconds=_loop_cfg.tick_seconds,
+                lease_seconds=_loop_cfg.lease_seconds,
+                prune_after_days=_loop_cfg.prune_completed_after_days,
+            )
+            await task_loop.start()
+            log.info(
+                "[startup] gateway: the ONE loop is running",
+                extra={"_fields": {"tick_s": _loop_cfg.tick_seconds,
+                                   "max_parallel": _loop_cfg.max_parallel,
+                                   "max_attempts": _loop_cfg.default_max_attempts,
+                                   "worker": task_loop.worker_id}},
+            )
+        else:
+            log.warning(
+                "[startup] gateway: the task loop is DISABLED — pending tasks will "
+                "accumulate and nothing will recover a dropped turn",
+            )
+
         # D01.7 — the conversation sweep. NOTE the name: `session_sweep` is
         # already taken by the idle-owl-session reaper, a different concept.
         from stackowl.scheduler.handlers.conversation_sweep import (
