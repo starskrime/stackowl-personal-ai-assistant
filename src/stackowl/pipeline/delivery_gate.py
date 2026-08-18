@@ -445,6 +445,28 @@ _SCHEDULE_FLOOR_TEXT = (
 )
 
 
+def _is_uncitable_url(url: str) -> bool:
+    """True when a URL cannot be a SOURCE, so it is not a citation to check.
+
+    A loopback address is the clear case and the one that mattered: eleven of
+    Bakir's turns were floored over ``http://localhost``, which an OAuth setup
+    answer must state as the redirect URI. Nobody can read localhost as evidence
+    for a claim, so calling it a fabricated citation is a category error — not a
+    judgement about how strict the gate should be.
+
+    Reuses ``infra.net.host_locality.is_local_url``, the same oracle the SSRF guard
+    consults; a second opinion about what "local" means is how two rules drift
+    apart. Never raises — this runs on every answer containing a URL, and an
+    exception here would turn a grounding check into a lost turn.
+    """
+    try:
+        from stackowl.infra.net.host_locality import is_local_url
+
+        return bool(is_local_url(url))
+    except Exception:
+        return False
+
+
 def _normalize_url(raw: str) -> str:
     """Canonicalize a URL for set membership: lowercase scheme+host, drop the
     fragment, strip a trailing path slash. Query is KEPT (a different query is a
@@ -650,7 +672,11 @@ async def surface_grounding_gate(state: PipelineState) -> PipelineState:
         fabricated = {
             norm
             for u in response_urls
-            if (norm := _normalize_url(u)) and norm not in fetched and norm not in user_urls
+            if (norm := _normalize_url(u))
+            and norm not in fetched
+            and norm not in user_urls
+            # A loopback URL is configuration, not a source — see _is_uncitable_url.
+            and not _is_uncitable_url(u)
         }
         if not fabricated:
             return state  # every URL is grounded or user-supplied — back-compat
