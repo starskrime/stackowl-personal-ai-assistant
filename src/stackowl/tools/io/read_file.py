@@ -20,7 +20,10 @@ class ReadFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Read the contents of a file. Path must be inside STACKOWL_DATA_DIR."
+        return (
+                "Read, open and load the full text contents of a file from disk. Use for inspecting saved notes, logs, "
+                "code, CSV or JSON. Path must be inside STACKOWL_DATA_DIR."
+        )
 
     @property
     def parameters(self) -> dict[str, object]:

@@ -277,7 +277,10 @@ class BrowserExtractTool(_BrowserTool):
     def name(self) -> str: return "browser_extract"
     @property
     def description(self) -> str:
-        return "Extract content from the current page. Modes: markdown (default, via Trafilatura), text, links, html."
+        return (
+            "Extract, scrape and read the visible content or article text of the current web page, so it can be "
+            "summarised or searched. Modes: markdown (default, via Trafilatura), text, links, html."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {
@@ -761,7 +764,8 @@ class BrowserDownloadTool(_BrowserTool):
     @property
     def description(self) -> str:
         return (
-            "Click trigger_selector and capture the resulting download. "
+            "Download and save a file from a web page by clicking trigger_selector, "
+            "capturing the resulting attachment such as a PDF, CSV, image or export. "
             "Returns {path, bytes, sha256}. CONSEQUENTIAL."
         )
     @property
@@ -823,7 +827,11 @@ class BrowserCookiesGetTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_cookies_get"
     @property
-    def description(self) -> str: return "Return cookies for the session, optionally filtered by domain."
+    def description(self) -> str:
+        return (
+            "Read, inspect and export the browser session's cookies, optionally filtered by domain. Use to capture a "
+            "login or check which authentication state is active."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {
@@ -861,7 +869,11 @@ class BrowserCookiesSetTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_cookies_set"
     @property
-    def description(self) -> str: return "Add cookies to the session. Pass a list of cookie dicts."
+    def description(self) -> str:
+        return (
+            "Add, set, inject or restore cookies into the browser session from a list of cookie dicts. Use to reuse a "
+            "saved login and authenticate without signing in again."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {
@@ -904,7 +916,12 @@ class BrowserCookiesClearTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_cookies_clear"
     @property
-    def description(self) -> str: return "Clear all cookies on the session."
+    def description(self) -> str:
+        return (
+            "Clear, delete and remove all cookies from the browser session. Use to log out, sign out, drop a stale "
+            "login, "
+            "or reset authentication state before a fresh visit."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}
@@ -932,7 +949,11 @@ class BrowserTabOpenTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_tab_open"
     @property
-    def description(self) -> str: return "Open a new tab (page) inside the session. Returns the new page_handle."
+    def description(self) -> str:
+        return (
+            "Open a new tab or page inside the existing browser session, so several sites can be visited side by side. "
+            "Returns the new page_handle."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}
@@ -957,7 +978,12 @@ class BrowserTabListTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_tab_list"
     @property
-    def description(self) -> str: return "List open tabs (pages) in the session with their handles + current URLs."
+    def description(self) -> str:
+        return (
+            "List and show every open tab or page in the browser session with its handle and current URL. Use to see "
+            "what "
+            "is open before switching or closing a tab."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}
@@ -985,7 +1011,12 @@ class BrowserTabCloseTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_tab_close"
     @property
-    def description(self) -> str: return "Close a single tab (page) inside the session, without closing the session."
+    def description(self) -> str:
+        return (
+            "Close one single tab or page inside the browser session while leaving the session and its other tabs "
+            "open. "
+            "Use to tidy up after finishing with one page."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {
@@ -1028,7 +1059,11 @@ class BrowserCloseTool(_BrowserTool):
     @property
     def name(self) -> str: return "browser_close"
     @property
-    def description(self) -> str: return "Close an entire browser session (all tabs, release context)."
+    def description(self) -> str:
+        return (
+            "Close, quit and shut down an entire browser session, closing every open tab and releasing its context and "
+            "memory. Use when finished browsing a site."
+        )
     @property
     def parameters(self) -> dict[str, object]:
         return {"type": "object", "properties": {"session_id": {"type": "string"}}, "required": ["session_id"]}

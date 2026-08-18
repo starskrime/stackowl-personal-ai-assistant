@@ -21,7 +21,10 @@ class WriteFileTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Write content to a file. Path must be inside STACKOWL_DATA_DIR."
+        return (
+                "Write, save or create a file on disk, overwriting any existing content. Use to store notes, export "
+                "results, or produce a document or report. Path must be inside STACKOWL_DATA_DIR."
+        )
 
     @property
     def manifest(self) -> ToolManifest:
