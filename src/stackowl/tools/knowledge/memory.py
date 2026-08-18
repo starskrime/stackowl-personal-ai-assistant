@@ -122,9 +122,13 @@ class MemoryTool(Tool):
                 "target": {
                     "type": "string",
                     "description": (
-                        "Which curated file to write: 'user' for the user's "
-                        "profile (the default), or an owl's name for that owl's "
-                        "own working notes."
+                        "'user' = durable facts about the PERSON (preferences, "
+                        "how they want you to work). It is shared with EVERY owl "
+                        "and is the smallest budget, so keep it to a handful of "
+                        "lasting facts. An owl's name = that owl's own working "
+                        "notes. Job config, credentials, schedules, and logs of "
+                        "what you already delivered are NOT user preferences — "
+                        "put them on the owl that owns the work, or nowhere."
                     ),
                     "default": _DEFAULT_TARGET,
                 },
