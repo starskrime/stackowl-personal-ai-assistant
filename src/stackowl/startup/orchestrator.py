@@ -1774,6 +1774,35 @@ class StartupOrchestrator:
                 "[startup] gateway: plugin index loaded",
                 extra={"_fields": {"count": len(plugin_index.all())}},
             )
+            # Bakir's decision, 2026-08-17: plugins load AT BOOT. Until now the
+            # index was a catalogue nothing acted on — LocalPluginLoader had zero
+            # construction sites in src/, so a plugin dropped into
+            # ~/.stackowl/plugins/ was COUNTED here and loaded nothing.
+            #
+            # Every extension point in _ABC_NAMES is handed its real registry, so
+            # a declared point cannot be silently unregistrable (the MemoryProvider
+            # defect fixed earlier today). load_installed_plugins never raises and
+            # time-bounds each load, so third-party code executing at startup
+            # cannot stop or wedge the boot.
+            from stackowl.plugins.boot import load_installed_plugins
+            from stackowl.plugins.local_loader import LocalPluginLoader
+            from stackowl.scheduler.base import HandlerRegistry
+
+            plugin_report = await load_installed_plugins(
+                index=plugin_index,
+                loader=LocalPluginLoader(
+                    tool_registry=tool_registry,
+                    command_registry=CommandRegistry.instance(),
+                    handler_registry=HandlerRegistry.instance(),
+                    channel_registry=ChannelRegistry.instance(),
+                    owl_registry=owl_registry,
+                ),
+            )
+            if plugin_report.skipped:
+                log.warning(
+                    "[startup] gateway: some plugins did NOT load",
+                    extra={"_fields": {"skipped": list(plugin_report.skipped)}},
+                )
         except Exception as exc:
             log.warning(
                 "[startup] gateway: plugin index load failed — continuing without plugins",

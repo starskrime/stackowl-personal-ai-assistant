@@ -757,6 +757,27 @@ current:
       retry_queue is the one worth checking by hand because it can change behaviour
       rather than a number.
   - id: ESC-16-do-plugins-get-lifecycle-hooks
+    DECIDED_BY_BAKIR_LOADING:
+      date: 2026-08-17
+      answer: >-
+        PLUGINS LOAD AT BOOT. Bakir chose "on load" over load-on-explicit-command
+        and over leaving the loader unwired, against my recommendation of the
+        explicit command. Recorded as HIS call, with my reasoning noted rather
+        than silently dropped: booting means the platform EXECUTES third-party
+        code at startup, and a plugin that hangs or raises during load is a plugin
+        that stops the platform.
+      what_that_obliges_the_implementation_to_do: >-
+        Because it is now automatic, the load path must be hardened in ways an
+        operator-triggered load would not need: (1) a plugin that raises during
+        load must NOT stop the boot — it is skipped, loudly, and the platform
+        starts without it; (2) load must be time-bounded so a hanging plugin
+        cannot wedge startup; (3) the capability gate stays load-time, so an
+        ungranted plugin never reaches a call site; (4) what loaded, what was
+        skipped and why must be one INFO line, because at boot nobody is watching.
+      still_open: >-
+        The hook contract itself is decided (capability-gated, observe-only, no pip
+        entry points) and architected in designs/D16.1.md. This settles only HOW a
+        plugin is discovered and loaded.
     DECIDED_BY_BAKIR:
       date: 2026-08-17
       answer: >-
