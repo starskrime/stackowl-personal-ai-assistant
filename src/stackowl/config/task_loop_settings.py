@@ -90,19 +90,24 @@ class TaskLoopSettings(BaseModel):
         ),
     )
     produce_replies: bool = Field(
-        default=True,
+        default=False,
         description=(
             "The LOOP produces the chat reply, not merely recovers one — Bakir's "
             "design in full: 'the loop should go understand, find the answer, "
-            "return back answer to the Telegram.' ON by default per the standing "
-            "rule that a finished feature ships enabled rather than dormant.\n\n"
-            "The trade, stated honestly: the live typing/status indicator does not "
-            "run for a loop-produced turn, because the worker delivers when the "
-            "work is done. The ANSWER itself is unaffected — Telegram already "
-            "buffers a reply and sends it in one piece, so nothing about the "
-            "delivered message changes. Set this False to hand production back to "
-            "the fast path; the durable row, the delivery rule and the retry "
-            "ladder are identical either way."
+            "return back answer to the Telegram.'\n\n"
+            "TURNED BACK OFF 2026-08-18 after Bakir used it, and the reason is "
+            "worth keeping: loop production WORKS (measured — claim to delivered "
+            "in 9s and 23s on real turns), but it loses the instant "
+            "acknowledgement that the fast path sends and then REPLACES IN PLACE "
+            "with the real answer. On a platform where a turn takes 9-30s, that "
+            "ack is what tells the user their message was received at all; without "
+            "it the wait reads as nothing happening.\n\n"
+            "This goes back ON once the loop path sends its own ack and edits it "
+            "in place — RetryActuator._deliver_success ALREADY edits a message "
+            "when it has a channel_message_id, so the missing piece is creating "
+            "one, not new delivery machinery. Until then the fast path produces "
+            "and the loop owns recovery; the durable row, the delivery rule and "
+            "the retry ladder are identical either way."
         ),
     )
     escalate_dead_letters: bool = Field(
