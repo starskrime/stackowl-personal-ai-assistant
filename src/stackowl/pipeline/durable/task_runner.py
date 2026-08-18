@@ -118,6 +118,14 @@ class DurableTaskRunner:
                 session_key=state.session_key or None,
                 creation_ceiling=creation_ceiling,
                 task_envelope=task_envelope,
+                # THE ONE LOOP. An agent's own scheduled work is a task on the
+                # same terms as a chat turn (Bakir, 2026-08-18). Without these the
+                # rows existed but carried no destination and no achievement
+                # condition, so they reached status='completed' with delivered_at
+                # NULL — success claimed with no proof anyone received it.
+                trigger_kind="schedule",
+                destination=state.channel or None,
+                achievement="the answer is delivered to the job's targets",
                 created_at=now,
                 updated_at=now,
             )

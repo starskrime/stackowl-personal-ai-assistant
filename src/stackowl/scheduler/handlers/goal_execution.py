@@ -292,6 +292,29 @@ class GoalExecutionHandler(JobHandler):
         else:
             status, delivery_failed = await self._deliver_answer(job, response_text)
             result_text = response_text or None
+            # THE ONE LOOP (Bakir, 2026-08-18: the loop is for "all actions what
+            # agents done", not only chat). A scheduled task completes on the same
+            # terms as a chat turn: only when its answer actually reached its
+            # destination. Before this, these rows read status='completed' with
+            # delivered_at NULL — the agent's own work claiming success with no
+            # proof anyone received it.
+            #
+            # `status` is the rollup _deliver_answer already computed, and it is
+            # deliberately honest ("undeliverable" when a body existed and nothing
+            # was sent). Reusing that verdict rather than deriving a second one is
+            # the point: two opinions about whether delivery happened is how they
+            # drift.
+            if final_state.task_id and self._db is not None:
+                from stackowl.pipeline.durable.agent_task import complete_agent_task
+                from stackowl.pipeline.durable.store import DurableTaskStore
+                from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+
+                await complete_agent_task(
+                    DurableTaskStore(self._db, DEFAULT_PRINCIPAL_ID),
+                    task_id=final_state.task_id,
+                    result=response_text,
+                    delivery_status=status,
+                )
 
         await self._record_result(job.job_id, status, result_text, duration_ms)
 
