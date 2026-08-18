@@ -91,6 +91,31 @@ _DEFAULT_OWL = "secretary"
 _DEFAULT_CHANNEL = "cli"
 
 
+def reply_target_for_task(task: object) -> str | None:
+    """The address a recovered task's answer must be sent to, or None.
+
+    Reads ``destination`` — "telegram:72055773" — which the loop already records
+    and which the delivery rule already turns on, so there is no second source of
+    truth about where a reply belongs.
+
+    Returns the address in its CHANNEL-NATIVE form: slack ids are not numeric, so
+    coercing would break every non-telegram gateway. A channel-only destination
+    ("cli") addresses its single terminal implicitly and yields None, as does a
+    task with no destination at all — a sweep has nobody waiting, and inventing a
+    recipient would be worse than having none.
+
+    Never raises: recovery runs after a crash, and a parsing error here would turn
+    a lost answer into a lost recovery.
+    """
+    try:
+        raw = getattr(task, "destination", None)
+        if not raw or ":" not in str(raw):
+            return None
+        return str(raw).split(":", 1)[1].strip() or None
+    except Exception:  # pragma: no cover — defensive
+        return None
+
+
 class DurableTaskRecoverer:
     """Resumes orphaned durable tasks for one owner — background drive.
 
@@ -437,8 +462,16 @@ class DurableTaskRecoverer:
             parent_session_key=task.session_key,
             fallback=f"recover-{task_id[:12]}",
         )
+        # WHERE THE ANSWER GOES. Without this a recovered turn has no
+        # reply_target, _proactive_fallback declines ("no durable reply target")
+        # and the answer it just computed is DISCARDED — measured 2026-08-18,
+        # 222 characters of a real reply thrown away after Bakir sent a file.
+        # Recovery exists so work is not lost on a crash; it was losing the answer
+        # instead. task.destination is the address the loop already records.
+        reply_target = reply_target_for_task(task)
         base = PipelineState(
             trace_id=f"recover-{task_id[:12]}",
+            reply_target=reply_target,
             session_key=lane,
             session_id=incarnation,
             identity_key=identity or "",
