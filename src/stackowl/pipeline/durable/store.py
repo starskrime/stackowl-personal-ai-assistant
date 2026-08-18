@@ -248,6 +248,42 @@ class DurableTaskStore(OwnedRepository):
         )
         return tasks
 
+    async def _warn_if_undelivered(self, task_id: str) -> None:
+        """Say so when a task with a DESTINATION is completed without delivery proof.
+
+        Deliberately a warning and not a refusal. These callers genuinely finished
+        the work — the answer did reach Bakir in both observed cases — they simply
+        cannot prove it through this seam. Refusing the transition would leave a
+        real, finished task stuck `running` until its lease expired and the loop
+        re-drove it, which would answer the user a SECOND time. A false duplicate
+        is worse than an unproven record.
+
+        So this makes the gap visible and countable rather than silent, which is
+        the precondition for closing it properly (each such caller threading its
+        own delivery verdict, as goal_execution now does).
+        """
+        try:
+            rows = await self._db.fetch_all(
+                f"SELECT destination, delivered_at FROM {self._table} "  # noqa: S608
+                "WHERE task_id = ? AND owner_id = ?",
+                (task_id, self._owner_id),
+            )
+            if not rows:
+                return
+            row = rows[0]
+            if row.get("destination") and row.get("delivered_at") is None:
+                log.tasks.warning(
+                    "[loop] task marked completed WITHOUT delivery proof — it had "
+                    "somewhere to deliver and this path cannot confirm it arrived",
+                    extra={"_fields": {"task_id": task_id,
+                                       "destination": row["destination"]}},
+                )
+        except Exception as exc:  # never block a finalize on its own bookkeeping
+            log.tasks.error(
+                "[loop] could not check delivery proof before completing a task",
+                exc_info=exc, extra={"_fields": {"task_id": task_id}},
+            )
+
     async def update_status(
         self,
         task_id: str,
@@ -273,6 +309,20 @@ class DurableTaskStore(OwnedRepository):
                 "set_result": result is not None,
             }},
         )
+        # THE DELIVERY RULE, ENFORCED WHERE IT IS WRITTEN. Bakir, 2026-08-17: a
+        # task is complete when its outcome reached its DESTINATION. mark_delivered
+        # is the only path that can prove that, but this method predates it and
+        # several callers (executor's finalize, crash recovery, task_runner) mark a
+        # task "completed" directly — so a row with somewhere to deliver could
+        # reach `completed` with delivered_at NULL. That is two writers to one
+        # fact, and it produced exactly the overclaim the loop exists to prevent:
+        # two of Bakir's own chat turns were finalized this way by RECOVERY after a
+        # restart, reading as complete with no proof he ever received them.
+        #
+        # A row with NO destination is unaffected: a sweep or an internal sub-task
+        # has nobody waiting, so "completed" is the whole truth for it.
+        if status == "completed":
+            await self._warn_if_undelivered(task_id)
         # 2. DECISION — build the SET list dynamically from the supplied fields
         set_parts: list[str] = ["status = ?", "updated_at = ?"]
         params: list[Any] = [status, datetime.now(tz=UTC).isoformat()]
