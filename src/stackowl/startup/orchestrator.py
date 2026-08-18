@@ -1659,6 +1659,10 @@ class StartupOrchestrator:
                 prune_after_days=_loop_cfg.prune_completed_after_days,
             )
             await task_loop.start()
+            # Publish it so the chat ingress can WAKE it on enqueue instead of
+            # making the user wait out a five-second tick. Set AFTER start() so
+            # nothing can hand work to a loop that is not yet ticking.
+            services.task_loop = task_loop
             log.info(
                 "[startup] gateway: the ONE loop is running",
                 extra={"_fields": {"tick_s": _loop_cfg.tick_seconds,
@@ -2290,8 +2294,17 @@ class StartupOrchestrator:
                 # Born running-with-a-lease so the loop cannot answer a turn the
                 # fast path is already handling; only an EXPIRED lease hands it
                 # over. Best-effort: never raises, never delays the turn.
-                from stackowl.pipeline.durable.turn_task import enqueue_turn_task
+                from stackowl.pipeline.durable.turn_task import (
+                    enqueue_turn_task,
+                    loop_produces_replies,
+                )
 
+                # WHO answers this turn. Exactly one producer must exist — a turn
+                # both run here and claimed by the loop is answered TWICE, and the
+                # user sees two replies to one question. The row's initial status
+                # IS the mechanism: `running` with a lease means the fast path
+                # holds it; `pending` means the loop may take it.
+                _loop_answers = loop_produces_replies(services)
                 await enqueue_turn_task(
                     getattr(services, "durable_task_store", None),
                     trace_id=msg.trace_id,
@@ -2300,7 +2313,20 @@ class StartupOrchestrator:
                     chat_id=msg.chat_id,
                     session_key=lane,
                     owl_name=decision.target,
+                    loop_produces=_loop_answers,
+                    loop=getattr(services, "task_loop", None),
                 )
+                if _loop_answers:
+                    # Bakir's design in full: the loop finds the answer and returns
+                    # it. The worker delivers in one piece, so this turn produces
+                    # no stream — that trade is stated on the config field, and it
+                    # is why the flag defaults OFF.
+                    log.info(
+                        "[startup] gateway: the LOOP will answer this turn",
+                        extra={"_fields": {"trace_id": msg.trace_id,
+                                           "session_key": lane}},
+                    )
+                    return
                 producer = asyncio.create_task(backend.run(state))
             producer.add_done_callback(_log_pipeline_crash)
 

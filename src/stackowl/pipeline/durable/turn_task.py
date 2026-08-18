@@ -63,6 +63,31 @@ def _destination(channel: object, chat_id: object = None) -> str:
     return f"{ch}:{addr}" if addr else ch
 
 
+def loop_produces_replies(services: Any) -> bool:
+    """Is the LOOP the primary producer for chat turns, or the fast path?
+
+    Bakir's design has the loop find the answer and return it. That is off by
+    default for a reason the config states in full: a loop-produced reply arrives
+    in one piece when the work finishes, so the streaming/progress path is bypassed
+    and a multi-tool turn on this hardware means minutes of silence.
+
+    Degrades toward the FAST PATH on any doubt. Both modes are safe; but "nobody
+    produces this turn" is not, and the fast path is the one that definitely
+    answers.
+    """
+    try:
+        cfg = getattr(services, "settings", None)
+        if cfg is None:
+            return False
+        return bool(cfg.task_loop.produce_replies)
+    except Exception as exc:
+        log.tasks.warning(
+            "[loop] could not read produce_replies — the fast path will answer",
+            exc_info=exc,
+        )
+        return False
+
+
 async def enqueue_turn_task(
     store: Any,
     *,
@@ -72,12 +97,19 @@ async def enqueue_turn_task(
     chat_id: object = None,
     session_key: str | None = None,
     owl_name: str | None = None,
+    loop_produces: bool = False,
+    loop: Any = None,
 ) -> None:
     """Record this turn as a durable task. Never raises.
 
     Keyed by ``trace_id``: it is already unique per turn, already threaded through
     every step, and already the key the response stream is registered under — so
     the completion seam can find the row without inventing a second identifier.
+
+    ``loop_produces`` decides WHO answers, and the row's initial status is the whole
+    mechanism. Exactly one producer must exist: a turn both run by the fast path and
+    claimed by the loop is answered TWICE, and on Telegram the user sees two replies
+    to one question.
     """
     if store is None:
         return
@@ -87,17 +119,32 @@ async def enqueue_turn_task(
         await store.enqueue(DurableTask(
             task_id=trace_id,
             goal=goal[:4000] or "(empty turn)",
-            status="running",
+            # pending  ⇒ claimable: the loop is expected to answer this.
+            # running  ⇒ held: the fast path is already answering, and the loop
+            #            only ever sees it if that lease EXPIRES, i.e. the fast
+            #            path demonstrably did not finish.
+            status="pending" if loop_produces else "running",
             trigger_kind="chat",
             destination=_destination(channel, chat_id),
             achievement="the reply is delivered to the user who asked",
             channel=channel,
             session_key=session_key,
             owl_name=owl_name,
-            # The fast path holds this turn. Only an EXPIRED lease hands it to the
-            # loop, so a turn in flight is never answered twice.
-            lease_owner=f"turn-{uuid.uuid4().hex[:8]}",
+            lease_owner=None if loop_produces else f"turn-{uuid.uuid4().hex[:8]}",
         ))
+        if loop_produces and loop is not None:
+            # Someone is WAITING on this one. A five-second tick is fine for a
+            # sweep and awful for a person, so the enqueue wakes the loop now and
+            # the tick stays the safety net. Best-effort: a failed wake costs one
+            # tick of latency, never the row.
+            try:
+                loop.wake()
+            except Exception as exc:
+                log.tasks.warning(
+                    "[loop] could not wake the loop — this turn waits for the next "
+                    "tick instead",
+                    exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+                )
     except Exception as exc:
         # The reply must not depend on the task table being writable.
         log.tasks.error(

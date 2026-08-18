@@ -76,6 +76,10 @@ class StepServices:
     #: loop existed: no rows, no recovery, and every existing construction site
     #: (tests included) keeps working untouched.
     durable_task_store: object | None = field(default=None)
+    #: The running TaskLoop, so an enqueue can WAKE it rather than making the user
+    #: wait out the tick. None ⇒ the tick is the only trigger (correct, just
+    #: slower).
+    task_loop: object | None = field(default=None)
     browser_runtime: CamoufoxRuntime | None = field(default=None)
     browser_sessions: BrowserSessionRegistry | None = field(default=None)
     audit_logger: AuditLogger | None = field(default=None)

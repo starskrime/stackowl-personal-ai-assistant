@@ -89,6 +89,21 @@ class TaskLoopSettings(BaseModel):
             "behind one gateway may be a transient blip behind another."
         ),
     )
+    produce_replies: bool = Field(
+        default=False,
+        description=(
+            "Let the LOOP produce a chat reply, not merely recover one. OFF by "
+            "default, and the default is a real judgement rather than caution: a "
+            "loop-produced reply is delivered by the worker in one piece, so the "
+            "user sees NOTHING until it is finished — the streaming/progress path "
+            "that makes a slow turn feel alive is bypassed. On this hardware a "
+            "multi-tool turn runs minutes. Turn it ON to make the loop the primary "
+            "path (Bakir's 'the loop should find the answer and return it'); leave "
+            "it OFF to keep streaming and let the loop own recovery only. Either "
+            "way the durable row, the delivery rule and the retry ladder are "
+            "unchanged."
+        ),
+    )
     escalate_dead_letters: bool = Field(
         default=True,
         description=(
