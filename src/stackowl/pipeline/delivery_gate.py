@@ -664,6 +664,15 @@ async def surface_grounding_gate(state: PipelineState) -> PipelineState:
                     "n_fabricated": len(fabricated),
                     "n_fetched": len(fetched),
                     "retrieval_ran": retrieval_ran,
+                    # WHICH urls. The count alone made this undiagnosable: eleven
+                    # consecutive turns were floored on 2026-08-18 and nothing
+                    # recorded what was actually objected to, so there was no way
+                    # to tell a genuine invented source from an instructional link
+                    # ("go to console.cloud.google.com/...") in a setup answer.
+                    # Same blind spot as a failing tool logging its classification
+                    # and never its cause. Capped so a link-heavy answer cannot
+                    # flood the log.
+                    "fabricated_urls": [str(u)[:120] for u in list(fabricated)[:5]],
                 }
             },
         )
