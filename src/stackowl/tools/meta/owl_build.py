@@ -45,10 +45,11 @@ from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.meta.owl_build_authz import build_agent_manifest, clamp_bounds
 from stackowl.tools.meta.owl_build_existence import existing_near_match
 from stackowl.tools.meta.owl_build_guards import (
-    MAX_AGENT_OWLS,
+    configured_owl_cap,
     consent_summary,
     count_agent_owls,
     name_quality_error,
+    over_owl_cap,
 )
 from stackowl.tools.meta.owl_build_infer import infer_capability, suggest_display_name
 from stackowl.tools.meta.owl_build_spec import (
@@ -896,10 +897,16 @@ class OwlBuildTool(Tool):
 
         # 3. Soft cap — a HARD gate BEFORE consent (the human shouldn't be asked to
         #    approve an owl we'd refuse anyway).
+        # UNLIMITED by default since 2026-08-18 (Bakir). An operator may still set
+        # settings.owl_limits.max_agent_owls to bound a shared deployment. What
+        # actually prevents a mess is below: the near-duplicate redirect, name
+        # quality, and consent for the tools granted — a hard count blocked the
+        # sixth GOOD owl exactly as readily as the sixth junk one.
+        _cap = configured_owl_cap()
         current = count_agent_owls(registry)
-        if current >= MAX_AGENT_OWLS:
+        if over_owl_cap(current=current, cap=_cap):
             return self._err(
-                f"you already have {current} agent-created owls (cap {MAX_AGENT_OWLS}) — "
+                f"you already have {current} agent-created owls (cap {_cap}) — "
                 "retire one (action='retire') or delegate_task to an existing owl instead.",
                 t0,
             )

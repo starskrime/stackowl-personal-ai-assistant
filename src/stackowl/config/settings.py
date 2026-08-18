@@ -20,6 +20,7 @@ from stackowl.config.notification_settings import (
     NotificationSettings,
     QuietHoursSettings,
 )
+from stackowl.config.owl_settings import OwlSettings
 from stackowl.config.progress_settings import ProgressSettings
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.provider_tier_migration import migrate_legacy_tier_field
@@ -1013,6 +1014,10 @@ class Settings(BaseSettings):
     #: The ONE durable task loop (Bakir's architecture, 2026-08-17). Its own file
     #: because this module is already ~1,000 lines; same shape as notifications/ui.
     task_loop: TaskLoopSettings = Field(default_factory=TaskLoopSettings)
+    #: Owl limits. max_agent_owls defaults to 0 = unlimited (Bakir, 2026-08-18).
+    #: NOT aliased to "owls" — that key is already the owl MANIFEST list, and two
+    #: meanings for one config key is a trap for whoever edits stackowl.yaml next.
+    owl_limits: OwlSettings = Field(default_factory=OwlSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
     discord_channel: DiscordSettings = Field(default_factory=DiscordSettings)
     slack_channel: SlackSettings = Field(default_factory=SlackSettings)

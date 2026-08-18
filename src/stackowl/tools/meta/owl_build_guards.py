@@ -7,7 +7,36 @@ import unicodedata
 
 from stackowl.owls.registry import OwlRegistry
 
-MAX_AGENT_OWLS = 5
+#: Retained ONLY so an old import keeps resolving; nothing reads it as a limit any
+#: more. The live value is settings.owl_limits.max_agent_owls, default 0 =
+#: unlimited (Bakir, 2026-08-18).
+MAX_AGENT_OWLS = 0
+
+
+def over_owl_cap(*, current: int, cap: int) -> bool:
+    """Is another owl refused? ``cap <= 0`` means UNLIMITED.
+
+    Bakir removed the limit of five, and the measurement supports it: the only real
+    cost of another owl is the ground-truth roster in the prompt — 69 chars per owl
+    on the live registry, so fifty owls is ~862 tokens, 0.33% of the window. Five
+    was a number, not a protection.
+
+    A negative cap is treated as unlimited rather than as "block everything":
+    garbage config must not lock the user out of their own platform.
+    """
+    return cap > 0 and current >= cap
+
+
+def configured_owl_cap() -> int:
+    """The operator's cap, or 0 for unlimited. Never raises — an unreadable config
+    must not silently reimpose a limit that was deliberately removed."""
+    try:
+        from stackowl.pipeline.services import get_services
+
+        cfg = getattr(get_services(), "settings", None)
+        return int(cfg.owl_limits.max_agent_owls) if cfg is not None else 0
+    except Exception:
+        return 0
 # Tools whose presence is a real privilege — flagged with ⚠ in the consent prompt so
 # the human (the real clamp) sees them. web_fetch is read-severity (SSRF-guarded) so
 # it is NOT flagged; network egress becomes its own bounds axis in Epic 3.

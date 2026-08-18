@@ -6,10 +6,10 @@ from stackowl.authz.bounds import BoundsSpec
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.tools.meta.owl_build_guards import (
-    MAX_AGENT_OWLS,
     consent_summary,
     count_agent_owls,
     name_quality_error,
+    over_owl_cap,
 )
 
 
@@ -73,5 +73,16 @@ def test_consent_summary_flags_consequential_and_lists_dropped() -> None:
     assert "researcher" in summary  # roster surfaced
 
 
-def test_max_agent_owls_is_a_positive_int() -> None:
-    assert isinstance(MAX_AGENT_OWLS, int) and MAX_AGENT_OWLS > 0
+def test_the_owl_count_is_unlimited_by_default() -> None:
+    """CONTRACT CHANGED 2026-08-18 at Bakir's request: "remove that limitation and
+    that should be unlimited". This asserted MAX_AGENT_OWLS > 0 — i.e. that a hard
+    cap EXISTS — which is precisely what he asked to remove, so the old assertion
+    was pinning the limit in place.
+
+    The live limit is now settings.owl_limits.max_agent_owls, default 0 =
+    unlimited. MAX_AGENT_OWLS survives only so an old import resolves; nothing
+    reads it as a limit. What this pins instead is the behaviour that matters —
+    an unlimited cap refuses nobody.
+    """
+    assert over_owl_cap(current=999, cap=0) is False
+    assert over_owl_cap(current=5, cap=5) is True  # an operator CAN still bound it
