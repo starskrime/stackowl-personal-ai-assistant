@@ -62,11 +62,9 @@ def should_decompose(task: DurableTask) -> bool:
         # Already split. Splitting again would fan out without bound: each child
         # fails, splits, and its children split in turn.
         return False
-    if task.parent_task_id:
-        # Depth ceiling. A sub-task is meant to BE the simple half; letting it
-        # decompose is how a two-level plan becomes a runaway tree.
-        return False
-    return True
+    # Depth ceiling. A sub-task is meant to BE the simple half; letting it
+    # decompose is how a two-level plan becomes a runaway tree.
+    return not task.parent_task_id
 
 
 async def plan_subtasks(
