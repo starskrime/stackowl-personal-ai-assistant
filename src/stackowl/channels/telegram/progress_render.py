@@ -223,7 +223,12 @@ class TelegramProgressView:
         if self._progress_count <= 1 and elapsed >= self._reassure_after_s:
             base = vocabulary.render(ProgressKey.STILL_WORKING, self._lang)
         else:
-            base = self._current_text or vocabulary.render(ProgressKey.ACK, self._lang)
+            # seed=self._started_at: one spell per TURN. Without a seed this
+            # fallback re-draws on every ticker edit and the word visibly changes
+            # while the user waits, which reads as a glitch rather than a flourish.
+            base = self._current_text or vocabulary.render(
+                ProgressKey.ACK, self._lang, seed=self._started_at,
+            )
         if elapsed >= self._elapsed_after_s:
             base = f"{base} {vocabulary.elapsed_suffix(elapsed, self._lang)}"
         return base

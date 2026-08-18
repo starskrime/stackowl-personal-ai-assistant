@@ -65,15 +65,9 @@ _GLYPHS: dict[ProgressKey, str] = {
 _Template = str | tuple[str, str]
 
 _EN: dict[ProgressKey, _Template] = {
-    # Bakir, 2026-08-18: the instant acknowledgement should be a SINGLE word, and
-    # a Harry Potter spell. "Accio" is the Summoning Charm — the message means
-    # "your question landed and I am summoning the answer", which is exactly what
-    # this state is for ("turn received, nothing started yet").
-    #
-    # It also happens to be the most multilingual string in this file. Every other
-    # template here is English prose needing a translation per bundle; a spell is
-    # pseudo-Latin and reads identically in every language, so the one line the
-    # user sees FIRST no longer depends on a bundle existing for their language.
+    # The ACK template is unused for English — ack_spell() supplies the word (see
+    # _ACK_SPELLS). Kept as the documented fallback for any bundle that has not
+    # been given a rotation of its own.
     ProgressKey.ACK: "Accio",
     ProgressKey.THINK: "Thinking…",
     ProgressKey.SEARCH_WEB: "Searching the web…",
@@ -93,6 +87,47 @@ _EN: dict[ProgressKey, _Template] = {
 }
 
 _BUNDLES: dict[str, dict[ProgressKey, _Template]] = {"en": _EN}
+
+# The instant acknowledgement, rotated. Bakir, 2026-08-18: a single word, a Harry
+# Potter spell, and "multiple different words instead of single hardcoded".
+#
+# CHOSEN FOR MEANING, not just for being spells. ProgressKey.ACK is "turn received,
+# nothing started yet", so every word here is about summoning, revealing,
+# illuminating or unlocking — the thing the platform is about to do. Spells about
+# defence, repair or silence would read as decoration, so they are deliberately
+# absent even though they are shorter or better known.
+#
+# ALL are single words, so the request holds no matter which one is drawn, and all
+# are pseudo-Latin — the one line a user sees FIRST therefore reads identically in
+# every language, unlike the English prose in the bundles above.
+_ACK_SPELLS: tuple[str, ...] = (
+    "Accio",       # summoning charm — summoning your answer
+    "Lumos",       # light — illuminating the question
+    "Revelio",     # reveals what is hidden
+    "Alohomora",   # unlocking charm — opening the problem up
+    "Aparecium",   # makes invisible ink appear
+)
+
+
+def ack_spell(seed: object = None) -> str:
+    """One acknowledgement spell.
+
+    ``seed`` makes the choice STABLE for a turn, and that is not a nicety: the live
+    status message is EDITED every few seconds by the ticker, and each edit
+    re-renders. Drawing freshly each time would make the word flicker between
+    spells while the user waits, which reads as a glitch rather than a flourish.
+    Same seed ⇒ same spell; different turns ⇒ different spells.
+
+    ``None`` draws at random, for callers with no per-turn handle. Never raises.
+    """
+    try:
+        if seed is None:
+            import secrets
+
+            return secrets.choice(_ACK_SPELLS)
+        return _ACK_SPELLS[hash(str(seed)) % len(_ACK_SPELLS)]
+    except Exception:  # pragma: no cover — a status line must never break a turn
+        return _ACK_SPELLS[0]
 
 # The tiny settle footer the live status collapses into once the answer is sent
 # ("✓ done in 34s"). Localizable; English default. ``{seconds}`` is the int
@@ -189,6 +224,7 @@ def render(
     *,
     count: int | None = None,
     skill: str | None = None,
+    seed: object = None,
 ) -> str:
     """Render a progress phrase: glyph + localized text. Never raises.
 
@@ -204,6 +240,12 @@ def render(
     if template is None:
         # Fall back to this locale's THINK, then English THINK.
         template = bundle.get(ProgressKey.THINK) or _EN[ProgressKey.THINK]
+    if progress_key is ProgressKey.ACK:
+        # The instant ack is drawn from the spell rotation rather than the bundle.
+        # ``seed`` keeps it stable for one turn — the live status message is edited
+        # every few seconds and each edit re-renders, so an unseeded draw would
+        # make the word flicker between spells while the user waits.
+        return f"{_GLYPHS[ProgressKey.ACK]} {ack_spell(seed)}".strip()
     text = _pick(template, count if count is not None else 1)
     try:
         text = text.format(count=count if count is not None else "", skill=skill or "")
