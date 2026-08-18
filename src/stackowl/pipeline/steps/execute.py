@@ -855,6 +855,37 @@ def _measured_absent_effects(outcomes: object) -> tuple[str, ...]:
     )
 
 
+#: How much of a repeat failure's reason survives the collapse. Long enough to
+#: carry a real cause ("gcloud: command not found", a stack trace's first line),
+#: short enough that N iterations cannot reproduce the 8k→11k token climb that
+#: motivated collapsing in the first place.
+_COLLAPSED_ERROR_CHARS = 240
+
+
+def _collapsed_failure_text(name: str, attempts: int, error: str) -> str:
+    """The summary a repeatedly-failing tool hands back to the model.
+
+    Bakir, 2026-08-18: "why does the tool not deliver failure to the model so the
+    model can rethink?" It did — but only on the FIRST failure. Every repeat
+    collapsed to "failed (non-retryable), N attempts — try a different approach or
+    answer without it", with the error text stripped. So from attempt two the model
+    knew THAT a tool failed and not WHY, while still being invited to proceed. On
+    his Gmail turn that gap was filled with two fabricated citations, which the
+    grounding gate then had to block.
+
+    The collapse itself stays — re-appending a full failure body every iteration
+    drove input tokens 8k→11k in one production turn. What comes back is the REASON,
+    truncated: bounded context and an actionable cause are not in conflict.
+    """
+    reason = " ".join((error or "").split())[:_COLLAPSED_ERROR_CHARS]
+    because = f" It keeps failing with: {reason}" if reason else ""
+    return (
+        f"'{name}' failed (non-retryable), {attempts} attempts this turn.{because} "
+        f"Do not retry it — try a genuinely different approach, or say plainly that "
+        f"you could not do this. Never invent a result you did not obtain."
+    )
+
+
 def _snapshot_consequential(state: PipelineState) -> PipelineState:
     """REACT-7/F099 — stamp the turn's consequential tally + bridged set onto state.
 
@@ -2012,16 +2043,29 @@ async def _run_with_tools(
         if (not tr.success) and not _is_transient_failure(tr):
             deterministic_fail_count[name] = deterministic_fail_count.get(name, 0) + 1
             _n = deterministic_fail_count[name]
+            if _n == 1:
+                # WHY the tool failed, once per tool per turn, at INFO.
+                # Bakir asked what `shell` was failing on and the logs could not
+                # say: the only trace was {"tool_name":"shell","outcome":
+                # "tool_error"} — the CLASSIFICATION, never the cause. A tool
+                # failing nine times in half an hour was undiagnosable after the
+                # fact. Once per tool per turn, so this cannot become the log-side
+                # version of the context bloat the collapse below exists to stop.
+                log.engine.info(
+                    "[pipeline] execute: tool failed — recording the reason once",
+                    extra={"_fields": {
+                        "tool": name, "trace_id": state.trace_id,
+                        "error": " ".join((tr.error or tr.output or "").split())[:400],
+                    }},
+                )
             if _n > 1:
                 log.engine.info(
                     "[pipeline] execute: repeat deterministic failure — collapsed to summary",
                     extra={"_fields": {"tool": name, "trace_id": state.trace_id,
                                        "attempts_this_turn": _n}},
                 )
-                return (
-                    f"{TOOL_FAILED_MARKER}'{name}' failed (non-retryable), {_n} attempts "
-                    f"this turn. Do not retry it — try a different approach or answer "
-                    f"without it."
+                return TOOL_FAILED_MARKER + _collapsed_failure_text(
+                    name, _n, tr.error or tr.output or "",
                 )
         return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}"
 

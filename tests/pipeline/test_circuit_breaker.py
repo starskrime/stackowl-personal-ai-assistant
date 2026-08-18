@@ -293,7 +293,23 @@ async def test_repeat_deterministic_failure_render_collapses() -> None:
     provider = await _run([tool], calls)
     # First failure: full detail retained.
     assert "HTTP 404 verbose body" in provider.rendered[0]
-    # Second (still a rendered failure, before the breaker bounces): collapsed summary.
-    assert "HTTP 404 verbose body" not in provider.rendered[1]
+    # Second: still COLLAPSED, but the reason is kept.
+    #
+    # CONTRACT CHANGED 2026-08-18. This previously asserted the error text was
+    # ABSENT from the repeat render, and that absence is what Bakir hit: from
+    # attempt two the model knew THAT a tool failed and not WHY, while still being
+    # told to "answer without it" — so on a real turn it filled the gap with
+    # fabricated citations the grounding gate then had to block.
+    #
+    # The property worth protecting was never "no error text"; it was BOUNDED
+    # context (production saw 8k→11k input tokens from re-appending full failure
+    # bodies). So the assertion moves to what actually matters: the repeat render
+    # carries the reason AND stays much smaller than the full first render.
+    assert "HTTP 404 verbose body" in provider.rendered[1], (
+        "the repeat render dropped the reason — the model cannot rethink without it"
+    )
     assert "non-retryable" in provider.rendered[1]
     assert "attempts" in provider.rendered[1]
+    assert len(provider.rendered[1]) < 700, (
+        f"the collapse stopped bounding context: {len(provider.rendered[1])} chars"
+    )
