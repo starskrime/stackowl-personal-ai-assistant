@@ -193,6 +193,22 @@ class TelegramChannelAdapter(ChannelAdapter):
         self._bot_username = bot_username
 
         app.add_handler(MessageHandler(filters.TEXT, self._handle_update))
+        # FILES. Bakir, 2026-08-18: he was asked for a Gmail credentials JSON, sent
+        # it, and the agent never responded. Only TEXT and VOICE handlers existed,
+        # so python-telegram-bot dropped every document BEFORE StackOwl saw it —
+        # nothing logged, because from our side the message never arrived. That is
+        # why it read as the agent ignoring him rather than failing.
+        #
+        # Documents, photos-as-file and audio all route here. A document message
+        # has text=None, so it cannot reuse _handle_update (which returns early on
+        # "empty after strip"); _handle_document downloads it and turns it into a
+        # turn that NAMES the saved path, so the agent can read it.
+        app.add_handler(
+            MessageHandler(
+                filters.Document.ALL | filters.PHOTO | filters.AUDIO,
+                self._handle_document,
+            )
+        )
         # Voice messages → transcribe → confirm (only when a handler was wired).
         if self._voice_handler is not None:
             app.add_handler(MessageHandler(filters.VOICE, self._voice_handler.handle_voice))
@@ -1412,6 +1428,131 @@ class TelegramChannelAdapter(ChannelAdapter):
         self._last_chat_id = chat_id
         log.telegram.info(
             "[telegram] adapter.handle_update: exit",
+            extra={"_fields": {"user_hash": user_hash, "trace_id": ingress.trace_id}},
+        )
+
+    #: Files above this are not downloaded. Telegram's Bot API caps a download at
+    #: 20MB anyway, but the platform must not be steered into writing a large file
+    #: into its own workspace by anyone who can message the bot.
+    _MAX_INBOUND_FILE_BYTES = 20 * 1024 * 1024
+
+    async def _handle_document(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """A file arrived — save it and hand the agent a turn that names it.
+
+        Mirrors ``_handle_update``'s authorization and ingress deliberately: a file
+        is a message like any other, and a second, subtly different authorization
+        path is how one of them ends up wrong.
+
+        Fails LOUDLY to the user. The whole defect this fixes was silence — Bakir
+        sent a file and got nothing back — so a download that fails tells him so
+        rather than dropping the message a second way.
+        """
+        log.telegram.info("[telegram] adapter.handle_document: entry")
+        message = update.effective_message
+        if message is None:
+            return
+        user = update.effective_user
+        user_id = int(user.id) if user is not None else 0
+        user_hash = hash_user_id(user_id)
+        if not is_authorized(user_id, self._settings.allowed_user_ids):
+            log.telegram.warning(
+                "[telegram] adapter.handle_document: unauthorized drop",
+                extra={"_fields": {"user_hash": user_hash}},
+            )
+            return
+        chat = update.effective_chat
+        chat_id = int(chat.id) if chat is not None else 0
+
+        # A photo arrives as a list of sizes; the last is the largest.
+        doc = getattr(message, "document", None)
+        if doc is None and getattr(message, "photo", None):
+            doc = message.photo[-1]
+        if doc is None:
+            doc = getattr(message, "audio", None)
+        if doc is None:
+            log.telegram.warning(
+                "[telegram] adapter.handle_document: no file on the message — skip",
+                extra={"_fields": {"user_hash": user_hash}},
+            )
+            return
+
+        size = int(getattr(doc, "file_size", 0) or 0)
+        if size > self._MAX_INBOUND_FILE_BYTES:
+            await self.send_text(
+                f"That file is {size // (1024 * 1024)}MB — too large for me to "
+                f"take. Please send something under 20MB.",
+                chat_id=chat_id,
+            )
+            return
+
+        from stackowl.channels.telegram.inbound_files import (
+            build_document_turn_text,
+            safe_document_name,
+        )
+
+        name = safe_document_name(getattr(doc, "file_name", None))
+        try:
+            data = await self.download_media(str(doc.file_id))
+        except Exception as exc:
+            # Tell him. Silence is the bug being fixed.
+            log.telegram.error(
+                "[telegram] adapter.handle_document: download failed",
+                exc_info=exc, extra={"_fields": {"user_hash": user_hash}},
+            )
+            await self.send_text(
+                f"I could not download {name} — please try sending it again.",
+                chat_id=chat_id,
+            )
+            return
+
+        try:
+            from stackowl.paths import StackowlHome
+
+            target_dir = StackowlHome.downloads_dir()
+            target_dir.mkdir(parents=True, exist_ok=True)
+            saved = target_dir / name
+            # Never silently overwrite a file already there — two uploads called
+            # "credentials.json" are two different credentials.
+            if saved.exists():
+                stem, dot, suffix = name.partition(".")
+                saved = target_dir / f"{stem}-{int(time.time())}{dot}{suffix}"
+            saved.write_bytes(data)
+        except Exception as exc:
+            log.telegram.error(
+                "[telegram] adapter.handle_document: could not save the file",
+                exc_info=exc, extra={"_fields": {"user_hash": user_hash}},
+            )
+            await self.send_text(
+                f"I downloaded {name} but could not save it. Please try again.",
+                chat_id=chat_id,
+            )
+            return
+
+        log.telegram.info(
+            "[telegram] adapter.handle_document: saved",
+            extra={"_fields": {"user_hash": user_hash, "name": name,
+                               "bytes": len(data), "path": str(saved)}},
+        )
+        ingress = IngressMessage(
+            text=build_document_turn_text(
+                file_name=name, saved_path=saved,
+                caption=getattr(message, "caption", None),
+            ),
+            session_key=str(user_id),
+            channel=self.channel_name,
+            trace_id=_mint_request_id(),
+            chat_id=chat_id,
+            is_direct=(chat is not None and getattr(chat, "type", None) == "private"),
+        )
+        self._queue.put_nowait(ingress)
+        self._last_update_at = time.monotonic()
+        self._last_chat_id = chat_id
+        log.telegram.info(
+            "[telegram] adapter.handle_document: exit",
             extra={"_fields": {"user_hash": user_hash, "trace_id": ingress.trace_id}},
         )
 
