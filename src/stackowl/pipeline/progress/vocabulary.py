@@ -65,7 +65,16 @@ _GLYPHS: dict[ProgressKey, str] = {
 _Template = str | tuple[str, str]
 
 _EN: dict[ProgressKey, _Template] = {
-    ProgressKey.ACK: "Working on it…",
+    # Bakir, 2026-08-18: the instant acknowledgement should be a SINGLE word, and
+    # a Harry Potter spell. "Accio" is the Summoning Charm — the message means
+    # "your question landed and I am summoning the answer", which is exactly what
+    # this state is for ("turn received, nothing started yet").
+    #
+    # It also happens to be the most multilingual string in this file. Every other
+    # template here is English prose needing a translation per bundle; a spell is
+    # pseudo-Latin and reads identically in every language, so the one line the
+    # user sees FIRST no longer depends on a bundle existing for their language.
+    ProgressKey.ACK: "Accio",
     ProgressKey.THINK: "Thinking…",
     ProgressKey.SEARCH_WEB: "Searching the web…",
     ProgressKey.READ_WEB: ("Reading a page…", "Reading {count} pages…"),

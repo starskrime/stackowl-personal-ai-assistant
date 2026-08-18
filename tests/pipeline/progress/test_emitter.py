@@ -121,7 +121,14 @@ def test_emits_start_tool_recover_and_synth_in_order() -> None:
     asyncio.run(drive())
 
     names = _step_names(bus)
-    assert "Working on it" in names[0]
+    # CONTRACT CHANGED 2026-08-18 at Bakir's request: the instant acknowledgement
+    # is now a single word, and a Harry Potter spell. Asserting the ACK's KEY
+    # rather than its English prose, so the next copy change does not break this
+    # test — what matters here is that emit_start emits the ACK state first, not
+    # what that state happens to say.
+    from stackowl.pipeline.progress.vocabulary import ProgressKey, render
+
+    assert names[0] == render(ProgressKey.ACK)
     assert "Searching the web" in names[1]
     assert "trying another way" in names[2]  # RECOVER copy
     assert "Writing your answer" in names[3]  # SYNTH copy
