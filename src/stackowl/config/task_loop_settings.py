@@ -90,18 +90,19 @@ class TaskLoopSettings(BaseModel):
         ),
     )
     produce_replies: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Let the LOOP produce a chat reply, not merely recover one. OFF by "
-            "default, and the default is a real judgement rather than caution: a "
-            "loop-produced reply is delivered by the worker in one piece, so the "
-            "user sees NOTHING until it is finished — the streaming/progress path "
-            "that makes a slow turn feel alive is bypassed. On this hardware a "
-            "multi-tool turn runs minutes. Turn it ON to make the loop the primary "
-            "path (Bakir's 'the loop should find the answer and return it'); leave "
-            "it OFF to keep streaming and let the loop own recovery only. Either "
-            "way the durable row, the delivery rule and the retry ladder are "
-            "unchanged."
+            "The LOOP produces the chat reply, not merely recovers one — Bakir's "
+            "design in full: 'the loop should go understand, find the answer, "
+            "return back answer to the Telegram.' ON by default per the standing "
+            "rule that a finished feature ships enabled rather than dormant.\n\n"
+            "The trade, stated honestly: the live typing/status indicator does not "
+            "run for a loop-produced turn, because the worker delivers when the "
+            "work is done. The ANSWER itself is unaffected — Telegram already "
+            "buffers a reply and sends it in one piece, so nothing about the "
+            "delivered message changes. Set this False to hand production back to "
+            "the fast path; the durable row, the delivery rule and the retry "
+            "ladder are identical either way."
         ),
     )
     escalate_dead_letters: bool = Field(

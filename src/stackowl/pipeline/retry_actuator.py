@@ -64,6 +64,19 @@ class RetryOutcome:
     status: str  # "completed" | "pending" | "failed"
 
 
+def _native_chat_id(raw: str) -> str | int:
+    """Return a chat id in the type its channel actually uses.
+
+    Telegram's ids are numeric and its API wants an int; slack's ("C123ABC") and
+    whatsapp's ("+15551234") are not numbers at all. Coercing everything to int
+    raised on slack and — worse — silently rewrote a whatsapp address to a
+    different number. Only a purely-numeric id becomes an int; everything else is
+    passed through untouched.
+    """
+    text = str(raw).strip()
+    return int(text) if text.isdigit() else text
+
+
 class RetryActuator:
     """Shared retry function — called by both the cron sweep and manual retry."""
 
@@ -328,8 +341,18 @@ class RetryActuator:
         # insert_pending's default (see turn_persist.py). Reusing the same
         # Protocol cast here instead of a second ad-hoc dispatch.
         if row.channel_chat_id:
+            # NOT int(). The chat id is CHANNEL-NATIVE: telegram's is numeric, but
+            # slack's is "C123ABC" (int() raises) and whatsapp's is "+15551234"
+            # (int() SILENTLY yields 15551234 — a different address, which is worse
+            # than raising). _TargetedSender.send_text already accepts str | int, so
+            # the value is passed through in the channel's own type and each adapter
+            # coerces what it actually needs.
+            #
+            # This was invisible while retry_queue rows were telegram-only. It stops
+            # being invisible the moment the loop produces replies for every
+            # gateway, which is what made it worth finding.
             await cast("_TargetedSender", adapter).send_text(
-                answer_text, chat_id=int(row.channel_chat_id)
+                answer_text, chat_id=_native_chat_id(row.channel_chat_id)
             )
         else:
             await adapter.send_text(answer_text)

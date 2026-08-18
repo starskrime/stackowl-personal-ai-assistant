@@ -159,3 +159,34 @@ class TestTheModeIsReadFromConfig:
                 raise RuntimeError("config unreadable")
 
         assert loop_produces_replies(SimpleNamespace(settings=_Boom())) is False
+
+
+class TestEveryGatewayCanReceiveALoopProducedReply:
+    """The bug that would have broken this feature on two of five channels.
+
+    ``_deliver_success`` coerced the chat id with ``int()``. Telegram's ids are
+    numeric so it worked, and retry_queue rows were telegram-only, so it was
+    invisible. The moment the loop produces replies for EVERY gateway it stops
+    being invisible:
+
+        slack     "C123ABC"    -> int() RAISES        -> no reply at all
+        whatsapp  "+15551234"  -> int() gives 15551234 -> a DIFFERENT address
+
+    The second is the worse of the two: it does not fail, it silently sends
+    someone else's answer somewhere else.
+    """
+
+    async def test_a_numeric_id_is_still_an_int_for_telegram(self) -> None:
+        from stackowl.pipeline.retry_actuator import _native_chat_id
+
+        assert _native_chat_id("72055773") == 72055773
+
+    async def test_a_slack_channel_id_survives(self) -> None:
+        from stackowl.pipeline.retry_actuator import _native_chat_id
+
+        assert _native_chat_id("C123ABC") == "C123ABC"
+
+    async def test_a_whatsapp_number_is_NOT_silently_rewritten(self) -> None:
+        from stackowl.pipeline.retry_actuator import _native_chat_id
+
+        assert _native_chat_id("+15551234") == "+15551234"
