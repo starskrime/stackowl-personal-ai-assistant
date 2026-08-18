@@ -1,4 +1,4 @@
-from stackowl.pipeline.capability_substitution import normalized_input_for, build_args_for
+from stackowl.pipeline.capability_substitution import build_args_for, normalized_input_for
 
 
 def test_normalized_input_from_failed_browse():

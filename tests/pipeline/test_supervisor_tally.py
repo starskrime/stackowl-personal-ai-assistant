@@ -1,5 +1,5 @@
-from stackowl.pipeline.supervisor import tally_tool_outcomes
 from stackowl.pipeline.persistence import is_structural_giveup
+from stackowl.pipeline.supervisor import tally_tool_outcomes
 
 
 def test_tally_reads_failed_bool_not_marker():

@@ -46,11 +46,20 @@ class TestARealSourceIsStillACitation:
         answer citing a page it never fetched."""
         assert _is_uncitable_url("https://example.com/article") is False
 
-    def test_the_oauth_endpoint_is_NOT_silently_exempted(self) -> None:
-        """Deliberate. accounts.google.com is a real public URL, and exempting it
-        here would quietly widen a security guardrail on my own judgement. It stays
-        flagged until Bakir decides, which is why he now sees it in the log."""
-        assert _is_uncitable_url("https://accounts.google.com/o/oauth2/auth") is False
+    def test_a_google_SEARCH_url_is_still_checked(self) -> None:
+        """SUPERSEDED 2026-08-18, and deliberately rewritten rather than deleted.
+
+        This test used to assert accounts.google.com was NOT exempt — a guard I put
+        in because widening a security gate was Bakir's decision, not mine. He made
+        it ("do both"), so the interactive-endpoint exemption now covers it and the
+        old assertion is obsolete.
+
+        What replaces it is the property that still matters: the exemption is
+        HOST-scoped to interactive endpoints, not a blanket pass for google.com. A
+        search result cited as a source is exactly the fabrication the gate exists
+        to block, and it must still be caught.
+        """
+        assert _is_uncitable_url("https://www.google.com/search?q=oauth") is False
 
 
 class TestItNeverBreaksTheGate:

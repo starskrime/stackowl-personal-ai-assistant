@@ -17,6 +17,7 @@ import asyncio
 import os
 import re
 import shlex
+import shutil
 import time
 from pathlib import Path
 
@@ -346,6 +347,33 @@ def _is_catastrophic_segment(args: list[str]) -> tuple[bool, str]:
     return (False, "")
 
 
+def _preferred_shell_executable() -> str | None:
+    """The shell a ``shell_command`` should run under, or None to keep the default.
+
+    ``create_subprocess_shell`` uses ``/bin/sh``, which on Debian and Ubuntu — this
+    box included — is DASH. The model writes bash, because that is what a shell
+    command looks like to anyone who has used one: ``[[ ]]``, arrays, process
+    substitution, ``source``. Dash rejects all of it with a syntax error naming
+    neither shell::
+
+        /bin/sh: 1: Syntax error: "(" unexpected
+
+    so the agent could not tell why an ordinary command was invalid and retried
+    variations of something that was never going to run. Measured on Bakir's Gmail
+    setup, 2026-08-18.
+
+    LOOKED UP, NEVER ASSUMED. A host without bash (Alpine, Windows) gets None and
+    behaves exactly as before — this platform has to run on all hardware, and a
+    hard-coded ``/bin/bash`` would trade one host's bug for another's. Never
+    raises: this runs on every shell call, and an unusual PATH must not break the
+    tool.
+    """
+    try:
+        return shutil.which("bash")
+    except Exception:  # pragma: no cover — defensive; PATH lookup should not fail
+        return None
+
+
 async def _gate_catastrophic(
     *, tool_name: str, command: str, reason: str
 ) -> ToolResult | None:
@@ -528,6 +556,9 @@ async def run_argv(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd or None,
+                # Run bash where it exists. See _preferred_shell_executable —
+                # /bin/sh is dash here, and the model writes bash.
+                executable=_preferred_shell_executable(),
             )
         else:
             proc = await asyncio.create_subprocess_exec(

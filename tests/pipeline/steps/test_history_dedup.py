@@ -4,8 +4,8 @@ Story #4 — Stale apology prose is not re-fed/amplified across turns.
 When the same assistant message content recurs in the re-fed window, keep only
 the most-recent occurrence.  User turns are never touched.
 """
-from stackowl.providers.base import Message
 from stackowl.pipeline.steps.classify import _dedup_assistant_history
+from stackowl.providers.base import Message
 
 
 def test_repeated_assistant_message_collapses_to_latest() -> None:

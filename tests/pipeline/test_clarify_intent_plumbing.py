@@ -6,8 +6,8 @@ Tests that:
 - `_ensure_tool_capable` passes through an incapable provider untouched on a
   `clarify` turn, exactly as it does for `conversational`.
 """
-from stackowl.pipeline.state import PipelineState, TOOL_FREE_CLASSES
 from stackowl.pipeline.provider_select import _ensure_tool_capable
+from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
 
 
 class _NoToolsProvider:
@@ -28,7 +28,7 @@ def _state(**kw):
 
 
 def test_tool_free_classes_membership():
-    assert TOOL_FREE_CLASSES == frozenset({"conversational", "clarify"})
+    assert frozenset({"conversational", "clarify"}) == TOOL_FREE_CLASSES
 
 
 def test_clarify_question_field_defaults_none():

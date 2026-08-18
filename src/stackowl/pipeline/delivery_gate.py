@@ -445,6 +445,52 @@ _SCHEDULE_FLOOR_TEXT = (
 )
 
 
+#: Hosts whose purpose is to be VISITED by a human, not read as a source. A setup
+#: answer cannot be written without naming where to go — "open
+#: accounts.google.com/o/oauth2/auth and approve" — and the grounding gate was
+#: flooring every such answer as a fabricated citation. Eleven of Bakir's OAuth
+#: turns died this way on 2026-08-18.
+#:
+#: A NAMED SET, NOT A HEURISTIC. "Does this url look instructional" is precisely
+#: the fuzzy rule that quietly stops a security gate working; an explicit list can
+#: be read, reviewed and argued with. Matched on the HOST only, exactly or as a
+#: real subdomain, so accounts.google.com.evil.test is not exempt and a search
+#: result on the same domain is still checked.
+_INTERACTIVE_ENDPOINT_HOSTS: frozenset[str] = frozenset({
+    "accounts.google.com",       # OAuth consent / sign-in
+    "console.cloud.google.com",  # GCP console — credentials, APIs, IAM
+    "console.developers.google.com",
+    "myaccount.google.com",      # security settings, app passwords
+    "github.com/settings",       # (host-matched below; path kept for legibility)
+    "login.microsoftonline.com",
+    "portal.azure.com",
+    "console.aws.amazon.com",
+    "api.slack.com",             # app config / OAuth setup
+})
+
+
+def _interactive_endpoint(url: str) -> bool:
+    """Is this a place the USER is told to go, rather than a source?
+
+    Host-matched, never substring-matched: a substring test would exempt
+    ``accounts.google.com.evil.test``. Never raises — it runs on every answer
+    containing a url.
+    """
+    try:
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(url).hostname or "").lower().strip(".")
+        if not host:
+            return False
+        for allowed in _INTERACTIVE_ENDPOINT_HOSTS:
+            allowed_host = allowed.split("/", 1)[0]
+            if host == allowed_host or host.endswith("." + allowed_host):
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _is_uncitable_url(url: str) -> bool:
     """True when a URL cannot be a SOURCE, so it is not a citation to check.
 
@@ -462,7 +508,7 @@ def _is_uncitable_url(url: str) -> bool:
     try:
         from stackowl.infra.net.host_locality import is_local_url
 
-        return bool(is_local_url(url))
+        return bool(is_local_url(url)) or _interactive_endpoint(url)
     except Exception:
         return False
 

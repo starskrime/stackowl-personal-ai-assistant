@@ -24,7 +24,6 @@ from stackowl.providers.react_callback import ReActIterationState
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
 
-
 # ---------------------------------------------------------------------------
 # Minimal tool (needed so execute takes the tool-loop path)
 # ---------------------------------------------------------------------------

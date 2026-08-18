@@ -25,7 +25,6 @@ from stackowl.infra.lesson_experiment import (
     set_arm,
 )
 
-
 # --------------------------------------------------------------------------- #
 # Law 1: the arm must never change within a conversation.
 # --------------------------------------------------------------------------- #

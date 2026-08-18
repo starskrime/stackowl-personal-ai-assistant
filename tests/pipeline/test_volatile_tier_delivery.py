@@ -25,7 +25,6 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import assemble
 from stackowl.pipeline.steps.execute import _turn_context_prefix
 
-
 NOW = datetime.datetime(2026, 7, 27, 21, 46, tzinfo=datetime.UTC)
 
 

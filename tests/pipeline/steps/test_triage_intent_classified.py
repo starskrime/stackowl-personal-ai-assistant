@@ -15,7 +15,6 @@ import pytest
 
 from stackowl.pipeline.state import PipelineState
 
-
 # ---------------------------------------------------------------------------
 # Minimal state factory
 # ---------------------------------------------------------------------------
@@ -55,7 +54,6 @@ from stackowl.pipeline.services import StepServices, reset_services, set_service
 from stackowl.pipeline.steps import triage as triage_step  # noqa: E402
 from stackowl.providers.base import CompletionResult, Message, ModelProvider  # noqa: E402
 from stackowl.providers.registry import ProviderRegistry  # noqa: E402
-
 
 _JUDGE_SENTINEL = '{"delivered": true, "reason": "looks complete"}'
 

@@ -21,7 +21,6 @@ import pytest
 from stackowl.pipeline.state import PipelineState, StepError
 from stackowl.pipeline.step_error import format_step_error, parse_step_error
 
-
 # --------------------------------------------------------------------------- #
 # F092 — shared format/parse contract + structured carrier
 # --------------------------------------------------------------------------- #

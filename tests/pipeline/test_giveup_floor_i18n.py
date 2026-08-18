@@ -16,7 +16,6 @@ from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.setup.lang_detect import detect_language
 from stackowl.setup.localize import localize
 
-
 # =========================================================================== #
 # P-A — PipelineState carries a language field, default "en", survives .evolve()
 # =========================================================================== #
