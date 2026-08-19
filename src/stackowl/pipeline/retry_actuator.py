@@ -253,12 +253,34 @@ class RetryActuator:
         # token on its own line in the delivered message. Matches deliver.py's
         # normal-path join (`combined = "".join(...)`), which never had this bug.
         answer_text = "".join(c.content for c in final_state.responses if c.content).strip()
+        # DELIVERY AND BOOKKEEPING ARE SEPARATE FACTS. They used to share one
+        # `try`, so a send that SUCCEEDED followed by a mark_completed that failed
+        # reported "pending" — and the caller treats "pending" as "nothing reached
+        # the user" and re-drives. MEASURED 2026-08-19: Bakir's task 43be4591 sent
+        # him the same recovered answer at 01:18:46, 01:29:38 and 01:34:34, once
+        # per attempt, and had 27 attempts left to keep going.
+        #
+        # Bakir's rule decides which fact wins: "a task is complete when its
+        # outcome reached its DESTINATION". Once the answer has landed the
+        # achievement is met, whatever the bookkeeping did afterwards. Re-sending
+        # is not a smaller error than failing to record.
+        delivered = False
         try:
-            # 3. STEP — deliver + record completion; mirrors deliverer.py's
+            # 3. STEP — deliver, then record completion; mirrors deliverer.py's
             # _transport contract: this must never raise into the caller.
             await self._deliver_success(row, answer_text)
+            delivered = True
             await self._retry_store.mark_completed(row.id)
         except Exception as exc:  # never raise into the scheduler loop
+            if delivered:
+                # The user HAS the answer; only the record failed. Reporting
+                # anything but success here buys a duplicate message.
+                log.scheduler.error(
+                    "retry_actuator.attempt_retry: DELIVERED but could not record "
+                    "it — reporting completed so the answer is not sent twice",
+                    exc_info=exc, extra={"_fields": {"retry_id": row.id}},
+                )
+                return RetryOutcome(status="completed")
             delay_seconds = _delivery_retry_delay_seconds(exc)
             log.scheduler.error(
                 "retry_actuator.attempt_retry: success-path delivery/store failed",
