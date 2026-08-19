@@ -16,7 +16,7 @@ OWL = BoundsSpec(tools=frozenset({"a", "b"}))
 
 
 def test_only_tools_enforced_today() -> None:
-    assert ENFORCED_AXES == frozenset({"tools"})
+    assert frozenset({"tools"}) == ENFORCED_AXES
 
 
 def test_tools_narrowing_is_enforceable() -> None:

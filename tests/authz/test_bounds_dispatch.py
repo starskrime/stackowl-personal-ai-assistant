@@ -93,6 +93,7 @@ class _RecordingConsentGate:
         *,
         channel: str | None = None,
         session_key: str | None = None,
+        reply_target: int | str | None = None,
         category: str | None = None,
         call_args: dict[str, object] | None = None,
     ) -> bool:

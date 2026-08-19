@@ -145,6 +145,7 @@ async def _build_real_dispatch(
 
     class _Gate:
         async def check(self, tool: str, *, channel: Any = None, session_key: Any = None,
+                        reply_target: Any = None,
                         call_args: Any = None) -> bool:
             return True  # approve all → the primary runs and fails
 

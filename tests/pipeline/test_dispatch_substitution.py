@@ -590,7 +590,8 @@ async def _build_real_dispatch(
     )
 
     class _Gate:
-        async def check(self, tool, *, channel=None, session_key=None, call_args=None):  # noqa: ANN001
+        async def check(self, tool, *, channel=None, session_key=None, call_args=None,  # noqa: ANN001
+                        reply_target=None):
             return True  # approve all → the primary runs and fails
 
     class _Services:
