@@ -518,3 +518,67 @@ class TestATaskThatOwedAnAnswerIsNeverLeftDead:
 
         assert await store.revive_undelivered_failures() == 0
         assert (await store.get("dead")).status == "dead_letter"
+
+    async def test_a_revived_task_starts_clean_not_mid_transcript(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """MEASURED LIVE 2026-08-19. The first row this sweep ever revived was
+        claimed by the loop within seconds and failed instantly with
+        "ResumeTranscriptError: Invalid resume transcript" — it still carried the
+        checkpoint of the run that had died at step 12. Resuming a corpse fails the
+        same way every time, so it would have burned all thirty attempts and
+        dead-lettered without ever delivering. A revived task is a fresh attempt at
+        the GOAL."""
+        await _pending(store, "stale")
+        await store.save_checkpoint("stale", b"a transcript from the run that died")
+        await store._execute_owned(
+            "UPDATE tasks SET status='failed', destination='telegram:1', "
+            "current_step=12, result='budget:stop:steps:limit=20.0:actual=20.0' "
+            "WHERE owner_id=? AND task_id=?",
+            [store._owner_id, "stale"],
+        )
+
+        await store.revive_undelivered_failures()
+
+        row = await store.get("stale")
+        assert row.status == "pending"
+        assert row.current_step == 0
+        assert await store.load_checkpoint("stale") is None
+
+
+class TestACorruptCheckpointIsNotRepeatedForever:
+    async def test_a_resume_failure_drops_the_checkpoint_on_requeue(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """Not only the revive path. ANY task whose checkpoint stops validating
+        would otherwise fail identically at resume until the ceiling."""
+        await _pending(store, "corrupt")
+        await store.save_checkpoint("corrupt", b"no longer valid")
+
+        status = await store.fail_and_requeue(
+            "corrupt",
+            error="execute: ResumeTranscriptError: Invalid resume transcript",
+            failure_class="corrupt_state",
+        )
+
+        assert status == "pending"
+        assert await store.load_checkpoint("corrupt") is None
+        assert (await store.get("corrupt")).current_step == 0
+
+    async def test_an_ordinary_failure_KEEPS_its_checkpoint(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """The partial progress is the point of checkpointing. Dropping it on every
+        failure would make each retry redo work that had already succeeded."""
+        await _pending(store, "ordinary")
+        await store.save_checkpoint("ordinary", b"still good")
+
+        await store.fail_and_requeue(
+            "ordinary", error="connection reset", failure_class="transient",
+        )
+
+        kept = await store.load_checkpoint("ordinary")
+        assert kept is not None
+        # Compared loosely: this store round-trips the blob through TEXT, so
+        # the exact type back is not the contract — surviving the requeue is.
+        assert b"still good" in (kept if isinstance(kept, bytes) else kept.encode())

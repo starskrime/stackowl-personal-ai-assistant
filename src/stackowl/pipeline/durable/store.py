@@ -985,6 +985,13 @@ class DurableTaskStore(OwnedRepository):
                 # hit, which is the entire point of requeuing rather than resetting.
                 await self._execute_owned(
                     f"UPDATE {self._table} SET status='pending', "  # noqa: S608
+                    # A revived task is a fresh attempt at the GOAL, not a
+                    # resume of a dead run. Measured live 2026-08-19: the
+                    # first revived row failed instantly with
+                    # "ResumeTranscriptError: Invalid resume transcript" —
+                    # it still carried the checkpoint of the run that died,
+                    # and would have repeated that failure to the ceiling.
+                    "checkpoint_blob=NULL, current_step=0, "
                     "last_error=COALESCE(last_error, result), "
                     "last_failure_class=COALESCE(last_failure_class, ?), "
                     "next_attempt_at=NULL, lease_owner=NULL, lease_expires_at=NULL, "
@@ -1067,8 +1074,12 @@ class DurableTaskStore(OwnedRepository):
             return "dead_letter"
 
         retry_at = now + timedelta(seconds=_backoff_for(attempts))
+        # A checkpoint that no longer validates makes every further attempt fail
+        # identically at resume. Dropping it costs the partial progress and buys a
+        # clean run — which is the only outcome that can still deliver.
+        clean = ", checkpoint_blob=NULL, current_step=0" if failure_class == "corrupt_state" else ""
         await self._db.execute(
-            f"UPDATE {self._table} SET status='pending', attempt_count=?, "  # noqa: S608
+            f"UPDATE {self._table} SET status='pending', attempt_count=?{clean}, "  # noqa: S608
             "last_error=?, last_failure_class=?, banned_capabilities=?, "
             "next_attempt_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
             "WHERE task_id=? AND owner_id=?",

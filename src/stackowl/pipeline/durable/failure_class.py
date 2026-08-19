@@ -42,6 +42,11 @@ _PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("401", "403", "unauthorized", "forbidden", "invalid api key",
       "authentication", "permission denied"), "auth"),
     (("404", "not found", "no such file", "does not exist"), "not_found"),
+    # A checkpoint that no longer validates cannot be resumed, and retrying
+    # reproduces it exactly. Named so `fail_and_requeue` can drop the
+    # checkpoint and let the next attempt start clean.
+    (("resume transcript", "resumetranscripterror", "invalid resume"),
+     "corrupt_state"),
     (("timeout", "timed out", "deadline exceeded"), "timeout"),
     (("connection refused", "connection reset", "temporarily unavailable",
       "503", "502", "econnrefused"), "transient"),
