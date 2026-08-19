@@ -195,6 +195,33 @@ class DurableTaskStore(OwnedRepository):
             "delegate_key": task.delegate_key,
             "lease_owner": task.lease_owner,
             "superseded": 1 if task.superseded else 0,
+            # THE LOOP CONTRACT, WRITTEN WHERE THE ROW IS BORN. Bakir, 2026-08-19:
+            # "if agent all actions integrate with core loop logic agent will get
+            # that superpower in doing everything."
+            #
+            # These six columns were absent from this insert, and `enqueue()` hid
+            # it by issuing a second UPDATE right after calling create() to set
+            # them. So the one caller that went through enqueue (chat turns) worked,
+            # and every other caller — task_runner's scheduled work, decompose's
+            # sub-goals — built a row with destination/achievement/trigger_kind set
+            # on the MODEL and had them silently dropped on write. Measured that
+            # day: 39 rows carried a destination, all chat; 1,058 carried none, and
+            # trigger_kind 'schedule'/'subgoal' had never once been persisted
+            # despite both being set in code.
+            #
+            # It is not cosmetic. A row with no destination cannot be rescued by
+            # `revive_undelivered_failures`, is never flagged by
+            # `_warn_if_undelivered`, and can reach 'completed' with delivered_at
+            # NULL — success claimed with nobody proven to have received it.
+            #
+            # A row that genuinely has nobody waiting (a sweep, a prune) still
+            # passes None here and takes on no delivery obligation.
+            "destination": task.destination,
+            "achievement": task.achievement,
+            "trigger_kind": task.trigger_kind,
+            "max_attempts": task.max_attempts,
+            "depends_on": ",".join(task.depends_on) or None,
+            "idempotency_key": task.idempotency_key,
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
         })

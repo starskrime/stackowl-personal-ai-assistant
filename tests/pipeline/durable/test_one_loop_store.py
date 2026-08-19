@@ -582,3 +582,91 @@ class TestACorruptCheckpointIsNotRepeatedForever:
         # Compared loosely: this store round-trips the blob through TEXT, so
         # the exact type back is not the contract — surviving the requeue is.
         assert b"still good" in (kept if isinstance(kept, bytes) else kept.encode())
+
+
+class TestEveryAgentActionGetsTheLoopContract:
+    """BAKIR, 2026-08-19: "if agent all actions integrate with core loop logic agent
+    will get that superpower in doing everything."
+
+    MEASURED that day, and it was not true yet:
+
+        rows by trigger_kind:  chat 39,  (none) 1058
+        rows carrying a destination:     39   — all of them chat
+
+    `trigger_kind="schedule"` appears in task_runner.py and `"subgoal"` in
+    decompose.py, and ZERO rows had ever carried either. The reason is a silent
+    drop: `create()` inserted a fixed column list that omitted destination,
+    achievement, trigger_kind, max_attempts, depends_on and idempotency_key.
+    `enqueue()` hid it by issuing a second UPDATE right after `create()` to set them
+    — so the ONE caller that used enqueue (chat turns) worked, and every other
+    caller built a row with those fields set on the model and had them thrown away
+    on write.
+
+    The consequence is not cosmetic. A row with no destination cannot be rescued by
+    `revive_undelivered_failures` (which requires one), cannot be warned about by
+    `_warn_if_undelivered`, and reaches 'completed' with delivered_at NULL — success
+    claimed with nobody proven to have received it. That is precisely the guarantee
+    the loop exists to provide, and scheduled work never had it.
+    """
+
+    async def test_create_persists_the_destination(
+        self, store: DurableTaskStore,
+    ) -> None:
+        await store.create(DurableTask(
+            task_id="sched-1", owner_id=store._owner_id, goal="daily digest",
+            status="running", destination="telegram:72055773",
+            achievement="the answer is delivered to the job's targets",
+            trigger_kind="schedule",
+        ))
+
+        row = await store.get("sched-1")
+        assert row.destination == "telegram:72055773"
+        assert row.achievement == "the answer is delivered to the job's targets"
+        assert row.trigger_kind == "schedule"
+
+    async def test_a_scheduled_row_can_now_be_rescued_when_it_never_delivers(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """The whole point of stamping it. Before, a failed scheduled job was
+        invisible to the sweep because the sweep keys on having a destination."""
+        await store.create(DurableTask(
+            task_id="sched-2", owner_id=store._owner_id, goal="daily digest",
+            status="running", destination="telegram:72055773",
+            achievement="delivered", trigger_kind="schedule",
+        ))
+        await store._execute_owned(
+            "UPDATE tasks SET status='failed' WHERE owner_id=? AND task_id=?",
+            [store._owner_id, "sched-2"],
+        )
+
+        assert await store.revive_undelivered_failures() == 1
+        assert (await store.get("sched-2")).status == "pending"
+
+    async def test_a_maintenance_row_with_no_destination_is_unchanged(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """A sweep or prune has nobody waiting. It must NOT gain a delivery
+        obligation, or every housekeeping handler dead-letters."""
+        await store.create(DurableTask(
+            task_id="sweep-1", owner_id=store._owner_id, goal="prune",
+            status="running",
+        ))
+
+        row = await store.get("sweep-1")
+        assert row.destination is None
+        assert row.achievement is None
+
+    async def test_enqueue_still_round_trips_everything(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """enqueue's follow-up UPDATE and create must not disagree about a row."""
+        await store.enqueue(DurableTask(
+            task_id="enq-1", owner_id=store._owner_id, goal="ask a question",
+            status="pending", destination="telegram:1", achievement="delivered",
+            trigger_kind="chat", max_attempts=7, idempotency_key="k1",
+        ))
+
+        row = await store.get("enq-1")
+        assert row.destination == "telegram:1"
+        assert row.trigger_kind == "chat"
+        assert row.max_attempts == 7
