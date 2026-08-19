@@ -361,6 +361,14 @@ class TestA2ADelegator:
             tier="fast",
         )
         owl_registry = _make_registry_with("slowpoke")
+        # UPDATED 2026-08-19. The wait is now taken from the TARGET OWL's own
+        # `timeout_seconds`, not the delegator's constructor default — 72 live
+        # delegation timeouts all fired at the old hardcoded 30s while every owl
+        # manifest declared 400s, so an owl was abandoned long before it was
+        # allowed to stop. This test therefore has to express "give up quickly"
+        # through the owl, which is now the single source of truth for it.
+        slow = owl_registry.get("slowpoke")
+        object.__setattr__(slow, "timeout_seconds", 0.1)
         services = StepServices(
             provider_registry=provider_registry,
             owl_registry=owl_registry,

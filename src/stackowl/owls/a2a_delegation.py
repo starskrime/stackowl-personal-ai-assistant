@@ -75,6 +75,44 @@ class A2ADelegator:
     def timeout_seconds(self) -> float:
         return self._timeout_seconds
 
+    def timeout_for(self, to_owl: str) -> float:
+        """How long to wait for ``to_owl`` — the limit that OWL is allowed to run.
+
+        MEASURED 2026-08-19: 72 delegation timeouts, every one at 30.0s, including
+        secretary → mailbutler twice that day. Against this hardware over 22,099
+        provider calls — median 6.5s, p90 75.2s, p99 132.4s, and 27.5% of calls
+        longer than 30s — a single call exceeds the old wait more than a quarter of
+        the time, and a delegated turn is many calls plus tool work. Delegation was
+        close to guaranteed to fail for any sub-task worth delegating.
+
+        Meanwhile every owl manifest already declares ``timeout_seconds`` (400.0),
+        and the delegator ignored it for its own constructor default. Two sources of
+        truth for one limit, and the shorter one was not the owl's own.
+
+        Raising the constant would only be a better guess about one machine. Asking
+        the target owl is one source of truth, needs no new knob, and follows the
+        owl automatically when it is reconfigured.
+
+        Never raises: a lookup that fails costs the caller the OLD default, never
+        the delegation.
+        """
+        registry = getattr(self._services, "owl_registry", None)
+        if registry is None:
+            return self._timeout_seconds
+        try:
+            manifest = registry.get(to_owl)
+            configured = float(getattr(manifest, "timeout_seconds", 0) or 0)
+        except Exception as exc:
+            log.engine.warning(
+                "[a2a-delegator] could not read the target owl's timeout — using "
+                "the default wait",
+                exc_info=exc, extra={"_fields": {"to": to_owl}},
+            )
+            return self._timeout_seconds
+        # A zero or negative configured wait would abandon the child instantly,
+        # which is worse than the bug this fixes.
+        return configured if configured > 0 else self._timeout_seconds
+
     async def delegate(
         self,
         from_owl: str,
@@ -88,6 +126,10 @@ class A2ADelegator:
         observed facts (timeout / exception / empty / child errors) — never parsed
         from child output text so the child cannot spoof a status.
         """
+        # Resolved ONCE, here, so the logs report the wait actually used. Logging
+        # the constructor default while waiting on the owl's own limit is the kind
+        # of lying log line that made the 30s timeout hard to find at all.
+        wait_s = self.timeout_for(to_owl)
         log.engine.debug(
             "[a2a-delegator] delegate: entry",
             extra={
@@ -96,7 +138,7 @@ class A2ADelegator:
                     "from": from_owl,
                     "to": to_owl,
                     "sub_task_len": len(sub_task),
-                    "timeout_s": self._timeout_seconds,
+                    "timeout_s": wait_s,
                 }
             },
         )
@@ -127,7 +169,7 @@ class A2ADelegator:
 
         t0 = time.monotonic()
         try:
-            response = await self._a2a_queue.receive(from_owl, timeout=self._timeout_seconds)
+            response = await self._a2a_queue.receive(from_owl, timeout=wait_s)
         except A2ATimeoutError as exc:
             specialist_task.cancel()
             log.engine.warning(
@@ -138,7 +180,7 @@ class A2ADelegator:
                         "trace_id": parent_state.trace_id,
                         "from": from_owl,
                         "to": to_owl,
-                        "timeout_s": self._timeout_seconds,
+                        "timeout_s": wait_s,
                     }
                 },
             )

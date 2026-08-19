@@ -572,6 +572,14 @@ class DurableTaskStore(OwnedRepository):
         The child's terminal status is written by the PARENT when it commits its
         delegate_task ledger entry — not by the child about itself. Thin wrapper
         over the owner-scoped status UPDATE so the call-site reads intentionally.
+
+        TERMINAL MEANS TERMINAL. This passes ``terminal=True``, so a 'failed' here
+        is written straight through instead of being returned to the loop. The
+        chokepoint's retry default is right for a task that simply fell over; it is
+        wrong here, where the PARENT has already committed its ledger entry and
+        decided this child is over. Requeueing it would re-run a sub-task whose
+        result nobody will read — the same waste as the orphaned child that ground
+        to attempt 13 of 30 on 2026-08-19.
         """
         # 1. ENTRY
         log.tasks.debug(
@@ -580,7 +588,7 @@ class DurableTaskStore(OwnedRepository):
                 "task_id": task_id, "owner_id": self._owner_id, "status": status,
             }},
         )
-        await self.update_status(task_id, status, result=result)
+        await self.update_status(task_id, status, result=result, terminal=True)
         # 4. EXIT
         log.tasks.info(
             "[tasks] store.terminalize_child: exit",
