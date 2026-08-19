@@ -424,3 +424,97 @@ class TestTheThreeAdditionsAreHONEST:
         assert parent.status == "dead_letter"
         assert "child" in (parent.last_error or ""), parent.last_error
         assert parent.last_failure_class == "dependency_failed"
+
+
+class TestATaskThatOwedAnAnswerIsNeverLeftDead:
+    """BAKIR, 2026-08-18. Task 43be4591 asked Friday to create an agent. It hit the
+    step budget, was written ``status='failed'`` with ``destination='telegram:...'``
+    and ``delivered_at`` NULL, and nothing ever picked it up. He got silence.
+
+    The chokepoint fix stops NEW rows dying this way but cannot reach rows already
+    dead — the loop claims only 'pending'. This sweep is what reaches them, and its
+    predicate is deliberately narrow: a destination, and no delivery. On the live
+    table that matched exactly one row out of 850 failures.
+    """
+
+    async def test_a_failed_task_with_someone_waiting_is_requeued(
+        self, store: DurableTaskStore,
+    ) -> None:
+        await _pending(store, "owed")
+        await store.update_status("owed", "running")
+        await store._execute_owned(
+            "UPDATE tasks SET status='failed', destination='telegram:72055773', "
+            "result='budget:stop:steps:limit=20.0:actual=20.0' "
+            "WHERE owner_id=? AND task_id=?",
+            [store._owner_id, "owed"],
+        )
+
+        assert await store.revive_undelivered_failures() == 1
+
+        row = await store.get("owed")
+        assert row.status == "pending"
+        assert row.delivered_at is None
+
+    async def test_the_revived_task_carries_what_killed_it(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """Requeuing without the reason is the blind retry the design rejects — it
+        would spend the same twenty steps and stop in the same place."""
+        await _pending(store, "owed2")
+        await store._execute_owned(
+            "UPDATE tasks SET status='failed', destination='telegram:1', "
+            "result='budget:stop:steps:limit=20.0:actual=20.0' "
+            "WHERE owner_id=? AND task_id=?",
+            [store._owner_id, "owed2"],
+        )
+
+        await store.revive_undelivered_failures()
+
+        row = await store.get("owed2")
+        assert "budget:stop" in (row.last_error or "")
+        assert row.last_failure_class == "budget"
+
+    async def test_a_failure_with_nobody_waiting_is_left_alone(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """The guard against a stampede. Sweeps and internal sub-tasks have no
+        destination and no one expecting anything, so reviving them would re-run
+        hundreds of rows to no benefit."""
+        await _pending(store, "nobody")
+        await store._execute_owned(
+            "UPDATE tasks SET status='failed' WHERE owner_id=? AND task_id=?",
+            [store._owner_id, "nobody"],
+        )
+
+        assert await store.revive_undelivered_failures() == 0
+        assert (await store.get("nobody")).status == "failed"
+
+    async def test_an_already_delivered_task_is_not_resurrected(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """Delivered is the achievement. Re-running it would send a second answer
+        to a question already answered."""
+        await _pending(store, "done")
+        await store._execute_owned(
+            "UPDATE tasks SET status='failed', destination='telegram:1', "
+            "delivered_at='2026-08-18T00:00:00+00:00' "
+            "WHERE owner_id=? AND task_id=?",
+            [store._owner_id, "done"],
+        )
+
+        assert await store.revive_undelivered_failures() == 0
+
+    async def test_a_dead_letter_stays_dead(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """dead_letter is a decision the loop already made AND announced to the
+        operator. Quietly undoing it would re-run work they were told had stopped."""
+        await _pending(store, "dead")
+        await store._execute_owned(
+            "UPDATE tasks SET status='dead_letter', destination='telegram:1' "
+            "WHERE owner_id=? AND task_id=?",
+            [store._owner_id, "dead"],
+        )
+
+        assert await store.revive_undelivered_failures() == 0
+        assert (await store.get("dead")).status == "dead_letter"

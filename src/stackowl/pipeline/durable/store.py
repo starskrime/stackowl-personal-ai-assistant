@@ -932,6 +932,94 @@ class DurableTaskStore(OwnedRepository):
             extra={"_fields": {"task_id": task_id, "children": len(depends_on)}},
         )
 
+    async def revive_undelivered_failures(self, *, limit: int = 50) -> int:
+        """Return to the loop any task that OWED someone an answer and never sent it.
+
+        Bakir's completion rule: "if it's delivered to me, it means loop is
+        completed". The contrapositive is this method. A row carrying a
+        ``destination`` and a NULL ``delivered_at`` has a person still waiting, so a
+        terminal ``failed`` is never a truthful resting place for it.
+
+        This exists because the fix that stopped NEW rows dying this way could not
+        reach the ones already dead. Measured on the live table 2026-08-18: 850
+        failed rows, of which exactly ONE had a destination and no delivery —
+        Bakir's own chat turn, which asked for an agent and got silence. The narrow
+        predicate is the safety: rows with nobody waiting (sweeps, internal
+        sub-tasks) are left alone, so this can never become a stampede.
+
+        Deliberately NOT reviving ``dead_letter``. That status is a decision the
+        loop already made and announced; undoing it here would re-run work the
+        operator was told had stopped.
+
+        Returns how many were revived. Never raises: a recovery sweep that can
+        crash the boot it runs in is worse than the stranded rows it fixes.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[loop] store.revive_undelivered_failures: entry",
+            extra={"_fields": {"owner_id": self._owner_id, "limit": limit}},
+        )
+        try:
+            rows = await self._db.fetch_all(
+                f"SELECT task_id, goal, destination, last_error, result "  # noqa: S608
+                f"FROM {self._table} "
+                "WHERE owner_id=? AND status='failed' AND destination IS NOT NULL "
+                "AND delivered_at IS NULL ORDER BY updated_at DESC LIMIT ?",
+                (self._owner_id, limit),
+            )
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not look for stranded undelivered tasks",
+                exc_info=exc, extra={"_fields": {"owner_id": self._owner_id}},
+            )
+            return 0
+
+        revived = 0
+        now = datetime.now(tz=UTC).isoformat()
+        for r in rows or []:
+            task_id = str(r["task_id"])
+            try:
+                # attempt_count is left as it is rather than zeroed: the row DID
+                # attempt, and the ceiling must count that. `result` is preserved
+                # into last_error so the next attempt inherits what the last one
+                # hit, which is the entire point of requeuing rather than resetting.
+                await self._execute_owned(
+                    f"UPDATE {self._table} SET status='pending', "  # noqa: S608
+                    "last_error=COALESCE(last_error, result), "
+                    "last_failure_class=COALESCE(last_failure_class, ?), "
+                    "next_attempt_at=NULL, lease_owner=NULL, lease_expires_at=NULL, "
+                    "updated_at=? WHERE owner_id=? AND task_id=? AND status='failed'",
+                    # Classify from whichever field actually holds the reason.
+                    # These rows died BEFORE the chokepoint existed, so their text
+                    # is in `result`; `last_error` is NULL. Reading only the latter
+                    # would leave the class empty for precisely the rows this
+                    # sweep exists to rescue — caught by its own test.
+                    [classify_failure(r["last_error"] or r["result"]) or None, now,
+                     self._owner_id, task_id],
+                )
+            except Exception as exc:
+                log.tasks.error(
+                    "[loop] could not revive a stranded task",
+                    exc_info=exc, extra={"_fields": {"task_id": task_id}},
+                )
+                continue
+            revived += 1
+            log.tasks.warning(
+                "[loop] REVIVED a task that owed someone an answer and never sent it",
+                extra={"_fields": {
+                    "task_id": task_id,
+                    "destination": str(r["destination"])[:60],
+                    "goal": str(r["goal"])[:120],
+                }},
+            )
+        # 4. EXIT — INFO because this is the evidence line for the claim that a
+        #    stranded turn was recovered; a DEBUG line could never close it.
+        log.tasks.info(
+            "[loop] undelivered-failure sweep complete",
+            extra={"_fields": {"examined": len(rows or []), "revived": revived}},
+        )
+        return revived
+
     async def fail_and_requeue(
         self, task_id: str, *, error: str, failure_class: str = "",
         banned: tuple[str, ...] = (),

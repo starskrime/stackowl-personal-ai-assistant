@@ -61,6 +61,7 @@ class _Store(Protocol):
     async def set_dependencies(
         self, task_id: str, depends_on: tuple[str, ...],
     ) -> None: ...
+    async def revive_undelivered_failures(self, *, limit: int = 50) -> int: ...
     async def reclaim_expired(self, *, now: Any = None) -> int: ...
     async def prune_completed(self, *, older_than_days: int = 1) -> int: ...
 
@@ -109,6 +110,25 @@ class TaskLoop:
                            extra={"_fields": {"worker": self._worker}})
             return
         self._stopping.clear()
+        # ONE-TIME RESCUE, at the only moment it is guaranteed to run before any
+        # claiming happens. Rows that died terminally BEFORE the failure chokepoint
+        # existed cannot be reached by the loop — it claims only 'pending'. Any of
+        # them that still owes a person an answer is returned to the queue here.
+        # The predicate (has a destination, never delivered) is what keeps this
+        # from becoming a stampede: on the day it was written it matched one row.
+        try:
+            revived = await self._store.revive_undelivered_failures()
+            if revived:
+                log.tasks.warning(
+                    "[loop] start: revived stranded tasks that owed an answer",
+                    extra={"_fields": {"revived": revived, "worker": self._worker}},
+                )
+        except Exception as exc:
+            # A rescue that can stop the loop starting is worse than the strandings.
+            log.tasks.error(
+                "[loop] start: the undelivered-failure sweep failed — starting anyway",
+                exc_info=exc, extra={"_fields": {"worker": self._worker}},
+            )
         self._task = asyncio.create_task(self._run_forever())
         log.tasks.info(
             "[loop] started",
