@@ -670,3 +670,79 @@ class TestEveryAgentActionGetsTheLoopContract:
         assert row.destination == "telegram:1"
         assert row.trigger_kind == "chat"
         assert row.max_attempts == 7
+
+
+class TestASubTaskDiesWithItsParent:
+    """MEASURED LIVE 2026-08-19, while Bakir was asking why agents keep failing.
+
+    Row `child-a49e8ce9…` — "List the existing owls so I can check for a name
+    collision before minting 'mailbutler'" — sat at attempt_count 13 of 30, status
+    pending, destination None, last_error "retry did not deliver (actuator reported
+    'pending')". Its parent, 43be4591, was already **completed and delivered**.
+
+    So the loop was spending a model call every few minutes re-running a
+    name-collision check for an owl that had been created hours earlier, and had 17
+    attempts still to burn. Each pass also logged
+    `retry_queue_store.mark_attempt_failed: row not found`, because a loop-born task
+    has no row in the retry queue the actuator does its bookkeeping in.
+
+    THE RULE THIS ADDS. A sub-task exists to serve its parent. Once that parent is
+    terminal, the child has no destination, no achievement, and nobody waiting — so
+    it is not claimable. This is the same principle as `_deps_satisfied` (do not run
+    what cannot help), applied upward instead of sideways.
+
+    A child whose parent is still RUNNING is untouched: that is the ordinary
+    fan-out the graph exists for.
+    """
+
+    async def _child_of(self, store: DurableTaskStore, parent_status: str) -> str:
+        await _pending(store, "par-1")
+        await store._execute_owned(
+            "UPDATE tasks SET status=? WHERE owner_id=? AND task_id=?",
+            [parent_status, store._owner_id, "par-1"],
+        )
+        await _pending(store, "kid-1")
+        await store._execute_owned(
+            "UPDATE tasks SET parent_task_id='par-1' WHERE owner_id=? AND task_id=?",
+            [store._owner_id, "kid-1"],
+        )
+        return "kid-1"
+
+    async def test_a_child_of_a_completed_parent_is_not_claimable(
+        self, store: DurableTaskStore,
+    ) -> None:
+        kid = await self._child_of(store, "completed")
+
+        ids = {t.task_id for t in await store.claimable(limit=50)}
+
+        assert kid not in ids, "the parent already delivered; the child has no work"
+
+    async def test_a_child_of_a_dead_lettered_parent_is_not_claimable(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """The parent stopped for good and the operator was told. Grinding its
+        children afterwards spends budget on work nobody is waiting for."""
+        kid = await self._child_of(store, "dead_letter")
+
+        ids = {t.task_id for t in await store.claimable(limit=50)}
+
+        assert kid not in ids
+
+    async def test_a_child_of_a_RUNNING_parent_is_still_claimable(
+        self, store: DurableTaskStore,
+    ) -> None:
+        """The ordinary fan-out. Blocking this would break decomposition itself."""
+        kid = await self._child_of(store, "running")
+
+        ids = {t.task_id for t in await store.claimable(limit=50)}
+
+        assert kid in ids
+
+    async def test_a_task_with_no_parent_is_unaffected(
+        self, store: DurableTaskStore,
+    ) -> None:
+        await _pending(store, "root-1")
+
+        ids = {t.task_id for t in await store.claimable(limit=50)}
+
+        assert "root-1" in ids

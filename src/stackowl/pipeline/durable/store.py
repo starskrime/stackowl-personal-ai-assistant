@@ -832,11 +832,30 @@ class DurableTaskStore(OwnedRepository):
             "attempt_count, max_attempts, last_error, last_failure_class, "
             "banned_capabilities, next_attempt_at, lease_expires_at, depends_on, "
             "trigger_kind, idempotency_key "
-            f"FROM {self._table} WHERE owner_id = ? AND status = 'pending' "
+            f"FROM {self._table} WHERE owner_id = ? AND status = 'pending' "  # noqa: S608
             "AND COALESCE(superseded, 0) = 0 "
             "AND (next_attempt_at IS NULL OR next_attempt_at <= ?) "
+            # A SUB-TASK DIES WITH ITS PARENT. Measured live 2026-08-19:
+            # child-a49e8ce9… ("list the owls so I can check for a name collision
+            # before minting 'mailbutler'") sat at attempt 13 of 30 while its
+            # parent 43be4591 had been completed and DELIVERED hours earlier. The
+            # loop was spending a model call every few minutes re-checking a name
+            # collision for an owl that already existed, with 17 attempts still to
+            # burn — and logging `mark_attempt_failed: row not found` each pass,
+            # because a loop-born task has no retry-queue row for the actuator's
+            # bookkeeping.
+            #
+            # A sub-task exists to serve its parent: once that parent is terminal
+            # the child has no destination, no achievement and nobody waiting. Same
+            # principle as `_deps_satisfied` (never run what cannot help), applied
+            # upward instead of sideways. A child of a RUNNING parent is the
+            # ordinary fan-out and is untouched.
+            "AND (parent_task_id IS NULL OR NOT EXISTS ("
+            f"  SELECT 1 FROM {self._table} p WHERE p.owner_id = ? "
+            "  AND p.task_id = tasks.parent_task_id "
+            "  AND p.status IN ('completed', 'dead_letter'))) "
             "ORDER BY created_at LIMIT ?",
-            (self._owner_id, stamp, int(limit)),
+            (self._owner_id, stamp, self._owner_id, int(limit)),
         )
         out: builtins.list[DurableTask] = []
         for r in rows:
