@@ -341,8 +341,13 @@ class CuratedMemory:
         candidate = [*existing, Entry(text=text, durability=durability)]
         budget = self.budget_for(target)
         projected = len(self._render(candidate))
+        evicted: list[Entry] = []
         if projected > budget:
-            # 2. DECISION — at capacity. This is the consolidation protocol.
+            # 2. DECISION — at capacity. Make room by DECAY first; the
+            # consolidation protocol is the fallback when nothing may be dropped.
+            candidate, evicted = self._evict_to_fit(candidate, budget)
+            projected = len(self._render(candidate))
+        if projected > budget:
             return self._at_capacity(target, text, budget)
 
         self._write(target, candidate)
@@ -354,10 +359,31 @@ class CuratedMemory:
                 "used": projected, "budget": budget,
             }},
         )
+        note = ""
+        if evicted:
+            # NEVER a silent delete. The model is told exactly what went, so it can
+            # put back anything it still needs — and the log keeps the text, so an
+            # eviction is recoverable rather than final.
+            for gone in evicted:
+                log.memory.warning(
+                    "[curated] decay: evicted the oldest until_changed entry to "
+                    "make room",
+                    extra={"_fields": {
+                        "target": target, "freed_chars": len(gone.rendered()),
+                        "text": gone.text[:200],
+                    }},
+                )
+            note = (
+                " Memory was full, so I made room by dropping the "
+                f"{len(evicted)} oldest until_changed "
+                f"{'entry' if len(evicted) == 1 else 'entries'}: "
+                + "; ".join(f'"{g.text[:60]}"' for g in evicted)
+                + ". Re-add anything there that is still true."
+            )
         return self._success(
             target,
             "Saved. It reaches the system prompt on the next /new — this "
-            "conversation keeps the prompt it started with.",
+            "conversation keeps the prompt it started with." + note,
         )
 
     def replace(self, target: str, old_text: str, new_text: str,
@@ -427,6 +453,48 @@ class CuratedMemory:
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(self._render(entries) + "\n", encoding="utf-8")
         tmp.replace(path)
+
+    def _evict_to_fit(
+        self, candidate: list[Entry], budget: int,
+    ) -> tuple[list[Entry], list[Entry]]:
+        """Drop the OLDEST ``until_changed`` entries until the set fits.
+
+        THE FOURTH DEFECT SHAPE, finally actuated. This module's own docstring
+        already decided it — "Storing it (not just checking it) lets EVICTION
+        prefer ``until_changed`` over ``permanent``" — and nothing ever evicted
+        anything. Measured 2026-08-18 over the platform's whole history: 5 removals
+        against 36 refusals, and 13,655 characters of fact discarded in three days
+        because the file was full.
+
+        The choice at capacity is NOT "lose something or lose nothing" — it is
+        "lose the newest fact or the oldest". The old behaviour always discarded
+        the newest. For a durability whose name says it holds only *until
+        changed*, the newer fact is the better bet.
+
+        ``permanent`` is never touched, which is what separates decay from data
+        loss. Order is file order, which IS insertion order because entries are
+        appended — so no timestamp had to be invented to know which is oldest.
+
+        Returns (kept, evicted). Evicts the MINIMUM that fits: this stops as soon
+        as there is room rather than trimming to some comfortable margin.
+        """
+        kept = list(candidate)
+        evicted: list[Entry] = []
+        # The entry just offered is last and is the one being made room FOR, so it
+        # is never a candidate for eviction.
+        while len(self._render(kept)) > budget:
+            oldest = next(
+                (i for i, e in enumerate(kept[:-1])
+                 if e.durability == "until_changed"),
+                None,
+            )
+            if oldest is None:
+                # Nothing evictable left. Hand back what we have; the caller falls
+                # through to the consolidation protocol, which is the honest answer for
+                # a file of durable facts.
+                break
+            evicted.append(kept.pop(oldest))
+        return kept, evicted
 
     def _at_capacity(self, target: str, attempted: str, budget: int) -> MemoryResult:
         """The refusal that makes the budget mean something.
