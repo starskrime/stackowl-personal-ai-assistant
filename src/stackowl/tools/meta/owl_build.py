@@ -166,9 +166,39 @@ def _edit_landed(current: object | None, args: dict[str, object]) -> bool | None
             return False
     tools = args.get("explicit_tools")
     if isinstance(tools, list) and tools:
-        checked += 1
         live = {str(t) for t in (getattr(current, "tools", None) or [])}
         missing = {str(t) for t in tools} - live
+        # AN AUTHORITY CLAMP IS A DECISION, NOT A FAILED EDIT. An unbounded creator
+        # is given SAFE_DEFAULT_CEILING so an agent cannot mint itself shell/exec/
+        # write/network, and both write paths already report the drop honestly
+        # ("Dropped above your authority: shell"). Comparing the live owl against
+        # what was REQUESTED rather than what was GRANTED scored that correct,
+        # secure outcome as a failure: verified=False → overclaim.detected →
+        # corrective replay → the identical edit again → clamped again. Measured
+        # 2026-08-19 on mailbutler, missing ['send_message','shell','write_file'],
+        # three times; 19 overclaims across 50 owl_build runs. Nothing was broken,
+        # and the platform could not stop retrying it.
+        #
+        # The teeth are kept: a tool the ceiling PERMITS that did not land is still
+        # a real failure, and an owl with no ceiling clamped nothing, so every
+        # absence there is genuine.
+        ceiling = getattr(current, "creation_ceiling", None)
+        clamped_away: set[str] = set()
+        if ceiling is not None:
+            clamped_away = {t for t in missing if not ceiling.permits_tool(t)}
+            if clamped_away:
+                log.tool.info(
+                    "owl_build.verify: tools absent because the creator's ceiling "
+                    "forbids them — a clamp, not a failed edit",
+                    extra={"_fields": {"clamped": sorted(clamped_away)}},
+                )
+                missing = missing - clamped_away
+        # Count this as a checked field only when the request contained something
+        # the ceiling would actually have allowed. A request that was clamped in
+        # FULL leaves no opinion (None) rather than a free pass — the same reason
+        # "the owl still exists" stopped counting as a successful edit.
+        if {str(t) for t in tools} - clamped_away:
+            checked += 1
         if missing:
             log.tool.warning(
                 "owl_build.verify: requested tools are absent from the live owl",
