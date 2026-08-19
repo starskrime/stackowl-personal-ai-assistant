@@ -97,6 +97,19 @@ class ConsentRequest:
     tool_name: str
     channel: str
     session_key: str
+    #: WHERE to ask, as opposed to WHICH CONVERSATION is asking. ``session_key``
+    #: is an identity — it scopes grants (``_window_active``, ``_session_batch``)
+    #: and must stay one. It is NOT an address, and a prompter that treated it as
+    #: one denied Bakir every owl_build he asked for from Telegram on 2026-08-19:
+    #: lanes became ``owl:secretary:telegram:dm:72055773`` and ``int(session_key)``
+    #: raised, so the gate failed closed before he was ever asked.
+    #:
+    #: This is the SAME value ``PipelineState.reply_target`` already carries for
+    #: the deliver step, threaded from ``IngressMessage.chat_id`` — a consent
+    #: prompt is an outgoing message like any other and needs the turn's own
+    #: target, never a shared last-chat. None ⇒ the prompter falls back to reading
+    #: the session key, and denies if that names no chat.
+    reply_target: int | str | None = None
     category: str | None = None
     summary: str = ""
     # When False, the prompter must NOT offer batch/window relaxation buttons
@@ -270,6 +283,7 @@ class ConsentPolicy:
         category: str | None = None,
         summary: str = "",
         reversible: bool = False,
+        reply_target: int | str | None = None,
     ) -> bool:
         """Return True if the action may proceed. Audits every decision.
 
@@ -331,6 +345,7 @@ class ConsentPolicy:
             tool_name=tool_name,
             channel=channel,
             session_key=session_key,
+            reply_target=reply_target,
             category=category,
             summary=summary,
             allow_relaxation=not excluded,

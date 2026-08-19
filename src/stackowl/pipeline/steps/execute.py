@@ -1712,7 +1712,13 @@ async def _run_with_tools(
                 # consent_summary() can show WHAT will run (e.g. execute_code's
                 # code + language + network), not just the static description.
                 allowed = await gate.check(
-                    t, channel=state.channel, session_key=state.session_key, call_args=args
+                    t, channel=state.channel, session_key=state.session_key,
+                    call_args=args,
+                    # The turn's OWN chat, the same value the deliver step uses.
+                    # Without it the consent prompt had no address and fell back to
+                    # parsing the session key — which denied every owl_build from
+                    # Telegram once lanes gained structure.
+                    reply_target=state.reply_target,
                 )
             except Exception as exc:
                 log.engine.error(

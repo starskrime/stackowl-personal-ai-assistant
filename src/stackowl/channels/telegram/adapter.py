@@ -26,6 +26,7 @@ from telegram.error import BadRequest, RetryAfter
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from stackowl.channels.base import ChannelAdapter
+from stackowl.channels.chat_id import chat_id_from_session
 from stackowl.channels.splitter import TelegramMessageSplitter
 from stackowl.channels.telegram._bot import (
     build_inline_keyboard,
@@ -161,9 +162,8 @@ class TelegramChannelAdapter(ChannelAdapter):
                 "[telegram] adapter.resolve_target: blank session_key — unresolved",
             )
             return None
-        try:
-            chat_id = int(sid)
-        except ValueError:
+        chat_id = chat_id_from_session(sid)
+        if chat_id is None:
             log.telegram.warning(
                 "[telegram] adapter.resolve_target: session_key is not a chat id — unresolved",
                 extra={"_fields": {"session_key": sid}},

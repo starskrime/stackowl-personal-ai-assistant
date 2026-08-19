@@ -80,6 +80,7 @@ class ConsequentialActionGate:
         session_key: str | None = None,
         category: str | None = None,
         call_args: dict[str, object] | None = None,
+        reply_target: int | str | None = None,
     ) -> bool:
         """Return True if execution should proceed.
 
@@ -117,6 +118,9 @@ class ConsequentialActionGate:
             category=effective_category,
             summary=summary,
             reversible=reversible,
+            # WHERE to ask. Without it the Telegram prompter had only the session
+            # KEY to work from and failed closed on every structured lane.
+            reply_target=reply_target,
         )
         # 4. EXIT
         log.tool.debug(

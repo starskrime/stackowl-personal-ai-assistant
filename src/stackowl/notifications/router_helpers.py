@@ -11,6 +11,7 @@ from datetime import datetime, time, timedelta
 from typing import TYPE_CHECKING, Literal
 from zoneinfo import ZoneInfo
 
+from stackowl.channels.chat_id import chat_id_from_session
 from stackowl.config.notification_settings import QuietHoursSettings
 from stackowl.infra.observability import log
 
@@ -102,18 +103,21 @@ def resolve_target_chat_id(channel: str | None, session_key: str | None) -> int 
             extra={"_fields": {"channel": channel}},
         )
         return None
-    try:
-        return int(sid)
-    except ValueError:
-        # Non-numeric session id on a chat-addressable channel (e.g. a group chat
-        # whose session id is not the user/chat id). Do NOT guess a target.
-        log.notifications.warning(
-            "[notifications] resolve_target_chat_id: session_key is not a chat id "
-            "— recipient unresolved, falling back to _last_chat_id (possible "
-            "cross-delivery under concurrency)",
-            extra={"_fields": {"channel": channel, "session_key": sid}},
-        )
-        return None
+    # Handles the bare id AND the structured lane
+    # ("owl:secretary:telegram:dm:72055773"). This used to be a bare int(sid),
+    # one of three independent copies that all went stale when lanes gained
+    # structure — see channels/chat_id.py.
+    resolved = chat_id_from_session(sid)
+    if resolved is not None:
+        return resolved
+    # Names no chat at all. Do NOT guess a target.
+    log.notifications.warning(
+        "[notifications] resolve_target_chat_id: session_key is not a chat id "
+        "— recipient unresolved, falling back to _last_chat_id (possible "
+        "cross-delivery under concurrency)",
+        extra={"_fields": {"channel": channel, "session_key": sid}},
+    )
+    return None
 
 
 async def resolve_recipient(

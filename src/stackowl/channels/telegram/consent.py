@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import uuid4
 
+from stackowl.channels.chat_id import chat_id_from_session
 from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
 from stackowl.infra.observability import log
 from stackowl.tools.consent import ConsentRequest, ConsentScope
@@ -98,9 +99,24 @@ class TelegramConsentPrompter:
         # 2. DECISION — target the INITIATING user's chat (session_key == Telegram
         # user id), never a shared/last chat (prevents a confused-deputy where a
         # different user sees/answers the prompt). Fail closed if unresolvable.
-        try:
-            chat_id = int(req.session_key)
-        except (TypeError, ValueError):
+        # ADDRESS FIRST, IDENTITY ONLY AS A FALLBACK. `reply_target` is the turn's
+        # own chat, threaded from IngressMessage.chat_id — the same value the
+        # deliver step uses so a reply cannot land in someone else's window. It was
+        # never passed to consent, so this prompter had only the session KEY, did
+        # `int(session_key)`, and failed closed on every structured lane. That is
+        # what denied Bakir every owl_build from Telegram on 2026-08-19.
+        #
+        # The session-key read stays for callers that legitimately have no turn
+        # target (proactive/recovery paths, where the key IS a bare chat id).
+        chat_id: int | None = None
+        target = req.reply_target
+        if isinstance(target, int):
+            chat_id = target
+        elif isinstance(target, str) and target.strip():
+            chat_id = chat_id_from_session(target)
+        if chat_id is None:
+            chat_id = chat_id_from_session(req.session_key)
+        if chat_id is None:
             log.telegram.error(
                 "[telegram] consent.prompt: session_key is not a chat id — denying (fail closed)",
                 extra={"_fields": {"tool": req.tool_name, "session": req.session_key}},
