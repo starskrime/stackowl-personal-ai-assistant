@@ -483,6 +483,14 @@ class CuratedMemory:
         # The entry just offered is last and is the one being made room FOR, so it
         # is never a candidate for eviction.
         while len(self._render(kept)) > budget:
+            # OLDEST FIRST, and deliberately nothing cleverer. A "drop the entry
+            # big enough to free the space in one go" rule was tried and reverted
+            # 2026-08-19: size is not a staleness signal, and on a real file it
+            # selected the OLDEST SUFFICIENT entry, which was a 24-char rule worth
+            # keeping — the very thing it was meant to protect. Age is the only
+            # staleness evidence this format actually carries, and durability is
+            # the control: an entry that should survive pressure belongs in
+            # `permanent`, which is never evicted.
             oldest = next(
                 (i for i, e in enumerate(kept[:-1])
                  if e.durability == "until_changed"),

@@ -143,3 +143,30 @@ class TestTheEvictionIsVisible:
 
         assert result.ok
         assert "made room" in result.message.lower() or "dropped" in result.message.lower()
+
+
+class TestTheEvictionRuleIsAgeAndNothingCleverer:
+    def test_a_mislabelled_rule_is_protected_by_marking_it_permanent(
+        self, mem: CuratedMemory,
+    ) -> None:
+        """MEASURED on Bakir's real secretary.md, 2026-08-19: making room for one
+        note evicted the 840-char stale incident log (rightly) AND "Telegram
+        replies must stay under 2048 tokens" — a 61-char rule worth keeping, lost
+        for being first in the file.
+
+        A "drop whichever entry frees the space in one go" rule was tried and
+        REVERTED: size is not a staleness signal, and it selected the oldest
+        sufficient entry — the small rule it was meant to protect. Age is the only
+        staleness evidence this format carries. Durability is the control, and it
+        works: the same rule marked permanent survives the same pressure."""
+        mem.add("user", "Telegram replies must stay under 2048 tokens",
+                durability="permanent")
+        mem.add("user", "a big stale block " + "s" * 600,
+                durability="until_changed")
+
+        mem.add("user", "the new fact " + "n" * 700, durability="until_changed")
+
+        kept = [e.text for e in mem.entries("user")]
+        assert any("2048 tokens" in t for t in kept)
+        assert not any("a big stale block" in t for t in kept)
+        assert mem.used_chars("user") <= mem.budget_for("user")
