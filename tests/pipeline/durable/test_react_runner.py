@@ -171,13 +171,23 @@ async def test_resume_replays_exactly_once_across_crash(pool: DbPool) -> None:
         await runner.start("do the thing", crash_drive, task_id="task-crash")
 
     # The crash interrupted the task with a checkpoint at iteration 1.  The
-    # in-process exception ran the fail-loud handler (status=failed); a REAL
-    # crash (process kill) would leave it `running`.  Simulate the orphaned-
-    # process state that S7 recovery / resume operates on by resetting to
-    # `running` — resume only no-ops on already-terminal tasks.
+    # in-process exception ran the fail-loud handler, which calls
+    # `update_status(..., "failed")`; a REAL crash (process kill) would leave it
+    # `running`.  Simulate the orphaned-process state that S7 recovery / resume
+    # operates on by resetting to `running` — resume only no-ops on terminal tasks.
     store = DurableTaskStore(pool, _OWNER)
     crashed = await store.get("task-crash")
-    assert crashed.status == "failed"
+    # UPDATED 2026-08-18: this asserted `failed`, which encoded the defect. A
+    # crash is the textbook RETRYABLE failure, yet `failed` is terminal — the loop
+    # claims only `pending`, so the row was unreachable forever. Measured on the
+    # live table that day: 850 failed rows, none ever retried, one of them a chat
+    # turn that owed Bakir an answer it never delivered. `update_status` now routes
+    # a non-terminal failure through `fail_and_requeue`, so the row comes back as
+    # `pending` carrying what failed. The checkpoint below still proves the crash
+    # happened exactly where it did.
+    assert crashed.status == "pending"
+    assert crashed.attempt_count == 1, "the attempt must be COUNTED, or the ceiling never arrives"
+    assert crashed.last_error, "the next attempt has to know what the last one hit"
     blob = await store.load_checkpoint("task-crash")
     assert blob is not None
     assert deserialize(blob).iteration == 1

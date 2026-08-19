@@ -33,6 +33,10 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from stackowl.infra.observability import log
+from stackowl.pipeline.durable.failure_class import (
+    classify_failure,
+    wants_reshaping,
+)
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.pipeline.durable.task import DurableTask
@@ -53,35 +57,12 @@ class _Store(Protocol):
         self, task_id: str, *, error: str, failure_class: str = "",
         banned: tuple[str, ...] = (),
     ) -> str: ...
+    async def enqueue(self, task: Any) -> None: ...
+    async def set_dependencies(
+        self, task_id: str, depends_on: tuple[str, ...],
+    ) -> None: ...
     async def reclaim_expired(self, *, now: Any = None) -> int: ...
     async def prune_completed(self, *, older_than_days: int = 1) -> int: ...
-
-
-def classify_failure(exc: BaseException) -> str:
-    """Name the failure so the ceiling can be spent intelligently.
-
-    A network blip and a missing credential must not cost the same thirty
-    attempts: the first is worth retrying, the second fails identically every time
-    and would burn thirty guaranteed-wasted model calls — seconds of latency each
-    on this hardware.
-
-    Reuses the project's single transient oracle rather than adding a second
-    opinion about what "transient" means.
-    """
-    try:
-        from stackowl.infra.resilience import looks_like_dead_handle
-
-        if looks_like_dead_handle(exc):
-            return "transient"
-    except Exception:  # pragma: no cover — the oracle must never decide the turn
-        log.tasks.warning("[loop] transient oracle unavailable", exc_info=True)
-    if isinstance(exc, TimeoutError | ConnectionError):
-        return "transient"
-    if isinstance(exc, PermissionError):
-        return "auth"
-    if isinstance(exc, FileNotFoundError | LookupError):
-        return "not_found"
-    return "error"
 
 
 class TaskLoop:
@@ -208,6 +189,18 @@ class TaskLoop:
         delivered would be the overclaim shape this platform keeps finding —
         success asserted rather than observed.
         """
+        # CHANGE THE SHAPE BEFORE SPENDING ANOTHER ATTEMPT. Bakir's task
+        # 43be4591 died on `budget:stop:steps:limit=20.0:actual=20.0` — it ran out
+        # of steps. Re-running it identically spends the same twenty steps and
+        # stops at the same place, which is the "blind" retry his design rejects:
+        # "so next loop when it picks it, it also looks: is any previous one? Yes
+        # — learn from that experience."
+        #
+        # `should_decompose` and `plan_subtasks` were written for exactly this and
+        # then never called from anywhere — grep found zero call sites outside
+        # their own module. This is the call site.
+        if await self._maybe_reshape(task):
+            return
         try:
             result = await self._runner(task)
         except Exception as exc:
@@ -238,6 +231,84 @@ class TaskLoop:
                 "its lease expires",
                 exc_info=exc, extra={"_fields": {"task_id": task.task_id}},
             )
+
+    async def _maybe_reshape(self, task: Any) -> bool:
+        """Split a task that keeps failing for a reason repetition cannot fix.
+
+        Returns True when the task became a parent waiting on children, in which
+        case this attempt must NOT also run it.
+
+        NEVER raises and never loses the task. Every failure path here returns
+        False, which simply means "run it the ordinary way" — the task stays
+        exactly as retryable as it was. A reshaping step that could strand the
+        work it is meant to rescue would be worse than not having it.
+        """
+        try:
+            if not wants_reshaping(getattr(task, "last_failure_class", "") or ""):
+                return False
+            from stackowl.pipeline.durable.decompose import (
+                plan_subtasks,
+                should_decompose,
+            )
+
+            if not should_decompose(task):
+                return False
+            children = await plan_subtasks(task, self._decomposer())
+            if not children:
+                return False
+            for child in children:
+                await self._store.enqueue(child)
+            await self._store.set_dependencies(
+                task.task_id, tuple(c.task_id for c in children),
+            )
+            log.tasks.info(
+                "[loop] task RESHAPED — repeating it could not have worked",
+                extra={"_fields": {
+                    "task_id": task.task_id,
+                    "failure_class": getattr(task, "last_failure_class", ""),
+                    "attempt": getattr(task, "attempt_count", 0),
+                    "children": [c.task_id for c in children],
+                }},
+            )
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not reshape a repeatedly-failing task — it stays "
+                "retryable in its original form",
+                exc_info=exc, extra={"_fields": {"task_id": task.task_id}},
+            )
+            return False
+        else:
+            return True
+
+    def _decomposer(self) -> Any:
+        """The platform's existing decomposer, or None.
+
+        Resolved lazily from services rather than taken in ``__init__`` for two
+        reasons: this module must stay drivable by a test double without importing
+        the database, and a constructor argument would let the feature ship
+        dormant when a wiring site forgot to pass it. None simply means no split
+        is attempted.
+        """
+        try:
+            from stackowl.objectives.decomposer import ObjectiveDecomposer
+            from stackowl.pipeline.services import get_services
+
+            registry = getattr(get_services(), "provider_registry", None)
+            if registry is None:
+                log.tasks.warning(
+                    "[loop] no provider registry — a stuck task cannot be split",
+                )
+                return None
+            # Constructed the SAME way objective_tool and the objective driver
+            # already build it. Services exposes no decomposer attribute, and
+            # adding one would be a second place that knows how to make one.
+            return ObjectiveDecomposer(registry)
+        except Exception as exc:
+            log.tasks.warning(
+                "[loop] no decomposer available — a stuck task cannot be split",
+                exc_info=exc,
+            )
+            return None
 
     async def _safe_fail(
         self, task: Any, *, error: str, failure_class: str

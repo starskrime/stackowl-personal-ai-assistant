@@ -20,6 +20,10 @@ from stackowl.authz.bounds import BoundsSpec
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
+from stackowl.pipeline.durable.failure_class import (
+    classify_failure,
+    wants_reshaping,
+)
 from stackowl.pipeline.durable.task import DEFAULT_MAX_ATTEMPTS, DurableTask, TaskStatus
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
@@ -292,12 +296,18 @@ class DurableTaskStore(OwnedRepository):
         current_step: int | None = None,
         thread_id: str | None = None,
         result: str | None = None,
+        terminal: bool = False,
     ) -> None:
         """Owner-scoped UPDATE of a task's status and optional fields.
 
         Only the provided keyword fields are written; ``updated_at`` is always
         refreshed. The UPDATE carries an ``owner_id`` predicate so it can never
         touch another principal's row.
+
+        ``terminal=True`` writes a ``failed`` status straight through instead of
+        returning the row to the loop. Reserved for a caller that has ALREADY
+        decided the task is over; the default is to retry, because the measured
+        cost of the opposite default was 850 dead rows.
         """
         # 1. ENTRY
         log.tasks.debug(
@@ -323,6 +333,35 @@ class DurableTaskStore(OwnedRepository):
         # has nobody waiting, so "completed" is the whole truth for it.
         if status == "completed":
             await self._warn_if_undelivered(task_id)
+        # THE SAME RULE FOR THE OTHER ENDING. Bakir, 2026-08-17: "a failure returns
+        # the row to pending *with what failed*, so the next attempt is constrained
+        # rather than blind." `fail_and_requeue` implements exactly that — but it
+        # was reachable ONLY from inside TaskLoop, and a chat turn does not run
+        # inside the loop. The fast path produces the reply and, when it dies,
+        # executor/react_runner/task_runner each call THIS method with "failed".
+        # It wrote that as terminal, and the loop only ever claims 'pending', so
+        # the row became unreachable. Measured 2026-08-18: 850 failed rows and not
+        # one of them had ever reached attempt_count > 0 — including the turn that
+        # left Bakir without an answer, destination telegram, delivered_at NULL.
+        #
+        # Routed HERE rather than in the three callers for the same reason the
+        # 'completed' branch above lives here: one source, and the others ask it.
+        if status == "failed" and not terminal:
+            await self._require_owned(task_id, op="update_status")
+            failure_class = classify_failure(result)
+            log.tasks.info(
+                "[loop] a failure reached the chokepoint — returning it to the loop",
+                extra={"_fields": {
+                    "task_id": task_id, "failure_class": failure_class or "unknown",
+                    "reshaping": wants_reshaping(failure_class),
+                    "error": (result or "")[:200],
+                }},
+            )
+            await self.fail_and_requeue(
+                task_id, error=result or "task failed with no reported reason",
+                failure_class=failure_class,
+            )
+            return
         # 2. DECISION — build the SET list dynamically from the supplied fields
         set_parts: list[str] = ["status = ?", "updated_at = ?"]
         params: list[Any] = [status, datetime.now(tz=UTC).isoformat()]
@@ -858,6 +897,40 @@ class DurableTaskStore(OwnedRepository):
                 extra={"_fields": {"reclaimed": affected}},
             )
         return int(affected)
+
+    async def set_dependencies(
+        self, task_id: str, depends_on: tuple[str, ...],
+    ) -> None:
+        """Make a task WAIT for the rows that were split out of it.
+
+        ``enqueue`` writes ``depends_on`` for a new row; a parent being reshaped
+        already exists, so it needs this. Without it the parent stays immediately
+        claimable and the loop re-runs the whole goal alongside the children it
+        just created — the fan-out would compete with itself and the split would
+        make things worse rather than better.
+
+        Also clears ``next_attempt_at``: the backoff was a delay before repeating
+        the SAME work, and this task is no longer going to do that work. Its real
+        gate is now ``_deps_satisfied``.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[loop] store.set_dependencies: entry",
+            extra={"_fields": {"task_id": task_id, "deps": list(depends_on)}},
+        )
+        await self._require_owned(task_id, op="set_dependencies")
+        # 2. STEP
+        await self._execute_owned(
+            f"UPDATE {self._table} SET depends_on=?, next_attempt_at=NULL, "  # noqa: S608
+            "updated_at=? WHERE owner_id=? AND task_id=?",
+            [",".join(depends_on) or None, datetime.now(tz=UTC).isoformat(),
+             self._owner_id, task_id],
+        )
+        # 3. EXIT
+        log.tasks.info(
+            "[loop] task now waits on the sub-tasks split out of it",
+            extra={"_fields": {"task_id": task_id, "children": len(depends_on)}},
+        )
 
     async def fail_and_requeue(
         self, task_id: str, *, error: str, failure_class: str = "",
