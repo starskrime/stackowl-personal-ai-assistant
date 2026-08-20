@@ -788,6 +788,40 @@ current:
       that is deciding blind. Meanwhile the union read holds recall together, and
       retry_queue is the one worth checking by hand because it can change behaviour
       rather than a number.
+    A_SIXTH_TABLE_AND_THE_FIRST_BEHAVIOURAL_HARM_2026_08_20: >-
+      The 2026-08-16 sweep found five tables and judged the harm "reporting only"
+      everywhere except staged_facts. There is a SIXTH, and it is the first case
+      where the conditional key stopped WORK rather than skewing a number.
+        tasks.owner_id   principal-default 759 failed / 33 completed / 1 pending
+                         72055773           96 completed / 57 pending / 30 failed
+                         owl:<owl>:recovery:<task>  ~18 more lane strings
+      `tasks.owner_id` is not merely read by that column — it is the TENANCY key.
+      `claimable` carries `WHERE owner_id = ?` and TaskLoop is constructed with no
+      owner, so it drains principal-default and nothing else. 72 pending rows, the
+      oldest from 2026-08-19T03:43 and every one past its next_attempt_at, were
+      unreachable by the loop and NOTHING REPORTED IT for a day and a half —
+      precisely the state loop.py calls worse than having no loop.
+      THE WRITER IS FIXED (e692e27d): every non-principal row came from
+      rollover_summary_handler passing `owner_scope_key` as `tasks.owner_id`. The
+      knowledge scope now stays on the summary and the task takes the principal,
+      and the loop counts+warns about pending rows it cannot claim, so the class
+      cannot be silent again.
+      WHAT IS STILL BAKIR'S. The 387 EXISTING rows are untouched — 72 of them
+      pending. Re-keying them to principal-default would hand the loop 72
+      conversation-summary CHECKPOINT RECORDS to drive as ReAct goals, one model
+      call each, and their goal text ("rollover summary for owl:X:...") is not a
+      runnable goal at all. Options, none taken unilaterally: (a) delete the
+      pending rollover rows — they are bookkeeping whose conversations are long
+      over; (b) re-key them and accept the drive; (c) leave them and let
+      prune_completed age out the completed ones while the pending ones sit.
+      THIS ALSO SHARPENS THE ESCALATION'S OWN QUESTION. The 2026-08-16 framing was
+      "deterministic key vs fix each reader". This case says a third thing: some of
+      these columns are not the same KIND of key at all. `staged_facts.source_ref`
+      asks who knowledge is about; `tasks.owner_id` asks which tenant owns work.
+      Collapsing them is what produced the harm, and a single deterministic
+      owner_scope_key would not have prevented it — the handler would still have
+      been filing work under a knowledge key. Worth deciding alongside the key
+      shape rather than after it.
   - id: ESC-16-do-plugins-get-lifecycle-hooks
     DECIDED_BY_BAKIR_LOADING:
       date: 2026-08-17
