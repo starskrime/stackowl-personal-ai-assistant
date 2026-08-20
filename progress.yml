@@ -1634,7 +1634,20 @@ known_debt:
   - id: DEBT-2026-08-19-three-call-sites-bypass-the-tool-chokepoint
     found: 2026-08-19
     found_by: "D16.1 implement, wiring the pre/post_tool_call hooks into Tool.__call__"
-    status: FOUND, NOT FIXED — reported in dd2a62e7's commit body rather than folded in
+    status: FIXED 2026-08-20 (08e3b20e), on Bakir's instruction ("fix both"). All three
+      sites now CALL the tool, and each decides with is_trustworthy_success() — the one
+      derived predicate — so verified=None still falls back to the self-report (the ~92
+      un-migrated tools are byte-identical) and a refuted claim is never a win. The MCP
+      client gets isError with a plain reason; batch approve reports the action FAILED
+      instead of telling the user "done" for something already measured as not having
+      happened; the sandboxed script gets the verdict in a new `verified` field. PTC's
+      bypass was documented as deliberate and both its reasons were wrong — there is no
+      consent gate in __call__, and "works under a test-mode guard" was a HOLE around a
+      guard that exists to block live I/O, not a design property; the docstring says so
+      now rather than being quietly deleted. The tests/sandbox/ptc doubles that let it
+      survive (bare objects with an execute() method, not Tool subclasses, not callable)
+      are now real Tool subclasses. 9 new tests; ptc 47, interaction+j8+sec3+coupling 42,
+      mcp+exposure+story_10_6 125.
     what: >-
       THREE call sites invoke `tool.execute(**args)` directly instead of calling the tool,
       so they bypass `Tool.__call__` entirely:
@@ -11621,17 +11634,27 @@ items:
       so the failure half of the contract is demonstrated too. The probe was REMOVED and
       the platform restarted; the log reads "no plugins installed" again, now naming the
       directory it looked in.
-      STILL UNOBSERVED LIVE: pre/post_tool_call and on_session_start/end. Both are proven
-      by tests against the real seams, but no turn has run since (see below). Close them
-      with a real turn and:
+      SECOND RUN 2026-08-20, after Bakir supplied the sudo password and gp-vpn.service was
+      restarted (it was in `failed` state, the same root cause as 2026-08-14; the gateway
+      resolves to 172.30.104.100 again and the boot probe reports ok in 749-1454ms). With
+      the provider healthy the tool half closed on REAL traffic — an agent turn called a
+      real tool and the hook recorded both ends:
+        pre_tool_call  {'tool': 'note_applied_lesson', 'arguments': {'lesson_id': 'L2', ...}}
+        post_tool_call {'tool': 'note_applied_lesson', 'success': True, 'verified': None,
+                        'error': None, 'duration_ms': 0.955}
+      and post_llm_call now carries ok: true (1907ms), so both branches of that point are
+      observed. Counts over the window: pre_llm_call 10, post_llm_call 8, pre_tool_call 1,
+      post_tool_call 1.
+      STILL UNOBSERVED LIVE: on_session_start and on_session_end ONLY. They fire on a
+      conversation boundary, which needs an INBOUND turn — a scheduled job never opens a
+      lane — and driving one myself would have sent a probe message into Bakir's own
+      assistant. They are proven by tests against the real seam, including the ESC-13 case
+      where a restart mints a session_id and deliberately fires neither. To close: install
+      an observer plugin, send one message, then
         grep -h 'hooks.register: exit' ~/.stackowl/logs/stackowl*.jsonl | tail
-      plus an observer plugin; glob the ROTATED logs, per the D08.3 lesson.
-      ENVIRONMENTAL, NOT OURS: NeraAiRaw went unreachable mid-validation with
-      "[Errno -5] No address associated with hostname". gp-vpn.service is in `failed`
-      state again — the same root cause recorded on 2026-08-14. Restarting the unit needs
-      interactive auth, so it is Bakir's: `sudo systemctl restart gp-vpn.service`. No turn
-      can complete until it is up, which is why the two turn-scoped hook points are still
-      unobserved.
+      globbing the ROTATED logs, per the D08.3 lesson.
+      The probe plugin was REMOVED after each run and the platform restarted; the log reads
+      "no plugins installed" again, naming the directory it looked in.
     doc: docs/reference-mapping/designs/D16.1.md
     doc_last_verified: null
     decisions: []
