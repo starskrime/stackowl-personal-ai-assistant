@@ -974,6 +974,7 @@ def _snapshot_consequential(state: PipelineState) -> PipelineState:
         )
         return state.evolve(
             effects_measured_absent=_measured_absent_effects(outcomes),
+            capabilities_denied=tool_outcome_ledger.get_denied_capabilities(),
             consequential_failures=failures,
             consequential_failure_errors=failure_errors,
             consequential_successes=successes,
@@ -1634,6 +1635,10 @@ async def _run_with_tools(
         bounds_block = check_effective_bounds(effective, name)
         if bounds_block is not None:
             denied_this_run.add(name)
+            # ALSO onto the turn-scoped ledger, so the fact outlives this closure.
+            # `denied_this_run` is local and dies at the turn boundary, which is why
+            # a blocked turn used to close as 'completed' with nothing retried.
+            tool_outcome_ledger.record_denied_capability(name)
             # Provenance for the log only (deny branch only — no per-dispatch
             # recompute on the allow path). Guarded: a transient fault while
             # recomputing the owl-only verdict must NOT abort the turn — the tool

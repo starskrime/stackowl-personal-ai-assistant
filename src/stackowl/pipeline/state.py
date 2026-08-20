@@ -352,6 +352,16 @@ class PipelineState(BaseModel, frozen=True):
     # 0, because only retrieval and scheduling_commit had actuators; 8 of the 11
     # named owl_build, a write-effect tool. Default () = byte-identical.
     effects_measured_absent: tuple[str, ...] = ()
+    #: Capabilities this turn was REFUSED by bounds. Bakir, 2026-08-20: "system
+    #: itself should heal yourself... this not integrated to our core loop flow."
+    #: This fact used to live in `denied_this_run`, a LOCAL in execute.py that died
+    #: at the turn boundary — so the loop could see "you claimed it and verify()
+    #: proved the effect absent" but never "you were BLOCKED and never got to try",
+    #: which is the most common agent failure here (315 bounds refusals all-time).
+    #: Carried on the state so the completion seam can put the work back on the
+    #: loop with what blocked it, and the existing dead-letter escalates to him
+    #: when constrained retries still cannot get past it.
+    capabilities_denied: tuple[str, ...] = ()
     # Capabilities this turn may NOT use because a previous attempt at the same
     # goal already failed with them. Threaded from the retry_queue row so the ban
     # becomes a real exclusion in tool-selection rather than a sentence in the

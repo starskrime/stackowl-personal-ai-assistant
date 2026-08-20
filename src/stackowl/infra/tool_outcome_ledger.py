@@ -73,12 +73,45 @@ _outcomes: ContextVar[tuple[ToolOutcome, ...] | None] = ContextVar(
 )
 
 
+#: Capabilities REFUSED by bounds this turn. Bakir, 2026-08-20: "system itself
+#: should heal yourself... this not integrated to our core loop flow."
+#:
+#: This fact used to live in `denied_this_run`, a LOCAL set inside execute.py's
+#: dispatch closure, and died at the turn boundary. So the loop could see "you
+#: claimed it and verify() proved the effect absent" but never "you were BLOCKED
+#: and never got to try" — the most common agent failure on this platform (315
+#: bounds refusals all-time). It rides HERE rather than in a new carrier because
+#: this ledger is already turn-scoped and already bound/reset around exactly the
+#: window that matters; a second lifetime to keep in step would be the duplication
+#: CLAUDE.md forbids.
+_denied: ContextVar[tuple[str, ...] | None] = ContextVar(
+    "denied_capabilities", default=None,
+)
+
+
 def bind() -> Token[tuple[ToolOutcome, ...] | None]:
+    _denied.set(())
     return _outcomes.set(())
 
 
 def reset(token: Token[tuple[ToolOutcome, ...] | None]) -> None:
     _outcomes.reset(token)
+    _denied.set(())
+
+
+def record_denied_capability(name: str) -> None:
+    """Remember that ``name`` was refused this turn. Never raises."""
+    try:
+        current = _denied.get() or ()
+        if name not in current:
+            _denied.set((*current, name))
+    except Exception:  # pragma: no cover — bookkeeping must not cost a turn
+        return
+
+
+def get_denied_capabilities() -> tuple[str, ...]:
+    """Capabilities refused this turn, in first-refused order."""
+    return _denied.get() or ()
 
 
 def record_tool_outcome(

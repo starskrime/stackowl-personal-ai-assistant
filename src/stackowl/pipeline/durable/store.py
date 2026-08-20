@@ -1117,7 +1117,7 @@ class DurableTaskStore(OwnedRepository):
         # escalation, never a silent grind.
         ceiling = (
             min(row.max_attempts, _UNACHIEVED_EFFECT_MAX_ATTEMPTS)
-            if failure_class == "unachieved_effect"
+            if failure_class in ("unachieved_effect", "blocked_capability")
             else row.max_attempts
         )
         exhausted = attempts >= ceiling

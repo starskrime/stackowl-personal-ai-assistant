@@ -182,6 +182,24 @@ def unachieved_effect_of(state: Any) -> str | None:
     return str(absent[0]) if absent else None
 
 
+#: A turn that was BLOCKED gets the same small ceiling as one whose effect was
+#: measured absent, and for the same reason: the block is fed back, so it is either
+#: routable in a couple of tries or it needs Bakir to grant something.
+BLOCKED_CAPABILITY_CLASS = "blocked_capability"
+
+
+def blocked_capability_of(state: Any) -> str | None:
+    """A capability this turn was refused, or None.
+
+    Never raises — bookkeeping must not cost a delivered turn.
+    """
+    try:
+        denied = tuple(getattr(state, "capabilities_denied", None) or ())
+    except Exception:  # pragma: no cover — a hostile state must not break delivery
+        return None
+    return str(denied[0]) if denied else None
+
+
 async def complete_turn_task(
     store: Any, *, trace_id: str, result: str, state: Any = None,
 ) -> None:
@@ -208,6 +226,37 @@ async def complete_turn_task(
     if store is None:
         return
     unachieved = unachieved_effect_of(state)
+    blocked = None if unachieved else blocked_capability_of(state)
+    if blocked:
+        # BEING BLOCKED IS A FAILURE THE LOOP MUST SEE. The user asked for something
+        # and it did not happen — the same unachieved goal as a measured-absent
+        # effect, arriving one step earlier. Nothing new runs the work: the existing
+        # requeue, the existing ceiling, and the existing dead-letter escalation,
+        # which is what finally tells Bakir "I need this capability" instead of
+        # closing the task as done.
+        try:
+            await store.fail_and_requeue(
+                trace_id,
+                error=(
+                    f"the turn was BLOCKED: `{blocked}` is not permitted for this "
+                    f"owl, so the work was never attempted. Either route around it "
+                    f"(delegate_task to an owl that holds it), or ask the user to "
+                    f"grant it — owl_build action='grant' with explicit_tools="
+                    f"['{blocked}'] — and say plainly that you need it."
+                ),
+                failure_class=BLOCKED_CAPABILITY_CLASS,
+            )
+            log.tasks.info(
+                "[loop] the turn was blocked on a capability — returning it to the "
+                "loop instead of closing it as done",
+                extra={"_fields": {"trace_id": trace_id, "blocked": blocked}},
+            )
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not return a blocked turn to the loop",
+                exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+            )
+        return
     if unachieved:
         try:
             await store.fail_and_requeue(
