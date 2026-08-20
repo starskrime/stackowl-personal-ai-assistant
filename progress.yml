@@ -14,8 +14,9 @@
 # ============================================================================
 
 schema_version: 1
-updated: 2026-08-11
-updated_by: "claude-opus-5 — D08.1 CLOSED: all four acceptance checks proven live (blocks=2 chars=205), doc closed with its Verification section run. Also fixed a live incident: conversational turns died on any tool-requiring question; the leak now escalates. Next: D08.2."
+updated: 2026-08-19
+updated_by: "claude-opus-5 — RECONCILED: 41 commits between 2026-08-17 and 2026-08-19 were live and unrecorded here (the ONE LOOP arc, the authority-vs-action authz fix, curated-memory decay). Recorded as ARC-2026-08-17-to-19-one-loop-authz-memory in known_debt. D16.1 corrected from implement:not_started to implement:partial — two of its commits already shipped (fed6968d, e3434952) and plugin loading at boot is PROVEN LIVE. Now working the rest of D16.1 implement: the LifecycleHook extension point."
+superseded_updated_by: "claude-opus-5 — D08.1 CLOSED: all four acceptance checks proven live (blocks=2 chars=205), doc closed with its Verification section run. Also fixed a live incident: conversational turns died on any tool-requiring question; the leak now escalates. Next: D08.2."
 
 program:
   name: "StackOwl ← Hermes"
@@ -259,7 +260,21 @@ deployment:
 current:
   wave: 2
   item: D16.1
-  stage: architect
+  stage: implement
+  RECONCILED_2026_08_19: >-
+    THIS FILE WAS STALE BY 41 COMMITS. Everything between 2026-08-17 and 2026-08-19 —
+    the ONE LOOP arc, the authority-vs-action authz fix, curated-memory decay — shipped
+    and went live without a line here. It is now recorded as
+    ARC-2026-08-17-to-19-one-loop-authz-memory in `known_debt`, with what remains open.
+    D16.1'S OWN STATE WAS ALSO WRONG. `implement` read not_started while two of its
+    commits had already shipped: fed6968d (a declared extension point must have somewhere
+    to register — MemoryProvider had no registry slot, so the loop hit `continue` silently)
+    and e3434952 (plugins load at boot, Bakir's call, hardened: a raising plugin is skipped,
+    a hanging one is abandoned after 10s, one INFO line names both halves). PROVEN LIVE,
+    not assumed — every boot writes "[plugins] boot: no plugins installed" from
+    plugins/boot.py, so the loader that had ZERO construction sites is now called on every
+    start. The stage is therefore `partial`, and what remains is the LifecycleHook
+    extension point itself plus the three friction items the architect stage carried in.
   stage_status: >-
     D01.6 IS CLOSED (2026-08-15): its live baseline was captured, its brainstorm accepted
     as a documented pre-process exception, and metric 1 recorded as unmeasurable on this
@@ -1599,6 +1614,103 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ARC-2026-08-17-to-19-one-loop-authz-memory
+    found: 2026-08-19
+    found_by: "live incident work with Bakir — 41 commits between 2026-08-17 and 2026-08-19, none of which this file recorded until now"
+    status: SHIPPED, tested, pushed and live. Recorded here as evidence-led work per PROCESS.md ("record it as debt or an ADR so the record still says what we knew and what we chose"). The open half is listed under `still_open` below.
+    why_it_is_here_and_not_on_an_item: >-
+      None of it was on the map's critical path. It was driven by what broke in front of
+      the operator: agent creation being refused, delegation timing out, a digest job
+      reporting its own failure, a consent button that ate taps. PROCESS.md's evidence-first
+      rule permits exactly this and obliges this record.
+    the_one_loop: >-
+      THE RETRY PATH HAD NEVER EXECUTED. 850 failed rows existed and ZERO carried
+      attempt_count > 0 — a failed task died where it fell (6a3debca). Fixed as a chain,
+      each fix only visible once the prior one went live:
+        6a3debca  a failed task returns to pending WITH what failed
+        27f8322d  an undelivered-but-terminal row is revived at loop start
+        413a5109  a revived task starts clean instead of resuming a corpse
+        4f8e8db5  an answer that reached the user is never sent again (the duplicate-flood
+                  the revival could otherwise cause)
+        5f682934  create() persists the loop contract for EVERY caller — six columns were
+                  silently dropped for every non-chat caller
+        293cf503  a sub-task dies with its parent instead of grinding for hours
+        081057ca  an unachieved EFFECT rejoins the loop. Measured across every log:
+                  overclaim.detected 134, corrected 51 (the WORDING), refulfilled 1 (the
+                  WORK) — 132 detected and then abandoned, 16 of them owl creation.
+                  Measured-absent only, never merely-unverified, so a re-drive cannot
+                  double a side effect. Attempt budget 3, then ONE escalation.
+        456ee39d  being BLOCKED is a failure the loop can SEE. A refused capability lived
+                  in `denied_this_run`, a local set inside execute.py's dispatch closure
+                  that died at the turn boundary — so the most common agent failure here
+                  (315 bounds refusals all-time) never entered the loop, and blocked turns
+                  closed 'completed' with attempt_count 0.
+        2dc98193  the constrained retry is actually TOLD the constraint — `fail_and_requeue`
+                  wrote the remedy to `last_error` and `_augment_goal` never read it. The
+                  third write-with-no-reader of the session.
+      NO SECOND ENGINE was added: same table, same fail_and_requeue, same dead-letter
+      escalation. That is the standing rule (feedback_loop_oriented_no_duplication).
+    authz: >-
+      THE CORE ISSUE WAS AUTHORITY, NOT ACTION. Consent gated "may I run this tool now?",
+      which Bakir could answer; NOTHING gated an owl's ceiling, so shell/write_file/
+      send_message were permanently unreachable for an agent-created owl by every route and
+      no permission he could give would change it — there was no question the platform knew
+      how to ask. Measured on mailbutler: three edits each returning
+      missing: ['send_message','shell','write_file'].
+        389e3902  `owl_build action='grant'` — the ONLY path that widens a ceiling. A
+                  separate action, not a flag on edit, because the monotone ratchet is a
+                  real safety property. AND the other half found while building it: the
+                  authorization was INVERTED — attended (Bakir on Telegram) consent DENIED
+                  and reported as "declined by user", unattended the autonomous prompter
+                  GRANTED execute_code/destructive/lock. authority_widening joins the
+                  always-ask set; if Bakir cannot be reached the answer is no.
+        d1dd897a  a consent prompt gets the turn's ADDRESS — ConsentRequest carried
+                  identity (session_key) and no delivery address, so every structured lane
+                  failed closed.
+        1f3711f2  a refused tool tells the owl what it CAN use, and the whole list.
+        2a4a0060  an authority clamp is a DECISION, not a failed edit.
+        3a89cbdb  the approval window is 1200s (Bakir's instruction, was 120s) and a dead
+                  button says so. `consent.handle_callback: resolved` had NEVER appeared in
+                  any log — no click had ever landed inside the old window. The audit reason
+                  is now "not_approved", never "user_denied", because the prompter returns
+                  DENY for refusal, timeout and fail-closed alike.
+    memory: >-
+      c7548e67 + bd894e6d — curated memory DECAYS (evicts oldest until_changed, never
+      permanent) instead of refusing to learn when full; a2d09e7b — USER.md was 97%
+      non-user facts (job config, owl logs) and was relocated. USER.md is the person only.
+    also: >-
+      703ee143 unlimited owls; f9c546d5 delegation waits the CALLEE's own declared timeout
+      (was a hardcoded 30s against a measured p90 of 75.2s over 22,099 provider calls — 27.5%
+      of single calls exceeded the old wait, so delegation was near-guaranteed to fail);
+      aba3cca2 a job that names its owl runs as that owl (triage read "secretary" as
+      "nobody has chosen yet" — a conflated sentinel, now split by `owl_pinned`);
+      aee7a58b a file sent to Telegram reaches the agent at all (documents matched NO
+      handler and were dropped by python-telegram-bot before StackOwl saw them);
+      b06a65b8 a recovered task's answer had a destination to go to;
+      021cd0aa a repeatedly-failing tool keeps telling the model WHY;
+      8f2e45e8 + 0cbf4790 the grounding gate records WHICH urls it called fabricated, and
+      a loopback redirect URI is configuration rather than a fabricated source.
+    still_open:
+      - >-
+        2f7e8055 made an unproven completion a WARNING, not a refusal: update_status
+        predates complete_turn_task/mark_delivered and several callers (executor finalize,
+        crash recovery, task_runner) still mark completed directly. Two writers to one
+        fact. Refusing would strand a finished task until its lease expired and answer the
+        user twice, so the gap is counted instead. Closing it properly means each caller
+        threading its own delivery verdict, as goal_execution already does.
+      - >-
+        0cbf4790 fixed only the unarguable half of the grounding false-positive.
+        accounts.google.com in "go here to authorise" is still flagged as a fabricated
+        citation. Whether an instruction counts as a citation is a product judgement about
+        a SECURITY guardrail and is Bakir's; a test asserts it is NOT silently exempted.
+      - >-
+        No email tool exists. mailbutler is still a shell owl driving a script through
+        `secretary`; aba3cca2 removed the immediate need for a grant, not the gap.
+    the_lesson_that_cost_the_most: >-
+      THREE mechanisms were declared in code and wired to NOTHING — should_decompose(),
+      describe_job_destination(), and six columns create() silently dropped. Each read as
+      if it worked and the database said otherwise. Before building: grep for callers.
+      After wiring: prove the fact survives the boundary it has to cross, on live data.
   - id: INCIDENT-2026-08-15-telegram-self-heal-never-wired
     found: 2026-08-15
     found_by: "the item-loop, after Bakir picked the chronic boot warning to investigate"
@@ -11391,7 +11503,7 @@ items:
     stages:
       brainstorm: done
       architect:  done             # designs/D16.1.md — hook contract decided
-      implement:  not_started
+      implement:  partial          # two commits shipped 2026-08-17; hooks still to build
       cleanup:    not_started
       test:       not_started
       validate:   not_started
@@ -11440,10 +11552,41 @@ items:
         ToolResult.duration_ms is required with no default — RECOMMEND defaulting it
         to 0.0 and letting the platform's own timing win, since an author-supplied
         duration is a second writer to a fact the platform already owns.
-    doc: null
+    doc: docs/reference-mapping/designs/D16.1.md
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - date: 2026-08-17
+        commit: fed6968d
+        what: >-
+          A DECLARED EXTENSION POINT MUST HAVE SOMEWHERE TO REGISTER. _ABC_NAMES declared
+          six points; LocalPluginLoader.__init__ built five registry slots. MemoryProvider
+          (D08.2 slice C's whole point) had none, so _register_classes did
+          `self._registries.get("MemoryProvider")` -> None -> `continue`, SILENTLY: the
+          plugin would load, be discovered by issubclass, register nowhere, and the platform
+          would report a successful install of a plugin that does nothing. It gets its slot
+          via a new memory_provider_registry argument (default None, so no construction site
+          changed), and the bare `continue` now logs a WARNING naming plugin, class and
+          extension point — the silent skip is HOW this went unnoticed.
+      - date: 2026-08-17
+        commit: e3434952
+        what: >-
+          PLUGINS LOAD AT BOOT — Bakir's call (2026-08-17), over my recommendation of an
+          explicit operator command. New src/stackowl/plugins/boot.py (139 lines) and its
+          call site in startup/orchestrator.py. Hardened for what automatic loading implies,
+          because the platform now executes third-party code during startup: a plugin that
+          RAISES is skipped rather than fatal; each load is time-bounded
+          (DEFAULT_PLUGIN_LOAD_TIMEOUT_SECONDS = 10.0) and run via asyncio.to_thread so a
+          synchronous third-party import cannot stall the event loop; the capability gate
+          stays at LOAD time inside the loader; and one INFO line names what loaded and what
+          was skipped, because nobody is watching a boot.
+        proven_live: >-
+          NOT ASSUMED FROM THE CODE PATH. Every boot writes the line:
+            grep -h '\[plugins\] boot' ~/.stackowl/logs/stackowl*.jsonl | tail
+          returns "[plugins] boot: no plugins installed" at INFO on each start (checked
+          2026-08-20T02:26Z). The loader that had ZERO construction sites anywhere in src/
+          is now called on every boot. Zero plugins are installed, so the loaded/skipped
+          branch is not yet exercised on live data — that is what the validate stage owes.
     notes: null
 
   - id: D16.2
