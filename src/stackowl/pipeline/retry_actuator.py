@@ -43,6 +43,13 @@ _DEFAULT_DELIVERY_RETRY_DELAY_SECONDS = 60.0
 _DELIVERY_RETRY_DELAY_BUFFER_SECONDS = 5.0
 
 
+#: How much of `last_error` the retry prompt carries. `last_error` holds up to
+#: 2000 chars; pasting all of it in front of a short ask would drown the thing
+#: being asked for — the unbounded-prose failure that `banned_capabilities` was
+#: chosen to avoid in the first place.
+_RETRY_REASON_CHARS = 400
+
+
 def _delivery_retry_delay_seconds(exc: BaseException) -> float:
     """Honor Telegram's own flood-control cooldown when the delivery failure is
     a ``RetryAfter`` — blindly retrying on the fixed cadence while still banned
@@ -318,15 +325,41 @@ class RetryActuator:
         return RetryOutcome(status="completed")
 
     def _augment_goal(self, row: RetryQueueRow) -> str:
-        if not row.banned_capabilities:
-            return row.goal
+        """Tell the retry WHAT burned and WHY, so it is constrained, not blind.
+
+        MEASURED 2026-08-20 on task 86de5841. The loop saw the turn was blocked on
+        `shell`, requeued it with the reason AND the remedy stored on the row, then
+        claimed it and re-drove it for eight and a half minutes — and the retry
+        reached for `owl_build action='edit'`, which by design can never widen
+        authority, instead of `action='grant'`, which exists to do exactly that.
+        `grant` was called zero times.
+
+        The cause was here: this method built the prompt from
+        `banned_capabilities` ALONE and never read `last_error`, so the explanation
+        `fail_and_requeue` had carefully written to the row was never shown to the
+        model. Bakir's rule — "adding previous failure or action details... so next
+        loop when it picks it, it also looks: is any previous one? Yes — learn from
+        that experience" — was half kept: WHICH capability burned was passed on, WHY
+        and WHAT TO DO INSTEAD were dropped.
+
+        A blocked turn bans NOTHING (the tool never ran), so under the old code its
+        goal went back verbatim with no hint at all — the worst case of the three.
+        """
         banned = ", ".join(row.banned_capabilities)
-        return (
-            f"(Retry attempt {row.attempt_count + 1}: a previous attempt at this "
-            f"same ask already failed using {banned} — try a genuinely different "
-            f"approach or tool this time, do not repeat the same failed path.)\n\n"
-            f"{row.goal}"
-        )
+        reason = (row.last_error or "").strip()
+        if not banned and not reason:
+            return row.goal
+        parts = [f"(Retry attempt {row.attempt_count + 1}."]
+        if banned:
+            parts.append(
+                f" A previous attempt at this same ask already failed using "
+                f"{banned} — try a genuinely different approach or tool this time, "
+                f"do not repeat the same failed path."
+            )
+        if reason:
+            parts.append(f" What happened last time: {reason[:_RETRY_REASON_CHARS]}")
+        parts.append(")\n\n")
+        return "".join(parts) + row.goal
 
     def _pick_newly_failed(self, row: RetryQueueRow, final_state: PipelineState) -> str:
         """Name the FIRST capability this retry attempt touched that wasn't
