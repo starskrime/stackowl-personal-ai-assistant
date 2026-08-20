@@ -1751,8 +1751,30 @@ known_debt:
         predates complete_turn_task/mark_delivered and several callers (executor finalize,
         crash recovery, task_runner) still mark completed directly. Two writers to one
         fact. Refusing would strand a finished task until its lease expired and answer the
-        user twice, so the gap is counted instead. Closing it properly means each caller
-        threading its own delivery verdict, as goal_execution already does.
+        user twice, so the gap is counted instead.
+        DIAGNOSED 2026-08-20 on live traffic, and it is NOT a missing verdict — the
+        remedy written here ("each caller threading its own delivery verdict") does not fit
+        the case that actually fires. Two warnings that afternoon, task-7d8ee9162233
+        (destination telegram) and task-95cb7eac7765 (cli). BOTH ROWS CARRY delivered_at,
+        stamped in the same instant as the warning. The sequence is:
+          react_runner.py:268  update_status(task_id, "completed")  <- the drive returned
+          goal_execution       _deliver_answer -> complete_agent_task -> mark_delivered
+        so the task is marked complete when the FUNCTION RETURNED and the proof lands a
+        moment later. That is precisely the rule Bakir stated on 2026-08-17 — "a task is
+        complete when its outcome reached its DESTINATION, not when the function returned"
+        — broken in the runner that drives every durable task.
+        TWO CONSEQUENCES, and the second is why this is worth fixing rather than silencing:
+        (1) the warning fires on the HAPPY path, so the counter cannot separate a real gap
+        from ordinary operation and the debt is unmeasurable — the same unfalsifiable-check
+        shape as D08.1's DEBUG evidence line; (2) between the drive returning and delivery
+        landing, the row reads `completed` with delivered_at NULL, which is exactly the
+        shape the revival sweep (27f8322d) hunts for, so a crash in that window makes a
+        delivered-a-moment-later answer look like a lost one.
+        THE FIX IS A LIFECYCLE CHANGE, NOT A LOG TWEAK: react_runner must not declare
+        terminal success on a task that still owes a delivery — it should leave the row to
+        the delivery path, which already knows the honest verdict. NOT DONE AUTONOMOUSLY:
+        it changes when every durable task becomes terminal, and the failure mode of
+        getting it wrong is re-driving work that already ran. Needs Bakir.
       - >-
         0cbf4790 fixed only the unarguable half of the grounding false-positive.
         accounts.google.com in "go here to authorise" is still flagged as a fabricated
