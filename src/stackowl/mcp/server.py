@@ -21,6 +21,7 @@ from stackowl.mcp.tool_exposure import McpToolExposurePolicy
 if TYPE_CHECKING:
     from stackowl.tools.base import Tool
     from stackowl.tools.registry import ToolRegistry
+from stackowl.tools.verification import is_trustworthy_success
 
 log = logging.getLogger("stackowl.mcp")
 
@@ -159,9 +160,9 @@ class McpServer:
                 return PlainTextResponse("")
 
             log.debug("mcp.server.start_sse: step — server bound", extra={"_fields": {"host": host, "port": port}})
+            import uvicorn  # type: ignore[import]
             from starlette.applications import Starlette  # type: ignore[import]
             from starlette.routing import Route  # type: ignore[import]
-            import uvicorn  # type: ignore[import]
 
             app = Starlette(routes=[Route("/sse", handle_sse, methods=["GET"])])
             config = uvicorn.Config(app, host=host, port=port, log_level="warning")
@@ -303,7 +304,8 @@ def _wire_handlers(
     mcp_server: Any, registry: ToolRegistry, exposure: McpToolExposurePolicy,
 ) -> None:
     """Register list_tools and call_tool handlers on the mcp.Server."""
-    from mcp.types import CallToolResult, TextContent, Tool as McpSdkTool  # type: ignore[import]
+    from mcp.types import CallToolResult, TextContent  # type: ignore[import]
+    from mcp.types import Tool as McpSdkTool
 
     @mcp_server.list_tools()  # type: ignore[misc]
     async def _list_tools() -> list[McpSdkTool]:
@@ -328,9 +330,30 @@ def _wire_handlers(
             return CallToolResult(
                 content=[TextContent(type="text", text=exposure.denial_message(name))], isError=True
             )
-        result = await tool.execute(**arguments)
-        if result.success:
+        # CALL THE TOOL, do not reach past it into execute(). __call__ is where the
+        # platform times the call, wraps a raise into a failed ToolResult instead of
+        # letting it escape into the server, runs the bounded retry-once for a
+        # read-severity transient, and runs verify() + the acceptance authority. This
+        # path used to skip all of it, so an external client's tool call was verified
+        # by NOTHING and a raising tool reached the MCP layer as a transport failure.
+        result = await tool(**arguments)
+        # A claim reality refuted is not a success — the same predicate every other
+        # consumer of a ToolResult uses, rather than a second opinion here.
+        if is_trustworthy_success(result.success, result.verified):
             return [TextContent(type="text", text=result.output)]
+        if result.success and result.verified is False:
+            log.warning(
+                "mcp.server.call_tool: tool claimed success but verification REFUTED it",
+                extra={"_fields": {"tool": name}},
+            )
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text=(f"{name} reported success but the platform could not confirm "
+                          f"the effect happened — treating it as a failure"),
+                )],
+                isError=True,
+            )
         # Surface failures with the MCP error convention so clients can tell a
         # failed tool from a successful empty result; never an empty error text.
         return CallToolResult(

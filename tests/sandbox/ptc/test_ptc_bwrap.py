@@ -18,7 +18,6 @@ Run bounded:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -27,26 +26,37 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.sandbox.bwrap import BwrapSandbox
 from stackowl.sandbox.ptc.server import PtcServer
 from stackowl.sandbox.spec import ExecResult, ExecSpec
-
+from stackowl.tools.base import Tool, ToolResult
 
 # --- a tiny REAL host tool surface for the callback ------------------------------
 
 
-class _ToolResult:
-    def __init__(self, *, success: bool, output: str = "", error: str | None = None) -> None:
-        self.success = success
-        self.output = output
-        self.error = error
+class _RealReadFile(Tool):
+    """A minimal real read_file: reads from an absolute host path the test seeds.
 
+    A REAL ``Tool`` subclass since 2026-08-20 — a bare object with an ``execute()``
+    method is not what a registry holds, and the dispatcher now CALLS the tool so
+    that verification, exception wrapping and the lifecycle hooks apply to a
+    sandboxed script's host-tool call like any other.
+    """
 
-class _RealReadFile:
-    """A minimal real read_file: reads from an absolute host path the test seeds."""
+    @property
+    def name(self) -> str:
+        return "read_file"
 
-    async def execute(self, **kwargs: object) -> _ToolResult:
+    @property
+    def description(self) -> str:
+        return "Read a host file for a sandboxed script, in this test only."
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        return {"type": "object", "properties": {"path": {"type": "string"}}}
+
+    async def execute(self, **kwargs: object) -> ToolResult:
         try:
-            return _ToolResult(success=True, output=Path(str(kwargs["path"])).read_text())
+            return ToolResult(success=True, output=Path(str(kwargs["path"])).read_text())
         except Exception as exc:  # noqa: BLE001
-            return _ToolResult(success=False, error=str(exc))
+            return ToolResult(success=False, output="", error=str(exc))
 
 
 class _Registry:

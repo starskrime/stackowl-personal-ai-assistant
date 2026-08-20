@@ -30,6 +30,7 @@ from stackowl.pipeline.services import StepServices
 from stackowl.tools.base import ToolResult
 from stackowl.tools.child_exclusion import child_excluded_now
 from stackowl.tools.registry import ToolRegistry
+from stackowl.tools.verification import is_trustworthy_success
 
 # Hard cap on the number of actions one batch may present (an unreadable plan the
 # user cannot meaningfully consent to is rejected instead).
@@ -248,7 +249,13 @@ class BatchExecutor:
             return {"n": n, "tool": action.tool, "summary": action.summary,
                     "success": False, "error": "tool no longer registered"}
         try:
-            result: ToolResult = await tool.execute(**action.args)
+            # CALL THE TOOL. The batch approval is the CONSENT and that bypass stands
+            # (consent lives in the pipeline dispatch gate, not here) — but reaching
+            # past __call__ into execute() also skipped verify(), the acceptance
+            # authority, the timing stamp and the lifecycle hooks, which the batch
+            # never meant to opt out of. An action the user approved runs exactly the
+            # tool an ordinary turn would.
+            result: ToolResult = await tool(**action.args)
         except Exception as exc:  # B5 — surface, log, keep going, never raise
             log.tool.error(
                 "batch_approve.execute: action raised — surfaced, continuing",
@@ -258,14 +265,30 @@ class BatchExecutor:
             self._auditor.action(session_key, action, success=False, error=str(exc))
             return {"n": n, "tool": action.tool, "summary": action.summary,
                     "success": False, "error": str(exc)}
-        if not result.success:
+        # A claim the tool's own verify() REFUTED is not a success. Without this the
+        # batch would report "done" for an action the platform had already measured
+        # as not having happened — the overclaim this tree keeps paying for, inside
+        # the one flow the user explicitly approved.
+        succeeded = is_trustworthy_success(result.success, result.verified)
+        if result.success and not succeeded:
+            log.tool.warning(
+                "batch_approve.execute: action claimed success but verification "
+                "REFUTED it — reported as a failure",
+                extra={"_fields": {"n": n, "tool": action.tool}},
+            )
+        elif not succeeded:
             log.tool.warning(
                 "batch_approve.execute: action returned failure — surfaced, continuing",
                 extra={"_fields": {"n": n, "tool": action.tool, "error": result.error}},
             )
-        err = None if result.success else (result.error or "")
-        self._auditor.action(session_key, action, success=result.success, error=err)
+        err = None if succeeded else (
+            result.error
+            or ("the tool reported success but the platform could not confirm the "
+                "effect happened")
+        )
+        self._auditor.action(session_key, action, success=succeeded, error=err)
         return {"n": n, "tool": action.tool, "summary": action.summary,
-                "success": result.success,
-                "output": result.output if result.success else "",
+                "success": succeeded,
+                "verified": result.verified,
+                "output": result.output if succeeded else "",
                 "error": err}

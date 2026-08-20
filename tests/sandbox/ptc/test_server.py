@@ -20,6 +20,7 @@ import pytest
 
 from stackowl.sandbox.ptc.protocol import PtcLimits
 from stackowl.sandbox.ptc.server import PtcServer
+from stackowl.tools.base import Tool, ToolResult
 
 _LEN = struct.Struct(">I")
 
@@ -27,15 +28,17 @@ _LEN = struct.Struct(">I")
 # --- fakes -----------------------------------------------------------------------
 
 
-class _FakeResult:
-    def __init__(self, *, success: bool, output: str = "", error: str | None = None) -> None:
-        self.success = success
-        self.output = output
-        self.error = error
+class _SpyTool(Tool):
+    """Records every call so a test can prove a tool ran (or did NOT).
 
-
-class _SpyTool:
-    """Records every execute() call so a test can prove a tool ran (or did NOT)."""
+    A REAL ``Tool`` subclass since 2026-08-20, and that is the point rather than
+    tidiness: this used to be a bare object with an ``execute()`` method, so it did
+    not resemble what a registry actually holds — and it kept passing while the
+    dispatcher reached past ``Tool.__call__`` into ``execute()``, skipping
+    verification, the acceptance authority, exception wrapping and the lifecycle
+    hooks. A double that cannot be called the way the real thing is called cannot
+    catch that.
+    """
 
     def __init__(self, *, output: str = "OK", success: bool = True, delay: float = 0.0) -> None:
         self.calls: list[dict[str, object]] = []
@@ -43,11 +46,23 @@ class _SpyTool:
         self._success = success
         self._delay = delay
 
-    async def execute(self, **kwargs: object) -> _FakeResult:
+    @property
+    def name(self) -> str:
+        return "spy"
+
+    @property
+    def description(self) -> str:
+        return "A spy tool that records the arguments a PTC script passed it."
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs: object) -> ToolResult:
         self.calls.append(dict(kwargs))
         if self._delay:
             await asyncio.sleep(self._delay)
-        return _FakeResult(success=self._success, output=self._output)
+        return ToolResult(success=self._success, output=self._output)
 
 
 class _FakeRegistry:

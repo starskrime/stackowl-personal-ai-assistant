@@ -20,6 +20,7 @@ from stackowl.sandbox.ptc.confine import (
     sandbox_write_root,
 )
 from stackowl.sandbox.ptc.protocol import PTC_WRITE_TOOLS, PtcLimits
+from stackowl.tools.verification import is_trustworthy_success
 
 __all__ = ["PtcToolInvoker"]
 
@@ -50,9 +51,21 @@ class PtcToolInvoker:
 
         Write tools (``write_file``/``edit``) are confined to the SANDBOX workspace via
         the path_guard root override (defense-in-depth: the path is independently
-        re-resolved + escape-checked first). ``tool.execute`` is called DIRECTLY (not
-        ``__call__``) so the per-call consent gate is NOT re-prompted, and so it
-        also works under a test-mode guard.
+        re-resolved + escape-checked first).
+
+        THE TOOL IS CALLED, not reached past into ``execute()`` — corrected 2026-08-20,
+        and the reasons the old bypass gave were both wrong. It said consent must not
+        be re-prompted: there is NO consent gate in ``Tool.__call__``, consent lives in
+        the pipeline dispatch, so that reason described something that never happened.
+        It said the bypass makes PTC work under a test-mode guard: ``TestModeGuard``
+        exists to block live I/O when the platform runs in test mode, and a sandboxed
+        script calling a real host tool IS live I/O — so that was a hole around the
+        guard, not a feature of the design.
+        What the bypass actually cost: ``verify()``, the ACCEPTANCE AUTHORITY, the
+        exception wrapper and the lifecycle hooks. PTC is default-ALLOW minus the
+        escape vectors below, so ``send_message``, ``owl_build`` and ``skill_manage``
+        are reachable from a script — which is where an unverified success matters
+        most, not least. The verdict now rides back to the script in ``verified``.
 
         D05.5 — THE STATED REASON FOR THAT BYPASS IS NO LONGER TRUE, and is
         rewritten here rather than left standing. It used to read "the allowlist
@@ -99,15 +112,30 @@ class PtcToolInvoker:
         try:
             if tool in PTC_WRITE_TOOLS:
                 with sandbox_write_root(self._workspace):  # type: ignore[arg-type]
-                    result = await instance.execute(**call_args)
+                    result = await instance(**call_args)
             else:
-                result = await instance.execute(**call_args)
+                result = await instance(**call_args)
         finally:
             TraceContext.reset(token)
+        verified = getattr(result, "verified", None)
+        # is_trustworthy_success is the ONE predicate: verified None falls back to the
+        # self-report (byte-identical for every tool that does not verify), and a
+        # measured-absent effect is never a win. The script is told the verdict too,
+        # so it can act on "claimed but unconfirmed" rather than only on success.
+        succeeded = is_trustworthy_success(
+            bool(getattr(result, "success", False)), verified,
+        )
+        error = getattr(result, "error", None)
+        if not succeeded and not error:
+            error = (
+                f"'{tool}' reported success but the platform could not confirm the "
+                "effect happened"
+            )
         return {
-            "success": bool(getattr(result, "success", False)),
-            "output": getattr(result, "output", ""),
-            "error": getattr(result, "error", None),
+            "success": succeeded,
+            "output": getattr(result, "output", "") if succeeded else "",
+            "error": error,
+            "verified": verified,
         }
 
     # ----------------------------------------------------------------- bounds
