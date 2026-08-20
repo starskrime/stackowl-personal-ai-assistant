@@ -11577,6 +11577,30 @@ items:
         ToolResult.duration_ms is required with no default — RECOMMEND defaulting it
         to 0.0 and letting the platform's own timing win, since an author-supplied
         duration is a second writer to a fact the platform already owns.
+    LIVE_EVIDENCE_2026_08_19: >-
+      THE CHAIN IS PROVEN ON THE RUNNING PLATFORM, not asserted from the code path.
+      A throwaway observer plugin was installed into ~/.stackowl/plugins/, the platform
+      restarted, and the log carried:
+        [plugins] boot: exit {'loaded': ['hookprobe'], 'skipped': [], 'installed': 1}
+        [plugins] hooks.register: exit {'plugin': 'hookprobe', 'hook': 'ProbeHook',
+          'points': [all six], 'count': 6}
+      and the hook then observed REAL traffic — the startup provider probe — recording
+        {"point": "pre_llm_call",  "event": {"provider": "NeraAiRaw", "protocol": "openai"}}
+        {"point": "post_llm_call", "event": {... "ok": false, "duration_ms": 2073.9}}
+      so the failure half of the contract is demonstrated too. The probe was REMOVED and
+      the platform restarted; the log reads "no plugins installed" again, now naming the
+      directory it looked in.
+      STILL UNOBSERVED LIVE: pre/post_tool_call and on_session_start/end. Both are proven
+      by tests against the real seams, but no turn has run since (see below). Close them
+      with a real turn and:
+        grep -h 'hooks.register: exit' ~/.stackowl/logs/stackowl*.jsonl | tail
+      plus an observer plugin; glob the ROTATED logs, per the D08.3 lesson.
+      ENVIRONMENTAL, NOT OURS: NeraAiRaw went unreachable mid-validation with
+      "[Errno -5] No address associated with hostname". gp-vpn.service is in `failed`
+      state again — the same root cause recorded on 2026-08-14. Restarting the unit needs
+      interactive auth, so it is Bakir's: `sudo systemctl restart gp-vpn.service`. No turn
+      can complete until it is up, which is why the two turn-scoped hook points are still
+      unobserved.
     doc: docs/reference-mapping/designs/D16.1.md
     doc_last_verified: null
     decisions: []
@@ -11593,6 +11617,28 @@ items:
           via a new memory_provider_registry argument (default None, so no construction site
           changed), and the bare `continue` now logs a WARNING naming plugin, class and
           extension point — the silent skip is HOW this went unnoticed.
+      - date: 2026-08-19
+        commit: da9de7a5
+        what: >-
+          BOOT WAS READING THE DOWNLOAD CATALOGUE. load_installed_plugins iterated
+          PluginIndex — plugin-index.yaml, whose entries carry name/url/version/sha256
+          and NO path — so an installed plugin was still never loaded and the live line
+          "[plugins] boot: no plugins installed" meant "nothing FINDABLE", not "nothing
+          installed". Boot now walks ~/.stackowl/plugins/*/plugin.yaml, the layout
+          _install_local_plugin writes, which is also Bakir's ESC-16 answer: the
+          directory IS the consent. The operator's `/plugins disable` is now honoured
+          (it was ignored entirely); a plugin with no registry row is hand-placed rather
+          than disabled and still loads; a registry that cannot be read decides nothing.
+        how_it_survived_a_test_suite: >-
+          The boot test built a fake index whose entries had a `path` attribute. The real
+          PluginIndexEntry has no such field, so the double described a class that does
+          not exist and the path was green while loading nothing — PROCESS.md failure
+          mode 2, the second plugin-surface defect in three days to survive because
+          nothing real had ever run through it. The tests now build REAL directories, and
+          one asserts the catalogue's shape so the old double cannot return.
+        found_by: >-
+          INSTALLING AN ACTUAL PLUGIN and watching it not load. No amount of reading
+          would have shown it: the code, the log line and the tests all agreed.
       - date: 2026-08-19
         commit: dd2a62e7 (and bd218911)
         what: >-
