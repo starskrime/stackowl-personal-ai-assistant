@@ -259,8 +259,8 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D16.1
-  stage: validate
+  item: D16.3
+  stage: brainstorm
   D16_1_STATE_2026_08_19: >-
     IMPLEMENT, CLEANUP AND TEST ARE DONE. The seventh extension point (LifecycleHook,
     observe-only, capability-gated) is live and wired at three seams — Tool.__call__,
@@ -11692,7 +11692,7 @@ items:
       implement:  done             # 2026-08-19 — hooks, the gate, three seams, boot source
       cleanup:    done             # nothing obsolete; the one dead surface is recorded
       test:       done             # 67 plugin tests + the seams' own suites, all green
-      validate:   partial          # tool + llm hooks PROVEN LIVE; the 2 session points owed
+      validate:   done             # 2026-08-20 — all SIX hook points proven on live traffic
       document:   done             # 2026-08-20 @c67767e1 — Verification RUN, not read
     CLEANUP_2026_08_19: >-
       Nothing was made obsolete by this work and nothing was orphaned — the loader,
@@ -11786,6 +11786,46 @@ items:
       globbing the ROTATED logs, per the D08.3 lesson.
       The probe plugin was REMOVED after each run and the platform restarted; the log reads
       "no plugins installed" again, naming the directory it looked in.
+    VALIDATE_CLOSED_2026_08_20: >-
+      THE LAST CHECK IS CLOSED. on_session_start and on_session_end were the only two
+      hook points never observed live; both now are, with full payloads, and closing
+      them found a real defect in the item itself.
+      HOW THE TRAFFIC WAS OBTAINED WITHOUT MESSAGING BAKIR. The earlier note said
+      driving a turn "would have sent a probe message into Bakir's own assistant".
+      It does not have to: a one-shot `goal_execution` job targeted at `cli`
+      (target_channels=["cli"], run_once=true) runs the whole pipeline, self-deletes
+      on success, and reaches no chat. That drive left a durable row which the
+      liveness sweep reclaimed, and RECOVERY resolves a lane through
+      `resolve_runner_lane` -> `SessionStore.resolve_for` — which is the on_session_start
+      seam. Observed:
+        on_session_start {"session_key": "owl:secretary:recovery:task-d11dcf5",
+          "session_id": "20260820_175426_fe323318", "owl_name": "secretary",
+          "channel": "cli", "previous_session_id": None}
+      THEN on_session_end DID NOT COME, AND THAT WAS THE FINDING. The platform
+      recognises a conversation boundary in TWO places: `resolve_for` (the user came
+      back and their gap crossed the policy) and `SessionStore.sweep` (nobody spoke;
+      the sweeper finalises on the clock — the whole reason that method exists). The
+      hook was wired at the first only, so a hook saw a conversation end ONLY when the
+      user happened to return before the sweeper got there — which is not how
+      conversations normally end. Worse, `resolve_for` suppresses its dispatch when
+      `existing.expiry_finalized`, a guard written for the EVENT BUS (which the sweeper
+      already notifies via _publish_rollover); the hook dispatch was added inside that
+      guard later and inherited a suppression meant for a publisher it does not share —
+      so a lane the sweeper finalised reached a hook by NEITHER route. An actuator
+      wired on one path of two, inside the item built to avoid that, and invisible to
+      every existing test because they all drove the traffic path. Fixed in f4d0f2d5
+      (END only, never START: sweep finalises rather than mints).
+      PROVEN BY THE FIX'S OWN PATH, on the running platform:
+        on_session_end {"session_key": "owl:secretary:recovery:task-d11dcf5",
+          "session_id": "20260820_180913_8e254581", "reason": "idle",
+          "owl_name": "secretary", "channel": "cli", "message_count": 3,
+          "completed_turns": 3}
+      `reason: idle` is the sweeper. Before f4d0f2d5 this produced nothing at all.
+      The lane was my own probe lane, backdated past the 1440-minute idle policy so the
+      REAL sweep would act on it on its normal pass — no code path was simulated.
+      TEARDOWN DONE. Plugin removed, platform restarted, log reads
+      "[plugins] boot: no plugins installed" naming the directory it looked in. Evidence
+      file kept out of the repo. All six hook points are now observed on live traffic.
     DOCUMENT_2026_08_20: >-
       CLOSED TO DOC_STANDARD, and running the document stage EARNED ITS KEEP rather than
       being a write-up. Three things it caught:
