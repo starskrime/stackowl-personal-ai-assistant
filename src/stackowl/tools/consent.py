@@ -65,8 +65,17 @@ _DEFAULT_ALWAYS_ASK_TOOLS = frozenset(
 #: contradicted each other. The distinction that settles it: every other reversible-auto
 #: tool changes DATA, which undo restores. This class changes what the agent WILL DO on
 #: later turns, and an injected instruction acts before anyone exercises the undo.
+#: ``authority_widening`` (2026-08-19) — the action grants an owl a capability it
+#: did not have, permanently. Bakir: "I'm giving my permission... I'm giving
+#: everything agent still failing." Until this existed there was NO path by which
+#: his permission could widen an owl at all: tools above SAFE_DEFAULT_CEILING were
+#: clamped at mint and `owl_build.py` states an edit "cannot widen past the mint
+#: clamp". The platform could ask him whether to ACT, and had no way to ask him
+#: whether an owl may BE something. This category is what carries that question —
+#: and it is always-ask because a capability granted forever is the least
+#: reversible thing here, and must never be taken autonomously.
 _DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset(
-    {"lock", "alarm", "destructive", "prompt_surface"}
+    {"lock", "alarm", "destructive", "prompt_surface", "authority_widening"}
 )
 _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 
@@ -167,6 +176,31 @@ class AutonomousPrompter:
     """
 
     async def prompt(self, req: ConsentRequest) -> ConsentScope:
+        # THE DOCSTRING ABOVE WAS ASPIRATIONAL, NOT TRUE. It claimed the always-ask
+        # sets are "untouched" because the policy applies them before any prompter
+        # is consulted — but `excluded` only skips the AUTO shortcuts; the request
+        # still arrives here, and this method granted everything. MEASURED
+        # 2026-08-19 against a policy with no channel UX:
+        #
+        #     execute_code -> allowed=True    'destructive' -> allowed=True
+        #     'lock'       -> allowed=True
+        #
+        # Those are exactly the tools and categories the E11-E13 reviews refused to
+        # relax, granted in the one situation where nobody can undo them.
+        #
+        # `allow_relaxation` already carries what is needed: the policy sets it to
+        # `not excluded`, so False means always-ask. Refusing those here is what
+        # makes the claim above real.
+        if not req.allow_relaxation:
+            log.tool.warning(
+                "[consent] autonomous grant REFUSED — this is always-ask and no "
+                "human is attached to decide it",
+                extra={"_fields": {
+                    "tool": req.tool_name, "category": req.category,
+                    "channel": req.channel,
+                }},
+            )
+            return ConsentScope.DENY
         log.tool.info(
             "[consent] autonomous grant — no human attached to this turn",
             extra={"_fields": {

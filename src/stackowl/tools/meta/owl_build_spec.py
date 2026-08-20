@@ -18,7 +18,9 @@ class OwlBuildSpec(BaseModel):
     # extra field claims; they are simply absent from the validated spec either way.
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    action: Literal["create", "edit", "retire", "rename", "pause", "resume"]
+    action: Literal[
+        "create", "edit", "retire", "rename", "pause", "resume", "grant",
+    ]
     # name defaults to "" (not required): a free-text `/owl create <sentence>`
     # constructs a spec with no name so the validator reports it as a recoverable
     # MissingField and the tool ASKS for it (elicitation). Every action's own

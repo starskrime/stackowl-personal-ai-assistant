@@ -128,9 +128,20 @@ class TestTheRingfenceHolds:
             {"execute_code", "computer_use", "ha_call_service", "browser_dialog"}
         )
 
-    async def test_the_always_ask_categories_are_unchanged(self) -> None:
+    async def test_the_always_ask_categories_never_shrink(self) -> None:
+        """The invariant is that the ringfence never LOSES a category — not that it
+        can never gain one. Exact equality also blocked STRENGTHENING it, which is
+        how "authority_widening" (2026-08-19) tripped this test while making the
+        platform stricter, not looser."""
         from stackowl.tools.consent import _DEFAULT_ALWAYS_ASK_CATEGORIES
 
-        assert _DEFAULT_ALWAYS_ASK_CATEGORIES == frozenset(
+        assert frozenset(
             {"lock", "alarm", "destructive", "prompt_surface"}
-        )
+        ) <= _DEFAULT_ALWAYS_ASK_CATEGORIES
+
+    async def test_granting_an_owl_a_capability_is_ringfenced(self) -> None:
+        """A capability granted forever is the least reversible action here, so it
+        must reach a human or not happen."""
+        from stackowl.tools.consent import _DEFAULT_ALWAYS_ASK_CATEGORIES
+
+        assert "authority_widening" in _DEFAULT_ALWAYS_ASK_CATEGORIES

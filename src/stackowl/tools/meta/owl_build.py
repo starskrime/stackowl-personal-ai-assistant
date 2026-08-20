@@ -26,6 +26,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from stackowl.authz.bounds import BoundsSpec
 from stackowl.commands.config_helpers import config_path
 from stackowl.commands.owls_command import OwlsCommand
 from stackowl.commands.owls_helpers import (
@@ -75,7 +76,15 @@ _SOURCE_NAME = "agent_owls"
 _AUDIT_SOURCE: SkillSource = "learned"
 _ACTOR = "agent_self:owl_build"
 
-_VALID_ACTIONS: tuple[str, ...] = ("create", "edit", "retire", "rename", "pause", "resume")
+_VALID_ACTIONS: tuple[str, ...] = (
+    "create", "edit", "retire", "rename", "pause", "resume", "grant",
+)
+
+#: The consent category for GRANTING an owl a capability it did not have.
+#: Distinct from the ordinary build category because it is always-ask: a
+#: capability held forever is the least reversible thing this tool can do, so
+#: it must reach a human and can never be taken autonomously.
+_WIDENING_CATEGORY = "authority_widening"
 
 # One natural-language question per recoverable create field (ADR-A: the validator
 # decides WHICH field is missing; this only PHRASES the ask). User-facing prose,
@@ -350,7 +359,13 @@ class OwlBuildTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": list(_VALID_ACTIONS),
-                    "description": "create | edit | retire | rename | pause | resume",
+                    "description": (
+                        "create | edit | retire | rename | pause | resume | "
+                        "grant. Use 'grant' to give an EXISTING owl a tool it is "
+                        "not currently allowed to hold (pass explicit_tools); it "
+                        "always asks the user, and is the only way to widen an "
+                        "owl's authority."
+                    ),
                 },
                 "name": {
                     "type": "string",
@@ -518,6 +533,8 @@ class OwlBuildTool(Tool):
                 return await self._pause(spec, t0)
             if spec.action == "resume":
                 return await self._resume(spec, t0)
+            if spec.action == "grant":
+                return await self._grant(spec, t0)
             return await self._retire(spec, t0)
         except NotImplementedError:
             return self._err(f"action '{spec.action}' is not yet implemented.", t0)
@@ -676,8 +693,123 @@ class OwlBuildTool(Tool):
 
     # ------------------------------------------------------------------ consent
 
+    async def _grant(self, spec: OwlBuildSpec, t0: float) -> ToolResult:
+        """Give an existing owl a capability it is not currently allowed to hold.
+
+        BAKIR, 2026-08-19: "I'm giving my permission to do that. Agent still
+        failing. I'm giving everything agent still failing."
+
+        He was right, and it was structural. Consent gated ACTIONS — "may I run
+        this tool now?" — and he could answer that. Nothing gated AUTHORITY. An
+        owl's tools are clamped at mint against SAFE_DEFAULT_CEILING, and `_edit`
+        re-clamps against the ORIGINAL ceiling on purpose ("an edit can never widen
+        authority past what was approved at mint time"). So `shell`, `write_file`
+        and `send_message` were unreachable for an agent-created owl by EVERY
+        route, permanently, and no permission he could give would change it. The
+        platform could ask him whether to act, and had no way to ask him what an
+        owl may BE.
+
+        This is that question, and it is the ONLY thing that moves the ratchet
+        outward. It is deliberately a separate action rather than a flag on `edit`:
+        the monotone ratchet is a real safety property and widening must be an
+        explicit, auditable request, not a side effect of an ordinary edit.
+
+        Gated on ``authority_widening``, which is always-ask — so it can never be
+        taken by the reversible auto-allow, and never by the autonomous grant when
+        nobody is attached. If Bakir cannot be reached, the answer is no.
+        """
+        registry = get_services().owl_registry
+        if registry is None:
+            return self._err("no owl registry available.", t0)
+        try:
+            current = registry.get(spec.name)
+        except Exception:
+            return self._err(f"no owl named '{spec.name}'.", t0)
+
+        requested = {str(t).strip() for t in (spec.explicit_tools or []) if str(t).strip()}
+        if not requested:
+            return self._err(
+                "action='grant' needs explicit_tools — the tools to grant.", t0,
+            )
+        # None means the registry could not enumerate tools; validating against an
+        # empty set there would reject every legitimate grant, so skip the check
+        # rather than refuse on missing information.
+        known = _valid_tool_names(get_services())
+        unknown = sorted(requested - set(known)) if known else []
+        if unknown:
+            return self._err(
+                f"unknown tool(s): {', '.join(unknown)}. Grant only tools that exist.",
+                t0,
+            )
+
+        ceiling = current.creation_ceiling
+        held: set[str] = set(ceiling.tools or ()) if ceiling is not None else set()
+        adding = sorted(requested - held)
+        if not adding:
+            return self._ok(
+                f"owl '{spec.name}' is already allowed to hold "
+                f"{', '.join(sorted(requested))} — nothing to grant.",
+                t0, extra={"owl": spec.name, "op": "grant"},
+            )
+
+        summary = (
+            f"GRANT NEW AUTHORITY to owl '{spec.name}': {', '.join(adding)}.\n"
+            f"This permanently widens what that owl may do — it is not undone by "
+            f"editing the owl afterwards. It currently may use: "
+            f"{', '.join(sorted(held)) or '(nothing)'}."
+        )
+        refusal = await self._consent_or_refuse(
+            summary, spec.name, category=_WIDENING_CATEGORY,
+        )
+        if refusal is not None:
+            return self._err(refusal, t0)
+
+        widened_tools = sorted(held | requested)
+        new_ceiling = (
+            ceiling.model_copy(update={"tools": frozenset(widened_tools)})
+            if ceiling is not None
+            else BoundsSpec(tools=frozenset(widened_tools))
+        )
+        new_bounds = (
+            current.bounds.model_copy(update={"tools": frozenset(widened_tools)})
+            if current.bounds is not None
+            else BoundsSpec(tools=frozenset(widened_tools))
+        )
+        updated = current.model_copy(update={
+            "creation_ceiling": new_ceiling,
+            "bounds": new_bounds,
+            "tools": widened_tools,
+        })
+
+        snapshot = await snapshot_owl(updated.name)
+        try:
+            await persist_owl(updated)
+            registry.register(updated, source_name=_SOURCE_NAME)
+        except Exception as exc:  # B5 — no-hidden-errors, atomic rollback
+            log.tool.error(
+                "owl_build._grant: persist/register failed — rolling back",
+                exc_info=exc, extra={"_fields": {"owl": updated.name}},
+            )
+            await restore_owl(updated.name, snapshot)
+            return self._err(f"failed to grant tools to '{updated.name}': {exc}", t0)
+
+        await self._audit("grant", updated.name, spec.name)
+        # INFO, because this is the evidence line for "who widened what, and when".
+        log.tool.info(
+            "owl_build.grant: authority WIDENED with the user's approval",
+            extra={"_fields": {
+                "owl": updated.name, "granted": adding, "now_holds": widened_tools,
+            }},
+        )
+        return self._ok(
+            f"Granted {', '.join(adding)} to owl '{spec.name}'. It may now use: "
+            f"{', '.join(widened_tools)}.",
+            t0, extra={"owl": updated.name, "op": "grant"},
+        )
+
     async def _consent_or_refuse(
-        self, summary: str, name: str, *, reversible: bool = False
+        self, summary: str, name: str, *, reversible: bool = False,
+        category: str | None = None,
     ) -> str | None:
         """Consequential consent, fail-closed off-TTY. Returns a refusal or None.
 
@@ -725,7 +857,7 @@ class OwlBuildTool(Tool):
                 tool_name=self.name,
                 channel=channel,
                 session_key=session_key,
-                category=_CONSENT_CATEGORY,
+                category=category or _CONSENT_CATEGORY,
                 summary=summary,
                 reversible=reversible,
             )
@@ -737,7 +869,16 @@ class OwlBuildTool(Tool):
             )
             return f"refused: consent check failed while building owl '{name}'."
         if not allowed:
-            return f"declined by user — owl '{name}' was not built."
+            # This used to blame the USER. On 2026-08-19 that wording was returned
+            # five times for edits Bakir never saw a prompt for — the Telegram
+            # prompter could not parse the session key, failed closed, and the
+            # platform told him he had refused his own request. A refusal the user
+            # was never shown must not be reported as their decision.
+            return (
+                f"not approved — owl '{name}' was not built. If you were not asked, "
+                "the approval could not be delivered to you; ask again and it will "
+                "prompt."
+            )
         return None
 
     # ------------------------------------------------------- elicitation (ADR-A)
