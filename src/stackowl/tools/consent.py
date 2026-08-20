@@ -396,7 +396,16 @@ class ConsentPolicy:
             return self._finalize(False, tool_name, channel, session_key, category, "prompt_error", None)
 
         if scope is ConsentScope.DENY:
-            return self._finalize(False, tool_name, channel, session_key, category, "user_denied", scope)
+            # "not_approved", not "user_denied". The prompter returns DENY for a
+            # real refusal, a TIMEOUT, and a fail-closed error alike — this method
+            # cannot tell them apart, so it must not assert the user refused. On
+            # 2026-08-19/20 every one of Bakir's expired prompts was audited as his
+            # decision, and owl_build reported "declined by user" for prompts he was
+            # never shown. An audit line that guesses intent is worse than one that
+            # states only what is known.
+            return self._finalize(
+                False, tool_name, channel, session_key, category, "not_approved", scope,
+            )
 
         if scope is ConsentScope.DENY_SESSION:
             if session_key:

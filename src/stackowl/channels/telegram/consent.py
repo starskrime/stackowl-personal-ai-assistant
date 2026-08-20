@@ -27,7 +27,15 @@ __all__ = ["TelegramConsentPrompter"]
 
 _CALLBACK_PREFIX = "consent"
 # Default time a consent prompt stays open before failing closed.
-_DEFAULT_TIMEOUT_SECONDS = 120.0
+#: How long an approval button stays live. Bakir, 2026-08-20: "I see approve button
+#: i am clicking but no reaction" — and "Increase 120 to 1200".
+#:
+#: 120s was shorter than a phone notification often takes to reach someone, and the
+#: INFO line a resolved click writes (`consent.handle_callback: resolved`) had NEVER
+#: appeared in any log: no click had ever landed inside the window. Every prompt
+#: expired, failed closed, and was recorded as `user_denied` — blaming him for a
+#: refusal he never made.
+_DEFAULT_TIMEOUT_SECONDS = 1200.0
 
 # Decision → leading symbol, mapped once over the whole ConsentScope enum.
 # Language-neutral on purpose (the platform is multilingual): a glyph conveys
@@ -202,10 +210,30 @@ class TelegramConsentPrompter:
         rid, scope_raw = parts[1], parts[2]
         pending = self._pending.get(rid)
         if pending is None or pending.future.done():
-            log.telegram.debug(
-                "[telegram] consent.handle_callback: no live request — ignored",
-                extra={"_fields": {"rid": rid}},
+            # SAY SO, never swallow it. Any window can expire, and a button that
+            # eats taps is indistinguishable from a broken platform — which is
+            # exactly how it felt to Bakir. INFO, not DEBUG: production runs at
+            # INFO, and this line is the evidence that a click arrived at all.
+            log.telegram.info(
+                "[telegram] consent.handle_callback: the approval had already "
+                "expired when it was clicked — telling the user",
+                extra={"_fields": {"rid": rid, "chat_id": chat_id}},
             )
+            if chat_id is not None:
+                try:
+                    await self._adapter.send_inline_keyboard(
+                        "That approval request has expired, so the tap did nothing. "
+                        "Ask me again and I'll re-request it.",
+                        {},
+                        chat_id=chat_id,
+                        parse_mode=None,
+                    )
+                except Exception as exc:  # never raise into the callback router
+                    log.telegram.error(
+                        "[telegram] consent.handle_callback: could not tell the "
+                        "user their approval had expired",
+                        exc_info=exc, extra={"_fields": {"rid": rid}},
+                    )
             return
         try:
             scope = ConsentScope(scope_raw)
