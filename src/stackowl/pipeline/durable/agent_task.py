@@ -38,7 +38,11 @@ from stackowl.infra.observability import log
 #: loop can recover it. "suppressed" counts: the router deliberately withheld the
 #: message (quiet hours, focus mode), which is a decision about delivery rather
 #: than a failure of it.
-_DELIVERED_STATUSES = frozenset({"completed", "delivered", "suppressed"})
+#:
+#: PUBLIC because the chat path asks it too. ``steps/deliver`` needs the same rule
+#: for its stream-miss proactive push, and a second copy of this set is exactly the
+#: "two copies of one rule" shape this platform keeps paying for.
+DELIVERED_STATUSES = frozenset({"completed", "delivered", "suppressed"})
 
 
 def describe_job_destination(job: Any) -> str | None:
@@ -76,7 +80,7 @@ async def complete_agent_task(
         return
     if not (result or "").strip():
         return
-    if delivery_status not in _DELIVERED_STATUSES:
+    if delivery_status not in DELIVERED_STATUSES:
         log.tasks.info(
             "[loop] scheduled task produced an answer that did NOT reach its "
             "destination — leaving it open for the loop",

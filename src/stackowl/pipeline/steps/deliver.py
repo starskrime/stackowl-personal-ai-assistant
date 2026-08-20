@@ -75,7 +75,17 @@ async def run(state: PipelineState) -> PipelineState:
     # destination to push to — there the miss IS terminal and is logged loudly.
     writer = registry.get_writer(state.trace_id)
     if writer is None:
-        await _proactive_fallback(state, services)
+        # THE COMPLETION SEAM RUNS HERE TOO, and it did not until 2026-08-20. This
+        # branch is the ONE path that reaches a user whose live stream is gone —
+        # which is precisely the recovered turn, the case the loop exists for — and
+        # it returned before the seam below. Measured on the live table: two chat
+        # rows reading status='completed' with delivered_at NULL, both answered
+        # through this branch. Nothing could ever see them: the revival sweep scans
+        # only status='failed'. The push's own verdict decides, so a fallback that
+        # could not send still records nothing and the row stays open for the loop.
+        delivered = await _proactive_fallback(state, services)
+        if delivered:
+            await _complete_turn(state, services)
         return state
 
     # REACT-8/F037 — terminal signaling contract. The tool path (and consolidate)
@@ -123,23 +133,7 @@ async def run(state: PipelineState) -> PipelineState:
         await writer.write(chunk)
     await writer.close()
 
-    # THE ONE LOOP's completion seam. The reply has now crossed the writer to the
-    # user, which is the only thing that counts as done — Bakir, 2026-08-17: "if
-    # it's delivered to me, it means loop is completed." Marking it anywhere
-    # earlier would record a success the user never saw, the overclaim shape this
-    # platform keeps finding. Best-effort by construction: complete_turn_task never
-    # raises, so the durable bookkeeping cannot cost a delivered turn.
-    from stackowl.pipeline.durable.turn_task import complete_turn_task
-
-    await complete_turn_task(
-        getattr(services, "durable_task_store", None),
-        trace_id=state.trace_id,
-        result="".join(c.content for c in state.responses if c.content),
-        # The turn's own verification verdict. A reply that APOLOGISES for an effect
-        # it measured absent has reached the user without doing the work, and must
-        # not record achievement — it goes back on the loop instead.
-        state=state,
-    )
+    await _complete_turn(state, services)
 
     log.gateway.info(
         "[pipeline] deliver: exit",
@@ -283,8 +277,49 @@ async def _summarize_if_terse(
     return compressed
 
 
-async def _proactive_fallback(state: PipelineState, services: StepServices) -> None:
+async def _complete_turn(state: PipelineState, services: StepServices) -> None:
+    """THE ONE LOOP's completion seam — the reply has reached the user.
+
+    Bakir, 2026-08-17: *"if it's delivered to me, it means loop is completed."*
+    Marking it anywhere earlier would record a success the user never saw, the
+    overclaim shape this platform keeps finding. Best-effort by construction:
+    ``complete_turn_task`` never raises, so the durable bookkeeping cannot cost a
+    delivered turn.
+
+    ONE HELPER BECAUSE THERE ARE TWO DELIVERY PATHS. The live-stream write and the
+    stream-miss proactive push both reach the user, and until 2026-08-20 only the
+    first proved it. A second inline copy of this call is how the two would drift
+    again, so both branches ask this.
+
+    WHICH ID THE PROOF LANDS ON. ``state.task_id`` when the drive carries one,
+    ``trace_id`` otherwise. An ordinary chat turn sets no ``task_id`` and its row
+    IS keyed by the trace id (``enqueue_turn_task``), so that path is unchanged. A
+    RECOVERY drive mints ``trace_id="recover-<12hex>"`` while keeping the real
+    ``task_id`` on the state — keying on the trace id there wrote the proof against
+    a row that does not exist.
+    """
+    from stackowl.pipeline.durable.turn_task import complete_turn_task
+
+    await complete_turn_task(
+        getattr(services, "durable_task_store", None),
+        trace_id=state.task_id or state.trace_id,
+        result="".join(c.content for c in state.responses if c.content),
+        # The turn's own verification verdict. A reply that APOLOGISES for an effect
+        # it measured absent has reached the user without doing the work, and must
+        # not record achievement — it goes back on the loop instead.
+        state=state,
+    )
+
+
+async def _proactive_fallback(
+    state: PipelineState, services: StepServices
+) -> str | None:
     """Durably push a top-level turn's answer when its live stream is gone (F100).
+
+    Returns the transport's own status when the answer ACTUALLY reached the user,
+    and ``None`` when it did not. The caller turns that into a delivery proof, so
+    the verdict is the transport's rather than a second opinion derived beside it —
+    two opinions about whether delivery happened is how they drift.
 
     Called ONLY on a stream-miss for a non-delegated top-level turn (the caller
     already excludes ``delegation_depth>0``). The computed answer is joined and
@@ -315,7 +350,7 @@ async def _proactive_fallback(state: PipelineState, services: StepServices) -> N
                 }
             },
         )
-        return
+        return None
 
     # Import locally so the typing-only services import stays light and there is
     # no import cycle at module load (notifications imports pipeline types).
@@ -336,16 +371,36 @@ async def _proactive_fallback(state: PipelineState, services: StepServices) -> N
             exc_info=exc,
             extra={"_fields": {"request_id": state.trace_id, "session_key": state.session_key}},
         )
-        return
+        return None
+    # THE SAME ROLLUP THE SCHEDULED PATH ALREADY USES. `agent_task` owns the set of
+    # statuses that mean the outcome genuinely arrived; asking it rather than
+    # re-listing them here keeps ONE source for the rule (a "failed" transport is a
+    # miss, and "suppressed" is a decision about delivery rather than a failure of
+    # it). Anything outside the set leaves the row open for the loop.
+    from stackowl.pipeline.durable.agent_task import DELIVERED_STATUSES
+
+    arrived = str(status) in DELIVERED_STATUSES
+    fields = {
+        "request_id": state.trace_id,
+        "session_key": state.session_key,
+        "channel": state.channel,
+        "status": status,
+        "body_len": len(body),
+    }
+    if not arrived:
+        # THIS USED TO CLAIM DELIVERY REGARDLESS OF THE STATUS IT PRINTED. The
+        # deliverer returns "failed" when transport could not complete, and the
+        # line still read "answer delivered via proactive fallback" — a log that
+        # contradicts its own field. Nobody grepping for a lost answer would have
+        # found it.
+        log.gateway.error(
+            "[deliver] stream-miss: proactive fallback did NOT deliver — the "
+            "answer has not reached the user and the task stays open",
+            extra={"_fields": fields},
+        )
+        return None
     log.gateway.warning(
         "[deliver] stream-miss: live reader gone — answer delivered via proactive fallback",
-        extra={
-            "_fields": {
-                "request_id": state.trace_id,
-                "session_key": state.session_key,
-                "channel": state.channel,
-                "status": status,
-                "body_len": len(body),
-            }
-        },
+        extra={"_fields": fields},
     )
+    return str(status)

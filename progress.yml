@@ -1631,6 +1631,102 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ARC-2026-08-20-delivery-proof
+    found: 2026-08-20
+    found_by: "the handoff's JOB 1, re-measured against live traffic before touching code"
+    status: FIXED — three defects, one lifecycle. Tests first, then the fix, then live proof.
+    the_correction_that_had_to_come_first: >-
+      THE RECORDED DIAGNOSIS NAMED DEAD CODE. The 2026-08-19 entry (and the handoff
+      built on it) said the site was `react_runner.py:268`. It is not:
+      `DurableReActRunner` has ZERO production callers — `grep -rn react_runner src/`
+      returns only its own module, the `pipeline/durable/__init__.py` export and a
+      comment. The four live warnings all came from `task_runner._finalize`, which the
+      log shows plainly: every one is followed within milliseconds by
+      "[tasks] runner._finalize: finalized".
+      TWO OTHER RECORDED FACTS WERE ALSO WRONG. (1) "the revival sweep hunts for
+      completed+delivered_at NULL" — it does not; `revive_undelivered_failures` selects
+      `status='failed'`, so a row at `completed` with no proof is visible to NO sweep at
+      all. The consequence is worse than recorded and quieter: not a double-drive, a
+      silent loss. (2) "both rows carry delivered_at stamped in the same instant" — of
+      the four warned tasks, `b5ac873d370a…` was stamped 3m46s later and
+      `f1f930de554a…` was NEVER stamped and still is not.
+    what_was_actually_broken: >-
+      THREE DEFECTS, and all three are failure mode #1 from PROCESS.md — an actuator
+      wired on only some paths.
+        1. steps/deliver.py returned from the stream-miss branch BEFORE the completion
+           seam: `if writer is None: await _proactive_fallback(...); return state`. That
+           branch is the ONE path that reaches a user whose live stream is gone — which
+           is exactly the RECOVERED turn, the case the loop exists for. So the single
+           path that most needs a delivery proof never wrote one.
+        2. The seam keyed the proof on `trace_id`; the durable row is keyed by
+           `task_id`. For an ordinary chat turn they are the SAME STRING
+           (`enqueue_turn_task` uses the trace id as the task id), which is why this
+           never showed. A recovery drive mints `trace_id="recover-<12hex>"` and keeps
+           the real `task_id` on the state, so the proof would have been written against
+           a row that does not exist.
+        3. `mark_delivered` issued its UPDATE and logged "[loop] task COMPLETE" without
+           asking how many rows it matched — so defect 2 would have reported success
+           forever. A proof that cannot disagree with its claim is not a proof.
+      AND THE ORDERING BUG ON TOP: `task_runner._finalize` wrote `completed` when the
+      DRIVE RETURNED, before `goal_execution._deliver_answer -> complete_agent_task ->
+      mark_delivered` could land the proof. Bakir's rule, 2026-08-17, broken in the
+      runner that drives every durable task.
+    measured_before: >-
+      Live table 2026-08-20: 257 completed / 849 failed / 73 pending. Of the completed,
+      30 carried a destination AND delivery proof, 225 had no destination (correct —
+      nobody waiting), and 2 carried a destination with delivered_at NULL:
+      f1f930de554a45d29599c9d784d0cf2e and 7299dcfaad914378aa2c8f06bb4a6b72, both
+      trigger_kind='chat', both destination telegram:72055773. Both answers DID reach
+      Bakir — via the proactive fallback — and nothing in the platform could tell.
+    the_fix: >-
+      NO SECOND ENGINE. Same table, same `mark_delivered`, same recovery claim.
+        - steps/deliver.py: the stream-miss branch now runs the completion seam when the
+          push actually landed, and both delivery branches call ONE `_complete_turn`
+          helper rather than two inline copies. The verdict is the transport's own —
+          `_proactive_fallback` returns its status, checked against `DELIVERED_STATUSES`,
+          which is now PUBLIC on agent_task.py so the chat path asks the same set the
+          scheduled path already used instead of listing it a second time.
+        - The proof is keyed `state.task_id or state.trace_id`. An ordinary turn sets no
+          task_id and is unchanged; a recovery drive now lands on its real row.
+        - store.mark_delivered uses execute_returning_rowcount and logs ERROR
+          "[loop] delivery proof matched NO row" when it matched nothing.
+        - store.update_status DECLINES the completed transition for a row that owes a
+          delivery (has a destination, delivered_at NULL) and leaves it `running` with
+          its result written, for `mark_delivered` to close. Routed at the CHOKEPOINT,
+          not in the three callers, for the same reason the failure rule already is —
+          one source, and the others ask it. `_warn_if_undelivered` became the predicate
+          `_owes_delivery`.
+      WHY LEAVING IT RUNNING IS SAFE, AND WHY IT IS NOT A STRAND. The old note here said
+      refusing would strand a finished task until its lease expired and answer the user
+      twice. That assumed the delivery path could not close the row; it can, and it is
+      the only thing that ever could. The scheduled path calls mark_delivered
+      milliseconds later; the chat path calls it INSIDE the pipeline, before the runner
+      finalizes at all. The declined write still stamps `updated_at`, so the row is a
+      freshly-touched one and the liveness sweep's 600s staleness threshold cannot reach
+      it while delivery is in flight. If delivery genuinely never happens the row is
+      still open and the EXISTING recovery owns it — which is what
+      `complete_agent_task`'s own comment already said should happen.
+    a_docstring_that_disagreed_with_the_database: >-
+      `claim_for_recovery` claimed to be a single-winner CAS: "a concurrent second writer
+      sees rows-affected=0 and must skip". Measured directly — it does not. The
+      destination status is inside the claimable set, so a second UPDATE against an
+      already-`recovering` row matches again and also reports 1. That is deliberate (it
+      is what lets a stale `recovering` orphan be reclaimed at all) and it is safe only
+      because of who calls it: boot recovery runs when the prior process is provably
+      dead, and TaskLivenessSweepHandler excludes `recovering` precisely so it cannot
+      race a live claim. Behaviour unchanged; the docstring corrected to say what is
+      true, because a believed-and-wrong safety property is worse than none.
+    the_two_stranded_rows: >-
+      NOT rewritten. Both were delivered to Bakir before the fix existed, so reviving
+      them would re-send an answer he already has — the duplicate flood 4f8e8db5 exists
+      to prevent — and editing live rows is not a call to make unilaterally. They age
+      out on their own: `prune_completed` deletes completed rows older than one day. The
+      fix means no new row can enter that state.
+    tests: >-
+      Three new files, written before the fix and each red first:
+      tests/pipeline/durable/test_a_delivered_answer_is_always_proven.py (7),
+      test_delivery_proof_lands_or_says_so.py (2),
+      test_a_task_owing_delivery_is_not_declared_done.py (9).
   - id: DEBT-2026-08-19-three-call-sites-bypass-the-tool-chokepoint
     found: 2026-08-19
     found_by: "D16.1 implement, wiring the pre/post_tool_call hooks into Tool.__call__"
@@ -1747,34 +1843,13 @@ known_debt:
       a loopback redirect URI is configuration rather than a fabricated source.
     still_open:
       - >-
-        2f7e8055 made an unproven completion a WARNING, not a refusal: update_status
-        predates complete_turn_task/mark_delivered and several callers (executor finalize,
-        crash recovery, task_runner) still mark completed directly. Two writers to one
-        fact. Refusing would strand a finished task until its lease expired and answer the
-        user twice, so the gap is counted instead.
-        DIAGNOSED 2026-08-20 on live traffic, and it is NOT a missing verdict — the
-        remedy written here ("each caller threading its own delivery verdict") does not fit
-        the case that actually fires. Two warnings that afternoon, task-7d8ee9162233
-        (destination telegram) and task-95cb7eac7765 (cli). BOTH ROWS CARRY delivered_at,
-        stamped in the same instant as the warning. The sequence is:
-          react_runner.py:268  update_status(task_id, "completed")  <- the drive returned
-          goal_execution       _deliver_answer -> complete_agent_task -> mark_delivered
-        so the task is marked complete when the FUNCTION RETURNED and the proof lands a
-        moment later. That is precisely the rule Bakir stated on 2026-08-17 — "a task is
-        complete when its outcome reached its DESTINATION, not when the function returned"
-        — broken in the runner that drives every durable task.
-        TWO CONSEQUENCES, and the second is why this is worth fixing rather than silencing:
-        (1) the warning fires on the HAPPY path, so the counter cannot separate a real gap
-        from ordinary operation and the debt is unmeasurable — the same unfalsifiable-check
-        shape as D08.1's DEBUG evidence line; (2) between the drive returning and delivery
-        landing, the row reads `completed` with delivered_at NULL, which is exactly the
-        shape the revival sweep (27f8322d) hunts for, so a crash in that window makes a
-        delivered-a-moment-later answer look like a lost one.
-        THE FIX IS A LIFECYCLE CHANGE, NOT A LOG TWEAK: react_runner must not declare
-        terminal success on a task that still owes a delivery — it should leave the row to
-        the delivery path, which already knows the honest verdict. NOT DONE AUTONOMOUSLY:
-        it changes when every durable task becomes terminal, and the failure mode of
-        getting it wrong is re-driving work that already ran. Needs Bakir.
+        RESOLVED 2026-08-20 — see ARC-2026-08-20-delivery-proof below. Kept here
+        because the diagnosis recorded on 2026-08-19 named the WRONG FILE and a
+        future reader following it would chase dead code. It said the site was
+        react_runner.py:268; react_runner has ZERO production callers (only
+        pipeline/durable/__init__.py exports it and its own tests import it). The
+        real site was task_runner._finalize, and it was one of three defects, not
+        one. The corrected account is on the new arc.
       - >-
         0cbf4790 fixed only the unarguable half of the grounding false-positive.
         accounts.google.com in "go here to authorise" is still flagged as a fabricated

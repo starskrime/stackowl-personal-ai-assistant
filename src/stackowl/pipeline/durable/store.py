@@ -285,19 +285,25 @@ class DurableTaskStore(OwnedRepository):
         )
         return tasks
 
-    async def _warn_if_undelivered(self, task_id: str) -> None:
-        """Say so when a task with a DESTINATION is completed without delivery proof.
+    async def _owes_delivery(self, task_id: str) -> bool:
+        """True when this task has a DESTINATION and no proof it ever arrived.
 
-        Deliberately a warning and not a refusal. These callers genuinely finished
-        the work — the answer did reach Bakir in both observed cases — they simply
-        cannot prove it through this seam. Refusing the transition would leave a
-        real, finished task stuck `running` until its lease expired and the loop
-        re-drove it, which would answer the user a SECOND time. A false duplicate
-        is worse than an unproven record.
+        WAS A WARNING UNTIL 2026-08-20, AND THE WARNING WAS THE WRONG REMEDY. It
+        fired on the HAPPY path — the drive returns, this runs, and the delivery
+        lands a moment later — so the counter could never separate a real gap from
+        ordinary operation. An unfalsifiable check is not a check.
 
-        So this makes the gap visible and countable rather than silent, which is
-        the precondition for closing it properly (each such caller threading its
-        own delivery verdict, as goal_execution now does).
+        The earlier note here said refusing the transition would strand a finished
+        task until its lease expired and answer the user twice. That reasoning
+        assumed the delivery path could not close the row. It can, and it is the
+        only thing that ever could: ``mark_delivered``. The scheduled path calls it
+        immediately after this returns, and the chat path calls it INSIDE the
+        pipeline, before the runner finalizes at all. Leaving the row open for a
+        few hundred milliseconds is not a strand — it is the task still being
+        genuinely incomplete, which is what Bakir's rule says it is.
+
+        A bookkeeping error answers False: a failure to READ must never be the
+        reason a finished task cannot finish.
         """
         try:
             rows = await self._db.fetch_all(
@@ -306,20 +312,15 @@ class DurableTaskStore(OwnedRepository):
                 (task_id, self._owner_id),
             )
             if not rows:
-                return
+                return False
             row = rows[0]
-            if row.get("destination") and row.get("delivered_at") is None:
-                log.tasks.warning(
-                    "[loop] task marked completed WITHOUT delivery proof — it had "
-                    "somewhere to deliver and this path cannot confirm it arrived",
-                    extra={"_fields": {"task_id": task_id,
-                                       "destination": row["destination"]}},
-                )
+            return bool(row.get("destination")) and row.get("delivered_at") is None
         except Exception as exc:  # never block a finalize on its own bookkeeping
             log.tasks.error(
                 "[loop] could not check delivery proof before completing a task",
                 exc_info=exc, extra={"_fields": {"task_id": task_id}},
             )
+            return False
 
     async def update_status(
         self,
@@ -364,8 +365,31 @@ class DurableTaskStore(OwnedRepository):
         #
         # A row with NO destination is unaffected: a sweep or an internal sub-task
         # has nobody waiting, so "completed" is the whole truth for it.
-        if status == "completed":
-            await self._warn_if_undelivered(task_id)
+        # A COMPLETION WITH NO ANSWER OWES NOTHING. `goal_execution` blanks
+        # response_text when a watch-style goal answers NO_NOTIFY_NEEDED, and
+        # `_deliver_answer` reports "empty answer — nothing to deliver"; both
+        # `complete_agent_task` and `complete_turn_task` then return early on an
+        # empty result, so nothing downstream would ever close such a row. Declining
+        # it would leave a correctly-quiet job running until the 600s liveness sweep
+        # reclaimed it, forever. The decline turns on an ANSWER existing, not merely
+        # on a destination existing — and `.strip()` here because that is exactly the
+        # test both delivery seams already apply.
+        if status == "completed" and (result or "").strip() and (
+            await self._owes_delivery(task_id)
+        ):
+            # DECLINE THE TRANSITION, DO NOT INVENT A SECOND ENDING. The row keeps
+            # whatever `result` this caller produced (so the answer is never lost
+            # from /agents log, and a later revive still has text to classify) and
+            # stays open for `mark_delivered`, which is the only writer that can
+            # prove arrival. If the delivery never happens the row is still open
+            # and the loop's EXISTING recovery owns it — no new queue, no new
+            # status column, no second retry path.
+            log.tasks.info(
+                "[loop] the drive finished but the answer has not reached its "
+                "destination yet — leaving the task open for the delivery path",
+                extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+            )
+            status = "running"
         # THE SAME RULE FOR THE OTHER ENDING. Bakir, 2026-08-17: "a failure returns
         # the row to pending *with what failed*, so the next attempt is constrained
         # rather than blind." `fail_and_requeue` implements exactly that — but it
@@ -443,8 +467,20 @@ class DurableTaskStore(OwnedRepository):
         ``recovering`` row is necessarily a STALE orphan left when a process was
         killed BETWEEN the claim (running -> recovering) and the resume. Without
         claiming ``recovering`` such a task would be stuck forever (the old sweep
-        listed only ``running``). This is still atomic, still owner-scoped, and a
-        single CAS winner. Returns ``True`` iff THIS call claimed the row.
+        listed only ``running``).
+
+        WHAT SINGLE-WINNER DOES AND DOES NOT MEAN HERE, corrected 2026-08-20 after
+        measuring it. An earlier version of this docstring said a concurrent second
+        writer sees rows-affected=0. It does NOT: the destination status is inside
+        the claimable set, so a second CAS against an already-``recovering`` row
+        matches it again and also reports 1. That is deliberate — it is the same
+        property that lets a stale ``recovering`` orphan be reclaimed at all — and
+        it is safe only because of who calls this. Boot recovery runs when the
+        prior process is provably dead, and the live ``TaskLivenessSweepHandler``
+        excludes ``recovering`` precisely so it cannot race a claim in progress.
+        Single-winner therefore holds against a ``running`` row, which is the case
+        every caller actually competes over. Returns ``True`` iff this call's
+        UPDATE matched.
 
         Owner-scoped: the WHERE carries ``owner_id`` so a row owned by a
         different principal can never be claimed through this store.
@@ -1241,12 +1277,30 @@ class DurableTaskStore(OwnedRepository):
         pays for when a tool asserts success it never observed.
         """
         now = datetime.now(UTC)
-        await self._db.execute(
+        # MEASURE THE EFFECT, NEVER TRUST THE CALL. This used to issue the UPDATE and
+        # announce COMPLETE without asking how many rows it matched — so when the chat
+        # seam keyed the proof on a recovery drive's `trace_id` (not a task id at all)
+        # it wrote against nothing and reported success forever. A proof that can
+        # never disagree with its claim is not a proof.
+        affected = await self._db.execute_returning_rowcount(
             f"UPDATE {self._table} SET status='completed', result=?, "  # noqa: S608
             "delivered_at=?, lease_owner=NULL, lease_expires_at=NULL, updated_at=? "
             "WHERE task_id=? AND owner_id=?",
             (result, now.isoformat(), now.isoformat(), task_id, self._owner_id),
         )
+        if not affected:
+            # Never raises: the answer HAS reached the user by the time this runs, and
+            # a bookkeeping failure must not cost a delivered turn. But it is an ERROR,
+            # because the row this was meant to close is still open and something is
+            # calling with an id the table does not hold.
+            log.tasks.error(
+                "[loop] delivery proof matched NO row — the answer reached its "
+                "destination and the task it belongs to is still open",
+                extra={"_fields": {
+                    "task_id": task_id, "owner_id": self._owner_id,
+                }},
+            )
+            return
         log.tasks.info(
             "[loop] task COMPLETE — its outcome reached its destination",
             extra={"_fields": {"task_id": task_id, "delivered_at": now.isoformat()}},

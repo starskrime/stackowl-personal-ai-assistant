@@ -327,7 +327,17 @@ async def test_a_provider_failure_leaves_the_task_failed_not_running(
     tmp_db: DbPool,
 ) -> None:
     """A task row stuck in 'running' for ever is the zombie this record exists to
-    prevent."""
+    prevent.
+
+    THE EXPECTED RESTING PLACE MOVED, and this assertion did not follow it until
+    2026-08-20. It read ``status == 'failed'``, which was true when it was written
+    and stopped being true at 6a3debca: a failure now returns the row to the loop
+    WITH what failed, because 850 dead rows had proved that a terminal 'failed' is
+    where work goes to be forgotten. ``pending`` IS the fixed zombie — the row is
+    not running, it is claimable, and it carries the reason. Asserting the old
+    literal made this file red against correct behaviour, which is failure mode #2:
+    a double that stopped resembling the real thing.
+    """
     await _write_transcript(tmp_db)
 
     await _handler(
@@ -335,9 +345,13 @@ async def test_a_provider_failure_leaves_the_task_failed_not_running(
     ).execute(_job())
 
     rows = await tmp_db.fetch_all(
-        "SELECT status FROM tasks WHERE goal LIKE '%rollover%'"
+        "SELECT status, last_error FROM tasks WHERE goal LIKE '%rollover%'"
     )
-    assert rows and rows[0]["status"] == "failed"
+    assert rows
+    assert rows[0]["status"] != "running", "the zombie this test exists to prevent"
+    assert rows[0]["status"] == "pending"
+    # Constrained, not blind: the next attempt is told what broke.
+    assert rows[0]["last_error"] and "provider" in rows[0]["last_error"]
 
 
 async def test_a_job_missing_its_incarnation_fails_loudly(tmp_db: DbPool) -> None:
