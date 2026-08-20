@@ -9,8 +9,24 @@ WHAT WAS ACTUALLY BROKEN. Boot constructed ``PluginIndex`` (a catalogue) and
 ``PluginRegistry`` (a table), and nothing anywhere in ``src/`` ever constructed
 ``LocalPluginLoader`` — the only thing that imports a plugin module and registers
 its classes. A plugin dropped into ``~/.stackowl/plugins/`` was COUNTED at boot and
-loaded nothing. The 2026-08-16 install-path proof drove the loader by hand, which
-proved the loader works, not that anything calls it.
+loaded nothing.
+
+AND THEN IT WAS BROKEN AGAIN, ONE LAYER DOWN. The first fix iterated
+``PluginIndex``, which is not a list of installed plugins at all: it is the
+DOWNLOADABLE CATALOGUE read from ``plugin-index.yaml``, and ``PluginIndexEntry``
+carries ``name``/``url``/``version``/``sha256`` and NO path. So every entry was
+skipped as "no install path recorded", an absent catalogue file read as "no plugins
+installed", and a real plugin sitting in the directory was still never loaded. It
+survived a test suite because the test's own index double invented a ``path``
+attribute the real class does not have — a double that had stopped resembling the
+thing it stands for. FOUND 2026-08-19 by installing an actual plugin and watching
+it not load.
+
+THE DIRECTORY IS THE SOURCE, and that is Bakir's ESC-16 decision rather than a
+convenience: pip entry points were refused so that installing a plugin stays an
+explicit act by the operator — the directory IS the consent. So this walks
+``~/.stackowl/plugins/*/plugin.yaml``, the exact layout ``_install_local_plugin``
+writes.
 
 WHAT AUTOMATIC LOADING OBLIGES, and why each guard below exists. The platform now
 executes third-party code during startup:
@@ -23,6 +39,9 @@ executes third-party code during startup:
   expiry.
 * The capability gate stays where it already is — LOAD time, inside the loader — so
   an ungranted plugin never reaches a call site.
+* A plugin the operator DISABLED stays disabled. ``/plugins disable`` writes
+  ``enabled = 0``, and a boot that loaded it anyway would be an actuator the
+  operator can see and the platform ignores.
 * One INFO line reports what loaded, what was skipped and why. Nobody is watching a
   boot, so a plugin that silently failed to load would look exactly like a plugin
   that was never installed.
@@ -36,7 +55,7 @@ this coroutine.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -56,51 +75,102 @@ class PluginBootReport:
     #: (plugin name, why it was skipped) — kept as a pair so the boot line can say
     #: WHICH plugin failed and WHY, rather than only that something did.
     skipped: tuple[tuple[str, str], ...] = ()
-    _errors: list[str] = field(default_factory=list, repr=False)
+
+
+def _installed_plugin_dirs(plugins_dir: Path) -> list[Path]:
+    """Every directory under ``plugins_dir`` holding a ``plugin.yaml``.
+
+    One level deep, because that is the layout the installer writes
+    (``~/.stackowl/plugins/<name>/plugin.yaml``). Sorted so a boot is reproducible
+    and two plugins registering the same name always collide the same way.
+    """
+    if not plugins_dir.is_dir():
+        return []
+    return sorted(
+        entry for entry in plugins_dir.iterdir()
+        if entry.is_dir() and (entry / "plugin.yaml").is_file()
+    )
+
+
+def _disabled_names(registry: Any, candidates: list[str]) -> frozenset[str]:
+    """Which of ``candidates`` the operator has explicitly DISABLED.
+
+    ``registry.list()`` returns only enabled rows and ``registry.exists()`` knows
+    both, so "known to the registry AND not enabled" is the one expression of
+    disabled. A plugin with no row at all is NOT disabled — it was placed in the
+    directory by hand, and Bakir's ESC-16 answer is that the directory is the
+    consent.
+    """
+    if registry is None:
+        return frozenset()
+    try:
+        enabled = {m.name for m in registry.list()}
+        return frozenset(
+            name for name in candidates
+            if name not in enabled and registry.exists(name)
+        )
+    except Exception as exc:
+        # A registry we cannot read must not decide anything. Loading what is on
+        # disk is the same behaviour as having no registry at all, and it is the
+        # one that keeps a working plugin working.
+        log.startup.error(
+            "[plugins] boot: could not read the plugin registry — enable/disable "
+            "state ignored for this boot",
+            exc_info=exc,
+        )
+        return frozenset()
 
 
 async def load_installed_plugins(
     *,
-    index: Any,
+    plugins_dir: Path | None,
     loader: Any,
+    registry: Any = None,
     timeout_seconds: float = DEFAULT_PLUGIN_LOAD_TIMEOUT_SECONDS,
 ) -> PluginBootReport:
-    """Import and register every installed plugin. NEVER raises.
+    """Import and register every installed, enabled plugin. NEVER raises.
 
     Returns a report rather than logging and forgetting, so the caller owns the
     boot line and a test can assert the outcome without parsing logs.
     """
-    if index is None or loader is None:
+    if plugins_dir is None or loader is None:
         log.startup.debug(
             "[plugins] boot: not wired — no plugins will load",
-            extra={"_fields": {"has_index": index is not None,
+            extra={"_fields": {"has_dir": plugins_dir is not None,
                                "has_loader": loader is not None}},
         )
         return PluginBootReport()
 
     try:
-        entries = list(index.all())
+        dirs = _installed_plugin_dirs(plugins_dir)
     except Exception as exc:
-        # An unreadable index must not cost the boot. The platform starts without
-        # plugins, and says so.
+        # An unreadable plugins directory must not cost the boot. The platform
+        # starts without plugins, and says so.
         log.startup.error(
-            "[plugins] boot: could not read the plugin index — starting with NO "
-            "plugins loaded",
-            exc_info=exc,
+            "[plugins] boot: could not read the plugins directory — starting with "
+            "NO plugins loaded",
+            exc_info=exc, extra={"_fields": {"dir": str(plugins_dir)}},
         )
         return PluginBootReport()
 
-    if not entries:
-        log.startup.info("[plugins] boot: no plugins installed")
+    if not dirs:
+        log.startup.info(
+            "[plugins] boot: no plugins installed",
+            extra={"_fields": {"dir": str(plugins_dir)}},
+        )
         return PluginBootReport()
 
+    disabled = _disabled_names(registry, [d.name for d in dirs])
     loaded: list[str] = []
     skipped: list[tuple[str, str]] = []
-    for entry in entries:
-        name = str(getattr(entry, "name", "") or "?")
-        raw_path = getattr(entry, "path", None)
-        if not raw_path:
-            skipped.append((name, "no install path recorded"))
+    for plugin_dir in dirs:
+        name = plugin_dir.name
+        if name in disabled:
+            skipped.append((name, "disabled by the operator"))
+            log.startup.info(
+                "[plugins] boot: plugin is disabled — not loaded",
+                extra={"_fields": {"plugin": name}},
+            )
             continue
         try:
             # to_thread: LocalPluginLoader.load is synchronous and IMPORTS a
@@ -108,7 +178,7 @@ async def load_installed_plugins(
             # the event loop, so one blocking plugin would stall everything, not
             # just this load.
             await asyncio.wait_for(
-                asyncio.to_thread(loader.load, Path(str(raw_path))),
+                asyncio.to_thread(loader.load, plugin_dir),
                 timeout=timeout_seconds,
             )
         except TimeoutError:
@@ -134,6 +204,6 @@ async def load_installed_plugins(
     log.startup.info(
         "[plugins] boot: exit",
         extra={"_fields": {"loaded": loaded, "skipped": [n for n, _ in skipped],
-                           "installed": len(entries)}},
+                           "installed": len(dirs)}},
     )
     return PluginBootReport(loaded=tuple(loaded), skipped=tuple(skipped))

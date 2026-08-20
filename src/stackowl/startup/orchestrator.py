@@ -1810,15 +1810,19 @@ class StartupOrchestrator:
             shutdown_event=stop_event,
         ))
 
-        # Plugin index — discover installed plugins from ~/.stackowl/plugins/.
+        # Plugin catalogue — the DOWNLOADABLE index read from plugin-index.yaml
+        # (name / url / version / sha256). It is NOT a list of what is installed,
+        # and this comment used to say it was, which is how the first boot-loading
+        # wiring came to iterate it and load nothing. Installed plugins are the
+        # DIRECTORIES under ~/.stackowl/plugins/, loaded below.
         # Failures log a warning but do not abort the gateway phase.
         try:
             from stackowl.plugins.index import PluginIndex
 
             plugin_index = PluginIndex()  # auto-loads on construction
             log.info(
-                "[startup] gateway: plugin index loaded",
-                extra={"_fields": {"count": len(plugin_index.all())}},
+                "[startup] gateway: plugin catalogue loaded",
+                extra={"_fields": {"available_to_install": len(plugin_index.all())}},
             )
             # Bakir's decision, 2026-08-17: plugins load AT BOOT. Until now the
             # index was a catalogue nothing acted on — LocalPluginLoader had zero
@@ -1835,8 +1839,15 @@ class StartupOrchestrator:
             from stackowl.plugins.local_loader import LocalPluginLoader
             from stackowl.scheduler.base import HandlerRegistry
 
+            # THE DIRECTORY, not the index. PluginIndex is the DOWNLOADABLE
+            # CATALOGUE (name/url/version/sha256) and its entries carry no path, so
+            # iterating it here loaded nothing and reported "no plugins installed"
+            # while a real plugin sat in ~/.stackowl/plugins/ (found 2026-08-19 by
+            # installing one). The registry is passed so a plugin the operator
+            # DISABLED stays disabled.
             plugin_report = await load_installed_plugins(
-                index=plugin_index,
+                plugins_dir=StackowlHome.plugins_dir(),
+                registry=PluginRegistry(default_db_path()),
                 loader=LocalPluginLoader(
                     tool_registry=tool_registry,
                     command_registry=CommandRegistry.instance(),
