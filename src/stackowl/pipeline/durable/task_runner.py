@@ -244,9 +244,15 @@ class DurableTaskRunner:
             "[tasks] runner._finalize: writing terminal status",
             extra={"_fields": {"task_id": task_id, "status": status}},
         )
-        await self._store.update_status(task_id, status, result=result)
+        # Log what the STORE wrote, never what we asked for. The chokepoint may
+        # return a failure to the loop as `pending`, or hold a completion at
+        # `running` until its answer is proven delivered — and a line reading
+        # "finalized: completed" beside a row that is still running is how the
+        # next debugging session starts from a false premise.
+        written = await self._store.update_status(task_id, status, result=result)
         # 4. EXIT
         log.tasks.info(
             "[tasks] runner._finalize: finalized",
-            extra={"_fields": {"task_id": task_id, "status": status}},
+            extra={"_fields": {"task_id": task_id, "status": written,
+                               "requested": status}},
         )

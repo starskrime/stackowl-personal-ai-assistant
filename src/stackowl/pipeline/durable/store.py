@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import builtins
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from stackowl.authz.bounds import BoundsSpec
 from stackowl.db.pool import DbPool
@@ -331,8 +331,17 @@ class DurableTaskStore(OwnedRepository):
         thread_id: str | None = None,
         result: str | None = None,
         terminal: bool = False,
-    ) -> None:
+    ) -> TaskStatus:
         """Owner-scoped UPDATE of a task's status and optional fields.
+
+        RETURNS THE STATUS IT ACTUALLY WROTE, which is not always the one asked
+        for: a failure is returned to the loop as ``pending``, and a completion
+        that owes an undelivered answer is held at ``running``. It used to return
+        None, and callers logged their REQUEST as though it were the outcome —
+        observed live 2026-08-20, two lines apart and contradicting each other::
+
+            [loop] ... leaving the task open for the delivery path
+            [tasks] runner._finalize: finalized {"status": "completed"}
 
         Only the provided keyword fields are written; ``updated_at`` is always
         refreshed. The UPDATE carries an ``owner_id`` predicate so it can never
@@ -414,11 +423,13 @@ class DurableTaskStore(OwnedRepository):
                     "error": (result or "")[:200],
                 }},
             )
-            await self.fail_and_requeue(
-                task_id, error=result or "task failed with no reported reason",
-                failure_class=failure_class,
+            return cast(
+                "TaskStatus",
+                await self.fail_and_requeue(
+                    task_id, error=result or "task failed with no reported reason",
+                    failure_class=failure_class,
+                ),
             )
-            return
         # 2. DECISION — build the SET list dynamically from the supplied fields
         set_parts: list[str] = ["status = ?", "updated_at = ?"]
         params: list[Any] = [status, datetime.now(tz=UTC).isoformat()]
@@ -451,7 +462,7 @@ class DurableTaskStore(OwnedRepository):
                 "task_id": task_id, "owner_id": self._owner_id, "status": status,
             }},
         )
-
+        return status
 
     async def claim_for_recovery(self, task_id: str) -> bool:
         """Atomically CLAIM an orphaned task for crash-recovery.

@@ -318,3 +318,53 @@ class TestNothingToDeliverIsStillDone:
         await store.update_status("t-real", "completed", result="the answer is 42")
 
         assert (await store.get("t-real")).status == "running"
+
+
+class TestTheLogSaysWhatActuallyHappened:
+    """OBSERVED ON THE LIVE RUN THAT PROVED THIS FIX, 2026-08-20::
+
+        22:45:10 [loop] the drive finished but the answer has not reached its
+                 destination yet — leaving the task open for the delivery path
+        22:45:10 [tasks] runner._finalize: finalized {"status": "completed"}
+
+    The second line is false. The row was left ``running``; ``_finalize`` logs the
+    status it REQUESTED, because ``update_status`` told it nothing. Two lines apart
+    and they contradict each other, and only one of them is true — which is the
+    same defect as the stream-miss line that claimed "answer delivered" while
+    printing status=failed. A log that disagrees with the database sends the next
+    debugging session the wrong way.
+
+    So the write reports what it wrote, and the caller logs that.
+    """
+
+    async def test_update_status_reports_the_status_it_actually_wrote(
+        self, pool: DbPool
+    ) -> None:
+        store = DurableTaskStore(pool, _OWNER)
+        await _seed(store, "t-report", destination="telegram:72055773")
+
+        written = await store.update_status(
+            "t-report", "completed", result="the answer is 42",
+        )
+
+        assert written == "running", "reported a completion it declined to make"
+        assert (await store.get("t-report")).status == "running"
+
+    async def test_an_ordinary_completion_reports_itself(self, pool: DbPool) -> None:
+        store = DurableTaskStore(pool, _OWNER)
+        await _seed(store, "t-plain", destination=None)
+
+        written = await store.update_status("t-plain", "completed", result="done")
+
+        assert written == "completed"
+
+    async def test_a_failure_reports_where_the_loop_put_it(self, pool: DbPool) -> None:
+        """A failure does not stay 'failed' — the chokepoint returns it to pending
+        with what broke. The caller's log must say pending, not failed."""
+        store = DurableTaskStore(pool, _OWNER)
+        await _seed(store, "t-fail", destination="telegram:72055773")
+
+        written = await store.update_status("t-fail", "failed", result="it exploded")
+
+        assert written == "pending"
+        assert (await store.get("t-fail")).status == "pending"

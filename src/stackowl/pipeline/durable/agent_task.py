@@ -81,11 +81,51 @@ async def complete_agent_task(
     if not (result or "").strip():
         return
     if delivery_status not in DELIVERED_STATUSES:
+        # RETURN IT TO THE LOOP, DO NOT MERELY SAY SO. This used to log "leaving it
+        # open for the loop" and return — but the loop claims `status='pending'`
+        # and the row is `running`, so nothing could pick it up. The only thing
+        # that touches a stale running row is the liveness sweep, and that path
+        # re-drives WITHOUT counting attempts: one model call every 600s, forever,
+        # with no ceiling and no escalation. Measured 2026-08-20 on a real turn.
+        #
+        # `fail_and_requeue` already counts the attempt, carries what failed into
+        # the next try, stops at the ceiling and dead-letters with a message to the
+        # operator. Using it is the sentence the old log line was claiming, not a
+        # second mechanism.
+        #
+        # WHICH KIND OF FAILURE IT IS IS ALREADY DECIDED. `_deliver_answer`'s own
+        # contract says "undeliverable → no target, retry won't help" and marks
+        # partial/failed for retry. Undeliverable is therefore the `permanent`
+        # class: ONE dead-letter and ONE message to the operator, rather than
+        # thirty model calls at a channel with nowhere to send. Reusing that
+        # verdict rather than deriving a second one is the same rule as above.
+        permanent = delivery_status == "undeliverable"
         log.tasks.info(
             "[loop] scheduled task produced an answer that did NOT reach its "
-            "destination — leaving it open for the loop",
-            extra={"_fields": {"task_id": task_id, "delivery": delivery_status}},
+            "destination — returning it to the loop",
+            extra={"_fields": {"task_id": task_id, "delivery": delivery_status,
+                               "permanent": permanent}},
         )
+        try:
+            await store.fail_and_requeue(
+                task_id,
+                error=(
+                    f"the answer was produced but delivery reported "
+                    f"'{delivery_status}' — it never reached anyone. "
+                    + ("The destination has no durable address, so retrying the "
+                       "same route cannot help." if permanent else
+                       "The transport may recover; the next attempt can try again.")
+                ),
+                failure_class="permanent" if permanent else "delivery",
+            )
+        except Exception as exc:
+            # The handler owns the JobResult; a bookkeeping failure must not turn a
+            # delivery problem into a crashed job. The lease expires and recovery
+            # picks the row up, which is the same fallback as below.
+            log.tasks.error(
+                "[loop] could not return an undelivered scheduled task to the loop",
+                exc_info=exc, extra={"_fields": {"task_id": task_id}},
+            )
         return
     try:
         await store.mark_delivered(task_id, result=result[:8000])
