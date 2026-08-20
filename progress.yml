@@ -11561,8 +11561,8 @@ items:
       implement:  done             # 2026-08-19 — hooks, the gate, three seams, boot source
       cleanup:    done             # nothing obsolete; the one dead surface is recorded
       test:       done             # 67 plugin tests + the seams' own suites, all green
-      validate:   partial          # boot+register+llm hooks PROVEN LIVE; two points owed
-      document:   not_started
+      validate:   partial          # tool + llm hooks PROVEN LIVE; the 2 session points owed
+      document:   done             # 2026-08-20 @c67767e1 — Verification RUN, not read
     CLEANUP_2026_08_19: >-
       Nothing was made obsolete by this work and nothing was orphaned — the loader,
       manifest, verify and remote-install paths are all still the only ones. dedup_target
@@ -11655,8 +11655,30 @@ items:
       globbing the ROTATED logs, per the D08.3 lesson.
       The probe plugin was REMOVED after each run and the platform restarted; the log reads
       "no plugins installed" again, naming the directory it looked in.
+    DOCUMENT_2026_08_20: >-
+      CLOSED TO DOC_STANDARD, and running the document stage EARNED ITS KEEP rather than
+      being a write-up. Three things it caught:
+      (1) TWO INVARIANTS HAD NO TEST. I1 (a hook never changes what the model sees — LAW 1,
+      the frozen per-incarnation tool array) and I2 (a hook costs zero tokens — LAW 2,
+      growth at the edges) were prose. The two carrying the platform's laws were the two
+      nothing could falsify. Both now have one:
+      tests/plugins/test_a_hook_never_reaches_the_waist.py — the tool array is byte-identical
+      across a hook plugin's load, LifecycleHook is not a Tool, and a hook plugin registers
+      nothing into an EMPTY registry either. The doc now carries an invariant -> test table.
+      (2) THE BODY STILL DESCRIBED THE PRE-IMPLEMENTATION CONTRACT. The Model section said
+      the gate rides PluginContext._require (a path that does not run) and the hook table
+      promised pre/post_llm_call payloads the shared seam cannot produce. Both were
+      corrected only in a divergence section at the END, so a reader hit the wrong contract
+      first. Corrected in place, with a pointer to the divergence rather than a silent edit.
+      (3) A PASTED TEST COUNT WAS WRONG BY SEVEN. The Verification section claimed
+      "27 passed"; running it says 20. Same shape as D08.2's wrong count — caught only
+      because the section was pasted into a terminal instead of trusted.
+      Verification now names commands that exist and were run: _ABC_NAMES lists all seven
+      points; CAPABILITY_FOR_EXTENSION_POINT maps all seven to real capabilities; the
+      invariant suites are 20 green; the seam suite is 9 green; and the live grep returns
+      the register line from the 2026-08-20 run.
     doc: docs/reference-mapping/designs/D16.1.md
-    doc_last_verified: null
+    doc_last_verified: "2026-08-20 @c67767e1"
     decisions: []
     changes:
       - date: 2026-08-17
