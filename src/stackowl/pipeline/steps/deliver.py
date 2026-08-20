@@ -135,6 +135,10 @@ async def run(state: PipelineState) -> PipelineState:
         getattr(services, "durable_task_store", None),
         trace_id=state.trace_id,
         result="".join(c.content for c in state.responses if c.content),
+        # The turn's own verification verdict. A reply that APOLOGISES for an effect
+        # it measured absent has reached the user without doing the work, and must
+        # not record achievement — it goes back on the loop instead.
+        state=state,
     )
 
     log.gateway.info(

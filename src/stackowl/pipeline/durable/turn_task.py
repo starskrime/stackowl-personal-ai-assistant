@@ -154,14 +154,87 @@ async def enqueue_turn_task(
         )
 
 
-async def complete_turn_task(store: Any, *, trace_id: str, result: str) -> None:
+#: A turn whose effect was MEASURED ABSENT gets a small ceiling, not the ordinary
+#: 30. The failure is already fed back, so it is either fixable in a few tries or it
+#: needs Bakir — and every attempt can produce another message to him. Dead-lettering
+#: quickly ESCALATES to him once, which is the honest trade: a few retries and one
+#: escalation, never a silent grind.
+UNACHIEVED_EFFECT_MAX_ATTEMPTS = 3
+
+#: The failure class recorded when a turn delivered an apology instead of the work.
+UNACHIEVED_EFFECT_CLASS = "unachieved_effect"
+
+
+def unachieved_effect_of(state: Any) -> str | None:
+    """The effect this turn PROMISED and whose absence its own verify() observed.
+
+    ``effects_measured_absent`` is deliberately the strict subset that was measured,
+    not everything unverified: re-driving a measured-absent effect cannot double a
+    side effect because nothing landed, while an UNKNOWN outcome is left alone so
+    the burden of proof stays on the claim.
+
+    Never raises — bookkeeping must not cost a delivered turn.
+    """
+    try:
+        absent = tuple(getattr(state, "effects_measured_absent", None) or ())
+    except Exception:  # pragma: no cover — a hostile state must not break delivery
+        return None
+    return str(absent[0]) if absent else None
+
+
+async def complete_turn_task(
+    store: Any, *, trace_id: str, result: str, state: Any = None,
+) -> None:
     """Mark the turn delivered — the ONLY way a chat task completes. Never raises.
 
     An empty result deliberately does NOT complete it. Nothing reached the user, so
     nothing was achieved, and leaving the row open is what lets the loop recover the
     turn rather than record a success that never happened.
+
+    NOR DOES AN APOLOGY. Bakir, 2026-08-19: "if I'm asking to do something, he
+    does." Measured over every log the platform has written: 134 overclaims
+    detected, 51 where only the WORDING was corrected, and exactly 1 where the work
+    was actually redone — 132 detected and then abandoned, 16 of them owl_build. The
+    delivery gate makes one in-turn corrective attempt; when it fails it floors the
+    answer to an honest "I couldn't complete this" and the turn completed as
+    DELIVERED, because the reply had reached him.
+
+    For a QUESTION the outcome is the answer, and delivery is achievement. For an
+    EFFECTFUL request the outcome is the effect, and an apology about the effect is
+    not the effect. So a turn whose own verification measured the promised effect
+    absent goes back on the loop carrying what failed — the loop's stated contract,
+    applied to the case it was skipping.
     """
     if store is None:
+        return
+    unachieved = unachieved_effect_of(state)
+    if unachieved:
+        try:
+            await store.fail_and_requeue(
+                trace_id,
+                error=(
+                    f"the turn told the user it had done this, but `{unachieved}` "
+                    f"was verified and its effect is NOT present — nothing was "
+                    f"actually changed. Do it for real, or say precisely what is "
+                    f"blocking it (if it needs a capability this owl lacks, ask the "
+                    f"user to grant it with owl_build action='grant')."
+                ),
+                failure_class=UNACHIEVED_EFFECT_CLASS,
+            )
+            log.tasks.info(
+                "[loop] the reply was delivered but the WORK was not — returning "
+                "the turn to the loop",
+                extra={"_fields": {
+                    "trace_id": trace_id, "unachieved": unachieved,
+                }},
+            )
+        except Exception as exc:
+            # The user has their (honest) reply. Failing to requeue must not also
+            # cost the turn — the lease will expire and recovery will pick it up.
+            log.tasks.error(
+                "[loop] could not return an unachieved turn to the loop",
+                exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+            )
         return
     if not (result or "").strip():
         log.tasks.info(

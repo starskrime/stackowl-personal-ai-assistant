@@ -95,6 +95,12 @@ def _permanent_classes() -> frozenset[str]:
     return _PERMANENT_CLASSES_FALLBACK
 
 
+#: See fail_and_requeue — an already-measured-absent effect retries a few times,
+#: then escalates, rather than spending a 30-attempt budget on the operator's
+#: notifications.
+_UNACHIEVED_EFFECT_MAX_ATTEMPTS = 3
+
+
 def _backoff_for(attempt: int) -> int:
     idx = min(max(attempt - 1, 0), len(_BACKOFF_SECONDS) - 1)
     return _BACKOFF_SECONDS[idx]
@@ -1103,7 +1109,18 @@ class DurableTaskStore(OwnedRepository):
         attempts = row.attempt_count + 1
         merged = tuple(sorted(set(row.banned_capabilities) | set(banned)))
         permanent = failure_class in _permanent_classes()
-        exhausted = attempts >= row.max_attempts
+        # A turn that DELIVERED an apology for an effect measured absent gets a
+        # small ceiling rather than the ordinary 30. The failure is already fed
+        # back, so it is either fixable in a few tries or it needs the operator —
+        # and each attempt can produce another message to them. Dead-lettering
+        # quickly escalates ONCE, which is the honest trade: a few retries and one
+        # escalation, never a silent grind.
+        ceiling = (
+            min(row.max_attempts, _UNACHIEVED_EFFECT_MAX_ATTEMPTS)
+            if failure_class == "unachieved_effect"
+            else row.max_attempts
+        )
+        exhausted = attempts >= ceiling
         now = datetime.now(UTC)
 
         if permanent or exhausted:
