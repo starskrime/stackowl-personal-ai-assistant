@@ -1614,6 +1614,31 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-2026-08-19-three-call-sites-bypass-the-tool-chokepoint
+    found: 2026-08-19
+    found_by: "D16.1 implement, wiring the pre/post_tool_call hooks into Tool.__call__"
+    status: FOUND, NOT FIXED — reported in dd2a62e7's commit body rather than folded in
+    what: >-
+      THREE call sites invoke `tool.execute(**args)` directly instead of calling the tool,
+      so they bypass `Tool.__call__` entirely:
+        src/stackowl/mcp/server.py:331                  (an external MCP client's call)
+        src/stackowl/tools/interaction/_batch_support.py:251  (batch approve)
+        src/stackowl/sandbox/ptc/dispatch.py:102 and :104     (sandbox dispatch)
+      __call__ is where the platform times the call, wraps a raise into a failed
+      ToolResult, runs the retry-once guard for read-severity tools, runs verify(), runs
+      the ACCEPTANCE AUTHORITY, emits the next-step signal — and now dispatches the
+      lifecycle hooks. Every one of those is skipped on these three paths.
+    why_it_matters: >-
+      It is the first failure shape in PROCESS.md — an actuator wired on only some paths —
+      sitting under the verification primitive the whole programme is built on. An MCP
+      client's tool call is verified by nothing, and a raising tool propagates into the
+      MCP server rather than returning a failed result.
+    why_not_fixed_here: >-
+      The fix is one word per site (`await tool(**args)`), but it changes behaviour across
+      three unrelated subsystems — the MCP server, batch approve and the sandbox — none of
+      which this item touches or can validate live today (the MCP server is opt-in and off).
+      It deserves its own change with its own tests rather than riding inside a
+      plugin-surface commit. NOT deferred silently: it is here, with the line numbers.
   - id: ARC-2026-08-17-to-19-one-loop-authz-memory
     found: 2026-08-19
     found_by: "live incident work with Bakir — 41 commits between 2026-08-17 and 2026-08-19, none of which this file recorded until now"
@@ -11568,6 +11593,56 @@ items:
           via a new memory_provider_registry argument (default None, so no construction site
           changed), and the bare `continue` now logs a WARNING naming plugin, class and
           extension point — the silent skip is HOW this went unnoticed.
+      - date: 2026-08-19
+        commit: dd2a62e7 (and bd218911)
+        what: >-
+          THE SEVENTH EXTENSION POINT SHIPPED. plugins/hooks.py: LifecycleHook (six
+          observe-only points), a HookRegistry keyed by point, and the three guards as
+          ACTUATORS rather than notes — a raising hook swallowed and logged at ERROR
+          (I3), a hanging one abandoned after 2s (I4), and one that fails three times
+          CONSECUTIVELY DISARMED for the life of the process with a WARNING (I5).
+          Observe-only is enforced, not trusted: dispatch() returns None whatever a hook
+          returns, and the event is a MappingProxyType so one hook cannot edit what the
+          next one sees. What a plugin observes is derived from the methods it overrides,
+          so the manifest never carries a second list that can disagree with the code.
+          WIRED AT THREE REAL SEAMS, each with a test that drives the real path:
+          Tool.__call__ (pre/post_tool_call), ModelProvider._resilient_round
+          (pre/post_llm_call) and SessionStore.resolve_for (on_session_start/end).
+          With no plugins installed each seam costs ONE DICT LOOKUP.
+        the_second_defect_this_found: >-
+          THE CAPABILITY MODEL WAS DECORATIVE. The architect stage said the hook gate
+          would ride "the existing PluginContext._require path". MEASURED 2026-08-19:
+          PluginContext has ZERO construction sites in src/ (only tests build one) and
+          manifest.capabilities was parsed by the manifest model and read by NOTHING — a
+          plugin with `capabilities: []` still had its Tool registered into the live tool
+          registry. Gating hooks alone would have left six ungated siblings, so the gate
+          is general: capabilities.require() is the ONE check, CAPABILITY_FOR_EXTENSION_POINT
+          maps every declared point to its capability, and both the loader (at LOAD time,
+          I6) and PluginContext call the same function. Two capabilities were missing and
+          are added: lifecycle_hooks, and memory_provider — which D08.2 slice C never got,
+          the same omission as its missing registry slot.
+        divergences_from_the_design: >-
+          Recorded in designs/D16.1.md under "Where the implementation disagreed with this
+          design", per PROCESS.md. (1) the gate above. (2) the LLM payload is provider /
+          protocol / ok / duration_ms, NOT tier and token counts: LLMGateway's docstring
+          claims every LLM consumer goes through it and roughly twenty call sites call
+          provider.complete() directly, so the shared seam is _resilient_round, which does
+          not know the tier — and token counts stay with cost_records, which already owns
+          them. (3) session hooks ride the EXISTING rollover boundary and an ESC-13
+          RESTART fires neither, because the user is not told about it either.
+        carried_scope_closed: >-
+          Item 3 (ToolResult.duration_ms required with no default) had ALREADY shipped in
+          b6f5e9c5 — checked before rebuilding it. Item 2: a Tool may now declare itself
+          once through `manifest` and have name/description/parameters derived, filling
+          ABSTRACT slots only so a subclass of a concrete tool keeps its parent's fields.
+          Item 1: nothing passes config to a plugin constructor because there is nothing to
+          pass — PluginManifest carries config_schema (a shape) and no config VALUES — so
+          the loader STATES the no-argument contract instead of letting a raw TypeError
+          reach the author.
+        gate: >-
+          ruff 39 in src/ (the DEBT-1 baseline, unchanged), mypy clean on every touched
+          file, 13 new tests. tests/plugins 62, tests/sessions+plugins 230,
+          tests/providers 624, tests/tools top-level 191.
       - date: 2026-08-17
         commit: e3434952
         what: >-
