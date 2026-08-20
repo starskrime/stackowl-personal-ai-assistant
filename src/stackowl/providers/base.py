@@ -13,6 +13,7 @@ from stackowl.health.status import HealthStatus
 from stackowl.infra import prompt_metrics
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
+from stackowl.plugins import hooks
 from stackowl.providers.react_callback import IterationCallback
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -188,14 +189,30 @@ class ModelProvider(ABC):
 
         attempt = 0
         round_fn = do_round
+        # D16.1 — the observe-only plugin seam for model calls. THIS is the shared
+        # site rather than LLMGateway: the gateway's docstring claims every LLM
+        # consumer goes through it, and roughly twenty call sites call
+        # provider.complete()/complete_with_tools() directly (measured 2026-08-19),
+        # so a hook there would be an actuator wired on some paths only. Every
+        # concrete provider wraps EVERY remote round in this bracket, which is why
+        # it exists at all. One dict lookup when no plugin is installed.
+        await hooks.dispatch(
+            hooks.PRE_LLM_CALL, {"provider": self.name, "protocol": self.protocol}
+        )
+        started = time.monotonic()
         while True:
             try:
-                return await resilient_round(
+                result = await resilient_round(
                     self._breaker, self._limiter, round_fn,
                     cooldown_hours=self._cooldown_hours,
                 )
             except Exception as exc:
                 if shrink is None or recovery_for(exc) is not RecoveryAction.COMPRESS:
+                    # The hook OBSERVES the failure; it never absorbs it. The
+                    # caller's exception is re-raised unchanged — an observer that
+                    # swallowed a provider fault would turn a visible outage into a
+                    # silent one.
+                    await self._dispatch_post_llm(started, ok=False)
                     raise
                 if attempt >= _MAX_COMPRESS_ATTEMPTS:
                     log.engine.error(
@@ -205,6 +222,7 @@ class ModelProvider(ABC):
                             "provider": self.name, "attempts": attempt,
                         }},
                     )
+                    await self._dispatch_post_llm(started, ok=False)
                     raise
                 attempt += 1
                 smaller = shrink(attempt)
@@ -214,6 +232,7 @@ class ModelProvider(ABC):
                         "to compress — surfacing honestly",
                         extra={"_fields": {"provider": self.name, "attempts": attempt}},
                     )
+                    await self._dispatch_post_llm(started, ok=False)
                     raise
                 log.engine.warning(
                     "[provider] payload too large — compressed and retrying "
@@ -226,6 +245,19 @@ class ModelProvider(ABC):
                     }},
                 )
                 round_fn = smaller
+            else:
+                await self._dispatch_post_llm(started, ok=True)
+                return result
+
+    async def _dispatch_post_llm(self, started: float, *, ok: bool) -> None:
+        """Announce that a remote round finished. Latency is measured HERE rather
+        than taken from a provider's own report, so every backend is comparable;
+        token counts deliberately stay with the cost pipeline (cost_records), which
+        already owns them — a second writer to that fact is how the two disagree."""
+        await hooks.dispatch(hooks.POST_LLM_CALL, {
+            "provider": self.name, "protocol": self.protocol, "ok": ok,
+            "duration_ms": (time.monotonic() - started) * 1000,
+        })
 
     def note_payload_limit(self, working_chars: int) -> None:
         """Remember a context size this provider actually ACCEPTED.

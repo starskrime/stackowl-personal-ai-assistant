@@ -26,6 +26,7 @@ from typing import Any
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
 from stackowl.paths import StackowlHome
+from stackowl.plugins import hooks
 from stackowl.sessions.models import (
     Branch,
     ResetReason,
@@ -343,6 +344,34 @@ class SessionStore:
                 }},
             )
             self._publish_rollover(existing, entry, decision.reason)
+            # D16.1 — the observe-only plugin seam, riding the boundary the
+            # platform ALREADY recognises rather than inventing a second notion of
+            # "a conversation ended". END before START: a hook summarising the
+            # conversation that just closed must not be handed the new one first.
+            await hooks.dispatch(hooks.ON_SESSION_END, {
+                "session_key": key, "session_id": existing.session_id,
+                "reason": decision.reason.value if decision.reason else None,
+                "owl_name": existing.owl_name, "channel": existing.channel,
+                "message_count": existing.message_count,
+                "completed_turns": existing.completed_turns,
+            })
+            await hooks.dispatch(hooks.ON_SESSION_START, {
+                "session_key": key, "session_id": entry.session_id,
+                "owl_name": entry.owl_name, "channel": entry.channel,
+                "previous_session_id": existing.session_id,
+            })
+        elif existing is None:
+            # A lane's FIRST incarnation. No end, because nothing ended.
+            await hooks.dispatch(hooks.ON_SESSION_START, {
+                "session_key": key, "session_id": entry.session_id,
+                "owl_name": entry.owl_name, "channel": entry.channel,
+                "previous_session_id": None,
+            })
+        # DELIBERATELY NOT on an ESC-13 RESTART, which mints a new session_id
+        # without ending the conversation: the same condition the platform uses to
+        # decide whether the USER is told a boundary happened decides whether a
+        # hook is. A start with no matching end would be an observer's view of a
+        # conversation the platform does not believe ended.
         return entry, decision.branch, decision.reason
 
     def _publish_rollover(self, old: SessionEntry, new: SessionEntry,

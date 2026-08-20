@@ -200,12 +200,32 @@ class LocalPluginLoader:
                         )
                         continue
                     try:
-                        instance = obj()
+                        try:
+                            instance = obj()
+                        except TypeError as exc:
+                            # STATE THE CONTRACT rather than let a raw TypeError
+                            # about a missing positional argument reach the author.
+                            # Extension points are constructed with NO arguments,
+                            # and nothing passes plugin configuration to a
+                            # constructor today: PluginManifest carries
+                            # config_schema (a shape) and no config VALUES, and no
+                            # store holds any. Found by being the first user of
+                            # this surface (D16.1, 2026-08-16).
+                            raise PluginValidationError(
+                                manifest.name,
+                                f"registration of {attr_name} failed: an extension "
+                                f"point is constructed with no arguments, and "
+                                f"{attr_name} requires some ({exc}). Read what it "
+                                f"needs inside the class instead — plugin "
+                                f"configuration is not passed to constructors.",
+                            ) from exc
                         registry.register(instance, source_name=manifest.name)
                         log.debug(
                             "plugins.local_loader._register_classes: step — registered %s",
                             attr_name,
                         )
+                    except PluginValidationError:
+                        raise
                     except Exception as exc:
                         log.error(
                             "plugins.local_loader._register_classes: registration failed",

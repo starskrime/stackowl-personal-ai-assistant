@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -11,6 +11,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.infra.resilience import looks_like_dead_handle
 from stackowl.infra.trace import TraceContext
+from stackowl.plugins import hooks
 from stackowl.tools.verification import is_trustworthy_success
 
 
@@ -160,11 +161,49 @@ class ToolManifest(BaseModel):
     ] | None = None
 
 
+def _derived_from_manifest(field: str) -> property:
+    """A read-only property that reads ``field`` off this tool's own manifest."""
+
+    def _get(self: Tool) -> Any:
+        return getattr(self.manifest, field)
+
+    _get.__name__ = field
+    _get.__doc__ = f"Derived from this tool's manifest.{field}."
+    return property(_get)
+
+
 class Tool(ABC):
     """Abstract base for all tools available to the pipeline (ARCH-94).
 
     execute() may raise — __call__ catches and wraps into a failed ToolResult.
+
+    DECLARE YOURSELF ONCE. A tool may either spell out ``name`` / ``description`` /
+    ``parameters``, as every built-in does, or define ``manifest`` alone and have
+    the three derived from it. Both were not possible until D16.1: implementing
+    ``manifest`` alone is the obvious guess — ``ToolManifest`` exists and every
+    tool has one — and it failed with "Can't instantiate abstract class ... without
+    an implementation for abstract methods 'description', 'name', 'parameters'".
+    That was the first thing the first plugin author wrote and the first thing that
+    broke (measured 2026-08-16, driving a real plugin through the real loader).
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Fill the three fields from ``manifest`` when a subclass declares only it.
+
+        ABSTRACT SLOTS ONLY, and that is the whole safety of it: a subclass that
+        inherits a real ``name`` from a concrete parent keeps it, so overriding a
+        manifest to change one thing can never silently rewrite the parent's name.
+        A class that declares NEITHER stays abstract and still fails loudly at
+        instantiation, naming exactly what is missing — the same early, legible
+        error as before, rather than a recursion between two defaults.
+        """
+        super().__init_subclass__(**kwargs)
+        if "manifest" not in cls.__dict__:
+            return
+        for derivable in ("name", "description", "parameters"):
+            current = getattr(cls, derivable, None)
+            if getattr(current, "__isabstractmethod__", False):
+                setattr(cls, derivable, _derived_from_manifest(derivable))
 
     @property
     @abstractmethod
@@ -278,6 +317,14 @@ class Tool(ABC):
             )
             return ToolResult(success=False, output="", error=str(exc), duration_ms=duration_ms)
 
+        # D16.1 — the observe-only plugin seam. THIS is the tool chokepoint: every
+        # invocation goes through __call__ (it is what times the call and wraps a
+        # raise into a failed ToolResult), so a hook here cannot be wired on some
+        # paths only. Costs one dict lookup when no plugin is installed, which is
+        # every deployment today; a hook can never change the call, only watch it.
+        await hooks.dispatch(
+            hooks.PRE_TOOL_CALL, {"tool": self.name, "arguments": dict(kwargs)}
+        )
         async with TraceContext.span(f"tool.{self.name}"):
             try:
                 result = await self.execute(**kwargs)
@@ -420,4 +467,11 @@ class Tool(ABC):
                 "reported_duration_ms": result.duration_ms,
             }},
         )
+        # Post fires for a FAILURE too — the event an observer most wants. A hook
+        # that only saw successes would be useless for the case it exists for.
+        await hooks.dispatch(hooks.POST_TOOL_CALL, {
+            "tool": self.name, "success": result.success,
+            "verified": result.verified, "error": result.error,
+            "duration_ms": (time.monotonic() - t0) * 1000,
+        })
         return result
