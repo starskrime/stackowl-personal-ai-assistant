@@ -153,7 +153,11 @@ async def run(state: PipelineState) -> PipelineState:
     owl_registry = services.owl_registry
     provider_registry = services.provider_registry
 
-    if state.owl_name != _FALLBACK_OWL:
+    # A DELIBERATE CHOICE IS NOT AN ABSENT ONE. `owl_name != _FALLBACK_OWL` reads
+    # "somebody direct-addressed an owl", which is right for chat but treats a
+    # scheduled job's explicit `owl: secretary` as unrouted. `owl_pinned` says the
+    # choice was made on purpose, whichever owl it names.
+    if state.owl_pinned or state.owl_name != _FALLBACK_OWL:
         if owl_registry is None:
             log.engine.debug(
                 "[pipeline] triage: no owl_registry — accepting direct address as-is",

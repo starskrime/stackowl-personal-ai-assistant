@@ -184,6 +184,11 @@ class GoalExecutionHandler(JobHandler):
             # the job row), not a hardcoded "cli" that drops the answer.
             channel=job.primary_channel or "cli",
             owl_name=str(job.params.get("owl") or "secretary"),
+            # PINNED when the job named one. Without this a job declaring
+            # owl='secretary' is indistinguishable from an unrouted chat turn, and
+            # the router re-decides it — which is how the Gmail digest came to run
+            # as `mailbutler`, the one owl without `shell`, and report failure.
+            owl_pinned=bool(job.params.get("owl")),
             pipeline_step="",
             # Cron/scheduler goal execution has no user present to answer a
             # mid-turn clarify; default-deny so a clarify call never parks a

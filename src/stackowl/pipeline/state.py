@@ -362,6 +362,18 @@ class PipelineState(BaseModel, frozen=True):
     #: loop with what blocked it, and the existing dead-letter escalates to him
     #: when constrained retries still cannot get past it.
     capabilities_denied: tuple[str, ...] = ()
+    #: True when the owl was CHOSEN deliberately (a scheduled job declaring
+    #: ``owl:``), as opposed to merely defaulted. Triage skips routing on
+    #: ``owl_name != "secretary"``, which treats secretary as "nobody has chosen
+    #: yet" — correct for an inbound chat turn, wrong for a job that explicitly
+    #: declares ``owl: secretary``, and the two were the same string.
+    #:
+    #: MEASURED 2026-08-19: goal_execution-88f54aa1 declares owl=secretary (which
+    #: is UNBOUNDED and holds `shell`), the router overrode it to `mailbutler`
+    #: (which does not), and Bakir's Gmail digest delivered "⚠️ Digest FAILED —
+    #: no mail checked" twice. A deliberate choice and an absent one must not look
+    #: identical.
+    owl_pinned: bool = False
     # Capabilities this turn may NOT use because a previous attempt at the same
     # goal already failed with them. Threaded from the retry_queue row so the ban
     # becomes a real exclusion in tool-selection rather than a sentence in the
