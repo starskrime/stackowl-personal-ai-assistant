@@ -24,6 +24,7 @@ from stackowl.db.pool import DbPool
 from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.scheduler.job import Job
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 pytestmark = pytest.mark.asyncio
 
@@ -155,36 +156,58 @@ async def test_a_lane_that_said_nothing_costs_nothing(tmp_db: DbPool) -> None:
 
 
 async def test_the_work_is_scoped_to_the_person_not_the_lane(tmp_db: DbPool) -> None:
-    """The scoping invariant SURVIVED the miner (D08.1) — only where you observe
-    it moved.
+    """The scoping invariant SURVIVED the miner (D08.1) — but it had been moved to
+    the wrong table, and observing it there is what cemented a real defect.
 
     It used to be asserted through mine_session's argument, which is a source_ref
-    (the OWNER) rather than a session key: turn_persist files conversation
-    records under owner_scope_key, so passing the owl-prefixed lane would have
-    hit a source_ref with no rows. The extraction pipeline is gone, but the same
-    resolution still decides the task record's owner, so that is where it is
-    checked now. Deleting this with the miner would have dropped live coverage.
+    (the OWNER) rather than a session key. When the extraction pipeline went, the
+    observation point was moved onto ``tasks.owner_id`` on the reasoning that "the
+    same resolution still decides the task record's owner". The strings matched;
+    the QUESTIONS did not. ``source_ref`` asks who the knowledge is about;
+    ``tasks.owner_id`` is the tenancy key the ONE loop claims on. Pinning the
+    second to the first taught the handler to file work under a person, and by
+    2026-08-20 that had put 387 rows beyond the loop's reach — 72 still pending.
+
+    So the invariant is observed where it actually lives, and the separation the
+    old assertion collapsed is now pinned explicitly on the next line.
     """
     await _write_transcript(tmp_db)
 
     await _handler(tmp_db, FakeMiner(), FakeRegistry(FakeProvider(_notable()))).execute(_job())
 
-    rows = await tmp_db.fetch_all("SELECT owner_id FROM tasks")
-    assert [r["owner_id"] for r in rows] == [IDENTITY], (
-        "must scope to the identity, not the lane"
+    rows = await tmp_db.fetch_all(
+        "SELECT source_ref FROM staged_facts WHERE source_type = 'conversation_summary'"
     )
+    assert [r["source_ref"] for r in rows] == [IDENTITY], (
+        "the SUMMARY must scope to the identity, not the lane"
+    )
+    # ...and the WORK does not follow the person. Two questions, two keys.
+    task_rows = await tmp_db.fetch_all("SELECT owner_id FROM tasks")
+    assert [r["owner_id"] for r in task_rows] == [DEFAULT_PRINCIPAL_ID]
 
 
 async def test_a_lane_with_no_identity_falls_back_to_the_lane(tmp_db: DbPool) -> None:
-    """A runner lane has no person behind it, and must still be handled."""
+    """A runner lane has no person behind it, and must still be handled.
+
+    Same correction as above: the fallback is a property of the KNOWLEDGE scope.
+    The task row is the principal either way — which is the point, because it was
+    this conditional (identity-or-lane) that scattered the work rows across ~20
+    owners in the first place.
+    """
     await _write_transcript(tmp_db)
 
     await _handler(tmp_db, FakeMiner(), FakeRegistry(FakeProvider(_notable()))).execute(
         _job(identity_key=None)
     )
 
-    rows = await tmp_db.fetch_all("SELECT owner_id FROM tasks")
-    assert [r["owner_id"] for r in rows] == [LANE]
+    rows = await tmp_db.fetch_all(
+        "SELECT source_ref FROM staged_facts WHERE source_type = 'conversation_summary'"
+    )
+    assert [r["source_ref"] for r in rows] == [LANE]
+    task_rows = await tmp_db.fetch_all("SELECT owner_id FROM tasks")
+    assert [r["owner_id"] for r in task_rows] == [DEFAULT_PRINCIPAL_ID], (
+        "a lane must never become a tenancy key"
+    )
 
 
 # ----------------------------------------------------------------- the artifact
@@ -308,7 +331,11 @@ async def test_the_boundary_leaves_a_durable_task_record(tmp_db: DbPool) -> None
     )
     assert len(rows) == 1
     assert rows[0]["status"] == "completed"
-    assert rows[0]["owner_id"] == IDENTITY
+    # The PRINCIPAL owns the work. Filed under the identity, the row is invisible
+    # to the ONE loop, which claims `WHERE owner_id = 'principal-default'` — so a
+    # summary that died mid-flight would not have been resumable after all, which
+    # is the whole point of this record.
+    assert rows[0]["owner_id"] == DEFAULT_PRINCIPAL_ID
 
 
 async def test_a_provider_failure_fails_the_job_honestly(tmp_db: DbPool) -> None:

@@ -62,6 +62,7 @@ class _Store(Protocol):
         self, task_id: str, depends_on: tuple[str, ...],
     ) -> None: ...
     async def revive_undelivered_failures(self, *, limit: int = 50) -> int: ...
+    async def count_pending_for_other_owners(self) -> int: ...
     async def reclaim_expired(self, *, now: Any = None) -> int: ...
     async def prune_completed(self, *, older_than_days: int = 1) -> int: ...
 
@@ -127,6 +128,31 @@ class TaskLoop:
             # A rescue that can stop the loop starting is worse than the strandings.
             log.tasks.error(
                 "[loop] start: the undelivered-failure sweep failed — starting anyway",
+                exc_info=exc, extra={"_fields": {"worker": self._worker}},
+            )
+        # WHAT NOTICES WHEN THE QUEUE GROWS SOMEWHERE THIS LOOP CANNOT SEE. The
+        # claim is owner-scoped and this loop is bound to ONE owner, so a row filed
+        # under anything else is invisible to it forever. That happened: 387 rows
+        # written under a knowledge scope instead of a principal, 72 of them still
+        # pending, and nothing said a word for a day and a half. The writer is
+        # fixed; this is so the CLASS of mistake cannot be silent again.
+        #
+        # A count and a warning, never a claim — driving another owner's work is a
+        # decision (ESC-17), not a repair. Same fail-open contract as the sweep
+        # above: bookkeeping must never stop the loop from starting.
+        try:
+            unreachable = await self._store.count_pending_for_other_owners()
+            if unreachable:
+                log.tasks.warning(
+                    "[loop] start: pending tasks exist that this loop cannot claim "
+                    "— they belong to another owner and nothing will ever run them",
+                    extra={"_fields": {"unreachable_pending": unreachable,
+                                       "worker": self._worker}},
+                )
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] start: could not count unreachable pending tasks — "
+                "starting anyway",
                 exc_info=exc, extra={"_fields": {"worker": self._worker}},
             )
         self._task = asyncio.create_task(self._run_forever())

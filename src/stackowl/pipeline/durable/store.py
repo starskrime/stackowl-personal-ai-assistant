@@ -1028,6 +1028,28 @@ class DurableTaskStore(OwnedRepository):
             extra={"_fields": {"task_id": task_id, "children": len(depends_on)}},
         )
 
+    async def count_pending_for_other_owners(self) -> int:
+        """How many pending rows THIS store can never claim, because they belong
+        to someone else.
+
+        ``claimable`` carries ``WHERE owner_id = ?`` and ``TaskLoop`` is built with
+        no owner, so it drains ``principal-default`` and nothing else. On
+        2026-08-20 that left 72 pending rows — the oldest a day and a half old,
+        every one past its ``next_attempt_at`` — in a table nobody was draining,
+        with nothing reporting it. loop.py's docstring already calls that state
+        worse than having no loop; the platform was in it and said nothing.
+
+        A COUNT, not a rescue. Claiming another owner's rows would drive work this
+        loop was never given. Whether the table should be multi-owner is ESC-17's
+        question; this only makes it a question with a number attached.
+        """
+        rows = await self._db.fetch_all(
+            f"SELECT COUNT(*) AS n FROM {self._table} "  # noqa: S608 — table from class
+            "WHERE status = 'pending' AND owner_id != ?",
+            (self._owner_id,),
+        )
+        return int((rows[0]["n"] if rows else 0) or 0)
+
     async def revive_undelivered_failures(self, *, limit: int = 50) -> int:
         """Return to the loop any task that OWED someone an answer and never sent it.
 

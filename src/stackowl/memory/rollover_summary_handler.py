@@ -171,7 +171,7 @@ class RolloverSummaryHandler(JobHandler):
                           "summary_parsed": None, "messages": 0},
             )
 
-        task_id = await self._open_task(job, lane=lane, ended=ended, owner=scope)
+        task_id = await self._open_task(job, lane=lane, ended=ended)
 
         # 3. STEP — the narrative. Once one of two legs here; now the whole job.
         mined = 0
@@ -184,7 +184,7 @@ class RolloverSummaryHandler(JobHandler):
                 extra={"_fields": {"job_id": job.job_id, "tier": self._tier,
                                    "mined": mined}},
             )
-            await self._close_task(task_id, owner=scope, status="failed",
+            await self._close_task(task_id, status="failed",
                                    result=f"summary call failed: {exc}")
             return self._failed(job, t0, f"summary call failed: {exc}", mined=mined)
 
@@ -205,7 +205,7 @@ class RolloverSummaryHandler(JobHandler):
             )
 
         await self._close_task(
-            task_id, owner=scope, status="completed",
+            task_id, status="completed",
             result=f"mined={mined} summary_staged={staged}",
         )
         duration_ms = (time.monotonic() - t0) * 1000
@@ -296,8 +296,7 @@ class RolloverSummaryHandler(JobHandler):
 
     # ------------------------------------------------- the durable task record
 
-    async def _open_task(self, job: Job, *, lane: str, ended: str,
-                         owner: str) -> str | None:
+    async def _open_task(self, job: Job, *, lane: str, ended: str) -> str | None:
         """Record the boundary as a durable task (Bakir's Q15, reaffirmed).
 
         Used as a CHECKPOINT RECORD driven by this handler, not as a goal fed to
@@ -307,10 +306,27 @@ class RolloverSummaryHandler(JobHandler):
         """
         task_id = f"rollover-{uuid.uuid4().hex[:12]}"
         try:
-            store = DurableTaskStore(self._db, owner or DEFAULT_PRINCIPAL_ID)
+            # THE PRINCIPAL OWNS THE WORK; THE SCOPE OWNS THE KNOWLEDGE. `owner`
+            # here is `owner_scope_key` — identity_key or the lane — which answers
+            # "who is this SUMMARY about". `tasks.owner_id` answers a different
+            # question: which principal owns this WORK. It is the tenancy boundary
+            # the ONE loop, the liveness sweep and every _require_owned check turn
+            # on, and `TaskLoop` is constructed with no owner, so it claims
+            # `principal-default` and nothing else.
+            #
+            # MEASURED 2026-08-20: filing the row under the scope had put 387 rows
+            # beyond the loop's reach — 72 of them `pending`, the oldest a day and
+            # a half old and every one past its next_attempt_at. Work in a table
+            # nobody is draining, which loop.py's own docstring calls worse than
+            # having no loop. Every non-principal row in the table was written
+            # here; every other writer was already correct.
+            #
+            # The scope is still what `_stage` files the summary under, which is
+            # right: knowledge is about a person, work belongs to a tenant.
+            store = DurableTaskStore(self._db, DEFAULT_PRINCIPAL_ID)
             now = datetime.now(UTC)
             await store.create(DurableTask(
-                task_id=task_id, owner_id=owner or DEFAULT_PRINCIPAL_ID,
+                task_id=task_id, owner_id=DEFAULT_PRINCIPAL_ID,
                 goal=f"rollover summary for {lane} incarnation {ended}",
                 status="running", created_at=now, updated_at=now,
             ))
@@ -323,26 +339,30 @@ class RolloverSummaryHandler(JobHandler):
             )
             return None
 
-    async def _checkpoint(self, task_id: str | None, *, owner: str,
-                          blob: str) -> None:
+    async def _checkpoint(self, task_id: str | None, *, blob: str) -> None:
         if task_id is None:
             return
         try:
-            await DurableTaskStore(self._db, owner).save_checkpoint(task_id, blob)
+            # Same principal the row was created under — see _open_task. A
+            # checkpoint written under a different owner reaches no row at all.
+            await DurableTaskStore(self._db, DEFAULT_PRINCIPAL_ID).save_checkpoint(
+                task_id, blob,
+            )
         except Exception as exc:
             log.memory.warning(
                 "[memory] rollover_summary._checkpoint: not saved",
                 exc_info=exc, extra={"_fields": {"task_id": task_id}},
             )
 
-    async def _close_task(self, task_id: str | None, *, owner: str, status: str,
+    async def _close_task(self, task_id: str | None, *, status: str,
                           result: str) -> None:
         """Terminalise the record. A row left 'running' for ever is the zombie
         this record exists to prevent."""
         if task_id is None:
             return
         try:
-            await DurableTaskStore(self._db, owner).update_status(
+            # Same principal the row was created under — see _open_task.
+            await DurableTaskStore(self._db, DEFAULT_PRINCIPAL_ID).update_status(
                 task_id, status, result=result,  # type: ignore[arg-type]
             )
         except Exception as exc:
