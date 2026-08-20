@@ -260,7 +260,24 @@ deployment:
 current:
   wave: 2
   item: D16.1
-  stage: implement
+  stage: validate
+  D16_1_STATE_2026_08_19: >-
+    IMPLEMENT, CLEANUP AND TEST ARE DONE. The seventh extension point (LifecycleHook,
+    observe-only, capability-gated) is live and wired at three seams — Tool.__call__,
+    ModelProvider._resilient_round and SessionStore.resolve_for. Two defects were found
+    by building it, both the shape this programme keeps finding: the capability model was
+    DECORATIVE (PluginContext had zero construction sites; manifest.capabilities was read
+    by nothing), and boot was iterating the DOWNLOAD CATALOGUE rather than the plugins
+    directory, so an installed plugin still never loaded. The second was found only by
+    installing a real plugin — the code, the log line and the tests all agreed with each
+    other and were all wrong.
+    VALIDATE IS PARTIAL AND THE REASON IS STATED: boot-load, hook registration and
+    pre/post_llm_call are PROVEN on the running platform (see LIVE_EVIDENCE_2026_08_19 on
+    the item). pre/post_tool_call and the two session points are proven by tests against
+    the real seams but not yet observed live, because no turn can complete —
+    gp-vpn.service is in `failed` state and the model gateway has no DNS. That needs
+    Bakir: `sudo systemctl restart gp-vpn.service`.
+    NEXT: finish validate once a turn runs, then `document`, then D16.3.
   RECONCILED_2026_08_19: >-
     THIS FILE WAS STALE BY 41 COMMITS. Everything between 2026-08-17 and 2026-08-19 —
     the ONE LOOP arc, the authority-vs-action authz fix, curated-memory decay — shipped
@@ -11528,11 +11545,25 @@ items:
     stages:
       brainstorm: done
       architect:  done             # designs/D16.1.md — hook contract decided
-      implement:  partial          # two commits shipped 2026-08-17; hooks still to build
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      implement:  done             # 2026-08-19 — hooks, the gate, three seams, boot source
+      cleanup:    done             # nothing obsolete; the one dead surface is recorded
+      test:       done             # 67 plugin tests + the seams' own suites, all green
+      validate:   partial          # boot+register+llm hooks PROVEN LIVE; two points owed
       document:   not_started
+    CLEANUP_2026_08_19: >-
+      Nothing was made obsolete by this work and nothing was orphaned — the loader,
+      manifest, verify and remote-install paths are all still the only ones. dedup_target
+      is null and stays null: the hook table is the ONE discovery mechanism D16.3 and
+      D04.1 arrive expecting, which is why ESC-16 had to be answered before it was built.
+      lint and types are at their baselines (ruff 39 in src/, mypy 65 — both identical
+      before and after; tests/plugins is clean).
+      ONE DEAD SURFACE REMAINS, deliberately not removed: PluginContext still has zero
+      construction sites in src/. Nothing hands a plugin a capability-filtered view,
+      because a plugin reaches its registries through registration rather than through a
+      context. It is no longer a SECOND permission rule — it now calls the same
+      capabilities.require() the loader does — so what is left is an unused class, not a
+      copy that can drift. Removing it would delete a designed surface nobody has asked to
+      lose (feedback_never_disable_features); it is recorded here instead.
     architect_closed:
       date: 2026-08-17
       doc: docs/reference-mapping/designs/D16.1.md
