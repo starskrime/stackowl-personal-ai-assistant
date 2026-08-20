@@ -335,3 +335,93 @@ class TestTheSessionSeam:
         await resolve_turn_session(_Msg(), now=_now(13, day=26), **kw)  # type: ignore[arg-type]
 
         assert watcher.events == []
+
+
+class TestTheClockBoundaryTellsHooksToo:
+    """THE WAY A CONVERSATION ACTUALLY ENDS IS BY GOING QUIET, and until 2026-08-20
+    that ending reached no hook at all.
+
+    Found at D16.1's validate stage, watching for an ``on_session_end`` that never
+    came. There are TWO places the platform recognises a conversation boundary:
+
+      resolve_for    — the TRAFFIC path: the user spoke again, and the gap since
+                       their last message crossed the policy.
+      sweep          — the CLOCK path: nobody spoke, and the sweeper finalises the
+                       lane on schedule. Its own docstring says why it exists —
+                       "without this, a rollover only happens when the user next
+                       sends a message, so the 4 AM boundary would really mean
+                       'whenever you next say something'".
+
+    The hook was wired at the first only. Worse, the two interact: ``resolve_for``
+    suppresses its dispatch when ``existing.expiry_finalized``, precisely so one
+    boundary is not announced twice. That guard was written for the EVENT BUS
+    consumer, which the sweeper does notify via ``_publish_rollover``. The hook
+    dispatch was later added inside the guard and inherited a suppression meant for
+    a publisher it does not share — so a lane the sweeper finalised could never
+    reach a hook by either route.
+
+    Net effect: a hook saw a conversation end only when the user happened to come
+    back before the sweeper got there. That is an actuator wired on one path of two,
+    the first failure shape in PROCESS.md, sitting inside the item built to avoid it.
+
+    NO ``on_session_start`` HERE, and that asymmetry is deliberate: the sweeper
+    finalises rather than mints, because "minting here would hand out an incarnation
+    nobody is using and start a conversation the user never opened". The next
+    inbound message mints it through the normal path, which dispatches START then.
+    """
+
+    async def test_a_lane_the_sweeper_expires_ends_for_hooks(
+        self, tmp_db: DbPool, watcher: _Watcher
+    ) -> None:
+        store = _store(tmp_db)
+        kw = dict(owl_name="secretary", session_store=store,
+                  session_settings=SessionSettings(), services=_NoIdentityServices())
+        _k, run1, _ = await resolve_turn_session(_Msg(), now=_now(20, day=25), **kw)  # type: ignore[arg-type]
+        watcher.events.clear()
+
+        finalized, _skipped = await store.sweep(now=_now(9, day=26))
+
+        assert finalized == 1, "the fixture must actually expire the lane"
+        assert watcher.points() == [ON_SESSION_END], (
+            "the clock boundary reached no hook"
+        )
+        end = watcher.payload(ON_SESSION_END)
+        assert end["session_id"] == run1
+        assert end["reason"], "a boundary always has a reason"
+        assert end["owl_name"] == "secretary"
+        assert end["channel"] == "telegram"
+
+    async def test_a_sweep_that_finalises_nothing_says_nothing(
+        self, tmp_db: DbPool, watcher: _Watcher
+    ) -> None:
+        """The sweep runs every minute against every lane. A hook firing on an
+        uneventful pass would be a rename of 'the sweeper ran'."""
+        store = _store(tmp_db)
+        await resolve_turn_session(
+            _Msg(), owl_name="secretary", session_store=store,
+            session_settings=SessionSettings(), services=_NoIdentityServices(),
+            now=_now(12, day=26),
+        )
+        watcher.events.clear()
+
+        finalized, _ = await store.sweep(now=_now(13, day=26))
+
+        assert finalized == 0
+        assert watcher.events == []
+
+    async def test_one_boundary_is_announced_once(
+        self, tmp_db: DbPool, watcher: _Watcher
+    ) -> None:
+        """The double-announce guard must still hold. After the sweeper ends a lane,
+        the user's next message mints the new incarnation — and must START it
+        without ENDING the same conversation a second time."""
+        store = _store(tmp_db)
+        kw = dict(owl_name="secretary", session_store=store,
+                  session_settings=SessionSettings(), services=_NoIdentityServices())
+        await resolve_turn_session(_Msg(), now=_now(20, day=25), **kw)  # type: ignore[arg-type]
+        await store.sweep(now=_now(9, day=26))
+        watcher.events.clear()
+
+        await resolve_turn_session(_Msg(), now=_now(10, day=26), **kw)  # type: ignore[arg-type]
+
+        assert ON_SESSION_END not in watcher.points(), "announced the same ending twice"

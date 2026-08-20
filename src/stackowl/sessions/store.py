@@ -677,6 +677,30 @@ class SessionStore:
                 }},
             )
             self._publish_rollover(entry, ended, reason)
+            # D16.1 — THE OTHER HALF OF THE BOUNDARY. The hook was wired only at
+            # `resolve_for`, which fires when the USER comes back and their gap
+            # crossed the policy. But the ordinary way a conversation ends is by
+            # going quiet, and that ending happens HERE, on the clock — which is
+            # the whole reason this method exists.
+            #
+            # The two paths also interact badly without this. `resolve_for`
+            # suppresses its dispatch when `existing.expiry_finalized`, so that one
+            # boundary is not announced twice; that guard was written for the event
+            # bus, which the line above already notified. The hook dispatch was
+            # added inside it later and inherited a suppression meant for a
+            # publisher it does not share — so a lane finalised here could reach a
+            # hook by NEITHER route. Found at D16.1's own validate stage.
+            #
+            # END only, never START: this method finalises rather than mints (see
+            # the docstring), so there is no new incarnation to announce. The next
+            # inbound message mints it and dispatches START through the normal path.
+            await hooks.dispatch(hooks.ON_SESSION_END, {
+                "session_key": entry.session_key, "session_id": entry.session_id,
+                "reason": reason.value if reason else None,
+                "owl_name": entry.owl_name, "channel": entry.channel,
+                "message_count": entry.message_count,
+                "completed_turns": entry.completed_turns,
+            })
             finalized += 1
         log.gateway.info(
             "session.sweep: finalized",
