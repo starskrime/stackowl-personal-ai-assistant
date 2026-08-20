@@ -218,9 +218,18 @@ class TestPluginContextDeniesDeniedCapability:
 
 
 class TestAllCapabilitiesConstant:
-    def test_expected_strings_present(self) -> None:
-        """ALL_CAPABILITIES contains all expected capability names."""
-        expected = {
+    def test_no_capability_is_ever_removed(self) -> None:
+        """The invariant is that the set never SHRINKS.
+
+        This asserted EQUALITY, which is the wrong pin: it blocked adding a
+        capability as firmly as removing one, and D16.1 needs two additions
+        (``memory_provider``, which D08.2 slice C's extension point never got, and
+        ``lifecycle_hooks``). Removing one is the change that matters — a
+        capability an operator has already granted in a plugin.yaml would stop
+        being recognised, and the plugin would fail to load with no explanation of
+        what changed under it.
+        """
+        never_removed = {
             "tool_registry",
             "command_registry",
             "handler_registry",
@@ -231,7 +240,11 @@ class TestAllCapabilitiesConstant:
             "audit_logger",
             "browser_runtime",
         }
-        assert ALL_CAPABILITIES == expected
+        assert never_removed <= ALL_CAPABILITIES
+
+    def test_the_d161_additions_are_present(self) -> None:
+        """The gate is only real if the capabilities it requires exist."""
+        assert {"memory_provider", "lifecycle_hooks"} <= ALL_CAPABILITIES
 
 
 class TestPluginCapabilityDeniedErrorMessage:

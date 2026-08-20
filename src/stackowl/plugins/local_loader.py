@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 from stackowl.exceptions import PluginValidationError
+from stackowl.plugins import capabilities as caps
 from stackowl.plugins.manifest import PluginManifest
 
 log = logging.getLogger("stackowl.plugins")
@@ -25,6 +26,10 @@ _ABC_NAMES = {
     # path all apply unchanged, which is why a separate memory-provider registry
     # was rejected as duplicated machinery.
     "MemoryProvider": "stackowl.memory.providers",
+    # D16.1 / ESC-16 (Bakir, 2026-08-17). The seventh point, and the first that
+    # OBSERVES the agent rather than adding to it. Capability-gated and
+    # observe-only — see plugins/hooks.py for why a veto is a v1 non-goal.
+    "LifecycleHook": "stackowl.plugins.hooks",
 }
 
 
@@ -39,6 +44,7 @@ class LocalPluginLoader:
         channel_registry: Any = None,
         owl_registry: Any = None,
         memory_provider_registry: Any = None,
+        hook_registry: Any = None,
     ) -> None:
         log.debug("plugins.local_loader.__init__: entry")
         # EVERY key in _ABC_NAMES must appear here. D08.2 slice C added
@@ -57,6 +63,11 @@ class LocalPluginLoader:
             "ChannelAdapter": channel_registry,
             "OwlSource": owl_registry,
             "MemoryProvider": memory_provider_registry,
+            # Injected like every other slot rather than defaulted to the
+            # process-wide singleton: a slot that fills itself in cannot be
+            # reported as unwired, and "which extension points is this deployment
+            # missing?" is a question the loader is supposed to be able to answer.
+            "LifecycleHook": hook_registry,
         }
         log.debug("plugins.local_loader.__init__: exit")
 
@@ -159,6 +170,18 @@ class LocalPluginLoader:
                     )
                     continue
                 if issubclass(obj, abc_cls) and obj is not abc_cls:
+                    # THE GATE, and it is load-time on purpose: a denied plugin
+                    # never reaches a call site (D16.1 invariant I6). Until
+                    # 2026-08-19 `capabilities` was declared in every manifest and
+                    # read by nothing — PluginContext, the only thing that checked
+                    # it, had zero construction sites — so a plugin granted nothing
+                    # registered whatever it liked. Raises, so the whole plugin is
+                    # refused rather than half-loaded.
+                    caps.require(
+                        manifest.name,
+                        manifest.capabilities,
+                        caps.CAPABILITY_FOR_EXTENSION_POINT[abc_name],
+                    )
                     registry = self._registries.get(abc_name)
                     if registry is None:
                         # NOT silent. This plugin defines a real extension point and

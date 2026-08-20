@@ -1831,6 +1831,7 @@ class StartupOrchestrator:
             # time-bounds each load, so third-party code executing at startup
             # cannot stop or wedge the boot.
             from stackowl.plugins.boot import load_installed_plugins
+            from stackowl.plugins.hooks import HookRegistry
             from stackowl.plugins.local_loader import LocalPluginLoader
             from stackowl.scheduler.base import HandlerRegistry
 
@@ -1842,6 +1843,7 @@ class StartupOrchestrator:
                     handler_registry=HandlerRegistry.instance(),
                     channel_registry=ChannelRegistry.instance(),
                     owl_registry=owl_registry,
+                    hook_registry=HookRegistry.instance(),
                 ),
             )
             if plugin_report.skipped:

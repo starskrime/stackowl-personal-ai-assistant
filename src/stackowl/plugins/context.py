@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from stackowl.exceptions import PluginCapabilityDeniedError
 from stackowl.plugins import capabilities as caps
 
 if TYPE_CHECKING:
@@ -60,14 +59,10 @@ class PluginContext:
         )
 
     def _require(self, capability: str, value: Any) -> Any:
-        if capability not in self._granted:
-            err = PluginCapabilityDeniedError(capability)
-            log.critical(
-                "plugins.context._require: capability denied",
-                exc_info=err,
-                extra={"_fields": {"plugin": self._plugin_name, "capability": capability}},
-            )
-            raise err
+        # ONE source for the rule. The loader gates registration with the same
+        # function, and a second copy of a permission check is how the two end up
+        # disagreeing about what an operator granted.
+        caps.require(self._plugin_name, self._granted, capability)
         return value
 
     @property
