@@ -61,6 +61,27 @@ class ReadFileTool(Tool):
                 extra={"_fields": {"path": path_str}},
             )
             return ToolResult(success=False, output="", error="Path traversal denied", duration_ms=duration_ms)
+        # A DIRECTORY IS NOT A PLATFORM FAULT, and it used to be reported as one.
+        # MEASURED on live traffic 2026-08-20: two ERRORs with full tracebacks for
+        # read_file('~/.stackowl/workspace'), then "same-tool failure threshold
+        # reached — circuit open" after the model retried the identical call three
+        # times. It was told "[Errno 21] Is a directory", which says what happened
+        # and not what to do — the exact shape 021cd0aa fixed for repeated tool
+        # failures. Named separately so the answer carries the next step, and at
+        # WARNING because a model guessing a path is ordinary, while an ERROR here
+        # should still mean the filesystem is in trouble.
+        if target.is_dir():
+            duration_ms = (time.monotonic() - t0) * 1000
+            log.tool.warning(
+                "read_file.execute: path is a directory — not a readable file",
+                extra={"_fields": {"path": path_str}},
+            )
+            return ToolResult(
+                success=False, output="",
+                error=(f"{path_str} is a directory, not a file. Use search_files to "
+                       f"find a file inside it, then read that file by name."),
+                duration_ms=duration_ms,
+            )
         try:
             content = await asyncio.to_thread(target.read_text, encoding="utf-8")
             duration_ms = (time.monotonic() - t0) * 1000
