@@ -260,7 +260,82 @@ deployment:
 current:
   wave: 2
   item: D16.3
-  stage: brainstorm
+  stage: architect
+  ESCALATIONS:
+    raised: 2026-08-20
+    context: >-
+      D16.3 brainstorm, answered by panel. Everything evidence could settle IS settled and
+      recorded on the item; these five cannot be, and the first one is why the rest wait.
+      Work continues on everything they do not block — the defect cluster the panel found
+      is independent of all five.
+    E1_the_items_verdict_itself:
+      question: >-
+        D16.3's literal question — "which categories are worth an ABC?" — measures to
+        NONE. Every category at 3+ implementations already has its ABC; every category
+        without one has 0-2; nine of our 18 ABCs are already below the reference
+        platform's own threshold; LifecycleHook has zero implementations and the plugins
+        table has zero rows. Should D16.3 close as `no_change_needed` on the ABC question,
+        with the map corrected and the reference platform's meta-rule ("wait for 3
+        integrations before designing the ABC") recorded as standing policy?
+      why_evidence_cannot_settle_it: >-
+        Changing a P0 mapped item's verdict is a programme decision, not a measurement.
+        The numbers say the ABC would be unused; whether an unused-but-declared seam is
+        still worth having is a bet about who writes against StackOwl, and only Bakir
+        holds that.
+      panel_recommendation: >-
+        Close the ABC question as no_change_needed. Do NOT close the item's obligation to
+        D04.1 — that is a separate mechanism (a data record) and it is still owed.
+      blocked_until_answered: "the architect stage's framing; nothing else"
+    E2_who_may_extend_which_category:
+      question: >-
+        Which categories do you WANT third parties writing against? Not which are at 3+ —
+        that is a fact, and it is answered. This is a trust-surface question.
+      why_evidence_cannot_settle_it: >-
+        Seven extension points exist and zero plugins have ever been installed, so usage
+        data cannot distinguish "nobody wanted it" from "nobody was invited".
+      panel_recommendation: >-
+        None offered — the panel deliberately declined this one.
+      blocked_until_answered: "whether any 8th point is ever proposed"
+    E3_is_a_fourth_inference_backend_coming:
+      question: >-
+        D04.1's own Ask, unchanged: is provider BREADTH a goal, or is one gateway enough?
+      why_evidence_cannot_settle_it: >-
+        PARTIALLY ANSWERED ALREADY and not re-asked in full: the `provider_agnostic`
+        constraint records that your deployment is one LiteLLM gateway while your USERS
+        run many backends. What evidence cannot say is whether breadth is a near-term
+        goal or a someday one, and that decides how much D04.1 should build.
+      panel_recommendation: >-
+        Build for the four backends that exist, not for 32. 100% of 99,573 recorded calls
+        went through ONE provider class; the other two have never served a request here.
+      blocked_until_answered: "D04.1's scope, not D16.3's"
+    E4_is_any_in_tree_set_formally_closed:
+      question: >-
+        D16.4 (a sibling item) is the reference platform's policy that third-party
+        products ship as standalone plugin repos and the in-tree set is CLOSED. Do you
+        want that policy, and for which categories?
+      why_evidence_cannot_settle_it: "A maintenance-load decision about future work."
+      panel_recommendation: >-
+        Worth adopting as the discipline that keeps the core small — but it is D16.4's
+        item, and it changes what D16.3 should conclude, so it is raised here.
+      blocked_until_answered: "nothing today; it would change D16.3's conclusion if answered YES"
+    E5_the_vision_defect_is_a_capability_you_do_not_have:
+      question: >-
+        Vision is structurally unreachable and has been since the model-token list was
+        written — 0 of 99,573 calls across all 8 models ever run are recognised as
+        vision-capable. `vision_analyze` is still advertised to the model on every turn.
+        Fix it now as its own item, or fold it into D04.1?
+      why_evidence_cannot_settle_it: >-
+        The measurement is unambiguous; the PRIORITY is not. It is a shipped capability
+        loss nobody has hit, because nobody has sent an image — so it is urgent by
+        severity and not by symptom, and that trade is yours.
+      panel_recommendation: >-
+        Fix it now and separately. Two lenses agreed it must not be held hostage to a
+        taxonomy item's disposition. The honest fix is a ladder the platform already
+        proves works in model_window.py — operator override, then live probe, then
+        catalog, then a conservative default — plus registering a `vision` capability so a
+        deployment with no vision backend HIDES the tool instead of offering it and
+        failing.
+      blocked_until_answered: "nothing — but it is the largest real capability in this area"
   D16_1_STATE_2026_08_19: >-
     IMPLEMENT, CLEANUP AND TEST ARE DONE. The seventh extension point (LifecycleHook,
     observe-only, capability-gated) is live and wired at three seams — Tool.__call__,
@@ -12010,12 +12085,107 @@ items:
         guesses inside shared code (a tool-call dialect, a token ceiling, a cache-stat
         field name). D04.1 turns those into declarative data; D16.1 and D16.3 are what
         make it possible to declare them.
+    BRAINSTORM_2026_08_20: >-
+      ASKED BY PANEL, not by asking Bakir what evidence could settle. Round 0 measured
+      first; five lenses then argued against its numbers. 25 questions drafted and routed:
+      16 derivable, 4 irreducibly the operator's, 5 split. Two were already answered by
+      decisions in this file and were NOT re-asked (Q11 provider breadth -> the
+      `provider_agnostic` constraint; Q16 one capability per family -> D16.1's recorded
+      reasoning). The full routing is in the item's decisions log.
+      THE ITEM'S OWN QUESTION ANSWERS "NONE", AND THAT IS THE FINDING. D16.3 asks "which
+      categories are worth an ABC for your roadmap?". Measured across the tree: EVERY
+      category with 3+ implementations already HAS its ABC (tools 62, job handlers 40,
+      slash commands 32, channels 7, web search 3), and EVERY category without one has
+      0-2. There is no cell in the matrix where an ABC is missing and demand exists.
+      Meanwhile NINE of our 18 ABCs sit BELOW the reference platform's own 3+ threshold,
+      LifecycleHook has ZERO implementations, and the `plugins` table has 0 rows after
+      seven extension points. The scarce resource here is not abstraction.
+      THE MAP'S GAP LINE IS WRONG IN TWO OF ITS THREE CELLS. It says ABCs are "missing
+      for memory, model providers, context engines". `ModelProvider` is an ABC at
+      providers/base.py:87 (4 abstract of 24, 3 real subclasses). `MemoryProvider` is an
+      ABC at memory/providers.py:49 AND one of the seven registered plugin points since
+      D08.2 slice C. Only context engines is true — and the reference platform's own
+      context-engine ABC has exactly ONE implementation against 4 abstract methods, so by
+      their own 3+ rule copying it would add our TENTH sub-threshold ABC.
+      WHAT THE REFERENCE PLATFORM ACTUALLY DID, and it is the opposite of what the item
+      implies. Its model-provider extension point `ProviderProfile` is NOT an ABC: a plain
+      dataclass, ZERO abstract methods, name-registered, 32 of them — and 14 never
+      subclass it at all, they instantiate it with overrides. The WIRE DIALECT is a
+      separate strict ABC (agent/transports/base.py, 5 abstract, 4 impls). THEY SPLIT THE
+      TWO AXES STACKOWL HAS FUSED INTO ONE CLASS. So D04.1 does not want an ABC; it wants
+      a DATA RECORD, and the ABC question and the profile question are not the same
+      question.
+      AND THE DATA RECORD ALREADY EXISTS. Two lenses reached this independently:
+      `ProviderConfig` (config/provider.py:43) is already keyed by backend name, already
+      held per-backend in registry._configs, and already carries seven per-backend
+      behavioural facts (supports_native_tools, cache_ttl, cooldown_hours, context_chars,
+      max_output_tokens, tool_max_iterations, quirks), most with live readers. Building a
+      second record keyed by the same thing, holding the same kind of fact, read by the
+      same call sites, is "two copies of one rule" — CLAUDE.md defect shape #3 — and the
+      same shape as the four overlapping task engines banned on 2026-08-17. The rule
+      "find the existing loop and extend it" applies to records as well as to queues.
+    BRAINSTORM_CORRECTION_TO_ITS_OWN_MEASUREMENT: >-
+      Round 0 reported that per-backend facts "live as CLASS-LEVEL properties, so 4
+      backends sharing one class cannot differ". TWO lenses independently refuted the
+      half that mattered, and the refutation is verified here: supports_vision and
+      supports_document are ALREADY per-instance — openai_provider.py:395,
+      anthropic_provider.py:182,186 and gemini_provider.py all return
+      is_vision_model(self._config.default_model). Genuinely class-level, ignoring config,
+      are only `supports_tools` (base.py:394 True; gemini_provider.py:99 False) and
+      `supports_cache_breakpoints` (base.py:410 False; anthropic_provider.py:190 True).
+      THE STRUCTURE IS FINE; THE DATA IS THE BUG. That strengthens the record case and
+      demolishes any ABC case — recorded because a panel that had averaged its lenses
+      instead of hunting their disagreement would have shipped the wrong diagnosis.
+    BRAINSTORM_CONTRADICTIONS_NOT_AVERAGED: >-
+      C1 — WHAT THE RECORD IS KEYED ON. Two lenses assumed the configured backend NAME.
+      The third objected that the name is operator-chosen and demonstrably not an
+      identity: three of the four live backends (qwen36, ollama-standard,
+      ollama-powerful) point at the IDENTICAL base_url and default_model, so name-keying
+      needs three identical records that can drift; and `/provider rename` exists
+      (commands/provider_command.py:678) and rewrites name in place, so a name-keyed
+      record silently detaches on rename and drops back to the fallback with no log line.
+      UNRESOLVED, and it belongs to architect: key on (base_url, default_model) with name
+      demoted to a label, or keep name-keying and extend the existing
+      registry.apply_settings -> model_window.invalidate() path (registry.py:438) to the
+      record. The precedent for the second already exists and is correct.
+      C2 — DECLARATION vs DISCOVERY. One lens made the record the answer; another argued
+      the highest-capability change is a PROBE, and that a declaration nobody checks is
+      the "asserted, never measured" root cause this programme exists to kill. They are
+      not actually opposed once ORDERED, and the ordering is the decision: operator YAML >
+      live probe > record > fallback. Discovery stays ahead of declaration; the record's
+      job is to replace DEFAULT_WINDOW_FALLBACK = 1_000_000, the one number in this system
+      that is a pure guess. The standing "prefer dynamic discovery" rule is NOT
+      contradicted: it forbids guessing what the system KNOWS, not being TOLD what it
+      cannot report. The line drawn: OBSERVABLE facts -> discovery always; DECLARABLE
+      facts the protocol cannot carry -> a declaration is MORE compliant than today's
+      substring inference; POLICY facts -> always declaration.
+    BRAINSTORM_WHAT_THE_PANEL_FOUND_THAT_NOBODY_ASKED_FOR: >-
+      Ten defects surfaced while answering a taxonomy question. Recorded in known_debt as
+      ARC-2026-08-20-provider-facts; the four that change what should be built:
+      (1) is_vision_model() returns False for EVERY model this deployment has ever run —
+      verified independently: 0 of 99,573 recorded calls across all 8 distinct models
+      match the 33-token hardcoded vendor-substring list. Vision is structurally
+      unreachable in production and has been since the list was written. It also violates
+      TWO standing rules (no hardcoded keyword lists; no vendor names in src/).
+      (2) A SECOND instance of the same shape that Round 0 missed: OpenAIProvider never
+      overrides supports_document, so on the 100%-of-traffic path PDF Mode B can never
+      find a provider (tools/io/pdf.py:209).
+      (3) ProviderConfig has NO model_config, so pydantic defaults to extra="ignore" and
+      silently DROPS a misspelled key — verified here by constructing it with three
+      unknown keys and watching supports_native_tools stay True. Its sibling ModelOverride
+      in the same file has extra="forbid". Fixing that one line is worth more than the
+      entire proposed record.
+      (4) DEFAULT_WINDOW_FALLBACK = 1_000_000 fired 8 times across 8 distinct days against
+      a real 262,144 window — a 3.8x over-estimate of the trim budget — under a log line
+      whose msg is IDENTICAL to the success case, and memoized for the life of the
+      process. The compensating actuator, note_payload_limit, has fired ZERO times in the
+      entire log history. Detection and repair both absent.
     gap: "(no gap line — see Ask)"
     depends_on: [D16.1]
     blocks: [D04.1]
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
