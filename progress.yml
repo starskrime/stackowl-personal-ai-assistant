@@ -11070,10 +11070,38 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   not_started
-      document:   not_started
+      validate:   partial
+      document:   partial
     doc: "docs/reference-mapping/designs/D05.4.md"
-    doc_last_verified: null
+    doc_last_verified: "2026-08-21 against 76dfd48c — Verification RUN, and running it found three defects in the document itself"
+    DOCUMENT_STAGE_2026_08_21:
+      the_verification_section_WAS_BROKEN_and_running_it_is_what_found_that: >-
+        Its log queries were UNBOUNDED IN TIME. The JSONL is append-only for a whole
+        day, so they swept up records written under the OLD contract and reported
+        failure forever: check 1 asked for 0 and got 12, every one of them from
+        before the fix went live at 16:34Z. A check that cannot pass is the same
+        defect as one that cannot fail, and this document already carried a warning
+        about the second kind while containing three of the first.
+        FIXED: every query now takes the current core's boot timestamp first and
+        bounds on it. Re-run bounded — 0 warnings, denominator 9 rebuilds.
+      AND_THE_DENOMINATOR_IS_NOW_PART_OF_THE_SECTION: >-
+        The I1 check ships with a second query beside it that counts rebuilds,
+        because 0 warnings over 0 rebuilds reads identically to 0 over 9 and this
+        session has already been fooled by exactly that twice. The I2 check states
+        plainly that all-equal `measured`/`basis` means the invariant has NOT been
+        exercised — OPEN, not PASS.
+      TWO_STALE_FACTS_IN_THE_CONFIG_TABLE: >-
+        `tool_count_cap` was documented as needing a restart; it carries
+        `json_schema_extra={"hot_reload": True}` and is live-changeable.
+        `HARD_TOOL_COUNT_CAP` was listed with NO default, which DOC_STANDARD names
+        as an anti-pattern because the default is the thing people need — it is 150,
+        in pipeline/context_budget.py. Both corrected against the tree.
+      WHY_THE_STAGE_IS_PARTIAL_AND_NOT_DONE: >-
+        Every path, default and command in the document is now verified and the
+        tests pass (24 + 21). What cannot be closed is the LIVE half: I1 and I2 have
+        no discriminating opportunity yet, because every rebuild since the fix is a
+        distinct incident lane seen once. The document says so rather than claiming
+        a pass it has not earned.
     decisions:
       - date: 2026-08-21
         by: panel
