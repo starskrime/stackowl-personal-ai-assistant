@@ -123,6 +123,36 @@ def tier_span(floor: str, ceiling: str) -> list[str]:
     return list(LADDER[lo : hi + 1])
 
 
+def escalation_target_is_identical(
+    provider: Any, model: str, next_provider: Any, next_model: str
+) -> bool:
+    """True when stepping up a tier lands on the SAME backend AND the same model.
+
+    MEASURED 2026-08-21. The ladder is fully wired — 25 ESCALATE_SENTINEL returns
+    across the retained logs, 25 executions of the handler that consumes them — and
+    every one of the 25 was ``standard -> powerful`` on a deployment with ONE enabled
+    provider spanning all three tiers. So each discarded a finished attempt (14, 15,
+    16 and 19 tool calls in four of those turns) and re-ran the identical loop against
+    the identical model. ``on_escalate`` also resets the tool-outcome ledger, so the
+    re-run is blind to what the first attempt learned.
+
+    Nothing noticed, because the escalation log line never compared the target it was
+    stepping up TO. This predicate is what makes that comparison possible.
+
+    Compared by NAME, not by object identity: the registry may hand back distinct
+    instances across calls, and it is the target that matters, not the Python object.
+    Returns False when the next provider cannot be resolved — an unresolvable tier is
+    a different problem and must not be reported as a no-op escalation.
+    """
+    if next_provider is None or provider is None:
+        return False
+    return (
+        str(getattr(provider, "name", "") or "")
+        == str(getattr(next_provider, "name", "") or "")
+        and model == next_model
+    )
+
+
 class LLMGateway:
     """Stateless escalating wrapper over a :class:`ProviderRegistry`."""
 
@@ -374,11 +404,34 @@ class LLMGateway:
                         await on_escalate(tier, tiers[idx + 1])
                     continue
             if can_escalate and is_escalate_signal(final_text):
+                next_provider, next_model, _next_degraded = (
+                    self._registry.resolve_tier_with_fallback(tiers[idx + 1])
+                )
+                no_op = escalation_target_is_identical(
+                    provider, model, next_provider, next_model
+                )
                 log.engine.info(
                     "[llm_gateway] tools: model escalated mid-loop — discard + step up",
                     extra={"_fields": {"purpose": purpose, "from_tier": tier, "model": model,
-                                       "to_tier": tiers[idx + 1], "tool_calls": len(calls)}},
+                                       "to_tier": tiers[idx + 1], "tool_calls": len(calls),
+                                       "same_target": no_op}},
                 )
+                if no_op:
+                    # BEHAVIOUR UNCHANGED, DELIBERATELY. The re-run still happens; only
+                    # the silence is fixed. Whether a no-op escalation should instead
+                    # deliver the floor from the attempt already made changes what the
+                    # user receives, and is ESC-22 for Bakir. Logged at INFO because
+                    # production runs at INFO and a debug line is not evidence.
+                    log.engine.info(
+                        "[llm_gateway] tools: the stronger tier resolves to the SAME "
+                        "provider and model — this re-run cannot improve on the "
+                        "attempt being discarded",
+                        extra={"_fields": {
+                            "purpose": purpose, "provider": getattr(provider, "name", ""),
+                            "model": model, "from_tier": tier, "to_tier": tiers[idx + 1],
+                            "discarded_tool_calls": len(calls),
+                        }},
+                    )
                 if on_escalate is not None:
                     await on_escalate(tier, tiers[idx + 1])
                 continue
