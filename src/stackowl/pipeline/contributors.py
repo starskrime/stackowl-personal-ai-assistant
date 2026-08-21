@@ -93,8 +93,24 @@ class PromptContributorRegistry:
 
     def __init__(self) -> None:
         self._by_name: dict[str, PromptContributor] = {}
+        #: name -> the plugin that registered it, so an unload can drop exactly its
+        #: own contributors. Without this a contributor outlives its plugin and keeps
+        #: writing into the prompt with nothing owning it.
+        self._source_of: dict[str, str] = {}
 
-    def register(self, contributor: PromptContributor) -> None:
+    def register(
+        self, contributor: PromptContributor, source_name: str | None = None
+    ) -> None:
+        """Register a contributor. ``source_name`` is the owning plugin.
+
+        THE KEYWORD IS THE LOADER'S CONTRACT, not a convenience. `LocalPluginLoader`
+        calls ``registry.register(instance, source_name=manifest.name)`` for EVERY
+        extension point, and the first version of this method did not accept it — so a
+        real plugin failed at boot with a TypeError while twenty unit tests passed,
+        because every one of them called ``register(contributor)`` directly. Found by
+        installing a real plugin, which is the D16.1 lesson repeating on the item that
+        recorded it.
+        """
         name = str(getattr(contributor, "name", "") or "").strip()
         if not name:
             log.engine.error(
@@ -104,17 +120,37 @@ class PromptContributorRegistry:
             )
             return
         self._by_name[name] = contributor
+        if source_name:
+            self._source_of[name] = source_name
         log.engine.info(
             "[plugins] prompt contributor registered",
-            extra={"_fields": {"name": name, "total": len(self._by_name)}},
+            extra={"_fields": {"name": name, "source": source_name or "",
+                               "total": len(self._by_name)}},
         )
 
     def unregister(self, name: str) -> None:
         if self._by_name.pop(name, None) is not None:
+            self._source_of.pop(name, None)
             log.engine.info(
                 "[plugins] prompt contributor unregistered",
                 extra={"_fields": {"name": name}},
             )
+
+    def unregister_by_source(self, source_name: str) -> int:
+        """Drop every contributor a plugin registered. Returns how many.
+
+        Mirrors ChannelRegistry's method of the same name — the shape the plugin
+        unload path already expects of a registry.
+        """
+        names = [n for n, src in self._source_of.items() if src == source_name]
+        for name in names:
+            self.unregister(name)
+        if names:
+            log.engine.info(
+                "[plugins] prompt contributors dropped with their plugin",
+                extra={"_fields": {"source": source_name, "dropped": names}},
+            )
+        return len(names)
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._by_name))

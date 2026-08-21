@@ -118,11 +118,65 @@ class TestAnAnswerThatDidNotArriveGoesBackOnTheLoop:
 
         await _complete(_Broken(), status="undeliverable")
 
-    async def test_an_empty_answer_is_left_alone(self) -> None:
-        """A goal that answered NO_NOTIFY_NEEDED produced nothing to deliver, so it
-        owes nothing — requeueing it would grind a correctly-quiet job."""
+    async def test_an_empty_answer_is_never_requeued(self) -> None:
+        """A goal that answered NO_NOTIFY_NEEDED owes nothing — requeueing it would
+        grind a correctly-quiet job.
+
+        CORRECTED 2026-08-21. This used to assert that NOTHING happened: not requeued
+        AND not completed. The first half was right and the second half was the bug —
+        "left alone" meant the row stayed `running` forever, which a live probe found
+        on task-63e66df245aa. Choosing silence is a finished outcome, so it closes; it
+        just does not go back on the loop.
+        """
         store = _Store()
         await _complete(store, status="completed", result="   ")
 
-        assert store.delivered == []
         assert store.requeued == []
+        assert store.delivered == [("task-d11dcf560e41", "")]
+
+
+class TestAGoalThatDeliberatelySaysNothingStillFinishes:
+    """CAUGHT BY A LIVE PROBE, and it is a defect my own delivery-proof fix created.
+
+    A watch-style goal may answer with the NO_NOTIFY_NEEDED sentinel — "the condition
+    is not met, say nothing". Observed 2026-08-21 on task-63e66df245aa:
+
+        05:41:06 [loop] the drive finished but the answer has not reached its
+                 destination yet — leaving the task open for the delivery path
+        05:41:06 goal_execution.execute: goal signaled no-notify — suppressing delivery
+        tasks: status=running  destination=cli  delivered_at=NULL   ...forever
+
+    THE ORDERING IS THE BUG. `_finalize` runs INSIDE `_drive`, before
+    `goal_execution.execute` blanks `response_text`. So the chokepoint saw the model's
+    actual text ("NO_NOTIFY_NEEDED"), judged the task to owe a delivery, and declined
+    the completion — correctly, on the information it had. Then the handler blanked the
+    result and `complete_agent_task` returned early on an empty string, so nothing ever
+    closed the row.
+
+    I had guarded this case at the WRONG LAYER: the "a completion with no answer is
+    terminal" carve-out lives in `update_status`, where the answer is not yet empty.
+    The layer that KNOWS the goal chose silence is this one.
+
+    A no-notify goal has achieved its purpose — it evaluated the condition and decided
+    not to speak. That is success, not an undelivered answer, and `_deliver_answer`
+    already says so by returning "completed" for an empty body.
+    """
+
+    async def test_an_empty_result_with_a_delivered_status_completes(self) -> None:
+        store = _Store()
+        await _complete(store, status="completed", result="")
+
+        assert store.delivered == [("task-d11dcf560e41", "")], (
+            "a goal that deliberately said nothing was left open forever"
+        )
+        assert store.requeued == []
+
+    async def test_an_empty_result_that_FAILED_to_deliver_still_requeues(self) -> None:
+        """The distinction that keeps this from swallowing real failures: empty
+        because the goal chose silence is success; empty alongside a failed transport
+        is not."""
+        store = _Store()
+        await _complete(store, status="failed", result="")
+
+        assert store.delivered == []
+        assert len(store.requeued) == 1

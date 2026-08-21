@@ -110,14 +110,33 @@ class TestCompletionStillMeansDelivered:
 
         assert store.delivered == []
 
-    async def test_an_empty_result_does_not_complete_it(self) -> None:
+    async def test_an_empty_result_with_a_DELIVERED_status_still_completes(self) -> None:
+        """CORRECTED 2026-08-21 by a live probe, and the old assertion was half right.
+
+        It read `assert store.delivered == []` for an empty result — on the reasoning
+        that nothing delivered is nothing achieved. True when the emptiness means a
+        failure. FALSE when the goal CHOSE silence: a watch-style goal answers
+        NO_NOTIFY_NEEDED, `goal_execution` blanks response_text, and
+        `_deliver_answer` returns "completed" for an empty body because there was
+        genuinely nothing to send.
+
+        Observed on task-63e66df245aa: status=running, delivered_at=NULL, and nothing
+        able to close it — because `_finalize` runs BEFORE the handler blanks the text,
+        so the chokepoint saw "NO_NOTIFY_NEEDED", judged a delivery owed, and declined
+        the completion; then this function returned early on the now-empty string. The
+        row was stranded forever.
+
+        The distinction that keeps this honest is the STATUS, asserted below and in
+        test_an_undelivered_answer_actually_returns_to_the_loop.py: empty + delivered
+        means silence was the outcome; empty + failed still goes back on the loop.
+        """
         store = _Store()
 
         await complete_agent_task(
             store, task_id="task-1", result="   ", delivery_status="completed",
         )
 
-        assert store.delivered == []
+        assert store.delivered == [("task-1", "")]
 
 
 class TestItNeverCostsTheJob:

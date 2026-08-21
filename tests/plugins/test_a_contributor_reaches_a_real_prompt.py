@@ -149,3 +149,67 @@ class TestEveryDeclaredSlotIsActuallyWired:
             "declared extension points whose registry is never passed at the real "
             f"construction site — a plugin would register NOWHERE: {missing}"
         )
+
+
+class TestItRegistersThroughTheREALLoaderContract:
+    """CAUGHT BY INSTALLING A REAL PLUGIN, after twenty green tests said otherwise.
+
+    Every test above calls `registry.register(contributor)` directly. The LOADER does
+    not — it calls `registry.register(instance, source_name=manifest.name)`, so that
+    every registration can be undone when the plugin unloads. The first implementation
+    of `PromptContributorRegistry.register` took no such keyword, and the live install
+    failed at boot:
+
+        TypeError: PromptContributorRegistry.register() got an unexpected keyword
+        argument 'source_name'
+        [plugins] boot: exit {"loaded": [], "skipped": ["styleprobe"], "installed": 1}
+
+    This is the D16.1 lesson repeating on the very item that recorded it: "the defect
+    that mattered most was found by INSTALLING A REAL PLUGIN and watching it not load —
+    the code, the log line and the tests all agreed and were all wrong." A double that
+    calls a method differently from the only real caller cannot prove that caller works.
+
+    So these drive the loader's actual signature, and the unload path it exists for.
+    """
+
+    def test_register_accepts_the_loaders_keyword(self) -> None:
+        from stackowl.pipeline.contributors import PromptContributorRegistry
+
+        reg = PromptContributorRegistry()
+        reg.register(_Extra(), source_name="styleprobe")
+
+        assert reg.names() == ("house_style",)
+
+    def test_unloading_a_plugin_drops_its_contributors(self) -> None:
+        """The reason `source_name` exists at all. A contributor that survives its
+        plugin's unload keeps writing into the prompt with nothing owning it."""
+        from stackowl.pipeline.contributors import PromptContributorRegistry
+
+        class _Other(PromptContributor):
+            name = "other"
+
+            async def render(self, ctx: PromptContext) -> str:
+                return "x"
+
+        reg = PromptContributorRegistry()
+        reg.register(_Extra(), source_name="styleprobe")
+        reg.register(_Other(), source_name="somethingelse")
+
+        removed = reg.unregister_by_source("styleprobe")
+
+        assert removed == 1
+        assert reg.names() == ("other",)
+
+    def test_the_signature_matches_what_the_loader_calls(self) -> None:
+        """Pins the contract against the CALL SITE rather than against my memory of it,
+        so a future change to either side fails here instead of at someone's boot."""
+        import inspect
+
+        from stackowl.pipeline.contributors import PromptContributorRegistry
+        from stackowl.plugins import local_loader
+
+        src = inspect.getsource(local_loader)
+        assert "registry.register(instance, source_name=manifest.name)" in src
+
+        params = inspect.signature(PromptContributorRegistry.register).parameters
+        assert "source_name" in params

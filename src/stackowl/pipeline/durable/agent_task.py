@@ -78,7 +78,29 @@ async def complete_agent_task(
     """
     if store is None:
         return
-    if not (result or "").strip():
+    if not (result or "").strip() and delivery_status in DELIVERED_STATUSES:
+        # A GOAL THAT DELIBERATELY SAID NOTHING HAS STILL FINISHED. A watch-style goal
+        # answers NO_NOTIFY_NEEDED when its condition is not met, and goal_execution
+        # blanks response_text — so an empty result here means "evaluated, chose
+        # silence", which `_deliver_answer` already calls "completed" for an empty body.
+        #
+        # This used to return, leaving the row open forever. MEASURED 2026-08-21 on
+        # task-63e66df245aa: status=running, delivered_at=NULL, nothing to close it.
+        # The ORDERING is why the guard in `update_status` could not catch it —
+        # `_finalize` runs inside `_drive`, BEFORE the handler blanks the text, so the
+        # chokepoint saw "NO_NOTIFY_NEEDED" and correctly judged a delivery owed. This
+        # is the layer that knows silence was the point.
+        #
+        # Empty alongside a FAILED transport is a different thing and still requeues
+        # below — silence chosen is success; silence because nothing sent is not.
+        try:
+            await store.mark_delivered(task_id, result="")
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not close a goal that chose not to notify — its "
+                "lease will expire and the loop may re-drive it",
+                exc_info=exc, extra={"_fields": {"task_id": task_id}},
+            )
         return
     if delivery_status not in DELIVERED_STATUSES:
         # RETURN IT TO THE LOOP, DO NOT MERELY SAY SO. This used to log "leaving it
