@@ -667,6 +667,35 @@ current:
         recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
+    VALIDATE_THE_EVICTION_FIX_AND_THE_CAP_CHANGE_2026_08_21:
+      the_derived_message_is_PROVEN_ON_LIVE_TRAFFIC: >-
+        Not asserted from the code path — read back out of the running platform's log.
+        Three variants now coexist in the file, which is exactly the before/after this
+        needed: 254 events carrying the OLD text ("the turn's token budget could not fit
+        them"), then 9 carrying "the tool_count_cap of 30 was reached" and 9 carrying
+        "the tool_count_cap of 40 was reached". The line now names the constraint that
+        actually bound, on real turns, and the closing query returns something — which is
+        the check D08.1 taught us to run BEFORE needing it.
+      THE_CAP_CHANGE_HAS_NOT_FIXED_IT_and_that_is_the_headline: >-
+        40 IS STILL BINDING. Nine evictions have already fired at the new cap within
+        minutes of it going live. Raising the number moved the threshold; it did not stop
+        the array from being clipped, which is the outcome I flagged when recommending
+        against the change and is the strongest available evidence for ESC-27's
+        re-framing: the defect is that THREE mechanisms decide the presented set and none
+        owns it, not that the number was wrong.
+      TOO_EARLY_FOR_A_VERDICT_and_this_is_said_deliberately: >-
+        The cap changed at ~13:56Z and this was read at 14:10Z. Fourteen minutes is not a
+        sample. Today's counters (evictions 284, leaked floors 11, give-ups 16) are
+        DOMINATED by the pre-change period and must not be read as the effect of the
+        change. The honest comparison needs a full day at cap=40 against the recorded
+        baseline (266 / 11 / 16 on the last full day at cap=30). Evictions were still
+        climbing when measured — 266 at 12:30Z, 284 by 14:10Z.
+      unrelated_errors_seen_and_NOT_attributed_to_this_work: >-
+        owl_ratings health probe timed out twice more (12:21Z, 13:37Z), self-recovering
+        each time; one telegram "no active chat (best-effort)"; one retry_actuator
+        success-path delivery failure at 01:47Z. None touches the tool-presentation path.
+        Recorded so the next reader does not have to re-triage them, and NOT counted as
+        evidence for or against the cap change.
     A_REGRESSION_I_SHIPPED_AND_REPORTED_AS_GREEN_2026_08_21:
       what: >-
         Commit 0f1431e9 ("authority follows the ORIGIN of the request") broke 15 owl_build
