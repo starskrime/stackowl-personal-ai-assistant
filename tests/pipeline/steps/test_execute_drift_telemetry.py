@@ -1,11 +1,26 @@
-"""E2-S3 — off-plan tools emit drift telemetry but still run (observe-only).
+"""The task envelope is a REAL BOUNDARY — an off-plan tool is REFUSED, not audited.
 
-Drives the real _run_with_tools via the same harness as test_bounds_dispatch.py.
-Verifies:
-  - A tool outside task_envelope.tools still EXECUTES (observe-only, never blocked)
-  - A single WARNING is logged for each off-plan tool (the audit signal)
-  - On-plan tools produce no drift warning
-  - No envelope → no drift warning (non-durable turns are inert)
+WAS "off-plan tools emit drift telemetry but still run (observe-only)". ESC-29,
+Bakir 2026-08-21: make it a real boundary. I recommended the opposite — that the
+envelope ADD rather than remove, since it enforced nothing and was routinely wrong
+about what a task needs. He chose enforcement, which is the coherent other answer: if
+the narrowing is a genuine least-privilege boundary then presenting fewer tools is
+CORRECT, and the array shrinking on an enveloped turn stops being a Law 2 violation
+and becomes a real capability difference honestly reflected.
+
+MEASURED BEFORE CHANGING IT. 452 off-plan uses in the retained logs currently succeed,
+96% of them web_fetch (296) and web_search (139). But that is an ALL-TIME figure and
+it is heavily historical — 20-40/day through July, and 2, 2, 9, 2, 2 over the last
+five days. The current exposure is ~2 refusals a day, not 452, and only on the durable
+path (`task_envelope` is set solely by task_runner / store / recovery; an interactive
+chat turn carries None and is untouched).
+
+THE REFUSAL CARRIES AN APPEAL, and that is not decoration. A narrow envelope that
+cannot be widened is the same defect this session already fixed for owl_build — "the
+tool by which an owl asks for authority was gated by the authority it lacked ... a
+ceiling that cannot be APPEALED is not a legitimate choice" (0f1431e9). The message
+must distinguish "your owl lacks this" (bounds) from "your owl HAS this, the plan
+omitted it" (envelope), because the recoveries differ.
 """
 
 from __future__ import annotations
@@ -130,13 +145,17 @@ async def _drive(
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_off_plan_tool_runs_and_is_audited(
+async def test_off_plan_tool_is_REFUSED_and_audited(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Off-plan tool still executes AND a drift warning is logged (observe-only).
+    """An off-plan tool does NOT execute, and the refusal is logged.
 
-    owl_bounds permits BOTH tools; task_envelope allows only allowed_tool.
-    forbidden_tool is off-plan → should still run but emit exactly one warning.
+    owl_bounds permits BOTH tools; task_envelope allows only allowed_tool. The owl
+    genuinely holds forbidden_tool — the PLAN is what excludes it, which is why this
+    refusal is distinct from a bounds refusal.
+
+    INVERTED from `test_off_plan_tool_runs_and_is_audited` (ESC-29). It previously
+    asserted `forbidden.executed is True` under an explicit "OBSERVE-ONLY" comment.
     """
     owl_bounds = BoundsSpec(tools=frozenset({"allowed_tool", "forbidden_tool"}))
     envelope = BoundsSpec(tools=frozenset({"allowed_tool"}))
@@ -144,9 +163,9 @@ async def test_off_plan_tool_runs_and_is_audited(
     with caplog.at_level(logging.WARNING, logger="stackowl.engine"):
         allowed, forbidden, _provider = await _drive(owl_bounds, task_envelope=envelope)
 
-    # OBSERVE-ONLY: BOTH tools must have executed
+    # ENFORCED: the on-plan tool runs, the off-plan one does not.
     assert allowed.executed is True
-    assert forbidden.executed is True
+    assert forbidden.executed is False, "an off-plan tool must not run"
 
     # At least one warning must be a drift/off-plan warning for forbidden_tool.
     # The tool name lives in the structured _fields dict (not the message text).

@@ -481,6 +481,40 @@ def _schema_tool_name(schema: dict[str, object]) -> str:
     return ""
 
 
+def _off_plan_block(tool_name: str, plan_tools: frozenset[str]) -> str:
+    """The refusal a tool gets for being outside the TASK PLAN (ESC-29).
+
+    Distinct from a bounds refusal on purpose. `bounds_guard.check_effective_bounds`
+    says "not permitted by this owl's bounds" — here that would be false, because the
+    owl DOES hold the tool. Only the plan omitted it, so the recovery is different and
+    the message has to say which situation this is.
+
+    THE REFUSAL CARRIES THE APPEAL. A narrow envelope that cannot be widened is the
+    same defect fixed earlier for owl_build: the operator's answer becomes unreachable
+    rather than merely unsought. There is no runtime API to widen a durable task's
+    envelope, so the honest appeal is to say so and name the reachable route — finish
+    with what the plan allows, or report that the plan was insufficient, which is a
+    thing a human reads. Promising a widening mechanism that does not exist would be
+    worse than refusing plainly.
+
+    Names the WHOLE permitted list, following the precedent set in `bounds_guard`:
+    Bakir, 2026-08-19, "Agent should have access to all list to choose."
+    """
+    allowed = sorted(plan_tools)
+    lines = [
+        f"The action '{tool_name}' is outside this task's plan and was not run.",
+    ]
+    if allowed:
+        lines.append("This task's plan permits: " + ", ".join(allowed) + ".")
+    lines.append(
+        "This is the PLAN's limit, not your owl's — you hold this tool on other "
+        "tasks. Finish using the tools above if you can. If the plan is genuinely "
+        "insufficient, say so plainly in your answer and stop, so it can be "
+        "re-planned; do not retry this tool."
+    )
+    return "\n".join(lines)
+
+
 def _exclude_spawn_tools(schemas: list[dict[str, object]]) -> list[dict[str, object]]:
     """Drop spawn/delegate tools from a presented schema list (depth>0 children)."""
     return [s for s in schemas if _schema_tool_name(s) not in _CHILD_EXCLUDED_TOOLS]
@@ -1414,8 +1448,6 @@ async def _run_with_tools(
     # F3.1 — within a single run, a tool denied once must not re-prompt the user
     # if the model stubbornly re-calls it; short-circuit subsequent calls.
     denied_this_run: set[str] = set()
-    # E2-S3 — off-plan tools already drift-logged this run (de-duplicate per tool).
-    drift_audited: set[str] = set()
     # W3.T14 — capability_tags already auto-substituted this turn (one route-around
     # per capability per turn; a second failure of the same class falls through to
     # the honest TOOL_FAILED marker rather than substituting again).
@@ -1674,17 +1706,31 @@ async def _run_with_tools(
                 }},
             )
             return bounds_block
-        # E2-S3 — drift telemetry (OBSERVE-ONLY). A durable task carries a
-        # least-privilege task_envelope; a tool outside it still runs (the hard
-        # boundary owl∩ceiling already permitted it) but is logged once as drift.
-        # Honest-case telemetry, NOT adversarial detection. Never blocks.
+        # E2-S3 — the task envelope is a REAL BOUNDARY (ESC-29, Bakir 2026-08-21).
+        # It was observe-only: a tool outside the plan ran anyway and was logged as
+        # drift. It now REFUSES.
+        #
+        # Deliberately NOT folded into `compute_effective_bounds`. That composes
+        # owl.bounds ∩ creation_ceiling and its refusal says "not permitted by this
+        # owl's bounds" — which would be FALSE here and, worse, unactionable: the owl
+        # DOES hold this tool, the plan simply omitted it. Two different refusals need
+        # two different recoveries, so this one carries its own.
+        #
+        # Scope, measured before the change: only the durable path sets
+        # `task_envelope` (task_runner / store / recovery), so an interactive chat turn
+        # carries None and is untouched. Off-plan use ran at 2/day over the five days
+        # before this shipped (452 all-time, but 20-40/day back in July).
         te = state.task_envelope
-        if te is not None and te.tools is not None and name not in te.tools and name not in drift_audited:
-            drift_audited.add(name)
+        if te is not None and te.tools is not None and name not in te.tools:
             log.engine.warning(
-                "[authz] drift: off-plan tool used",
-                extra={"_fields": {"tool": name, "owl": state.owl_name, "trace_id": state.trace_id}},
+                "[authz] task plan: off-plan tool REFUSED",
+                extra={"_fields": {
+                    "tool": name, "owl": state.owl_name, "trace_id": state.trace_id,
+                    "axis": "tools", "denied_by": "task_envelope",
+                    "plan_permits": sorted(te.tools),
+                }},
             )
+            return _off_plan_block(name, te.tools)
         t = tool_registry.get(name)
         if t is None:
             log.engine.warning("[pipeline] execute: unknown tool in dispatch", extra={"_fields": {"tool": name}})

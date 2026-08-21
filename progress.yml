@@ -667,6 +667,50 @@ current:
         recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
+    ESC_29_the_task_envelope_becomes_a_REAL_BOUNDARY:
+      answer: "MAKE IT A REAL BOUNDARY. A tool outside the plan is REFUSED, not logged as drift."
+      recorded_as_HIS_call_against_my_recommendation: >-
+        I recommended "ADD, never remove" — presented = stable base ∪ envelope — on the
+        grounds that the envelope enforces nothing today and is routinely wrong about
+        what a task needs. He chose enforcement instead, which is the coherent opposite:
+        if the narrowing is a genuine least-privilege boundary then presenting fewer
+        tools is CORRECT, and the array changing between turns stops being a Law 2
+        violation and becomes a real capability change honestly reflected.
+      THE_RISK_I_FLAGGED_AND_HE_ACCEPTED_stated_in_numbers: >-
+        452 tool uses in the retained logs are off-plan and currently SUCCEED, because
+        the hard boundary (owl.bounds ∩ creation_ceiling) already permits them. Under
+        enforcement every one of those is refused. 96% are the two most-needed tools —
+        web_fetch 296 and web_search 139 — across owls Brain (284), headhunter (82),
+        secretary (40), scout (17), sysdesign (11). This is not a theoretical regression:
+        it is a measured list of things that work today and will stop.
+      THEREFORE_THE_IMPLEMENTATION_MUST_CARRY_AN_APPEAL: >-
+        A narrow envelope that cannot be widened is the SAME defect this session already
+        fixed once for owl_build — "the tool by which an owl asks for authority was gated
+        by the authority it lacked ... a ceiling that cannot be APPEALED is not a
+        legitimate choice, because the operator's answer becomes unreachable rather than
+        merely unsought" (0f1431e9). Enforcing the envelope without a widening path would
+        strand any task whose plan was incomplete, which — at 452 measured instances — is
+        most of them. The refusal must be recoverable IN-TURN and must say how.
+      AND_IT_DOES_NOT_BY_ITSELF_CLOSE_D05_4: >-
+        Stated so it is not assumed. Enforcement makes the narrowing LEGITIMATE; it does
+        not make the presented array stable. A lane will still swing 6-7 -> 23-36 tools
+        between an enveloped turn and a plain one, and the position-0 cache marker is
+        still invalidated on each swing. What changes is that the swing now reflects a
+        real permission difference rather than an accident, which is a defensible reading
+        of Law 2 but a different one from "the array must not change".
+    ESC_30_the_local_console_is_an_OFFICIAL_ORIGIN:
+      answer: "YES. Register the CLI/socket adapter as a gateway channel."
+      what_it_means: >-
+        Only `telegram` registers today (measured: 585 registrations, and it is the sole
+        entry in ChannelRegistry). So an authority request from the operator's own
+        terminal is currently UNOFFICIAL and prompts — on the most attended surface there
+        is, which contradicts "never ask me to enable anything". Registering the console
+        makes provenance match reality.
+      the_counter_argument_kept: >-
+        The console is reachable by anything running on the box, including an owl that
+        holds shell. So it is a weaker origin claim than an authenticated remote channel,
+        and this widens what counts as official. He weighed that and chose it; recorded
+        so the trade is visible if it ever matters.
     D05_4_ROOT_CAUSE_CORRECTED_2026_08_21:
       RETRACTION: >-
         The block below (D05_4_ROOT_CAUSE_FOUND, commit e0d2b949) names the browser
