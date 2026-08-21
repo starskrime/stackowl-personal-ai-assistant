@@ -1320,7 +1320,31 @@ class OpenAIProvider(ModelProvider):
             _INPUT_TOKEN_SAFETY_MARGIN,
             int(input_tokens * _INPUT_ESTIMATE_ERROR_RATE),
         )
-        headroom = window - input_tokens - margin
+        # THE MARGIN IS A RESERVE, NOT A BUDGET — and spending it is what put ten
+        # ContextWindowExceededError 400s in the log on 2026-08-21, at exactly one
+        # token over the window.
+        #
+        # `margin` exists to cover the estimate's error. Subtracting it once corrects
+        # the estimate; the remainder was then handed back in full as max_tokens, so a
+        # request whose estimate was wrong by EXACTLY the declared rate summed to the
+        # window precisely:
+        #
+        #     input_est 57,716 + margin 14,429 = 72,145  (real input was 72,146)
+        #     + headroom 190,000                          (the log shows 189,999)
+        #     = 262,144, the window, with zero slack
+        #
+        # Subtracting it TWICE is the fix: once to correct the estimate, once to keep
+        # as actual slack. An error at the declared rate now leaves `margin` tokens
+        # spare instead of none, and only an error of TWICE the admitted rate can
+        # overflow. This costs a proportionally smaller answer on a large prompt and
+        # nothing at all on a small one, where max_output_tokens still binds.
+        #
+        # It is arithmetic, deliberately, not classification: the OTHER half of this
+        # failure — the COMPRESS actuator being unreachable because
+        # `_resilient_round` keys PAYLOAD_TOO_LARGE on status 413 while this gateway
+        # returns 400 — cannot be fixed without either English matching (banned) or a
+        # per-backend declaration, which is D04.1's thesis and is recorded there.
+        headroom = window - input_tokens - 2 * margin
         if headroom < _MIN_OUTPUT_TOKENS:
             log.engine.warning(
                 "[openai] _output_cap: prompt leaves little/no headroom for output — "
