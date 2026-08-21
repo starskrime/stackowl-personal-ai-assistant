@@ -374,6 +374,30 @@ current:
       alert. Seventh time this session that a partial view of a record was read as
       the whole record; recorded because the correction came from printing the
       whole `fields` object rather than the one key I had assumed mattered.
+    TRAFFIC_ARRIVED_AND_THE_CHECKS_ARE_STILL_OPEN_2026_08_21_1845Z: >-
+      30 rebuilds have now run since the boot and the promoted INFO line is
+      producing data — so the instrument works. NEITHER CHECK CAN BE CLOSED ON IT,
+      and the reason is the denominator, not the result.
+      EVERY ONE OF THE 30 IS AN `incident-*` LANE and each (lane, owl) appears
+      EXACTLY ONCE — 10 incident RCA runs x 3 owls (rca_gatherer, hypothesis,
+      verifier). A first sighting is not a comparison: the old lane-keyed audit
+      would not have warned on these either, so "0 warnings" here is 0 over 0
+      opportunities and proves nothing about the fix.
+      SAME FOR THE BASIS. All 30 read `measured == basis`, which looks like the
+      mechanism doing nothing — it is every key being STAMPED for the first time.
+      A reused basis can only show up as `measured != basis`, which requires a
+      SECOND rebuild on the same key, which requires a multi-turn conversation
+      whose memo is wiped mid-session. None has occurred.
+      SO THE CHECKS WAIT ON A SHAPE OF TRAFFIC THE PLATFORM'S OWN AUTONOMOUS WORK
+      DOES NOT PRODUCE: a multi-turn interactive lane. That is a better statement
+      of the wait than "needs traffic", and it is worth saying plainly — the
+      mechanism is proven by unit test (`test_the_basis_is_stamped_once_and_reused`,
+      `test_a_capability_flip_keeps_the_basis`) and NOT by production observation.
+      Claiming otherwise would be D01.1's defect exactly: a test that writes its own
+      file passes forever.
+      WHAT IS CONFIRMED LIVE: the line is at INFO and emits both figures, the memo
+      path is exercised 30 times, and `tools=40` on every rebuild — the
+      tool_count_cap binding, consistent with 36 of 36 evictions naming the cap.
     check_1_no_warning_without_a_conversation: >-
       OPEN, and it needs a DENOMINATOR before silence means anything. Baseline
       taken before the fix went live: 12 such warnings today, 112 over six days.
