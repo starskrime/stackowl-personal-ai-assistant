@@ -317,6 +317,44 @@ current:
   wave: 2
   item: D05.4
   stage: validate
+  WHERE_THIS_SESSION_ENDED_2026_08_21:
+    headline: >-
+      D05.4 is at validate:partial / document:partial and CANNOT reach done without
+      a shape of traffic only real use produces — a multi-turn interactive lane
+      whose memo is invalidated mid-conversation. Everything else on the item is
+      done and pushed (24 commits, 46dd948f..64a29544).
+    the_two_checks_and_EXACTLY_what_closes_them: >-
+      I1 — a `tools array CHANGED` warning must never fire on a run with no
+      session_id. I2 — a rebuild must reproduce the array, visible as a
+      `presented tools — rebuilt` record where `fixed_cost_measured` differs from
+      `fixed_cost_basis` while `tools` does not change.
+      BOTH ARE 0-OVER-0 TODAY, not passing. Every rebuild since the fix is a
+      distinct `incident-*` lane seen exactly once, so neither check has had a
+      discriminating opportunity. The Verification section in designs/D05.4.md now
+      ships the denominator query beside each check for this reason.
+      RUN IT AS: bound on the current boot (the section shows how) and require the
+      rebuild count to be non-zero before reading the warning count.
+    what_ALSO_shipped_and_is_LIVE_VERIFIED: >-
+      Migration 0120 (the owl-ratings probe was structurally over its 5s budget —
+      0 timeouts across 32 sweeps after, against 5 of 5 before); the CodeWatcher
+      now watches `*.sql` (a migration could never self-apply, silently); and
+      `AllProvidersUnavailableError` no longer renders one reason as
+      "n; o;  ; f; a; s; t". Platform since the last boot: 2,376 INFO, 9 WARNING,
+      ZERO ERROR.
+    the_red_test_sweep_is_CLOSED: >-
+      Every directory swept. 13 failures found, all verified pre-existing at
+      46dd948f, all 13 root-caused and fixed. tests/journeys went 11 failures -> 0.
+    WAITING_ON_BAKIR: >-
+      ESC-31 + ESC-31b (one decision: should the memo AND the hydration set key on
+      the conversation rather than the lane — three stores, one confusion),
+      ESC-32 (does the prompt-part audit move too — measure first), ESC-33 (is a
+      timed-out probe UNKNOWN rather than DOWN). Plus the three that were already
+      open: ESC-17, ESC-19, ESC-20.
+    NOT_STARTED_AND_DELIBERATELY_SO: >-
+      DEBT-INCIDENT-STORM (246 incidents from 5 signatures in one day; dedup is
+      implemented and the effect is absent — two candidate causes, NOT chosen
+      between) and DEBT-SKILL-CATALOG-ALERT. Both are new arcs; starting one
+      mid-item is how items stop finishing.
   D05_4_ARCHITECT_AND_IMPLEMENT_2026_08_21:
     doc: docs/reference-mapping/designs/D05.4.md
     headline: >-
