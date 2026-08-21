@@ -1,4 +1,4 @@
-"""CodeWatcher — quiet-period debounce over a watched *.py tree.
+"""CodeWatcher — quiet-period debounce over a watched source tree.
 
 Drives ``_check_once`` directly with real files (explicit mtimes via os.utime)
 and an injected clock, so settle timing is deterministic and fast — no sleeps,
@@ -172,3 +172,60 @@ async def test_threaded_run_dispatches_onto_loop(tmp_path: Path) -> None:
     finally:
         watcher.stop()
     assert fired.is_set()
+
+
+# ---------------------------------------------------------------------------
+# A migration is a source change too (2026-08-21)
+# ---------------------------------------------------------------------------
+
+def test_a_new_migration_triggers_a_restart(tmp_path: Path) -> None:
+    """THE SELF-HEALING GAP THIS CLOSES, found by shipping migration 0120 and
+    watching it not apply.
+
+    Migrations run at startup phase 1, so a new one only takes effect on a
+    restart — and this watcher, the thing that restarts the core, scanned
+    ``rglob("*.py")`` and could not see one. The migration sat on disk, committed
+    and tested, with ``schema_migrations`` still reading the previous version and
+    nothing saying so. The tree agreed with the commit and neither agreed with the
+    database.
+    """
+    clock = FakeClock()
+    src = tmp_path / "src"
+    migrations = src / "db" / "migrations"
+    migrations.mkdir(parents=True)
+    _write(src / "a.py", "x = 1\n", mtime=500.0)
+    _write(migrations / "0001_x.sql", "CREATE INDEX IF NOT EXISTS i ON t(a);", mtime=500.0)
+    fired: list[int] = []
+    watcher = CodeWatcher(
+        [src], lambda: fired.append(1), quiet_period_s=300.0, clock=clock,
+    )
+    watcher._on_start()
+
+    _write(migrations / "0002_y.sql", "CREATE INDEX IF NOT EXISTS j ON t(b);", mtime=600.0)
+    watcher._check_once()
+    assert fired == [], "must debounce, not fire on first sighting"
+    clock.advance(301.0)
+    watcher._check_once()
+    assert fired == [1], "a new .sql migration must settle into a restart"
+
+
+def test_an_unwatched_suffix_still_does_not_trigger_a_restart(tmp_path: Path) -> None:
+    """The other jaw. Widening the scan to every file would restart the core on a
+    log write, a stray editor swap file or a dropped artefact — so the suffix list
+    is the boundary, and it is asserted rather than assumed."""
+    clock = FakeClock()
+    src = tmp_path / "src"
+    src.mkdir()
+    _write(src / "a.py", "x = 1\n", mtime=500.0)
+    fired: list[int] = []
+    watcher = CodeWatcher(
+        [src], lambda: fired.append(1), quiet_period_s=300.0, clock=clock,
+    )
+    watcher._on_start()
+
+    _write(src / "notes.md", "hello", mtime=600.0)
+    _write(src / "data.json", "{}", mtime=600.0)
+    watcher._check_once()
+    clock.advance(301.0)
+    watcher._check_once()
+    assert fired == [], "only source suffixes may restart the core"

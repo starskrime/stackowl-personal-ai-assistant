@@ -4,7 +4,7 @@ Models :class:`stackowl.config.watcher.ConfigWatcher` (daemon-thread mtime poll,
 cross-thread dispatch via ``call_soon_threadsafe``) but differs in two ways the
 dev hot-restart needs:
 
-* It watches a *tree* of ``*.py`` files under ``watch_paths`` (an aggregate
+* It watches a *tree* of source files under ``watch_paths`` (an aggregate
   signature of (path, mtime)), not a single config file.
 * Its debounce is a **quiet-period** settle, not a one-tick settle: a detected
   change is held until ``quiet_period_s`` elapses with NO further change, so a
@@ -30,9 +30,29 @@ log = logging.getLogger("stackowl.runtime")
 # A frozen, comparable snapshot of the watched tree: sorted (path, mtime) pairs.
 Signature = tuple[tuple[str, float], ...]
 
+#: What counts as "the source changed".
+#:
+#: ``.sql`` JOINED ``.py`` ON 2026-08-21, and it is a self-healing gap rather than a
+#: nicety. Migrations are applied at startup phase 1, so a new migration only takes
+#: effect on a restart — and this watcher, the thing that restarts the core, could
+#: not see one. Migration 0120 was committed and then sat unapplied on disk with
+#: ``schema_migrations`` still reading 0119 and nothing saying so, until an
+#: unrelated ``.py`` edit happened to trigger a restart for its own reasons.
+#:
+#: That is the platform hot-healing onto new CODE but not onto new SCHEMA, and the
+#: failure is silent: the tree, the commit and the tests all agree the migration
+#: exists while the database does not have it. The same debounce, drain and
+#: exec-replace apply — a half-written file is covered by the quiet period exactly
+#: as a half-written module already is.
+_WATCHED_SUFFIXES = (".py", ".sql")
+
 
 class CodeWatcher(PolledDaemonThread):
-    """Polls ``*.py`` mtimes under ``watch_paths`` and fires ``on_change`` on settle.
+    """Polls source mtimes under ``watch_paths`` and fires ``on_change`` on settle.
+
+    Watched suffixes are :data:`_WATCHED_SUFFIXES` — ``.py`` for code and ``.sql``
+    for migrations, which need a restart to be applied and so need one to be
+    noticed.
 
     Thread lifecycle (start/stop/loop capture/poll loop) lives in
     PolledDaemonThread, shared with ConfigWatcher — this class owns only the
@@ -75,15 +95,17 @@ class CodeWatcher(PolledDaemonThread):
         self._pending_sig = None
 
     def _scan(self) -> Signature:
-        """Aggregate (path, mtime) over every ``*.py`` under the watched paths."""
+        """Aggregate (path, mtime) over every watched source file under the paths."""
         entries: list[tuple[str, float]] = []
         for root in self._paths:
-            if root.is_file() and root.suffix == ".py":
+            if root.is_file() and root.suffix in _WATCHED_SUFFIXES:
                 mtime = self._mtime(root)
                 if mtime is not None:
                     entries.append((str(root), mtime))
                 continue
-            for path in root.rglob("*.py"):
+            for path in root.rglob("*"):
+                if path.suffix not in _WATCHED_SUFFIXES:
+                    continue
                 mtime = self._mtime(path)
                 if mtime is not None:
                     entries.append((str(path), mtime))
