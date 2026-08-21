@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import ClassVar, Literal
 
 log = logging.getLogger("stackowl.security")
@@ -307,11 +307,19 @@ class ToolUseUnsupportedError(DomainError):
 
 
 class AllProvidersUnavailableError(InfrastructureError):
-    """Raised when cascade finds all providers OPEN."""
+    """Raised when cascade finds all providers OPEN.
 
-    def __init__(self, details: list[str]) -> None:
-        self.details = details
-        super().__init__("All providers unavailable: " + "; ".join(details))
+    ``details`` accepts a single reason as well as a list of them, and that is not
+    politeness — a ``str`` is iterable, so the previous ``"; ".join(details)``
+    silently rendered ``"no fast provider"`` as ``"n; o;  ; f; a; s; t..."``. The
+    type hint said ``list[str]`` and nothing enforced it, so the most likely
+    mistake produced an error message that destroyed its own payload, which is the
+    one thing an error message must not do. Found 2026-08-21 in journey logs.
+    """
+
+    def __init__(self, details: str | Sequence[str]) -> None:
+        self.details: list[str] = [details] if isinstance(details, str) else list(details)
+        super().__init__("All providers unavailable: " + "; ".join(self.details))
 
 
 class OwlTimeoutError(InfrastructureError):

@@ -308,8 +308,19 @@ class _FakeProviderRegistry:
     def get_by_tier(self, tier: str) -> object:
         return self._p
 
-    def get_with_cascade(self, tier: str) -> object:
-        return self._p
+    def get_with_cascade(self, tier: str) -> tuple[object, str]:
+        """(provider, model), matching ProviderRegistry.get_with_cascade.
+
+        RETURNED A BARE PROVIDER UNTIL 2026-08-21, and the real signature is
+        `tuple[ModelProvider, str]`. Production unpacks it (`provider, model =
+        resolved` in owls/router.py and pipeline/delivery_gate.py), so the crash
+        and recovery paths — the only ones in this file that reach the router —
+        died on `TypeError: cannot unpack non-iterable _RecoveringProvider
+        object`, the recovery aborted, and the task stayed `pending`. The test
+        then reported "recovered task did not complete", which is true and blames
+        the wrong thing: the double had drifted from the contract, not the loop.
+        """
+        return (self._p, "test-model")
 
 
 @pytest.fixture()

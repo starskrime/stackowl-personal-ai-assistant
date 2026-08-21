@@ -150,8 +150,16 @@ class _FakeProviderRegistry:
     def get_by_tier(self, tier: str) -> _ExplodingProvider:
         return self._p
 
-    def get_with_cascade(self, tier: str) -> _ExplodingProvider:
-        return self._p
+    def get_with_cascade(self, tier: str) -> tuple[_ExplodingProvider, str]:
+        """(provider, model), matching ProviderRegistry.get_with_cascade.
+
+        RETURNED A BARE PROVIDER UNTIL 2026-08-21. Production unpacks it, so the
+        apology cascade died on `TypeError: cannot unpack non-iterable
+        _ExplodingProvider object` BEFORE ever reaching the exploding provider this
+        test exists to exercise. The merge-gate assertion then failed for a reason
+        that had nothing to do with the merge gate.
+        """
+        return (self._p, "test-model")
 
 
 # --------------------------------------------------------------------------- #
