@@ -46,7 +46,10 @@ class ProviderEntry:
     models: tuple[str, ...] = field(default_factory=tuple)
     # Subset of ``models`` known to be vision/multimodal-capable (E10-S1). Lets the
     # onboarding picker surface a vision-capable choice; the runtime capability flag
-    # is decided independently by ``providers.vision_models.is_vision_model``.
+    # is now `ProviderConfig.supports_vision`, which DEFAULTS TO ENABLED (Bakir's
+    # standing rule, 2026-08-20). This catalog field stays a PICKER hint for
+    # onboarding only — it never decided the runtime flag, and now there is no
+    # runtime list for it to disagree with.
     vision_models: tuple[str, ...] = field(default_factory=tuple)
     tier: str = "powerful"
     needs_api_key: bool = True

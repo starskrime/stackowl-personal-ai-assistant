@@ -75,35 +75,48 @@ def test_gemini_inline_data_shape() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# supports_vision flips on the configured model.
+# supports_vision follows the DECLARATION, and defaults to enabled.
 # --------------------------------------------------------------------------- #
 @pytest.mark.parametrize(
-    ("protocol", "vision_model", "text_model", "cls"),
+    ("protocol", "cls"),
     [
-        ("openai", "gpt-4o", "gpt-3.5-turbo", OpenAIProvider),
-        ("openai", "llava", "llama3.2", OpenAIProvider),
-        ("anthropic", "claude-sonnet-4-6", "claude-2.1", AnthropicProvider),
-        ("gemini", "gemini-2.5-pro", "gemini-1.0-pro", GeminiProvider),
+        ("openai", OpenAIProvider),
+        ("anthropic", AnthropicProvider),
+        ("gemini", GeminiProvider),
     ],
 )
-def test_supports_vision_flag(
-    monkeypatch: pytest.MonkeyPatch,
-    protocol: str,
-    vision_model: str,
-    text_model: str,
-    cls: type,
+def test_supports_vision_defaults_to_enabled_and_is_opt_out(
+    monkeypatch: pytest.MonkeyPatch, protocol: str, cls: type,
 ) -> None:
+    """REWRITTEN 2026-08-20. This used to assert the flag flipped on the MODEL NAME —
+    that a model called "gpt-3.5-turbo" reported False while "gpt-4o" reported True.
+
+    That behaviour is gone with the 33-token vendor-substring list that produced it,
+    which recognised 0 of 99,573 real calls on the live deployment and broke two
+    standing rules (no hardcoded keyword lists; no vendor names in src/). Under Bakir's
+    standing rule — "make it default, never ask me to enable anything" — a backend is
+    vision-capable unless it says otherwise, whatever its model is called.
+
+    The old test was also passing `tier="standard"`, a field that does not exist
+    (`tiers` is the real one). It was silently dropped, which is exactly the defect
+    fixed in the same session; the config now warns about it, so the typo is corrected
+    here rather than left to trip the new validator.
+    """
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
 
-    def _mk(model: str) -> Any:
+    def _mk(model: str, **over: Any) -> Any:
         cfg = ProviderConfig(
-            name="p", protocol=protocol, default_model=model, tier="standard",
+            name="p", protocol=protocol, default_model=model, tiers=("standard",),
             base_url="http://x" if protocol == "openai" else None,
+            **over,
         )
         return cls(cfg, api_key="k")
 
-    assert _mk(vision_model).supports_vision is True
-    assert _mk(text_model).supports_vision is False
+    # Nothing declared -> capable, regardless of what the model is named.
+    assert _mk("some-private-gateway-model").supports_vision is True
+    assert _mk("a-model-nobody-has-a-list-for").supports_vision is True
+    # The only way off is an explicit opt-out.
+    assert _mk("anything", supports_vision=False).supports_vision is False
 
 
 # --------------------------------------------------------------------------- #

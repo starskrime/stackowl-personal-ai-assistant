@@ -438,7 +438,10 @@ class ModelProvider(ABC):
         caller routing an image (the vision selector) checks this flag and reports
         "no vision backend" rather than letting a text-only provider drop the
         bytes. A provider whose ``default_model`` is a known vision/multimodal model
-        overrides this to True (see ``providers.vision_models.is_vision_model``).
+        overrides this to True. Concrete providers answer from
+        ``ProviderConfig.resolve_vision()``, which defaults to ENABLED — the
+        33-token vendor-substring list that used to decide it was deleted on
+        2026-08-20 having recognised 0 of 99,573 real calls.
         """
         return False
 

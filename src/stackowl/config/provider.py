@@ -133,10 +133,12 @@ class ProviderConfig(BaseModel):
     # an uncounted wrap-up generation run as a 21st+ step). An owl with explicit caps
     # still overrides via max_iterations at the call site.
     tool_max_iterations: int = DEFAULT_TURN_MAX_STEPS
-    # WHETHER THIS BACKEND READS IMAGES — declared, because it cannot be inferred.
+    # WHETHER THIS BACKEND READS IMAGES. DEFAULT: YES.
     #
-    # None = fall through to `providers.vision_models.is_vision_model`, the 33-token
-    # vendor-substring heuristic, so every existing deployment is unchanged.
+    # BAKIR'S STANDING RULE, 2026-08-20: "make it default, never ask me to enable
+    # anything, everything should be enabled at system level." So None does NOT mean
+    # "go and guess" — it means CAPABLE. An operator sets False for the rare backend
+    # that genuinely cannot, and sets nothing the rest of the time.
     #
     # MEASURED 2026-08-20: that heuristic recognised 0 of 99,573 recorded calls across
     # all 8 models this deployment has ever run. Its list carries `gemma3` while the box
@@ -153,17 +155,21 @@ class ProviderConfig(BaseModel):
     # capabilities are not derivable from its name by anyone, which is precisely where a
     # declaration is more honest than an inference.
     #
-    # Rung ONE of the ladder model_window.py already proves: override, then probe, then
-    # catalog, then a conservative default. The heuristic stays as the last rung until
-    # the probe exists — deleting it first would regress deployments it does describe.
+    # THE VENDOR TOKEN LIST IS GONE, and defaulting to True is what allowed that. It
+    # broke two standing rules on its own (no hardcoded keyword lists; no vendor names
+    # in src/) and it was not a fallback anyone could rely on — it recognised 0 of
+    # 99,573 calls. Replacing "guess from the name" with "assume capable, and let a
+    # real failure say otherwise" is the same doctrine the rest of the platform runs
+    # on: measure the EFFECT, never infer the capability.
     supports_vision: bool | None = None
 
     def resolve_vision(self, model: str | None = None) -> bool:
         """Whether ``model`` (default: this backend's own) can read images.
 
         Precedence: a per-model declaration, then this backend's declaration, then
-        the name heuristic. Never raises — a capability check that throws would take
-        the turn with it.
+        ENABLED. Never raises — a capability check that throws would take the turn
+        with it, and it fails to True for the same reason: the operator should never
+        have to switch a capability on.
         """
         try:
             target = model or self.default_model
@@ -172,9 +178,8 @@ class ProviderConfig(BaseModel):
                     return entry.supports_vision
             if self.supports_vision is not None:
                 return self.supports_vision
-            from stackowl.providers.vision_models import is_vision_model
-
-            return is_vision_model(target)
+            # DEFAULT ENABLED. Nothing to turn on.
+            return True
         except Exception as exc:  # pragma: no cover — defensive
             from stackowl.infra.observability import log
 

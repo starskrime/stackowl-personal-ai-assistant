@@ -59,17 +59,25 @@ class TestTheOperatorCanDeclareIt:
         """The exact live case: a private gateway model no list can describe."""
         assert _cfg(supports_vision=True).resolve_vision() is True
 
-    def test_a_declared_false_wins_over_a_recognised_name(self) -> None:
-        """The override must work in BOTH directions. A model whose name suggests
-        vision but whose endpoint refuses images is the same problem mirrored, and an
-        override that could only turn things ON would leave it unfixable."""
+    def test_a_declared_false_is_the_only_way_to_turn_it_off(self) -> None:
+        """The override exists for the rare backend that genuinely cannot. It is an
+        OPT-OUT, never an opt-in — the operator sets nothing in the normal case."""
         assert _cfg(default_model="llava", supports_vision=False).resolve_vision() is False
+        assert _cfg(supports_vision=False).resolve_vision() is False
 
-    def test_unset_falls_through_to_the_existing_heuristic(self) -> None:
-        """Silence must change nothing. Every deployment whose model names the list
-        DOES describe keeps working, which is why the list is not deleted yet."""
+    def test_unset_means_ENABLED_not_guessed(self) -> None:
+        """BAKIR'S STANDING RULE, 2026-08-20: "make it default, never ask me to enable
+        anything, everything should be enabled at system level."
+
+        So silence means CAPABLE, for every backend, whatever its model is named. This
+        is what let the 33-token vendor list be deleted outright: it recognised 0 of
+        99,573 real calls, so it was never a fallback anyone could rely on — and
+        "assume capable, let a real failure say otherwise" is the same doctrine the
+        rest of the platform runs on. Measure the EFFECT; never infer the capability.
+        """
         assert _cfg(default_model="llava").resolve_vision() is True
-        assert _cfg(default_model="neraai-v1-raw").resolve_vision() is False
+        assert _cfg(default_model="neraai-v1-raw").resolve_vision() is True
+        assert _cfg(default_model="anything-at-all").resolve_vision() is True
 
     def test_none_is_the_default_so_no_config_changes_meaning(self) -> None:
         assert ProviderConfig.model_fields["supports_vision"].default is None
@@ -119,10 +127,11 @@ class TestTheProvidersActuallyConsultIt:
         p = OpenAIProvider(_cfg(supports_vision=True), "k")
         assert p.supports_vision is True
 
-    def test_the_openai_provider_still_falls_through(self) -> None:
-        """Undeclared stays exactly as it was — byte-identical for every existing
-        deployment."""
+    def test_the_openai_provider_defaults_to_capable(self) -> None:
+        """Undeclared reaches the provider as CAPABLE, which is what makes vision
+        reachable on this deployment without the operator touching anything."""
         from stackowl.providers.openai_provider import OpenAIProvider
 
         assert OpenAIProvider(_cfg(default_model="llava"), "k").supports_vision is True
-        assert OpenAIProvider(_cfg(), "k").supports_vision is False
+        assert OpenAIProvider(_cfg(), "k").supports_vision is True
+        assert OpenAIProvider(_cfg(supports_vision=False), "k").supports_vision is False

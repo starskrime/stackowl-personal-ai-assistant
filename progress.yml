@@ -187,6 +187,34 @@ workflow:
 # RULES — non-negotiable, derived from Bakir's standing preferences.
 # ---------------------------------------------------------------------------
 rules:
+  everything_ships_enabled:
+    stated_by: Bakir
+    date: 2026-08-20
+    rule: >-
+      "Make it default. Never ask me to enable anything — everything should be enabled
+      at system level."
+    what_it_means_in_practice: >-
+      A capability defaults to ON. An operator switch exists only as an OPT-OUT, for the
+      rare deployment that genuinely cannot, and the normal case is that they set
+      nothing. A design that requires the operator to turn something on to get the
+      behaviour we intended has not shipped it — it has filed it.
+      This EXTENDS the older rule (a finished feature ships ON, not dormant behind a
+      flag) from flags to CAPABILITIES: it is no longer enough that the code path is
+      live if reaching it needs a config line.
+    worked_example: >-
+      Vision, 2026-08-20. The first fix made `supports_vision` declarable with a
+      fallback to a 33-token vendor-substring heuristic — which meant Bakir would have
+      had to add a YAML line to get a capability the platform already had the transport
+      for. Under this rule the default flipped to ENABLED and the heuristic was DELETED
+      outright. Defaulting to on is what made deleting it possible: a list that
+      recognised 0 of 99,573 real calls was never a fallback anyone could rely on, and
+      "assume capable, let a real failure say otherwise" is the same doctrine the rest
+      of the platform runs on — measure the EFFECT, never infer the capability.
+    the_check_to_apply: >-
+      Before shipping anything: "does this need the operator to switch it on?" If yes,
+      invert the default. Then ask the harder version — "is there an existing capability
+      that is off, or unreachable, purely because nobody set a flag?" — because this
+      rule is retroactive, not only forward-looking.
   process:
     - "READ docs/reference-mapping/PROCESS.md before picking up any item. It is the method."
     - "Port the DESIGN, never the code. Read Hermes until you can explain it, then write our own in our idiom, then state the divergence in the doc."
