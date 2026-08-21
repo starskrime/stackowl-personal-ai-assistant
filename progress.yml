@@ -317,6 +317,56 @@ current:
   wave: 2
   item: D16.3
   stage: architect
+  ESCALATIONS_ANSWERED_2026_08_21:
+    by: Bakir
+    E_owner_key_enforcement:
+      answer: "HEAL + REPORT, no enforcement at the write boundary."
+      consequence: >-
+        What ships stays: unreachable bookkeeping is retired automatically, work that
+        owes an answer is surfaced at ERROR, and nothing can merge tenants. A new bad
+        writer can still strand rows until the next sweep catches them — accepted,
+        because both enforcement paths cost more than that. Normalising was PROVEN to
+        merge tenants (two owners collided on the composite PK); raising would break any
+        caller whose principal row is not yet written.
+    E_mailbutler_shell:
+      answer: "WAIT for it to ask, decide then."
+      consequence: >-
+        No pre-emptive grant. The plumbing that made the ask impossible is fixed
+        (owl_build reachable via ROUTER_TOOLS; grant no longer routed into create), so
+        the request will now arrive carrying its actual goal — a concrete case to judge
+        rather than a permanent capability in the abstract. Note there is still no
+        UN-grant path, which is why judging the concrete case matters.
+    E_priority:
+      answer: "FINISH THE CHAIN to D04.1."
+      consequence: >-
+        D16.3's remaining slice, then D04.1 "Providers as plugins" — the item that turns
+        per-backend facts into data, expedited on 2026-08-15 because three live faults in
+        one day were all that class. Live-defect chasing yields to the chain unless
+        something is actively broken.
+    E2_who_may_extend_which_category:
+      answer: "EVERYTHING, INCLUDING PROMPT CONTRIBUTORS — maximum extensibility."
+      recorded_as_his_call_with_my_reasoning_kept: >-
+        My recommendation was "none yet, keep the seams internal", and he chose against
+        it. Recorded as HIS decision with the counter-argument intact rather than
+        silently dropped, because the next reader deserves both.
+        THE ARGUMENT AGAINST, unchanged and still true: seven extension points exist and
+        ZERO plugins have ever been installed, so there is no evidence an eighth is
+        wanted; and a prompt contributor is a larger trust surface than any gated tool —
+        third-party code composing the SYSTEM PROMPT, on every turn of the session, not
+        covered by consent, riding the frozen prefix for the life of an incarnation. It
+        is also a one-way door on first install: reversible today (0 plugin rows),
+        permanently not, the moment one third party registers.
+        WHAT MAKES HIS CALL WORKABLE, and it is the pattern D16.1 already established:
+        the point is CAPABILITY-GATED, exactly like lifecycle_hooks. A plugin declaring
+        a prompt contributor without the grant fails to load, loudly. That keeps
+        "extensible" from meaning "unguarded", and it is the same shape the seventh point
+        already ships.
+      changes_the_design: >-
+        designs/D16.3.md said the contributor interface does NOT join `_ABC_NAMES` and
+        gated promotion on this very question. That section is now superseded — the doc
+        must be corrected rather than left contradicting the decision, and the remaining
+        implement slice grows an 8th entry across the three tables that must agree
+        (_ABC_NAMES, CAPABILITY_FOR_EXTENSION_POINT, LocalPluginLoader._registries).
   ESCALATIONS_ANSWERED_2026_08_20:
     by: Bakir
     E1_the_items_verdict:
