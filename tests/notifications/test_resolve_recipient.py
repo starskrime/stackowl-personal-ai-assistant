@@ -42,10 +42,47 @@ async def test_a_composite_lane_resolves_through_the_store() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_composite_lane_without_a_store_is_unresolved_not_guessed() -> None:
-    """Falls through to the heuristic, which correctly refuses to parse it.
-    None means 'say so loudly' — never a fabricated recipient."""
-    assert await resolve_recipient("telegram", "owl:secretary:telegram:dm:72055773") is None
+async def test_a_composite_lane_without_a_store_is_PARSED_not_guessed() -> None:
+    """THE RULE CHANGED, and this test is rewritten rather than deleted so the
+    change stays legible.
+
+    It used to assert None here, on the reasoning that the heuristic "correctly
+    refuses to parse" a composite lane and that refusing is the safe answer.
+    Refusing turned out to BE the defect: with no recipient the deliverer falls
+    back to the adapter's shared ``_last_chat_id``, which is the cross-delivery bug
+    this whole module exists to prevent. Bakir hit the same stale assumption from
+    the consent side on 2026-08-19 — "session_key is not a chat id — denying (fail
+    closed)" — and could not create his email assistant, with his own chat id
+    sitting in the string being rejected.
+
+    `d1dd897a` gave the rule one home in ``channels/chat_id.py``, which states the
+    distinction this test now pins: reading the tail of a KNOWN structured format
+    (``owl:<owl>:<channel>:<kind>:<chat_id>``) is PARSING, not guessing. The
+    fail-closed contract is unchanged for anything that names no chat — see the
+    two tests below, which are the other jaw of the vice.
+
+    This test was RED for three days after that commit.
+    """
+    assert await resolve_recipient(
+        "telegram", "owl:secretary:telegram:dm:72055773"
+    ) == 72055773
+
+
+@pytest.mark.asyncio
+async def test_a_lane_that_names_no_chat_is_still_unresolved() -> None:
+    """The half that must NOT change. A fabricated recipient shows one user
+    another user's message, so anything that is neither a bare id nor a lane
+    ending in one stays None and the caller keeps failing closed."""
+    assert await resolve_recipient("telegram", "owl:secretary:telegram:dm:alice") is None
+    assert await resolve_recipient("telegram", "owl:secretary:telegram:dm:") is None
+    assert await resolve_recipient("telegram", "not-a-lane") is None
+
+
+@pytest.mark.asyncio
+async def test_an_empty_tail_is_not_the_chat_id_zero() -> None:
+    """A trailing separator leaves an empty segment. int("") raises, but a helper
+    that stripped and defaulted would address chat 0 — a stranger."""
+    assert await resolve_recipient("telegram", "owl:secretary:telegram:dm:") is None
 
 
 @pytest.mark.asyncio
