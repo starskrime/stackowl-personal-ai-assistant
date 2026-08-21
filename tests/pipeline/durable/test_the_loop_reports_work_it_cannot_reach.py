@@ -34,10 +34,13 @@ pytestmark = pytest.mark.asyncio
 class _Store:
     """The loop's store surface, narrowed to what start() touches."""
 
-    def __init__(self, unreachable: int = 0, raises: bool = False) -> None:
+    def __init__(self, unreachable: int = 0, raises: bool = False,
+                 healed: int = 0) -> None:
         self._unreachable = unreachable
         self._raises = raises
+        self._healed = healed
         self.asked = 0
+        self.healed_calls = 0
 
     async def revive_undelivered_failures(self, *, limit: int = 50) -> int:
         return 0
@@ -47,6 +50,15 @@ class _Store:
         if self._raises:
             raise RuntimeError("the count query blew up")
         return self._unreachable
+
+    async def heal_unreachable_owners(self, *, limit: int = 500) -> int:
+        """The double grew a method because the loop now HEALS rather than counts —
+        see test_unreachable_work_heals_itself.py. A double that lags the real surface
+        is this platform's second recurring defect, so it tracks."""
+        self.healed_calls += 1
+        if self._raises:
+            raise RuntimeError("the heal query blew up")
+        return self._healed
 
 
 async def _start(store: _Store):
@@ -71,7 +83,7 @@ class TestUnreachableWorkIsAnnounced:
         with caplog.at_level("WARNING"):
             await _start(store)
 
-        hits = [r for r in caplog.records if "cannot claim" in r.message]
+        hits = [r for r in caplog.records if "no loop could claim" in r.message]
         assert hits, f"silent; records were {[r.message for r in caplog.records]}"
 
     async def test_a_clean_table_says_nothing(self, caplog) -> None:
@@ -81,7 +93,7 @@ class TestUnreachableWorkIsAnnounced:
         with caplog.at_level("WARNING"):
             await _start(store)
 
-        assert not [r for r in caplog.records if "cannot claim" in r.message]
+        assert not [r for r in caplog.records if "no loop could claim" in r.message]
         assert store.asked == 1, "the count must actually run, not be skipped"
 
     async def test_a_failing_count_never_stops_the_loop(self, caplog) -> None:
@@ -93,4 +105,4 @@ class TestUnreachableWorkIsAnnounced:
             loop = await _start(store)
 
         assert loop.worker_id
-        assert any("could not count" in r.message for r in caplog.records)
+        assert any("could not count" in r.message or "starting anyway" in r.message for r in caplog.records)

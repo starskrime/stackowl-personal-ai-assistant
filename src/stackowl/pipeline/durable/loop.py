@@ -63,6 +63,7 @@ class _Store(Protocol):
     ) -> None: ...
     async def revive_undelivered_failures(self, *, limit: int = 50) -> int: ...
     async def count_pending_for_other_owners(self) -> int: ...
+    async def heal_unreachable_owners(self, *, limit: int = 500) -> int: ...
     async def reclaim_expired(self, *, now: Any = None) -> int: ...
     async def prune_completed(self, *, older_than_days: int = 1) -> int: ...
 
@@ -141,12 +142,20 @@ class TaskLoop:
         # decision (ESC-17), not a repair. Same fail-open contract as the sweep
         # above: bookkeeping must never stop the loop from starting.
         try:
+            # HEAL, DO NOT MERELY COUNT. This block used to only warn, and Bakir's rule
+            # of 2026-08-21 is what condemns that: "if you fix core issue platform
+            # should heal himself. If it does not, then platform has issue with self
+            # healing OR core issue not resolved." Both were true — the writer was
+            # fixed and 387 rows stayed exactly where they were, because detection is
+            # not healing and the standing rule is to build the actuator rather than
+            # file the debt.
+            healed = await self._store.heal_unreachable_owners()
             unreachable = await self._store.count_pending_for_other_owners()
-            if unreachable:
+            if healed or unreachable:
                 log.tasks.warning(
-                    "[loop] start: pending tasks exist that this loop cannot claim "
-                    "— they belong to another owner and nothing will ever run them",
-                    extra={"_fields": {"unreachable_pending": unreachable,
+                    "[loop] start: repaired work no loop could claim",
+                    extra={"_fields": {"healed": healed,
+                                       "still_unreachable": unreachable,
                                        "worker": self._worker}},
                 )
         except Exception as exc:

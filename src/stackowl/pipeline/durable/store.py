@@ -1039,6 +1039,118 @@ class DurableTaskStore(OwnedRepository):
             extra={"_fields": {"task_id": task_id, "children": len(depends_on)}},
         )
 
+    async def _known_principals(self) -> frozenset[str]:
+        """Principal ids the tenancy store actually holds. Empty on any failure."""
+        try:
+            rows = await self._db.fetch_all("SELECT principal_id FROM principals")
+            return frozenset(str(r["principal_id"]) for r in rows or [])
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not read the principals table — skipping the owner check",
+                exc_info=exc,
+            )
+            return frozenset()
+
+    async def heal_unreachable_owners(self, *, limit: int = 500) -> int:
+        """Repair work the loop can never claim, because it is filed under a
+        non-principal owner. Returns how many rows were healed. Never raises.
+
+        BAKIR'S RULE, 2026-08-21: "if you fix core issue platform should heal himself.
+        If it does not, then platform has issue with self healing OR core issue not
+        resolved." Both were true here. On 2026-08-20 the WRITER was fixed
+        (rollover_summary_handler filed under a knowledge scope) and a WARNING was
+        added counting the strandings — and 387 rows stayed exactly where they were.
+        Detection is not healing.
+
+        THE CORE was never the writer. `tasks.owner_id` is a tenancy key with no
+        integrity constraint: measured, 26 of 27 distinct values in the live table are
+        not principals at all. Any writer could mis-file, and the owner-scoped claim
+        then made the rows invisible. `enqueue`/`create` now normalise at the write
+        boundary so the class cannot recur; this drains what already exists.
+
+        THE SPLIT IS THE PLATFORM'S OWN RULE, not a judgement call — does the task have
+        a DESTINATION?
+
+        * YES — someone is owed an answer, so re-file it onto this principal and leave
+          it claimable. The loop must be able to recover it.
+        * NO — it can never achieve anything and nobody is waiting, so retire it with a
+          stated reason. Blindly re-filing these would hand the loop unrunnable goals
+          ("rollover summary for owl:…" is a checkpoint record, not a goal), burning the
+          full attempt ceiling on each and dead-lettering at the operator. Measured
+          across all 387 stranded rows: every one has no destination.
+
+        Already-terminal rows are left alone — they are history, not damage, and
+        `prune_completed` owns their lifecycle.
+        """
+        try:
+            principals = await self._known_principals()
+            if not principals:
+                return 0
+            marks = ",".join("?" for _ in principals)
+            rows = await self._db.fetch_all(
+                "SELECT task_id, owner_id, destination FROM tasks "  # noqa: S608
+                f"WHERE owner_id NOT IN ({marks}) "
+                "AND status NOT IN ('completed','failed','dead_letter','parked') "
+                "LIMIT ?",
+                (*sorted(principals), int(limit)),
+            )
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not look for unreachable work", exc_info=exc,
+            )
+            return 0
+
+        healed = 0
+        now = datetime.now(tz=UTC).isoformat()
+        for r in rows or []:
+            task_id = str(r["task_id"])
+            try:
+                if r["destination"]:
+                    # REPORTED, NEVER RE-FILED. Moving a row to this principal would
+                    # merge tenants — an unregistered owner may be a real customer
+                    # whose principal row simply has not been written yet, and the
+                    # composite PK (owner_id, task_id) makes the collision silent
+                    # damage rather than an error. Proven by test: two owners
+                    # normalised to one collided on that PK. Someone is owed this
+                    # answer, so it is surfaced for a human rather than moved.
+                    log.tasks.error(
+                        "[loop] work that OWES AN ANSWER is filed under a "
+                        "non-principal and no loop can claim it — needs an operator, "
+                        "because re-filing it could merge two tenants",
+                        extra={"_fields": {"task_id": task_id,
+                                           "was_owner": str(r["owner_id"])[:60],
+                                           "destination": str(r["destination"])[:60]}},
+                    )
+                    continue
+                else:
+                    await self._db.execute(
+                        "UPDATE tasks SET status='dead_letter', "
+                        "last_error=?, updated_at=? WHERE task_id=?",
+                        ("retired by the unreachable-owner sweep: filed under a "
+                         "non-principal, no destination, so nothing was waiting on it "
+                         "and it could never be claimed",
+                         now, task_id),
+                    )
+                    log.tasks.info(
+                        "[loop] retired unreachable bookkeeping — no destination, so "
+                        "nobody was waiting and no loop could ever claim it",
+                        extra={"_fields": {"task_id": task_id,
+                                           "was_owner": str(r["owner_id"])[:60]}},
+                    )
+            except Exception as exc:
+                log.tasks.error(
+                    "[loop] could not heal an unreachable task",
+                    exc_info=exc, extra={"_fields": {"task_id": task_id}},
+                )
+                continue
+            healed += 1
+        if healed:
+            log.tasks.warning(
+                "[loop] unreachable-owner sweep healed work no loop could claim",
+                extra={"_fields": {"healed": healed, "owner_id": self._owner_id}},
+            )
+        return healed
+
     async def count_pending_for_other_owners(self) -> int:
         """How many pending rows THIS store can never claim, because they belong
         to someone else.

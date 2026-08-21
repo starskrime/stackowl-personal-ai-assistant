@@ -187,6 +187,34 @@ workflow:
 # RULES — non-negotiable, derived from Bakir's standing preferences.
 # ---------------------------------------------------------------------------
 rules:
+  selfhealing_proves_the_root_cause:
+    stated_by: Bakir
+    date: 2026-08-21
+    rule: >-
+      "Always fix core issue, not current. Platform has self healing. So if you fix core
+      issue platform should heal himself. If it does not, then platform has issue with
+      self healing OR core issue not resolved."
+    why_it_is_more_than_fix_root_causes: >-
+      It makes the claim FALSIFIABLE. Anyone can assert they fixed the root cause; this
+      says the platform will tell you. After a real core fix, existing damage drains on
+      its own — stranded rows get claimed, blocked work resumes, degraded state repairs.
+      If it does not, exactly two explanations remain and both are actionable: the core
+      is not actually fixed (a writer or one path was fixed, the cause is upstream), or
+      self-healing has a gap (the actuator cannot see the damage, is not wired, or was
+      never built). Either way the answer is more work, never "shipped".
+    the_check_to_apply: >-
+      After every core fix, ask: WHAT EXISTING DAMAGE SHOULD NOW HEAL BY ITSELF, AND DID
+      IT? Name the mechanism that should drain it and go watch it. The phrases "the
+      existing rows are left as-is" and "escalated to Bakir" are the signature of a
+      half-fix — that is exactly where this rule bites.
+    worked_example_my_own_violation: >-
+      2026-08-20/21. `rollover_summary_handler` filed durable tasks under a knowledge
+      scope instead of a principal, so 387 rows — 72 still pending — were invisible to
+      the owner-scoped loop. I fixed the WRITER, added a WARNING counting the unreachable
+      rows, and left the 387 in place. DETECTION IS NOT HEALING. Under this rule the fix
+      was incomplete: a platform that can see 72 rows it will never run should drain or
+      retire them, not report them. Recorded as the worked example because it is the
+      exact shape the rule exists to catch.
   everything_ships_enabled:
     stated_by: Bakir
     date: 2026-08-20
