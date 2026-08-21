@@ -1740,6 +1740,111 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ARC-2026-08-20-provider-facts
+    found: 2026-08-20
+    found_by: "the D16.3 brainstorm panel — ten defects surfaced while answering a taxonomy question"
+    status: IN PROGRESS — one fixed, one REFUTED on verification, the rest recorded below
+    fixed:
+      - >-
+        A MISSPELLED PROVIDER KEY WAS SILENT. `ProviderConfig` declared no
+        `model_config`, so pydantic defaulted to extra="ignore" and DROPPED unknown
+        keys — verified by construction: three unknown keys accepted, no error, and
+        `supports_native_tools` stayed True. Its sibling `ModelOverride`, in the same
+        file, carries extra="forbid". Nine of ProviderConfig's seventeen fields are
+        unreachable from any `/provider` command, so the fields most likely to be
+        hand-typed were exactly the ones whose typos vanished — and every one of them
+        describes what a backend can DO.
+        FIXED by ANNOUNCING rather than forbidding: a model_validator(mode="before")
+        logs the provider name, the unknown keys and the known set at WARNING, and the
+        platform keeps booting. Forbidding is stricter and the Stability lens preferred
+        it, but this file is hand-edited YAML in deployments we cannot see and making a
+        previously-accepted config fail to boot on upgrade is a product decision.
+        Raised as E-provider-strict rather than taken unilaterally. The live config was
+        measured clean first: 4 entries, 7 known keys each, no unknown keys, no quirks.
+    refuted_on_verification: >-
+      THE PANEL SAID `OpenAIProvider.supports_document` WAS "A SECOND INSTANCE OF THE
+      VISION BUG". IT IS NOT, AND THE CODE SAYS SO IN ITS OWN DOCSTRING. Checked rather
+      than accepted: all three providers DO route document blocks
+      (`providers/_blocks.py`, called at openai_provider.py:1362), but
+      `openai_user_content` documents that "a non-image document has no portable
+      OpenAI-chat block, so it is sent as a descriptive text part — the OpenAI path is
+      the IMAGE path; PDF Mode B routes to Anthropic/Gemini document blocks". So
+      `supports_document == False` on the openai path is HONEST. Declaring it True
+      would route PDFs into a path that degrades the bytes to the string
+      "[attached application/pdf document: file]" — strictly worse than refusing.
+      RECORDED BECAUSE A FUTURE READER FOLLOWING THE PANEL RECORD WOULD HAVE "FIXED" A
+      CORRECT BEHAVIOUR. What remains true is a DEPLOYMENT fact, not a code defect: no
+      configured backend here speaks a document-capable protocol, so PDF Mode B cannot
+      work on this box, and `pdf.py:210` already says so at INFO (0 occurrences — nobody
+      has sent one).
+      CONTRAST WITH VISION, which IS a real defect: the openai image path works, so
+      vision is blocked purely by the 33-token substring list matching nothing. Same
+      symptom, opposite cause.
+    still_open:
+      - >-
+        VISION IS STRUCTURALLY UNREACHABLE. Verified independently: 0 of 99,573 recorded
+        calls across all 8 distinct models ever run are recognised by
+        `providers/vision_models.py`'s 33-token hardcoded vendor-substring list. The
+        transport works; only the recognition fails. Violates TWO standing rules (no
+        hardcoded keyword lists; no vendor names in src/). Blast radius is wider than
+        one tool: `VisionSelector.select()` can never return a provider, so
+        `vision_analyze`, `browser_vision` and GUI vision routing are all dead — and
+        `vision_analyze` is still advertised to the model on every turn because it
+        declares no `requires_capability`. Escalated as E5 (fix now vs fold into D04.1);
+        the panel's recommended shape is the ladder model_window.py already proves works
+        — operator override, live probe, catalog, conservative default — plus a `vision`
+        capability so a deployment with no vision backend HIDES the tool.
+      - >-
+        DEFAULT_WINDOW_FALLBACK = 1_000_000 fired 8 times across 8 distinct days against
+        a real 262,144 window — a 3.8x over-estimate of the trim budget — under a log
+        line whose `msg` is IDENTICAL to the success case (only `fields.probed: null`
+        differs), and memoized in `_WINDOW_CACHE` for the life of the process. The
+        compensating actuator `note_payload_limit` has fired ZERO times in the entire
+        log history, so it is unproven rather than proven-working. Detection and repair
+        both absent. Latent today only because real prompts run ~13K against 262K.
+      - >-
+        `ProviderConfig.quirks` is a write with no reader (1 grep hit, a docstring at
+        _resilient_round.py:97). All three lenses said DELETE rather than invent a
+        reader — it was created for a classifier that explicitly refuses to consume it
+        ("structural classification only, no English matching"). Not deleted yet: it is
+        a config field, and removing one is a user-facing change under the standing
+        "never disable without asking" rule. Bundled into E-provider-strict.
+      - >-
+        `_CONTEXT_LIMIT_RE` (model_window.py:165) matches the English string "maximum
+        context length is", violating the no-hardcoded-English rule 60 lines from
+        _resilient_round.py's explicit promise of "no English matching". The platform
+        banned English matching in the error CLASSIFIER and rebuilt it in the window
+        PROBE — two copies of one rule, one quietly exempted.
+      - >-
+        `protocol: grok` is served by OpenAIProvider (registry.py fall-through) whose
+        `.protocol` property returns "openai". ProviderConfig.protocol is a 4-value
+        Literal; ModelProvider.protocol is a 3-value Literal. So a grok backend reports
+        itself as openai to the presented-tools memo key, to PRE_LLM_CALL hooks and to
+        the CLI. No log, no warning.
+      - >-
+        The presented-tool-schema memo (`pipeline/steps/execute.py:1318`) is keyed by
+        PROTOCOL, not by backend. Safe today because only protocol-level facts vary the
+        schema set — but this deployment runs FOUR `protocol: openai` backends, so the
+        moment a per-backend fact varies the tool schema, backend A serves backend B's
+        cached array for the rest of the session. The only log lines on that path are
+        DEBUG, so under production INFO the evidence for that regression would not
+        exist. A constraint on D04.1, recorded before it is designed.
+      - >-
+        49 provider YAMLs under `src/stackowl/setup/providers/` are read ONLY by
+        onboarding and the CLI (`setup/minimal.py`, `cli/providers_cli.py`,
+        `commands/provider_command.py`) — never by the runtime. That is `quirks`'
+        disease at 49x scale: a rich provider-facts corpus with no runtime reader, and
+        `setup/provider_catalog.py:49` documents the split as intentional. Likely the
+        real content of D04.1.
+      - >-
+        `config_schema` on PluginManifest is another declared-but-unread field —
+        local_loader.py:206 admits the manifest "carries config_schema (a shape) and no
+        config VALUES, and no store holds any", which is why every extension point must
+        be constructible as `obj()` with no arguments.
+      - >-
+        `LifecycleHook` is listed in `_ABC_NAMES` but is NOT an ABC ("Nothing here is
+        abstract", hooks.py:91). The table named _ABC_NAMES already contains a non-ABC,
+        which is worth knowing before anyone argues about what belongs in it.
   - id: ARC-2026-08-20-delivery-proof
     found: 2026-08-20
     found_by: "the handoff's JOB 1, re-measured against live traffic before touching code"

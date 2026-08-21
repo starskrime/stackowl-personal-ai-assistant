@@ -48,6 +48,47 @@ class ProviderConfig(BaseModel):
     is ever needed for a new provider.
     """
 
+    # NOT extra="forbid", and the difference from ModelOverride above is
+    # deliberate rather than an oversight. Forbidding is the stricter fix and it
+    # is right for a config we control; this one is hand-edited YAML in
+    # deployments we cannot see, and making a previously-accepted file fail to
+    # boot on upgrade is a product decision, not a bug fix. So an unknown key is
+    # ANNOUNCED and the platform keeps booting. Escalated as E-provider-strict.
+    #
+    # Why announcing matters at all: NINE of this model's seventeen fields are
+    # unreachable from any `/provider` command, so the fields most likely to be
+    # typed by hand are exactly the ones whose typos vanish — and every one of
+    # them describes what a backend can DO. A dropped `supports_native_tools`
+    # does not fail; it silently takes the other capability path.
+    @model_validator(mode="before")
+    @classmethod
+    def _announce_unknown_keys(cls, data: object) -> object:
+        """Say so when a key was typed and will be ignored. Never raises."""
+        try:
+            if not isinstance(data, dict):
+                return data
+            unknown = sorted(set(data) - set(cls.model_fields))
+            if unknown:
+                from stackowl.infra.observability import log
+
+                log.config.warning(
+                    "[config] provider entry has unknown keys — they are IGNORED, so "
+                    "whatever they were meant to set is not in effect",
+                    extra={"_fields": {
+                        "provider": str(data.get("name") or "<unnamed>"),
+                        "unknown_keys": unknown,
+                        "known_keys": sorted(cls.model_fields),
+                    }},
+                )
+        except Exception as exc:  # never let bookkeeping block a config load
+            from stackowl.infra.observability import log
+
+            log.config.error(
+                "[config] could not check a provider entry for unknown keys",
+                exc_info=exc,
+            )
+        return data
+
     name: str
     protocol: Literal["openai", "anthropic", "gemini", "grok"]
     enabled: bool = True
