@@ -48,6 +48,7 @@ from stackowl.gateway.scanner import GatewayScanner, IngressMessage
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.durable.store import DurableTaskStore
+from stackowl.pipeline.durable.task import DurableTask
 from stackowl.pipeline.durable.task_runner import DurableTaskRunner
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
@@ -261,12 +262,25 @@ async def test_hard_exception_floors_message_and_keeps_failure() -> None:
 
 
 @pytest.mark.asyncio
-async def test_durable_task_hard_fail_stays_failed_with_message(tmp_db: DbPool) -> None:
-    """A durable task whose provider hard-fails mid-turn ends in the TERMINAL status
-    ``failed`` (the errors → failed mapping in DurableTaskRunner._drive) AND a
-    non-empty response was produced. Proves the floor's responses-only write did NOT
-    flip the durable task to ``completed``. REAL DurableTaskStore over a migrated DB;
-    ONLY the AI provider is mocked."""
+async def test_durable_task_hard_fail_is_never_a_fake_success(tmp_db: DbPool) -> None:
+    """A durable task whose provider hard-fails mid-turn must NEVER read as success,
+    and the failure must be RECORDED so the next attempt is constrained.
+
+    THE RULE CHANGED AND THIS GATE IS RE-EXPRESSED, NOT RELAXED. It used to assert
+    ``status == "failed"``, which was the pre-ONE-LOOP way of saying "not a fake
+    success". Since 2026-08-17 a failure is returned to the loop as ``pending`` *with
+    what failed* — verified in `store.update_status`, which routes a non-terminal
+    ``failed`` through `fail_and_requeue`: attempt_count incremented, last_error and
+    last_failure_class recorded, banned_capabilities accumulated. Asserting the old
+    literal here would now demand the platform re-acquire a defect it fixed after
+    measuring 850 failed rows, not one of which had ever reached attempt_count > 0 —
+    including the turn that left Bakir without an answer.
+
+    WHAT THE GATE LOCKS IS UNCHANGED AND IS NOW STRICTER: the floor's responses-only
+    write must not flip a real failure into a success, and the failure must survive
+    ON THE ROW. The old assertion checked the first and not the second.
+
+    REAL DurableTaskStore over a migrated DB; ONLY the AI provider is mocked."""
     provider = _ExplodingProvider()
     backend = _backend(provider, pool=tmp_db)
     store = DurableTaskStore(tmp_db)
@@ -284,11 +298,28 @@ async def test_durable_task_hard_fail_stays_failed_with_message(tmp_db: DbPool) 
 
     final_state, task_id = await runner.run(goal="finish my task", state=state)
 
-    # The terminal status keys off `errors`: non-empty → `failed`.
     task = await store.get(task_id)
-    assert task.status == "failed", (
-        f"MERGE-GATE FAIL: the durable task did not stay `failed` after a hard "
-        f"failure — the floor flipped it to a fake success. status={task.status!r}"
+    # (1) THE INVARIANT — never a fake success. This is what the gate is for.
+    assert task.status != "completed", (
+        f"MERGE-GATE FAIL: the durable task read as COMPLETED after a hard failure "
+        f"— the floor flipped it to a fake success. status={task.status!r}"
+    )
+    # (2) The failure is RETURNED TO THE LOOP, not dropped on the floor. `pending`
+    # is the ONE LOOP contract; pinned so a silent revert to terminal-on-first-
+    # failure fails loudly here rather than re-creating the 850 unreachable rows.
+    assert task.status == "pending", (
+        f"expected the failure to be returned to the loop as `pending`, got "
+        f"{task.status!r}"
+    )
+    # (3) …WITH WHAT FAILED. A retry that does not know why the last one died is
+    # the "blind" retry the loop rule exists to prevent, and the old assertion
+    # never checked this at all.
+    assert task.attempt_count >= 1, (
+        f"the failed attempt was not counted — attempt_count={task.attempt_count}"
+    )
+    assert (task.last_error or "").strip(), (
+        "the failure was returned to the loop with NO recorded reason, so the next "
+        "attempt is blind"
     )
 
     # AND a non-empty honest response was still produced (the user is not in silence).
@@ -308,3 +339,69 @@ async def test_durable_task_hard_fail_stays_failed_with_message(tmp_db: DbPool) 
 
 if __name__ == "__main__":  # pragma: no cover
     pytest.main([__file__, "-q"])
+
+
+# --------------------------------------------------------------------------- #
+# Test 3 — the retry is BOUNDED: a task that always fails is dead-lettered
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_a_permanently_failing_task_is_dead_lettered_not_retried_forever(
+    tmp_db: DbPool,
+) -> None:
+    """THE LOCK THE OLD ASSERTION ACCIDENTALLY PROVIDED, now made deliberate.
+
+    Test 2 used to assert `status == "failed"`, which — as a side effect of
+    demanding a terminal value — also proved a failing task could not spin forever.
+    Re-expressing that gate to the ONE LOOP contract (`pending`, with what failed)
+    removes that coverage, and "returns to pending on every failure" with no ceiling
+    is precisely the no-decay shape this programme keeps finding: a queue that only
+    ever re-queues.
+
+    It IS bounded — `fail_and_requeue` computes `exhausted = attempts >= ceiling`
+    and dead-letters on `permanent or exhausted` — but that was true by reading, not
+    by test. Reading is how the last four "it's intentional" conclusions started,
+    and two of them were wrong.
+
+    Note the terminal value is `dead_letter`, not `failed`: it also escalates ONCE,
+    which is the honest trade recorded at the call site — "a few retries and one
+    escalation, never a silent grind".
+    """
+    store = DurableTaskStore(tmp_db)
+    task = DurableTask(
+        task_id="bounded-retry-1",
+        goal="a goal that can never succeed",
+        status="pending",
+        session_key="sess-bounded-retry",
+        max_attempts=3,
+    )
+    await store.create(task)
+
+    seen: list[str] = []
+    # Generously more rounds than the ceiling: if the ceiling is ever removed this
+    # loop still terminates, and the assertion below is what fails — not the suite.
+    for _ in range(task.max_attempts + 5):
+        status = await store.fail_and_requeue(
+            task.task_id, error="the provider exploded again", failure_class="",
+        )
+        seen.append(status)
+        if status == "dead_letter":
+            break
+
+    assert "dead_letter" in seen, (
+        "UNBOUNDED RETRY: a task that fails every time never stopped. "
+        f"max_attempts={task.max_attempts}, statuses seen={seen}"
+    )
+    assert len(seen) <= task.max_attempts, (
+        f"the ceiling was not honoured: {len(seen)} attempts against "
+        f"max_attempts={task.max_attempts}, statuses={seen}"
+    )
+
+    final = await store.get(task.task_id)
+    assert final.status == "dead_letter"
+    # It stopped WITH the reason on the row, not merely stopped.
+    assert (final.last_error or "").strip(), (
+        "dead-lettered with no recorded reason — the operator gets a dead row and "
+        "no way to see why"
+    )

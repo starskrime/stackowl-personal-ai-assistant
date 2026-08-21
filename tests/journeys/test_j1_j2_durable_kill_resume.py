@@ -371,7 +371,10 @@ def _durable_state() -> PipelineState:
 
 async def _tasks(pool: DbPool) -> list[dict[str, Any]]:
     return await pool.fetch_all(
-        "SELECT task_id, status, checkpoint_blob, result FROM tasks", ()
+        # `delivered_at` is part of the shape now: since 2026-08-17 it is the
+        # PROOF that separates a completed task from a self-report, so a helper
+        # that cannot see it cannot check the thing that matters.
+        "SELECT task_id, status, checkpoint_blob, result, delivered_at FROM tasks", ()
     )
 
 
@@ -468,14 +471,42 @@ async def test_durable_goal_survives_crash_and_runs_side_effect_exactly_once(
     assert ledger_after[0]["tool_name"] == "send_report"
 
     # ---- J1 — durable completion + delivery ----------------------------------
+    #
+    # THE RULE CHANGED ON 2026-08-17 AND THIS IS RE-EXPRESSED, NOT RELAXED. It used
+    # to assert `status == "completed"` straight after the drive. A task is now
+    # complete when its outcome reached its DESTINATION, so `store.update_status`
+    # DECLINES a completion that still owes an undelivered answer and holds the row
+    # at `running` for the delivery path — "a `completed` row without delivered_at
+    # would be a self-report". Asserting the old literal would demand the platform
+    # re-acquire exactly the overclaim it removed: two of Bakir's own chat turns
+    # were finalized by recovery reading as complete with no proof he received them.
     tasks_after = await _tasks(pool)
     assert len(tasks_after) == 1
-    assert tasks_after[0]["status"] == "completed", (
-        f"J1 FAIL: recovered task did not complete. status={tasks_after[0]['status']!r}"
+    # (1) The row is OPEN and owned by the delivery path — not lost, not failed.
+    assert tasks_after[0]["status"] == "running", (
+        f"J1 FAIL: the recovered task should be held open for delivery, got "
+        f"status={tasks_after[0]['status']!r}"
     )
-    # The final answer is delivered (the runner finalized the task with it).
+    # (2) The answer SURVIVES on the row, which is what J1 has always really
+    # claimed — the drive produced it and nothing lost it across the crash.
     assert tasks_after[0]["result"] == _FINAL_ANSWER, (
-        f"J1 FAIL: final answer not delivered. result={tasks_after[0]['result']!r}"
+        f"J1 FAIL: final answer not on the row. result={tasks_after[0]['result']!r}"
+    )
+
+    # (3) …AND THE LOOP ACTUALLY CLOSES. This is the half the old assertion gave us
+    # for free and would otherwise be lost: proving the row can still reach a
+    # terminal state. It is a STRONGER check than before, because it exercises the
+    # only writer that may close it rather than assuming a status.
+    store = DurableTaskStore(pool, DEFAULT_PRINCIPAL_ID)
+    await store.mark_delivered(tasks_after[0]["task_id"], result=_FINAL_ANSWER)
+    delivered = await _tasks(pool)
+    assert delivered[0]["status"] == "completed", (
+        f"J1 FAIL: proven delivery did not complete the task. "
+        f"status={delivered[0]['status']!r}"
+    )
+    assert delivered[0]["delivered_at"], (
+        "J1 FAIL: the task completed with no delivered_at — that is a self-report, "
+        "which is the exact overclaim the destination rule exists to prevent."
     )
 
 

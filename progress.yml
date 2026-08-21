@@ -3102,12 +3102,33 @@ known_debt:
         the exactly-once and ledger assertions PASS in both; only the terminal
         status differs. This is the distinction the previous entry said had to be
         drawn before touching anything, and it is now drawn with evidence.
-        STILL TO DO, and deliberately not rushed: rewrite them to the ONE LOOP
-        contract WITHOUT weakening what they lock. The hard-fail test is a MERGE
-        GATE against "the floor flipped it to a fake success" — that invariant must
-        survive as "never `completed`, and the error is recorded", with terminality
-        asserted by driving attempts to exhaustion rather than by expecting `failed`
-        on the first failure.
+        DONE 2026-08-21 — all four rewritten and GREEN, and each one ends up
+        STRICTER than the assertion it replaced:
+        (a) the merge gate now asserts the invariant it actually guards — never
+        `completed` — plus two things the old `status == "failed"` never checked:
+        attempt_count incremented and last_error recorded, i.e. the retry is
+        CONSTRAINED rather than blind, which is the loop rule itself.
+        (b) A NEW test pins the BOUND, because re-expressing (a) removed the
+        coverage the old terminal assertion supplied by accident. A task that fails
+        every time reaches `dead_letter` within max_attempts, with its reason on the
+        row. Without it, "returns to pending on every failure" would have no
+        executable ceiling — the no-decay shape wearing a loop's clothing.
+        (c) The three completion assertions now prove the delivery rule END TO END:
+        the row is held `running` with the answer on it, and `mark_delivered` — the
+        only writer that can prove arrival — closes it to `completed` with
+        `delivered_at` set. That is stronger than asserting a status, because it
+        exercises the mechanism instead of assuming it.
+        A CORRECTION TO MY OWN DIAGNOSIS: the exhaustion status is `dead_letter`,
+        not `failed`, and it escalates ONCE. I wrote "writes a terminal failure",
+        which is true in spirit and wrong in the name — and the name is what the
+        next person greps for.
+        AND ONE MORE THING VERIFIED RATHER THAN ASSUMED: `update_status` with a
+        non-terminal `failed` routes through `fail_and_requeue`, so the failure is
+        genuinely recorded — attempt_count, last_error, last_failure_class and
+        accumulated banned_capabilities. Had it merely written `pending`, the retry
+        would be blind and this WOULD have been a real defect. That is the check
+        that separated "intentional" from "broken", and it is the one I nearly
+        skipped after reading a convincing comment.
       SUPERSEDED_4_durable_tasks_do_not_FINALIZE: >-
         THE MOST VALUABLE ONE AND IT IS NOT CLOSED. Four tests —
         test_durable_goal_survives_crash_and_runs_side_effect_exactly_once,

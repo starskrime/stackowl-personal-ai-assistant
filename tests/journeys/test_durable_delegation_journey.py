@@ -615,13 +615,30 @@ async def test_durable_delegated_child_write_exactly_once_across_crash(pool: DbP
     )
 
     # ---- The ROOT parent goal completes + delivers the final answer ----------
+    #
+    # RE-EXPRESSED FOR THE ONE LOOP CONTRACT (2026-08-17), not relaxed. A task is
+    # complete when its outcome reached its DESTINATION, so `store.update_status`
+    # declines a completion that still owes an undelivered answer and holds the row
+    # at `running` for `mark_delivered` — the only writer that can prove arrival.
+    # Asserting the old literal would demand back the overclaim the rule removed.
     roots_after = await _roots(pool)
     assert len(roots_after) == 1
-    assert roots_after[0]["status"] == "completed", (
-        f"D1 FAIL: the recovered root parent did not complete. status={roots_after[0]['status']!r}"
+    assert roots_after[0]["status"] == "running", (
+        f"D1 FAIL: the recovered root parent should be held open for delivery, got "
+        f"status={roots_after[0]['status']!r}"
     )
     assert roots_after[0]["result"] == _FINAL, (
-        f"D1 FAIL: the parent final answer was not delivered. result={roots_after[0]['result']!r}"
+        f"D1 FAIL: the parent final answer is not on the row. result={roots_after[0]['result']!r}"
+    )
+    # …and the loop still CLOSES, exercised through the only writer that may close
+    # it. This is the half the old assertion gave for free and would otherwise be
+    # lost — and it is stronger, because it proves the delivery rule end to end
+    # rather than assuming a status.
+    _store = DurableTaskStore(pool)
+    await _store.mark_delivered(roots_after[0]["task_id"], result=_FINAL)
+    _closed = await _roots(pool)
+    assert _closed[0]["status"] == "completed", (
+        f"D1 FAIL: proven delivery did not complete the root. status={_closed[0]['status']!r}"
     )
 
 
@@ -755,13 +772,30 @@ async def test_child_layer_exactly_once_when_parent_short_circuit_removed(pool: 
     )
 
     # ---- The ROOT parent goal still completes + delivers the final answer ----
+    #
+    # RE-EXPRESSED FOR THE ONE LOOP CONTRACT (2026-08-17), not relaxed. A task is
+    # complete when its outcome reached its DESTINATION, so `store.update_status`
+    # declines a completion that still owes an undelivered answer and holds the row
+    # at `running` for `mark_delivered` — the only writer that can prove arrival.
+    # Asserting the old literal would demand back the overclaim the rule removed.
     roots_after = await _roots(pool)
     assert len(roots_after) == 1
-    assert roots_after[0]["status"] == "completed", (
-        f"D1 FAIL: the recovered root parent did not complete. status={roots_after[0]['status']!r}"
+    assert roots_after[0]["status"] == "running", (
+        f"D1 FAIL: the recovered root parent should be held open for delivery, got "
+        f"status={roots_after[0]['status']!r}"
     )
     assert roots_after[0]["result"] == _FINAL, (
-        f"D1 FAIL: the parent final answer was not delivered. result={roots_after[0]['result']!r}"
+        f"D1 FAIL: the parent final answer is not on the row. result={roots_after[0]['result']!r}"
+    )
+    # …and the loop still CLOSES, exercised through the only writer that may close
+    # it. This is the half the old assertion gave for free and would otherwise be
+    # lost — and it is stronger, because it proves the delivery rule end to end
+    # rather than assuming a status.
+    _store = DurableTaskStore(pool)
+    await _store.mark_delivered(roots_after[0]["task_id"], result=_FINAL)
+    _closed = await _roots(pool)
+    assert _closed[0]["status"] == "completed", (
+        f"D1 FAIL: proven delivery did not complete the root. status={_closed[0]['status']!r}"
     )
 
 
