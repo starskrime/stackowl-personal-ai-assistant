@@ -3035,6 +3035,52 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-INCIDENT-STORM
+    found: 2026-08-21
+    found_by: "noticing that 30 of 30 D05.4 rebuilds were incident-RCA lanes and asking why there were so many"
+    status: OPEN — measured, NOT fixed. A new arc, deliberately not started mid-item.
+    the_measurement: >-
+      Incidents OPENED per day: 3, 0, 6, 25, 26, 246, 86 across 2026-08-15..21,
+      with RCAs run 3, 0, 6, 20, 23, 238, 79. Each RCA is a staged three-owl
+      session, so 2026-08-20 spent on the order of 700 owl turns on incidents.
+    THE_PART_THAT_MAKES_IT_A_DEFECT_AND_NOT_A_BUSY_DAY: >-
+      Those 246 incidents on 2026-08-20 are only FIVE distinct signatures:
+      outcome:delegate_task:unachieved_effect (66),
+      outcome:owl_build:unachieved_effect (64), outcome:shell:unachieved_effect
+      (61), health:provider_registry:degraded (47),
+      health:provider:NeraAiRaw:degraded (8). One signature opened 66 separate
+      incidents in a day.
+    AND_DEDUP_IS_ALREADY_IMPLEMENTED_which_is_what_makes_it_shape_1: >-
+      `incident_escalation` maps signature -> incident_id in `_open_incidents` and
+      its own docstring states the intent: "a signature that stays hot for an hour
+      produces ONE RCA session, not one per 5-minute tick". So the mechanism is
+      built and the EFFECT is not there — measure the effect, never trust the call.
+    TWO_CANDIDATE_CAUSES_AND_I_HAVE_NOT_CHOSEN_BETWEEN_THEM: >-
+      (a) `self._open_incidents: dict[str, str] = {}` is IN-MEMORY, so every core
+      restart re-opens every active signature as a new incident. The platform
+      self-restarts on any src change and did so five times today.
+      (b) The entry is deleted as soon as the signature stops being active
+      ("so it can re-open later"), so a condition that FLAPS — active, clear,
+      active — mints a new incident on each re-arm. 66 opens against ~288 five-
+      minute ticks is 23%, which fits flapping rather than total dedup failure.
+      These are not exclusive and both are plausible. Choosing between them needs
+      a restart-versus-open correlation that I have not run, and saying which it is
+      without that would be the guess this session has already been wrong about
+      twice.
+    why_it_matters_beyond_cost: >-
+      It also DEFEATS THE ANALYSIS IT FEEDS. "too few precisely-attributed rows to
+      recur on — skipping (co-occurrence noise diluted the raw cluster)" fired 538
+      times today and 244 on 2026-08-20: the miner is looking for recurrence and
+      cannot find it, because each occurrence became its own incident instead of
+      recurring on a shared one. The same shape as DEBT-D054-BROWSER-FLAP — a
+      transient treated as a new event — with the added twist that the fragmenting
+      is what blinds the analyser.
+    closing_query: >-
+      Incidents per DISTINCT signature per day. Pass is a small multiple of the
+      signature count, not a multiple of the tick count:
+      jq -rc 'select(.msg|test("incident opened"))|.fields.signature'
+      ~/.stackowl/logs/stackowl.jsonl | sort | uniq -c | sort -rn
+
   - id: ARC-2026-08-21-red-test-sweep
     found: 2026-08-21
     found_by: "a directory-by-directory sweep, after ONE red test had hidden a privilege escalation for three days"
@@ -3337,8 +3383,13 @@ known_debt:
       IDENTICAL, which is the trap this session has already fallen into twice. A
       test batch was running in both windows, so the load is broadly comparable
       rather than a quiet-box flattering comparison.
-      NOT YET A FULL DAY, and the full-day figure against the recorded per-day
-      baseline (2, 4, 2, 1, 1, 0, 3 and 9) is still the clean comparison.
+      THREE HOURS ON: 0 timeouts across 32 sweeps (17:12Z to 20:14Z), with heavy
+      test batches running for much of it. Against 5 of 5 in the half hour before,
+      and a per-day baseline of 2, 4, 2, 1, 1, 0, 3 and 9. The denominator is
+      stated because 0 over 0 would read identically — that is the trap this
+      session fell into twice and it is the reason the sweep count is quoted at
+      all. A full day at ordinary load remains the clean comparison, but 0/32 is
+      no longer "no opportunity".
     WHAT_IS_DELIBERATELY_NOT_FIXED: "the timeout -> down semantics. Raised as ESC-33."
 
   - id: DEBT-D054-BROWSER-FLAP
