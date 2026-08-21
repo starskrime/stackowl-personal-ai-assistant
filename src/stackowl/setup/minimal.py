@@ -192,7 +192,8 @@ class MinimalSetup:
         duration_ms = (time.monotonic() - t0) * 1000
         typer.echo(localize("setup_ready"))
         typer.echo(
-            f"\nTip: drop YAML files in {StackowlHome.providers_dir()} to add your own providers."
+            f"\nTip: drop YAML files in {StackowlHome.providers_dir()} to add providers "
+            f"the bundle does not carry. A file cannot redefine a built-in provider."
         )
         log.setup.info(
             "[minimal] MinimalSetup.run: exit",

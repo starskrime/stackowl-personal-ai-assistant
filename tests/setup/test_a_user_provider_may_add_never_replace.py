@@ -1,4 +1,4 @@
-"""Replacing a bundled provider entry is announced at INFO, not DEBUG.
+"""A user file may ADD a provider; it may never REPLACE a bundled one.
 
 WHY IT MATTERS, and it is not a logging preference. `ProviderCatalog.load()` merges
 `~/.stackowl/providers/*.yaml` over the 49 bundled entries with "user wins on name
@@ -12,10 +12,15 @@ that provider name, and until 2026-08-21 the only trace was `log.setup.debug`. P
 runs at INFO, where, per this repo's own rule, "a `log.*.debug` line does not exist when
 you need it". The write happened and nothing said so.
 
-WHAT THIS DOES NOT DO. It does not stop the replacement. Whether a user file may replace
-a bundled entry at all, rather than only introduce a new name, removes an advertised
-capability and is ESC-23, open with Bakir. This closes the "nothing notices" half only,
-which needs no ruling.
+ANSWERED 2026-08-21 (ESC-23): Bakir chose ADDITIVE-ONLY. A collision is now refused and
+the bundled entry kept, logged at INFO. This deliberately removes an advertised
+capability — the module docstring described the override and `setup/minimal.py` invited
+it — which is exactly why it was escalated rather than assumed, and why both of those
+texts changed with the behaviour.
+
+The earlier shape of this file (announce the replacement, change nothing) is kept in the
+history rather than pretended away: making it VISIBLE was the half that needed no ruling,
+and it shipped first while the other half waited.
 """
 
 from __future__ import annotations
@@ -66,9 +71,23 @@ def _merge(monkeypatch, tmp_path):
     return run
 
 
-class TestTheReplacementIsVisibleInProduction:
-    def test_it_logs_at_INFO_and_names_the_url_change(self, _merge, caplog) -> None:
-        """THE CASE THAT MATTERS: the same name pointing somewhere else."""
+class TestACollisionIsRefusedAndAnnounced:
+    def test_the_bundled_base_url_SURVIVES_a_colliding_user_file(
+        self, _merge
+    ) -> None:
+        """THE CASE THE DECISION IS ABOUT. `_add_discover` sends `entry.base_url` the
+        operator's raw token before `store_secret` runs, so if the user file won here
+        it would receive the next credential typed for the name "openai"."""
+        result = _merge(
+            {"openai": "https://api.openai.com/v1"},
+            {"openai": "http://elsewhere.invalid/v1"},
+        )
+
+        assert [e.base_url for e in result] == ["https://api.openai.com/v1"]
+
+    def test_it_logs_the_REFUSAL_at_INFO_and_names_both_urls(
+        self, _merge, caplog
+    ) -> None:
         caplog.set_level(logging.INFO)
 
         _merge(
@@ -76,11 +95,12 @@ class TestTheReplacementIsVisibleInProduction:
             {"openai": "http://elsewhere.invalid/v1"},
         )
 
-        hits = [r for r in caplog.records if "REPLACED a bundled provider" in r.message]
-        assert hits, "a bundled entry was replaced and production logged nothing"
+        hits = [r for r in caplog.records if "REFUSED a user file" in r.message]
+        assert hits, "a collision was refused and production logged nothing"
         fields = getattr(hits[0], "_fields", {})
-        assert fields.get("base_url_changed") is True
-        assert fields.get("to_base_url") == "http://elsewhere.invalid/v1"
+        assert fields.get("would_have_changed_base_url") is True
+        assert fields.get("kept_base_url") == "https://api.openai.com/v1"
+        assert fields.get("ignored_base_url") == "http://elsewhere.invalid/v1"
 
     def test_it_is_not_emitted_at_DEBUG_only(self, _merge, caplog) -> None:
         """The regression guard. A future edit that drops this back to debug makes
@@ -90,7 +110,7 @@ class TestTheReplacementIsVisibleInProduction:
         _merge({"a": "u1"}, {"a": "u2"})
 
         assert any(
-            r.levelno >= logging.INFO and "REPLACED a bundled provider" in r.message
+            r.levelno >= logging.INFO and "REFUSED a user file" in r.message
             for r in caplog.records
         )
 
@@ -103,11 +123,24 @@ class TestTheReplacementIsVisibleInProduction:
         result = _merge({"a": "u1"}, {"brandnew": "u2"})
 
         assert {e.name for e in result} == {"a", "brandnew"}
-        assert not [r for r in caplog.records if "REPLACED a bundled provider" in r.message]
+        assert not [r for r in caplog.records if "REFUSED a user file" in r.message]
 
-    def test_the_replacement_still_takes_effect(self, _merge) -> None:
-        """Behaviour is UNCHANGED by this commit — only the silence is fixed. If this
-        ever fails, ESC-23 was decided by accident instead of by Bakir."""
+    def test_the_replacement_no_longer_takes_effect(self, _merge) -> None:
+        """The inverse of what this test asserted while ESC-23 was open. Kept as the
+        same test rather than deleted, so the change of behaviour is legible in the
+        history instead of looking like coverage that quietly vanished."""
         result = _merge({"a": "bundled"}, {"a": "user"})
 
-        assert [e.base_url for e in result] == ["user"]
+        assert [e.base_url for e in result] == ["bundled"]
+
+    def test_a_user_file_can_still_ADD_a_provider_alongside_a_collision(
+        self, _merge
+    ) -> None:
+        """Refusing one name must not discard the whole file's other entries."""
+        result = _merge(
+            {"openai": "bundled"},
+            {"openai": "hijack", "myllm": "http://mine.invalid/v1"},
+        )
+
+        by_name = {e.name: e.base_url for e in result}
+        assert by_name == {"openai": "bundled", "myllm": "http://mine.invalid/v1"}

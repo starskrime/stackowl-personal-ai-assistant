@@ -5,8 +5,12 @@ Each provider declares which of the four base protocols it speaks
 needs to branch on provider names.
 
 Bundled definitions live in src/stackowl/setup/providers/*.yaml.
-User overrides live in ~/.stackowl/providers/*.yaml — a file with the
-same ``name`` field replaces the bundled entry.
+User providers live in ~/.stackowl/providers/*.yaml. A file may ADD a
+provider the bundle does not carry; it may NOT replace a bundled entry.
+A name collision is refused and logged at INFO (ESC-23, 2026-08-21) —
+``ProviderEntry`` carries ``base_url``, and the add-token flow sends
+that URL the operator's raw credential to validate it, so allowing a
+replacement allowed a local file to redirect the next token typed.
 """
 
 from __future__ import annotations
@@ -76,7 +80,7 @@ class ProviderCatalog:
 
     @classmethod
     def load(cls) -> list[ProviderEntry]:
-        """Return merged provider list: bundled entries + user overrides.
+        """Return the merged provider list: bundled entries plus user ADDITIONS.
 
         Sort order: non-local entries grouped by protocol (anthropic → gemini →
         grok → openai, alphabetical within each group), then local providers
@@ -100,31 +104,41 @@ class ProviderCatalog:
                 "[provider_catalog] ProviderCatalog.load: could not load user overrides — %s", exc
             )
 
-        # 4. DECISION — merge: user wins on name collision
+        # 4. DECISION — merge: ADDITIVE only, bundled wins on a name collision
         merged: dict[str, ProviderEntry] = {e.name: e for e in bundled}
         for entry in user_entries:
             if entry.name in merged:
-                # INFO, NOT DEBUG, since 2026-08-21 — and the base_url is the reason.
-                # This entry decides where `/provider add-token` sends the operator's
-                # RAW credential: commands/provider_command.py:886 passes
-                # `entry.base_url` and the token straight to `list_models()` to validate
-                # them, BEFORE `store_secret` runs. So replacing a bundled entry
-                # redirects the next credential typed for that provider name. That is a
-                # security-relevant event and production runs at INFO, where a debug
-                # line does not exist. Whether a user file should be allowed to REPLACE
-                # a bundled entry at all (rather than only ADD a new name) is ESC-23,
-                # open with Bakir — removing an advertised capability is his call. This
-                # line changes no behaviour; it only ends the silence.
+                # ADDITIVE-ONLY since 2026-08-21 (ESC-23, Bakir's call). A user file
+                # may INTRODUCE a provider; it may not REPLACE a bundled one.
+                #
+                # This deliberately removes an advertised capability — the module
+                # docstring described the override and setup/minimal.py invites it —
+                # so it was escalated rather than assumed. The reason it goes:
+                # `ProviderEntry` carries `base_url`, and
+                # `commands/provider_command.py` `_add_discover` sends that base_url
+                # the operator's RAW token in order to validate it, BEFORE
+                # `store_secret` runs. A file redefining a bundled entry therefore
+                # redirects the next credential typed for that name. That is the same
+                # risk class that got last-writer-wins rejected for plugin profiles;
+                # it was simply already shipped, one layer down.
+                #
+                # REFUSED AT INFO, never in silence. Until 2026-08-21 the replacement
+                # was announced at DEBUG, which production never records.
                 previous = merged[entry.name]
                 log.setup.info(
-                    "[provider_catalog] user file REPLACED a bundled provider entry",
+                    "[provider_catalog] REFUSED a user file that would replace a "
+                    "bundled provider — a user provider may add a new name, never "
+                    "redefine a built-in one; the bundled entry is kept",
                     extra={"_fields": {
                         "name": entry.name,
-                        "base_url_changed": entry.base_url != previous.base_url,
-                        "from_base_url": previous.base_url or "",
-                        "to_base_url": entry.base_url or "",
+                        "kept_base_url": previous.base_url or "",
+                        "ignored_base_url": entry.base_url or "",
+                        "would_have_changed_base_url": (
+                            entry.base_url != previous.base_url
+                        ),
                     }},
                 )
+                continue
             merged[entry.name] = entry
 
         result = cls._sort(list(merged.values()))

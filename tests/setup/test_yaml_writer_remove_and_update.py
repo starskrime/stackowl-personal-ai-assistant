@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 from ruamel.yaml import YAML
 
 from stackowl.setup.yaml_writer import remove_provider_config, update_provider_field

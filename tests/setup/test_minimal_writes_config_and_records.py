@@ -12,7 +12,6 @@ from stackowl.db.pool import DbPool
 from stackowl.setup.onboarding_table import OnboardingTable
 from stackowl.setup.provider_catalog import ProviderEntry
 
-
 # Shared fake entries for mocking the catalog
 _ANTHROPIC_ENTRY = ProviderEntry(
     name="anthropic",

@@ -34,7 +34,7 @@ def test_catalog_sort_order_locals_last_then_custom_last() -> None:
         assert last_regular_idx < first_local_idx, "Locals should come after all regular providers"
 
 
-def test_user_override_replaces_bundled_entry_by_name(
+def test_a_user_file_CANNOT_replace_a_bundled_entry_by_name(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path / "home"))
@@ -61,10 +61,15 @@ def test_user_override_replaces_bundled_entry_by_name(
 
     entries = ProviderCatalog.load()
     openai_entry = next(e for e in entries if e.name == "openai")
-    assert openai_entry.label == "OpenAI (custom override)"
-    assert openai_entry.base_url == "https://custom.openai.example.com/v1"
-    assert openai_entry.tier == "fast"
-    # Count must remain 49 (override, not addition)
+    # INVERTED 2026-08-21 (ESC-23). This asserted that the user file WON. Bakir chose
+    # additive-only: a user provider may add a name the bundle does not carry, never
+    # redefine a built-in one. `ProviderEntry` carries `base_url`, and the add-token
+    # flow sends that URL the operator's raw credential to validate it — so a
+    # replacement let a local file redirect the next token typed for "openai". The
+    # test is inverted rather than deleted so the change of behaviour stays legible.
+    assert openai_entry.label != "OpenAI (custom override)"
+    assert openai_entry.base_url != "https://custom.openai.example.com/v1"
+    # Count still 49: the colliding file contributed nothing, and added nothing either.
     assert len(entries) == 49
 
 
