@@ -11,7 +11,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # The boundary-router: every built specialist gets these on top of its preset.
-ROUTER_TOOLS: frozenset[str] = frozenset({"delegate_task", "tool_search", "tool_describe"})
+#
+# `owl_build` + `owls_list` joined 2026-08-21, and the reason is narrow. `owl_build
+# action='grant'` is the ONLY sanctioned path that widens a ceiling (389e3902) — and
+# it was NOT in a specialist's ceiling, so the tool by which an owl asks for authority
+# was itself gated by the authority it lacked. Measured over three days: mailbutler
+# was refused `owl_build` SIX times; the request could not even be made.
+#
+# THE CIRCULARITY IS THE DEFECT, not the narrowness. A narrow ceiling is a legitimate
+# choice and this does not widen one. A ceiling that cannot be APPEALED is never
+# legitimate, because then the operator's answer is unreachable rather than merely
+# unsought.
+#
+# AND IT CONFERS NO POWER TO ACT. `grant` is gated on the `authority_widening` consent
+# category, which is always-ask and stays always-ask: this lets an owl RAISE the
+# question, never answer it. `owls_list` rides along at far lower stakes — an owl told
+# to delegate cannot name a target it may not enumerate, and it was refused 11 times
+# across two owls in the same window.
+ROUTER_TOOLS: frozenset[str] = frozenset(
+    {"delegate_task", "tool_search", "tool_describe", "owl_build", "owls_list"}
+)
 
 
 @dataclass(frozen=True)

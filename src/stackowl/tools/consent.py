@@ -74,8 +74,17 @@ _DEFAULT_ALWAYS_ASK_TOOLS = frozenset(
 #: whether an owl may BE something. This category is what carries that question —
 #: and it is always-ask because a capability granted forever is the least
 #: reversible thing here, and must never be taken autonomously.
+#: ``owl_build`` (2026-08-21) — create/edit/rename/retire/pause/resume, i.e. the SHAPE
+#: of the owl fleet. It joins the always-ask set as the second half of the provenance
+#: rule above: an official origin is answered before this list is ever consulted, so
+#: Bakir is never prompted for his own request, while an unattended caller with no
+#: official origin — a cron sweep, an MCP client, a webhook — is refused. This is
+#: STRICTLY SAFER than before, when the category was absent here and such a caller had
+#: it auto-granted; it became reachable at all when `owl_build` entered ROUTER_TOOLS so
+#: that an owl could appeal its own ceiling.
 _DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset(
-    {"lock", "alarm", "destructive", "prompt_surface", "authority_widening"}
+    {"lock", "alarm", "destructive", "prompt_surface", "authority_widening",
+     "owl_build"}
 )
 _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 
@@ -148,6 +157,48 @@ class FailClosedPrompter:
         return ConsentScope.DENY
 
 
+#: The category whose answer follows the request's ORIGIN rather than the presence of
+#: a human at the keyboard. Bakir, 2026-08-21: "provide freedom to them if request come
+#: from official channels" — and, on what official means, "if it come from channel which
+#: is connected to gateway".
+#: BOTH halves of "what an owl may BE". `authority_widening` is the grant itself;
+#: `owl_build` covers create/edit/rename/retire/pause/resume — the fleet's shape. Both
+#: follow the ORIGIN of the request.
+_PROVENANCE_CATEGORIES = frozenset({"authority_widening", "owl_build"})
+
+
+def _gateway_channels() -> frozenset[str]:
+    """Channel names the gateway currently holds a live adapter for.
+
+    This is the provenance claim the platform can actually make. A turn arriving on a
+    registered adapter came through the operator's own configured, authenticated
+    ingress; a turn with no such origin — a scheduled sweep, an MCP caller, a webhook,
+    an internal sub-goal — did not.
+
+    Never raises: an origin we cannot establish is not an origin we trust, so a lookup
+    failure yields the empty set and the caller fails closed.
+    """
+    try:
+        from stackowl.channels.registry import ChannelRegistry
+
+        # `all()` returns the live adapters in registration order; each names itself
+        # via `channel_name`. There is no names() helper — an earlier draft of this
+        # called one and it does not exist, which the except below would have
+        # swallowed into "nothing is ever official", silently disabling the whole
+        # feature. Hence the real-registry test beside the mocked ones.
+        return frozenset(
+            str(a.channel_name) for a in ChannelRegistry.instance().all()
+            if getattr(a, "channel_name", None)
+        )
+    except Exception as exc:
+        log.tool.warning(
+            "[consent] could not read the gateway's channels — treating this origin "
+            "as UNOFFICIAL",
+            exc_info=exc,
+        )
+        return frozenset()
+
+
 class AutonomousPrompter:
     """Grants consent when NO human is attached to the turn.
 
@@ -191,6 +242,32 @@ class AutonomousPrompter:
         # `allow_relaxation` already carries what is needed: the policy sets it to
         # `not excluded`, so False means always-ask. Refusing those here is what
         # makes the claim above real.
+        # AUTHORITY FOLLOWS THE ORIGIN OF THE REQUEST. `authority_widening` is
+        # always-ask because a capability granted to an owl is permanent — but
+        # always-ask resolves to REFUSED whenever nobody is attached, so an owl doing
+        # unattended work could never widen and the request died silently. Measured:
+        # owl_build/authority_widening returned False on every autonomous path.
+        #
+        # A turn that arrived on a channel the gateway HOLDS came through the
+        # operator's own configured, authenticated ingress. That is a provenance claim
+        # the platform can make, and it is the one Bakir named. A turn with no such
+        # origin has neither an owner behind it nor a place to answer, which is exactly
+        # where an unreviewable permanent grant would be worst — so it still refuses.
+        #
+        # ONLY this category. Every other always-ask member gates what the agent DOES,
+        # and an official origin says who ASKED, never that a destructive act was
+        # intended. Widening those is a separate, explicit decision.
+        if not req.allow_relaxation and req.category in _PROVENANCE_CATEGORIES:
+            official = bool(req.channel) and req.channel in _gateway_channels()
+            log.tool.info(
+                "[consent] authority request judged by its ORIGIN",
+                extra={"_fields": {
+                    "tool": req.tool_name, "category": req.category,
+                    "channel": req.channel, "official": official,
+                }},
+            )
+            if official:
+                return ConsentScope.ONCE
         if not req.allow_relaxation:
             log.tool.warning(
                 "[consent] autonomous grant REFUSED — this is always-ask and no "
@@ -337,6 +414,40 @@ class ConsentPolicy:
                 "category": category, "reversible": reversible,
             }},
         )
+        # AUTHORITY FOLLOWS THE ORIGIN — decided HERE, before any prompter, because
+        # Bakir's rule is that he should never be asked to enable something. A check
+        # living only in AutonomousPrompter would grant unattended and still prompt him
+        # when he is attended, which is the opposite of what he asked for.
+        #
+        # Bakir, 2026-08-21: "provide freedom to them if request come from official
+        # channels" / "if it come from channel which is connected to gateway".
+        #
+        # Scope is exactly the two categories that decide what an owl may BE — the
+        # grant itself, and the shape of the fleet. Everything that decides what the
+        # agent DOES (execute_code, destructive, lock, alarm, prompt_surface) is
+        # untouched: an official origin says who ASKED, never that a destructive act
+        # was intended.
+        #
+        # This is also strictly SAFER than before for the unattended case. `owl_build`
+        # was not an always-ask category, so an unattended sweep or an MCP caller could
+        # already have it auto-granted; now a request with no official origin is
+        # refused outright.
+        if category in _PROVENANCE_CATEGORIES:
+            official = bool(channel) and channel in _gateway_channels()
+            log.tool.info(
+                "[consent] authority judged by ORIGIN, not by attendance",
+                extra={"_fields": {
+                    "tool": tool_name, "category": category, "channel": channel,
+                    "official": official, "session": session_key,
+                }},
+            )
+            if official:
+                return self._finalize(
+                    True, tool_name=tool_name, channel=channel,
+                    session_key=session_key, category=category,
+                    reason="official_channel", scope=ConsentScope.ONCE,
+                )
+
         tier = self.tiers.get(tool_name, TrustTier.ALWAYS_ASK)
         excluded = self._is_always_ask(tool_name, category)
 
