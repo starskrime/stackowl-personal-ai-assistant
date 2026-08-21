@@ -349,6 +349,59 @@ current:
       fire here is the exact mistake ESC-27 re-scoped this item to escape. The fix
       shipped is the smaller one: a memo MISS now reproduces the memo HIT, which is
       what the hit path already did.
+  D05_4_VALIDATE_2026_08_21:
+    status: PARTIAL — the code is live and the boot is clean; three of four checks WAIT ON TRAFFIC and none is claimed.
+    the_restart_was_predicted_and_then_verified_rather_than_assumed: >-
+      Last src write 16:27:58Z, restart requested 16:33:00Z (302s), exec-replace
+      16:33:05Z, boot 16:34:11Z. The running image therefore loaded every module
+      AFTER the last write, which is the check this programme has paid for
+      skipping. Boot clean: 542 INFO, 9 WARNING, 1 ERROR.
+      AN EARLIER BOOT WAS DISCARDED FOR EXACTLY THIS REASON — the core restarted at
+      16:23:32 while execute.py was still being written at 16:24:29, so that image
+      was a possible MIX and nothing was measured against it.
+      THE ONE ERROR IS THE RESTART ITSELF: health_sweep at 16:33:05, five seconds
+      after "restart requested — quiescing", reporting owl_ratings and
+      provider_registry down. provider_probe reported ok=1 two seconds later.
+      MEASURED RATHER THAN ASSUMED: 1 of 119 UNHEALTHY errors over six days is
+      within 60s of a restart, so restart-coincidence is NOT the general
+      explanation for that line — it happens to be the explanation for this one.
+    A_MISREADING_I_MADE_AND_CAUGHT_IN_THE_SAME_MINUTE: >-
+      I queried `.fields.down` on the UNHEALTHY records, saw an empty list on 92 of
+      93 events on 2026-08-20, and was about to file "an ERROR that names no
+      subsystem". The records DO name them — under `degraded`, which my query did
+      not print. The 2026-08-20 spike is a 20-hour provider degradation
+      (provider:NeraAiRaw + provider_registry, 03:30Z to 23:41Z), not an empty
+      alert. Seventh time this session that a partial view of a record was read as
+      the whole record; recorded because the correction came from printing the
+      whole `fields` object rather than the one key I had assumed mattered.
+    check_1_no_warning_without_a_conversation: >-
+      OPEN, and it needs a DENOMINATOR before silence means anything. Baseline
+      taken before the fix went live: 12 such warnings today, 112 over six days.
+      Since the boot: 0 — but also 0 tool turns, so this is "no opportunity", not
+      success. The denominator is now readable, which it was not before: count
+      `presented tools — rebuilt` records carrying no session_id, and require the
+      audit to have stayed silent for all of them.
+      CLOSE WITH: jq 'select(.msg|test("tools array CHANGED"))|select(.session_id==null)'
+      ~/.stackowl/logs/stackowl.jsonl — must stay EMPTY.
+    check_2_a_real_change_names_the_delta: >-
+      OPEN. Needs a genuine within-conversation change, which measured ONCE in six
+      days, so this may take a week and that is stated rather than glossed.
+      CLOSE WITH: jq 'select(.msg|test("tools array CHANGED"))|.fields|{added,removed}'
+      — every record must carry both keys.
+    check_3_the_basis_holds_across_a_rebuild: >-
+      OPEN. This is the item's central claim and the reason the `rebuilt` line was
+      promoted to INFO (d3cbe299) — at debug no volume of traffic could ever have
+      closed it, which is D08.1's lesson applied before the fact rather than after.
+      CLOSE WITH: jq 'select(.msg|test("presented tools — rebuilt"))|
+      {tools,measured:.fields.fixed_cost_measured,basis:.fields.fixed_cost_basis}'
+      — pass is at least one record where measured != basis, on a lane whose
+      `tools` did not change.
+    check_4_the_test_evidence_which_IS_closed: >-
+      45 targeted tests green (24 cache_audit, 21 presented_tools + d052 wiring),
+      plus 10 on d052+d053 after the INFO promotion, plus the 4 D01.2 gateway
+      integration tests. The idempotence test is the one that matters: it went RED
+      before the fix at 66 tools -> 53, and green after, with the REAL registry and
+      REAL budgeter and only the AI provider mocked.
     the_closing_queries_which_are_INFO_or_WARNING_so_both_can_return_something: >-
       (1) jq 'select(.msg|test("tools array CHANGED"))|select(.session_id==null)'
       ~/.stackowl/logs/stackowl.jsonl — must be EMPTY after this ships, against 112
