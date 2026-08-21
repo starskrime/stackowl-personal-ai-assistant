@@ -667,6 +667,49 @@ current:
         recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
+    A_REGRESSION_I_SHIPPED_AND_REPORTED_AS_GREEN_2026_08_21:
+      what: >-
+        Commit 0f1431e9 ("authority follows the ORIGIN of the request") broke 15 owl_build
+        tests across 8 files in tests/tools/meta, and its own commit message claims
+        "Green: 307 owls, 205 meta, 51 targeted". At that commit the truth is 190 passed,
+        15 FAILED. BISECTED: 0f1431e9~1 passes, 0f1431e9 fails. This is not a pre-existing
+        red inherited from someone else — it is mine, and the green claim was false. I
+        found it only because a full tests/tools run was gated on something else.
+      the_mechanism: >-
+        The commit added "owl_build" to _DEFAULT_ALWAYS_ASK_CATEGORIES. owl_build passes
+        category="owl_build" from its own code (owl_build.py:871), so `_is_always_ask` is
+        now True for it — which SKIPS the `tier is TrustTier.AUTO` branch in
+        ConsentPolicy.request. Every owl_build test constructs
+        ConsentPolicy(tiers={"owl_build": TrustTier.AUTO}) precisely to take consent out
+        of the picture, and that stopped working. With no channel UX in a harness, the
+        FailClosedPrompter then denies.
+      the_fix_does_NOT_weaken_the_gate: >-
+        Refusing an authority request with no official origin is the INTENDED behaviour
+        and it stays. What was wrong is that the harness did not resemble production:
+        live, ChannelRegistry holds a real adapter (measured: telegram, 585
+        registrations), so a genuine operator turn IS official and IS granted. The tests
+        set channel="cli" and registered nothing, so they asserted against a world that
+        does not exist. tests/tools/meta/conftest.py now registers a "cli" gateway
+        adapter, autouse — the alternative is 15 near-identical opt-ins and a 16th test
+        written without one.
+      TWO_MEASUREMENT_ERRORS_I_MADE_WHILE_DIAGNOSING_THIS: >-
+        (1) I reported "category=None on every owl_build consent request in production"
+        and concluded the whole provenance feature was structurally unreachable. WRONG:
+        `[consent] policy.request: exit` logs only tool/decision/reason (consent.py:611) —
+        there is no category field at all, and I read the ABSENT key as the VALUE None.
+        (2) I reported the provenance INFO line as "never logged, so the feature is dead".
+        WRONG: the commit went live 2026-08-21T03:03Z and the last owl_build consent
+        decision in the whole log is 02:16Z — 47 minutes EARLIER. Nothing has exercised
+        the path since it shipped. Both are the same shape as the truncated `dropped`
+        list: an absent or bounded field read as a complete answer.
+      WHAT_IS_STILL_TRUE_AND_UNVERIFIED: >-
+        The production impact is UNTESTED, not absent. The next owl_build request from a
+        non-telegram origin hits excluded=True and must prompt or fail closed. Only
+        `telegram` is a registered gateway channel, so an owl_build from the TUI/CLI is
+        NOT official today — it would prompt rather than be refused (the socket prompter
+        is registered for all channels), but that still contradicts "never ask me to
+        enable anything" for the most attended surface there is. Recorded, not fixed:
+        whether the local operator console counts as an official origin is a decision.
     ESC_25_cooperative_stop_vs_tool_dispatch:
       answer: "KEEP DISPATCH FIRST. A stop is honoured after the in-flight tool completes."
       recorded_as_HIS_call_against_my_recommendation: >-
