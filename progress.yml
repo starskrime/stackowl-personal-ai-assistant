@@ -1824,6 +1824,75 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ARC-2026-08-21-authority-and-freedom
+    found: 2026-08-21
+    found_by: "Bakir, live: 'agent control is very strict and my agents get blocked on tool usage'"
+    status: SHIPPED — 0f1431e9, 520184c5. Evidence-led work per PROCESS.md, recorded here rather than on a mapped item.
+    what_he_asked: >-
+      "I want to give them good and correct access and the ability to ask for access and
+      update access on themselves. Platform should have ability to self improve and self
+      edit himself." Then, asked what an official channel is: "if it come from channel
+      which is connected to gateway."
+    the_measurement_that_reframed_it: >-
+      MY FIRST NUMBERS WERE ALL-TIME AND MISLED BOTH OF US. 362 bounds refusals with
+      web_search at 191 looked like a policy problem; scoped to the last three days it is
+      83 refusals, ~62 of them mailbutler alone, and the web_search ones are from
+      2026-07-22 against an owl whose bounds have included web_search ever since. The
+      same error inflated a tool_build claim — see below. LESSON: an all-time count
+      answers a different question from "what is blocking me today", and quoting one as
+      the other sent the first diagnosis in the wrong direction.
+    defect_1_the_appeal_was_unreachable: >-
+      `owl_build` is the ONLY sanctioned path that widens a ceiling (389e3902) and it was
+      NOT in mailbutler's ceiling — refused SIX times in three days. The tool by which an
+      owl asks for authority was gated by the authority it lacked, so the request could
+      not be made at all. A narrow ceiling is a legitimate choice; a ceiling that cannot
+      be APPEALED is not, because the operator's answer becomes unreachable rather than
+      merely unsought. `owl_build` + `owls_list` joined ROUTER_TOOLS.
+    defect_2_grant_was_routed_into_create: >-
+      Even when reached, `action='grant'` asked for a SPECIALTY — for an owl that already
+      exists. Measured 01:25:12 and 01:28:43: the agent tried twice and gave up.
+      `grant` had been added to `_VALID_ACTIONS` and to owl_build's dispatch and NEVER to
+      `validate_owl_build_spec`, which branches on retire/pause/resume, edit and rename
+      and then FALLS THROUGH to create's requirements. Same shape as D16.1's
+      MemoryProvider defect: a three-place change made in two places, found only when
+      someone used it. Fixed with a guard that checks EVERY member of _VALID_ACTIONS for
+      silently inheriting create's set.
+    defect_3_authority_had_no_route_when_unattended: >-
+      `authority_widening` is always-ask, which resolves to REFUSED whenever nobody is
+      attached, so an owl doing unattended work could never widen and the request died
+      silently. Now authority follows the ORIGIN: a turn on a channel the gateway HOLDS
+      came through the operator's configured ingress; a sweep, an MCP caller or a webhook
+      did not. DECIDED IN THE POLICY, not in AutonomousPrompter — a check living only in
+      the prompter would grant unattended and still prompt him when attended, the
+      opposite of his "never ask me to enable anything" rule.
+      SCOPE IS THE TWO CATEGORIES THAT DECIDE WHAT AN OWL MAY BE: `authority_widening`
+      (the grant) and `owl_build` (the fleet's shape). Everything deciding what the agent
+      DOES is untouched — execute_code, computer_use, ha_call_service, browser_dialog,
+      lock, alarm, destructive, prompt_surface. An official origin says who ASKED, never
+      that a destructive act was intended.
+      STRICTLY SAFER THAN BEFORE for the unattended case: `owl_build` was NOT an
+      always-ask category, so a cron sweep or MCP client already had create/retire
+      auto-granted. It joins that set here, which matters precisely because ROUTER_TOOLS
+      made the tool reachable.
+    what_needed_no_change: >-
+      tool_build. He asked for its approval requirement to be removed; measured, it was
+      already gone — not in always-ask tools, its category not in always-ask categories,
+      returns True unattended. The 28 refusals cited were all 2026-07-25 to 07-29 with
+      none since, i.e. fixed by AutonomousPrompter around 08-16. Reported as current when
+      it was historical; corrected to him in the same turn.
+    my_own_defect_worth_recording: >-
+      The first implementation called `ChannelRegistry.instance().names()` — a method that
+      DOES NOT EXIST. The helper's own `except` swallowed the AttributeError into "the
+      empty set", so nothing would ever have been official and the feature would have
+      shipped SILENTLY DEAD, underneath twelve green tests — every one of which
+      monkeypatched the function under test. That is this programme's second recurring
+      defect (a double standing in front of the code it tests), committed while fixing
+      the same class elsewhere. The guard is a test that drives the REAL registry once.
+    still_open_for_bakir: >-
+      mailbutler is refused `shell` 29 times in three days. It can now ASK, and the ask
+      reaches him through Telegram — but whether it should HOLD shell is a grant only he
+      can make. Also unexamined: `memory` was refused once for mailbutler despite being
+      IN its bounds, which no current theory explains.
   - id: ARC-2026-08-20-provider-facts
     found: 2026-08-20
     found_by: "the D16.3 brainstorm panel — ten defects surfaced while answering a taxonomy question"
