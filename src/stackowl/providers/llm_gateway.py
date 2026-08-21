@@ -156,6 +156,51 @@ def escalation_target_is_identical(
 class LLMGateway:
     """Stateless escalating wrapper over a :class:`ProviderRegistry`."""
 
+    def _can_escalate_meaningfully(
+        self, tiers: tuple[str, ...] | list[str], idx: int, provider: Any, model: str
+    ) -> bool:
+        """Is there a HIGHER tier that actually resolves somewhere else?
+
+        ESC-22, ANSWERED BY BAKIR 2026-08-21: "deliver the floor already earned".
+
+        `can_escalate` used to mean only "this is not the last rung", which is a fact
+        about the LADDER, not about the TARGET. On a deployment where one provider
+        spans every tier — which is this one — every rung resolves to the same
+        (provider, model), so the flag said "a stronger model exists" when none did.
+
+        The cost was measured before it was fixed: 25 escalations, all landing on the
+        same (NeraAiRaw, neraai-v1-raw). Each made the provider DISCARD a finished
+        attempt — 14, 15, 16 and 19 tool calls in four of those turns — return the
+        ESCALATE sentinel, and hand the gateway a turn it had to re-run before anything
+        could be delivered. `on_escalate` also reset the tool-outcome ledger, so the
+        re-run was blind to what the first attempt had already learned.
+
+        Telling the provider the truth up front is the whole fix. With this False, it
+        never emits the sentinel: it takes its own floor path and DELIVERS the answer
+        it just worked for, on the first attempt. Nothing downstream changes, because
+        this is exactly the state every ladder already reaches at its ceiling.
+
+        Resolution is a registry dict lookup, so scanning the tiers above costs
+        nothing worth measuring.
+        """
+        for higher in tiers[idx + 1:]:
+            try:
+                nxt_provider, nxt_model, _degraded = (
+                    self._registry.resolve_tier_with_fallback(higher)
+                )
+            except Exception as exc:  # noqa: BLE001 — never let a probe end a turn
+                log.engine.warning(
+                    "[llm_gateway] could not resolve a higher tier while checking "
+                    "whether escalation can change anything — assuming it can",
+                    exc_info=exc, extra={"_fields": {"tier": higher}},
+                )
+                return True
+            if not escalation_target_is_identical(
+                provider, model, nxt_provider, nxt_model
+            ):
+                return True
+        return False
+
     def __init__(self, registry: ProviderRegistry) -> None:
         self._registry = registry
 
@@ -203,8 +248,15 @@ class LLMGateway:
         result: CompletionResult | None = None
         retried_tiers: set[str] = set()  # ADR-2 — one same-tier retry per tier per call
         for idx, tier in enumerate(tiers):
-            can_escalate = idx < len(tiers) - 1
             provider, model, degraded = self._registry.resolve_tier_with_fallback(tier)
+            # Same rule as the tool loop (ESC-22): "can escalate" must mean the target
+            # above is DIFFERENT, not merely that a rung exists. Here it also decides
+            # whether ESCALATE_INSTRUCTION is appended to the prompt at all — so on a
+            # single-backend ladder the model is no longer invited to emit a sentinel
+            # that cannot route anywhere.
+            can_escalate = idx < len(tiers) - 1 and self._can_escalate_meaningfully(
+                tiers, idx, provider, model
+            )
             msgs = _augment_messages(messages, can_escalate)
             try:
                 result = await provider.complete(msgs, model=model, **kwargs)
@@ -320,8 +372,21 @@ class LLMGateway:
         final_text, calls = "", []  # type: tuple[str, list[dict[str, Any]]]
         retried_tiers: set[str] = set()  # ADR-2 — one same-tier retry per tier per call
         for idx, tier in enumerate(tiers):
-            can_escalate = idx < len(tiers) - 1
             provider, model, degraded = self._registry.resolve_tier_with_fallback(tier)
+            can_escalate = idx < len(tiers) - 1 and self._can_escalate_meaningfully(
+                tiers, idx, provider, model
+            )
+            if idx < len(tiers) - 1 and not can_escalate:
+                log.engine.info(
+                    "[llm_gateway] tools: every stronger tier resolves to the SAME "
+                    "provider and model — running as if at the ceiling so this "
+                    "attempt is DELIVERED instead of discarded and re-run",
+                    extra={"_fields": {
+                        "purpose": purpose, "tier": tier,
+                        "provider": getattr(provider, "name", ""), "model": model,
+                        "tiers_above": list(tiers[idx + 1:]),
+                    }},
+                )
             # Rebuild schemas for THIS tier's provider (protocol + window differ per
             # tier); reuse the passed-in list when no builder is supplied.
             if build_tool_schemas is not None:
@@ -404,34 +469,16 @@ class LLMGateway:
                         await on_escalate(tier, tiers[idx + 1])
                     continue
             if can_escalate and is_escalate_signal(final_text):
-                next_provider, next_model, _next_degraded = (
-                    self._registry.resolve_tier_with_fallback(tiers[idx + 1])
-                )
-                no_op = escalation_target_is_identical(
-                    provider, model, next_provider, next_model
-                )
+                # `can_escalate` now guarantees a DIFFERENT target above (ESC-22), so
+                # reaching here means the step up can genuinely produce another class
+                # of answer. The "same target" branch that used to live here is gone
+                # rather than left as a guard: it is unreachable by construction, and
+                # an unreachable guard reads to the next person like a live one.
                 log.engine.info(
                     "[llm_gateway] tools: model escalated mid-loop — discard + step up",
                     extra={"_fields": {"purpose": purpose, "from_tier": tier, "model": model,
-                                       "to_tier": tiers[idx + 1], "tool_calls": len(calls),
-                                       "same_target": no_op}},
+                                       "to_tier": tiers[idx + 1], "tool_calls": len(calls)}},
                 )
-                if no_op:
-                    # BEHAVIOUR UNCHANGED, DELIBERATELY. The re-run still happens; only
-                    # the silence is fixed. Whether a no-op escalation should instead
-                    # deliver the floor from the attempt already made changes what the
-                    # user receives, and is ESC-22 for Bakir. Logged at INFO because
-                    # production runs at INFO and a debug line is not evidence.
-                    log.engine.info(
-                        "[llm_gateway] tools: the stronger tier resolves to the SAME "
-                        "provider and model — this re-run cannot improve on the "
-                        "attempt being discarded",
-                        extra={"_fields": {
-                            "purpose": purpose, "provider": getattr(provider, "name", ""),
-                            "model": model, "from_tier": tier, "to_tier": tiers[idx + 1],
-                            "discarded_tool_calls": len(calls),
-                        }},
-                    )
                 if on_escalate is not None:
                     await on_escalate(tier, tiers[idx + 1])
                 continue

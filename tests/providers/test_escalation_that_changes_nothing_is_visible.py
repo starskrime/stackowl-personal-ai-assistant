@@ -85,11 +85,12 @@ class TestTheWasteIsAnnouncedAtINFO:
             tool_dispatcher=None, floor="fast", ceiling="powerful",
         )
 
-        hits = [r for r in caplog.records if "cannot improve on" in r.message]
-        assert hits, "a no-op escalation happened and production logged nothing"
+        hits = [r for r in caplog.records
+                if "running as if at the ceiling" in r.message]
+        assert hits, "the ladder was a no-op and production logged nothing"
         fields = getattr(hits[0], "_fields", {})
         assert fields.get("model") == "only-model"
-        assert fields.get("discarded_tool_calls") == 2
+        assert fields.get("tiers_above"), "the line does not say what was skipped"
 
     async def test_a_REAL_escalation_is_not_flagged(self, caplog) -> None:
         """The line must stay rare enough to mean something."""
@@ -101,11 +102,15 @@ class TestTheWasteIsAnnouncedAtINFO:
             tool_dispatcher=None, floor="fast", ceiling="powerful",
         )
 
-        assert not [r for r in caplog.records if "cannot improve on" in r.message]
+        assert not [r for r in caplog.records if "running as if at the ceiling" in r.message]
 
-    async def test_the_re_run_STILL_HAPPENS(self, caplog) -> None:
-        """ESC-22 is Bakir's to decide. This pins that observing the waste did not
-        silently also change what the user gets."""
+    async def test_the_identical_re_run_IS_SKIPPED(self, caplog) -> None:
+        """ESC-22, ANSWERED 2026-08-21: deliver the floor already earned.
+
+        Was `test_the_re_run_STILL_HAPPENS` while the question was open — it pinned
+        that observing the waste had not silently also changed what the user gets.
+        Bakir chose to stop burning the second identical turn, so the pin inverts: the
+        attempt must NOT be re-run when the target cannot differ."""
         caplog.set_level(logging.INFO)
         gateway, calls = _one_provider_gateway(escalates_on_attempt=1)
 
@@ -114,7 +119,37 @@ class TestTheWasteIsAnnouncedAtINFO:
             tool_dispatcher=None, floor="fast", ceiling="powerful",
         )
 
-        assert len(calls) >= 2, "the discarded attempt was not re-run — behaviour changed"
+        assert len(calls) == 1, (
+            f"the loop re-ran an identical target {len(calls)} times"
+        )
+
+    async def test_a_REAL_escalation_still_re_runs(self, caplog) -> None:
+        """The half that must NOT change. A genuine ladder still discards and steps
+        up; only the no-op case is short-circuited."""
+        caplog.set_level(logging.INFO)
+        gateway, calls = _two_provider_gateway()
+
+        await gateway.complete_with_tools(
+            user_text="hi", system_text=None, tool_schemas=[],
+            tool_dispatcher=None, floor="fast", ceiling="powerful",
+        )
+
+        assert len(calls) >= 2, "a real escalation stopped stepping up"
+
+    async def test_the_users_answer_is_the_attempts_own_text(self) -> None:
+        """Skipping the re-run must not hand the user the ESCALATE sentinel — that is
+        a raw control token, and it is what the discarded attempt literally returned."""
+        from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
+
+        gateway, _calls = _one_provider_gateway(escalates_on_attempt=1)
+
+        text, calls = await gateway.complete_with_tools(
+            user_text="hi", system_text=None, tool_schemas=[],
+            tool_dispatcher=None, floor="fast", ceiling="powerful",
+        )
+
+        assert text != ESCALATE_SENTINEL, "the sentinel reached the caller"
+        assert calls, "the attempt's tool calls were discarded along with the re-run"
 
 
 # --------------------------------------------------------------------------- #
@@ -133,9 +168,12 @@ def _one_provider_gateway(*, escalates_on_attempt: int):
 
         async def complete_with_tools(self, **kw):
             calls.append(kw.get("model", ""))
-            if len(calls) == escalates_on_attempt:
+            # A REAL provider only emits the sentinel when it is TOLD it may. The
+            # first draft of this double escalated unconditionally, which made the
+            # fix look untestable — it hid the very signal the fix works through.
+            if kw.get("can_escalate") and len(calls) == escalates_on_attempt:
                 return ESCALATE_SENTINEL, [{"tool": "a"}, {"tool": "b"}]
-            return "done", []
+            return "floor answer", [{"tool": "a"}, {"tool": "b"}]
 
     return _gateway({"fast": (_P(), "only-model"), "standard": (_P(), "only-model"),
                      "powerful": (_P(), "only-model")}), calls
@@ -155,7 +193,7 @@ def _two_provider_gateway():
 
             async def complete_with_tools(self, **kw):
                 calls.append(kw.get("model", ""))
-                if len(calls) == 1:
+                if kw.get("can_escalate") and len(calls) == 1:
                     return ESCALATE_SENTINEL, []
                 return "done", []
 
