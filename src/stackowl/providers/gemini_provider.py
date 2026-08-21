@@ -17,7 +17,6 @@ from stackowl.providers._blocks import gemini_user_parts, message_has_blocks
 from stackowl.providers._resilient_round import _is_transport_error
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.model_config import resolve_model_override
-from stackowl.providers.vision_models import is_vision_model
 
 # Gemini candidate finish_reason names that are a NORMAL (non-blocked) completion.
 # Anything else with empty text (SAFETY / RECITATION / BLOCKLIST / PROHIBITED_CONTENT
@@ -117,12 +116,12 @@ class GeminiProvider(ModelProvider):
     @property
     def supports_vision(self) -> bool:
         """True when the configured Gemini model is multimodal (1.5+/2.x)."""
-        return is_vision_model(self._config.default_model)
+        return self._config.resolve_vision()
 
     @property
     def supports_document(self) -> bool:
         """A multimodal Gemini model also accepts inline PDF document blocks (Mode B)."""
-        return is_vision_model(self._config.default_model)
+        return self._config.resolve_vision()
 
     async def stream(self, messages: list[Message], model: str, **kwargs: object) -> AsyncIterator[str]:
         TestModeGuard.assert_not_test_mode("gemini.stream")

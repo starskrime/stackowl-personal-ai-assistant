@@ -40,7 +40,6 @@ from stackowl.providers.iteration_budget import IterationBudget
 from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.resume_validation import validate_resume_transcript
-from stackowl.providers.vision_models import is_vision_model
 
 
 def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
@@ -392,7 +391,7 @@ class OpenAIProvider(ModelProvider):
         (llava, llama3.2-vision, …) — both ride the OpenAI ``image_url`` data-URL
         serialization in ``complete()``.
         """
-        return is_vision_model(self._config.default_model)
+        return self._config.resolve_vision()
 
     async def stream(self, messages: list[Message], model: str, **kwargs: object) -> AsyncIterator[str]:
         TestModeGuard.assert_not_test_mode("openai.stream")

@@ -29,6 +29,9 @@ class ModelOverride(BaseModel):
     # None = inherit the parent ProviderConfig's own value for this field.
     max_output_tokens: int | None = None
     context_chars: int | None = None
+    # Whether THIS model reads images. None = inherit the parent. One connection can
+    # front both a text model and a multimodal one, and they need not agree.
+    supports_vision: bool | None = None
 
     @field_validator("tiers")
     @classmethod
@@ -130,6 +133,58 @@ class ProviderConfig(BaseModel):
     # an uncounted wrap-up generation run as a 21st+ step). An owl with explicit caps
     # still overrides via max_iterations at the call site.
     tool_max_iterations: int = DEFAULT_TURN_MAX_STEPS
+    # WHETHER THIS BACKEND READS IMAGES — declared, because it cannot be inferred.
+    #
+    # None = fall through to `providers.vision_models.is_vision_model`, the 33-token
+    # vendor-substring heuristic, so every existing deployment is unchanged.
+    #
+    # MEASURED 2026-08-20: that heuristic recognised 0 of 99,573 recorded calls across
+    # all 8 models this deployment has ever run. Its list carries `gemma3` while the box
+    # runs gemma4, and `qwen2-vl` while the box runs qwen3.5/3.6 — and the primary
+    # backend is a private gateway model named `neraai-v1-raw`, which no vendor list can
+    # ever describe. Vision was not degraded, it was unreachable: VisionSelector could
+    # never return a provider, taking vision_analyze, browser_vision and GUI vision
+    # routing with it. The image TRANSPORT was fine the whole time.
+    #
+    # This does not contradict the standing "prefer dynamic discovery" rule. That rule
+    # forbids guessing what the system KNOWS; a substring list is not discovery, it is a
+    # hardcoded guess wearing discovery's clothes, and it breaks two other standing rules
+    # outright (no hardcoded keyword lists, no vendor names in src/). A private model's
+    # capabilities are not derivable from its name by anyone, which is precisely where a
+    # declaration is more honest than an inference.
+    #
+    # Rung ONE of the ladder model_window.py already proves: override, then probe, then
+    # catalog, then a conservative default. The heuristic stays as the last rung until
+    # the probe exists — deleting it first would regress deployments it does describe.
+    supports_vision: bool | None = None
+
+    def resolve_vision(self, model: str | None = None) -> bool:
+        """Whether ``model`` (default: this backend's own) can read images.
+
+        Precedence: a per-model declaration, then this backend's declaration, then
+        the name heuristic. Never raises — a capability check that throws would take
+        the turn with it.
+        """
+        try:
+            target = model or self.default_model
+            for entry in self.models:
+                if entry.name == target and entry.supports_vision is not None:
+                    return entry.supports_vision
+            if self.supports_vision is not None:
+                return self.supports_vision
+            from stackowl.providers.vision_models import is_vision_model
+
+            return is_vision_model(target)
+        except Exception as exc:  # pragma: no cover — defensive
+            from stackowl.infra.observability import log
+
+            log.config.error(
+                "[config] could not resolve a backend's vision capability — "
+                "reporting NOT vision-capable",
+                exc_info=exc, extra={"_fields": {"provider": self.name}},
+            )
+            return False
+
     # `quirks` WAS HERE AND IS DELETED (2026-08-20, Bakir's call). D02.6 declared it
     # as the escape hatch that justified not porting the reference platform's
     # English-matching classifier: "every reason they encode is reachable from a

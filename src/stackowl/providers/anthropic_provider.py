@@ -38,7 +38,6 @@ from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
 from stackowl.providers.model_config import resolve_model_override
 from stackowl.providers.react_callback import IterationCallback, ReActIterationState
 from stackowl.providers.resume_validation import validate_resume_transcript
-from stackowl.providers.vision_models import is_vision_model
 
 
 def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
@@ -179,12 +178,12 @@ class AnthropicProvider(ModelProvider):
     @property
     def supports_vision(self) -> bool:
         """True when the configured Claude model is vision-capable (Claude 3+)."""
-        return is_vision_model(self._config.default_model)
+        return self._config.resolve_vision()
 
     @property
     def supports_document(self) -> bool:
         """A vision-capable Claude model also accepts PDF document blocks (Mode B)."""
-        return is_vision_model(self._config.default_model)
+        return self._config.resolve_vision()
 
     @property
     def supports_cache_breakpoints(self) -> bool:
