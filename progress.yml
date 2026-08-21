@@ -600,6 +600,15 @@ current:
         (session_key, owl, provider, protocol, window, hydrated) and the key has six
         components. This is the standing rule working as stated — a real core fix should
         leave the platform to heal itself, and it did.
+      THE_SELF_RESTART_MECHANISM_MEASURED: >-
+        Worth writing down because I misread it once and nearly concluded the watcher had
+        stalled. The CodeWatcher polls `src` every 2.0s and restarts after a 300s QUIET
+        period measured from the file's MTIME — not from the commit. Confirmed to the
+        second on b6e447a4: mtime 08:47:31, restart requested 08:52:34 (303s), core
+        booted 08:52:42, clean at 529 lines / 526 INFO / 0 ERROR. So "I committed five
+        minutes ago and nothing restarted" is the wrong question; the clock starts when
+        the file is WRITTEN, which is usually earlier than the commit and occasionally
+        much earlier.
       A_CORRECTION_TO_MY_OWN_TOOLING: >-
         My first three log queries reported "0 lines in the last 10 minutes" on a
         platform that was busy. The JSONL timestamp field is `ts`, not `timestamp`, so
