@@ -26,16 +26,10 @@ Exit status is 1 when something is wrong, 0 when the file is sound.
 from __future__ import annotations
 
 import collections
-import re
 import sys
 from pathlib import Path
 
 import yaml
-
-#: Keys that legitimately repeat INSIDE an item's nested structures (a list of
-#: sub-items each with a name/status). Only top-level item keys are checked, but
-#: the flat regex cannot tell nesting apart, so these are excluded by name.
-_NESTED_OK = frozenset({"items", "name", "detail", "status", "decision"})
 
 _STAGES = (
     "brainstorm", "architect", "implement", "cleanup", "test", "validate", "document",
@@ -59,19 +53,60 @@ _VALID_STAGE_VALUES = frozenset({
 })
 
 
-def _item_blocks(text: str) -> list[tuple[str, str]]:
-    """(id, raw block) for every item, by source position.
+def _describe(node: yaml.MappingNode) -> str:
+    """A human label for the mapping a duplicate was found in.
 
-    Deliberately textual. The whole point is to see what ``yaml.safe_load``
-    HIDES, so parsing first and inspecting the result would miss it.
+    Prefers the mapping's own ``id`` (items) so a message reads "D10.2: 'changes'
+    appears 2 times"; falls back to the line number, which is what makes a
+    duplicate under ``current:`` findable at all.
     """
-    starts = [m.start() for m in re.finditer(r"^  - id: ", text, re.M)]
-    out: list[tuple[str, str]] = []
-    for start, end in zip(starts, [*starts[1:], len(text)], strict=True):
-        block = text[start:end]
-        match = re.search(r"id: (\S+)", block)
-        out.append((match.group(1) if match else "<unknown>", block))
-    return out
+    for key, value in node.value:
+        if getattr(key, "value", None) == "id" and isinstance(value, yaml.ScalarNode):
+            return str(value.value)
+    return f"line {node.start_mark.line + 1}"
+
+
+def duplicate_key_problems(text: str) -> list[str]:
+    """Every key that appears twice in the SAME mapping, at any depth.
+
+    WIRED ON ONLY SOME PATHS UNTIL 2026-08-21. The first version of this check was
+    textual — ``^  - id: `` to find item blocks, then ``^    (\\w+):`` for their keys
+    — so it inspected items and nothing else. ``current:``, which holds ``stage``,
+    ``ESCALATIONS`` and every hand-off note and is the most-written block in the file,
+    was never looked at. It carried ``ESCALATIONS:`` twice (lines 425 and 699); the
+    first held D16.3's entire brainstorm escalation record and was discarded at every
+    load, while this script printed "no duplicate keys".
+
+    ``yaml.compose`` builds the node tree BEFORE duplicate keys are merged away, so
+    every mapping is checked exactly, at any depth, with no indent assumptions. That
+    also retires the ``_NESTED_OK`` allow-list: it existed only because "the flat
+    regex cannot tell nesting apart", and a composer can — ``status`` appearing in two
+    different items is two mappings, not a duplicate.
+    """
+    try:
+        root = yaml.compose(text)
+    except Exception as exc:  # noqa: BLE001 — the message is the output
+        return [f"does not parse: {exc}"]
+
+    problems: list[str] = []
+    stack: list[yaml.Node] = [root] if root is not None else []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, yaml.MappingNode):
+            seen: collections.Counter[str] = collections.Counter(
+                str(k.value) for k, _v in node.value if isinstance(k, yaml.ScalarNode)
+            )
+            where = _describe(node)
+            for key, n in sorted(seen.items()):
+                if n > 1:
+                    problems.append(
+                        f"{where}: '{key}' appears {n} times — YAML keeps the LAST, "
+                        f"so a write to any earlier copy is discarded without an error"
+                    )
+            stack.extend(v for _k, v in node.value)
+        elif isinstance(node, yaml.SequenceNode):
+            stack.extend(node.value)
+    return problems
 
 
 def main() -> int:
@@ -79,17 +114,7 @@ def main() -> int:
     text = path.read_text(encoding="utf-8")
     problems: list[str] = []
 
-    for ident, block in _item_blocks(text):
-        keys = re.findall(r"^    (\w+):", block, re.M)
-        dupes = {
-            k: n for k, n in collections.Counter(keys).items()
-            if n > 1 and k not in _NESTED_OK
-        }
-        for key, n in sorted(dupes.items()):
-            problems.append(
-                f"{ident}: '{key}' appears {n} times — YAML keeps the LAST, so a "
-                f"write to any earlier copy is discarded without an error"
-            )
+    problems.extend(duplicate_key_problems(text))
 
     try:
         data = yaml.safe_load(text)

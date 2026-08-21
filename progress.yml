@@ -422,7 +422,14 @@ current:
       in-tree implementation set is formally CLOSED (D16.4's policy). Neither blocks
       current work; both should be asked before any 8th extension point ships, because
       E1's architect decision may propose exactly that.
-  ESCALATIONS:
+  # RECOVERED 2026-08-21. This whole block — D16.3's brainstorm escalation record,
+  # ~76 lines carrying E1-E5 as they were ASKED — was written as `ESCALATIONS:`
+  # while `current:` already had a key of that name further down. YAML keeps the
+  # last, so every load discarded it: the answers survived under
+  # ESCALATIONS_ANSWERED_2026_08_20, the questions did not. Renamed, not rewritten.
+  # `scripts/progress_lint.py` printed "no duplicate keys" the whole time, because
+  # its check only ever inspected `items:` blocks. Both are fixed together.
+  ESCALATIONS_D16_3_2026_08_20:
     raised: 2026-08-20
     status: ANSWERED 2026-08-20 — see ESCALATIONS_ANSWERED_2026_08_20 above; E2 and E4 remain open
     context: >-
@@ -3203,7 +3210,13 @@ known_debt:
       PROVABLY dead rather than incidentally dead. It was already dead before —
       0106 did not remove a working capability, it removed the possibility of one
       ever appearing without a deliberate schema change.
-    decision: >
+    # RECOVERED 2026-08-21. This block was written as `decision:` and so was
+    # DISCARDED at every load — the item carried the key twice and YAML keeps the
+    # last, leaving Bakir's answer with no record of the question it answered.
+    # Renamed, not rewritten. Found when progress_lint's duplicate check was
+    # widened past `items:`; `decision` had additionally been excluded by name in
+    # the old allow-list, so nothing could ever have reported it.
+    recommendation_before_the_answer: >
       NOT removed. Deleting a user-facing parameter is a capability decision, not
       cleanup, and the standing rule is never to disable a feature without asking.
       Two honest options for Bakir: drop the parameter (and the filter) as dead
