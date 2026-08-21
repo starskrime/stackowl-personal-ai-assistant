@@ -447,6 +447,53 @@ current:
       against hooks: 27 overrides across 198 possible slots in 33 plugins (13.6%), and
       get_hostname has zero implementors. A hook is a published extension point that
       freezes the call site you just extracted.
+    THE_DIVERGENCE_INVENTORY_IS_NOW_EXECUTABLE_2026_08_21:
+      commit: 1a1d1f6d
+      what: >-
+        tests/providers/conformance.py + test_both_tool_loops_conform.py. One scripted
+        transcript, rendered into both wire dialects, driven through BOTH
+        complete_with_tools implementations, compared on what an outside caller can see:
+        returned text, recorded tool calls, on_iteration_complete COUNT, and the ORDER of
+        dispatch vs callback. 19 tests. No production code changed — it is diagnostic.
+      why_it_was_built_before_the_verdict: >-
+        The panel's objection to extracting the shared loop was that an extraction
+        silently picks a winner. That objection cannot be weighed without knowing exactly
+        what differs, so the inventory is what ESC-21 needs in order to be answered well.
+        It is also worth having if the extraction is CANCELLED: it is the only thing that
+        would notice the two loops drifting further apart.
+      D1_and_D2_CONFIRMED: >-
+        openai returns ESCALATE on tool-budget exhaustion AND on a judge-ruled give-up.
+        anthropic does neither — it wraps up, and it nudges. Both now pinned, so a change
+        on either side fails loudly instead of vanishing into a warning that stops
+        appearing.
+      D5_CONFIRMED_BUT_NARROWER_THAN_RECORDED: >-
+        THE BRAINSTORM OVERSTATED THIS AND THE CORRECTION MATTERS. D5 does NOT affect the
+        native tool-call path — there both loops emit exactly `dispatch, callback,
+        callback` for one call, byte-identical. It lives only on the TEXT-ReAct
+        (`ACTION:`) path, and it is TWO separate differences: (1) anthropic fires an
+        EXTRA on_iteration_complete per iteration — one ReAct call gives 2 vs 3, two give
+        3 vs 5, so the gap WIDENS rather than being a constant offset a consumer could
+        correct for; and (2) the order around dispatch is INVERTED — openai dispatches
+        then calls back, anthropic calls back then dispatches. (2) is the one with teeth:
+        the callback is how the pipeline raises TurnStopped/BudgetBreach, so a user stop
+        or budget kill executes ONE EXTRA TOOL on openai and not on anthropic. The W4.T17
+        comment asserting that invariant is byte-identical on both sides and one of them
+        violates it.
+      THE_HARNESS_CAUGHT_ITSELF_FIRST: >-
+        Its first version reported the callback counts as IDENTICAL, because every
+        scripted turn used native tool calls. A harness that exercises one path cannot
+        see a divergence living on the other — the same lesson as every test double in
+        this programme that stopped resembling the real thing. Recorded because the
+        near-miss is the useful part: it would have produced a confident "no divergence"
+        finding that closed the question wrongly.
+      SOMETHING_THE_BRAINSTORM_DID_NOT_CLAIM_and_it_is_FINE: >-
+        The give-up nudge is budget-REFUNDED on both sides (iter_budget.refund
+        "give_up_directive"), so nothing in the iteration budget bounds it — which would
+        be unbounded spend if no separate cap existed. MEASURED: an always-vetoing judge
+        gets exactly 3 rounds on BOTH, at max_iterations 4, 8 and 16. The cap is real,
+        shared and independent of the budget. Both then deliver the vetoed text rather
+        than nothing, which is the never-empty floor working as designed, and they agree
+        exactly. Checked because an extraction could have broken it in silence.
     SHIPPED_FROM_THE_BRAINSTORM_2026_08_21:
       note: >-
         Four defects found while measuring D04.1, each fixed at its root and each
@@ -953,6 +1000,18 @@ current:
       re-scope that stops at the loop extraction lowers the cost of the NEXT backend
       but ships no breadth. If breadth is wanted on a timeline, the plugin surface is
       the thing that delivers it and this recommendation defers it indefinitely.
+    EVIDENCE_ADDED_2026_08_21: >-
+      The inventory is now EXECUTABLE (commit 1a1d1f6d, 19 tests), so this can be
+      answered from measurements rather than from the panel's opinion of them. What
+      actually differs between the two loops: openai escalates on tool-budget exhaustion
+      and on a judge-ruled give-up, anthropic does neither; and on the TEXT-ReAct path
+      anthropic fires an extra progress callback per iteration (2 vs 3 for one call, 3 vs
+      5 for two — the gap widens) and inverts the dispatch/callback order, so a user stop
+      executes one extra tool on openai and not on anthropic. What does NOT differ: the
+      whole native tool-call path, the ceiling behaviour, and the give-up nudge cap
+      (exactly 3 on both, independent of max_iterations). The divergence is therefore
+      REAL but SMALLER and more localised than "1,195 lines written twice" suggests —
+      which cuts BOTH ways for this decision and is offered as such.
     blocked_until_answered: "D04.1's architect stage. NOTHING else — see not_blocked below."
     not_blocked: >-
       The differential conformance harness, the supports_document fix, the memo-key
