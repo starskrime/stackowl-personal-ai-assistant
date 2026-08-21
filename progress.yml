@@ -261,8 +261,64 @@ current:
   wave: 2
   item: D16.3
   stage: architect
+  ESCALATIONS_ANSWERED_2026_08_20:
+    by: Bakir
+    E1_the_items_verdict:
+      answer: "BUILD THE CONTEXT-ENGINE ABC. D16.3 does NOT close as no_change_needed."
+      recorded_as_his_call_with_my_reasoning_kept: >-
+        My recommendation was no_change_needed on the ABC question, and he chose against
+        it. Recorded as HIS decision with the counter-argument intact rather than
+        silently dropped, because the next reader deserves both: context assembly is the
+        ONE genuinely missing category, but it will be our TENTH ABC below the reference
+        platform's own 3+ threshold, and the reference platform's own context-engine ABC
+        has exactly ONE implementation against 4 abstract methods. The measured risk is
+        that it joins LifecycleHook (0 implementations) and the eight other sub-threshold
+        ABCs as declared surface nobody writes against.
+        WHAT MAKES HIS CALL DEFENSIBLE ON THE SAME EVIDENCE: our context assembly has
+        FIVE contributors composed by hardcoded import in pipeline/steps/assemble.py
+        (build_stable_base_prompt:16, DNAPromptInjector:17, CapabilityManifest:19,
+        SkillInstructionInjector:22, plus memory blocks from classify). Five clears the
+        3+ bar on the CONTRIBUTOR axis even though it fails on the whole-engine axis.
+        That distinction is what architect must resolve: a contributor interface inside
+        assemble.py is a different object from a swappable context-engine, and the
+        reference platform built the second. Building the first is justified by our own
+        numbers; building the second is not.
+      architect_must_decide: >-
+        Contributor interface (5 real implementations today) vs swappable whole-engine
+        ABC (1). The panel's evidence supports the former. Also: whether it joins
+        _ABC_NAMES as an 8th plugin extension point, which is a SEPARATE and heavier
+        commitment than being an internal seam — and one that closes the moment a third
+        party registers against it.
+    E3_provider_breadth:
+      answer: "BUILD FOR THE 4 BACKENDS THAT EXIST. D04.1 is scoped to real configurations, not to 32 profiles."
+      consequence: >-
+        D04.1 makes per-backend facts declarable and correct for the configurations that
+        exist. Breadth stays possible without being built. Explicitly NOT adopted:
+        last-writer-wins plugin override, which one lens flagged as a one-way door and a
+        credential-redirection surface (a plugin silently redefining a built-in backend's
+        base_url).
+    E5_vision:
+      answer: "FIX NOW, AS ITS OWN ITEM. Not folded into D04.1."
+      shape_he_accepted: >-
+        The ladder model_window.py already proves works — operator override, live probe,
+        catalog, conservative default — plus registering a `vision` capability so a
+        deployment with no vision backend HIDES the tool instead of advertising it and
+        failing.
+    E_provider_strict:
+      answer: "KEEP THE WARNING (do NOT forbid). DELETE `quirks`."
+      consequence: >-
+        Unknown provider keys stay non-fatal, so no deployment we cannot see breaks on
+        upgrade. `quirks` is deleted rather than given a reader — it was built for a
+        classifier that explicitly refuses to consume it, and keeping it "pending a
+        reader" is how it survived to be found twice.
+    E2_and_E4_still_open: >-
+      Which categories he WANTS third-party-extensible (trust surface), and whether any
+      in-tree implementation set is formally CLOSED (D16.4's policy). Neither blocks
+      current work; both should be asked before any 8th extension point ships, because
+      E1's architect decision may propose exactly that.
   ESCALATIONS:
     raised: 2026-08-20
+    status: ANSWERED 2026-08-20 — see ESCALATIONS_ANSWERED_2026_08_20 above; E2 and E4 remain open
     context: >-
       D16.3 brainstorm, answered by panel. Everything evidence could settle IS settled and
       recorded on the item; these five cannot be, and the first one is why the rest wait.

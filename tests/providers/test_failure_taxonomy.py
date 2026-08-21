@@ -168,14 +168,19 @@ def test_NO_vendor_names_in_the_taxonomy():
         assert vendor not in code.lower(), f"vendor name in code: {vendor}"
 
 
-def test_provider_quirks_are_config_not_code():
+def test_the_quirks_escape_hatch_is_gone_not_merely_unused():
+    """D02.6 declared `ProviderConfig.quirks` as the alternative to English matching,
+    and nothing ever read it — one grep hit, a docstring. Deleted 2026-08-20.
+
+    This asserts the DELETION rather than the field, because the failure mode being
+    guarded is its quiet return: a field re-added "for later" is how the first one
+    survived to be found twice. The invariant it was supposed to protect — no vendor
+    names in this module — is held by the test above, which is the one that always
+    had teeth.
+    """
     from stackowl.config.provider import ProviderConfig
 
-    base = {"name": "p", "protocol": "openai", "default_model": "m", "tiers": ("fast",)}
-    assert ProviderConfig(**base).quirks == ()
-    assert ProviderConfig(**base, quirks=("strip_grammar_pattern",)).quirks == (
-        "strip_grammar_pattern",
-    )
+    assert "quirks" not in ProviderConfig.model_fields
 
 
 # --------------------------------------------------------------------------- #

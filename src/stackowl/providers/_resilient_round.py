@@ -93,9 +93,14 @@ class RecoveryAction(enum.Enum):
     hard-won incident knowledge. NOT ported: its ``_classify_by_message`` path
     (English substring matching) and the three of its members named after specific
     model runtimes — those names belong in the design doc, not here. Both are
-    against standing rules, and every reason they encode is reachable from a status
-    code or a ``ProviderConfig.quirks`` entry instead: same coverage, and a
-    provider-specific fact stays configuration rather than a branch in ``src/``.
+    against standing rules, and every reason they encode is reachable from a STATUS
+    CODE instead, which is structural.
+    D02.6 originally also promised ``ProviderConfig.quirks`` as a second route for
+    provider-specific facts. That field was deleted on 2026-08-20 having never had a
+    reader, and the promise is withdrawn rather than left standing: a free-form token
+    had nowhere to be interpreted, because the only component that would read it is
+    this classifier, which does not parse text by design. Status codes carry the
+    coverage on their own.
     See ``docs/reference-mapping/designs/D02.6.md`` for the member-by-member mapping.
     """
 
