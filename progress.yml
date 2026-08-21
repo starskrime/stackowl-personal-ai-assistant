@@ -12445,7 +12445,7 @@ items:
     stages:
       brainstorm: done
       architect:  done             # 2026-08-20 — designs/D16.3.md, rung 1, NOT an 8th plugin point
-      implement:  not_started
+      implement:  partial          # 2026-08-21 — the ONE list ships; the contributor Protocol is the remaining slice
       cleanup:    not_started
       test:       not_started
       validate:   not_started
@@ -12487,6 +12487,26 @@ items:
       including prompt_hash) is the migration's whole safety story and gets written
       first: a prompt that changes shape silently invalidates every live session's cache,
       which is Law 1.
+    IMPLEMENT_SLICE_1_2026_08_21: >-
+      THE MEASURED DEFECT IS FIXED FIRST, before any abstraction. `PROMPT_PART_NAMES` +
+      `compose_prompt_parts()` make the seven-part list exist ONCE, and `run()` derives
+      the prompt, the D01.2 cache audit and the D01.6 per-part sizes from it. So
+      `capabilities_len` now reaches the log it was added for — it had NEVER appeared,
+      across all 18 `assemble: exit` lines the live log holds, while `banner_len` and
+      `memory_len` were reported and are not parts of the prompt at all. Those two are
+      kept deliberately and now sit under a comment saying why.
+      I3 IS PROVEN, NOT ARGUED. The composer is pinned against the literal expression it
+      replaced across all 128 empty/non-empty combinations of seven parts, plus the
+      `None` stable_context case. A prompt that changes shape silently invalidates every
+      live session's cached prefix, which is Law 1, so byte-identity is the migration's
+      whole safety story and it is asserted rather than reasoned.
+      TWO GUARDS BEYOND THE INVARIANTS: an unknown key cannot enter the prompt (it would
+      be a new way to move prompt_hash with no audit trail), and a missing key is empty
+      rather than a KeyError (prompt building must never cost a turn).
+      REMAINING SLICE: the `PromptContributor` Protocol and `PromptContext` from the
+      design — turning the seven inline blocks into named renderers. The list existing
+      once is the part that pays for itself immediately; the Protocol is what lets the
+      seven stop being inline, and it is not needed to close the drift.
     changes: []
     notes: null
 

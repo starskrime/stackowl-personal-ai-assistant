@@ -24,6 +24,44 @@ from stackowl.skills.instruction_injector import (
     SkillTier,
 )
 
+#: THE ONE LIST. Every part of the composed system prompt, in composed ORDER.
+#:
+#: D16.3. This existed three times inside `run()` — the `parts` tuple that builds the
+#: prompt, the `audit_prompt_parts` dict D01.2 reads, and the `assemble: exit` log
+#: fields D01.6 exists to produce — and the copies had ALREADY DRIFTED. Measured across
+#: all 18 `assemble: exit` lines the live log holds: `capabilities_len` is absent, while
+#: `banner_len` and `memory_len` are logged and are not parts of the prompt at all.
+#: `capabilities` is a real 579-char part whose size had never once been recorded,
+#: inside the function whose own comment calls those sizes "the diagnostic D01.6 exists
+#: to obtain".
+#:
+#: ORDER IS BEHAVIOUR. It is the cached prefix (Law 1) — reordering this tuple changes
+#: every session's prompt_hash and invalidates its cache. Treat a reorder as a prompt
+#: change, never a tidy-up.
+PROMPT_PART_NAMES: tuple[str, ...] = (
+    "base", "capabilities", "persona", "owls", "skills", "profile", "stable_context",
+)
+
+
+def compose_prompt_parts(
+    rendered: dict[str, str],
+) -> tuple[str | None, dict[str, str], dict[str, int]]:
+    """Compose the prompt, the audit map and the size fields from ONE list.
+
+    Returns ``(system_prompt, audit_parts, log_fields)``. Driven by
+    :data:`PROMPT_PART_NAMES` rather than by the caller's keys, so an unknown part
+    cannot enter the prompt unaudited and a missing one is simply empty — prompt
+    building must never raise, and never silently gain a stanza nobody can see.
+    """
+    parts = {name: rendered.get(name) or "" for name in PROMPT_PART_NAMES}
+    body = [text for text in parts.values() if text]
+    return (
+        "\n\n".join(body) or None,
+        parts,
+        {f"{name}_len": len(text) for name, text in parts.items()},
+    )
+
+
 _injector = DNAPromptInjector()
 _skill_injector = SkillInstructionInjector()
 
@@ -405,21 +443,10 @@ async def run(state: PipelineState) -> PipelineState:
     # delivered as its own chunk — which also means the user reads the
     # undelivered body VERBATIM, as render_banner intends, rather than the owl's
     # paraphrase of it.
-    parts = [
-        p for p in (
-            base, capabilities, persona, owls_block, skills_block,
-            profile, state.stable_context,
-        ) if p
-    ]
-    system_prompt = "\n\n".join(parts) or None
-    # D01.6 — stamp this turn's prompt identity so the single cost-recording site
-    # (providers/base.py::_record_cost) can attach it without threading arguments
-    # through every provider signature. Never raises.
-    prompt_hash, prompt_chars = prompt_metrics.stamp(system_prompt)
-    # D01.2 — prompt_hash says the prompt MOVED; this says which part moved. The
-    # cold build is the only place a silent invalidator can be caught at its
-    # source, because it is the only place the parts still exist separately.
-    audit_prompt_parts(state.session_key, {
+    # ONE LIST, three uses. See PROMPT_PART_NAMES for why: these were three separate
+    # hand-kept lists and they had already drifted — `capabilities_len` never once
+    # reached the log D01.6 added it for.
+    system_prompt, audit_parts, part_lens = compose_prompt_parts({
         "base": base,
         "capabilities": capabilities,
         "persona": persona,
@@ -427,7 +454,15 @@ async def run(state: PipelineState) -> PipelineState:
         "skills": skills_block,
         "profile": profile,
         "stable_context": state.stable_context or "",
-    }, owl=state.owl_name)
+    })
+    # D01.6 — stamp this turn's prompt identity so the single cost-recording site
+    # (providers/base.py::_record_cost) can attach it without threading arguments
+    # through every provider signature. Never raises.
+    prompt_hash, prompt_chars = prompt_metrics.stamp(system_prompt)
+    # D01.2 — prompt_hash says the prompt MOVED; this says which part moved. The
+    # cold build is the only place a silent invalidator can be caught at its
+    # source, because it is the only place the parts still exist separately.
+    audit_prompt_parts(state.session_key, audit_parts, owl=state.owl_name)
     # INFO, not DEBUG. These per-part sizes are the diagnostic D01.6 exists to
     # obtain, and at debug level they vanished entirely: 0 of 17403 lines in the
     # live log carried them, which is why prompt composition was unmeasurable.
@@ -436,15 +471,13 @@ async def run(state: PipelineState) -> PipelineState:
         extra={"_fields": {
             "trace_id": state.trace_id,
             "session_key": state.session_key,
-            "base_len": len(base),
-            "persona_len": len(persona),
+            # Every part's size, DERIVED from the one list — so a part added later
+            # cannot be silently unmeasured the way `capabilities` was.
+            **part_lens,
+            # Not parts of the composed prompt, and deliberately still reported:
+            # the banner rides the turn (state.pending_banner) and memory_len is
+            # D01.1's comparison against the profile that replaced it.
             "banner_len": len(banner),
-            "owls_len": len(owls_block),
-            "skills_len": len(skills_block),
-            # D01.1 — the profile is what is now IN the prompt; memory_len stays
-            # so the two can be compared during the cut-over and afterwards.
-            "profile_len": len(profile),
-            "stable_context_len": len(state.stable_context or ""),
             "memory_len": len(state.memory_context or ""),
             "system_len": prompt_chars,
             "prompt_hash": prompt_hash,
