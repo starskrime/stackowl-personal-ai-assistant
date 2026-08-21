@@ -447,6 +447,31 @@ current:
       against hooks: 27 overrides across 198 possible slots in 33 plugins (13.6%), and
       get_hostname has zero implementors. A hook is a published extension point that
       freezes the call site you just extracted.
+    VALIDATE_THE_ESCALATION_ANSWERS_2026_08_21:
+      restart: >-
+        BY SELF-RESTART again, and predicted to the second this time using the mtime rule
+        recorded earlier: last src write 12:23:32, restart requested 12:28:35 (303s),
+        core booted 12:28:43. Clean — 529 lines, 526 INFO, 3 WARNING, 0 ERROR, every
+        phase ok, gateway up, scheduler polling, webhook listening.
+      the_running_code_was_VERIFIED_not_assumed: >-
+        Introspected the live modules rather than trusting the commit:
+        LLMGateway._can_escalate_meaningfully present; anthropic carries both the D1
+        ("tool budget exhausted without delivering") and D2 ("judge ruled give-up")
+        escalations; ProviderCatalog carries the additive-only refusal. All four true.
+      ONE_ERROR_IN_THE_WINDOW_AND_IT_WAS_PROBABLY_MINE: >-
+        At 12:21:16 the health sweep logged ERROR "UNHEALTHY subsystems detected",
+        down=[owl_ratings], after the aggregator timed out on that probe at 5001ms. It
+        SELF-RECOVERED on the next sweep (11/11 ok at 12:26:41) and the sweeps either
+        side were 11/11. The window coincides exactly with a full tests/providers run
+        plus concurrent suites loading this box, so the likeliest cause is my own test
+        load rather than a defect — stated as a likelihood, not a conclusion, because it
+        was not isolated. Worth noting what went RIGHT: something noticed, logged at
+        ERROR, and delivered a notification. That is the guide-star rule working.
+      what_is_still_OPEN: >-
+        D5. The order half is ESC-25 and has a LIVE consequence measured directly on the
+        openai path: a cooperative stop currently executes one more tool before being
+        honoured. The count half (anthropic's extra per-iteration callback on text-ReAct)
+        is expected to close with it.
     RE_SCOPED_WORK_STATUS_2026_08_21:
       D1_budget_exhaustion_escalation: "CLOSED (bc132963) — lifted into anthropic, harness expectations inverted."
       D2_judge_give_up_escalation: "CLOSED (bc132963) — same commit; ceiling still nudges, 3-round cap unchanged."
