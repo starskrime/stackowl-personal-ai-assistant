@@ -667,6 +667,51 @@ current:
         recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
+    D05_4_ROOT_CAUSE_CORRECTED_2026_08_21:
+      RETRACTION: >-
+        The block below (D05_4_ROOT_CAUSE_FOUND, commit e0d2b949) names the browser
+        recycle as the cause of the presented array changing turn to turn. THAT LAST STEP
+        IS WRONG and this supersedes it. The browser finding itself stands; its
+        CONSEQUENCE does not.
+      what_I_conflated: >-
+        I equated 284 "eligible tools NOT presented" events with 284 changes to the
+        model's toolset. They are not the same thing. That line fires on every REBUILD,
+        and a rebuild that reproduces the SAME array changes nothing the model sees.
+      the_measurement_that_settles_it_ALREADY_EXISTED: >-
+        `pipeline/cache_audit.py:95 audit_tools_stability` has been logging
+        "[cache] breakpoints: tools array CHANGED — position 0 invalidated this turn" at
+        WARNING, with prev_hash/hash keyed on (session_key, owl), since D01.2. I said last
+        iteration that "did this owl's toolset change between turn 4 and turn 5 cannot be
+        answered from the record" and then proposed building a fingerprint. Both were
+        wrong: the fingerprint exists, it is at WARNING, and it answers exactly that.
+        Found by reading the call site before writing code — the "check existing before
+        building new" rule paying for itself.
+      WHAT_THE_REAL_NUMBERS_ARE: >-
+        Today: 13 changes across 4 lanes, not 284 across 69 sessions. All-time 482. The
+        signature is a SIZE SWING, not a re-rank: owl=mailbutler on one lane went
+        7, 6, 36, 6, 7, 6, 6 tools; owl=secretary went 23, 6.
+      THE_ACTUAL_CAUSE: >-
+        execute.py:1244 — `restrict_to = state.task_envelope.tools if state.task_envelope
+        is not None else None`. A turn WITH a planned envelope takes the deterministic
+        select() path and presents 6-7 tools; a turn WITHOUT one takes the budgeted path
+        and presents 23-36. Both happen inside a single lane, so the model's capability
+        set expands and contracts between turns. That is ESC-18's original observation
+        ("3, 4, 5, 6, 23, 26, 27, 30 tools on consecutive turns") and its "three
+        mechanisms" framing was closer to right than my correction of it claimed — the
+        competing mechanisms are `restrict_to` and the budgeter, and they produce
+        different arrays for the same owl.
+      WHAT_THE_BROWSER_FINDING_STILL_IS: >-
+        A real and separate defect, worth fixing on its own terms: a transient ~3-second
+        subprocess bounce fires `_on_capability_change("browser")` 62 times a day, each
+        wiping EVERY session's memoized array platform-wide and forcing 284 needless
+        rebuilds. It costs recomputation and defeats the memo D05.2 added. It is simply
+        not what makes the toolset change.
+      THE_LESSON_I_KEEP_RE_LEARNING_THIS_SESSION: >-
+        Four times now I have read a proxy as the thing itself — an absent `category`
+        field as the value None, a truncated `dropped[:20]` as the whole list, "the
+        provenance line never logged" as "the feature is dead", and now "a rebuild
+        happened" as "the array changed". Each time the correction came from measuring the
+        actual quantity rather than one correlated with it.
     D05_4_ROOT_CAUSE_FOUND_2026_08_21:
       the_falsified_assumption: >-
         infra/presented_tools.py:79 justifies clearing the ENTIRE memo on any capability
