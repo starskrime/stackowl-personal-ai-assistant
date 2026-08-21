@@ -1318,6 +1318,10 @@ async def _run_with_tools(
             memo_key = presented_tools.make_key(
                 session_key=state.session_key or "",
                 owl=state.owl_name or "",
+                # The BACKEND, not just its protocol. Four backends here speak
+                # `openai`, and the escalation ladder rebuilds schemas per tier while
+                # `window` stays frozen — so without this the tiers share one entry.
+                provider=str(getattr(prov, "name", "") or ""),
                 protocol=prov.protocol,
                 window=_window,
                 hydrated=_hydrated,

@@ -75,7 +75,7 @@ def test_history_growth_does_not_shrink_the_array_through_the_memo():
     """THE FIX. One session, one key → the same array regardless of history."""
     reg = _registry()
     key = presented_tools.make_key(
-        session_key="lane-1", owl="scout", protocol="openai",
+        session_key="lane-1", owl="scout", provider="backend-a", protocol="openai",
         window=8192, hydrated=None,
     )
     first = _build(reg, fixed_cost=100)
@@ -98,9 +98,9 @@ def test_a_different_session_does_not_hit():
     """Stability horizon is the SESSION. A new session must recompute, or a
     learned demotion could never take effect."""
     a = presented_tools.make_key(
-        session_key="lane-1", owl="scout", protocol="openai", window=8192, hydrated=None)
+        session_key="lane-1", owl="scout", provider="backend-a", protocol="openai", window=8192, hydrated=None)
     b = presented_tools.make_key(
-        session_key="lane-2", owl="scout", protocol="openai", window=8192, hydrated=None)
+        session_key="lane-2", owl="scout", provider="backend-a", protocol="openai", window=8192, hydrated=None)
     presented_tools.put(a, [{"name": "x"}])
     assert presented_tools.get(b) is None
 
@@ -110,18 +110,18 @@ def test_escalation_tiers_do_not_share_an_array():
     different wire protocols and have different windows. A session-only key
     would hand an Anthropic-shaped array to an OpenAI-protocol tier."""
     fast = presented_tools.make_key(
-        session_key="s", owl="scout", protocol="openai", window=8192, hydrated=None)
+        session_key="s", owl="scout", provider="backend-a", protocol="openai", window=8192, hydrated=None)
     powerful = presented_tools.make_key(
-        session_key="s", owl="scout", protocol="anthropic", window=200_000, hydrated=None)
+        session_key="s", owl="scout", provider="backend-a", protocol="anthropic", window=200_000, hydrated=None)
     presented_tools.put(fast, [{"function": {"name": "openai_shaped"}}])
     assert presented_tools.get(powerful) is None
 
 
 def test_two_owls_on_one_lane_do_not_share_an_array():
     a = presented_tools.make_key(
-        session_key="s", owl="scout", protocol="openai", window=8192, hydrated=None)
+        session_key="s", owl="scout", provider="backend-a", protocol="openai", window=8192, hydrated=None)
     b = presented_tools.make_key(
-        session_key="s", owl="secretary", protocol="openai", window=8192, hydrated=None)
+        session_key="s", owl="secretary", provider="backend-a", protocol="openai", window=8192, hydrated=None)
     presented_tools.put(a, [{"name": "x"}])
     assert presented_tools.get(b) is None
 
@@ -135,10 +135,10 @@ def test_a_tool_search_hydration_invalidates_so_promotion_still_works():
     discovery invalidates and costs one rebuild.
     """
     before = presented_tools.make_key(
-        session_key="s", owl="scout", protocol="openai", window=8192, hydrated=None)
+        session_key="s", owl="scout", provider="backend-a", protocol="openai", window=8192, hydrated=None)
     presented_tools.put(before, [{"name": "stale"}])
     after = presented_tools.make_key(
-        session_key="s", owl="scout", protocol="openai", window=8192,
+        session_key="s", owl="scout", provider="backend-a", protocol="openai", window=8192,
         hydrated={"image_gen"},
     )
     assert presented_tools.get(after) is None, (
@@ -151,10 +151,10 @@ def test_hydrated_set_order_does_not_change_the_key():
     directly, two identical hydrated sets could hash differently and the memo
     would simply never hit — a silent, total loss of the fix."""
     k1 = presented_tools.make_key(
-        session_key="s", owl="o", protocol="openai", window=1,
+        session_key="s", owl="o", provider="backend-a", protocol="openai", window=1,
         hydrated={"a", "b", "c"})
     k2 = presented_tools.make_key(
-        session_key="s", owl="o", protocol="openai", window=1,
+        session_key="s", owl="o", provider="backend-a", protocol="openai", window=1,
         hydrated={"c", "a", "b"})
     assert k1 == k2
 
@@ -164,7 +164,7 @@ def test_get_returns_a_copy_so_a_caller_cannot_poison_the_memo():
     exclusion. Handing out the stored list would let one delegated child's
     exclusion persist onto every later turn of the parent's session."""
     key = presented_tools.make_key(
-        session_key="s", owl="o", protocol="openai", window=1, hydrated=None)
+        session_key="s", owl="o", provider="backend-a", protocol="openai", window=1, hydrated=None)
     presented_tools.put(key, [{"name": "a"}, {"name": "spawn"}])
     got = presented_tools.get(key)
     got.pop()
@@ -176,11 +176,11 @@ def test_clear_owl_drops_that_owl_across_every_session():
     just the one that made the edit — otherwise a self-extending owl keeps being
     handed its pre-edit toolset on every other lane."""
     edited_a = presented_tools.make_key(
-        session_key="s1", owl="scout", protocol="openai", window=1, hydrated=None)
+        session_key="s1", owl="scout", provider="backend-a", protocol="openai", window=1, hydrated=None)
     edited_b = presented_tools.make_key(
-        session_key="s2", owl="scout", protocol="openai", window=1, hydrated=None)
+        session_key="s2", owl="scout", provider="backend-a", protocol="openai", window=1, hydrated=None)
     bystander = presented_tools.make_key(
-        session_key="s1", owl="secretary", protocol="openai", window=1, hydrated=None)
+        session_key="s1", owl="secretary", provider="backend-a", protocol="openai", window=1, hydrated=None)
     for k in (edited_a, edited_b, bystander):
         presented_tools.put(k, [{"name": "x"}])
 
@@ -195,9 +195,9 @@ def test_clear_owl_drops_that_owl_across_every_session():
 
 def test_clear_is_session_scoped():
     a = presented_tools.make_key(
-        session_key="s1", owl="o", protocol="openai", window=1, hydrated=None)
+        session_key="s1", owl="o", provider="backend-a", protocol="openai", window=1, hydrated=None)
     b = presented_tools.make_key(
-        session_key="s2", owl="o", protocol="openai", window=1, hydrated=None)
+        session_key="s2", owl="o", provider="backend-a", protocol="openai", window=1, hydrated=None)
     presented_tools.put(a, [{"name": "a"}])
     presented_tools.put(b, [{"name": "b"}])
     presented_tools.clear("s1")

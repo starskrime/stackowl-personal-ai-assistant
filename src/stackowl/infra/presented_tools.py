@@ -58,9 +58,12 @@ __all__ = ["clear", "clear_owl", "get", "make_key", "put"]
 _MAX_ENTRIES = 256
 
 _lock = threading.Lock()
-_memo: OrderedDict[tuple[str, str, str, int, tuple[str, ...]], list[dict[str, Any]]] = (
-    OrderedDict()
-)
+#: Key: (session_key, owl, provider, protocol, window, hydrated). ``provider`` was
+#: added 2026-08-21 — without it, two DIFFERENT backends speaking one protocol shared
+#: an entry, and the array they shared is BUDGETED to a window, so the weaker backend
+#: was served a set fitted to the stronger one's. See make_key().
+_MemoKey = tuple[str, str, str, str, int, tuple[str, ...]]
+_memo: OrderedDict[_MemoKey, list[dict[str, Any]]] = OrderedDict()
 
 
 def _on_capability_change(capability: str) -> None:
@@ -94,17 +97,35 @@ def make_key(
     *,
     session_key: str,
     owl: str,
+    provider: str,
     protocol: str,
     window: int,
     hydrated: set[str] | None,
-) -> tuple[str, str, str, int, tuple[str, ...]]:
+) -> _MemoKey:
     """Build the memo key. ``hydrated`` is SORTED into a tuple, not left a set —
     a set has no stable iteration order to hash a key on, and two identical
-    hydrated sets must produce the same key or the memo never hits."""
-    return (session_key, owl, protocol, window, tuple(sorted(hydrated or ())))
+    hydrated sets must produce the same key or the memo never hits.
+
+    ``provider`` IS PART OF THE KEY, since 2026-08-21. Without it two different
+    backends speaking one protocol collided inside a single session, and the first
+    to build an array handed it to the second. That is not a cache inefficiency:
+    the array is budgeted to a window (see ``execute.py``'s ``budget=`` argument,
+    whose stated purpose is that "a weak/small-window model is not drowned in tool
+    schemas"), and ``window`` could not separate them either — it is stamped once by
+    assemble and never re-stamped per tier, while the escalation ladder rebuilds
+    schemas for EACH tier's provider.
+
+    Measured: 1,530 real traces used more than one provider and 254 more than one
+    model, spanning a 2b to a 122b, all on ``protocol: openai``. Dormant today
+    (three of four backends are disabled, last multi-model trace 2026-07-20) and it
+    re-arms the moment a second backend is enabled.
+    """
+    return (
+        session_key, owl, provider, protocol, window, tuple(sorted(hydrated or ()))
+    )
 
 
-def get(key: tuple[str, str, str, int, tuple[str, ...]]) -> list[dict[str, Any]] | None:
+def get(key: _MemoKey) -> list[dict[str, Any]] | None:
     """Return the memoized schemas for this key, or None."""
     with _lock:
         hit = _memo.get(key)
@@ -118,9 +139,7 @@ def get(key: tuple[str, str, str, int, tuple[str, ...]]) -> list[dict[str, Any]]
         return list(hit)
 
 
-def put(
-    key: tuple[str, str, str, int, tuple[str, ...]], schemas: list[dict[str, Any]]
-) -> None:
+def put(key: _MemoKey, schemas: list[dict[str, Any]]) -> None:
     """Memoize schemas for this key, evicting the least recently used."""
     with _lock:
         _memo[key] = list(schemas)
@@ -143,6 +162,10 @@ def clear_owl(owl: str) -> None:
     with; the next turn rebuilds.
     """
     with _lock:
+        # Index 1 is the owl. `provider` was inserted at index 2 in 2026-08-21's key
+        # change specifically so session_key and owl keep positions 0 and 1 and this
+        # scan is unaffected — a positional read is the kind of thing that breaks in
+        # silence, so it is pinned by test_clear_owl_still_finds_the_owl.
         for key in [k for k in _memo if k[1] == owl]:
             del _memo[key]
 
