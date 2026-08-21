@@ -301,15 +301,29 @@ async def test_j4_unbounded_owl_runs_both_tools_unchanged() -> None:
 
     reply = await _turn(env, "@vault_owl look up my balance and wire $1000")
 
-    # Both tools run — byte-for-byte legacy behavior through the very same arc. The
-    # scripted model calls the forbidden tool TWICE; with NO bounds (and a
-    # read-severity tool that needs no consent) BOTH calls genuinely execute, so the
-    # forbidden tool runs twice (no denied_this_run short-circuit on the legacy path).
+    # Both tools run. The scripted model calls the forbidden tool TWICE; with NO
+    # bounds (and a read-severity tool that needs no consent) BOTH calls genuinely
+    # execute, so the forbidden tool runs twice — that is the whole control, and it
+    # is what proves bounds (not something else) does the blocking in the sibling
+    # test.
     assert env.allowed.runs == 1
     assert env.forbidden.runs == 2
     assert provider.allowed_out == _ALLOWED_OUTPUT
     assert provider.forbidden_out == "SHOULD-NEVER-APPEAR"  # i.e. the forbidden tool RAN
-    assert provider.forbidden_out_2 == "SHOULD-NEVER-APPEAR"
+
+    # THE SECOND OBSERVATION IS NO LONGER BYTE-IDENTICAL, AND THAT IS A FEATURE.
+    # A repeated non-idempotent call now carries a `[loop-guard]` nudge appended to
+    # the tool's output ("has been called 2 times with identical arguments"), so the
+    # model reuses the result it already has instead of grinding. Asserting equality
+    # here made a real anti-thrash guard read as a regression; what this test
+    # actually claims is that the tool RAN and its result reached the model.
+    assert "SHOULD-NEVER-APPEAR" in provider.forbidden_out_2
+    # And pin the guard itself, so the nudge cannot silently stop firing — an
+    # anti-thrash guard that quietly disappears looks exactly like one that works.
+    assert "[loop-guard]" in provider.forbidden_out_2, (
+        "the repeated identical call should carry the loop-guard nudge. "
+        f"got {provider.forbidden_out_2!r}"
+    )
     assert _REPLY_FRAGMENT in reply
 
 

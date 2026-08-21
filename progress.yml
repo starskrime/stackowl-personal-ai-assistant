@@ -3143,24 +3143,52 @@ known_debt:
         retry contract now returns a row to `pending` where the test expects a
         terminal state — the two readings are behaviourally different and only one
         is a bug.
-      OPEN_5_the_owls_command_surface: >-
-        2 tests in test_owl_builder_journey get `/owls` usage text back, so the
-        subcommand they invoke no longer exists under that name. Cheap to settle:
-        diff the test's invocation against the SubCommand tree.
-      OPEN_6_an_event_name_changed: >-
-        test_allowlist_subscribes_exactly_the_unblocked_budget_events expects
-        `budget_exceeded` and gets `..._cost_report`. One name, two places.
-      OPEN_7_the_global_skills_catalog: >-
-        test_skill_discovery_journey asserts the default Secretary receives the
-        GLOBAL skills catalog in its system prompt; the prompt carries only an
-        AVAILABLE block with one learned skill. Either a real injection regression
-        or a stale expectation — NOT yet distinguished, and it must be, because one
-        of those is a shipped capability loss.
-      OPEN_8_the_loop_guard_suffix: >-
-        test_j4_tools_bounds asserts a tool's exact output; a `[loop-guard]` notice
-        is now appended when a tool is called twice with identical arguments. The
-        feature looks right and the assertion is stale, but confirm the guard is
-        intended before rewriting the test to accept it.
+      RESOLVED_5_the_owls_surface_was_RESPELLED_not_removed: >-
+        `67cc2fd9` folded structured creation into the unified `/owl` dispatcher:
+        `OwlCommand.create` parses the same flags via `parse_owl_build_flags`,
+        while `OwlsCommand.create` is the free-text elicitation path. `--role` is
+        gone (the preset supplies it) and `--specialty` is now required. The REAL
+        reason consent failed was different and worth having: the command is
+        invoked DIRECTLY, outside the pipeline, so `get_services()` was unbound and
+        `owl_build` read `consent_gate=None` and failed closed. Also removed two
+        `reply.startswith("✓")` assertions — the owl was created correctly and the
+        test failed on a decorative prefix, which is "trust the call" instead of
+        measure the effect, inside a test.
+        STILL OPEN AND STOPPED AT FOUR ATTEMPTS, which the standing rule calls an
+        architecture question rather than a fifth attempt. The platform's own ERROR
+        names it: "[owls] persist_owl: no db wired — the owl change was NOT
+        persisted". OWL PERSISTENCE MOVED FROM YAML TO THE DATABASE and step 4 of
+        this journey reloads a yaml file nothing writes any more. NEXT STEP: give
+        the journey a db-backed fixture and assert persistence through the store.
+        The sibling control additionally wants a capability-less owl, which the
+        validator no longer permits — that control may have to construct its
+        manifest directly rather than through the command.
+      RESOLVED_6_the_lock_fired_on_an_INTENDED_change: >-
+        Not a rename — an ADDITION. `conversation_cost_report` joined the
+        allow-list deliberately (DEBT-7: Bakir asked to be told what a conversation
+        cost, so the report must be deliverable rather than log-only). The exact-set
+        assertion did its job and was then left red. Restating the list was the
+        mistake, not the assertion: it now derives from `_ALLOWED_EVENTS`, so it
+        still catches the bridge and the list disagreeing, while the two budget
+        events keep an explicit check because a derived assertion alone would pass
+        on an empty list.
+      RESOLVED_7_the_skills_catalog_is_NOT_a_regression: >-
+        This is the one that had to be distinguished, because the other reading was
+        a shipped capability loss. SkillInstructionInjector tiers by RELEVANCE
+        SCORE — >= FULL_FLOOR is ACTIVE, >= SUMMARY_FLOOR is AVAILABLE, below that
+        CATALOG. A video-download skill against "can you download a video for me?"
+        scores well and is PROMOTED to AVAILABLE: the feature working better than
+        the assertion assumed. Hardcoding "## CATALOG" demanded the skill be judged
+        irrelevant to the very question it answers. Now asserts against the headers
+        IMPORTED from the module that emits them.
+      RESOLVED_8_the_loop_guard_is_a_FEATURE: >-
+        A repeated non-idempotent call carries a `[loop-guard]` nudge appended to
+        the tool output, from `guardrails.after_call`, with idempotence read from
+        the tool's DECLARED action_severity rather than a hardcoded name list.
+        Asserting byte-equality made a real anti-thrash guard read as a regression.
+        The test now asserts the tool's result REACHED the model (which is what it
+        actually claims) and additionally PINS the nudge — an anti-thrash guard
+        that quietly stops firing looks exactly like one that works.
       NOT_RED_the_two_smoke_tests: >-
         test_e2_s1_browser_snapshot and test_e2_s6_dialog_consent fail inside the
         24-minute batch and PASS in isolation at both HEAD and 46dd948f. So they
