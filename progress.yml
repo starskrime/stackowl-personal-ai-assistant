@@ -447,6 +447,18 @@ current:
       against hooks: 27 overrides across 198 possible slots in 33 plugins (13.6%), and
       get_hostname has zero implementors. A hook is a published extension point that
       freezes the call site you just extracted.
+    RE_SCOPED_WORK_STATUS_2026_08_21:
+      D1_budget_exhaustion_escalation: "CLOSED (bc132963) — lifted into anthropic, harness expectations inverted."
+      D2_judge_give_up_escalation: "CLOSED (bc132963) — same commit; ceiling still nudges, 3-round cap unchanged."
+      D4_per_model_output_cap: "CLOSED (b6e447a4) — the tool loop now resolves the override like stream() and complete()."
+      D5_callback_count_and_order: >-
+        OPEN, and split. The ORDER half is ESC-25 (does a cooperative stop get to prevent
+        a tool?) — a user-visible design question with a LIVE half: on this deployment a
+        stop currently executes one more tool. The COUNT half — anthropic firing an extra
+        on_iteration_complete per text-ReAct iteration, 2 vs 3 for one call and 3 vs 5 for
+        two — looks like a plain double-fire and is expected to close with the order.
+      ESC_22_no_op_escalation: "CLOSED (afe006a2) — can_escalate now means the target above is DIFFERENT."
+      ESC_23_catalog_override: "CLOSED (fae357d7) — additive-only; two tests inverted, both advertising texts updated."
     THE_DIVERGENCE_INVENTORY_IS_NOW_EXECUTABLE_2026_08_21:
       commit: 1a1d1f6d
       what: >-
@@ -1053,6 +1065,39 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-25-does-a-cooperative-stop-get-to-prevent-a-tool
+    raised: 2026-08-21
+    question: >-
+      When a user presses stop (or the budget governor kills a turn) mid-ReAct, should
+      the tool that the model just asked for still execute? Today it does.
+    the_measurement: >-
+      MEASURED on the live path 2026-08-21. `on_iteration_complete` is how the pipeline
+      raises TurnStopped/BudgetBreach, and on the NATIVE tool-call path BOTH providers
+      dispatch the tool BEFORE calling it — so the stop is honoured one tool late. Driven
+      directly: a callback that raises TurnStopped propagated correctly, and
+      `tools executed before the stop was honoured: ['web_search']`. On the TEXT-ReAct
+      path the two providers disagree — anthropic calls back first (so the stop DOES
+      pre-empt the tool) and openai dispatches first. Every backend here is
+      openai-protocol, so the live answer today is "the tool runs".
+    why_evidence_cannot_settle_it: >-
+      Both orders are defensible and the choice is user-visible. Dispatch-first gives the
+      callback complete information — `ReActIterationState` carries `tool_call_records`,
+      so it is meant to report what HAPPENED. Callback-first means a stop prevents side
+      effects, which is what a user pressing stop probably expects. The two goals are in
+      direct conflict and neither is written down.
+    a_correction_to_the_record: >-
+      D04.1's brainstorm recorded that "the W4.T17 comment asserts the invariant one of
+      them violates". That is not right, and it was checked rather than repeated: W4.T17
+      governs callback-before-GIVE-UP-NUDGE at the final-answer boundary, which BOTH
+      loops satisfy. The dispatch-order difference is separate and undocumented.
+    the_recommendation: >-
+      CALLBACK FIRST on the dispatch boundary — a stop should prevent the side effect,
+      and a tool that runs after the user said stop cannot be un-run. The reporting
+      argument is weaker because the callback fires again after the tool anyway. This
+      would also close D5's ordering half and leave only anthropic's extra per-iteration
+      callback, which looks like a plain double-fire.
+    blocked_until_answered: >-
+      D5 only. D1, D2 and D4 are closed; D04.1's re-scoped work is otherwise complete.
   - id: ESC-21-D04.1-the-items-verdict
     raised: 2026-08-21
     question: >-
