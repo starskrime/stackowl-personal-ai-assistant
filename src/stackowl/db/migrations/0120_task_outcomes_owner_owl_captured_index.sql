@@ -1,0 +1,60 @@
+-- Migration 0120 — composite index for the owl-ratings health probe, which has
+-- been over its own timeout budget for weeks and reporting a healthy subsystem
+-- as DOWN.
+--
+-- THE SYMPTOM, and it was misattributed twice before it was measured. The health
+-- sweep logs `UNHEALTHY subsystems detected` at ERROR with down=[owl_ratings],
+-- preceded by `[health] aggregator: owl_ratings timed out after 5001ms`. It was
+-- twice written off as "probably my own test load, stated as a likelihood" — a
+-- reasonable guess, because the rate does track load: 2, 4, 2, 1, 1, 0, 3 per day
+-- over 2026-08-14..20, then 9 on 2026-08-21 while heavy suites were running.
+--
+-- THE CAUSE IS NOT LOAD. `OwlRatingHealthContributor.health_check` runs one
+-- `count_approach_ratings_for_owl` per owl, serially, inside a 5,000 ms budget
+-- (`_CONTRIBUTOR_TIMEOUT` in health/aggregator.py). Measured 2026-08-21 against
+-- the live database with the box otherwise idle:
+--
+--     15 owls, warm page cache, read-only connection   4,464 ms   (89% of budget)
+--     15 owls, cold page cache                        27,092 ms   (5.4x over)
+--     the same 15 queries WITH this index                 55 ms
+--
+-- So the probe was already spending nearly its whole budget doing nothing wrong;
+-- any concurrent activity — or a cold cache after a restart — pushed it over. Load
+-- was the trigger, never the cause.
+--
+-- WHY IT IS SLOW. The query filters `owner_id AND owl_name AND captured_at`, and
+-- the only indexes available were single-column: `idx_task_outcomes_owner` and
+-- `idx_task_outcomes_owl`. SQLite picked the owner one — and this deployment has
+-- exactly ONE owner, `principal-default`, holding all 16,733 rows. So the "index
+-- scan" selected the entire table, 15 times per sweep, every 5 minutes, plus a
+-- temp B-tree for the GROUP BY. Roughly 250,000 row examinations every five
+-- minutes to answer a question about 15 owls.
+--
+-- Query plan before:
+--     SEARCH task_outcomes USING INDEX idx_task_outcomes_owner (owner_id=?)
+-- and after:
+--     SEARCH task_outcomes USING INDEX idx_task_outcomes_owner_owl_captured
+--            (owner_id=? AND owl_name=? AND captured_at>?)
+--
+-- AND IT WAS GETTING WORSE ON ITS OWN. `task_outcomes` only ever appends, so the
+-- scan grows with history — the fourth of this programme's recurring defect
+-- shapes. An index makes the probe's cost a function of the MATCHES rather than of
+-- the table, which is what stops it re-crossing the budget next month.
+--
+-- COLUMN ORDER is equality-first then range, so the range column can be used
+-- rather than merely filtered: owner_id (=), owl_name (=), captured_at (>=).
+-- `approach_rating` is deliberately NOT in the index — it is an IN () over two of
+-- several values and adding it would widen every entry to save a cheap check on an
+-- already-tiny row set.
+--
+-- WHAT THIS DOES NOT FIX, deliberately, because it is a judgement call about what
+-- pages the operator: on timeout `aggregator._run_contributor` reports
+-- `status="down"`. A timeout means UNKNOWN, not down — and `owl_ratings` cannot
+-- legitimately report "down" at all, since its own health_check returns only "ok"
+-- or "degraded". So every `down=[owl_ratings]` ever logged came from the timeout
+-- path asserting more than it measured. Raised as ESC-33 rather than changed here.
+--
+-- IDEMPOTENT: CREATE INDEX IF NOT EXISTS. No VACUUM, no data change, additive only.
+
+CREATE INDEX IF NOT EXISTS idx_task_outcomes_owner_owl_captured
+    ON task_outcomes(owner_id, owl_name, captured_at);

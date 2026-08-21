@@ -756,6 +756,34 @@ current:
         confident zero. Recorded because it is the same shape as the defects this
         programme hunts — a query that cannot fail is not evidence — and because "no
         recent activity" was very nearly used to justify restarting into a live turn.
+  ESCALATIONS_HEALTH_2026_08_21:
+    raised: 2026-08-21
+    status: OPEN — does not block anything; migration 0120 removes the trigger regardless of the answer.
+    ESC_33_a_timed_out_probe_is_UNKNOWN_not_DOWN:
+      question: >-
+        `aggregator._run_contributor` reports `status="down"` when a contributor
+        exceeds its 5,000ms budget. Should a timeout instead report a distinct
+        UNKNOWN state that does not raise an ERROR or notify?
+      the_evidence_that_makes_it_a_real_question: >-
+        `OwlRatingHealthContributor.health_check` can only ever return "ok" or
+        "degraded" — "down" is not a value it is capable of producing. So EVERY
+        `down=[owl_ratings]` in the entire log came from the timeout path asserting
+        something the probe never measured. That is the exact shape this session
+        has now found seven times, and here it is inside the alerting path: the
+        operator is paged with a claim no measurement supports.
+      why_evidence_cannot_settle_it: >-
+        It is a question about what should WAKE the operator, not about what is
+        true. A slow probe may well deserve an alert — "I cannot tell whether this
+        subsystem is healthy" is itself worth knowing, and a third state that
+        nobody looks at would be worse than a false ERROR that someone does. Which
+        of those you want is yours.
+      recommendation: >-
+        A distinct `unknown` status that logs at WARNING and does NOT enter `down`.
+        Keep an escalation for it, but on a RUN OF timeouts rather than a single
+        one — a probe that cannot answer three sweeps running is a real signal; one
+        that misses a single sweep under load is not.
+      blocked_until_answered: "nothing — 0120 removes the trigger for owl_ratings specifically, not the class."
+
   ESCALATIONS_D05_4_2026_08_21:
     raised: 2026-08-21
     status: OPEN — neither blocks D05.4, which shipped everything they do not block.
@@ -2983,6 +3011,53 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ARC-2026-08-21-owl-ratings-probe-over-budget
+    found: 2026-08-21
+    found_by: "the D05.4 validate wait — a Monitor on the JSONL, not by looking for it"
+    status: SHIPPED (migration 0120). Evidence-led work per PROCESS.md; `map_check.py` returned no match.
+    the_symptom_and_how_it_was_MISATTRIBUTED_TWICE: >-
+      `[scheduler] health_sweep.execute: UNHEALTHY subsystems detected` at ERROR
+      with down=[owl_ratings], preceded by `[health] aggregator: owl_ratings timed
+      out after 5001ms`. This record already contains two entries writing it off as
+      "the likeliest cause is my own test load rather than a defect — stated as a
+      likelihood, not a conclusion, because it was not isolated". That caution was
+      right and the guess was wrong.
+    why_the_load_story_was_SO_PLAUSIBLE: >-
+      Because the rate genuinely tracks load: 2, 4, 2, 1, 1, 0, 3 per day across
+      2026-08-14..20, then 9 on 2026-08-21 while heavy suites ran. A correlation
+      that strong is exactly how a structural defect hides — load was the TRIGGER
+      and never the cause.
+    THE_MEASUREMENT_THAT_SETTLED_IT: >-
+      `OwlRatingHealthContributor.health_check` runs one
+      `count_approach_ratings_for_owl` per owl, serially, inside a 5,000ms budget
+      (`_CONTRIBUTOR_TIMEOUT`, health/aggregator.py:57). Against the LIVE database
+      with the box otherwise idle: 15 owls, warm page cache, read-only connection —
+      4,464ms, i.e. 89% of the budget doing nothing wrong. Cold page cache —
+      27,092ms, 5.4x over. With the index — 55ms. So it was over budget on any
+      cold start and one heartbeat away from over on every warm one.
+    the_cause: >-
+      The query filters owner_id AND owl_name AND captured_at and only
+      single-column indexes existed. SQLite chose `idx_task_outcomes_owner` — and
+      this deployment has exactly ONE owner, `principal-default`, holding all
+      16,733 rows. The "index scan" therefore selected the whole table, 15 times
+      per sweep, every 5 minutes: ~250,000 row examinations to answer a question
+      about 15 owls. And `task_outcomes` only appends, so it was worsening on its
+      own — the fourth of this programme's recurring defect shapes.
+    the_fix: >-
+      Migration 0120, additive and idempotent: a composite index on
+      (owner_id, owl_name, captured_at), equality columns first so the range column
+      SEEKS rather than merely filters. `approach_rating` deliberately excluded — an
+      IN() over two values, cheap to check on an already-tiny row set, and
+      including it would widen every entry. NOT fixed by parallelising the probe:
+      15 sequential queries at 3.7ms each is not a problem, and `asyncio.gather`
+      would have hidden the scan rather than removed it.
+    A_TEST_THAT_ASSERTS_THE_PLANNER_NOT_JUST_THE_INDEX: >-
+      tests/db/test_migration_0120_owl_ratings_probe_index.py asserts SQLite
+      actually CHOOSES the index, because an index the planner declines to use is
+      the original defect plus a B-tree to maintain — and that is not hypothetical:
+      `idx_task_outcomes_owl` already existed and the planner passed it over.
+    WHAT_IS_DELIBERATELY_NOT_FIXED: "the timeout -> down semantics. Raised as ESC-33."
+
   - id: DEBT-D054-BROWSER-FLAP
     found: 2026-08-21
     found_by: "D05.4 architect Round 0"
