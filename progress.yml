@@ -3080,7 +3080,35 @@ known_debt:
         `AllProvidersUnavailableError` typed `details: list[str]` and did
         `"; ".join(details)`; a str is iterable, so one reason rendered as
         "n; o;  ; f; a; s; t...". Now accepts `str | Sequence[str]`.
-      OPEN_4_durable_tasks_do_not_FINALIZE: >-
+      RESOLVED_4_DIAGNOSIS_2026_08_21_it_is_the_ONE_LOOP_CONTRACT_not_a_regression: >-
+        VERIFIED IN THE CODE, not inferred from a comment. `store.update_status` is
+        the delivery-rule chokepoint (Bakir, 2026-08-17) and it RETURNS THE STATUS
+        IT ACTUALLY WROTE, which is not always the one asked for:
+        (a) a completion that owes an UNDELIVERED answer is HELD at `running`,
+        because a task is complete when its outcome reached its DESTINATION;
+        (b) a failure is RETURNED TO THE LOOP as `pending`, so the next attempt is
+        constrained rather than blind — "the measured cost of the opposite default
+        was 850 dead rows";
+        (c) `terminal=True` writes `failed` straight through and is used only by
+        `terminalize_child`, where the PARENT has already decided.
+        AND THE RETRY IS BOUNDED, which is the question that actually mattered:
+        `fail_and_requeue` (store.py:1271) computes `exhausted = attempts >=
+        ceiling` and writes a terminal failure when `permanent or exhausted`, with
+        a tighter ceiling (_UNACHIEVED_EFFECT_MAX_ATTEMPTS = 3) for an unachieved
+        effect. So a permanently-failing task still reaches `failed`; it is not an
+        unbounded loop.
+        THEREFORE the two tests assert the PRE-ONE-LOOP terminal values and are
+        STALE, not evidence of a regression. The invariants they guard are intact —
+        the exactly-once and ledger assertions PASS in both; only the terminal
+        status differs. This is the distinction the previous entry said had to be
+        drawn before touching anything, and it is now drawn with evidence.
+        STILL TO DO, and deliberately not rushed: rewrite them to the ONE LOOP
+        contract WITHOUT weakening what they lock. The hard-fail test is a MERGE
+        GATE against "the floor flipped it to a fake success" — that invariant must
+        survive as "never `completed`, and the error is recorded", with terminality
+        asserted by driving attempts to exhaustion rather than by expecting `failed`
+        on the first failure.
+      SUPERSEDED_4_durable_tasks_do_not_FINALIZE: >-
         THE MOST VALUABLE ONE AND IT IS NOT CLOSED. Four tests —
         test_durable_goal_survives_crash_and_runs_side_effect_exactly_once,
         test_durable_task_hard_fail_stays_failed_with_message, and two in
