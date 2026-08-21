@@ -511,8 +511,8 @@ class AnthropicProvider(ModelProvider):
         ``max_tokens`` (live incident 2026-07-22): explicit per-call override
         for the output-token budget, mirroring the OpenAI-compatible provider's
         own ``max_tokens`` param. ``None`` (default) preserves today's
-        behavior: every round uses ``self._config.max_output_tokens``
-        unconditionally.
+        behavior: every round resolves the model's own cap via
+        ``resolve_model_override``, exactly as ``stream()`` and ``complete()`` do.
 
         ``can_escalate`` (set ONLY by LLMGateway below the ceiling tier) mirrors the
         openai provider: when the model persistently emits an unparseable tool call
@@ -682,7 +682,15 @@ class AnthropicProvider(ModelProvider):
                         messages=_msgs,
                         max_tokens=(
                             max_tokens if max_tokens is not None
-                            else self._config.max_output_tokens
+                            # PER-MODEL, like stream() and complete() already do.
+                            # This read `self._config.max_output_tokens` RAW until
+                            # 2026-08-21, so the agentic loop was the one path that
+                            # ignored `models[].max_output_tokens` — while the comment
+                            # above the sibling call sites tells the operator to set
+                            # exactly that. One fact must be read one way.
+                            else resolve_model_override(
+                                self._config, resolved_model
+                            )[0]
                         ),
                         tools=tool_schemas,
                         system=system_kwargs.get("system"),
@@ -970,7 +978,15 @@ class AnthropicProvider(ModelProvider):
                         messages=messages,
                         max_tokens=(
                             max_tokens if max_tokens is not None
-                            else self._config.max_output_tokens
+                            # PER-MODEL, like stream() and complete() already do.
+                            # This read `self._config.max_output_tokens` RAW until
+                            # 2026-08-21, so the agentic loop was the one path that
+                            # ignored `models[].max_output_tokens` — while the comment
+                            # above the sibling call sites tells the operator to set
+                            # exactly that. One fact must be read one way.
+                            else resolve_model_override(
+                                self._config, resolved_model
+                            )[0]
                         ),
                         system=system_kwargs.get("system"),
                     )
