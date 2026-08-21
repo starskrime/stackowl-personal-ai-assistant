@@ -393,6 +393,25 @@ class OpenAIProvider(ModelProvider):
         """
         return self._config.resolve_vision()
 
+    @property
+    def supports_document(self) -> bool:
+        """A vision-capable model also accepts PDF document blocks (pdf Mode B).
+
+        THIS PROPERTY WAS MISSING UNTIL 2026-08-21, and its absence made a capability
+        structurally unreachable rather than merely off. Anthropic and Gemini both
+        derive document support from ``resolve_vision()``; this class did not, so it
+        fell through to the ABC default of False (``base.py:382``). Since every
+        non-anthropic, non-gemini protocol builds an ``OpenAIProvider``, and every
+        configured backend here is ``protocol: openai``, ``pdf.py``'s Mode B selector
+        could only ever find ``None`` — with no config key able to change it.
+
+        Deliberately answered from ``resolve_vision()`` rather than a new
+        ``supports_document`` config field: an image and a PDF both ride
+        ``DocumentBlock``, one resolver already decides the question, and a second
+        field would be a second copy of one rule.
+        """
+        return self._config.resolve_vision()
+
     async def stream(self, messages: list[Message], model: str, **kwargs: object) -> AsyncIterator[str]:
         TestModeGuard.assert_not_test_mode("openai.stream")
         log.engine.debug(
