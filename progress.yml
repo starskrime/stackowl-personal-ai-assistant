@@ -315,8 +315,8 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D04.1
-  stage: brainstorm
+  item: D05.4
+  stage: architect
   D04_1_BRAINSTORM_2026_08_21:
     method: Round 0 Measurement, then a three-agent panel (Stability / Improvement+Killer / Ease-of-use+Future-proof).
     headline: >-
@@ -667,6 +667,81 @@ current:
         recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
+    D05_4_ROOT_CAUSE_FOUND_2026_08_21:
+      the_falsified_assumption: >-
+        infra/presented_tools.py:79 justifies clearing the ENTIRE memo on any capability
+        flip with: "Capability flips are rare; a turn-frequency invalidation this is not."
+        MEASURED: 950 global wipes all-time, 62 today, and 100% of them are the SAME
+        capability — `browser`. The assumption the design rests on is empirically false,
+        which reverses the trade-off the comment consciously made ("inventing that
+        bookkeeping ... would be the expensive kind of clever").
+      the_mechanism_end_to_end: >-
+        The browser runtime recycles on a cadence — 699 `runtime.disconnect: browser
+        process gone — marking unavailable` all-time, 322 recycles, 35 availability
+        events today, with `restarting` -> `restart ok` completing in about 3 seconds.
+        Each blip fires `_on_capability_change("browser")`, which drops EVERY memoized
+        tool array for EVERY session platform-wide. The next turn in every live session
+        is therefore a rebuild; each rebuild re-ranks; and under a fixed hard_cap a
+        different 30 tools survive. That is the whole Law 2 instability, and it is why
+        raising the cap to 40 changed nothing.
+      why_this_matters_more_than_the_cap: >-
+        A TRANSIENT 3-second process restart is being treated as a CAPABILITY CHANGE. It
+        is not one — the owl's capabilities did not change, a subprocess bounced. So the
+        invalidation is not merely too broad in SCOPE (all sessions rather than the
+        affected ones), it is triggered by the wrong EVENT.
+      the_two_candidate_fixes_for_the_architect_stage: >-
+        (a) SCOPE the invalidation: record which capabilities an array depended on and
+        drop only those entries. Directly reverses the comment's trade-off now that its
+        premise is measured false. (b) Do not treat a transient recycle as a capability
+        flip at all — debounce it, so a subprocess bounce that resolves in seconds never
+        reaches the presentation layer. (b) is cheaper and addresses the wrong-EVENT
+        problem rather than the wrong-SCOPE one; (a) is still right for genuine flips.
+        They compose, and the design takes both in that order.
+      AND_A_MEASUREMENT_GAP_TO_CLOSE_FIRST: >-
+        The presented set is not logged, only the truncated `dropped[:20]`. So "did this
+        owl's toolset change between turn 4 and turn 5" cannot be answered from the
+        record. A stable FINGERPRINT of the presented array per turn, at INFO, makes that
+        a one-line query and is what will prove or disprove the fix. It ships FIRST, so
+        the before/after is measurable rather than asserted.
+    D05_4_ARCHITECT_ROUND_0_EXTENDED_2026_08_21:
+      A_CORRECTION_TO_ESC_18s_OWN_FRAMING: >-
+        ESC-18 recorded "THREE mechanisms decide which tools the model sees, none of them
+        owning the question". Measured today, that is not right and the difference changes
+        the design. `restrict_to`, the budgeter, and profile/capability gating are not
+        three call sites — they are PARAMETERS of one function, `to_provider_schema`,
+        which has exactly TWO production callers, both in execute.py (1313 and 1344), and
+        those two are the branches of a single `if restrict_to is not None`. A single
+        owner ALREADY EXISTS. The defect is not that nobody owns the question; it is that
+        the owner's RESULT is unstable.
+      WHAT_IS_ACTUALLY_WRONG: >-
+        The presented array changes WITHIN a session. 284 eviction events today across 75
+        sessions; in 69 of those 75 the dropped membership changed during the session.
+        And every one of those events is a REBUILD, because `to_provider_schema` is not
+        called on a memo hit — so the memo introduced by D05.2 to hold the array steady is
+        missing far more often than it hits.
+      THE_WORKED_EXAMPLE: >-
+        session owl:secretary:telegram:dm:72055773, five rebuilds over ~2h20m. `presented`
+        is 30 every time and `dropped_count` is 49 every time — the SIZE is stable. The
+        MEMBERSHIP is not: at 03:00:59 the set shifted so that `delegate_task`, `clarify`,
+        `claude_code` and `browser_vision` became dropped while `batch_approve`,
+        `browser_back`, `browser_screenshot` and `browser_wait_for` returned. 10 of the 25
+        sampled names are unstable within that one session. Losing `clarify` mid-session
+        removes the agent's way of asking a question; losing `delegate_task` removes how
+        it spawns work.
+      THE_LIMIT_OF_THIS_EVIDENCE_stated_because_it_matters: >-
+        Those comparisons use the `dropped[:20]` TRUNCATED sample, not the full list of 49.
+        Some of the apparent membership shift may be rank reordering pushing different
+        names into the first twenty rather than tools genuinely entering or leaving the
+        presented set. The full set is not logged anywhere, so the question "did this
+        owl's toolset actually change between turn 4 and turn 5" CANNOT be answered from
+        the record today. That gap is the first thing the design has to close — and it is
+        cheap: a stable FINGERPRINT of the presented array per turn at INFO makes
+        stability a one-line query without dumping thirty names every turn.
+      WHY_THE_CAP_IS_NOT_THE_ANSWER: >-
+        Confirmed live within minutes of raising it: 40 binds too (9 events at cap=40).
+        The number moves the threshold; it does not make the result stable. Whatever the
+        cap is, an unstable RANKING under a fixed cap produces a different set each
+        rebuild.
     VALIDATE_THE_EVICTION_FIX_AND_THE_CAP_CHANGE_2026_08_21:
       the_derived_message_is_PROVEN_ON_LIVE_TRAFFIC: >-
         Not asserted from the code path — read back out of the running platform's log.
