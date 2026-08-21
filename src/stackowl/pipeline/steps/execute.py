@@ -1402,7 +1402,13 @@ async def _run_with_tools(
                 )
                 if state.session_key:
                     presented_tools.put(memo_key, schemas)
-                log.engine.debug(
+                # INFO, not debug (D05.4). This line is the EVIDENCE for the
+                # item's central claim — that a rebuild reproduces the array the
+                # model already had — and production runs at INFO, so at debug it
+                # could never close the check. Its sibling `memo hit` stays at
+                # debug: that one fires on every turn, this one only on a genuine
+                # rebuild (~284/day, nearly all of them the browser flap).
+                log.engine.info(
                     "[pipeline] execute: presented tools — rebuilt",
                     extra={"_fields": {
                         "trace_id": state.trace_id, "owl": state.owl_name,
