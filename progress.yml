@@ -3082,7 +3082,7 @@ known_debt:
   - id: ARC-2026-08-21-owl-ratings-probe-over-budget
     found: 2026-08-21
     found_by: "the D05.4 validate wait — a Monitor on the JSONL, not by looking for it"
-    status: SHIPPED (migration 0120). Evidence-led work per PROCESS.md; `map_check.py` returned no match.
+    status: SHIPPED AND LIVE (migration 0120, applied 17:11:46Z). 0 of 6 sweeps timed out after, against 5 of 5 before. Evidence-led per PROCESS.md; `map_check.py` returned no match.
     the_symptom_and_how_it_was_MISATTRIBUTED_TWICE: >-
       `[scheduler] health_sweep.execute: UNHEALTHY subsystems detected` at ERROR
       with down=[owl_ratings], preceded by `[health] aggregator: owl_ratings timed
@@ -3146,6 +3146,23 @@ known_debt:
       actually CHOOSES the index, because an index the planner declines to use is
       the original defect plus a B-tree to maintain — and that is not hypothetical:
       `idx_task_outcomes_owl` already existed and the planner passed it over.
+    LIVE_RESULT_2026_08_21_with_the_denominator_stated: >-
+      Migration 0120 applied at 17:11:46Z (phase 1 took 16,261ms building the index
+      over 16,733 rows — a one-time cost). Verified in the live database: max
+      applied 0120, `idx_task_outcomes_owner_owl_captured` present, and
+      EXPLAIN QUERY PLAN confirms the planner CHOOSES it.
+      BEFORE, the five consecutive sweeps at 16:22, 16:27, 16:33, 16:39 and 16:44 —
+      5 of 5 — logged `owl_ratings timed out` at 5,001-5,379ms and the sweep took
+      5+ seconds.
+      AFTER, the six consecutive sweeps at 17:17, 17:23, 17:28, 17:34, 17:39 and
+      17:45 — 0 of 6 — logged no timeout of ANY contributor, and each completed in
+      1-2 seconds.
+      THE DENOMINATOR IS STATED BECAUSE 0 TIMEOUTS OVER 0 SWEEPS WOULD LOOK
+      IDENTICAL, which is the trap this session has already fallen into twice. A
+      test batch was running in both windows, so the load is broadly comparable
+      rather than a quiet-box flattering comparison.
+      NOT YET A FULL DAY, and the full-day figure against the recorded per-day
+      baseline (2, 4, 2, 1, 1, 0, 3 and 9) is still the clean comparison.
     WHAT_IS_DELIBERATELY_NOT_FIXED: "the timeout -> down semantics. Raised as ESC-33."
 
   - id: DEBT-D054-BROWSER-FLAP
