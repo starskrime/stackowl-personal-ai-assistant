@@ -30,6 +30,10 @@ _ABC_NAMES = {
     # OBSERVES the agent rather than adding to it. Capability-gated and
     # observe-only — see plugins/hooks.py for why a veto is a v1 non-goal.
     "LifecycleHook": "stackowl.plugins.hooks",
+    # D16.3 / E2 (Bakir, 2026-08-21). The eighth point, and the first that WRITES
+    # INTO THE PROMPT rather than adding a callable. Capability-gated for that
+    # reason — see plugins/capabilities.PROMPT_CONTRIBUTOR.
+    "PromptContributor": "stackowl.pipeline.contributors",
 }
 
 
@@ -45,6 +49,7 @@ class LocalPluginLoader:
         owl_registry: Any = None,
         memory_provider_registry: Any = None,
         hook_registry: Any = None,
+        prompt_contributor_registry: Any = None,
     ) -> None:
         log.debug("plugins.local_loader.__init__: entry")
         # EVERY key in _ABC_NAMES must appear here. D08.2 slice C added
@@ -68,6 +73,10 @@ class LocalPluginLoader:
             # reported as unwired, and "which extension points is this deployment
             # missing?" is a question the loader is supposed to be able to answer.
             "LifecycleHook": hook_registry,
+            # Added in the SAME edit as the _ABC_NAMES entry above, deliberately.
+            # D08.2 added MemoryProvider to one table and not the other, and the
+            # plugin then installed "successfully" while registering nowhere.
+            "PromptContributor": prompt_contributor_registry,
         }
         log.debug("plugins.local_loader.__init__: exit")
 

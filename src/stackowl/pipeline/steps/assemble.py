@@ -45,15 +45,40 @@ PROMPT_PART_NAMES: tuple[str, ...] = (
 
 def compose_prompt_parts(
     rendered: dict[str, str],
+    extra: dict[str, str] | None = None,
 ) -> tuple[str | None, dict[str, str], dict[str, int]]:
     """Compose the prompt, the audit map and the size fields from ONE list.
 
-    Returns ``(system_prompt, audit_parts, log_fields)``. Driven by
-    :data:`PROMPT_PART_NAMES` rather than by the caller's keys, so an unknown part
-    cannot enter the prompt unaudited and a missing one is simply empty — prompt
-    building must never raise, and never silently gain a stanza nobody can see.
+    Returns ``(system_prompt, audit_parts, log_fields)``. The built-in seven are
+    driven by :data:`PROMPT_PART_NAMES` rather than by the caller's keys, so an
+    unknown part cannot enter the prompt unaudited and a missing one is simply empty —
+    prompt building must never raise, and never silently gain a stanza nobody can see.
+
+    ``extra`` carries PLUGIN-contributed parts (D16.3 / E2, Bakir 2026-08-21). Three
+    properties make that safe enough to allow at all:
+
+    * **Appended, never interleaved.** Order is the cached prefix (Law 1); a plugin
+      part inserted between built-ins would move every part after it and invalidate
+      every live session for a mechanism, not a content change. With no plugins the
+      composed prompt is BYTE-IDENTICAL, which is every deployment today.
+    * **Sorted by name.** Plugin load order is filesystem order, which is not a
+      contract — two plugins must not produce different prompts on different boots.
+    * **Cannot overwrite a built-in.** A contributor named ``base`` adds nothing;
+      the platform's own parts win. Third-party code may ADD to the prompt, never
+      DELETE the agent's own instructions, and that is the trust boundary that
+      matters most here.
     """
     parts = {name: rendered.get(name) or "" for name in PROMPT_PART_NAMES}
+    for name in sorted(extra or {}):
+        if name in parts:
+            log.engine.warning(
+                "[pipeline] assemble: a contributed part tried to overwrite a "
+                "built-in and was ignored — plugins may ADD to the prompt, never "
+                "replace the platform's own",
+                extra={"_fields": {"part": name}},
+            )
+            continue
+        parts[name] = (extra or {}).get(name) or ""
     body = [text for text in parts.values() if text]
     return (
         "\n\n".join(body) or None,

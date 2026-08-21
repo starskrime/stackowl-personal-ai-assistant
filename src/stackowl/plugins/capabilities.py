@@ -40,6 +40,13 @@ MEMORY_PROVIDER: Final = "memory_provider"
 #: plugin implements are derived from the methods it overrides, so six capabilities
 #: would state the same fact twice.
 LIFECYCLE_HOOKS: Final = "lifecycle_hooks"
+#: D16.3 / E2 (Bakir, 2026-08-21: "everything, including prompt contributors").
+#: THE HEAVIEST GRANT ON THIS LIST, and it is gated precisely because of that: a
+#: contributor writes into the SYSTEM PROMPT, on every turn, uncovered by consent, and
+#: it rides the frozen prefix for the life of an incarnation. A tool has to be called;
+#: this simply speaks. The capability is what keeps "extensible" from meaning
+#: "unguarded" — see designs/D16.3.md for the argument that was traded away.
+PROMPT_CONTRIBUTOR: Final = "prompt_contributor"
 
 ALL_CAPABILITIES: Final = frozenset({
     TOOL_REGISTRY,
@@ -53,6 +60,7 @@ ALL_CAPABILITIES: Final = frozenset({
     BROWSER_RUNTIME,
     MEMORY_PROVIDER,
     LIFECYCLE_HOOKS,
+    PROMPT_CONTRIBUTOR,
 })
 
 #: Extension point (``_ABC_NAMES`` key) -> the capability an operator must have
@@ -67,6 +75,7 @@ CAPABILITY_FOR_EXTENSION_POINT: Final = {
     "OwlSource": OWL_REGISTRY,
     "MemoryProvider": MEMORY_PROVIDER,
     "LifecycleHook": LIFECYCLE_HOOKS,
+    "PromptContributor": PROMPT_CONTRIBUTOR,
 }
 
 
