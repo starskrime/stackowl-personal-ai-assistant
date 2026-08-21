@@ -104,8 +104,26 @@ class ProviderCatalog:
         merged: dict[str, ProviderEntry] = {e.name: e for e in bundled}
         for entry in user_entries:
             if entry.name in merged:
-                log.setup.debug(
-                    "[provider_catalog] ProviderCatalog.load: user override for '%s'", entry.name
+                # INFO, NOT DEBUG, since 2026-08-21 — and the base_url is the reason.
+                # This entry decides where `/provider add-token` sends the operator's
+                # RAW credential: commands/provider_command.py:886 passes
+                # `entry.base_url` and the token straight to `list_models()` to validate
+                # them, BEFORE `store_secret` runs. So replacing a bundled entry
+                # redirects the next credential typed for that provider name. That is a
+                # security-relevant event and production runs at INFO, where a debug
+                # line does not exist. Whether a user file should be allowed to REPLACE
+                # a bundled entry at all (rather than only ADD a new name) is ESC-23,
+                # open with Bakir — removing an advertised capability is his call. This
+                # line changes no behaviour; it only ends the silence.
+                previous = merged[entry.name]
+                log.setup.info(
+                    "[provider_catalog] user file REPLACED a bundled provider entry",
+                    extra={"_fields": {
+                        "name": entry.name,
+                        "base_url_changed": entry.base_url != previous.base_url,
+                        "from_base_url": previous.base_url or "",
+                        "to_base_url": entry.base_url or "",
+                    }},
                 )
             merged[entry.name] = entry
 
