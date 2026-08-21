@@ -317,6 +317,136 @@ current:
   wave: 2
   item: D04.1
   stage: brainstorm
+  D04_1_BRAINSTORM_2026_08_21:
+    method: Round 0 Measurement, then a three-agent panel (Stability / Improvement+Killer / Ease-of-use+Future-proof).
+    headline: >-
+      ALL THREE LENSES INDEPENDENTLY REJECTED THE ITEM AS SCOPED. Nobody argued for
+      "providers as plugins". That contradicts a recorded decision (D04.1 depends on
+      D16.3 precisely so a ProviderProfile joins the extension table, expedited
+      2026-08-15), so under the item-loop's rule 5 it is ESCALATED, not reconciled.
+      See ESC-21. Everything the verdict does not block is recorded below and several
+      findings outrank the item.
+    what_the_panel_agreed_on: >-
+      The 1,195-line duplicated tool loop is real and is the only substantial content
+      in this area. openai_provider.complete_with_tools (541-1188) and
+      anthropic_provider.complete_with_tools (492-1040) call the same shared helpers in
+      the same order at parallel offsets. 13 of ModelProvider's 14 PLATFORM members are
+      overridden by no subclass. Nobody disputed that this is worth fixing.
+    CONTRADICTION_1_is_the_tool_dialect_declarable:
+      ease_of_use: "DECLARE it — you cannot discover it cheaply; the observation costs a whole failed turn."
+      improvement: "NO — a declaration would be silently stale."
+      RESOLVED_BY_EVIDENCE: >-
+        Improvement wins, verified directly at providers/_react.py:135-141: the FOURTH
+        leaked-call shape was "FOUND LIVE 2026-08-15, immediately after the local model
+        was upgraded from qwen 3.6 27b to qwen 3.8 27b" — same backend row, same
+        base_url, same protocol, new dialect. The wire dialect is a property of the
+        MODEL'S TRAINING, not of the backend. A per-backend declaration would go stale
+        the moment the operator runs a model upgrade, and go stale SILENTLY. What
+        contains this today (_react.py parse-and-recover) is already shared and already
+        shape-based, which is the correct kind of fix.
+    CONTRADICTION_2_extract_the_loop_first_or_last:
+      improvement: "Extract it — it is the only real content, and it is T7, not D04.1."
+      stability: "Extract LAST. There is no behaviour-preserving extraction available."
+      RESOLVED_BY_EVIDENCE: >-
+        Stability wins, on a concrete divergence inventory (D1-D8). The two bodies are
+        not one logic written twice; one is ahead of the other. Auto-escalate on
+        tool-budget exhaustion and judge-ruled-give-up escalation are BOTH OpenAI-only
+        (openai:1086-1092, :984-994; anthropic has neither). _output_cap is OpenAI-only,
+        so 8c60a3d4's fix is wired on one path. The callback/parse ORDER is inverted
+        under byte-identical comments, so Anthropic fires on_iteration_complete twice
+        per text-ReAct iteration and OpenAI dispatches a tool before the callback can
+        raise TurnStopped. An extraction silently picks a winner; if the base is the
+        Anthropic shape, OpenAI loses escalate-on-max-out and NOTHING NOTICES — the only
+        signal is a WARNING that stops appearing, and no sweep watches for absences.
+        Coverage is 51 OpenAI test files to 16 Anthropic, so the shared loop would be
+        written against 3.2x more evidence from one side.
+    CONTRADICTION_3_the_400_413_fault:
+      ease_of_use: "Already discovered from the effect via note_payload_limit. Doctrine working."
+      improvement: "Body-substring check on ContextWindowExceededError."
+      stability: "Neither. note_payload_limit learns from a HYPOTHESIS, not a result."
+      RESOLVED_BY_EVIDENCE: >-
+        Stability wins and found a bug the other two missed: note_payload_limit fires
+        INSIDE _shrink (openai:796, anthropic:718), i.e. BEFORE the smaller round is
+        attempted, and it ratchets _learned_context_chars DOWN for the process lifetime
+        and never back up. So one misclassified 400 would permanently shrink that
+        provider's context for every later turn — the no-decay shape. Its proposal
+        needs no declaration at all: attempt COMPRESS ONCE for any BAD_REQUEST, and call
+        note_payload_limit only if the smaller request SUCCEEDS. The retry is its own
+        oracle. MY OWN MEASUREMENT SUPPORTS THIS: of every log record carrying
+        "Error code: 400" in the 31 retained files, 845 of 845 are
+        ContextWindowExceededError — so a one-shot COMPRESS is nearly free in practice.
+        A per-backend "which status means too big" field would be strictly worse than
+        both, and would violate the recorded provider_agnostic constraint.
+    FINDINGS_THAT_OUTRANK_THE_ITEM:
+      escalation_is_a_same_model_no_op_on_this_deployment: >-
+        VERIFIED BY ME, and the Improvement lens had the right conclusion from the wrong
+        evidence (it cited "stepping up tier", which is the non-tool complete() path and
+        is legitimately 0). The real handler is llm_gateway.py:375 and it IS fully wired:
+        25 ESCALATE_SENTINEL returns, 25 handler executions, matched. But all 25 are
+        standard->powerful, and this deployment has ONE enabled provider (NeraAiRaw,
+        tiers fast+standard+powerful, one default_model, no per-model overrides), so
+        every tier resolves to the SAME (provider, model). The escalation discards the
+        whole attempt and re-runs the identical ReAct loop on the identical model —
+        throwing away 14, 15, 16 and 19 tool calls in four of those turns. Worse,
+        on_escalate resets the tool-outcome ledger, so the second attempt is BLIND to
+        what the first learned, which is the opposite of the loop-core rule that a
+        failure must return "with what failed". 3 fired on 2026-08-21. Nothing notices,
+        because the log line says "step up" without comparing the resolved target.
+      supports_document_can_never_be_true_here: >-
+        VERIFIED. ModelProvider.supports_document defaults False (base.py:382) and is
+        overridden ONLY by anthropic_provider.py:184 and gemini_provider.py:122.
+        OpenAIProvider never overrides it, every configured backend is protocol openai,
+        and it is not a ProviderConfig field at all — so pdf.py:209 can only ever select
+        None and Mode B is unreachable with NO config key that fixes it. This is exactly
+        the supports_vision defect Bakir had fixed on 2026-08-20, one field over.
+        HONEST SCOPE: latent, not observed — the "no document-capable provider" line has
+        fired 0 times against 16 pdf invocations, because all 16 took Mode A.
+      the_cache_probe_is_wired_to_the_path_nobody_runs: >-
+        cache_breakpoint_probes has 0 rows because its only writer is
+        anthropic_provider.py:314, and no Anthropic backend is configured. The
+        instrument built to disambiguate "no cache hit" from "backend cannot report"
+        sits on the one code path that never executes, so the whole D01.1+D01.2
+        prompt-cache arc is unfalsifiable on the only live deployment. 0 of 101,593
+        cost_records rows report a cache hit.
+      anthropic_tool_loop_bypasses_resolve_model_override: >-
+        anthropic_provider.py:686-688 reads self._config.max_output_tokens raw, while
+        its own stream() (:423) and complete() (:1104) both use resolve_model_override.
+        The remedy prescribed in its own comment at :1096-1099 — "the FIRST Anthropic
+        provider added must set an explicit models[].max_output_tokens" — is INERT on
+        the tool-loop path. Default is 250000 against real ceilings of 8192-64000, so
+        the first Anthropic provider ever configured 400s on its first agentic turn
+        AFTER following the documented fix.
+    CORRECTED_A_LENS_CLAIM_the_memo_collision:
+      claim: "Stability: the presented-tool-schema memo collision is reachable TODAY on live traffic."
+      corrected: >-
+        OVERSTATED, and this is the same all-time-vs-current trap that misdirected the
+        first diagnosis earlier in this programme. The mechanism is real and verified:
+        the memo key is (session_key, owl, protocol, window, hydrated) —
+        infra/presented_tools.py:62 — with NO provider name, and _resolve_execute_window
+        (execute.py:730) returns state.model_window unconditionally when set, stamped
+        once by assemble and never re-stamped per tier. But it cannot fire today: 3 of
+        the 4 configured backends are disabled, so there is one provider. 1,530 real
+        traces used more than one provider and 254 used more than one MODEL — and the
+        most recent multi-model trace is 2026-07-20, a month old. VERDICT: dormant, not
+        live; re-arms the moment a second backend is enabled, which is what this item is
+        about. The one-line fix (provider.name in the key) should still precede any
+        profile work.
+    what_the_panel_recommends_instead: >-
+      1) A DIFFERENTIAL CONFORMANCE HARNESS driving both complete_with_tools bodies
+      through the same scripted transcripts, asserting returned text, all_calls shape,
+      ESCALATE-or-not, on_iteration_complete CALL COUNT and dispatch-vs-callback ORDER.
+      It goes red on D1/D2/D5 and converts "they have diverged" from an assertion into
+      an executable inventory. Worth building even if the extraction is cancelled.
+      2) Close the divergences IN PLACE, one commit each, against that harness.
+      3) Only then extract — into _react.py, which is already 433 lines of shared spine
+      imported by both, rather than into a new base class. The seam exists; the work is
+      to widen it, not to invent one.
+      4) Move the 4 capability properties to ProviderConfig, supports_document included,
+      defaulting to CAPABLE per the 2026-08-20 rule.
+      5) NO hooks and NO plugin profiles. The reference platform's own usage data argues
+      against hooks: 27 overrides across 198 possible slots in 33 plugins (13.6%), and
+      get_hostname has zero implementors. A hook is a published extension point that
+      freezes the call site you just extracted.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
     E_owner_key_enforcement:
@@ -704,6 +834,104 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-21-D04.1-the-items-verdict
+    raised: 2026-08-21
+    question: >-
+      All three D04.1 lenses independently rejected "providers as plugins". Nobody
+      argued for it. Should D04.1 be RE-SCOPED to the differential-harness /
+      close-divergences-in-place / extract-into-_react.py sequence, and the plugin
+      framing dropped?
+    why_evidence_cannot_settle_it: >-
+      It contradicts a recorded decision. D04.1 was made to depend on D16.3 precisely so
+      a ProviderProfile would join the extension-point table rather than invent a
+      parallel discovery path, and Bakir expedited the chain D16.1 -> D16.3 -> D04.1 on
+      2026-08-15 on that reasoning. D16.3 shipped the eighth extension point to make it
+      possible. Evidence can say the plugin surface would serve zero current users; it
+      cannot say whether the goal was ever this deployment.
+    the_panels_recommendation: >-
+      RE-SCOPE. Keep the loop work, drop the plugin surface. The three faults D04.1 was
+      created to fix do not survive their own evidence: the tool dialect is a property
+      of the model's training and would go stale silently if declared (_react.py:135-141,
+      a new shape appeared after a model upgrade inside ONE backend row); the 400/413
+      fault is better fixed by a one-shot COMPRESS that uses the retry as its own oracle
+      than by any declaration; and the cache-stat fault is fixed by MEASUREMENT, which is
+      the opposite of declaration. Meanwhile the reference platform's own hook usage is
+      27 of 198 possible slots across 33 plugins.
+    the_counter_argument_kept: >-
+      Recorded so it is not lost: D04.1's stated purpose is user-facing provider
+      BREADTH, which Bakir confirmed is a goal ("his users run many backends"). A
+      re-scope that stops at the loop extraction lowers the cost of the NEXT backend
+      but ships no breadth. If breadth is wanted on a timeline, the plugin surface is
+      the thing that delivers it and this recommendation defers it indefinitely.
+    blocked_until_answered: "D04.1's architect stage. NOTHING else — see not_blocked below."
+    not_blocked: >-
+      The differential conformance harness, the supports_document fix, the memo-key
+      fix, and the escalation same-target defect are all independent of the verdict and
+      are being worked.
+  - id: ESC-22-escalation-that-resolves-to-the-same-model
+    raised: 2026-08-21
+    question: >-
+      When a tier escalation resolves to the SAME (provider, model) as the tier it came
+      from, what should happen? Deliver the honest floor from the attempt already made,
+      or re-run the loop anyway?
+    the_measurement: >-
+      25 escalations all-time, all standard->powerful, every one resolving to
+      (NeraAiRaw, neraai-v1-raw) because one provider covers all three tiers. The
+      attempt is DISCARDED — including 14, 15, 16 and 19 tool calls in four of those
+      turns — and re-run identically. on_escalate resets the tool-outcome ledger, so
+      the retry is blind to what the first attempt learned. 3 fired 2026-08-21.
+    why_evidence_cannot_settle_it: >-
+      Both behaviours are defensible and the choice changes what the user receives. A
+      second identical attempt is not strictly worthless (sampling is stochastic), but
+      it costs a full turn and cannot produce a different CLASS of answer, which is what
+      the judge asked for when it ruled give-up.
+    the_panels_recommendation: >-
+      Detect the no-op at tier-resolution time, log it at INFO (never DEBUG — a DEBUG
+      line is not evidence here), and deliver the floor from the attempt already made
+      rather than burning an identical second one. This is the guide-star rule applied:
+      a designed self-heal that silently degrades to a paid no-op is exactly what "if
+      this degrades silently, what notices?" exists to catch, and today nothing does.
+    blocked_until_answered: "the fix only. The INFO line that makes it visible is not blocked and ships first."
+  - id: ESC-23-the-provider-catalog-override-is-a-silent-credential-path
+    raised: 2026-08-21
+    question: >-
+      Should a user YAML in ~/.stackowl/providers/ be allowed to REPLACE a bundled
+      provider entry, or only ADD a new one?
+    the_measurement: >-
+      setup/provider_catalog.py merges with "user wins on name collision" and announces
+      it at log.setup.debug — invisible at production INFO. ProviderEntry carries
+      base_url, and commands/provider_command.py:886 _add_discover passes
+      entry.base_url and the RAW token to list_models BEFORE store_secret runs. So a
+      file that redefines a bundled entry's base_url redirects the next credential the
+      operator types, and nothing observable fires. The override is advertised in
+      setup/minimal.py:195.
+    why_evidence_cannot_settle_it: >-
+      Making the override additive-only REMOVES an advertised capability, which is a
+      stop-and-ask under the standing rule. It also bears directly on ESC-21: this is
+      the same credential-redirection risk that got last-writer-wins rejected for
+      plugin profiles on 2026-08-21 — and it is already shipped, one layer down.
+    the_panels_recommendation: >-
+      Additive-only: a user file may introduce a new name, never replace a bundled one;
+      a collision is refused and logged at INFO. Plus an INFO-level egress record when a
+      credential is first sent to a new host, which pdf.py:223 already models for bytes.
+    blocked_until_answered: >-
+      the additive-only change. The DEBUG->INFO promotion is pure observability, closes
+      the "nothing notices" half, and is NOT blocked.
+  - id: ESC-24-two-user-facing-shapes-that-a-refactor-must-not-decide
+    raised: 2026-08-21
+    question: >-
+      Two things in the provider config would change shape if per-backend facts are
+      normalised. Neither should be settled inside a refactor. (a) context_chars is in
+      CHARACTERS while the runtime reasons in TOKENS — any rename to context_tokens
+      silently changes an operator's existing value by ~4x with no error. (b) `models:`
+      means a list of strings in the 49 catalog YAMLs and a list of ModelOverride
+      objects in ProviderConfig, and `tier` vs `tiers` differ the same way — so
+      unifying the two families collides in a way YAML will not catch.
+    why_evidence_cannot_settle_it: "Both are user-facing key shapes in a file Bakir hand-edits."
+    the_panels_recommendation: >-
+      Leave both alone. If a unit fix is ever wanted it needs a dual-read alias, for
+      which config/provider.py's _normalize_legacy_tier validator is the precedent.
+    blocked_until_answered: "nothing today; recorded so a later refactor cannot decide it by accident."
   - id: ESC-15-the-delegation-timeout-predates-the-model-it-waits-for
     RESOLVED: "RESOLVED 2026-08-15 — Bakir chose MAKE DELEGATION NON-BLOCKING, over deriving the timeout from measured latency (my recommendation), over a configurable larger default, and over measuring child durations first. The parent stops waiting at all: it takes a handle and the child reports back when done, which removes the timeout question rather than tuning it, and fits the durable-task machinery the platform already has. This is a larger change than the one that caused the fault, and deliberately so — a derived timeout would still have been a number that can be wrong, and the failure mode it produces (a healthy child killed mid-work, its parent left with nothing to answer) is exactly what a wait should never be able to cause. FOLDED INTO D07.3 'Background delegation & durability', which already owns this surface; it is a design change needing its own architect stage, not a patch."
     raised: 2026-08-15
@@ -8470,7 +8698,7 @@ items:
       invent a parallel discovery path.
 
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
