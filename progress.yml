@@ -3095,11 +3095,33 @@ known_debt:
       2026-08-14..20, then 9 on 2026-08-21 while heavy suites ran. A correlation
       that strong is exactly how a structural defect hides — load was the TRIGGER
       and never the cause.
+    A_CORRECTION_TO_MY_OWN_EVIDENCE_2026_08_21: >-
+      I WROTE "with the box otherwise idle" AND THE BOX WAS NOT IDLE. Both live-DB
+      timings below (4,464ms warm, 27,092ms cold) were taken while TWO pytest
+      batches were running at load average ~5 on a Jetson. Ninth instance this
+      session of asserting a condition I had not checked — and this one is inside
+      the evidence for my own fix.
+      WHAT THE NUMBERS ACTUALLY SUPPORT, re-measured as a CONTROLLED A/B: same
+      process, same load, three runs each, index dropped and recreated to prove
+      causation — WITH index best 48.2ms / 45.0ms, WITHOUT index best 449.0ms and
+      median 553.0ms, WITH index again 45.0ms. So the index is causally
+      responsible for roughly a TEN-FOLD reduction, reproducibly.
+      WHAT THEY DO NOT SUPPORT: any absolute latency claim. The same work measured
+      55ms, 449ms, 4,464ms, 14,656ms and 27,092ms at different moments on this box,
+      swinging two orders of magnitude with page-cache state and load. A
+      measurement taken right after the boot that BUILT the index read 14,656ms,
+      which is worse than the pre-fix number and means nothing.
+      SO THE VERDICT IS NOT CLAIMED FROM A STOPWATCH. It is claimed from
+      production: `[health] aggregator: owl_ratings timed out` must become rare or
+      vanish. Baseline to compare against, per day: 2, 4, 2, 1, 1, 0, 3 across
+      2026-08-14..20 and 9 on 2026-08-21 before the index applied at 17:11:46Z.
+      CLOSE WITH: grep -c "owl_ratings timed out" ~/.stackowl/logs/stackowl.jsonl
+      over a full day at load comparable to the baseline days.
     THE_MEASUREMENT_THAT_SETTLED_IT: >-
       `OwlRatingHealthContributor.health_check` runs one
       `count_approach_ratings_for_owl` per owl, serially, inside a 5,000ms budget
-      (`_CONTRIBUTOR_TIMEOUT`, health/aggregator.py:57). Against the LIVE database
-      with the box otherwise idle: 15 owls, warm page cache, read-only connection —
+      (`_CONTRIBUTOR_TIMEOUT`, health/aggregator.py:57). Against the LIVE database —
+      NOT idle, see the correction above: 15 owls, warm page cache, read-only —
       4,464ms, i.e. 89% of the budget doing nothing wrong. Cold page cache —
       27,092ms, 5.4x over. With the index — 55ms. So it was over budget on any
       cold start and one heartbeat away from over on every warm one.
