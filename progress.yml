@@ -521,6 +521,22 @@ current:
         `grep -c "cannot improve on" ~/.stackowl/logs/stackowl.jsonl`. Both are INFO, so
         both CAN return something — which is the check D08.1 taught us to run before
         needing it.
+      6c5bcfde_the_memo_key_went_live_BY_SELF_RESTART: >-
+        Not restarted by hand. The commit landed 08:10:43 UTC; the CodeWatcher requested
+        a core restart at 08:12:45 and the core booted at 08:12:51 — it picked up the
+        change itself once the code settled, while two INCIDENT sessions were running.
+        Boot clean: 409 lines, 406 INFO, 0 ERROR, every phase ok. Verified live rather
+        than assumed: `make_key`'s parameters are now
+        (session_key, owl, provider, protocol, window, hydrated) and the key has six
+        components. This is the standing rule working as stated — a real core fix should
+        leave the platform to heal itself, and it did.
+      A_CORRECTION_TO_MY_OWN_TOOLING: >-
+        My first three log queries reported "0 lines in the last 10 minutes" on a
+        platform that was busy. The JSONL timestamp field is `ts`, not `timestamp`, so
+        every time-windowed filter I wrote silently matched nothing and returned a
+        confident zero. Recorded because it is the same shape as the defects this
+        programme hunts — a query that cannot fail is not evidence — and because "no
+        recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
     E_owner_key_enforcement:
