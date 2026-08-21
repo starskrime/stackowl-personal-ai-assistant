@@ -1426,6 +1426,7 @@ current:
 
   ESCALATIONS:
   - id: ESC-27-D05.4s-deferral-premise-expired-when-D04.1-was-rescoped
+    RESOLVED: "RESOLVED 2026-08-21 \u2014 RESUME RE-FRAMED. Give the presented tool array ONE owner; do NOT adopt the reference disclosure mechanism (it still cannot fire). D05.4 is the current item."
     raised: 2026-08-21
     question: >-
       D05.4 was deferred on 2026-08-17 with a stated condition: "D04.1 is what CREATES the
@@ -1470,6 +1471,7 @@ current:
       D05.4's architect stage. The misattributing log line below is NOT blocked and ships
       first.
   - id: ESC-26-the-rescope-orphaned-ESC-14
+    RESOLVED: "RESOLVED 2026-08-21 \u2014 UN-FOLD IT. ESC-14 gets its own item, fixed at the pipeline fusion site (execute.py), then the three strip_turn_context nets DELETED. NOT YET STARTED."
     raised: 2026-08-21
     question: >-
       ESC-14 (the volatile turn context is fused onto the user's own message, so a model
@@ -1496,6 +1498,7 @@ current:
       nothing today. D04.1 can close on its re-scoped terms either way; this exists so
       closing it does not quietly cancel a recorded instruction.
   - id: ESC-25-does-a-cooperative-stop-get-to-prevent-a-tool
+    RESOLVED: "RESOLVED 2026-08-21 \u2014 KEEP DISPATCH FIRST (Bakir, against my recommendation). A cooperative stop lets the in-flight tool finish. D5 order half closes as working-as-intended; pinned by a conformance test as a DECISION."
     raised: 2026-08-21
     question: >-
       When a user presses stop (or the budget governor kills a turn) mid-ReAct, should
@@ -1529,6 +1532,7 @@ current:
     blocked_until_answered: >-
       D5 only. D1, D2 and D4 are closed; D04.1's re-scoped work is otherwise complete.
   - id: ESC-21-D04.1-the-items-verdict
+    RESOLVED: "RESOLVED 2026-08-21 \u2014 RE-SCOPE. See ESCALATIONS_ANSWERED_2026_08_21.ESC_21. D04.1 closed 7/7 on the re-scoped terms; doc at designs/D04.1.md."
     raised: 2026-08-21
     question: >-
       All three D04.1 lenses independently rejected "providers as plugins". Nobody
@@ -1575,6 +1579,7 @@ current:
       fix, and the escalation same-target defect are all independent of the verdict and
       are being worked.
   - id: ESC-22-escalation-that-resolves-to-the-same-model
+    RESOLVED: "RESOLVED 2026-08-21 \u2014 DELIVER THE FLOOR ALREADY EARNED. Shipped afe006a2 (can_escalate now means the target above is DIFFERENT)."
     raised: 2026-08-21
     question: >-
       When a tier escalation resolves to the SAME (provider, model) as the tier it came
@@ -1599,6 +1604,7 @@ current:
       this degrades silently, what notices?" exists to catch, and today nothing does.
     blocked_until_answered: "the fix only. The INFO line that makes it visible is not blocked and ships first."
   - id: ESC-23-the-provider-catalog-override-is-a-silent-credential-path
+    RESOLVED: "RESOLVED 2026-08-21 \u2014 ADDITIVE-ONLY. Shipped fae357d7; two tests inverted, both advertising texts updated."
     raised: 2026-08-21
     question: >-
       Should a user YAML in ~/.stackowl/providers/ be allowed to REPLACE a bundled
@@ -1624,6 +1630,7 @@ current:
       the additive-only change. The DEBUG->INFO promotion is pure observability, closes
       the "nothing notices" half, and is NOT blocked.
   - id: ESC-24-two-user-facing-shapes-that-a-refactor-must-not-decide
+    RESOLVED: "NOT ASKED \u2014 recommendation stands: leave both alone (context_chars stays in CHARACTERS; the models:/tier collision stays unresolved). Recorded so a refactor cannot decide either by accident."
     raised: 2026-08-21
     question: >-
       Two things in the provider config would change shape if per-backend facts are
