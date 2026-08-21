@@ -836,6 +836,35 @@ current:
         runs that are not conversations at all. Every OTHER bug found in this area today
         was the same confusion.
       blocked_until_answered: "DEBT-D054-BROWSER-FLAP's fix; nothing in D05.4."
+    ESC_31b_THE_SAME_QUESTION_IN_A_THIRD_STORE_measured_2026_08_21:
+      what_this_adds_to_ESC_31: >-
+        It is not two stores, it is THREE, and they should be answered together or
+        the platform ends up half-converted. `infra/hydrated_tools.py` keys the
+        tool_search promotion set on `session_key` while its own docstring says it
+        "must survive ACROSS turns of the same SESSION" — the identical
+        code-vs-stated-intent gap as the memo. Same fix, same trade, same decision.
+      MEASURED_TODAY_and_the_contamination_is_real: >-
+        On lane `owl:secretary:telegram:dm:72055773`, in ONE day: 29 tool_search
+        calls carrying NO session_id (retry, self-heal `-fix`, goal execution) and
+        26 carrying one (actual conversations). They share a hydration bucket, so a
+        tool discovered by a background retry is promoted into the next interactive
+        turn's presented schema and vice versa. That is a real capability change to
+        the model's roster, sourced from a run the user never saw.
+      AND_A_SECOND_DEFECT_IN_THE_SAME_STORE_which_is_the_shape_this_programme_HUNTS: >-
+        `record()` opens with `if not session_key or not names: return`, and 59 of
+        today's 185 tool_search calls (32%) carry an EMPTY session_key. So a third
+        of all discoveries are silently discarded and the model re-discovers the
+        same tool every turn on those paths — FX-07's whole purpose, not firing, on
+        a third of its traffic. A write that does not happen, with nothing saying
+        so. NOT a proposal to hydrate the empty key: bucketing them all under "" is
+        the same cross-contamination in a worse form. It is an argument that the
+        key is wrong, not that the guard is.
+      recommendation: >-
+        Answer ESC-31 once, for all three stores, and prefer the CONVERSATION. A
+        lane is not a horizon for anything — it outlives conversations, spans owls,
+        and is shared with runs that are not conversations at all. Every defect
+        found in this area today reduced to that one confusion.
+      blocked_until_answered: "nothing today; it is a live behaviour change and so is Bakir's."
     ESC_32_should_the_prompt_part_audit_move_too:
       question: >-
         `audit_prompt_parts` still keys on (session_key, owl). Should it move to the
