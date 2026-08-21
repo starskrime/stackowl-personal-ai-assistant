@@ -223,3 +223,61 @@ class TestAContributorNeverCostsTheTurn:
         fields = set(PromptContext.__dataclass_fields__)
         assert fields == {"owl_name", "channel", "session_key", "lean"}
         assert "intent_class" not in fields
+
+
+class TestI5AContributorNeverReachesTheWaist:
+    """INVARIANT I5, and it had no test until the document stage went looking.
+
+    Law 2: every model tool ships on every API call, so the waist is the most expensive
+    place to add anything. A prompt contributor is allowed precisely because it costs
+    ZERO tokens in the tool array — it writes prose into a prompt that is composed once
+    per incarnation, not a schema the model must carry on every request.
+
+    That is a claim about the tool registry, so it is asserted against the tool
+    registry. D16.1 found the same gap for hooks: I1 and I2 were prose, and they were
+    the two carrying the platform's laws — "the two with no test" were "the two nothing
+    could falsify".
+    """
+
+    def test_a_contributor_is_not_a_tool(self) -> None:
+        from stackowl.pipeline.contributors import PromptContributor
+        from stackowl.tools.base import Tool
+
+        assert not issubclass(PromptContributor, Tool)
+
+    def test_registering_a_contributor_adds_nothing_to_the_tool_registry(self) -> None:
+        """The measurable form of I5: the presented tool array is byte-identical
+        across a contributor's registration."""
+        from stackowl.pipeline.contributors import (
+            PromptContributor,
+            get_registry,
+            reset_registry,
+        )
+        from stackowl.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        before = sorted(t.name for t in registry.all())
+
+        reset_registry()
+        try:
+            class _Part(PromptContributor):
+                name = "waist_probe"
+
+                async def render(self, ctx: object) -> str:
+                    return "text"
+
+            get_registry().register(_Part())
+            after = sorted(t.name for t in registry.all())
+        finally:
+            reset_registry()
+
+        assert after == before
+
+    def test_the_contributor_registry_holds_no_tools(self) -> None:
+        """A contributor cannot smuggle a callable into the waist by being one: the
+        registry stores it under a NAME and only ever asks it for a string."""
+        from stackowl.pipeline.contributors import PromptContributorRegistry
+
+        reg = PromptContributorRegistry()
+        assert not hasattr(reg, "tools")
+        assert "render_all" in dir(reg)

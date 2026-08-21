@@ -315,8 +315,8 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D16.3
-  stage: architect
+  item: D04.1
+  stage: brainstorm
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
     E_owner_key_enforcement:
@@ -12524,12 +12524,12 @@ items:
       brainstorm: done
       architect:  done             # 2026-08-20 — designs/D16.3.md, rung 1, NOT an 8th plugin point
       implement:  done             # 2026-08-21 — one list, 8th extension point, wired end to end
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      cleanup:    no_change_needed # nothing was made obsolete; dedup_target is null
+      test:       done             # 36 targeted + 423 durable/plugins, all green
+      validate:   done             # 2026-08-21 — a real plugin part reached a real prompt, 3 cold builds
+      document:   done             # 2026-08-21 @b48ac3a4 — Verification RUN, and it corrected 4 things
     doc: docs/reference-mapping/designs/D16.3.md
-    doc_last_verified: null
+    doc_last_verified: "2026-08-21 @b48ac3a4"
     ARCHITECT_2026_08_20: >-
       THE DESIGN IS NOT THE REFERENCE PLATFORM'S OBJECT, and running this stage against
       the real code is what produced the difference. Their ContextEngine is a swappable
@@ -12617,6 +12617,31 @@ items:
       active set was fixed. Wiring it without fixing that ordering would produce a
       registry that accepts registrations nobody reads. A new test now checks the real
       construction site for unwired slots, with that exclusion documented in place.
+    VALIDATE_AND_DOCUMENT_2026_08_21: >-
+      VALIDATED BY INSTALLING A REAL PLUGIN, which is the only method that has ever
+      worked on this surface. A throwaway contributor was installed, and its part
+      appeared across THREE independent cold builds — the probe lane plus two incident
+      lanes the platform generated on its own:
+        [pipeline] assemble: plugin parts contributed  parts=['styleprobe']
+        [pipeline] assemble: exit  styleprobe_len=65  system_len=14286  (68 / 66 on the others)
+      So a third-party part reaches a real system prompt AND its size lands in the D01.6
+      diagnostic by construction — the drift that started this item cannot recur. Plugin
+      removed afterwards; the log reads "boot: no plugins installed" again.
+      IT FOUND TWO DEFECTS TWENTY GREEN TESTS HAD MISSED. (1) the loader calls
+      register(instance, source_name=...) for every point and the registry did not accept
+      it, so the plugin failed at boot with a TypeError while every unit test passed —
+      D16.1's lesson repeating on the item that recorded it. (2) the probe left a task
+      stranded `running` forever: _finalize runs BEFORE goal_execution blanks a
+      NO_NOTIFY_NEEDED response, so the chokepoint judged a delivery owed and declined,
+      then complete_agent_task returned early on the now-empty string. My carve-out was
+      at the wrong layer. Both fixed in b48ac3a4.
+      DOCUMENT EARNED ITS KEEP TOO, the same way D16.1's did. Running the Verification
+      section rather than reading it corrected FOUR things: three test filenames that did
+      not exist (they were the names I expected to write, recorded as fact), a test count,
+      and INVARIANT I5 — "a contributor never reaches the waist" — which had NO TEST AT
+      ALL. That is precisely D16.1's finding repeating: the invariants carrying the
+      platform's Laws are the ones nothing could falsify. I5 now asserts the tool array is
+      byte-identical across a contributor's registration.
     changes: []
     notes: null
 
