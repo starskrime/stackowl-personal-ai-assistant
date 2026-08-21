@@ -618,6 +618,56 @@ current:
         recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
+    ESC_21_D04_1_the_items_verdict:
+      answer: "RE-SCOPE. Close the divergences in place; drop the plugin surface."
+      what_it_means: >-
+        D04.1 stops being "Providers as plugins". It becomes: lift openai's
+        escalate-on-max-out and escalate-on-give-up into anthropic, one commit each,
+        against the conformance harness that now pins both. No ProviderProfile, no
+        third-party provider plugins, and the 1,195-line extraction is a SEPARATE
+        decision taken later on its own merits — the codebase already names it T7.
+      the_counter_argument_that_was_traded_away: >-
+        Kept rather than deleted, because it was real: D04.1's stated purpose is
+        user-facing provider BREADTH, which Bakir has confirmed is a goal. A re-scope
+        that stops at correctness lowers the cost of the NEXT backend but ships no
+        breadth to anyone. If breadth becomes urgent, the plugin surface is what
+        delivers it and this decision defers it indefinitely.
+      why_the_evidence_pointed_here: >-
+        None of the three faults D04.1 was created to fix survives measurement as a
+        declaration problem. The tool dialect is a property of the MODEL'S TRAINING —
+        _react.py:135-141 records a new shape appearing after a qwen 3.6 -> 3.8 upgrade
+        inside ONE backend row — so a per-backend declaration goes stale at the next
+        pull, silently. The 400/413 fault is better served by using the retry as its own
+        oracle. The cache-stat fault is fixed by MEASUREMENT, which is the opposite of
+        declaration. And the reference platform's own hook usage is 27 of 198 possible
+        slots across 33 plugins.
+    ESC_22_escalation_that_resolves_to_the_same_model:
+      answer: "DELIVER THE FLOOR ALREADY EARNED. Skip the identical re-run."
+      what_it_means: >-
+        When the next tier resolves to the same (provider, model), stop discarding the
+        finished attempt. Return its honest floor instead of burning a second identical
+        turn. Measured cost of the old behaviour: 25 occurrences, up to 19 tool calls
+        thrown away per turn, with on_escalate resetting the ledger so the re-run was
+        blind to what the first attempt learned.
+    ESC_23_the_provider_catalog_override:
+      answer: "ADDITIVE-ONLY. A user file may add a new provider name, never replace a bundled one."
+      what_it_means: >-
+        A name collision is REFUSED and logged at INFO rather than silently winning.
+        This REMOVES an advertised capability (setup/minimal.py:195 invites the
+        override, and the module docstring documents it), which is why it was asked
+        rather than assumed. The reason it goes: ProviderEntry carries base_url, and
+        provider_command.py:886 sends that base_url the operator's RAW token before
+        store_secret runs — so replacement is credential redirection, which is the same
+        risk class that got last-writer-wins rejected for plugin profiles.
+    ESC_24_two_user_facing_shapes:
+      answer: "NOT ASKED — recommendation stands unless contradicted: leave both alone."
+      what_it_means: >-
+        context_chars stays in CHARACTERS (a rename to context_tokens would silently
+        change an existing value by ~4x with no error), and the models:/tier vs
+        models:/tiers collision between the catalog and config families stays
+        unresolved. Recorded so a later refactor cannot decide either by accident; if a
+        unit fix is ever wanted it needs a dual-read alias, for which
+        config/provider.py's _normalize_legacy_tier validator is the precedent.
     E_owner_key_enforcement:
       answer: "HEAL + REPORT, no enforcement at the write boundary."
       consequence: >-
