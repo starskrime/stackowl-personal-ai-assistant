@@ -550,12 +550,33 @@ class ToolRegistry:
             kept = {t.name for t in fitted}
             dropped = [t.name for t in ranked if t.name not in kept]
             if dropped:
+                # SAY WHICH CONSTRAINT BOUND. Two can, and until 2026-08-21 this line
+                # always blamed the token budget — which on this deployment was never
+                # the one. Measured across the retained logs: 266 events in a single
+                # day, every one with presented == hard_cap == 30 (the operator's
+                # `tool_count_cap`), while the schemas cost ~7,524 tokens against a
+                # 262,144-token window. ESC-9 added this line so an operator asking
+                # "why can't my browser owl type?" had something to read; sending them
+                # to a budget that is 2.87% consumed is worse than silence, because it
+                # is confidently wrong. Derived, not hardcoded, since either can bind.
+                limited_by = (
+                    "tool_count_cap" if len(fitted) >= hard_cap else "token_budget"
+                )
+                reason = (
+                    f"the tool_count_cap of {hard_cap} was reached"
+                    if limited_by == "tool_count_cap"
+                    else "the turn's token budget could not fit them"
+                )
                 log.tool.info(
-                    "registry.to_provider_schema: eligible tools NOT presented — "
-                    "the turn's token budget could not fit them",
+                    f"registry.to_provider_schema: eligible tools NOT presented — {reason}",
                     extra={"_fields": {
+                        "limited_by": limited_by,
+                        # `dropped` is capped at 20 names to bound the line; the real
+                        # figure is `dropped_count`, and the flag says so — a truncated
+                        # list reads exactly like a complete one otherwise.
                         "dropped": dropped[:20],
                         "dropped_count": len(dropped),
+                        "dropped_truncated": len(dropped) > 20,
                         "presented": len(fitted),
                         "hard_cap": hard_cap,
                     }},

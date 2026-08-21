@@ -208,11 +208,23 @@ class TestTheyAgreeOnCallbackAccounting:
 
         assert a.callbacks == b.callbacks == 3, (a.callbacks, b.callbacks)
 
-    async def test_dispatch_still_precedes_the_callback_on_both(self) -> None:
-        """PINS THE OPEN QUESTION rather than asserting it is right. ESC-25 asks
-        whether a cooperative stop should get to prevent the tool; today it does not,
-        on either loop. If that is flipped, this test flips with it — deliberately, and
-        on both sides at once."""
+    async def test_dispatch_precedes_the_callback_on_both_BY_DECISION(self) -> None:
+        """ESC-25, ANSWERED 2026-08-21: dispatch first, on both loops, deliberately.
+
+        Was pinned here as an OPEN question. Bakir chose to keep dispatch first, against
+        my recommendation — I argued a tool that runs after the user says stop cannot be
+        un-run. His counter-case is the one the code already encodes: `ReActIterationState`
+        carries `tool_call_records`, so the callback REPORTS a completed iteration, and
+        firing it before dispatch would have it report an iteration that has not happened.
+
+        THE CONSEQUENCE IS USER-VISIBLE and is not what "stop" implies: a cooperative
+        stop, or a budget kill, lets the tool already requested finish. That is now
+        uniform across both loops rather than accidental — anthropic used to pre-empt it
+        on the text-ReAct path only, by an ordering nobody had chosen.
+
+        Kept as a test so the behaviour stays deliberate: changing it must fail here
+        first, on both sides at once.
+        """
         script = [ReActCall("web_search", {"q": "1"}), Say("done")]
 
         for dialect in DIALECTS:

@@ -485,14 +485,15 @@ current:
         always parsed first; anthropic now does too. Counts agree: 2 and 2 for one ReAct
         call, 3 and 3 for two.
       D5_order_half: >-
-        OPEN — ESC-25, and its stakes went UP rather than down. Closing the count half
-        means both loops now dispatch BEFORE the iteration callback on every path, so a
-        cooperative stop lands one tool late on BOTH. That was already true of the live
-        openai path; anthropic's pre-parse callback had been pre-empting the tool by
-        ACCIDENT. Making it uniform is the honest interim state — the question is now one
-        change applied to both sides — but nothing anywhere currently lets a stop prevent
-        a tool. A conformance test pins the current order as the OPEN question rather than
-        as correct, so flipping it flips both.
+        CLOSED 2026-08-21 as WORKING AS INTENDED — ESC-25, Bakir's call against my
+        recommendation. Both loops dispatch before the iteration callback on every path,
+        so a cooperative stop or budget kill lets the in-flight tool finish. I argued for
+        callback-first (a tool that runs after "stop" cannot be un-run); his counter-case
+        is the one the code already encodes — ReActIterationState carries
+        tool_call_records, so the callback reports a COMPLETED iteration and firing it
+        earlier would report one that has not happened. Now uniform by decision rather
+        than accident, and the conformance test pins it as a DECISION so a future change
+        must be deliberate. Worth surfacing to users: this is not what "stop" implies.
       ESC_22_no_op_escalation: "CLOSED (afe006a2) — can_escalate now means the target above is DIFFERENT."
       ESC_23_catalog_override: "CLOSED (fae357d7) — additive-only; two tests inverted, both advertising texts updated."
     THE_DIVERGENCE_INVENTORY_IS_NOW_EXECUTABLE_2026_08_21:
@@ -666,6 +667,65 @@ current:
         recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
+    ESC_25_cooperative_stop_vs_tool_dispatch:
+      answer: "KEEP DISPATCH FIRST. A stop is honoured after the in-flight tool completes."
+      recorded_as_HIS_call_against_my_recommendation: >-
+        I recommended callback-first on the grounds that a tool which runs after the user
+        said stop cannot be un-run, and that the reporting argument is weak because the
+        callback fires again after the tool anyway. He chose otherwise. The counter-case
+        for his choice is real and is the one the code already encodes: ReActIterationState
+        carries tool_call_records, so the callback is a report of a COMPLETED iteration —
+        firing it before dispatch would have it report an iteration that has not happened.
+      consequence: >-
+        D5's order half is CLOSED as "working as intended". Both loops keep dispatching
+        before the iteration callback on every path, which is now uniform rather than
+        accidental. The conformance test that pinned this as an OPEN question is re-worded
+        to pin it as a DECISION, so a future change still has to be deliberate.
+      what_a_user_should_expect: >-
+        Pressing stop mid-turn lets the tool already requested finish. Worth stating in
+        user-facing terms somewhere, because it is not what "stop" implies.
+    ESC_26_where_ESC_14_lands:
+      answer: "UN-FOLD IT. ESC-14 gets its own item and is fixed at the fusion site in the pipeline."
+      what_it_means: >-
+        The prepare_messages() hook was only ever the chosen VEHICLE. The fault is in
+        pipeline/steps/execute.py, one layer above any provider, so fixing it there needs
+        nothing ESC-21's re-scope removed. The three strip_turn_context nets
+        (delivery_gate.py:291, delegate_task.py:536, supervisor.py:312) are then DELETED
+        as the 2026-08-15 decision instructed — the instruction survives the re-scope
+        rather than expiring by omission.
+    ESC_27_D05_4_resumes_reframed:
+      answer: "RESUME, RE-FRAMED. Give the presented tool array ONE owner."
+      what_it_means: >-
+        NOT the reference mechanism — it still provably cannot fire here (tools are 2.87%
+        of a 262k window against a >10% trigger, and it defers only MCP/plugin tools while
+        zero plugins exist). The item becomes the question ESC-18's own architectural
+        finding named: THREE mechanisms decide which tools the model sees — `restrict_to`,
+        the per-turn budgeter, and capability/profile gating — and none of them owns the
+        question. Progressive disclosure adopted as designed would be a FOURTH.
+      the_defect_it_must_fix: >-
+        MEASURED 2026-08-21: 266 eviction events in one day (18 -> 34 -> 84 -> 128 -> 153
+        -> 266 across six days), every one at presented == hard_cap, 49 tools dropped in
+        233 of them, and 52 DISTINCT tools flickering in and out with ZERO stably absent.
+        The model's capability set differs turn to turn, which also moves the prompt prefix
+        that D01.2's position-0 cache marker exists to hold still.
+    ESC_28_tool_count_cap_raised_to_40:
+      answer: "RAISE IT TO 40 (the shipped default), as interim mitigation."
+      recorded_as_HIS_call_against_my_recommendation: >-
+        I recommended leaving it at 30, because the cap exists precisely because
+        weak/quantized models derail when offered too many tools and neraai-v1-raw is what
+        runs here — so raising it trades a MEASURED failure mode for an unmeasured one. He
+        chose to raise it. Done: ~/.stackowl/stackowl.yaml tool_count_cap 30 -> 40 (backup
+        at stackowl.yaml.bak-2026-08-21).
+      the_baseline_captured_BEFORE_the_change_so_the_effect_is_falsifiable: >-
+        2026-08-21, the last full day at cap=30: evictions 266, leaked-tool-call floors 11
+        (against 1 the previous day), judge give-ups 16. If the cap was the binding problem,
+        evictions should fall sharply. If the derailment risk is real, leaked floors and
+        give-ups should RISE. Both are INFO lines, so both are answerable. He did not
+        choose the "raise and measure" option, but the baseline is recorded anyway — a
+        change whose effect nobody looks at is the shape this programme keeps finding.
+      the_closing_query: >-
+        grep -c "NOT presented" and "persistent tool-call leak" and "judge ruled give-up"
+        in ~/.stackowl/logs/stackowl.jsonl, per day, compared against the line above.
     ESC_21_D04_1_the_items_verdict:
       answer: "RE-SCOPE. Close the divergences in place; drop the plugin surface."
       what_it_means: >-
@@ -1101,6 +1161,50 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-27-D05.4s-deferral-premise-expired-when-D04.1-was-rescoped
+    raised: 2026-08-21
+    question: >-
+      D05.4 was deferred on 2026-08-17 with a stated condition: "D04.1 is what CREATES the
+      tool population the mechanism manages, so it is built when it has a job." D04.1 has
+      now shipped — and under ESC-21's re-scope it created NO tool population at all: the
+      plugin surface was dropped, zero provider plugins exist, and the tool count is
+      unchanged. The condition for resuming D05.4 was never met. Does D05.4 resume anyway,
+      and if so on what grounds?
+    why_evidence_cannot_settle_it: >-
+      It is a decision that was made conditionally, and the condition lapsed through a
+      LATER decision of yours rather than through anything measurable. Resuming on the
+      original grounds would be building for a tool population that no longer arrives;
+      re-deferring indefinitely leaves a live, measured, ACCELERATING defect in place.
+      Which of those is acceptable is yours.
+    what_round_0_measured_TODAY_2026_08_21: >-
+      The reference mechanism still cannot fire — tools are ~7,524 tokens against a
+      262,144 window (2.87%) versus a >10% trigger, and it defers only MCP/plugin tools
+      while zero plugins are installed. ALL of ESC-18's original numbers stand. But the
+      ARCHITECTURAL finding underneath it is live and getting worse, and it never
+      depended on plugins at all.
+    the_live_defect_measured: >-
+      "eligible tools NOT presented" fired 689 times all-time and 266 TIMES TODAY, up
+      monotonically: 18 (08-16), 34, 84, 128, 153, 266 (08-21). Every event today reports
+      presented=30 against hard_cap=30, with 49 tools dropped in 233 of them. 52 DISTINCT
+      tools flicker in and out across the day and ZERO are dropped in every event — so no
+      tool is reliably absent, and the model's capability set differs turn to turn. That
+      is Law 2 broken on every turn ("Every model tool ships on every API call"), and it
+      also moves the prompt prefix, which is what D01.2's position-0 cache marker exists
+      to hold still. 0 of 101,522 cost_records rows have ever reported a cache hit.
+    a_correction_to_my_own_first_reading: >-
+      I first read "20 tools dropped" from the log's `dropped` list. That list is
+      TRUNCATED at 20 by `registry.py` (`dropped[:20]`); the real figure is in
+      `dropped_count` and is 49. Recorded because the truncated field looks like a
+      complete answer.
+    the_recommendation: >-
+      RESUME, but re-framed and NOT as the reference mechanism. The item's real subject is
+      the one ESC-18's own architectural finding named: THREE mechanisms decide which
+      tools the model sees and none owns the question. Progressive disclosure adopted as
+      designed would be a FOURTH. The measured defect — a per-turn-varying tool array —
+      needs an owner regardless of whether a single plugin is ever installed.
+    blocked_until_answered: >-
+      D05.4's architect stage. The misattributing log line below is NOT blocked and ships
+      first.
   - id: ESC-26-the-rescope-orphaned-ESC-14
     raised: 2026-08-21
     question: >-
