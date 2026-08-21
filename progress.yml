@@ -476,12 +476,23 @@ current:
       D1_budget_exhaustion_escalation: "CLOSED (bc132963) — lifted into anthropic, harness expectations inverted."
       D2_judge_give_up_escalation: "CLOSED (bc132963) — same commit; ceiling still nudges, 3-round cap unchanged."
       D4_per_model_output_cap: "CLOSED (b6e447a4) — the tool loop now resolves the override like stream() and complete()."
-      D5_callback_count_and_order: >-
-        OPEN, and split. The ORDER half is ESC-25 (does a cooperative stop get to prevent
-        a tool?) — a user-visible design question with a LIVE half: on this deployment a
-        stop currently executes one more tool. The COUNT half — anthropic firing an extra
-        on_iteration_complete per text-ReAct iteration, 2 vs 3 for one call and 3 vs 5 for
-        two — looks like a plain double-fire and is expected to close with the order.
+      D5_count_half: >-
+        CLOSED 2026-08-21 (9cfe911a), and it needed no ruling because THE CODE'S OWN
+        COMMENT settled it. W4.T17 says the callback runs "BEFORE the give-up nudge at
+        this FINAL-ANSWER boundary" — but anthropic fired it before `parse_react_action`
+        had run, so it also fired on text that turned out to be a ReAct tool call, which
+        is not a final answer and which the callback could not know it was at. openai has
+        always parsed first; anthropic now does too. Counts agree: 2 and 2 for one ReAct
+        call, 3 and 3 for two.
+      D5_order_half: >-
+        OPEN — ESC-25, and its stakes went UP rather than down. Closing the count half
+        means both loops now dispatch BEFORE the iteration callback on every path, so a
+        cooperative stop lands one tool late on BOTH. That was already true of the live
+        openai path; anthropic's pre-parse callback had been pre-empting the tool by
+        ACCIDENT. Making it uniform is the honest interim state — the question is now one
+        change applied to both sides — but nothing anywhere currently lets a stop prevent
+        a tool. A conformance test pins the current order as the OPEN question rather than
+        as correct, so flipping it flips both.
       ESC_22_no_op_escalation: "CLOSED (afe006a2) — can_escalate now means the target above is DIFFERENT."
       ESC_23_catalog_override: "CLOSED (fae357d7) — additive-only; two tests inverted, both advertising texts updated."
     THE_DIVERGENCE_INVENTORY_IS_NOW_EXECUTABLE_2026_08_21:
@@ -1090,6 +1101,32 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-26-the-rescope-orphaned-ESC-14
+    raised: 2026-08-21
+    question: >-
+      ESC-14 (the volatile turn context is fused onto the user's own message, so a model
+      copies the timestamp into tool arguments) was FOLDED INTO D04.1 on 2026-08-15, on
+      the reasoning that the reference design already owned the seam: `prepare_messages()`
+      is a per-provider hook for exactly how messages are composed before a call. ESC-21's
+      re-scope drops hooks. So where does ESC-14 land now?
+    why_this_had_to_be_raised_rather_than_quietly_dropped: >-
+      The 2026-08-15 decision also said the three `strip_turn_context` nets are to be
+      DELETED as part of this item, because "a net left under a repaired floor teaches the
+      next reader the wrong lesson". If D04.1 closes under its new scope without touching
+      ESC-14, that instruction silently expires: the floor is never repaired, the nets
+      stay, and the item that owned the work is marked done.
+    the_measurement: >-
+      VERIFIED 2026-08-21. `prepare_messages` has ZERO occurrences in src/. All three nets
+      are still deployed: pipeline/delivery_gate.py:291, tools/agents/delegate_task.py:536
+      and pipeline/supervisor.py:312, all calling owls/base_prompt.py:246.
+    the_recommendation: >-
+      UN-FOLD it. The hook was only ever the chosen VEHICLE, not the reason; the fault is
+      in the pipeline, one layer above any provider, and fixing it there needs nothing the
+      re-scope removed. Retiring the deletion instruction explicitly is the honest
+      fallback if it is not worth doing — but it should be a decision, not a silence.
+    blocked_until_answered: >-
+      nothing today. D04.1 can close on its re-scoped terms either way; this exists so
+      closing it does not quietly cancel a recorded instruction.
   - id: ESC-25-does-a-cooperative-stop-get-to-prevent-a-tool
     raised: 2026-08-21
     question: >-
@@ -9000,14 +9037,14 @@ items:
 
     stages:
       brainstorm: done
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    doc: docs/reference-mapping/designs/D04.1.md
+    doc_last_verified: 2026-08-21
     decisions: []
     changes: []
     notes: null
