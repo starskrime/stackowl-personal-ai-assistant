@@ -3051,6 +3051,73 @@ known_debt:
       with it and its fixtures do not. Where a test reaches into another
       directory's module, the fixture scope has to reach with it.
     A_THIRD_DEFECT_FOUND_BY_THE_FIX_ITSELF: "see ARC-2026-08-21-migrations-never-self-apply."
+    SWEEP_COMPLETED_2026_08_21_all_directories: >-
+      7,760 passed. tools 1,685 passed. journeys+tui+smoke+integration+spikes:
+      747 passed and 13 FAILED. Every one of the 13 was verified PRE-EXISTING in a
+      worktree at 46dd948f, this session's starting commit — none was caused by
+      today's work.
+    THE_13_TRIAGED_none_left_unexplained:
+      FIXED_1_the_envelope_journey_asserted_the_retired_rule: >-
+        test_preflight_envelope::test_durable_envelope_hides_offplan_audits_on_use.
+        ESC-29 made the envelope a real boundary; 8c403494 inverted the SIBLING
+        assertion in tests/pipeline and claimed "1424 pipeline tests green" — true
+        of that directory. This one is in tests/journeys and was never run.
+        Inverted (321590f2), and the APPEAL is now asserted for the first time:
+        the refusal must name `denied_by=task_envelope` and carry the whole
+        permitted list, which is the condition ESC-29 was granted on.
+      FIXED_2_a_double_that_drifted_from_get_with_cascade: >-
+        `ProviderRegistry.get_with_cascade` returns `tuple[ModelProvider, str]` and
+        production unpacks it. FIFTEEN fake registries in tests/journeys return a
+        bare provider. Only the tests reaching the cascade fail, on `TypeError:
+        cannot unpack non-iterable _RecoveringProvider object` — recovery aborts and
+        the task sits at `pending`, so the test reports "recovered task did not
+        complete" and blames the loop for a harness defect. Two fixed (c5c6e99c);
+        test_stale_recovering_orphan_is_reclaimed_not_stuck_forever went GREEN.
+        THE OTHER THIRTEEN ARE LATENT AND DELIBERATELY NOT SWEPT UP BLIND —
+        `grep -rn "def get_with_cascade" tests/` finds them. Changing a double whose
+        test currently passes is how a green suite quietly stops testing anything.
+      FIXED_3_an_error_that_destroyed_its_own_payload: >-
+        `AllProvidersUnavailableError` typed `details: list[str]` and did
+        `"; ".join(details)`; a str is iterable, so one reason rendered as
+        "n; o;  ; f; a; s; t...". Now accepts `str | Sequence[str]`.
+      OPEN_4_durable_tasks_do_not_FINALIZE: >-
+        THE MOST VALUABLE ONE AND IT IS NOT CLOSED. Four tests —
+        test_durable_goal_survives_crash_and_runs_side_effect_exactly_once,
+        test_durable_task_hard_fail_stays_failed_with_message, and two in
+        test_durable_delegation_journey. With the unpack fixed they advance from
+        `pending` to `running` and still never finalize; the hard-fail one expects
+        `failed` and reads `pending`. The exactly-once and ledger assertions
+        PASS — only the terminal status is wrong. Suspect the ONE LOOP arc
+        (2026-08-17..19), which rewrote task status handling and after which these
+        journeys were evidently never run. NEXT STEP: trace who writes
+        tasks.status to a terminal value on the recovery path, and whether the
+        retry contract now returns a row to `pending` where the test expects a
+        terminal state — the two readings are behaviourally different and only one
+        is a bug.
+      OPEN_5_the_owls_command_surface: >-
+        2 tests in test_owl_builder_journey get `/owls` usage text back, so the
+        subcommand they invoke no longer exists under that name. Cheap to settle:
+        diff the test's invocation against the SubCommand tree.
+      OPEN_6_an_event_name_changed: >-
+        test_allowlist_subscribes_exactly_the_unblocked_budget_events expects
+        `budget_exceeded` and gets `..._cost_report`. One name, two places.
+      OPEN_7_the_global_skills_catalog: >-
+        test_skill_discovery_journey asserts the default Secretary receives the
+        GLOBAL skills catalog in its system prompt; the prompt carries only an
+        AVAILABLE block with one learned skill. Either a real injection regression
+        or a stale expectation — NOT yet distinguished, and it must be, because one
+        of those is a shipped capability loss.
+      OPEN_8_the_loop_guard_suffix: >-
+        test_j4_tools_bounds asserts a tool's exact output; a `[loop-guard]` notice
+        is now appended when a tool is called twice with identical arguments. The
+        feature looks right and the assertion is stale, but confirm the guard is
+        intended before rewriting the test to accept it.
+      NOT_RED_the_two_smoke_tests: >-
+        test_e2_s1_browser_snapshot and test_e2_s6_dialog_consent fail inside the
+        24-minute batch and PASS in isolation at both HEAD and 46dd948f. So they
+        are order- or load-dependent, which is shared state leaking between tests —
+        a real signal, recorded rather than "fixed", with the reproduction: run the
+        whole tests/journeys+tui+smoke+integration+spikes batch.
 
   - id: ARC-2026-08-21-migrations-never-self-apply
     found: 2026-08-21
