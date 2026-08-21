@@ -75,16 +75,38 @@ async def test_proactive_candidates_are_intentionally_deferred_not_subscribed() 
     assert _DEFERRED_PROACTIVE_CANDIDATES.isdisjoint(_ALLOWED_EVENTS)
 
 
-async def test_allowlist_subscribes_exactly_the_unblocked_budget_events() -> None:
-    """FX-10: budget_exceeded/budget_80pct_alert are the only production events
-    on the allow-list today; registering subscribes exactly those two."""
+async def test_the_bridge_subscribes_exactly_the_allowlist() -> None:
+    """The bridge must subscribe to the allow-list and nothing else — no drift in
+    either direction.
+
+    THIS LOCK FIRED CORRECTLY AND WAS LEFT RED. It restated the allow-list as a
+    literal pair, so when `conversation_cost_report` was deliberately added
+    (DEBT-7 — Bakir asked to be told what a conversation cost, so the report has
+    to be deliverable rather than log-only) the test failed for a reviewed,
+    intended change and simply stayed failing.
+
+    Restating the list was the mistake, not the assertion. Derived from
+    `_ALLOWED_EVENTS` it still catches the thing worth catching — the bridge
+    subscribing something the allow-list does not sanction, or missing something it
+    does — while a reviewed addition to the list, which carries its own recorded
+    rationale in event_bridge.py, no longer breaks it. One source, and the other
+    asks it.
+
+    The two budget events keep an explicit check below, because they are what this
+    test is named for and a derived assertion alone would pass on an empty list.
+    """
     bus = _RecordingBus()
     deliverer = _RecordingDeliverer()
     bridge = EventDeliveryBridge(deliverer=deliverer)  # type: ignore[arg-type]
 
     bridge.register(bus)  # must not raise
 
-    assert set(bus.subscribed_events) == {"budget_exceeded", "budget_80pct_alert"}
+    assert set(bus.subscribed_events) == set(_ALLOWED_EVENTS), (
+        "the bridge and the allow-list disagree. "
+        f"subscribed={sorted(bus.subscribed_events)} allowed={sorted(_ALLOWED_EVENTS)}"
+    )
+    # The named invariant, stated literally so an empty allow-list cannot pass.
+    assert {"budget_exceeded", "budget_80pct_alert"} <= set(bus.subscribed_events)
 
 
 async def test_non_allowlisted_event_is_ignored() -> None:

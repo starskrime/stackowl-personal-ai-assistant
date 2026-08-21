@@ -4,7 +4,7 @@ End-to-end proof of the owl-builder business value with REAL wiring (the only
 mock is the AI provider):
 
   1. BUILD — a human runs the REAL ``/owls add rsr --role research --tier fast
-     --preset researcher`` command (``OwlsCommand._add``). A real ``researcher``
+     --preset researcher`` command (``OwlCommand.create``). A real ``researcher``
      manifest with safe-by-construction bounds (tools EXCLUDE ``shell``, INCLUDE
      ``web_fetch`` + the boundary-router ``delegate_task``) lands in the registry
      AND is persisted to ``stackowl.yaml``.
@@ -40,13 +40,13 @@ import pytest
 
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
-from stackowl.commands.owls_command import OwlsCommand
+from stackowl.commands.owls_command import OwlCommand
 from stackowl.config.settings import Settings
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.gateway.scanner import GatewayScanner
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
-from stackowl.pipeline.services import StepServices
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import StreamRegistry
 from stackowl.providers.base import CompletionResult, Message
@@ -199,6 +199,13 @@ class _Env:
     tool_registry: ToolRegistry
     in_bounds: _RecordingTool
     out_of_bounds: _RecordingTool
+    #: The SAME StepServices the pipeline runs on. Needed because the build step
+    #: below invokes the command DIRECTLY rather than through the backend, and
+    #: `owl_build` reads `get_services().consent_gate` from the ambient context —
+    #: which is unbound outside a pipeline run, so the tool fails closed with
+    #: "no consent gate available". Wiring the gate into StepServices was never
+    #: enough on its own; the direct caller has to be inside those services.
+    services: StepServices
 
 
 @pytest.fixture(autouse=True)
@@ -253,6 +260,7 @@ def _build(provider: _ScriptedResearcher) -> _Env:
         stream_registry=services.stream_registry, provider=provider,
         owl_registry=owl_registry, tool_registry=tool_registry,
         in_bounds=in_bounds, out_of_bounds=out_of_bounds,
+        services=services,
     )
 
 
@@ -300,20 +308,41 @@ async def test_owl_builder_journey_build_route_enforce_persist(
     provider = _ScriptedResearcher()
     env = _build(provider)
 
-    # --- 1. BUILD via the REAL /owls add command (no ceiling — the owl's OWN
+    # --- 1. BUILD via the REAL structured create (no ceiling — the owl's OWN
     #        researcher-preset bounds must do the blocking) -------------------
-    cmd = OwlsCommand(
+    #
+    # THE SPELLING MOVED, THE CAPABILITY DID NOT. `67cc2fd9` removed the `/owls
+    # add <name> --flags` surface and folded structured creation into the unified
+    # `/owl` dispatcher: `OwlCommand.create` parses the same flags through
+    # `parse_owl_build_flags`, while `OwlsCommand.create` is the free-text path
+    # that elicits missing fields interactively. This test needs the structured
+    # one — it is asserting what a PRESET produces, not what elicitation asks.
+    # `--role` is gone with the rename; the preset supplies the role.
+    cmd = OwlCommand(
         owl_registry=env.owl_registry,
         tool_registry=env.tool_registry,
     )
-    reply = await cmd.handle(
-        f"add {_OWL} --role research --tier fast --preset researcher",
-        PipelineState(
-            trace_id="build", session_key="build", input_text="", channel="cli",
-            owl_name="secretary", pipeline_step="start",
-        ),
+    _tok = set_services(env.services)
+    try:
+        reply = await cmd.handle(
+            f'create --name {_OWL} --tier fast --preset researcher '
+            f'--specialty "reads arxiv and summarises papers"',
+            PipelineState(
+                trace_id="build", session_key="build", input_text="", channel="cli",
+                owl_name="secretary", pipeline_step="start",
+            ),
+        )
+    finally:
+        reset_services(_tok)
+    # ASSERT THE EFFECT, NOT THE DECORATION. This used to require the reply to
+    # start with "✓"; the success message no longer carries that prefix, so the
+    # test failed on presentation while the owl was created correctly — "measure
+    # the EFFECT, never trust the call", applied to a test rather than to code.
+    # The registry assertions immediately below are the real proof and they were
+    # already here; the string check only ever added a way to fail wrongly.
+    assert _OWL in {m.name for m in env.owl_registry.list()}, (
+        f"the build did not register the owl. reply={reply!r}"
     )
-    assert reply.startswith("✓"), f"build command failed: {reply!r}"
 
     # The researcher manifest with safe-by-construction bounds is in the registry.
     manifest = env.owl_registry.get(_OWL)
@@ -390,15 +419,22 @@ async def test_unbounded_owl_runs_shell_proving_bounds_is_the_blocker(
     env = _build(provider)
 
     # Build a bare owl (no preset, no tools) → unbounded (bounds is None).
-    cmd = OwlsCommand(owl_registry=env.owl_registry, tool_registry=env.tool_registry)
-    reply = await cmd.handle(
-        f"add {_OWL} --role research --tier fast",
-        PipelineState(
-            trace_id="build", session_key="build", input_text="", channel="cli",
-            owl_name="secretary", pipeline_step="start",
-        ),
+    cmd = OwlCommand(owl_registry=env.owl_registry, tool_registry=env.tool_registry)
+    _tok = set_services(env.services)
+    try:
+        reply = await cmd.handle(
+            f"create --name {_OWL} --tier fast",
+            PipelineState(
+                trace_id="build", session_key="build", input_text="", channel="cli",
+                owl_name="secretary", pipeline_step="start",
+            ),
+        )
+    finally:
+        reset_services(_tok)
+    # Same rule as above: the registry is the proof, the reply prefix is not.
+    assert _OWL in {m.name for m in env.owl_registry.list()}, (
+        f"the build did not register the owl. reply={reply!r}"
     )
-    assert reply.startswith("✓"), f"build command failed: {reply!r}"
     assert env.owl_registry.get(_OWL).bounds is None, "bare owl should be unbounded"
 
     _ = await _turn(env, f"@{_OWL} fetch the page and then run a shell command")

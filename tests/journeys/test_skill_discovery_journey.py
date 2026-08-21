@@ -79,12 +79,33 @@ async def test_default_secretary_discovers_and_uses_a_categorized_skill(
 
     reply = await run_turn(env, "can you download a video for me?")
 
-    # 1) AWARENESS: MY global CATALOG region reached the default owl's prompt
-    # (distinct from classify's "## Relevant Skills" block — assert the catalog
-    # header specifically so this proves the global-catalog feature, not recall).
-    assert "## CATALOG" in provider.system_text, (
-        "default Secretary never got the global skills CATALOG — global catalog not "
-        f"injected into the system prompt. system_text={provider.system_text!r}"
+    # 1) AWARENESS: the global skill region reached the default owl's prompt,
+    # distinct from classify's "## Relevant Skills" block — so this proves the
+    # global-injector feature and not recall.
+    #
+    # WHICH TIER IT LANDS IN IS NOT THE POINT, and pinning one was why this test
+    # went red. SkillInstructionInjector places a skill by RELEVANCE SCORE —
+    # >= FULL_FLOOR is ACTIVE, >= SUMMARY_FLOOR is AVAILABLE, below that CATALOG.
+    # A video-download skill against "can you download a video for me?" scores well
+    # and is promoted to AVAILABLE, which is the feature working BETTER than the
+    # assertion assumed. The test hardcoded "## CATALOG" and so demanded the skill
+    # be judged irrelevant to the very question it answers.
+    #
+    # The headers are IMPORTED from the module that emits them rather than
+    # restated, so a rename moves both at once instead of silently re-breaking
+    # this — the same "one source, and have the other ask it" rule that this
+    # programme keeps applying to production code.
+    from stackowl.skills.instruction_injector import (
+        _ACTIVE_HEADER,
+        _AVAILABLE_HEADER,
+        _CATALOG_HEADER,
+    )
+
+    global_regions = (_ACTIVE_HEADER, _AVAILABLE_HEADER, _CATALOG_HEADER)
+    assert any(h in provider.system_text for h in global_regions), (
+        "default Secretary never got the global skill listing in ANY tier — the "
+        "global injector did not reach the system prompt. "
+        f"system_text={provider.system_text!r}"
     )
     assert _SKILL in provider.system_text
     # 2) REACHABILITY: the discovery tools survived the budget into the roster.
