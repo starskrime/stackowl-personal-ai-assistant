@@ -3011,6 +3011,74 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ARC-2026-08-21-red-test-sweep
+    found: 2026-08-21
+    found_by: "a directory-by-directory sweep, after ONE red test had hidden a privilege escalation for three days"
+    status: SHIPPED — 163c4d61, c0429055, bca4bf50. Evidence-led; `map_check.py` returned no match.
+    what_was_swept: >-
+      channels, authz, gateway, cli, commands, config, db — 1,403 passed. providers,
+      notifications, parliament, plugins, runtime, sandbox, mcp, media, interaction,
+      learning, objectives, process, setup, health, audit, brief, ipc, paths,
+      tenancy, vision, web_search, acceptance, security, service, supervisor, unit,
+      embeddings, messaging, migration, integrations — 2,159 passed, 2 FAILED.
+      memory/owls/scheduler/skills/startup/sessions hit MY OWN `timeout 2400` at 52%
+      with zero failures (exit 124, which is not a red test) and is being re-run
+      split. tools, journeys, tui, smoke and the root-level files are NOT yet swept.
+    RED_1_a_stale_contract_not_a_regression: >-
+      tests/notifications/test_resolve_recipient.py, red since d1dd897a
+      (2026-08-18). It asserted that a composite lane resolves to None because the
+      heuristic "correctly refuses to parse it". REFUSING WAS THE DEFECT: with no
+      recipient the deliverer falls back to the adapter's shared `_last_chat_id`,
+      which is the cross-delivery bug the module exists to prevent — and Bakir hit
+      the same stale assumption from the consent side and could not create his
+      email assistant. Rewritten to the new rule rather than deleted, with the
+      other jaw ADDED (a lane naming no chat is still unresolved; a trailing
+      separator is not chat id 0).
+    RED_2_the_16th_instance_of_a_regression_already_recorded: >-
+      tests/acceptance/test_trust_acceptance.py::test_eval2_creation_truth, red
+      since 0f1431e9. Same mechanism as the 15 already documented, and it SURVIVED
+      the sweep that fixed them, because that fix was an autouse fixture in
+      `tests/tools/meta/conftest.py` and therefore covered a DIRECTORY — while
+      tests/acceptance imports the helper across directory boundaries and so
+      inherited the helper without the world it needs. Fixed by importing
+      `_official_origin` alongside the fixtures that file already borrows: one
+      rule, one source. NOT added to tests/scheduler/handlers/conftest.py, which
+      borrows the same fixtures — measured, 128 passed there without it.
+    THE_LESSON_THAT_GENERALISES: >-
+      "Run the whole directory suite before claiming green" was the discipline
+      adopted after 15 red tests shipped as green. RED_2 shows it is not
+      sufficient: a helper imported across directories carries its assumptions
+      with it and its fixtures do not. Where a test reaches into another
+      directory's module, the fixture scope has to reach with it.
+    A_THIRD_DEFECT_FOUND_BY_THE_FIX_ITSELF: "see ARC-2026-08-21-migrations-never-self-apply."
+
+  - id: ARC-2026-08-21-migrations-never-self-apply
+    found: 2026-08-21
+    found_by: "shipping migration 0120 and watching it not apply"
+    status: SHIPPED — bca4bf50.
+    what: >-
+      `CodeWatcher._scan` did `rglob("*.py")`. Migrations are applied at startup
+      phase 1, so a new migration only takes effect on a RESTART — and the watcher
+      that restarts the core was blind to the one file type that needs a restart
+      to matter.
+    why_it_is_worse_than_an_inconvenience: >-
+      It is silent. 0120 sat on disk, committed and tested, with `schema_migrations`
+      still reading 0119 and nothing reporting the disagreement. The tree agreed
+      with the commit, the tests agreed with the tree, and neither agreed with the
+      database. The platform hot-heals onto new CODE and not onto new SCHEMA — the
+      guide-star question answered: nothing noticed.
+    AND_IT_ALMOST_PRODUCED_A_FALSE_WIN: >-
+      The health sweeps went quiet at 16:50 and my first reading was that the index
+      had landed. It had not. The box simply got quieter when a test sweep
+      finished. Eighth time this session a correlated quantity was read as the thing
+      itself, and the only reason it was caught is that the migration file's absence
+      from the watcher was checked in the SCAN CODE rather than in its docstring.
+    the_fix: >-
+      `_WATCHED_SUFFIXES = (".py", ".sql")`. Same debounce, drain and exec-replace;
+      a half-written .sql is covered by the 300s quiet period exactly as a
+      half-written module already is. Both jaws tested — an unwatched suffix must
+      still NOT restart the core, or a stray editor swap file would.
+
   - id: ARC-2026-08-21-owl-ratings-probe-over-budget
     found: 2026-08-21
     found_by: "the D05.4 validate wait — a Monitor on the JSONL, not by looking for it"
