@@ -12375,15 +12375,49 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  done             # 2026-08-20 — designs/D16.3.md, rung 1, NOT an 8th plugin point
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
+    doc: docs/reference-mapping/designs/D16.3.md
     doc_last_verified: null
-    decisions: []
+    ARCHITECT_2026_08_20: >-
+      THE DESIGN IS NOT THE REFERENCE PLATFORM'S OBJECT, and running this stage against
+      the real code is what produced the difference. Their ContextEngine is a swappable
+      WHOLE-ENGINE ABC: 4 abstract methods, ONE implementation. Ours would be the tenth
+      ABC below their own 3+ rule.
+      OUR NUMBERS CLEAR THE BAR ON A DIFFERENT AXIS. `assemble.run()` composes SEVEN
+      contributors — base, capabilities, persona, owls_block, skills_block, profile,
+      state.stable_context — by hardcoded import. Seven implementations of one concept.
+      So the design is a CONTRIBUTOR interface, not an engine.
+      AND THE JUSTIFICATION IS NOT THE MAP, IT IS A MEASURED DRIFT. The same seven-item
+      list is maintained THREE times in one function: the `parts` tuple that composes
+      the prompt (and fixes its ORDER, which is the cached prefix), the
+      `audit_prompt_parts` dict that D01.2 reads, and the `assemble: exit` log fields
+      that D01.6 exists to produce. They have ALREADY diverged — confirmed on live data
+      across all 18 `assemble: exit` lines the log holds: `capabilities_len` is ABSENT,
+      while `banner_len` and `memory_len` are logged on every turn and are NOT parts of
+      the composed prompt. `capabilities` is a real part (579 chars, measured in the
+      code's own comment) whose size has never once been recorded — inside the function
+      whose comment says per-part sizes are "the diagnostic D01.6 exists to obtain".
+      That is CLAUDE.md defect shape #3 at three copies, and making the list exist ONCE
+      is the whole design. The contract is not invented either: all seven already have a
+      stable name, render to a string where "" means nothing, and are individually
+      fail-open. It is being NAMED.
+      LADDER RUNG 1 — extend existing code. It does NOT join `_ABC_NAMES`, and that is
+      the load-bearing decision: becoming the 8th plugin point is a one-way door on first
+      install, it would let third-party code compose the SYSTEM PROMPT (a larger trust
+      surface than a gated tool, since it rides every turn and no consent covers it), and
+      seven points with ZERO installed plugins is not evidence for an eighth. Gated on
+      E2, which is unanswered. Promotion later is a three-line change across three tables,
+      by which time seven in-tree implementations will have proven the interface — the
+      order the reference platform's own meta-rule recommends.
+      SIX INVARIANTS, each mapped to a test. I3 (the composed prompt is BYTE-IDENTICAL,
+      including prompt_hash) is the migration's whole safety story and gets written
+      first: a prompt that changes shape silently invalidates every live session's cache,
+      which is Law 1.
     changes: []
     notes: null
 

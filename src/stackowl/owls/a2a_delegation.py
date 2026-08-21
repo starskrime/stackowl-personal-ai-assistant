@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
@@ -54,6 +54,57 @@ class A2AResult(BaseModel):
     content: str = ""
     child_detail: str = ""
     resolved_owl: str = ""
+
+
+async def settle_specialist_task(
+    specialist_task: asyncio.Task[Any],
+    *,
+    trace_id: str,
+    to_owl: str,
+    timeout: float = 1.0,
+) -> None:
+    """Let the child's task object finish unwinding. Observation only; never raises.
+
+    THIS IS NOT A TIMEOUT ON THE DELEGATION, and calling it one cost seven false
+    alarms in a single day. It runs only AFTER ``receive`` has returned, so the reply
+    is already in hand — this branch cannot indicate a delegation failure, by
+    construction. Measured 2026-08-21: of 14 such log lines, 12 were followed by
+    ``delegate: exit status=ok``, and ALL 14 carried ``duration_ms=0`` — meaning the
+    specialist had replied BEFORE the parent began waiting, so its coroutine was still
+    unwinding when the parent checked. The old WARNING therefore fired precisely when
+    delegation was FASTEST.
+
+    DEBUG, deliberately, against the usual rule that evidence belongs at INFO. That
+    rule exists so a claim can be proven in production; nothing here is a claim. A
+    WARNING that cannot distinguish a real problem from ordinary operation is not an
+    alarm — it is noise competing with the alarms that are real, which is the same
+    defect as a completion warning firing on the happy path.
+
+    Raising the wait would not help: no wait is correct, because the parent already has
+    what it asked for. How long the child takes to unwind afterwards is bookkeeping.
+    """
+    if specialist_task.done():
+        return
+    try:
+        await asyncio.wait_for(specialist_task, timeout=timeout)
+    except (TimeoutError, asyncio.CancelledError) as exc:
+        log.engine.debug(
+            "[a2a-delegator] delegate: the child's task was still unwinding after its "
+            "reply arrived — the delegation itself is unaffected",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": trace_id, "to": to_owl,
+                               "waited_s": timeout}},
+        )
+    except Exception as exc:  # noqa: BLE001 — the reply is already in hand
+        # The child raised on its way out AFTER answering. That cannot be allowed to
+        # turn a delivered delegation into a failed turn, so it is recorded and
+        # swallowed — recover loudly, never hide, but never at the caller's expense.
+        log.engine.warning(
+            "[a2a-delegator] delegate: the child raised while finishing, AFTER its "
+            "reply was received — the delegation stands",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": trace_id, "to": to_owl}},
+        )
 
 
 class A2ADelegator:
@@ -195,16 +246,9 @@ class A2ADelegator:
             return A2AResult(status="child_error", resolved_owl=to_owl, child_detail=_sanitize(str(exc)))
 
         duration_ms = (time.monotonic() - t0) * 1000
-        # Ensure specialist task wrapped up cleanly (it should have, since it sent the reply).
-        if not specialist_task.done():
-            try:
-                await asyncio.wait_for(specialist_task, timeout=1.0)
-            except (TimeoutError, asyncio.CancelledError) as exc:
-                log.engine.warning(
-                    "[a2a-delegator] delegate: specialist task did not finish in time",
-                    exc_info=exc,
-                    extra={"_fields": {"trace_id": parent_state.trace_id, "to": to_owl}},
-                )
+        await settle_specialist_task(
+            specialist_task, trace_id=parent_state.trace_id, to_owl=to_owl,
+        )
 
         # Governor-decided status: prefer the child-reported status when present;
         # otherwise derive from observed facts (content present → ok, blank → empty).
