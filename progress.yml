@@ -316,7 +316,45 @@ deployment:
 current:
   wave: 2
   item: D05.4
-  stage: architect
+  stage: validate
+  D05_4_ARCHITECT_AND_IMPLEMENT_2026_08_21:
+    doc: docs/reference-mapping/designs/D05.4.md
+    headline: >-
+      THE INSTRUMENT WAS THE DEFECT. `audit_tools_stability` compared arrays per
+      (session_key, owl) — the LANE — while a prompt cache is held across a
+      CONVERSATION (session_id). Six days, 2026-08-16 to 2026-08-21: 122 warnings,
+      112 on runs carrying NO session_id at all, 9 on the first tool turn of a
+      brand-new session_id, and ONE genuine within-conversation change. Both prior
+      root-cause analyses for this item were built on its output.
+    THE_ENVELOPE_BUDGETER_SPLIT_IS_NOT_THE_CAUSE_and_this_corrects_the_record: >-
+      D05_4_ROOT_CAUSE_CORRECTED_2026_08_21 named execute.py:1244 as THE ACTUAL
+      CAUSE. Its two facts are true; the conclusion is not. `task_envelope` is set
+      only by task_runner/store/recovery and every one of those runs carries
+      session_id == "", so branch A and branch B never alternate WITHIN one
+      conversation — only within one lane, which is the instrument's bucketing.
+      Since ESC-29 the narrowing is also a real least-privilege boundary, so fewer
+      tools on an enveloped run is correct rather than a Law 2 violation.
+    THE_RED_TEST_THAT_TURNED_A_WORRY_INTO_A_MEASUREMENT: >-
+      `infra/presented_tools.py` documented losing the memo as "never a correctness
+      issue". Written as a test — real registry, real budgeter, only the AI provider
+      mocked, 16k window — it went RED: a memo wipe mid-conversation took the
+      presented set from 66 tools to 53 and took `objective`, `process`,
+      `send_message`, `run_tests` and `search_files` with it. That wipe is fired by
+      a 3-second browser subprocess recycle, 62 times a day. The memo was not a
+      cache; it was the only thing holding Law 1.
+    WHAT_WAS_DELIBERATELY_NOT_BUILT: >-
+      No quantiser for the token budget. Since the eviction message started naming
+      the constraint that bound (2026-08-21T13:44:11Z), 36 of 36 evictions were the
+      tool_count_cap and 0 were the budget. Building for a mechanism that cannot
+      fire here is the exact mistake ESC-27 re-scoped this item to escape. The fix
+      shipped is the smaller one: a memo MISS now reproduces the memo HIT, which is
+      what the hit path already did.
+    the_closing_queries_which_are_INFO_or_WARNING_so_both_can_return_something: >-
+      (1) jq 'select(.msg|test("tools array CHANGED"))|select(.session_id==null)'
+      ~/.stackowl/logs/stackowl.jsonl — must be EMPTY after this ships, against 112
+      in the six days before. (2) the same line WITH a session_id must carry
+      `added`/`removed`. (3) grep -c "capability changed — dropping every memoized
+      tool array" — unchanged by this item on purpose; it is DEBT-D054-BROWSER-FLAP.
   D04_1_BRAINSTORM_2026_08_21:
     method: Round 0 Measurement, then a three-agent panel (Stability / Improvement+Killer / Ease-of-use+Future-proof).
     headline: >-
@@ -665,6 +703,48 @@ current:
         confident zero. Recorded because it is the same shape as the defects this
         programme hunts — a query that cannot fail is not evidence — and because "no
         recent activity" was very nearly used to justify restarting into a live turn.
+  ESCALATIONS_D05_4_2026_08_21:
+    raised: 2026-08-21
+    status: OPEN — neither blocks D05.4, which shipped everything they do not block.
+    ESC_31_what_is_the_memo_horizon:
+      question: >-
+        Should the presented-tool memo be keyed on the CONVERSATION (session_id) instead
+        of the LANE (session_key)? Its own docstring says "a new session must recompute,
+        or a learned demotion could never take effect" — and since D01.7 split the two,
+        session_key is the lane, so a new conversation on an existing lane never
+        recomputes and the learned usage ranking never takes effect for the life of that
+        lane.
+      why_evidence_cannot_settle_it: >-
+        Both readings are defensible on the same numbers. Lane-keyed maximises prompt-cache
+        stability, which is Law 1 and is the whole point of D05.2. Conversation-keyed makes
+        the learned ranking actually reach the model, which is the reason D05.2 built the
+        ranking in the first place. Measurement says which is cheaper; it cannot say which
+        you want, and it is a live behaviour change on every conversation.
+      the_uncomfortable_fact_kept_rather_than_smoothed: >-
+        The only thing re-ranking anything today is a DEFECT — the browser recycle wipes
+        the memo 62 times a day (DEBT-D054-BROWSER-FLAP). Fix the flap without answering
+        this and the ranking freezes for the life of every lane. That coupling is why the
+        two are raised together.
+      recommendation: >-
+        Conversation-keyed, and fix the flap in the same change. A lane is not a cache
+        horizon for anything — it outlives conversations, spans owls, and is shared with
+        runs that are not conversations at all. Every OTHER bug found in this area today
+        was the same confusion.
+      blocked_until_answered: "DEBT-D054-BROWSER-FLAP's fix; nothing in D05.4."
+    ESC_32_should_the_prompt_part_audit_move_too:
+      question: >-
+        `audit_prompt_parts` still keys on (session_key, owl). Should it move to the
+        conversation as `audit_tools_stability` just did?
+      why_evidence_cannot_settle_it: >-
+        Its false-positive rate has NOT been measured, and it is called from prompt
+        assembly, which has no session_id to hand. Changing it on the strength of a
+        neighbouring finding is exactly the assertion-instead-of-measurement this
+        programme keeps catching, so it was deliberately left alone.
+      recommendation: >-
+        Measure it first — the same six-day breakdown that was run for the tools audit —
+        and only then decide. If it reads like the tools audit did, it is the same fix.
+      blocked_until_answered: "nothing"
+
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
     AN_INVARIANT_LOCK_THAT_FIRED_AND_WAS_IGNORED_2026_08_21:
@@ -2850,6 +2930,61 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-D054-BROWSER-FLAP
+    found: 2026-08-21
+    found_by: "D05.4 architect Round 0"
+    status: OPEN — deliberately not fixed inside D05.4; it is a COST defect after D05.4, not a correctness one.
+    what: >-
+      `infra/presented_tools.py::_on_capability_change` drops EVERY memoized tool array
+      for EVERY session platform-wide whenever any capability's verdict changes. Its own
+      comment justifies the breadth with "Capability flips are rare; a turn-frequency
+      invalidation this is not."
+    the_measurement: >-
+      MEASURED FALSE. 950 wipes all-time, 62 in a single day, and 100% of them are the
+      SAME capability — `browser` — produced by a subprocess recycle that completes in
+      about three seconds (699 `runtime.disconnect: browser process gone` all-time, 322
+      recycles). It costs ~284 needless rebuilds a day.
+    two_defects_not_one: >-
+      Wrong EVENT (a transient bounce is not a capability change — the owl's capabilities
+      did not move, a subprocess did) compounded by wrong SCOPE (all sessions rather than
+      the ones whose array actually depended on that capability).
+    why_it_is_not_fixed_here: >-
+      D05.4 stamps the budget basis per session and the basis SURVIVES this wipe, so the
+      rebuild now reproduces the array the model already had. Before that it did not:
+      real registry, real budgeter, 16k window, a wipe mid-conversation took the presented
+      set from 66 tools to 53 and took `objective`, `process`, `send_message`, `run_tests`
+      and `search_files` with it. That amputation is closed. What is left is wasted CPU,
+      which is worth fixing on its own terms and does not belong inside a Law 1 item.
+    the_fix_when_it_is_taken: >-
+      Debounce at the SOURCE first (a recycle that resolves in seconds must never reach
+      the presentation layer as a capability flip), then scope the invalidation by
+      recording which capabilities an array depended on. In that order — the first
+      addresses the wrong event, the second the wrong scope, and they compose.
+    closing_query: >-
+      grep -c "capability changed — dropping every memoized tool array"
+      ~/.stackowl/logs/stackowl.jsonl — INFO, so it can return something today; a fix
+      should drive it toward the count of GENUINE capability changes, not to zero.
+
+  - id: DEBT-D054-MEMO-HORIZON
+    found: 2026-08-21
+    found_by: "D05.4 architect Round 0"
+    status: OPEN — a live behaviour change, so it is raised rather than taken. See ESC-31.
+    what: >-
+      `presented_tools`' memo key opens with `session_key` and its own docstring explains
+      that entry as "the stability horizon. A new session must recompute, or a learned
+      demotion could never take effect." Since D01.7 split the two identifiers,
+      `session_key` is the LANE, not the session — so a new conversation on an existing
+      lane does NOT recompute, and the learned usage ranking never takes effect for the
+      life of the lane. The code and its own stated intent disagree.
+    the_uncomfortable_part: >-
+      What actually keeps the ranking fresh today is DEBT-D054-BROWSER-FLAP: the browser
+      recycle wipes the memo 62 times a day. Fixing the flap without deciding this would
+      remove the only thing currently causing a re-rank.
+    why_it_is_not_taken_here: >-
+      Changing the horizon to `session_id` means every new conversation rebuilds. That is
+      more correct by the docstring's own argument and it is also more rebuilds on a live
+      path, which is a trade the operator owns. Raised as ESC-31.
+
   - id: ARC-2026-08-21-authority-and-freedom
     found: 2026-08-21
     found_by: "Bakir, live: 'agent control is very strict and my agents get blocked on tool usage'"
@@ -10412,19 +10547,125 @@ items:
         the panel CAN answer: the reference mechanism, adopted verbatim, is a no-op on
         this deployment today and becomes valuable only once plugins and MCP tools
         exist. The trigger constant is wrong for a 262k window regardless.
+    ARCHITECT_ROUND_0_2026_08_21:
+      headline: >-
+        THE INSTRUMENT THIS ITEM WAS TOLD TO MEASURE ITSELF WITH IS WRONG, AND ITS
+        OUTPUT HAD ALREADY BEEN BELIEVED TWICE. `audit_tools_stability` compares
+        arrays per (session_key, owl) — the LANE. A provider-side prompt cache is
+        held across a CONVERSATION, which is session_id. Six days, 2026-08-16 to
+        2026-08-21: 122 warnings, of which 112 were runs carrying NO session_id at
+        all (retry queue, self-heal `-fix`, goal execution, delegated children), 9
+        were the FIRST tool turn of a brand-new session_id, and 1 was a genuine
+        within-conversation change. A 99.2% false-positive rate on a WARNING line.
+      the_one_real_event: >-
+        session 20260816_080359_78d86c0d, owl=secretary, 2026-08-16: 30, 30, 30
+        tools and then 22. AND THE RECORD CANNOT SAY WHY. Two tool_search calls
+        (13:07:04, 13:07:19) changed the memo key's `hydrated`; two browser
+        recycles (13:07:39, 13:08:12) wiped every memoized array platform-wide.
+        History grew 379 tokens against a 262,144 window, so the token budget is
+        excluded — everything else is a live candidate. The presented MEMBERSHIP
+        is logged nowhere: only a count, two opaque hashes, and a `dropped[:20]`
+        on an eviction line that did not fire on the changing turn.
+      THE_RECORDED_ROOT_CAUSE_IS_CORRECTED: >-
+        D05_4_ROOT_CAUSE_CORRECTED_2026_08_21 named execute.py:1244 — the
+        envelope/budgeter split — as THE ACTUAL CAUSE of the array changing turn
+        to turn. Both halves of its evidence are true and the conclusion does not
+        follow. `task_envelope` is set only by task_runner/store/recovery, and
+        every one of those runs carries session_id == "". So branch A and branch B
+        never alternate WITHIN one conversation; they alternate within one LANE,
+        which is the instrument's bucketing artifact and not a prefix
+        invalidation. Since ESC-29 the narrowing is a real least-privilege
+        boundary as well, so presenting fewer tools on an enveloped run is correct
+        rather than a Law 2 violation. Sixth time this session a proxy was read as
+        the thing itself; this one was in the measuring device.
+      AND_THE_BUDGET_HAS_NEVER_BOUND_HERE: >-
+        Since the eviction message started naming the constraint that actually
+        bound (2026-08-21T13:44:11Z), 36 of 36 evictions were `tool_count_cap` and
+        0 were the token budget. A constant cap is stable across turns, which is
+        why the array is stable in practice despite an impure input. So a
+        quantiser for the budget was NOT built — that would repeat the mistake
+        this item was re-scoped to escape, adopting a mechanism whose trigger
+        cannot fire on this hardware.
+      WHAT_WAS_BUILT_INSTEAD_AND_WHY_IT_IS_NOT_DORMANT: >-
+        The invariant was written as a test first and IT WENT RED, which converted
+        a principled worry into a measured capability loss. Real registry, real
+        budgeter, only the AI provider mocked, 16k window: a memo wipe
+        mid-conversation took the presented set from 66 tools to 53 — `objective`,
+        `process`, `send_message`, `run_tests`, `search_files` and eight more,
+        gone, because a browser subprocess bounced for three seconds. That wipe
+        happens 62 times a day. `infra/presented_tools.py` documented losing the
+        memo as "never a correctness issue"; it was the only thing holding Law 1.
+      ESC_18s_THREE_MECHANISMS_ANSWERED: >-
+        `to_provider_schema` has exactly two production callers, both in
+        execute.py, and they are the two branches of one `if restrict_to is not
+        None`. A single owner already exists. The defect was never ownership: it
+        was that an input which changes the RESULT (`budget.fixed_cost_tokens`,
+        which grows every turn) was not in the memo KEY. The owner is now a
+        function of the CONVERSATION rather than of the turn.
     stages:
       brainstorm: done
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
       validate:   not_started
       document:   not_started
-    doc: null
+    doc: "docs/reference-mapping/designs/D05.4.md"
     doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+    decisions:
+      - date: 2026-08-21
+        by: panel
+        what: "Key the tools-stability audit on session_id (the conversation), not session_key (the lane)."
+        why: >-
+          121 of 122 six-day warnings compared arrays across a boundary where no
+          shared prefix had ever been held. The module had already made this exact
+          fix once at a coarser granularity — its own comment says an audit that
+          cries wolf trains its reader to ignore it — and the finer half was
+          missed. A run with no session_id builds its message list from scratch,
+          so there was never a previous turn of its own to invalidate.
+      - date: 2026-08-21
+        by: panel
+        what: "Report the DELTA (added/removed tool names), not two opaque hashes."
+        why: >-
+          The single genuine change in six days of production logs could not be
+          explained afterwards, because the presented membership was recorded
+          nowhere. An empty delta on both sides now means a pure REORDER, which
+          still invalidates position 0 and which nothing else could have said.
+      - date: 2026-08-21
+        by: panel
+        what: "Stamp the budget basis once per session; a memo miss must reproduce the memo hit."
+        why: >-
+          A memo HIT already ignores the budget completely, so this changes no
+          behaviour on the hit path — it makes the MISS agree with it. Written as
+          a test first and it went red at 66 -> 53 tools. Chosen over quantising
+          the basis because pinning is what the hit path already does, and over
+          narrowing the capability-flip scope because that fixes the trigger and
+          not the amputation.
+      - date: 2026-08-21
+        by: panel
+        what: "Do NOT narrow _on_capability_change's scope in this item."
+        why: >-
+          With the basis surviving the wipe, a needless rebuild costs CPU and no
+          longer costs the array. The trigger defect — a transient 3-second
+          subprocess bounce treated as a capability change, 950 all-time and 62 in
+          one day, 100% browser — is real, is a COST defect now rather than a
+          correctness one, and is tracked as DEBT-D054-BROWSER-FLAP rather than
+          folded in.
+    changes:
+      - date: 2026-08-21
+        what: "audit_tools_stability keys on the conversation and names the delta; budget basis stamped per session."
+        files:
+          - src/stackowl/pipeline/cache_audit.py
+          - src/stackowl/pipeline/steps/execute.py
+          - src/stackowl/infra/presented_tools.py
+          - tests/pipeline/test_cache_audit.py
+          - tests/pipeline/test_d052_tools_array_is_wired_stable.py
+          - tests/infra/test_presented_tools_memo.py
+    notes: >-
+      Ladder rung 1 — extend existing code. No new module, no config key, no
+      migration. Law 1 is strengthened (the array is now a function of the
+      conversation, so a rebuild cannot move it); Law 2 is untouched (no tool
+      added or removed from the waist).
     subsumed_by:
       date: 2026-07-29
       into: D05.2

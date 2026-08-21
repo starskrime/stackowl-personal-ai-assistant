@@ -206,3 +206,49 @@ async def test_the_second_turn_does_not_rebuild_at_all():
     assert len(reg.calls) == 1, (
         f"the second turn rebuilt the array (registry calls: {reg.calls})"
     )
+
+
+# ---------------------------------------------------------------------------
+# D05.4 — losing the memo must not change the ANSWER
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_wiped_memo_rebuilds_the_SAME_array():
+    """`infra/presented_tools.py` says losing the memo is "never a correctness
+    issue". That is the claim under test, and nothing had ever checked it.
+
+    It matters because the memo is wiped far more often than its own design
+    assumed. `_on_capability_change` drops EVERY memoized array platform-wide on
+    any capability flip, justified by "Capability flips are rare" — measured
+    false: 950 all-time, 62 in a single day, 100% of them `browser`, from a
+    ~3-second subprocess recycle.
+
+    So this is the real question: when that wipe lands mid-conversation, does the
+    rebuild reproduce what the model already had? If it does, the memo is a cache.
+    If it does not, the memo is the only thing holding Law 1 and every browser
+    bounce silently changes the agent's capabilities.
+
+    Real registry, real budgeter, only the AI provider mocked.
+    """
+    from stackowl.tools.registry import ToolRegistry
+
+    real = ToolRegistry.with_defaults()
+    sink: list = []
+
+    await _run_turn_with_registry(real, sink, history_messages=0, window=16_000)
+    # Exactly what a browser recycle does, 62 times a day — the PRODUCTION
+    # trigger, not `clear()`. The two are deliberately different since D05.4 and
+    # calling the wrong one would make this test pass by exercising a path
+    # nothing takes.
+    presented_tools._on_capability_change("browser")
+    await _run_turn_with_registry(real, sink, history_messages=40, window=16_000)
+
+    assert len(sink) == 2
+    before = [s["name"] for s in sink[0]]
+    after = [s["name"] for s in sink[1]]
+    assert before == after, (
+        "a memo wipe mid-conversation changed the presented tools: "
+        f"{len(before)} -> {len(after)}. "
+        f"Lost: {sorted(set(before) - set(after))}. "
+        f"Gained: {sorted(set(after) - set(before))}."
+    )

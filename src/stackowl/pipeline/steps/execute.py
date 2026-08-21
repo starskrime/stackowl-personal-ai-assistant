@@ -1375,12 +1375,28 @@ async def _run_with_tools(
                 schemas = cached
             else:
                 usage_scores = await _tool_usage_scores(state)
+                # D05.4 — fit against the SESSION'S basis, not this turn's. A memo
+                # HIT already ignores the budget completely; without this the MISS
+                # did not, so a rebuild mid-conversation re-measured a longer
+                # history and admitted fewer tools. Measured with the real
+                # registry at a 16k window: a wipe cost 13 tools, `objective` and
+                # `send_message` among them, for a browser subprocess bounce.
+                # Gated on session_key exactly as the memo above is: with no lane
+                # there is nothing to be stable ACROSS, and an empty key would
+                # otherwise pool every session-less utility call for one owl onto
+                # a single shared basis — one background run's history sizing
+                # every later one's toolset.
+                _basis = (
+                    presented_tools.budget_basis(memo_key, _fixed_cost)
+                    if state.session_key
+                    else _fixed_cost
+                )
                 schemas = tool_registry.to_provider_schema(
                     prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
                     usage_scores=usage_scores,
                     budget={
                         "window": _window,
-                        "fixed_cost_tokens": _fixed_cost,
+                        "fixed_cost_tokens": _basis,
                         "max_tools": _max_tools,
                     },
                 )
@@ -1392,6 +1408,7 @@ async def _run_with_tools(
                         "trace_id": state.trace_id, "owl": state.owl_name,
                         "protocol": prov.protocol, "window": _window,
                         "tools": len(schemas), "scored_tools": len(usage_scores),
+                        "fixed_cost_measured": _fixed_cost, "fixed_cost_basis": _basis,
                     }},
                 )
         # E8-S0 — child-toolset exclusion (PRIMARY fork-bomb cap): a delegated child
@@ -1419,9 +1436,18 @@ async def _run_with_tools(
     # D05.2 addressed both causes of that variance (a request_text-driven
     # ordering, and a per-turn budget that shrank as history grew), so this is
     # now the ACCEPTANCE TEST rather than a diagnosis: it should stay silent for
-    # any (lane, owl) pair with two or more turns. Reports only — this never
+    # any CONVERSATION with two or more tool turns. Reports only — this never
     # changes what is sent.
-    audit_tools_stability(state.session_key, tool_schemas, owl=state.owl_name)
+    #
+    # D05.4 — `session_id` is what the audit compares on. A cached prefix lives on
+    # the conversation; `session_key` is the lane, which outlives many
+    # conversations and is shared with runs that are not conversations (retry,
+    # self-heal, goal execution, delegated children). Lane-keyed, 121 of 122
+    # warnings over six days were comparisons across a boundary where no prefix
+    # had ever been held.
+    audit_tools_stability(
+        state.session_key, tool_schemas, owl=state.owl_name, session_id=state.session_id
+    )
     _tools_tokens = sum(_est_tokens(json.dumps(s)) for s in tool_schemas)
     log.engine.info(
         "[pipeline] execute: context budget",

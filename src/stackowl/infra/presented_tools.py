@@ -51,7 +51,7 @@ from typing import Any
 
 from stackowl.infra.observability import log
 
-__all__ = ["clear", "clear_owl", "get", "make_key", "put"]
+__all__ = ["budget_basis", "clear", "clear_owl", "get", "make_key", "put"]
 
 #: Bounded LRU across all sessions. Each entry is a list of schema dicts, so the
 #: cap is on memory, not correctness — an eviction just rebuilds next turn.
@@ -64,6 +64,12 @@ _lock = threading.Lock()
 #: was served a set fitted to the stronger one's. See make_key().
 _MemoKey = tuple[str, str, str, str, int, tuple[str, ...]]
 _memo: OrderedDict[_MemoKey, list[dict[str, Any]]] = OrderedDict()
+
+#: D05.4 — the SESSION'S budget basis, which is a different thing from the memo and
+#: has a different lifetime. The memo key without ``hydrated``: discovering a tool
+#: adds one to the array, it does not change how much room the history leaves.
+_BasisKey = tuple[str, str, str, str, int]
+_basis: OrderedDict[_BasisKey, int] = OrderedDict()
 
 
 def _on_capability_change(capability: str) -> None:
@@ -78,12 +84,26 @@ def _on_capability_change(capability: str) -> None:
     inventing that bookkeeping to save a rebuild that happens on a human-scale
     event would be the expensive kind of clever. Capability flips are rare; a
     turn-frequency invalidation this is not.
+
+    THAT LAST SENTENCE IS MEASURED FALSE (D05.4, 2026-08-21): 950 wipes all-time,
+    62 in a single day, 100% of them the SAME capability — `browser` — from a
+    ~3-second subprocess recycle. The scope is still not narrowed here, because
+    after D05.4 a needless rebuild costs CPU and no longer costs the array: the
+    BASIS survives this wipe, so the rebuild reproduces what the model already
+    had. Fixing the trigger (a transient bounce is not a capability change) is a
+    cost defect and is tracked separately.
     """
     log.infra.info(
         "[presented_tools] capability changed — dropping every memoized tool array",
         extra={"_fields": {"capability": capability or "(all)", "dropped": len(_memo)}},
     )
-    clear()
+    # The MEMO only. Dropping the basis here is what made this wipe a capability
+    # amputation: the rebuild would re-measure a history 40 messages longer and
+    # fit fewer tools. Measured before the fix, real registry, 16k window: 66
+    # tools before the wipe, 53 after — `objective`, `process`, `send_message`,
+    # `run_tests` and nine more, gone mid-conversation because a subprocess
+    # bounced.
+    _drop_memo(None)
 
 
 def _subscribe_once() -> None:
@@ -168,13 +188,21 @@ def clear_owl(owl: str) -> None:
         # silence, so it is pinned by test_clear_owl_still_finds_the_owl.
         for key in [k for k in _memo if k[1] == owl]:
             del _memo[key]
+        # The basis too: an owl edit changes the SYSTEM PROMPT, which is half of
+        # the fixed cost the array was fitted against. Keeping a stale basis
+        # across an edit would fit the new prompt to the old measurement.
+        for bkey in [k for k in _basis if k[1] == owl]:
+            del _basis[bkey]
 
 
-def clear(session_key: str | None = None) -> None:
-    """Drop one session's memo entries, or all of them when given no session.
+def _drop_memo(session_key: str | None) -> None:
+    """Drop memo entries WITHOUT touching the budget basis.
 
-    The session-scoped form is what a rollover calls so the next incarnation
-    picks up a freshly learned core.
+    Separate from :func:`clear` because the two have different meanings. A
+    capability flip says "this array may be stale" — rebuild it. It does not say
+    "this conversation is over", which is the only thing that should re-measure
+    how much room the history leaves. Conflating them is what let a 3-second
+    browser recycle shrink a live agent's toolset.
     """
     with _lock:
         if session_key is None:
@@ -182,6 +210,59 @@ def clear(session_key: str | None = None) -> None:
             return
         for key in [k for k in _memo if k[0] == session_key]:
             del _memo[key]
+
+
+def budget_basis(key: _MemoKey, measured: int) -> int:
+    """The fixed-cost figure this session's array is fitted against (D05.4).
+
+    Stamped from the FIRST tool turn and reused, so rebuilding the array later in
+    the conversation reproduces it. Without this, the presented set is a function
+    of the turn rather than of the conversation: history grows, ``fit_items``
+    admits fewer candidates, and every memo miss quietly costs the agent tools it
+    had a moment earlier.
+
+    This does not change what a memo HIT serves — a hit already ignores the
+    budget entirely. It makes the MISS agree with the hit, which is what turns the
+    memo back into a cache. `to_provider_schema`'s own docstring names the gap it
+    closes: the method cannot be "pure across turns it cannot see", so the caller
+    has to hand it an input that does not move.
+
+    Keyed without ``hydrated``: a tool_search discovery legitimately adds to the
+    array, and re-measuring the room because of it would reintroduce the drift.
+
+    Bounded at the same ``_MAX_ENTRIES`` as the memo, and by the same LRU, so the
+    two evict together on a busy box. A basis evicted mid-conversation re-measures
+    on the next rebuild — the one case where the array can still move — which is
+    the same trade the memo already makes and is why the bound is on both or
+    neither.
+    """
+    basis_key: _BasisKey = key[:5]
+    with _lock:
+        stamped = _basis.get(basis_key)
+        if stamped is not None:
+            _basis.move_to_end(basis_key)
+            return stamped
+        _basis[basis_key] = measured
+        _basis.move_to_end(basis_key)
+        while len(_basis) > _MAX_ENTRIES:
+            _basis.popitem(last=False)
+        return measured
+
+
+def clear(session_key: str | None = None) -> None:
+    """Drop one session's memo entries AND its budget basis, or all of them.
+
+    The session-scoped form is what a rollover calls so the next incarnation
+    picks up a freshly learned core — and a freshly measured basis, since a new
+    incarnation starts from a fresh history.
+    """
+    _drop_memo(session_key)
+    with _lock:
+        if session_key is None:
+            _basis.clear()
+            return
+        for bkey in [k for k in _basis if k[0] == session_key]:
+            del _basis[bkey]
 
 
 # Wire the capability→memo invalidation at import. Done here rather than in the

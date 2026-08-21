@@ -19,9 +19,28 @@ us about.
 D05.2 has since removed both causes of that variance: the ordering came from the
 turn's ``request_text``, and the budget shrank as history grew. This audit is
 therefore now the ACCEPTANCE TEST for that item rather than its diagnosis — it
-should stay silent for any ``(lane, owl)`` pair with two or more turns. Read the
+should stay silent for any CONVERSATION with two or more tool turns. Read the
 denominator before reading the result: silence with no repeat turns is no
 opportunity, not success.
+
+**D05.4, 2026-08-21 — the tools audit was measuring the wrong unit, and the
+result was believed.** It compared arrays per ``(session_key, owl)`` — the LANE.
+A provider-side prompt cache is held across a CONVERSATION, which is
+``session_id``. Many conversations share one lane, and so do runs that are not
+conversations at all: the retry queue, self-heal ``-fix`` turns, goal execution
+and delegated children all carry ``session_id == ""``. Measured over six days,
+2026-08-16 to 2026-08-21: **122 warnings, of which 112 were runs with no
+conversation, 9 were the first tool turn of a brand-new ``session_id``, and 1 was
+a genuine within-conversation change.** A 99.2% false-positive rate on a WARNING
+line, and it sent D05.4's root-cause analysis down the wrong path twice.
+
+This is the same defect the ``owl`` key below already fixed once, at a coarser
+granularity — and the comment on that fix states the cost exactly: an audit that
+cries wolf trains its reader to ignore it. So the audit now keys on the
+conversation, reports nothing when there is no conversation, and names WHICH
+tools entered and left rather than two opaque hashes. The one real event of those
+122 could not be explained from the record, because the presented membership was
+never logged; ``added``/``removed`` is what closes that.
 
 Reports only. Nothing here changes a request; a change is logged and the turn
 proceeds. Measurement must never become an outage.
@@ -51,7 +70,18 @@ _LANE_CACHE_MAX = 512
 # violations, which is DEBT-21's mistake exactly: "grouped by session_id alone,
 # three correct prompts read as three violations". An audit that cries wolf on
 # every multi-owl lane trains its reader to ignore it.
-_tools_hashes: OrderedDict[tuple[str, str], str] = OrderedDict()
+#
+# The TOOLS map below is keyed (session_id, owl) — the CONVERSATION, not the
+# lane — since D05.4. See the module docstring for the measurement. The prompt
+# map keeps the lane key: `audit_prompt_parts` is called from prompt assembly,
+# which has no session_id to offer, and its false-positive rate has not been
+# measured. Changing it on the strength of a neighbouring finding would be the
+# assertion this programme keeps catching.
+#
+# The value is the digest AND the presented names, so a change can say WHAT
+# moved. Bounded by construction: <= tool_count_cap short strings per entry,
+# in a map already capped at _LANE_CACHE_MAX lanes.
+_tools_hashes: OrderedDict[tuple[str, str], tuple[str, frozenset[str]]] = OrderedDict()
 _part_hashes: OrderedDict[tuple[str, str], dict[str, str]] = OrderedDict()
 
 
@@ -92,40 +122,85 @@ def tools_digest(tool_schemas: list[dict[str, Any]]) -> str:
         return ""
 
 
+def schema_names(tool_schemas: list[dict[str, Any]]) -> frozenset[str]:
+    """The tool names in a presented array, across both wire dialects.
+
+    OpenAI nests the name under ``function``; Anthropic puts it at the top level.
+    A schema carrying neither is skipped rather than guessed at — this feeds a
+    diagnostic, and inventing a name would make the delta lie.
+    """
+    names: set[str] = set()
+    for schema in tool_schemas:
+        name = schema.get("name")
+        if not isinstance(name, str) or not name:
+            fn = schema.get("function")
+            name = fn.get("name") if isinstance(fn, dict) else None
+        if isinstance(name, str) and name:
+            names.add(name)
+    return frozenset(names)
+
+
 def audit_tools_stability(
-    session_key: str, tool_schemas: list[dict[str, Any]], owl: str = ""
+    session_key: str,
+    tool_schemas: list[dict[str, Any]],
+    owl: str = "",
+    *,
+    session_id: str = "",
 ) -> None:
-    """Report when a lane's tools array changes between turns.
+    """Report when a CONVERSATION's tools array changes between its turns.
 
     A change is a WARNING rather than an error: it is not a fault, it is a cost.
     The array is legitimately allowed to vary (a delegated child has spawn tools
     removed; ``restrict_to`` narrows it), and the point is that the price of that
     variation should be visible rather than silent.
 
+    ``session_id`` IS THE UNIT, not ``session_key`` (D05.4). A prompt cache is
+    held across one conversation; a lane outlives many of them and is also shared
+    with runs that are not conversations at all. ``PipelineState.session_id`` is
+    ``""`` for exactly those — its own field comment says they "have a lane but no
+    conversation run, and saying so honestly beats inventing one" — so with no
+    conversation there is no prefix, nothing to invalidate, and nothing to report.
+    ``session_key`` is still carried into the log line, because correlating a
+    conversation back to its lane is the first thing a reader wants.
+
     Never raises.
     """
-    if not session_key:
-        # Background and utility calls legitimately have no lane. Bucketing them
-        # all under "" would report a change on nearly every one of them — noise
-        # that would train a reader to ignore this line.
+    if not session_id:
+        # No conversation ⇒ no cached prefix ⇒ no invalidation to report. This is
+        # 112 of the 122 warnings measured over six days: retry-queue runs,
+        # self-heal `-fix` turns, goal execution, delegated children. Each builds
+        # its own message list from scratch, so there was never a previous turn of
+        # theirs to have shared a prefix with. Per-run array SIZES stay answerable
+        # from `[pipeline] execute: context budget`, which carries tools_count at
+        # INFO on every turn, so nothing is lost by staying quiet here.
         return
     current = tools_digest(tool_schemas)
     if not current:
         return
-    key = (session_key, owl)
+    key = (session_id, owl)
+    names = schema_names(tool_schemas)
     previous = _tools_hashes.get(key)
-    _remember(_tools_hashes, key, current)
-    if previous is None or previous == current:
+    _remember(_tools_hashes, key, (current, names))
+    if previous is None or previous[0] == current:
         return
+    prev_hash, prev_names = previous
     log.engine.warning(
         "[cache] breakpoints: tools array CHANGED — position 0 invalidated this turn",
         extra={"_fields": {
+            "session_id": session_id,
             "session_key": session_key,
             "owl": owl,
-            "prev_hash": previous,
+            "prev_hash": prev_hash,
             "hash": current,
             "tool_count": len(tool_schemas),
-            "see": "D01.3 — per-turn tool-schema selection",
+            # WHAT moved, not just THAT it moved. The one genuine change in six
+            # days of production logs could not be explained afterwards, because
+            # the presented membership was never recorded anywhere. Empty on both
+            # sides means the members are identical and only the ORDER changed —
+            # which still invalidates position 0, and which nothing else would say.
+            "added": sorted(names - prev_names),
+            "removed": sorted(prev_names - names),
+            "see": "D05.4 — one owner for the presented tool array",
         }},
     )
 

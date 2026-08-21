@@ -21,6 +21,8 @@ credited for two defects.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from stackowl.infra import presented_tools
@@ -203,3 +205,66 @@ def test_clear_is_session_scoped():
     presented_tools.clear("s1")
     assert presented_tools.get(a) is None
     assert presented_tools.get(b) is not None
+
+
+# ---------------------------------------------------------------------------
+# D05.4 — the budget basis has a different lifetime from the memo
+# ---------------------------------------------------------------------------
+
+def _k(session: str = "s1", owl: str = "secretary") -> Any:
+    return presented_tools.make_key(
+        session_key=session, owl=owl, provider="NeraAiRaw",
+        protocol="openai", window=16_000, hydrated=None,
+    )
+
+
+def test_the_basis_is_stamped_once_and_reused() -> None:
+    """The whole point: the second turn's larger measurement is IGNORED, so the
+    array it fits is the array the first turn already sent."""
+    assert presented_tools.budget_basis(_k(), 1_000) == 1_000
+    assert presented_tools.budget_basis(_k(), 9_999) == 1_000
+
+
+def test_a_discovery_does_not_re_measure_the_basis() -> None:
+    """`hydrated` is in the MEMO key (a discovery must invalidate and re-present)
+    but not in the BASIS key. Finding a tool adds one to the array; it does not
+    change how much room the history leaves. Re-measuring on a discovery would put
+    the drift straight back."""
+    hydrated_key = presented_tools.make_key(
+        session_key="s1", owl="secretary", provider="NeraAiRaw",
+        protocol="openai", window=16_000, hydrated={"web_fetch"},
+    )
+    assert presented_tools.budget_basis(_k(), 1_000) == 1_000
+    assert presented_tools.budget_basis(hydrated_key, 9_999) == 1_000
+
+
+def test_a_capability_flip_keeps_the_basis() -> None:
+    """A browser recycle says "this array may be stale", not "this conversation is
+    over". Measured 62 times a day; before D05.4 each one re-measured the history
+    and cost the agent tools."""
+    assert presented_tools.budget_basis(_k(), 1_000) == 1_000
+    presented_tools._on_capability_change("browser")
+    assert presented_tools.get(_k()) is None, "the memo must still be dropped"
+    assert presented_tools.budget_basis(_k(), 9_999) == 1_000
+
+
+def test_a_rollover_re_measures_the_basis() -> None:
+    """The other jaw: a new incarnation starts from a fresh history, so keeping
+    the old basis would fit the new conversation to the old one's room."""
+    assert presented_tools.budget_basis(_k(), 1_000) == 1_000
+    presented_tools.clear("s1")
+    assert presented_tools.budget_basis(_k(), 9_999) == 9_999
+
+
+def test_an_owl_edit_re_measures_the_basis() -> None:
+    """An owl edit changes the SYSTEM PROMPT, which is half the fixed cost the
+    array was fitted against."""
+    assert presented_tools.budget_basis(_k(owl="scout"), 1_000) == 1_000
+    presented_tools.clear_owl("scout")
+    assert presented_tools.budget_basis(_k(owl="scout"), 9_999) == 9_999
+
+
+def test_the_basis_map_is_bounded() -> None:
+    for i in range(presented_tools._MAX_ENTRIES + 50):
+        presented_tools.budget_basis(_k(session=f"s-{i}"), i)
+    assert len(presented_tools._basis) <= presented_tools._MAX_ENTRIES
