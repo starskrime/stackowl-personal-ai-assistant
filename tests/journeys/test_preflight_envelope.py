@@ -314,14 +314,32 @@ async def test_durable_envelope_hides_offplan_audits_on_use(  # noqa: ANN001
 ) -> None:
     """Gateway-level proof of the full E2-S3 arc.
 
+    THE RULE CHANGED ON 2026-08-21 (ESC-29, Bakir's call, commit 8c403494): the task
+    envelope is a REAL BOUNDARY. An off-plan tool is REFUSED, not logged as drift.
+    This test is INVERTED rather than deleted, so the change of rule stays legible —
+    it used to assert ``forbidden.runs == 1`` under the banner "task_envelope is NOT
+    enforcement — it must never block tool execution", which is now exactly backwards.
+
+    IT WAS RED FOR THE WHOLE INTERVAL. 8c403494 inverted the sibling assertion in
+    tests/pipeline/steps/test_execute_drift_telemetry.py and its message claimed
+    "1424 pipeline tests green" — true of tests/pipeline, and this file is in
+    tests/journeys and was never run. A second test asserting the same retired rule
+    in another directory is the same miss that left the acceptance conftest without
+    its fixture. Running the whole DIRECTORY is not enough when the rule lives
+    somewhere else too; the rule needs to be grepped for, not the directory swept.
+
     The owl permits {allowed, forbidden}; the task envelope plans only {allowed}.
     The scripted owl calls BOTH via the real dispatcher.  Outcome:
 
       1. ``_FORBIDDEN_TOOL`` is HIDDEN from the presented schema (drift prevention).
-      2. ``_FORBIDDEN_TOOL`` STILL RUNS when called directly (observe-only boundary).
-      3. A drift WARNING is logged for the off-plan call (audit signal).
-      4. ``_ALLOWED_TOOL`` ran without restriction.
-      5. The turn delivered a final reply (no crash, full arc).
+      2. ``_FORBIDDEN_TOOL`` DOES NOT RUN — the envelope refuses it at dispatch.
+      3. A refusal WARNING is logged for the off-plan call (audit signal).
+      4. The refusal CARRIES AN APPEAL, naming what the plan does permit, so the
+         agent can finish or report the plan insufficient rather than retry into a
+         wall. That appeal is the whole reason enforcement was acceptable — see
+         0f1431e9, "a ceiling that cannot be APPEALED is not a legitimate choice".
+      5. ``_ALLOWED_TOOL`` ran without restriction.
+      6. The turn delivered a final reply (no crash, full arc).
     """
     # Owl permits both tools; the ENVELOPE (not the owl) drives hiding + auditing.
     owl_bounds = BoundsSpec(tools=frozenset({_ALLOWED_TOOL, _FORBIDDEN_TOOL}))
@@ -341,13 +359,14 @@ async def test_durable_envelope_hides_offplan_audits_on_use(  # noqa: ANN001
         f"The allowed tool should have run once, got runs={env.allowed.runs}"
     )
 
-    # --- OUTCOME 2: forbidden tool STILL RUNS (observe-only, not blocked) ---
-    assert env.forbidden.runs == 1, (
-        "OBSERVE-ONLY BREACH: the off-plan tool's execute() did not run. "
-        "task_envelope is NOT enforcement — it must never block tool execution."
+    # --- OUTCOME 2: forbidden tool is REFUSED (ESC-29 — a real boundary) ---
+    assert env.forbidden.runs == 0, (
+        "ENFORCEMENT BREACH: the off-plan tool's execute() RAN. Since ESC-29 the "
+        "task_envelope is a least-privilege boundary, not telemetry — a tool "
+        f"outside the plan must be refused before dispatch. runs={env.forbidden.runs}"
     )
 
-    # --- OUTCOME 3: drift WARNING fired for the off-plan tool ---
+    # --- OUTCOME 3: refusal WARNING fired for the off-plan tool ---
     def _is_drift_warning(r: logging.LogRecord) -> bool:
         if r.levelno != logging.WARNING:
             return False
@@ -361,6 +380,18 @@ async def test_durable_envelope_hides_offplan_audits_on_use(  # noqa: ANN001
     assert drift_records, (
         f"Expected at least one WARNING for off-plan '{_FORBIDDEN_TOOL}'. "
         f"Got records: {[(r.getMessage(), getattr(r, '_fields', {})) for r in caplog.records]}"
+    )
+    # The refusal must say WHICH limit it is and name the permitted set. A boundary
+    # the agent cannot see the shape of produces a retry loop against a wall, which
+    # is the failure ESC-29's appeal clause exists to prevent.
+    refusal = drift_records[0]
+    fields: dict[str, object] = getattr(refusal, "_fields", {})
+    assert fields.get("denied_by") == "task_envelope", (
+        f"the refusal must name the boundary that denied it, got {fields!r}"
+    )
+    assert _ALLOWED_TOOL in (fields.get("plan_permits") or []), (
+        "the refusal must name the whole permitted list so the agent can choose "
+        f"from it (bounds_guard's precedent), got {fields.get('plan_permits')!r}"
     )
 
     # --- OUTCOME 4: final reply delivered ---
