@@ -776,6 +776,16 @@ class AnthropicProvider(ModelProvider):
 
             if response.stop_reason != "tool_use":
                 text = "".join(b.text for b in response.content if hasattr(b, "text"))
+                # PARSE FIRST, so the callback below fires only at a boundary that is
+                # really a final answer. Until 2026-08-21 this loop fired the W4.T17
+                # callback BEFORE parsing, so it also fired on text that turned out to
+                # be a ReAct tool call — an extra `on_iteration_complete` per
+                # text-ReAct iteration (2 vs openai's 1 for one call, and the gap
+                # WIDENED with each iteration: 3 vs 5 for two). The comment below says
+                # "at this final-answer boundary", and firing it before the parse meant
+                # it could not know whether this was one. openai has always parsed
+                # first; this is parity with it, and with the comment.
+                action = parse_react_action(text, known=_known_tools)
                 # W4.T17 — the iteration callback (steer drain + cooperative stop +
                 # budget gate) runs BEFORE the give-up nudge at this final-answer
                 # boundary. This closes three exit-path hazards: a TurnStopped /
@@ -792,7 +802,7 @@ class AnthropicProvider(ModelProvider):
                             tool_call_records=list(all_calls),
                         )
                     )
-                    if on_iteration_complete is not None
+                    if on_iteration_complete is not None and action is None
                     else None
                 )
                 if folded:
@@ -810,7 +820,7 @@ class AnthropicProvider(ModelProvider):
                 # Text-protocol parity with openai: a model that emitted a tool call
                 # as TEXT (an ACTION block) instead of a native tool_use block is
                 # dispatched through the normal chokepoint rather than delivered raw.
-                action = parse_react_action(text, known=_known_tools)
+                # (`action` was resolved above, before the final-answer callback.)
                 if action is not None:
                     name, args = action
                     messages.append({"role": "assistant", "content": text})

@@ -159,33 +159,29 @@ class TestTheyAgreeOnEscalation:
             assert out.text.strip(), f"{dialect} returned an empty floor"
 
 
-class TestTheyDivergeOnCallbackAccounting:
-    """D5 — MEASURED, and narrower than the brainstorm recorded it.
+class TestTheyAgreeOnCallbackAccounting:
+    """D5's COUNT half — CLOSED 2026-08-21. Was `TestTheyDivergeOnCallbackAccounting`.
 
-    It does NOT affect the native tool-call path: there both loops emit exactly
-    ``dispatch, callback, callback`` for one call. It appears only on the TEXT-ReAct
-    (``ACTION:``) path, and it is two separate differences:
+    Anthropic fired `on_iteration_complete` an extra time per text-ReAct iteration:
+    2 vs 3 for one call, 3 vs 5 for two, a gap that WIDENED rather than being an
+    offset a consumer could correct for.
 
-      1. Anthropic fires ``on_iteration_complete`` an EXTRA time per iteration.
-         One ReAct call: openai 2, anthropic 3. Two ReAct calls: openai 3,
-         anthropic 5 — the gap widens per iteration, so anything counting
-         iterations from this callback reads a different number for one transcript.
-      2. The ORDER around dispatch is inverted. OpenAI dispatches the tool and
-         THEN calls back; Anthropic calls back and THEN dispatches.
+    THE CODE'S OWN COMMENT SETTLED IT, so this needed no ruling. W4.T17 says that
+    callback runs "BEFORE the give-up nudge at this FINAL-ANSWER boundary". Anthropic
+    fired it before `parse_react_action` had run, so it also fired on text that turned
+    out to be a ReAct tool call — a boundary that is not a final answer. OpenAI parses
+    first and fires it only on the genuine final-answer branch. Anthropic now does the
+    same.
 
-    (2) is the one with teeth. The callback is how the pipeline raises
-    ``TurnStopped`` / ``BudgetBreach``. On OpenAI the tool has ALREADY RUN when that
-    lands, so a user stop or a budget kill executes one extra tool; on Anthropic it
-    does not. The W4.T17 comment block asserting this invariant is byte-identical on
-    both sides, and one of them violates it.
-
-    Recorded as measurements, not as a verdict. Which order is correct is an open
-    question, and an extraction must not settle it by accident.
+    WHAT THIS DELIBERATELY DOES NOT DECIDE. Both loops now dispatch BEFORE the
+    iteration callback on every path, so a cooperative stop lands one tool late on
+    both. That was already true of the live OpenAI path; Anthropic's pre-parse callback
+    had been pre-empting the tool by accident. Making it uniform RAISES the stakes of
+    ESC-25 rather than answering it — the order question is still open, and flipping it
+    is now a single change applied to both.
     """
 
-    async def test_the_native_path_AGREES_on_both_count_and_order(self) -> None:
-        """The control. Without this, the divergence below could be an artifact of
-        the harness rather than of the loops."""
+    async def test_the_native_path_agrees_on_both_count_and_order(self) -> None:
         script = [Call("web_search", {"q": "1"}), Say("done")]
 
         a = await drive("openai", script, max_iterations=6)
@@ -193,36 +189,35 @@ class TestTheyDivergeOnCallbackAccounting:
 
         assert a.events == b.events == ["dispatch:web_search", "callback", "callback"]
 
-    async def test_the_text_react_path_fires_an_extra_callback_on_anthropic(
-        self,
-    ) -> None:
+    async def test_the_text_react_path_now_agrees_too(self) -> None:
         script = [ReActCall("web_search", {"q": "1"}), Say("done")]
 
         a = await drive("openai", script, max_iterations=6)
         b = await drive("anthropic", script, max_iterations=6)
 
-        assert (a.callbacks, b.callbacks) == (2, 3), (a.callbacks, b.callbacks)
+        assert a.callbacks == b.callbacks == 2, (a.callbacks, b.callbacks)
+        assert a.events == b.events, (a.events, b.events)
 
-    async def test_the_gap_WIDENS_with_each_iteration(self) -> None:
-        """Not a constant offset a consumer could correct for."""
+    async def test_the_gap_no_longer_widens(self) -> None:
+        """The property that made the old divergence unfixable downstream."""
         script = [ReActCall("web_search", {"q": "1"}),
                   ReActCall("web_search", {"q": "2"}), Say("done")]
 
         a = await drive("openai", script, max_iterations=6)
         b = await drive("anthropic", script, max_iterations=6)
 
-        assert (a.callbacks, b.callbacks) == (3, 5), (a.callbacks, b.callbacks)
+        assert a.callbacks == b.callbacks == 3, (a.callbacks, b.callbacks)
 
-    async def test_dispatch_and_callback_are_ordered_OPPOSITELY(self) -> None:
-        """The one with teeth: a stop raised from the callback lands after the tool
-        already ran on one side and before it on the other."""
+    async def test_dispatch_still_precedes_the_callback_on_both(self) -> None:
+        """PINS THE OPEN QUESTION rather than asserting it is right. ESC-25 asks
+        whether a cooperative stop should get to prevent the tool; today it does not,
+        on either loop. If that is flipped, this test flips with it — deliberately, and
+        on both sides at once."""
         script = [ReActCall("web_search", {"q": "1"}), Say("done")]
 
-        a = await drive("openai", script, max_iterations=6)
-        b = await drive("anthropic", script, max_iterations=6)
-
-        assert a.events[0] == "dispatch:web_search", a.events
-        assert b.events[0] == "callback", b.events
+        for dialect in DIALECTS:
+            out = await drive(dialect, script, max_iterations=6)
+            assert out.events[0] == "dispatch:web_search", (dialect, out.events)
 
 
 class TestTheyAgreeOnTheJudgeNudgeCap:
