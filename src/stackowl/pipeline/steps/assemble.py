@@ -468,6 +468,32 @@ async def run(state: PipelineState) -> PipelineState:
     # delivered as its own chunk — which also means the user reads the
     # undelivered body VERBATIM, as render_banner intends, rather than the owl's
     # paraphrase of it.
+    # PLUGIN-CONTRIBUTED PARTS (D16.3 / E2). Rendered here, on the COLD BUILD, so a
+    # contributor runs once per incarnation rather than once per turn — the same
+    # freeze every built-in part lives under. Empty for every deployment today, which
+    # is what keeps the composed prompt byte-identical.
+    #
+    # Fail-open by construction: render_all never raises, and a contributor that
+    # raises, hangs or returns a non-string simply contributes nothing.
+    contributed: dict[str, str] = {}
+    try:
+        from stackowl.pipeline.contributors import PromptContext, get_registry
+
+        contributed = await get_registry().render_all(PromptContext(
+            owl_name=state.owl_name, channel=state.channel,
+            session_key=state.session_key, lean=lean,
+        ))
+        if contributed:
+            log.engine.info(
+                "[pipeline] assemble: plugin parts contributed",
+                extra={"_fields": {"parts": sorted(contributed),
+                                   "session_key": state.session_key}},
+            )
+    except Exception as exc:  # no-hidden-errors: never let a plugin crash the turn
+        log.engine.error(
+            "[pipeline] assemble: prompt contributors FAILED — composing without them",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
     # ONE LIST, three uses. See PROMPT_PART_NAMES for why: these were three separate
     # hand-kept lists and they had already drifted — `capabilities_len` never once
     # reached the log D01.6 added it for.
@@ -479,7 +505,7 @@ async def run(state: PipelineState) -> PipelineState:
         "skills": skills_block,
         "profile": profile,
         "stable_context": state.stable_context or "",
-    })
+    }, extra=contributed)
     # D01.6 — stamp this turn's prompt identity so the single cost-recording site
     # (providers/base.py::_record_cost) can attach it without threading arguments
     # through every provider signature. Never raises.

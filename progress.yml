@@ -12523,7 +12523,7 @@ items:
     stages:
       brainstorm: done
       architect:  done             # 2026-08-20 — designs/D16.3.md, rung 1, NOT an 8th plugin point
-      implement:  partial          # 2026-08-21 — the ONE list ships; the contributor Protocol is the remaining slice
+      implement:  done             # 2026-08-21 — one list, 8th extension point, wired end to end
       cleanup:    not_started
       test:       not_started
       validate:   not_started
@@ -12585,6 +12585,38 @@ items:
       design — turning the seven inline blocks into named renderers. The list existing
       once is the part that pays for itself immediately; the Protocol is what lets the
       seven stop being inline, and it is not needed to close the drift.
+    IMPLEMENT_SLICE_2_2026_08_21: >-
+      THE EIGHTH EXTENSION POINT, capability-gated, wired end to end. `PromptContributor`
+      + `PromptContributorRegistry` in pipeline/contributors.py; the entry lands in ALL
+      THREE tables in one edit (_ABC_NAMES, CAPABILITY_FOR_EXTENSION_POINT,
+      LocalPluginLoader._registries) because that is the shape D08.2 failed; the registry
+      is PASSED at the real construction site in orchestrator.py; and assemble's cold
+      build renders contributors and appends them.
+      THREE PROPERTIES MAKE THIRD-PARTY PROMPT PARTS ALLOWABLE AT ALL: appended never
+      interleaved (order IS the cached prefix), sorted by name (plugin load order is
+      filesystem order, which is not a contract), and unable to overwrite a built-in (a
+      contributor named `base` adds nothing and is logged — third-party code may ADD to
+      the prompt, never DELETE the agent's own instructions). Plus raises/hangs/non-string
+      all contribute nothing, and PromptContext exposes NOTHING per-turn, which makes
+      D01.1's frozen-prompt mistake unavailable rather than discouraged.
+      WITH NO PLUGINS THE PROMPT IS BYTE-IDENTICAL — asserted, and it is every deployment
+      today.
+      THE DESIGN WAS WRONG ABOUT THE TYPE AND IMPLEMENT CAUGHT IT. It specified a
+      Protocol, reasoning that LifecycleHook is in _ABC_NAMES without being an ABC — true,
+      but LifecycleHook is a plain CLASS. The loader discovers points with `issubclass`,
+      and a runtime_checkable Protocol carrying a DATA member raises TypeError there. THREE
+      UNRELATED plugin tests went red because EVERY plugin load raised. A Protocol would
+      have made the eighth point undiscoverable by the mechanism that defines it. Corrected
+      to a plain class; designs/D16.3.md records it.
+      A SECOND DEFECT FOUND AT THE SAME SEAM, recorded rather than bodged:
+      `memory_provider_registry` is never passed at the production construction site, so
+      that slot is None — the bidirectional table test passes because the KEY is present
+      in both tables while the VALUE is nothing. And it cannot simply be wired: the
+      MemoryProviderRegistry is built inside memory/assembly.py and `.resolve()`d
+      immediately, BEFORE plugins load, so a plugin's provider would arrive after the
+      active set was fixed. Wiring it without fixing that ordering would produce a
+      registry that accepts registrations nobody reads. A new test now checks the real
+      construction site for unwired slots, with that exclusion documented in place.
     changes: []
     notes: null
 
