@@ -447,6 +447,80 @@ current:
       against hooks: 27 overrides across 198 possible slots in 33 plugins (13.6%), and
       get_hostname has zero implementors. A hook is a published extension point that
       freezes the call site you just extracted.
+    SHIPPED_FROM_THE_BRAINSTORM_2026_08_21:
+      note: >-
+        Four defects found while measuring D04.1, each fixed at its root and each
+        independent of ESC-21's verdict. All four are the same shape the panel was
+        looking for and none of them is "providers as plugins".
+      54f0fc41_the_duplicate_key_guard_was_wired_on_only_some_paths:
+        found: >-
+          I was about to append D04.1's escalations to `current.ESCALATIONS` and noticed
+          the key appeared TWICE under `current:` (lines 425 and 699), while
+          scripts/progress_lint.py printed "✓ no duplicate keys". Its check matched
+          "^  - id: " and so inspected item blocks only; `current:` — the most-written
+          block in the file — was never looked at. `_NESTED_OK` additionally excluded
+          five key names outright, `decision` among them.
+        what_was_lost: >-
+          D16.3's entire brainstorm escalation record, ~76 lines carrying E1-E5 as they
+          were ASKED, discarded at every load. And DEBT-36's `decision:` twice, so the
+          recommendation was dropped and Bakir's answer survived with no record of the
+          question it answered. Both RECOVERED by renaming, not rewriting.
+        fix: >-
+          Structural, not a widened regex: yaml.compose() builds the node tree BEFORE
+          duplicate keys are merged away, so every mapping is checked at any depth with
+          no indent assumptions — which also retires the allow-list. 6 tests, 5 red first;
+          the sixth runs the widened check against the real file, which is the assertion
+          the printed success line had always claimed and never made.
+      8f8f03eb_pdf_mode_B_could_never_select_a_provider:
+        found: "supports_document defaults False on the ABC; OpenAIProvider was the only subclass not overriding it."
+        why_it_mattered: >-
+          Every non-anthropic, non-gemini protocol builds an OpenAIProvider and every
+          configured backend is protocol openai, so pdf.py:209 could only ever return
+          None — and supports_document is not a ProviderConfig field, so no config key
+          could fix it. The supports_vision defect of 2026-08-20, one property over.
+        fix: >-
+          The SMALLER change: the property answers from resolve_vision(), which the two
+          sibling classes already do. A new supports_document key would have been a
+          second copy of one rule, and an image and a PDF both ride DocumentBlock.
+          `supports_vision: false` still turns both off together.
+        scope_stated_honestly: "Latent, not observed — 0 firings of the failure line against 16 pdf invocations, all Mode A."
+      84b722f2_a_replaced_provider_entry_now_says_so_at_INFO:
+        found: >-
+          ProviderCatalog merges user YAML over bundled entries with "user wins on name
+          collision" and announced it at log.setup.debug. A ProviderEntry carries
+          base_url, and provider_command.py:886 passes entry.base_url with the RAW token
+          to list_models() BEFORE store_secret runs — so a file redefining a bundled
+          entry redirects the next credential typed for that name, invisibly.
+        fix: "INFO, naming whether base_url changed and to what. Behaviour unchanged; the replacement half is ESC-23."
+      0b3fc19e_an_escalation_that_cannot_help_now_says_so:
+        found: "25 escalations, all standard->powerful, all resolving to the same (NeraAiRaw, neraai-v1-raw)."
+        fix: >-
+          One predicate, escalation_target_is_identical, comparing by name and failing
+          open on an unresolvable tier. Behaviour unchanged and a test pins that, because
+          the alternative — delivering the floor from the attempt already made — is
+          ESC-22 and changes what the user receives.
+    VALIDATE_2026_08_21:
+      restart: >-
+        ./start.sh at 08:00:49 UTC, AFTER the last commit at 08:00:17 UTC, so the running
+        core holds the new code rather than the old — the check this programme has paid
+        for skipping before. Boot clean: 551 lines, 546 INFO, 0 ERROR. The 5 warnings are
+        all pre-existing and unrelated (browser libs, a recovered db lock, an orphan
+        owl_dna row, a thin tool description).
+      supports_document_EVIDENCED: >-
+        Built every provider from the REAL ~/.stackowl/stackowl.yaml through the REAL
+        _build_provider and ran pdf.py:209's exact predicate against them: all four
+        report supports_document=True and the predicate now selects an OpenAIProvider
+        where it previously returned None. Evidence against the real config, not a
+        fixture.
+      the_two_INFO_lines_are_OPEN_not_closed: >-
+        Neither can be evidenced yet and neither is claimed. ~/.stackowl/providers/ is
+        EMPTY, so no user override exists and the catalog line correctly has nothing to
+        report. The escalation line needs a live no-op escalation; 25 have occurred over
+        four weeks, so it is a matter of traffic, not of wiring. THE CLOSING QUERIES:
+        `grep -c "REPLACED a bundled provider" ~/.stackowl/logs/stackowl.jsonl` and
+        `grep -c "cannot improve on" ~/.stackowl/logs/stackowl.jsonl`. Both are INFO, so
+        both CAN return something — which is the check D08.1 taught us to run before
+        needing it.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
     E_owner_key_enforcement:
