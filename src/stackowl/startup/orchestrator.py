@@ -2056,6 +2056,31 @@ class StartupOrchestrator:
             )
         # E5 — let the clarify gateway deliver questions back over the CLI.
         clarify_gateway.register_adapter("cli", adapter)
+        # ESC-30 — and register with the CHANNEL registry too, which is a different
+        # registry for a different purpose: clarify needs the adapter to deliver a
+        # question back, provenance needs it to judge an ORIGIN. Until 2026-08-21 only
+        # the first happened, so `_gateway_channels()` never contained "cli" and an
+        # authority request typed at the operator's own terminal was judged UNOFFICIAL
+        # and prompted — on the most attended surface there is. Measured: 17 console
+        # turns, 0 registrations, against telegram's 585.
+        #
+        # Failure is logged, never swallowed: if this does not take, the console goes
+        # back to being silently unofficial, which is precisely the silence ESC-30
+        # exists to end.
+        try:
+            from stackowl.channels.registry import ChannelRegistry
+
+            ChannelRegistry.instance().register(adapter)
+            log.info(
+                "[startup] gateway: console registered as an official origin",
+                extra={"_fields": {"channel": adapter.channel_name}},
+            )
+        except Exception as exc:  # noqa: BLE001 — must never block startup
+            log.warning(
+                "[startup] gateway: console could NOT be registered as a channel — "
+                "authority requests from the terminal will be judged unofficial",
+                exc_info=exc,
+            )
 
         # 2. DECISION — define the message processing loop
         async def _deliver_parliament(

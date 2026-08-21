@@ -667,6 +667,34 @@ current:
         recent activity" was very nearly used to justify restarting into a live turn.
   ESCALATIONS_ANSWERED_2026_08_21:
     by: Bakir
+    AN_INVARIANT_LOCK_THAT_FIRED_AND_WAS_IGNORED_2026_08_21:
+      what: >-
+        tests/channels/test_unwired_channel_consent_fails_closed.py has been RED since
+        commit 7e020cd1 and nothing acted on it. Found while running a neighbouring suite
+        for ESC-30, not by looking for it.
+      why_it_matters_more_than_a_stale_test: >-
+        The file's own docstring said it existed so that "a future refactor that made it
+        fail OPEN (privilege escalation by channel) is caught immediately". 7e020cd1 made
+        exactly that refactor. The lock did its job — it went red at the right commit —
+        and was then left red, which is the only failure mode a lock has.
+      the_escalation_was_REAL_and_is_already_closed_separately: >-
+        `AutonomousPrompter` granted everything at first, and its own code says so:
+        "THE DOCSTRING ABOVE WAS ASPIRATIONAL, NOT TRUE ... execute_code -> allowed=True,
+        'destructive' -> allowed=True, 'lock' -> allowed=True". Fixed 2026-08-19 by
+        refusing whenever `allow_relaxation` is False. So the danger the lock guarded
+        against did happen, ran for three days, and was caught by other means.
+      what_was_done: >-
+        The contract NARROWED rather than reversed, so the lock is restored in its narrow
+        form rather than deleted: an unwired channel GRANTS an ordinary consequential
+        action (deliberate — an unattended agent must not be blocked on a permission
+        nobody could have been asked for) and still REFUSES anything always-ask (the
+        escalation invariant, unchanged). Old assertions replaced with the reason
+        written down. Also fixed `RoutingPrompter`'s class docstring, which still read
+        "unknown → deny" — false since 7e020cd1, and uncorrected because the test that
+        would have prompted it was already red.
+      the_lesson: >-
+        A red test is not debt, it is an unread message. This one said "privilege
+        escalation by channel" for three days.
     ESC_29_the_task_envelope_becomes_a_REAL_BOUNDARY:
       answer: "MAKE IT A REAL BOUNDARY. A tool outside the plan is REFUSED, not logged as drift."
       recorded_as_HIS_call_against_my_recommendation: >-

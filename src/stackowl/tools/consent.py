@@ -291,7 +291,17 @@ class AutonomousPrompter:
 
 
 class RoutingPrompter:
-    """Multiplexes consent requests to a per-channel prompter; unknown → deny."""
+    """Multiplexes consent requests to a per-channel prompter.
+
+    An UNKNOWN channel does NOT deny outright — it routes to
+    :class:`AutonomousPrompter`, which grants an ordinary consequential action and
+    still refuses anything always-ask (``allow_relaxation`` False). "unknown → deny"
+    is what this said until 2026-08-21 and it had been false since 7e020cd1; the
+    invariant test that guarded it went red at that commit and stayed red, so nothing
+    corrected the sentence either. See
+    tests/channels/test_unwired_channel_consent_fails_closed.py for the contract as it
+    actually is.
+    """
 
     def __init__(self) -> None:
         self._by_channel: dict[str, ConsentPrompter] = {}
