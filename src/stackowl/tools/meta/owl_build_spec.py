@@ -115,6 +115,32 @@ def validate_owl_build_spec(spec: OwlBuildSpec) -> str | MissingFields | None:
         if spec.preset and spec.explicit_tools:
             return "provide either 'preset' or 'explicit_tools', not both."
         return None
+    if spec.action == "grant":
+        # WIDENING AN EXISTING OWL'S CEILING — not creating one, and the difference
+        # cost two live attempts. `grant` was added to `_VALID_ACTIONS` and to
+        # owl_build's dispatch by 389e3902 and NEVER here, so it fell through to the
+        # create requirements below and demanded a `specialty` for an owl that
+        # already exists. Measured 2026-08-21 01:25:12 and 01:28:43: an agent hit a
+        # bounds refusal, reached for the one sanctioned escape hatch, and was asked
+        # to invent a persona for the owl it was already running as.
+        #
+        # A grant needs exactly two things: WHICH owl (it exists) and WHAT capability
+        # is being asked for. It does not need a specialty or a cadence — the owl has
+        # both already, which is precisely why it is running and getting refused.
+        if not spec.name or not spec.name.strip():
+            return "owl name is required."
+        if spec.preset and spec.explicit_tools:
+            return "provide either 'preset' or 'explicit_tools', not both."
+        if not spec.preset and not spec.explicit_tools:
+            # A HARD error, not a question. A grant that names no capability widens
+            # nothing, and succeeding vacuously would be the overclaim shape this
+            # platform keeps paying for — a tool reporting success having changed no
+            # ceiling at all.
+            return (
+                "a grant must name the capability being requested: pass "
+                "'explicit_tools' (e.g. ['send_message']) or a 'preset'."
+            )
+        return None
     if spec.action == "rename":
         if not spec.name or not spec.name.strip():
             return "owl name is required."

@@ -516,7 +516,18 @@ class OwlBuildTool(Tool):
         # mid-turn via the ClarifyGateway, merge, re-validate, loop until complete,
         # then mint via the existing _create path. Fail-closed off-TTY (returns the
         # gap as an error; never hangs).
+        # CREATE ONLY, which is what the comment above always said. This block ran
+        # unconditionally, so any action the validator reported MissingFields for was
+        # dragged into create-field elicitation — the live failure of 2026-08-21,
+        # where `action='grant'` asked the caller for a `specialty`. The validator now
+        # has a `grant` branch, and this guard means the next action added without one
+        # gets a plain error instead of an interrogation about a persona.
         if isinstance(spec_check, MissingFields):
+            if spec.action != "create":
+                return self._err(
+                    f"'{spec.action}' is missing required field(s): "
+                    f"{', '.join(spec_check.fields)}.", t0,
+                )
             spec, gap_err = await self._elicit_missing(spec_check)
             if gap_err is not None:
                 return self._err(gap_err, t0)
