@@ -494,6 +494,29 @@ current:
         shared and independent of the budget. Both then deliver the vetoed text rather
         than nothing, which is the never-empty floor working as designed, and they agree
         exactly. Checked because an extraction could have broken it in silence.
+    D4_FIXED_2026_08_21_b6e447a4:
+      what: >-
+        AnthropicProvider.complete_with_tools read `self._config.max_output_tokens` RAW at
+        both round-builders, while stream() and complete() both resolve the per-model cap
+        through resolve_model_override(). One fact, two readings, inside one class —
+        defect shape #3. Measured before the fix: with a 250000 provider default and a
+        16000 per-model cap, the loop sent 250000 where complete() sends 16000.
+      why_it_was_worse_than_an_inconsistency: >-
+        The comment above BOTH sibling call sites tells the operator that the 250000
+        default exceeds real Anthropic ceilings (8192-64000) and that "the FIRST Anthropic
+        provider added must set an explicit models[].max_output_tokens". That remedy was
+        INERT on the agentic path. An operator following the instruction exactly would
+        still have had their first tool turn rejected.
+      A_CONSTRAINT_FOUND_WHILE_WRITING_THE_TESTS: >-
+        `_validate_models` (config/provider.py:274) REJECTS a models[] entry whose name
+        equals default_model. So the models[] half of that remedy is only reachable for a
+        NON-default model; capping the default one requires the parenthetical, a smaller
+        provider-level max_output_tokens. Recorded because the comment reads as though
+        either would do.
+      scope: >-
+        LATENT. Every configured backend is protocol openai, so no AnthropicProvider is
+        ever constructed here and this has never fired. Fixed because it is one line and
+        because D04.1 is about what happens when a second backend IS added.
     SHIPPED_FROM_THE_BRAINSTORM_2026_08_21:
       note: >-
         Four defects found while measuring D04.1, each fixed at its root and each
