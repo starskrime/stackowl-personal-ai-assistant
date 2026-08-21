@@ -887,11 +887,27 @@ class AnthropicProvider(ModelProvider):
                 # whether the agent delivered or gave up.
                 directive = await _enforce(text)
                 if directive:
+                    # D2 — PARITY WITH openai_provider, added 2026-08-21 under ESC-21.
+                    # The judge ruled give-up. If a stronger tier is genuinely
+                    # available, escalate the whole turn instead of nudging the weak
+                    # model to try again: the OBJECTIVE verdict, not the model's
+                    # self-report, drives the step-up. At the ceiling (`can_escalate`
+                    # False) we keep nudging exactly as before, bounded by the
+                    # nudge cap.
+                    if can_escalate:
+                        log.engine.warning(
+                            "[anthropic] complete_with_tools: judge ruled give-up — "
+                            "escalating to a stronger tier instead of nudging",
+                            extra={"_fields": {"provider": self._name}},
+                        )
+                        return ESCALATE_SENTINEL, all_calls
                     messages.append({"role": "user", "content": directive})
                     # D02.2 — the judge decided the model gave up and pushed it to
                     # continue. That round produced no answer, and the turn is
                     # already struggling: charging it makes give-up MORE likely,
-                    # not less. Measured at 18-42 of these a day.
+                    # not less. Measured at 18-42 of these a day. Only reached at the
+                    # TOP tier — below it the judge escalates instead, which leaves
+                    # this loop entirely.
                     iter_budget.refund("give_up_directive")
                     continue
                 log.engine.debug(
@@ -954,6 +970,23 @@ class AnthropicProvider(ModelProvider):
                 break
             if iter_directives:
                 messages.append({"role": "user", "content": iter_directives[0]})
+
+        # D1 — auto-escalate on max-out. PARITY WITH openai_provider, added 2026-08-21
+        # when ESC-21 chose to close the divergences in place rather than extract the
+        # shared loop. The tier burned its WHOLE tool budget without delivering, which
+        # is an objective "out of its depth" signal; a weak model never self-reports
+        # ESCALATE, so escalate here and hand the turn to the next tier rather than
+        # wrapping up a weak answer on the weak model. At the ceiling `can_escalate` is
+        # False — and since 2026-08-21 that also means "no stronger target exists", not
+        # merely "no higher rung" (ESC-22) — so the graceful wrap-up floor below still
+        # applies and nothing is discarded for nothing.
+        if can_escalate:
+            log.engine.warning(
+                "[anthropic] complete_with_tools: tool budget exhausted without "
+                "delivering — escalating to a stronger tier",
+                extra={"_fields": {"provider": self._name, "calls": len(all_calls)}},
+            )
+            return ESCALATE_SENTINEL, all_calls
 
         log.engine.warning(
             "[anthropic] complete_with_tools: max_iterations reached",
