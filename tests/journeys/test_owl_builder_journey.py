@@ -41,10 +41,12 @@ import pytest
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.commands.owls_command import OwlCommand
-from stackowl.config.settings import Settings
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.db.pool import DbPool
 from stackowl.gateway.scanner import GatewayScanner
+from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
+from stackowl.owls.store import OwlStore
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
@@ -225,7 +227,7 @@ def _config_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return cfg
 
 
-def _build(provider: _ScriptedResearcher) -> _Env:
+def _build(provider: _ScriptedResearcher, db: DbPool | None = None) -> _Env:
     adapter = TelegramChannelAdapter(TelegramSettings(allowed_user_ids=frozenset({USER_ID})))
     bot = _FakeBot()
     adapter._bot_app = _FakeBotApp(bot)  # type: ignore[assignment]
@@ -250,6 +252,12 @@ def _build(provider: _ScriptedResearcher) -> _Env:
         provider_registry=_FakeProviderRegistry(provider),  # type: ignore[arg-type]
         tool_registry=tool_registry,
         consent_gate=ConsequentialActionGate(),
+        # OWLS PERSIST TO SQLITE, NOT YAML (migration 0118). `persist_owl` reads
+        # `get_services().db_pool`; with none wired it logs
+        # "no db wired — the owl change was NOT persisted" at ERROR and returns
+        # False, so the build succeeds in memory and vanishes. The journey's
+        # persistence step was reloading a yaml file nothing writes any more.
+        db_pool=db,
         stream_registry=StreamRegistry(),
         owl_registry=owl_registry,
     )
@@ -297,6 +305,7 @@ async def _turn(env: _Env, text: str) -> str:
 
 async def test_owl_builder_journey_build_route_enforce_persist(
     _config_file: Path,
+    tmp_db: DbPool,
 ) -> None:
     """The full owl-builder value: a human builds a researcher specialist whose
     bounds are enforced end-to-end, the boundary-router stays available, and the
@@ -306,7 +315,7 @@ async def test_owl_builder_journey_build_route_enforce_persist(
     bounds, the persistence, and the Epic-2 enforcement seam are all real.
     """
     provider = _ScriptedResearcher()
-    env = _build(provider)
+    env = _build(provider, db=tmp_db)
 
     # --- 1. BUILD via the REAL structured create (no ceiling — the owl's OWN
     #        researcher-preset bounds must do the blocking) -------------------
@@ -386,10 +395,20 @@ async def test_owl_builder_journey_build_route_enforce_persist(
         f"The turn did not deliver a final reply under the owl's bounds. Got: {reply!r}"
     )
 
-    # --- 4. PERSIST — reload the SAME yaml from disk and re-check the bounds --
-    assert _config_file.exists(), "the build command did not persist the owl to yaml"
-    reloaded_registry = OwlRegistry.from_settings(Settings())
-    reloaded = reloaded_registry.get(_OWL)
+    # --- 4. PERSIST — reload from the OWL STORE and re-check the bounds -------
+    #
+    # OWLS LIVE IN SQLITE SINCE MIGRATION 0118, not in the yaml this step used to
+    # reload. `persist_owl` is the single funnel and its own docstring says why:
+    # "once the boot path adopted SQLite as the source of record, a write that
+    # still went only to the YAML would be silently discarded at the next restart
+    # — the read moved and the write did not." Asserting the yaml existed was
+    # checking the abandoned half, and it failed loudly only because the platform
+    # logs "no db wired — the owl change was NOT persisted" at ERROR.
+    _stored = {m.name: m for m in await OwlStore(tmp_db).list_all()}
+    assert _OWL in _stored, (
+        f"the build did not persist the owl to its store. have={sorted(_stored)}"
+    )
+    reloaded = _stored[_OWL]
     assert reloaded.bounds is not None, "reloaded researcher owl lost its bounds"
     assert _OUT_OF_BOUNDS_TOOL not in reloaded.bounds.tools, (
         f"after reload, '{_OUT_OF_BOUNDS_TOOL}' leaked into the researcher owl's bounds; "
@@ -408,6 +427,7 @@ async def test_owl_builder_journey_build_route_enforce_persist(
 
 async def test_unbounded_owl_runs_shell_proving_bounds_is_the_blocker(
     _config_file: Path,
+    tmp_db: DbPool,
 ) -> None:
     """CONTROL for the journey: an UNBOUNDED owl (built with NO preset/tools →
     ``bounds is None``) routed the same way runs BOTH tools — proving that in the
@@ -416,26 +436,31 @@ async def test_unbounded_owl_runs_shell_proving_bounds_is_the_blocker(
     ``shell`` registration would make the deny test pass vacuously.
     """
     provider = _ScriptedResearcher()
-    env = _build(provider)
+    env = _build(provider, db=tmp_db)
 
-    # Build a bare owl (no preset, no tools) → unbounded (bounds is None).
-    cmd = OwlCommand(owl_registry=env.owl_registry, tool_registry=env.tool_registry)
-    _tok = set_services(env.services)
-    try:
-        reply = await cmd.handle(
-            f"create --name {_OWL} --tier fast",
-            PipelineState(
-                trace_id="build", session_key="build", input_text="", channel="cli",
-                owl_name="secretary", pipeline_step="start",
-            ),
+    # An UNBOUNDED owl, registered DIRECTLY rather than built through the command.
+    #
+    # THE COMMAND CAN NO LONGER PRODUCE ONE, and that is a hardening rather than a
+    # defect: `capability` (which maps to `preset`) is now a required create field,
+    # so `/owl create --name x --tier fast` is refused with "still missing:
+    # capability, specialty". Every owl the builder makes therefore has a
+    # capability, and every capability carries bounds.
+    #
+    # This is a CONTROL — its job is to establish the counterfactual that a
+    # bounds-less owl runs `shell`, so the sibling test's denial can be attributed
+    # to bounds and not to a missing registration. Driving it through a builder
+    # that now refuses to make one would test the builder, not the counterfactual.
+    # Constructing the manifest states the premise directly and honestly.
+    env.owl_registry.register(
+        OwlAgentManifest(
+            name=_OWL,
+            role="research",
+            system_prompt="you are a bare owl with no bounds",
+            model_tier="fast",
+            bounds=None,
         )
-    finally:
-        reset_services(_tok)
-    # Same rule as above: the registry is the proof, the reply prefix is not.
-    assert _OWL in {m.name for m in env.owl_registry.list()}, (
-        f"the build did not register the owl. reply={reply!r}"
     )
-    assert env.owl_registry.get(_OWL).bounds is None, "bare owl should be unbounded"
+    assert env.owl_registry.get(_OWL).bounds is None, "the control owl must be unbounded"
 
     _ = await _turn(env, f"@{_OWL} fetch the page and then run a shell command")
 

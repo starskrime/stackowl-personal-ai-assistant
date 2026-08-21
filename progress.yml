@@ -3167,7 +3167,7 @@ known_debt:
         retry contract now returns a row to `pending` where the test expects a
         terminal state — the two readings are behaviourally different and only one
         is a bug.
-      RESOLVED_5_the_owls_surface_was_RESPELLED_not_removed: >-
+      RESOLVED_5_the_owls_surface_was_RESPELLED_and_persistence_MOVED: >-
         `67cc2fd9` folded structured creation into the unified `/owl` dispatcher:
         `OwlCommand.create` parses the same flags via `parse_owl_build_flags`,
         while `OwlsCommand.create` is the free-text elicitation path. `--role` is
@@ -3178,15 +3178,23 @@ known_debt:
         `reply.startswith("✓")` assertions — the owl was created correctly and the
         test failed on a decorative prefix, which is "trust the call" instead of
         measure the effect, inside a test.
-        STILL OPEN AND STOPPED AT FOUR ATTEMPTS, which the standing rule calls an
-        architecture question rather than a fifth attempt. The platform's own ERROR
-        names it: "[owls] persist_owl: no db wired — the owl change was NOT
-        persisted". OWL PERSISTENCE MOVED FROM YAML TO THE DATABASE and step 4 of
-        this journey reloads a yaml file nothing writes any more. NEXT STEP: give
-        the journey a db-backed fixture and assert persistence through the store.
-        The sibling control additionally wants a capability-less owl, which the
-        validator no longer permits — that control may have to construct its
-        manifest directly rather than through the command.
+        CLOSED 2026-08-21, and the pause was the right call rather than a delay.
+        Stopping at four attempts forced a diagnosis instead of a fifth guess, and
+        the platform's own ERROR line supplied it: "[owls] persist_owl: no db wired
+        — the owl change was NOT persisted". OWL PERSISTENCE MOVED TO SQLITE
+        (migration 0118) and step 4 was reloading the abandoned half. persist_owl's
+        docstring states the hazard exactly: "the read moved and the write did not."
+        FIXED by wiring `db_pool` into the journey's StepServices and reloading
+        through `OwlStore.list_all()`. The yaml assertion is gone, not weakened —
+        it was checking a file nothing writes.
+        THE CONTROL NOW REGISTERS ITS OWL DIRECTLY, and the reason is recorded
+        because it is a real behaviour change rather than a test convenience:
+        `capability` (mapping to `preset`) is a REQUIRED create field, so the
+        builder can no longer produce a bounds-less owl at all. That is a
+        hardening. A control exists to establish a counterfactual — a bounds-less
+        owl runs `shell`, so the sibling test's denial is attributable to BOUNDS
+        and not to a missing registration — and driving it through a builder that
+        now refuses to make one would test the builder instead of the premise.
       RESOLVED_6_the_lock_fired_on_an_INTENDED_change: >-
         Not a rename — an ADDITION. `conversation_cost_report` joined the
         allow-list deliberately (DEBT-7: Bakir asked to be told what a conversation
