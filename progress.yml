@@ -3035,6 +3035,40 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-SKILL-CATALOG-ALERT
+    found: 2026-08-21
+    found_by: "checking whether anything shipped today misbehaved live — it did not, and this was the only warning left"
+    status: OPEN — measured, NOT fixed. Severity is the operator's call, same class as ESC-33.
+    what_is_MEASURED: >-
+      "skill injection: catalog truncated by budget" fires at WARNING with
+      dropped=155 on 82-95% of tool turns: 63/77, 234/251, 145/163 and 370/389
+      across 2026-08-17..21, and 998 times on 2026-08-20 (more than once per turn,
+      since the injector runs per rebuild). 168 skills exist — 154 learned, 14
+      builtin — so the model sees 13 of them in the prompt.
+    IT_IS_NOT_A_CAPABILITY_LOSS_and_that_had_to_be_checked_first: >-
+      The truncated line appends "(+155 more — skill_view to list)", so the model is
+      TOLD there is more and given the route to it — the same overflow-stays-
+      reachable shape `tool_search` provides for tools. The alternative reading was
+      that 92% of skills had become invisible, which would have been a shipped
+      capability loss, so it was distinguished before anything else.
+    what_is_actually_wrong: >-
+      The LEVEL. A WARNING that fires on the designed steady state, on ~90% of
+      turns, is the cries-wolf shape this very repo names at the tools audit: "an
+      audit that cries wolf trains its reader to ignore it". It was the only
+      warning class left in a 2,376-line clean window, which is exactly when a
+      permanent alert does its damage — it is all a reader sees.
+    why_it_is_not_fixed_here: >-
+      Lowering it changes what an operator is shown, which is the same judgement as
+      ESC-33's timeout->down question and belongs to Bakir for the same reason.
+      Recommendation if asked: INFO for the ordinary truncation, and keep a WARNING
+      for a truncation that drops something RANKED ABOVE what it kept — that is the
+      only case where the budget is losing something the ranker thought mattered.
+    a_second_question_it_raises_but_does_not_answer: >-
+      154 learned skills against 14 builtin. A prior arc found 437 skills of which
+      92% were dead weight and added decay; 168 suggests decay ran. Whether 154 is
+      a healthy steady state or the same accumulation returning more slowly is NOT
+      measured here and should not be assumed from one number.
+
   - id: DEBT-INCIDENT-STORM
     found: 2026-08-21
     found_by: "noticing that 30 of 30 D05.4 rebuilds were incident-RCA lanes and asking why there were so many"
