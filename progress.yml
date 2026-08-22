@@ -13925,6 +13925,26 @@ items:
         Two failures appeared and both were root-caused rather than reclassified — see
         TWO_PRE_EXISTING_TESTS_WENT_RED_AND_THIS_IS_NOT_ME_BENDING_THEM above. Nothing was
         deferred.
+    WATCH_FIRST_REAL_OPPORTUNITY_2026_08_22_T21_39Z: >-
+      THE DENOMINATOR IS NO LONGER ZERO. A curated write landed at 21:38:01Z on the image
+      carrying all three guards: `[curated] add: stored` target=user durability=permanent
+      used=1137 budget=1375. It went through `_contain` and the per-entry ceiling and
+      produced a well-formed file — all 12 memory files still carry exactly (entries - 1)
+      delimiters, USER.md included.
+      SO I1 HAS ONE REAL OPPORTUNITY AND PASSED IT. One is thin and it is stated as thin:
+      a single well-behaved write does not exercise the ceiling (1,137 chars is under the
+      687-char per-entry ceiling only because it is the FILE total, not one entry) and does
+      not exercise containment against content that actually carries the delimiter. I2 and
+      I3 remain OPEN — no oversized entry has been attempted and no owl has a non-ASCII
+      name.
+    A_SECOND_ERROR_APPEARED_AND_IT_IS_NOT_MINE: >-
+      `[scheduler] health_sweep.execute: UNHEALTHY subsystems detected` at 21:11:17Z, and
+      reading the WHOLE fields object rather than one key (the lesson D05.4 paid for):
+      down=["provider_registry"], degraded=[]. Its cause is one line earlier — `[health]
+      aggregator: provider_registry timed out after 5005ms`. A single probe over a 5s
+      budget, self-resolving, no repeat since. Same SHAPE as the owl_ratings probe D05.4
+      fixed with migration 0120, but ONE occurrence is not a pattern and is recorded as one
+      occurrence, not a trend.
     VALIDATE_2026_08_22:
       status: "PARTIAL — the code is live and the boot is clean; all three guards are UNEXERCISED in production."
       platform_health: "40 minutes on the new image: 1,351 INFO, 27 WARNING, ZERO ERROR."
