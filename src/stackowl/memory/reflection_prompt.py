@@ -128,8 +128,8 @@ def describe_parse_failure(raw: str) -> dict[str, object]:
             out["missing"] = [k for k in REFLECTION_REQUIRED_KEYS if k not in obj]
             return out
         # Not a usable object. Separate "the model wrote prose" from "the JSON
-        # was cut off", because those want opposite fixes and the old preview
-        # could not tell them apart.
+        # was cut off" from "it is JSON-shaped but malformed", because those want
+        # different fixes and the old preview could not tell them apart.
         stripped = text.lstrip("`").lstrip()
         if stripped.startswith("json"):
             stripped = stripped[4:].lstrip()
@@ -140,6 +140,16 @@ def describe_parse_failure(raw: str) -> dict[str, object]:
             out["shape"] = "json_not_object"
         else:
             out["shape"] = "not_json"
+        if out["shape"] == "json_not_object":
+            # The first production record carried shape=json_not_object, chars=502,
+            # keys=None — brace-balanced, not truncated, and still unparseable. That
+            # already refuted the "a required key was missing" theory, but it did not
+            # say WHAT was malformed. json's own error names the character and the
+            # offset, which is the difference between another guess and a fix.
+            try:
+                json.loads(stripped)
+            except ValueError as exc:
+                out["json_error"] = str(exc)[:160]
         return out
     except Exception:  # pragma: no cover — a diagnostic may never raise
         out["shape"] = "describe_failed"

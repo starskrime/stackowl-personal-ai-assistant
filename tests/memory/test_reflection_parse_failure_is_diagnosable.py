@@ -117,3 +117,28 @@ def test_describe_never_raises_on_anything() -> None:
     for bad in ("", "   ", "{", "[]", "null", "{'python': 'dict'}", "\x00\xff"):
         got = describe_parse_failure(bad)
         assert isinstance(got, dict) and "shape" in got, (bad, got)
+
+
+def test_a_malformed_but_brace_balanced_object_names_the_decoder_error() -> None:
+    """The shape the FIRST production record actually had.
+
+    `shape=json_not_object, chars=502, keys=None` — brace-balanced, not truncated,
+    and still unparseable. That already refuted the "a required key was missing"
+    theory three reviewers proposed, but it did not say what was malformed. A raw
+    newline inside a string literal is the classic case a model emits.
+    """
+    from stackowl.memory.reflection_prompt import describe_parse_failure
+
+    raw_newline_in_string = '{"summary": "line one\nline two", "suggested_strategy": "s"}'
+    shape = describe_parse_failure(raw_newline_in_string)
+    assert shape["shape"] == "json_not_object", shape
+    assert "json_error" in shape, "the decoder's own error must be reported"
+    assert isinstance(shape["json_error"], str) and shape["json_error"], shape
+
+
+def test_a_wellformed_object_carries_no_json_error() -> None:
+    from stackowl.memory.reflection_prompt import describe_parse_failure
+
+    shape = describe_parse_failure('{"summary": "s"}')
+    assert shape["shape"] == "json_object"
+    assert "json_error" not in shape
