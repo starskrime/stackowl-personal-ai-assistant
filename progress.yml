@@ -12405,7 +12405,7 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       partial
+      test:       done
       validate:   partial
       document:   done
     blocked_on: null   # CLEARED 2026-08-22 — 159 live interactive turns measured; see current.D05_8_ROUND_0_MEASUREMENT_2026_08_22
@@ -12500,6 +12500,32 @@ items:
         Last src write 2026-08-22T16:11:36Z, core boot 16:12:35Z — 59 seconds later. The
         running image therefore loaded every module AFTER the last write, which is the check
         this programme has paid for skipping. Boot clean: 347 INFO, 8 WARNING, ZERO ERROR.
+    TEST_2026_08_22:
+      the_whole_directory_sweep_not_a_targeted_subset: >-
+        `uv run pytest tests/tools tests/pipeline tests/infra -q -p no:randomly` —
+        3,347 PASSED, 4 skipped, 0 failed, in 1,950s (32.5 min). Run against the tree at
+        af8cf60e, after the eviction test was rewritten.
+      a_first_sweep_reported_one_failure_and_it_was_STALE_not_red: >-
+        An earlier tests/tools sweep (1,725 passed, 1 failed, 1,065s) reported
+        test_the_dropped_list_says_it_is_truncated failing. That run was launched BEFORE the
+        test was rewritten to assert completeness, so it was executing the old file from a
+        snapshot taken at launch. Recorded rather than quietly re-run, because "a red test
+        appearing after your change usually means the change is INCOMPLETE" is the right
+        default and this is the exception that has to be evidenced, not asserted: the
+        rewritten file passes on its own (4 passed) and the full sweep afterwards is clean.
+      no_pre_existing_red: "Zero failures across all three directories. Nothing was left unexplained or deferred."
+    VALIDATE_UPDATE_2026_08_22_T17_03Z:
+      window: "51 minutes on the image booted 16:12:35Z."
+      platform_health: "2,187 INFO, 40 WARNING, ZERO ERROR."
+      I3_holds: "16 eviction records, 0 where `dropped` is shorter than `dropped_count`."
+      I1_has_ONE_opportunity_and_it_is_not_enough: >-
+        `[planner] plan: envelope set` fired exactly ONCE since boot, and 0 turns presented
+        36. That is consistent with the fix but does not prove it: an envelope that FITS
+        produces neither a 36 nor an eviction record, so a single small plan cannot
+        distinguish "the cap is now 40" from "the plan was smaller than either cap".
+        STILL OPEN, and this is a better statement of why than "needs traffic".
+      I2_still_has_ZERO: >-
+        It needs an envelope WIDER than the cap. The one that ran fitted. 0 over 0.
     VALIDATE_2026_08_22:
       status: "PARTIAL — I3 CLOSED live with a real contrast; I1 and I2 OPEN with their denominators printed."
       the_restart_was_verified_not_assumed: >-
