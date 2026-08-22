@@ -638,7 +638,11 @@ class ShellTool(Tool):
             "prompt. Only truly catastrophic, system-destroying commands "
             "(rm -rf on a system/home root, dd/mkfs/shred/wipefs on a device, "
             "recursive chmod/chown on a system root, fork bombs) require the user's "
-            "explicit approval; if no user is present to approve, they are refused."
+            "explicit approval; if no user is present to approve, they are refused. "
+            f"PYTHON: a shared virtualenv already exists at {StackowlHome.python_env()} "
+            "— install into it and run from its bin/python. Do NOT create a new venv "
+            "per task; only build a separate one if you need a dependency version "
+            "that would conflict with what is already installed there."
         )
 
     @property

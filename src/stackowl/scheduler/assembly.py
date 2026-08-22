@@ -156,6 +156,9 @@ class SchedulerAssembly:
         from stackowl.scheduler.handlers.knowledge_prune import KnowledgePruneHandler
         from stackowl.scheduler.handlers.morning_brief import MorningBriefHandler
         from stackowl.scheduler.handlers.tool_pruning import ToolPruningHandler
+        from stackowl.scheduler.handlers.workspace_env_janitor import (
+            register_workspace_env_janitor_handler,
+        )
         from stackowl.scheduler.scheduler import JobScheduler
         from stackowl.supervisor.supervisor import Supervisor
 
@@ -239,6 +242,11 @@ class SchedulerAssembly:
         # a 922 MB file on a disk at 99%, which surfaced as `database is locked`
         # and a task loop failing every tick.
         register_db_reclaim_handler(db)
+        # Stray virtualenvs need the same decay leg. Measured 2026-08-22: FOUR envs
+        # in the workspace totalling 707 MB, two of them byte-identical, none
+        # referenced anywhere in src/ — built ad hoc through `shell` because the
+        # learning loop had recorded env-CREATION as the winning move.
+        register_workspace_env_janitor_handler()
 
         tool_pruning_handler = ToolPruningHandler()
         HandlerRegistry.instance().register(tool_pruning_handler)
@@ -832,6 +840,14 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="db_reclaim", schedule="every 1h",
             interval_minutes=60,
+        )
+        # Workspace env janitor — reclaim stray per-tool virtualenvs. Daily rather
+        # than 12-hourly because it walks whole trees to find the newest mtime, and
+        # because an env has to sit IDLE for a fortnight before it qualifies: there
+        # is nothing a second daily pass could catch that the first would not.
+        await _seed_minutes_schedule(
+            db, handler_name="workspace_env_janitor", schedule="every 24h",
+            interval_minutes=1440,
         )
         # Dynamic-injection arc, sub-project 1 — weekly diff/backfill/prune between
         # SQLite (authoritative) and the derived graph mirror. 168h = 7 days,

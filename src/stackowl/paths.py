@@ -82,6 +82,33 @@ class StackowlHome:
         return cls.tools_dir() / "learned"
 
     @classmethod
+    def python_env(cls) -> Path:
+        """THE shared Python virtualenv every tool installs into and runs from.
+
+        ONE ENV, NOT ONE PER TOOL. Bakir, 2026-08-22: "each tool creates his env
+        instead of using one centralized env." Measured that morning, the workspace
+        held FOUR: ``genv`` 344 MB, ``venv`` 149 MB, ``gmail_env`` 149 MB and
+        ``.venv`` 65 MB — 707 MB, on a root filesystem with 1.3 GB free. ``venv``
+        and ``gmail_env`` had byte-identical 24-package sets: the same environment,
+        built twice, ten weeks apart.
+
+        WHAT KEPT REBUILDING THEM was not a bug in any tool — it was the learning
+        loop. Two published lessons recorded env-CREATION as the winning move
+        ("What worked for secretary: Creating a dedicated Python 3.14 venv at
+        ~/workspace/gmail_env…"), and because learning here stores wins and never
+        costs, the 149 MB price was never part of the lesson. The platform was
+        teaching itself to sprawl, so a shared env alone would have been overwritten
+        by its own advice; the lessons were rewritten to name this path.
+
+        Not referenced by any of the four: nothing in ``src/`` mentioned them at
+        all. They were built ad hoc through ``shell``, which is why the fix is an
+        ADDRESS the tool surface can name rather than an enforcement — a tool that
+        genuinely needs isolation (conflicting dependency versions) can still build
+        its own, and :class:`WorkspaceEnvJanitor` reclaims it once it goes unused.
+        """
+        return cls.workspace() / "env"
+
+    @classmethod
     def worktrees_dir(cls) -> Path:
         """Scratch git worktrees for isolated coding runs (claude_code, epic orchestration).
 
