@@ -315,8 +315,69 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 4
-  item: D08.4
+  item: D08.5
   stage: brainstorm
+  D08_4_LEFT_AT_6_OF_7_2026_08_22_T20_10Z:
+    why: >-
+      Everything except validate is done and pushed. All three guards have a ZERO
+      denominator 81 minutes into the current boot — no curated writes, and no owl on this
+      deployment has a non-ASCII name — so validate stays PARTIAL under the standing watch
+      in designs/D08.4.md rather than being read as a pass. `current.stage` had also drifted
+      to `brainstorm` while the item was at 6/7; corrected here.
+  D08_5_ROUND_0_MEASUREMENT_2026_08_22:
+    item: 'D08.5 "Graph memory" — verdict AHEAD, track keep, P3, wave 4, order 26. The map''s Ask is literally "Keep — but does it survive the D08.1 decision?"'
+    THE_ASK_HAS_A_DEFINITE_ANSWER_AND_IT_IS_NO: >-
+      The graph did NOT survive D08.1. It is intact, populated and reconciled — and it has
+      contributed NOTHING to a prompt in eight days.
+    THE_MEASUREMENT_THAT_SETTLES_IT: >-
+      `[pipeline] classify: exit` already carries `graph_context_len` AT INFO — the evidence
+      line existed and did not need building, which is the check-existing-code rule paying
+      out. Across 2,321 classify records, 2026-08-15 to 2026-08-22:
+        graph_context_len NON-ZERO on 0 of 2,321 turns — 0.00%.
+      Against its siblings on the same records, so the zero has a scale:
+        prefs_len   non-zero 2,321/2,321      stable_len  non-zero 2,321/2,321
+        skills_len  non-zero 2,291/2,321      lessons_len non-zero 1,932/2,321
+        history_len non-zero 1,734/2,321
+      Every other context block reaches the prompt on nearly every turn. The graph reaches
+      it on none.
+    THE_CHAIN_END_TO_END_each_hop_read_not_inferred: >-
+      ONE reader exists: pipeline/steps/classify.py:97 `adapter.traverse(entity_id,
+      max_hops=1)`, called from `_gather_graph_context` at :665.
+      Its entities come from KuzuSyncJobHandler, which mirrors `FROM committed_facts`
+      (kuzu_sync_handler.py:87).
+      committed_facts holds ZERO ROWS. staged_facts holds 4,654. kuzu_sync_log holds 20,065,
+      so the mirror HAS run historically — just with nothing to mirror.
+      AND THE TREE ALREADY RECORDS WHY, at commands/memory_helpers.py:160-168: the shared
+      stage-then-promote chokepoint "went with FactPromoter in D08.2 seam 3 pass 4 ... D08.1
+      retargeted both at curated memory ... Its terminal step was `promoter.force_promote()`
+      into `committed_facts`, which has held 0 rows SINCE MIGRATION 0112 and now HAS NO
+      WRITER AT ALL."
+      So the graph's feeder lost its writer as a CONSEQUENCE of D08.1, and the map's AHEAD
+      verdict has been describing an inert subsystem ever since.
+    A_MISTAKE_I_MADE_AND_CAUGHT_IN_THE_SAME_MINUTE: >-
+      My first pass reported "committed_facts: (no table)" for three databases and I was
+      about to record that the tables had been dropped. `sqlite3` IS NOT INSTALLED on this
+      box — every one of those lines was "command not found" rendered as a result. Redone
+      through Python's sqlite3 module the tables are all present with the counts above.
+      Recorded because a missing binary and a missing table produce the same-looking
+      output, and this programme has now been fooled by a partial view several times.
+    what_is_ALSO_true_and_costs_something: >-
+      `_gather_graph_context` runs on EVERY turn. It derives 6 candidate entity ids per
+      token for up to 5 tokens — 30 sha256 digests — and issues up to 30 `traverse` calls,
+      all of which can only return []. 4 `kuzu.traverse: failed — returning []` WARNINGs
+      fired in the window; the SUCCESS path logs at DEBUG (kuzu_adapter.py:445), so in
+      production the read path is invisible except when it fails. That is the D08.1 lesson
+      recurring, and it is why `graph_context_len` on the classify line — which IS at INFO —
+      was the only usable instrument.
+    a_second_defect_visible_from_here_NOT_yet_escalated: >-
+      Even with a populated committed_facts the two sides may not meet. The WRITER hashes
+      sha256("{entity_type}|{entity.name}") from an extracted entity NAME
+      (kuzu_sync_handler.py:100-103); the READER hashes sha256("{ent_type}|{token}") from a
+      RAW QUERY WORD (classify.py:70-77) across six guessed types. They match only when an
+      entity's name is exactly one query token, case-sensitively. Whether that ever matched
+      is UNMEASURED and unmeasurable while the feeder is empty — stated as unmeasured rather
+      than asserted.
+    routed_to_operator: [ESC-39]
   WHY_current_MOVED_OFF_D05_8_2026_08_22_T17_50Z:
     D05_8_is_6_of_7_and_its_last_stage_is_traffic_blocked: >-
       Everything except validate is done and pushed. validate needs a `restrict_to` set
@@ -2184,6 +2245,63 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-39-the-graph-memory-did-not-survive-D08.1-and-the-map-still-calls-it-AHEAD
+    raised: 2026-08-22
+    question: >-
+      Graph memory is recorded as verdict AHEAD, track KEEP — StackOwl's own differentiator
+      against the reference platform. It is measurably inert: 0 characters contributed to
+      2,321 prompts over eight days, because D08.1/D08.2 removed the writer of the table its
+      feeder reads. Does it get RE-FED, RETIRED, or LEFT AS IS? I will not pick.
+    why_evidence_cannot_settle_it: >-
+      Evidence settles that it does nothing today and why. It cannot settle whether a
+      first-class entity graph is still part of what this platform is for. Re-feeding means
+      choosing a new source now that curated memory replaced the old one — a design
+      decision. Retiring means removing a user-facing capability and a 39 MB store, which is
+      the first thing on this programme's stop-and-escalate list. Leaving it means paying a
+      per-turn cost for a subsystem that cannot return anything. All three are yours.
+    what_was_measured_2026_08_22: >-
+      `[pipeline] classify: exit` already carries `graph_context_len` at INFO, so no
+      instrument had to be built. Across 2,321 classify records, 2026-08-15..22:
+      graph_context_len is NON-ZERO on 0 of 2,321 turns — 0.00% — while on the SAME records
+      prefs_len and stable_len are non-zero on 2,321 of 2,321, skills_len on 2,291,
+      lessons_len on 1,932 and history_len on 1,734. Every other context block reaches the
+      prompt on nearly every turn; the graph reaches it on none.
+      THE CHAIN, EACH HOP READ: one reader exists (classify.py:97, from
+      `_gather_graph_context` at :665); its entities come from KuzuSyncJobHandler, which
+      mirrors `FROM committed_facts`; committed_facts holds ZERO rows against staged_facts'
+      4,654 and kuzu_sync_log's 20,065 — so the mirror has run historically with nothing to
+      mirror.
+      AND THE TREE ALREADY SAYS WHY, at commands/memory_helpers.py:160-168: the shared
+      stage-then-promote chokepoint "went with FactPromoter in D08.2 seam 3 pass 4 ... D08.1
+      retargeted both at curated memory ... Its terminal step was `promoter.force_promote()`
+      into `committed_facts`, which has held 0 rows SINCE MIGRATION 0112 and now HAS NO
+      WRITER AT ALL."
+    what_it_costs_to_leave_it: >-
+      `_gather_graph_context` runs every turn: 6 candidate ids per token for up to 5 tokens
+      = 30 sha256 digests and up to 30 `traverse` calls, none of which can return anything.
+      The 39 MB store is still opened, reconciled and health-probed — `[health] aggregator:
+      graph timed out` fired in the window, so it also costs a health signal.
+    a_second_defect_that_this_decision_should_absorb_rather_than_leave_behind: >-
+      The two sides may not meet even with a populated feeder. The WRITER hashes
+      sha256("{entity_type}|{entity.name}") from an extracted entity NAME
+      (kuzu_sync_handler.py:100-103); the READER hashes sha256("{ent_type}|{token}") from a
+      RAW QUERY WORD across six guessed types (classify.py:70-77). They match only when an
+      entity's name is exactly one query token, case-sensitively. UNMEASURED and
+      unmeasurable while the feeder is empty — so "re-feed it" must not be treated as a
+      one-line change; it needs this checked first or it will still return nothing.
+    the_recommendation: >-
+      Two things, in this order. FIRST, correct the record regardless of the decision: the
+      map's AHEAD/keep verdict describes a subsystem that has been inert since migration
+      0112, and any future session reading that line will draw the wrong conclusion — the
+      same stale-citation trap ESC-37 found on D08.4. SECOND, my recommendation on the
+      capability itself is RE-FEED rather than retire, because the reason it died is an
+      accident of D08.1's retargeting rather than a decision anyone made about graphs — but
+      only after the writer/reader id mismatch above is measured, and only if you still want
+      an entity graph. If you do not, retiring it is honest and should be explicit rather
+      than left to rot.
+    blocked_until_answered: >-
+      D08.5's verdict, its track, and anything that touches the read path. Nothing else —
+      correcting the map citation does not need the capability decision.
   - id: ESC-38-any-owl-can-write-any-owls-memory-including-the-root-administrators
     raised: 2026-08-22
     question: >-
