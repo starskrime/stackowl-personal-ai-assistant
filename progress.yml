@@ -3208,6 +3208,24 @@ known_debt:
       restores a promised appeal. The lock was right and the carve-out is now
       pinned, along with the inversion this must never perform (never narrow an
       unbounded owl into a five-tool allowlist).
+    LIVE_STATUS_2026_08_22_0200Z_stated_with_its_denominator: >-
+      THE FIX IS NOT YET PROVEN IN PRODUCTION AND MUST NOT BE READ AS PROVEN. The
+      core booted at 01:57:23Z carrying it, and since then: 509 INFO, 2 WARNING,
+      ZERO ERROR — including none of the `owl_build._grant: persist/register
+      failed` errors that fired at 01:26:50, 01:34:31 and 01:45:01 before it.
+      BUT THE DENOMINATOR IS ZERO: no grant has been ATTEMPTED since that boot, and
+      no owl turn has run at all in the window. Zero failures over zero attempts is
+      no opportunity, not success — the same trap this session has been quoting
+      denominators against all day, and it would be trivially easy to mistake here
+      because the numbers look like a clean recovery.
+      WHAT IS PROVEN: the end-to-end test drives the REAL OwlBuildTool through a
+      REAL OwlRegistry and a REAL store and asserts the tool lands in bounds AND
+      reaches the store; and it is MUTATION-CHECKED — restoring `register()` makes
+      it fail with the exact production error, `duplicate owl name: 'mailbutler'`.
+      CLOSING QUERY, and both lines are INFO/ERROR so both can return something:
+      `jq 'select(.msg|test("authority WIDENED"))'` must return a record, and
+      `jq 'select(.msg|test("persist/register failed"))'` must stay empty, with the
+      first non-zero before the second means anything.
     WHY_IT_SURVIVED_and_this_is_the_useful_half: >-
       The grant path already had SEVEN tests — valid action, spec accepts it,
       always-ask category, schema advertises it, handler requests the category,
