@@ -43,6 +43,7 @@ from stackowl.interaction.reversibility_resolver import (
 )
 from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
+from stackowl.owls.tool_presets import APPEAL_TOOLS as _APPEAL_TOOLS
 from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
@@ -852,7 +853,15 @@ def _restrict_to_for_turn(
     cannot reroute either, and the ladder's attempt ceiling is the right thing to
     stop the loop.
     """
-    banned_set = {b for b in banned if b}
+    from stackowl.owls.tool_presets import APPEAL_TOOLS
+
+    # GATE 2 of 4. A ban may never remove the tool by which an agent ASKS for what
+    # it lacks. Measured 2026-08-22: banned=["delegate_task","memory","owl_build"]
+    # — the platform had banned `owl_build` for failing, while `_grant` was
+    # structurally incapable of succeeding, and then told the agent to use
+    # `owl_build`. A capability that is banned for failing at something it could
+    # never do is a trap, not a lesson.
+    banned_set = {b for b in banned if b} - APPEAL_TOOLS
     if envelope_tools is not None:
         if not banned_set:
             return envelope_tools
@@ -1656,6 +1665,48 @@ async def _run_with_tools(
         # every tool that passes this, and an available tool is not thereby
         # permitted.
         _tool_obj = tool_registry.get(name)
+        # A TOOL THAT DOES NOT EXIST IS NOT A PERMISSION PROBLEM, and saying so is
+        # not cosmetic — it decides which recovery the loop runs.
+        #
+        # Ordered here for the same reason the capability check above it is, and
+        # the case is stronger: you cannot lack permission for something that
+        # cannot be. Until 2026-08-22 the bounds check ran first, so a hallucinated
+        # name that happened to be outside the owl's bounds was reported as "not
+        # permitted by this owl's bounds". MEASURED at 02:45:04: `memory_set`
+        # refused by bounds for mailbutler — a tool that does not exist (the real
+        # one is `memory`).
+        #
+        # THE CONSEQUENCE WAS AN UNWINNABLE HEALING LOOP. `blocked_capability_of`
+        # reads a bounds refusal as a capability block, so the loop requeued the
+        # turn telling the agent to "ask the user to grant it — owl_build
+        # action='grant' with explicit_tools=['memory_set']". The operator would be
+        # asked to grant a capability that can never exist, the retry ceiling would
+        # burn on an impossible goal, and the model would never learn the name was
+        # simply wrong.
+        #
+        # It also SHADOWED the correct recovery entirely: the branch below returns
+        # "Tool 'X' does not exist ... build it with tool_build (or author a
+        # skill)", which is the self-extension path this platform is built around.
+        # For any hallucinated name outside the owl's bounds it was unreachable.
+        #
+        # It does NOT weaken authz, by the same argument the capability check
+        # makes: bounds still gate every tool that passes this, and the catalog is
+        # not secret — `tool_search` already offers discovery over the FULL set.
+        if _tool_obj is None:
+            log.engine.warning(
+                "[pipeline] execute: unknown tool in dispatch",
+                extra={"_fields": {"tool": name, "owl": state.owl_name}},
+            )
+            tool_outcome_ledger.record_tool_outcome(
+                name=name, action_severity="read", success=False,
+                side_effect_committed=False,
+            )
+            progress.record_no_progress(name)
+            return (
+                f"{TOOL_FAILED_MARKER}Tool '{name}' does not exist. Do not call it again — "
+                "if this capability is missing, build it with tool_build (or author a "
+                "skill) and use the new tool, or use a different existing capability."
+            )
         _required_cap = getattr(getattr(_tool_obj, "manifest", None), "requires_capability", None)
         if _required_cap:
             from stackowl.infra.capabilities import resolve as _resolve_capability
@@ -1753,7 +1804,17 @@ async def _run_with_tools(
         # carries None and is untouched. Off-plan use ran at 2/day over the five days
         # before this shipped (452 all-time, but 20-40/day back in July).
         te = state.task_envelope
-        if te is not None and te.tools is not None and name not in te.tools:
+        # GATE 3 of 4. The same rule as the bounds and ban gates: a PLAN that did
+        # not foresee needing to ask for authority must not be able to prevent the
+        # asking. ESC-29 made this envelope a real boundary and its refusal already
+        # carries an appeal in words; an appeal the agent cannot act on is a
+        # sentence, not a recovery.
+        if (
+            te is not None
+            and te.tools is not None
+            and name not in te.tools
+            and name not in _APPEAL_TOOLS
+        ):
             log.engine.warning(
                 "[authz] task plan: off-plan tool REFUSED",
                 extra={"_fields": {

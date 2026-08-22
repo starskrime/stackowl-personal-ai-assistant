@@ -3216,6 +3216,100 @@ known_debt:
       query is `jq 'select(.msg|test("authority WIDENED"))'` returning a record
       whose owl was previously blocked.
 
+  - id: ARC-2026-08-22-a-nonexistent-tool-was-reported-as-a-permission-problem
+    found: 2026-08-22
+    found_by: "the corrected Monitor — watching EFFECTS instead of inputs, within minutes of arming it"
+    status: SHIPPED — existence is now checked before bounds.
+    THE_MEASUREMENT: >-
+      02:45:04 `[pipeline] execute: tool refused by bounds tool=memory_set
+      owl=mailbutler`. There is no `memory_set` tool; the real one is `memory`. The
+      model hallucinated a name and the platform told it that it lacked PERMISSION
+      for something that cannot exist. Confirmed against the live registry: the
+      only memory-ish tool is `memory`.
+    why_it_is_not_cosmetic: >-
+      `blocked_capability_of` reads a bounds refusal as a capability block, so the
+      loop requeues the turn with its standard remedy — "ask the user to grant it —
+      owl_build action='grant' with explicit_tools=['memory_set']". THE OPERATOR
+      WOULD BE ASKED TO GRANT A CAPABILITY THAT CAN NEVER EXIST, the retry ceiling
+      would burn on an impossible goal, and the model would never learn the name
+      was simply wrong. An unwinnable healing loop, produced by a misdiagnosis.
+    AND_IT_SHADOWED_THE_CORRECT_RECOVERY: >-
+      The unknown-tool branch already returns "Tool 'X' does not exist ... build it
+      with tool_build (or author a skill)" and routes the failure through the
+      ledger, the circuit breaker and the TOOL_FAILED_MARKER (the RC1 fix of
+      2026-07-08). That is the SELF-EXTENSION path this platform is built around,
+      and for any hallucinated name outside the owl's bounds it was unreachable —
+      bounds was checked at line 1712, existence at 1785. This is the live half of
+      the recorded gap "unknown-tool dispatch bypasses ledger; tool_build never a
+      substitution rung": the ledger half was fixed and the ordering kept the whole
+      branch out of reach.
+    the_fix_had_a_precedent_five_lines_above_it: >-
+      The `requires_capability` check is deliberately ordered BEFORE bounds with
+      exactly this reasoning in its own comment: "'this cannot run' is a cheaper
+      and more honest answer than 'you may not run this' ... It does NOT weaken
+      authz — bounds still gate every tool that passes this". "Does not exist" is
+      the stronger case, and `tool_registry.get(name)` was already fetched on that
+      line. No information leak: `tool_search` already offers discovery over the
+      FULL catalog, so the tool set is not secret.
+    THE_MONITOR_LESSON_recorded_because_it_paid_off_twice_in_one_hour: >-
+      My first monitor watched "banned capabilities excluded", which logs the RAW
+      ban list, and it raised a FALSE ALARM that nearly had me revert a correct
+      fix. Rearming it to watch EFFECTS — actual refusals, blocks and grants —
+      surfaced this genuine defect within minutes. Same instrument, one field
+      different, opposite value.
+
+  - id: ARC-2026-08-22-the-ASK-must-survive-every-gate
+    found: 2026-08-22
+    found_by: "Bakir: 'Agent again failed you did not fix the root cause of issue.' He was right."
+    status: SHIPPED AND LIVE (02:29:23Z). Verified by direct measurement; the healing END TO END is still unproven.
+    WHAT_I_GOT_WRONG_and_it_is_the_lesson: >-
+      I protected `owl_build` at ONE gate (`compute_effective_bounds`), watched a
+      grant land, and reported the root cause fixed. The grant landing was real and
+      it was never the thing that would fail next. FOUR independent gates can
+      remove a tool from a turn and I had fixed one:
+      (1) the owl's effective bounds — fixed, and reported as "the" fix;
+      (2) the retry's banned_capabilities — still open, and this is what failed;
+      (3) the task envelope's plan — still open;
+      (4) the budget / tool-count eviction — still open.
+      A principle applied in one place out of four is not a root-cause fix. It is
+      an instance fix wearing one.
+    THE_EVIDENCE_five_minutes_after_the_grant_succeeded: >-
+      02:20:25, banned=["delegate_task","memory","owl_build"]. The loop's own error
+      text tells a blocked agent, verbatim, to "ask the user to grant it — owl_build
+      action='grant'" or to "delegate_task to an owl that holds it" — and BOTH
+      remedies were on the ban list. They earned their place by FAILING, and they
+      failed because `_grant` called register() on an owl that already exists, which
+      could never succeed. The platform had learned to distrust the tools its own
+      healing depends on, for failing at a job they were structurally incapable of
+      doing. Fixing `_grant` stopped new failures; it did not clear the bans the old
+      ones had already earned.
+    THE_FIX: >-
+      `APPEAL_TOOLS = {owl_build, owls_list}` in owls/tool_presets.py, consulted at
+      ALL FOUR gates. `delegate_task` is deliberately NOT protected — it is a
+      routing tool with its own fork-bomb rule (a delegated child may not delegate)
+      and that rule must keep winning. Gate 4 is the one that would have bitten
+      next even with the others fixed: DISCOVERY was already non-evictable and the
+      ASK was not, so under a full roster an agent could find exactly the tool it
+      needed and lose the means to request it.
+      Six tests in ONE file cover all four gates, so the next person cannot fix one
+      and believe they are done — which is exactly what I did.
+    AND_MY_OWN_MONITOR_RAISED_A_FALSE_ALARM_ON_IT: >-
+      I armed a watch on "[pipeline] execute: banned capabilities excluded" and it
+      fired at 02:30:24 with owl_build still in the list — apparently disproving the
+      fix minutes after it shipped. IT LOGS `state.banned_capabilities`, THE RAW
+      INPUT, not the filtered result; the carve-out happens inside
+      `_restrict_to_for_turn`. Measured directly with that exact live list:
+      owl_build survives, owls_list survives, memory stays banned, delegate_task
+      stays banned. The instrument I built to catch the proxy trap was itself
+      reading a proxy. Monitor replaced with one watching effects (actual refusals,
+      blocks, grants) rather than inputs.
+    STILL_UNPROVEN_and_stated_so_it_is_not_assumed: >-
+      That the gates no longer remove the ask is verified by direct measurement and
+      by two production turns since with no bounds refusal. That an agent, when
+      BLOCKED, now actually asks and heals is NOT proven — it needs a blocked turn,
+      and none has occurred since 02:29:23. The closing evidence is a
+      `blocked on a capability` followed by an `authority WIDENED` for the same owl.
+
   - id: ARC-2026-08-22-agents-forget-granted-access
     found: 2026-08-22
     found_by: "Bakir, live: 'Agent losses granted tool access on next run' / 'never saved permanently'"

@@ -32,6 +32,28 @@ ROUTER_TOOLS: frozenset[str] = frozenset(
     {"delegate_task", "tool_search", "tool_describe", "owl_build", "owls_list"}
 )
 
+#: THE TOOLS BY WHICH AN AGENT ASKS FOR HELP. These must survive EVERY gate that
+#: can remove a tool from a turn, and on 2026-08-22 they survived exactly one.
+#:
+#: Four independent gates can take a tool away: the owl's effective bounds, the
+#: retry's `banned_capabilities`, the task envelope's plan, and the budget/count
+#: eviction. `owl_build` was protected at the FIRST only. So the loop would tell a
+#: blocked agent, in these exact words, "ask the user to grant it — owl_build
+#: action='grant'" and then the retry would ban `owl_build`, because a previous
+#: attempt at it had failed (it always failed: `_grant` called register() on an owl
+#: that already exists). The platform banned the one tool its own healing depends
+#: on, for failing at a job it was structurally incapable of doing.
+#:
+#: MEASURED 2026-08-22 02:20:25, minutes after a grant finally succeeded:
+#: banned=["delegate_task","memory","owl_build"] — BOTH remedies the loop names in
+#: its own error text, banned together.
+#:
+#: `delegate_task` is deliberately NOT here: it is a routing tool with its own
+#: fork-bomb rule (a delegated child may not itself delegate), and that rule must
+#: keep winning. `tool_search`/`tool_describe` are already non-evictable via
+#: `_DEFAULT_ALWAYS`. What was missing is the ASK.
+APPEAL_TOOLS: frozenset[str] = frozenset({"owl_build", "owls_list"})
+
 
 @dataclass(frozen=True)
 class OwlPreset:

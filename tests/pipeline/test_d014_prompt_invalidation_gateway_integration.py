@@ -39,7 +39,7 @@ from stackowl.owls.dna import OwlDNA
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
-from stackowl.pipeline.services import StepServices
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
 from stackowl.providers.openai_provider import OpenAIProvider
@@ -213,6 +213,29 @@ def _provider(client: _FakeClient) -> OpenAIProvider:
     provider = OpenAIProvider(config, api_key="")
     provider._client = client  # type: ignore[assignment]
     return provider
+
+
+@pytest.fixture(autouse=True)
+def _persistence_is_wired(tmp_db: DbPool):  # noqa: ANN201
+    """Bind the owl store into the AMBIENT services.
+
+    These tests build StepServices and hand them to the BACKEND, but `_edit` is
+    called directly rather than through it — and `persist_owl` resolves its db
+    from `get_services()`, the ambient context, which was never set. So the edit
+    silently persisted nowhere while the test asserted prompt invalidation and
+    passed.
+
+    Since 2026-08-22 `persist_owl` RAISES instead of returning an ignorable bool
+    (that ignorable bool is how grants were being lost), so the omission now
+    surfaces as "'scout' was NOT saved — no db wired" rather than a false success.
+    These tests are about D01.4 INVALIDATION, so they get a real store and go on
+    testing what they are named for.
+    """
+    token = set_services(StepServices(db_pool=tmp_db))
+    try:
+        yield
+    finally:
+        reset_services(token)
 
 
 def _services(provider: OpenAIProvider, registry: OwlRegistry, db: DbPool) -> StepServices:

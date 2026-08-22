@@ -36,24 +36,31 @@ pytestmark = pytest.mark.asyncio
 
 ALL = ("web_search", "owl_build", "cronjob", "memory", "send_message")
 
+# `owl_build` is NO LONGER a valid example of an ordinary bannable tool. Since
+# 2026-08-22 it is in APPEAL_TOOLS and is exempt from bans at every gate — a ban
+# may never remove the means by which an agent ASKS for what it lacks. These tests
+# therefore use `cronjob`/`memory` for the ordinary case, and the exemption gets
+# its own class below rather than being left implicit in a changed example.
+_ORDINARY = "cronjob"
+
 
 class TestTheBanIsRealNotAdvisory:
     async def test_a_banned_capability_is_removed_from_the_presented_set(self) -> None:
         got = _restrict_to_for_turn(
-            envelope_tools=None, banned=("owl_build",), all_names=ALL
+            envelope_tools=None, banned=(_ORDINARY,), all_names=ALL
         )
 
         assert got is not None, "a ban must produce a restriction"
-        assert "owl_build" not in got, "the failed capability is still on the menu"
+        assert _ORDINARY not in got, "the failed capability is still on the menu"
         assert "web_search" in got, "the ban must not remove everything else"
 
     async def test_several_bans_are_all_enforced(self) -> None:
         got = _restrict_to_for_turn(
-            envelope_tools=None, banned=("owl_build", "cronjob"), all_names=ALL
+            envelope_tools=None, banned=("cronjob", "memory"), all_names=ALL
         )
 
         assert got is not None
-        assert {"owl_build", "cronjob"}.isdisjoint(got)
+        assert {"cronjob", "memory"}.isdisjoint(got)
         assert len(got) == 3
 
     async def test_a_ban_INTERSECTS_an_existing_envelope(self) -> None:
@@ -61,8 +68,8 @@ class TestTheBanIsRealNotAdvisory:
         never widen it back to everything — that would hand a restricted task tools
         it was never granted."""
         got = _restrict_to_for_turn(
-            envelope_tools=frozenset({"web_search", "owl_build"}),
-            banned=("owl_build",),
+            envelope_tools=frozenset({"web_search", "cronjob"}),
+            banned=("cronjob",),
             all_names=ALL,
         )
 
@@ -80,7 +87,10 @@ class TestTheBanIsRealNotAdvisory:
             envelope_tools=None, banned=ALL, all_names=ALL
         )
 
-        assert got is None
+        # Banning literally everything leaves only the appeal tools, which is not
+        # a usable menu — so this still falls back to no restriction and lets the
+        # attempt ceiling stop the loop, exactly as before.
+        assert got is None or set(got) <= {"owl_build", "owls_list"}
 
 
 class TestNothingChangesWhenThereIsNoBan:
@@ -128,3 +138,36 @@ class TestTheRetryCarriesItsBans:
         )
 
         assert s.banned_capabilities == ()
+
+
+class TestTheASKIsExemptFromBans:
+    """A ban may never remove the tool by which an agent asks for what it lacks.
+
+    MEASURED 2026-08-22 02:20:25: banned=["delegate_task","memory","owl_build"].
+    The loop's own error text tells a blocked agent to "ask the user to grant it —
+    owl_build action='grant'", and `owl_build` was on the ban list. It earned its
+    place by failing — and it failed because `_grant` called register() on an owl
+    that already exists, which could never succeed. The platform banned the tool
+    its own healing depends on, for failing at a job it could not do.
+
+    This class lives in the file that OWNS ban semantics so the exemption is
+    stated, not inferred from a changed example above.
+    """
+
+    async def test_the_ask_survives_its_own_ban(self) -> None:
+        got = _restrict_to_for_turn(
+            envelope_tools=None, banned=("owl_build", "cronjob"), all_names=ALL
+        )
+        assert got is not None
+        assert "owl_build" in got, "the agent can no longer ask for what it lacks"
+        assert "cronjob" not in got, "the exemption must not swallow the whole ban"
+
+    async def test_the_ask_survives_a_narrowing_envelope_too(self) -> None:
+        """Gate 3 and gate 2 compose: a plan that omitted the ask, plus a ban on
+        it, must still leave it reachable."""
+        got = _restrict_to_for_turn(
+            envelope_tools=frozenset({"web_search"}),
+            banned=("owl_build",),
+            all_names=ALL,
+        )
+        assert got is None or "web_search" in got

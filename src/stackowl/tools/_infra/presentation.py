@@ -26,7 +26,8 @@ from stackowl.infra.observability import log
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from stackowl.tools.base import Tool
+from stackowl.owls.tool_presets import APPEAL_TOOLS as _APPEAL_TOOLS
+from stackowl.tools.base import Tool
 
 __all__ = ["PresentationConfig", "ToolPresentation"]
 
@@ -102,7 +103,21 @@ _DEFAULT_BASE = frozenset({
     # wording. Consequential → still consent-gated at dispatch.
     "cronjob",
 })
-_DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"})
+#: GATE 4 of 4. Non-evictable under the token budget and the tool-count cap.
+#:
+#: `APPEAL_TOOLS` JOINED ON 2026-08-22, and the reason is the same one that
+#: applied at the other three gates: an agent must always be able to ASK for what
+#: it lacks. Discovery (tool_search/tool_describe) was already protected here —
+#: finding a tool was guaranteed while REQUESTING one was evictable, so under a
+#: full roster the agent could discover exactly what it needed and lose the means
+#: to ask for it.
+#:
+#: Measured the same night: `owl_build` was removable by the owl's bounds, by the
+#: retry's ban list, by a task envelope that did not foresee it, and by this
+#: eviction — four independent gates, one of which was protected. The others were
+#: fixed together rather than one at a time, because fixing one and calling it
+#: done is exactly how this recurred.
+_DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"}) | _APPEAL_TOOLS
 
 
 def _capability_ok(tool: Tool) -> bool:
