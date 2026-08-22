@@ -795,7 +795,20 @@ class OwlBuildTool(Tool):
         snapshot = await snapshot_owl(updated.name)
         try:
             await persist_owl(updated)
-            registry.register(updated, source_name=_SOURCE_NAME)
+            # `replace`, NOT `register` — and this one word is why no grant has
+            # ever survived. `register` guards against DUPLICATES and a grant is by
+            # definition applied to an owl that already exists, so it raised
+            # ManifestValidationError("duplicate owl name") every single time; the
+            # except below then rolled the durable write back. Measured live
+            # 2026-08-22: three consecutive grant attempts on `mailbutler`, all
+            # rolled back on that exception, which is Bakir's "agents forget
+            # granted accesses ... never saved permanently".
+            #
+            # Every sibling mutation here already had it right (`_edit` and both
+            # rebuild paths all call `replace`), and registry.replace documents
+            # itself as "the dual of register's duplicate guard" — this call site
+            # was the only one that reached for the wrong verb.
+            registry.replace(updated)
         except Exception as exc:  # B5 — no-hidden-errors, atomic rollback
             log.tool.error(
                 "owl_build._grant: persist/register failed — rolling back",
