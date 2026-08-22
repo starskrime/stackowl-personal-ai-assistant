@@ -379,6 +379,126 @@ current:
       carries the real figure (49 on 641 of the 955 records). This already misled a reader
       once during D05.4 and is repeated here so it does not mislead a third time.
     panel: "Dispatched 2026-08-22 as six parallel lenses — Measurement, Stability, Improvement, Killer-functionality, Ease-of-use, Future-proof. Findings recorded below when they return."
+  D05_8_BRAINSTORM_PANEL_2026_08_22:
+    method: >-
+      25 questions drafted, then ROUTED rather than asked. 23 were derivable — from the
+      tree, the live registry driven in-process, the JSONL, or the read-only reference
+      clone — and the panel answered them with the evidence named. 2 were irreducibly
+      Bakir's and are queued as ESC-35 and ESC-36. Six lenses ran in parallel.
+    THE_ITEMS_VERDICT_PARITY_CONFIRMED_and_BOTH_earlier_numbers_were_wrong: >-
+      D05.8 closes as no_change_needed on its own subject. The count is at parity — but
+      neither of the two figures previously on record was the right comparison, and the
+      correction is the item's actual product.
+        THE MAP said: "the reference ships ~40 by default and gates the rest; StackOwl
+        presents up to 150." Both halves false. 150 is HARD_TOOL_COUNT_CAP, a backstop
+        that exceeds the entire live catalog (79) by 71 and has never been reached; the
+        measured maximum ever presented is 40.
+        THE 2026-08-04 CORRECTION said: "the gap is INVERTED — their default is 54, our
+        live average is 4." Both halves also false. "Our live average 4" was GOAL LANES
+        ONLY; the interactive median is 30. And 54 was never a presented count.
+      READ THE REFERENCE'S OWN LIST AND COUNT THE GATES: of the 54 names in its core set,
+      21 are env-gated by check_fn and absent unless the operator has set something — 4
+      desktop-GUI tools (HERMES_DESKTOP), 4 Home Assistant (HASS_TOKEN), 12 kanban
+      (HERMES_KANBAN_TASK or an explicit profile) and 1 computer-use (a driver install).
+      A PLAIN SESSION THERE PRESENTS 33.
+      Ours: median 30, p90 36, max 40, over 159 live interactive turns. THAT IS PARITY,
+      and it is the first time this item has been measured against the right number.
+    THE_MECHANISMS_DIFFER_EVEN_THOUGH_THE_OUTCOMES_MATCH_and_this_is_the_finding_to_keep: >-
+      The reference has NO tool-count cap anywhere — searched for max_tools / MAX_TOOLS /
+      tool_limit across its tree; every hit is result-truncation, CLI display or a cache
+      fingerprint. Its 54 is a never-defer FLOOR ("Always-load means always-load. No
+      exceptions.") and its only gate is window-relative: defer when the deferrable
+      schemas reach threshold_pct of context, default 10%, or a flat 20,000 tokens when
+      the window is unknown. Our whole 77-tool catalog is 18,634 tokens = 7.1% of a
+      262,144 window, so THEIR GATE WOULD NEVER FIRE HERE.
+      So the two platforms arrive at the same presented count by opposite means: they
+      would present everything and never reach their gate; we cap at a count that binds on
+      100% of the turns where anything is dropped. Same answer today, different exposure
+      to tomorrow — which is why the FUTURE-PROOF findings below are recorded rather than
+      closed with the item.
+    TWO_LENS_MEASUREMENTS_CONTRADICTED_EACH_OTHER_and_I_settled_both_MYSELF: >-
+      (1) Stability reported `tool_search` ran 19 times in 8 days and built a "2% recovery
+      rate" argument on it. Measurement said 794 and Future-proof 802. RESOLVED BY
+      RECOUNT, two independent record types agreeing exactly: 794
+      `tool_search.execute: exit` records and 794 `[heuristic] tool outcome` records
+      naming tool_search. Stability is wrong by 42x and its recovery-rate argument
+      collapses; tool_search is heavily used, not vestigial. `tool_describe`: 340.
+      (2) Measurement put the reference's effective default at 50 (removing only the 4
+      Home Assistant tools); Improvement put it at 33-37. RESOLVED BY READING THE LIST
+      AND COUNTING THE GATE COMMENTS: 21 gated, so 33. Measurement missed 17.
+      Recorded because in both cases the number a lens ASSERTED was the number its whole
+      position rested on, and in both cases recounting changed the answer.
+    CONTRADICTION_is_the_cap_costing_us_anything:
+      killer_and_improvement: >-
+        NO. Bucketed by presented count, the turns where the cap BINDS are the healthiest
+        in the window: 12 interactive turns at exactly 40 produced 0 tool_search, 0
+        tool_describe, 0 bounds refusals, 0 guardrail warnings. Every unit of damage sits
+        in the <=10 bucket (44 turns: 5.00 searches/turn, 52 refusals), which is the
+        task-envelope path where the cap is irrelevant. And the falsifiable harm test
+        comes back clean: across the window NOT ONE turn called a tool that existed in the
+        catalog and had been dropped by the cap. The 5 unknown-tool events name
+        memory_search, scout, gmail, gmail_assist, tool_call — none of which is registered.
+      stability_and_future_proof: >-
+        YES. 39 of 79 tools are removed on every budgeted turn; `clarify` was evicted on a
+        majority of cap-bound interactive turns and `delegate_task` 765 times; search +
+        describe together are ~25% of all tool dispatches, a round-trip paid to fetch a
+        242-token schema into a window that is 96% empty.
+      RESOLVED_BY_EVIDENCE_killer_and_improvement_win_on_the_ITEM: >-
+        The harm test decides it. A cost that never once produced a failed or blocked turn
+        is not a capability defect, and 794 tool_search calls are not evidence of a cap
+        problem when the cap-bound turns are precisely the ones that never call it. The
+        cap does not need to move.
+        BUT STABILITY AND FUTURE-PROOF ARE RIGHT ABOUT THE MECHANISM, and their evidence is
+        kept: what is actually being cut, on 70 of 77 tools, is decided BY THE ALPHABET.
+        That is defect D below. It is not an argument for a different cap VALUE — it is an
+        argument that the value is not the lever, which is the one thing all four lenses
+        ended up agreeing on from opposite directions.
+    FOUR_DEFECTS_THE_MEASUREMENT_EXPOSED_none_of_which_the_item_was_scoped_to_see: >-
+      Each was found independently by two or more lenses and then verified directly rather
+      than taken on report.
+        A. A SECOND CAP THE OPERATOR'S CONFIG CANNOT REACH. `_DEFAULT_CAP = 36`
+           (tools/_infra/presentation.py:63) backs `PresentationConfig.cap` (:142), and all
+           three `ToolPresentation()` construction sites in registry.py (498, 514, 591)
+           pass NO config — so `select()` is pinned to 36 while the operator's
+           `tool_count_cap` reaches only the budgeted path. MEASURED LIVE: 80 turns
+           presented exactly 36 tools (46 of them interactive) while the configured cap was
+           30 and then 40. No other path can produce 36. The settings docstring tells the
+           operator to "lower it (e.g. 12-18) for weak/quantized models"; on every turn
+           through select() that instruction is simply false. Failure modes 1 and 3 at once.
+        B. THE ENVELOPE PATH TRUNCATES WITH NO LOG LINE AT ALL. presentation.py:184-192
+           early-returns `planned[:budget]` BEFORE both the entry log (:196) and the drop
+           log (:263). Confirmed by absence: `[presentation] select: eligible tools NOT
+           presented` fired ZERO times in 8 days against 955 from to_provider_schema. A cut
+           with no witness, on a shipping feature.
+        C. THE EVICTION EVIDENCE IS STRUCTURALLY BLIND TO HALF THE CATALOG. `dropped[:20]`
+           (registry.py:577) preserves rank order, and rank order is alphabetical for the
+           tools that carry no score — so the 20 names emitted are a fixed alphabetical
+           prefix. `dropped_truncated: true` on 178 of 178 records today; it has never once
+           been false. Names that CANNOT appear in the log when dropped include
+           send_message, session_search, shell, task_status, todo, transcripts, tts,
+           undo_write, update_plan, run_tests, web_search and objective. This programme has
+           been reading that field as evidence all week.
+        D. `presentation_priority` IS SET ON 8 OF 77 TOOLS AND ALL 8 ARE BROWSER TOOLS.
+           Verified in-process: browser_snapshot 100, browser_type/navigate/click 90,
+           wait_for/scroll/extract 70, screenshot 60; the other 69 are 0. The rank key is
+           (-usage_score, -declared_priority, name), so for 69 of 77 it collapses to the
+           ALPHABET — and `browser_` sorts near the front. REPRODUCED COLD-START WITH THE
+           REAL REGISTRY: at cap 40 the presented set is 18 guaranteed + 22 discretionary,
+           of which 20 of 22 are browser_*, and the dropped 37 include clarify,
+           send_message, delegate_task, web_search, search_files, objective, execute_code,
+           process, todo, update_plan, edit, git, run_tests, read_logs and session_search.
+           ESC-9's own comment says the alphabet collapse "is how a browser owl lost the
+           tools that let it see and type" — it was fixed for the browser family ONLY.
+           The rescue signal is nearly empty: 220 of 233 schema builds scored <=7 tools.
+    what_ships_in_this_item_and_what_does_NOT: >-
+      A, B and C ship: A is the operator's own lever failing to reach a live path, and B
+      and C are pure instrument repair that changes no presented set — the same kind of fix
+      D05.4 was, and refusing to make them while writing "verified" into the record is the
+      exact dishonesty this programme exists to prevent.
+      D DOES NOT SHIP. Choosing which tools deserve priority changes what the model sees on
+      every cold-start turn; that is product intent, not a defect with an obvious repair.
+      ESC-36.
+    routed_to_operator: [ESC-35, ESC-36]
   WHERE_THIS_SESSION_ENDED_2026_08_21:
     headline: >-
       D05.4 is at validate:partial / document:partial and CANNOT reach done without
@@ -1824,6 +1944,107 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-36-the-presented-set-is-chosen-by-the-ALPHABET-and-only-browser-tools-escape-it
+    raised: 2026-08-22
+    question: >-
+      `presentation_priority` is declared on 8 of 77 tools and ALL EIGHT ARE BROWSER TOOLS.
+      For the other 69 the rank key collapses to the alphabet, so what the cap cuts is
+      decided by spelling. Which tools should carry a declared priority — and should
+      `clarify` and `send_message` be guaranteed rather than discretionary? I will not pick:
+      it changes what the model sees on every cold-start turn.
+    why_evidence_cannot_settle_it: >-
+      Evidence settles that the CURRENT ordering is accidental; it cannot settle what the
+      RIGHT ordering is. That is a claim about what this assistant is for. Ranking
+      `send_message` above `browser_scroll` is a product judgement about whether the
+      platform is primarily a browser automator or primarily a correspondent, and the
+      answer determines the cold-start behaviour of every new owl. It is also a live
+      user-facing change to the model's roster, which is yours by standing rule.
+    what_was_measured_2026_08_22: >-
+      Verified in-process against the real registry, not read off a file. Exactly 8 tools
+      carry a non-zero `presentation_priority`: browser_snapshot 100, browser_type /
+      browser_navigate / browser_click 90, browser_wait_for / browser_scroll /
+      browser_extract 70, browser_screenshot 60. The remaining 69 are 0.
+      `rank_candidates` sorts on (-usage_score, -declared_priority, name)
+      (tools/_infra/presentation.py:359-362), so for 69 of 77 the tie-break IS the alphabet
+      and `browser_` sorts near the front.
+      REPRODUCED AT COLD START (no usage history, cap 40): the presented set is 18
+      guaranteed + 22 discretionary, and 20 OF THE 22 ARE `browser_*`. The 37 dropped
+      include `clarify`, `send_message`, `delegate_task`, `web_search`, `search_files`,
+      `objective`, `execute_code`, `process`, `todo`, `update_plan`, `edit`, `git`,
+      `run_tests`, `read_logs` and `session_search`.
+      The signal that is supposed to rescue this is nearly empty: 220 of 233 schema builds
+      scored 7 or fewer tools.
+    this_is_ESC_9_recurring_on_the_path_it_was_never_applied_to: >-
+      ESC-9's own comment at presentation.py:317-321 says the middle term was added because
+      without it "the key collapsed to the alphabet whenever an owl had no usage history,
+      which is how a browser owl lost the tools that let it see and type". The fix was
+      real — and it was applied by giving priorities to the browser family only. Every
+      other tool still lives under the defect ESC-9 describes.
+    the_sharpest_single_instance: >-
+      `_DEFAULT_ALWAYS` gained APPEAL_TOOLS on 2026-08-22 under the stated principle "an
+      agent must always be able to ASK for what it lacks" — but APPEAL_TOOLS is
+      {owl_build, owls_list}. The ability to ask for a new OWL is guaranteed; the ability
+      to ask the USER (`clarify`) is discretionary, and is evicted on the majority of
+      cap-bound interactive turns. That comment's own closing line is "fixing one and
+      calling it done is exactly how this recurred."
+    the_recommendation: >-
+      Do not hand-rank 77 tools — that is a constant that will rot exactly like the eight
+      lockstep cap bumps did. Instead promote `clarify` into the guaranteed set beside the
+      existing appeal tools (it is the same principle, one addressee over), and make the
+      tie-break for unscored tools something other than the alphabet — the tool's own
+      toolset_group ordering, or a declared band rather than a per-tool integer. Then the
+      cap's VALUE stops mattering, which is what all four dissenting lenses converged on.
+    blocked_until_answered: >-
+      Nothing in D05.8, which closes on the count question. This is the reason the count
+      question turned out to be the wrong axis, so it is recorded where it will be found.
+  - id: ESC-35-a-COUNT-cannot-express-what-the-cap-is-for
+    raised: 2026-08-22
+    question: >-
+      `tool_count_cap` justifies itself with a claim about the MODEL — "weak/quantized
+      models derail when offered too many tools" (pipeline/steps/execute.py:1377-1379) —
+      and is implemented as a bare integer in the operator's YAML. Should the size of the
+      presented set become window-relative (the shape the reference platform uses), with
+      the count surviving only as an opt-out ceiling?
+    why_evidence_cannot_settle_it: >-
+      Evidence says the current value costs nothing TODAY and that the mechanism will not
+      survive tomorrow. It cannot say which risk you would rather carry. Changing the
+      rule changes the model's roster on every turn for every user, and "how exposed do
+      you want to be to a catalog that only grows" is an appetite question.
+    what_the_evidence_DOES_say_2026_08_22: >-
+      FOR LEAVING IT: the harm test is clean. Not one turn in 8 days called a tool that
+      existed in the catalog and had been dropped by the cap; the 12 interactive turns
+      where the cap bound produced 0 searches, 0 refusals and 0 guardrail warnings.
+      AGAINST LEAVING IT: the catalog is append-only and the presented count is flat.
+      Simulated through the real ranker — at 77 tools 37 are unreachable (48%), at 150 it
+      is 110 (73%), at 300 it is 260 (87%) — and the presented count never moves off 40.
+      `mcp/client.py:235` registers arbitrary remote tools into the same registry with no
+      count bound, and D16.1 -> D16.3 -> D04.1 is the expedited chain that turns that on.
+      `registry.unregister` has exactly ONE caller in src/ (tool_build deleting its own
+      tool), so there is no usage decay at all — failure mode 4, on the catalog itself.
+      AND THE CAP ALREADY DRIFTED ONCE: presentation.py:34-62 is a ledger of EIGHT
+      separate "cap bumped by 1 in lockstep" comments — a ratchet maintained by human
+      discipline, which is how `_DEFAULT_CAP` reached 36 while `tool_count_cap` went to 40.
+    the_seam_already_exists_which_is_why_this_is_worth_asking_now: >-
+      `resolve_no_progress_threshold(model_window)` (pipeline/progress_tracker.py:19) is
+      the platform's existing shape for exactly this — "capability-probed (reads the
+      resolved window), never pinned to a host" — with three consumers already riding
+      LEAN_WINDOW_THRESHOLD. `tool_count_cap` is the one model-sensitivity knob that does
+      not, and the plumbing is one argument: execute.py:1461-1463 already builds
+      `{"window": _window, ..., "max_tools": _max_tools}` in a single dict literal.
+      `resolve_tool_count_cap` simply never asked for the window sitting next to it.
+    a_smaller_fact_worth_your_attention_separately: >-
+      `tool_count_cap` declares `hot_reload: True`, but the only `presented_tools.clear()`
+      in src/ is skills/store.py:431 — no config-reload path invalidates the memo. So the
+      30 -> 40 change took effect only for sessions started afterwards, and nothing said
+      so. There is precedent: 9d26e664, "auto_restart.delay_minutes said hot_reload:True
+      and was not."
+    the_recommendation: >-
+      Window-relative, with `tool_count_cap` demoted to an opt-out ceiling, and only after
+      ESC-36 — because re-sizing a set that is chosen by the alphabet just changes which
+      letters survive. Order matters more than either change.
+    blocked_until_answered: >-
+      Nothing today. D05.8 closes on the count question either way; this exists so closing
+      it does not read as "the mechanism was examined and endorsed".
   - id: ESC-34-a-blocked-owl-is-shown-an-escape-hatch-that-does-not-open
     raised: 2026-08-22
     question: >-
