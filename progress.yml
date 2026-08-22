@@ -2397,6 +2397,37 @@ current:
   ESCALATIONS:
   - id: ESC-42-the-platforms-self-reports-are-dropped-and-recorded-as-successes
     raised: 2026-08-22
+    THE_UNBLOCKED_HALF_SHIPPED_AND_IS_VALIDATED_LIVE_2026_08_22_T23_52Z: >-
+      Commit a4555725. When a job attempts ZERO channels the body is now persisted to the
+      undelivered outbox instead of being discarded. Rollup, return value and the success
+      mapping are UNTOUCHED — the semantic half below is still yours.
+      THE RESTART WAS VERIFIED, NOT ASSUMED: last src write 23:19:19Z, core boot 23:20:22Z,
+      63 seconds later.
+      LIVE EVIDENCE WITH A REAL DENOMINATOR. Since that boot there were 3
+      `deliver_for_job: exit` records — 2 `delivered` and 1 `undeliverable`. That single
+      undeliverable one produced the new WARNING at 23:20:22.455Z
+      (`rollover_summary-d6dd5c3d`, category `job_failed`), and the outbox now reads
+      `no_deliverer: 1` against `transport_failed: 167`. Before the fix that first count was
+      ZERO — I measured 167 rows, all transport_failed, earlier the same day. One
+      opportunity, one body saved.
+    WHAT_THE_RESCUED_BODY_TURNED_OUT_TO_BE_which_is_the_best_argument_for_the_fix: >-
+      It was a FAILURE ALERT. The same job, `rollover_summary-d6dd5c3d`, failed 20ms earlier
+      with "malformed job: session_key and ended_conversation_id are required" (mined 0) and
+      then hit "max retries reached — one-shot marked permanently failed" after 3 retries.
+      So the platform tried to tell someone that a job had permanently failed, had no
+      channel to say it on, and until this fix that alert was discarded while the delivery
+      was recorded a success. The very first body the seam caught was a report of something
+      going wrong.
+    THREE_ERRORS_SINCE_BOOT_and_NONE_IS_MINE_stated_rather_than_glossed: >-
+      (1) rollover_summary.execute: exit — failed, "malformed job: session_key and
+      ended_conversation_id are required". (2) the same job exhausting 3 retries. Those two
+      are a PRE-EXISTING defect in the rollover_summary job's own arguments and are
+      recorded here as a new observation, not fixed — 32 rollover_summary deliveries were
+      among the 40 dropped bodies, so this job is worth its own look.
+      (3) health_sweep UNHEALTHY with down=["provider:NeraAiRaw","provider_registry"] —
+      the single backend down again, the same shape as the 2026-08-20 outage (14,898
+      circuit-open skips). Also not mine, and it is the standing single-provider exposure
+      already recorded under ESC-41's evidence.
     question: >-
       Jobs whose entire purpose is telling you what the platform did or learned are being
       discarded and logged as SUCCEEDED. Should `job_success_for_rollup` stop mapping
