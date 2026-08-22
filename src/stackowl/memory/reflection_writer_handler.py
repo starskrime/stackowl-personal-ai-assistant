@@ -35,6 +35,7 @@ from stackowl.memory.critic_scorer_handler import CriticScorerHandler
 from stackowl.memory.outcome_store import TaskOutcome
 from stackowl.memory.reflection_prompt import (
     ReflectionPromptBuilder,
+    describe_parse_failure,
     parse_reflection_response,
 )
 from stackowl.memory.reflection_store import ReflectionStore
@@ -371,11 +372,25 @@ class ReflectionWriterHandler(JobHandler):
         # 2. DECISION (cont.) — parse
         parsed = parse_reflection_response(result.content)
         if parsed is None:
+            # D09.1 — SAY WHY. `raw_preview` alone could not: measured over the
+            # retained 8-day window, 50 of 51 failure records carried a preview of
+            # EXACTLY 200 characters — every one truncated at this cap — and 49
+            # showed `{"summary": "..."` cut off mid-sentence. A reflection's
+            # summary alone runs past 200 chars, so the second required key is
+            # always beyond the window and every response looks identical here.
+            # Three separate reviewers read those previews as proof that
+            # `suggested_strategy` was missing and proposed relaxing the parser;
+            # on this field that was a guess, because it cannot tell "key absent"
+            # from "key past the cap" from "model output truncated". Same defect as
+            # D05.8's `dropped[:20]`. The preview stays — it is still the fastest
+            # way to eyeball a weird response — but the shape now answers the
+            # question a fix would need.
             log.memory.warning(
                 "[reflection] compute_reflection: could not parse response — skipping",
                 extra={"_fields": {
                     "outcome_id": outcome.outcome_id,
                     "raw_preview": result.content[:200],
+                    **describe_parse_failure(result.content),
                 }},
             )
             return None
