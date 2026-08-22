@@ -2017,6 +2017,25 @@ current:
       to ask the USER (`clarify`) is discretionary, and is evicted on the majority of
       cap-bound interactive turns. That comment's own closing line is "fixing one and
       calling it done is exactly how this recurred."
+    THE_SHARPEST_LIVE_INSTANCE_measured_2026_08_22_T17_45Z: >-
+      The self-heal BAN path hands a retry a toolset chosen by spelling, and this is not a
+      thought experiment — it is 80 measured turns.
+      When a capability has already failed a goal, execute.py:1345-1350 builds
+      `all_names - banned` (75-78 names) and routes it through select()'s `restrict_to`
+      branch, which sorts `planned` BY NAME and cuts at the cap. So the retry — the moment
+      the platform most needs the right tools — receives the ALPHABETICALLY FIRST 36 of the
+      catalog and loses roughly 41, historically with no log line at any level.
+      MEASURED: 81 traces carry `banned capabilities excluded from the presented set`, its
+      own `presented` field reads 75-78 going in, and all 71 of the 36-tool turns that can
+      be joined to a trace carry it. Turns with no ban never produce 36.
+      D05.8 shipped the two halves that do not need your answer — the cut is now logged and
+      cuts at the configured cap rather than a hidden 36. What it does NOT fix is that the
+      41 survivors are chosen by the alphabet, which is this escalation.
+      A NARROWER OPTION EXISTS AND IS WORTH YOUR ATTENTION SEPARATELY: the ban path could
+      route through the BUDGETED branch, which already ranks by measured per-owl usage,
+      instead of the envelope branch, which sorts by name. That would give a retry the tools
+      the owl actually uses. It is a behaviour change on a self-heal path, so it is put here
+      rather than taken.
     the_recommendation: >-
       Do not hand-rank 77 tools — that is a constant that will rot exactly like the eight
       lockstep cap bumps did. Instead promote `clarify` into the guaranteed set beside the
@@ -12556,6 +12575,49 @@ items:
         STILL OPEN, and this is a better statement of why than "needs traffic".
       I2_still_has_ZERO: >-
         It needs an envelope WIDER than the cap. The one that ran fitted. 0 over 0.
+    A_CORRECTION_TO_MY_OWN_RECORD_2026_08_22_T17_45Z:
+      what_I_wrote_and_what_is_actually_true: >-
+        I recorded that the 80 turns presenting exactly 36 tools were "the planned envelope
+        path saturating" and that "no other path can produce 36". The MECHANISM was right —
+        it IS select()'s restrict_to branch cutting at _DEFAULT_CAP, 4 always_present + 32
+        planned — but the TRIGGER was wrong, and the real one matters more.
+      the_planner_could_never_have_caused_it: >-
+        MEASURED across all eight retained logs: 104 `[planner] plan: envelope set` events,
+        sizes 3 (x51), 4 (x29), 5 (x19), 6 (x3), 7 (x2). THE LARGEST PLAN EVER MADE IS SEVEN
+        TOOLS. A plan of 7 presents 11, not 36. The planner has never come within a factor
+        of five of the cap.
+      the_ACTUAL_trigger_is_the_self_heal_BAN_path: >-
+        execute.py:1345-1350. When `state.banned_capabilities` is non-empty — a capability
+        that already failed this goal — `_restrict_to_for_turn` builds `all_names - banned`
+        and assigns it to `restrict_to`, deliberately, because its docstring says a
+        restriction "rides the existing non-memoized restrict_to branch". That set is 75-78
+        names. It then hits a branch designed for a SMALL plan and is cut to 36.
+        CORRELATION IS TOTAL: 81 traces carry the `banned capabilities excluded` line, its
+        own `presented` field reads 75-78 going in, and ALL 71 of the 36-turns that can be
+        joined to a trace carry it. Turns with no ban never produce 36.
+      why_this_makes_the_shipped_FIX_matter_MORE_not_less: >-
+        The silent cut (defect B) was not a latent envelope edge case. It fired on every
+        self-heal retry that had banned a capability — about ten a day — and each one lost
+        roughly FORTY-ONE tools with no log line at any level. A retry is the moment the
+        platform most needs the right toolset, and it was the moment it silently got the
+        alphabetically-first 36. After the fix those turns cut at 40 instead of 36 and emit
+        a record naming every tool they lost.
+      and_it_makes_ESC_36_sharper: >-
+        The 41 tools are chosen BY THE ALPHABET, because select()'s restrict_to branch sorts
+        `planned` by name. So the self-heal ban path — which exists to make a retry more
+        likely to succeed — hands the retry a toolset picked by spelling. That is ESC-36
+        with a named live trigger and a measured cost, and it is recorded there.
+      not_yet_exercised_live: >-
+        ZERO banned-capability turns since the 16:12:35Z boot, so the corrected path has had
+        no production opportunity. I1 and I2 remain OPEN and now have a NAMED trigger to
+        watch for instead of "an envelope wider than the cap", which the planner will never
+        produce.
+      how_the_error_happened_because_the_shape_repeats: >-
+        `restrict_to` has TWO producers and I checked only the one the parameter is named
+        after. The log line I reached for (`plan: envelope set`) belongs to the producer
+        that was innocent. Reading one producer of a value and calling it the cause is the
+        same partial-view mistake this programme has now made several times; the fix is to
+        grep for every assignment to the variable, not for the feature it is named after.
     VALIDATE_2026_08_22:
       status: "PARTIAL — I3 CLOSED live with a real contrast; I1 and I2 OPEN with their denominators printed."
       the_restart_was_verified_not_assumed: >-
