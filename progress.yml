@@ -380,6 +380,93 @@ current:
       "does the learning we already do help?" before "how do we do it sooner", and the
       instrument for that already exists and merely needs reading.
     routed_to_operator: [ESC-40]
+  D09_1_BRAINSTORM_PANEL_2026_08_22:
+    method: >-
+      Six lenses in parallel. Every load-bearing claim was re-checked by me, and doing that
+      corrected THREE lens claims and ONE of my own escalations. 25 questions routed.
+    ALL_SIX_LENSES_REJECTED_THE_FORK_AS_SPECIFIED: >-
+      Not one argued to adopt a per-turn daemon thread. Three rejected it specifically as a
+      SECOND EXECUTION ENGINE under Bakir's 2026-08-17 standing rule — the tree has already
+      paid for four, and `job_queue` still has zero references in src/. The existing turn is
+      ALREADY a durable row (pipeline/durable/turn_task.py) and DurableTask already carries
+      parent_task_id, depends_on, trigger_kind, max_attempts, lease_expires_at and
+      idempotency_key. A review is an `enqueue()` call, not an engine.
+    THE_REFERENCES_OWN_TRIGGER_IS_NOT_PER_TURN_and_the_map_overstates_it: >-
+      `_memory_nudge_interval = 10` and the review fires only when turns-since >= 10; the
+      skill nudge is the same. And `memory_enabled` DEFAULTS TO FALSE. So the reference
+      fires roughly 1 turn in 10, opt-in — not "after a turn" as the map entry says. The map
+      line should be corrected regardless of the verdict.
+    THE_ECONOMIC_PREMISE_IS_VOID_ON_THIS_DEPLOYMENT: >-
+      The map's stated advantage is that the fork "inherits the parent's cached system
+      prompt so it hits the same prefix cache". MEASURED: `cached_input_tokens` is 0 on
+      13,398 of 13,398 window calls and 0 of 104,899 ALL-TIME. There is no prompt cache
+      here. The fork's central economy buys exactly zero.
+      And there is one provider — `provider_count: 1`, 13,399/13,399 cost rows on one model,
+      the gateway itself saying "every stronger tier resolves to the SAME provider and model"
+      182 times. On 2026-08-20 that single backend produced 14,898 circuit-open skips and
+      777 floored turns. A per-turn fork feeds the same breaker that gates the user's reply.
+    THE_CAPABILITY_ALREADY_EXISTS_AND_IS_NEVER_USED_which_reframes_the_item: >-
+      `tools/knowledge/reflect_now.py` is an in-turn wrapper around the SAME
+      ReflectionWriterHandler, built explicitly "so it can learn from a just-finished
+      sub-task instead of waiting for the nightly cron". MEASURED OVER 8 DAYS: reflect_now
+      0 calls. synthesize_skills 0. evolve_now 0. All three sit in the GUARANTEED base set —
+      presented on every single turn, costing schema tokens on every call — and not one has
+      been invoked. `note_applied_lesson`, by contrast, fired 69 times (0,0,0,0,0,12,22,35
+      by day — all in the last three days).
+      SO THE GAP IS NOT "we cannot learn during a turn". IT IS "the model never chooses to."
+      That is an argument FOR an automatic trigger and AGAINST calling the capability
+      MISSING — and it is a different item from the one the map wrote.
+    A_ROOT_CAUSE_I_SETTLED_BY_REPAIRING_THE_INSTRUMENT_FIRST: >-
+      THREE lenses independently read the 51 reflection parse-failures, saw 50 previews
+      beginning `{"summary": ...`, and concluded `suggested_strategy` was missing —
+      proposing a one-line relaxation of `required_keys`. I measured the field instead:
+      `raw_preview` is `content[:200]` and ALL 50 previews are exactly 200 chars, so the
+      second key is ALWAYS beyond the window and every response looks identical there.
+      Shipped `describe_parse_failure` (5dd33e89, a6e7f358) and four production records
+      later the answer is in, and it is BOTH modes:
+        json_not_object chars=691  json_error="Expecting ',' delimiter: line 1 column 310"
+        json_not_object chars=482  json_error="Expecting ',' delimiter: line 1 column 240"
+        json_not_object chars=502  (pre-decoder-error build)
+        json_object     chars=519  keys=["summary"]  missing=["suggested_strategy"]
+      THREE OF FOUR ARE MALFORMED JSON — "Expecting ',' delimiter" at a mid-string offset is
+      an unescaped double-quote inside a string value. ONE of four is the missing-key case.
+      So the reviewers' fix would have addressed a MINORITY of failures while appearing to
+      address all of them. Repairing the instrument before acting on a prefix is what
+      separated those, and it took one restart.
+    CONTRADICTION_is_the_scheduled_path_behind: >-
+      Stability: "the eligible backlog is 0 rows right now; the scheduled path is keeping up
+      completely; there is no latency deficit to close."
+      Measurement: "turn -> lesson injectable is p50 958s (16.0 min), p90 2,755s (45.9 min),
+      max 2.2h; only 0.5% land within a minute."
+      RESOLVED — BOTH ARE TRUE AND THEY ANSWER DIFFERENT QUESTIONS. The queue drains because
+      a 15-minute cron drains it; the LATENCY is the wait for that cron, not a backlog. So
+      "keeping up" is about throughput and "16 minutes" is about freshness. The item is about
+      freshness, so Measurement's number is the relevant one — and the cheap lever is the
+      cron interval and `_DEFAULT_BATCH_LIMIT = 10` (saturated on 22.7% of runs), not a fork.
+    CONTRADICTION_how_should_X3_resolve: >-
+      Future-proof: COMPOSE — one engine, two triggers (schedule + a per-turn task row).
+      Stability: REPLACE — the scheduled miner must remain the SINGLE writer, because the two
+      stores resolve collisions in OPPOSITE directions: `reflections` is UNIQUE(trace_id) with
+      DO NOTHING (first writer wins) while `lessons` upserts on
+      lesson_id="reflection:<trace_id>" with DO UPDATE (last writer wins). Two producers on
+      one turn would leave the two stores permanently disagreeing, and the fork would also
+      STARVE the miner, because `reflections` IS the miner's watermark.
+      NOT RESOLVED BY EVIDENCE — both readings fit the same facts and the choice is a design
+      decision. Escalated as part of ESC-41. VERIFIED BY ME: make_lesson_id is
+      f"{source_type}:{source_ref}" and lessons_store does ON CONFLICT(lesson_id) DO UPDATE.
+    OTHER_DEFECTS_THE_MEASUREMENT_EXPOSED_recorded_not_acted_on: >-
+      * FailureOutcomeMiner ran 243 times over 8 days, scanned a 2,000-row cap EVERY run,
+        formed 1,682 clusters and wrote ZERO skills. A scheduled learning path that produces
+        nothing, and nothing noticed. (Round 0's "0 log lines" for it was MY error — it logs
+        under `[incident] miner.*`, a third string-match artifact this session.)
+      * 99 orphan lessons (source_type=reflection with no surviving reflections row) against
+        1 reflection with no lesson. Something prunes reflections; nothing prunes lessons.
+        `lessons_store.delete()` has no caller from any command or tool.
+      * The reflection prompt truncates input_text and response_text at 2,000 chars each;
+        76.8% of reflected turns are clipped and 31.9% of available characters discarded.
+      * There is no read path and no forget path for lessons — no /lessons command, no tool.
+        Curated memory has both. Lessons reach 83% of turns.
+    routed_to_operator: [ESC-41, ESC-42]
   D08_4_LEFT_AT_6_OF_7_2026_08_22_T20_10Z:
     why: >-
       Everything except validate is done and pushed. All three guards have a ZERO
@@ -2308,6 +2395,100 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-42-the-platforms-self-reports-are-dropped-and-recorded-as-successes
+    raised: 2026-08-22
+    question: >-
+      Jobs whose entire purpose is telling you what the platform did or learned are being
+      discarded and logged as SUCCEEDED. Should `job_success_for_rollup` stop mapping
+      "undeliverable" to True when ZERO channels were even attempted, and should the NACK
+      path write a row when the undeliverable tuple is empty? Both change delivery
+      semantics, so I am not taking them.
+    why_evidence_cannot_settle_it: >-
+      The mapping is DELIBERATE and documented: proactive_job.py:323-336 says "an
+      unresolvable target is undeliverable, which a retry can't fix", and that reasoning is
+      sound for its stated case. What it does not cover is the case where nothing was
+      attempted because nothing was CONFIGURED — which is a misconfiguration, not an
+      unresolvable target. Distinguishing those changes what the scheduler retries and what
+      the operator sees, so it is a decision rather than a repair.
+    what_was_measured_2026_08_22: >-
+      `morning_brief-15904936` has target_channels NULL and target_addresses NULL, while
+      `check_in-df94ceab`, which delivers fine, has ["telegram"] and {"telegram":72055773}.
+      Telegram itself is healthy — 199 canary deliveries rolled up "delivered" in the same
+      window. With no channels resolved, deliver_for_job returns
+      rollup="undeliverable", per_channel={}, undeliverable=[].
+      THE BODY IS THEN DISCARDED: the PA5(b) NACK write is `for channel in undeliverable:`
+      (proactive_job.py:206) and that tuple is EMPTY, so nothing is written. Confirmed
+      against the store: 167 undelivered_outbox rows, ALL reason='transport_failed', ZERO
+      containing lessons_effect, zero with a no-recipient reason.
+      AND THE JOB IS RECORDED A SUCCESS: job_success_for_rollup maps "undeliverable" -> True.
+      No retry, no incident, no self-heal.
+      BLAST RADIUS over the window: 40 drops of exactly this shape — 32 rollover_summary,
+      7 morning_brief, 1 skill_synthesizer.
+    why_this_is_the_sharpest_thing_on_the_board: >-
+      It is this platform's own loop contract broken in one line. CLAUDE.md: "A task is
+      complete when its outcome reached its DESTINATION, not when the function returned."
+      Here the outcome reached nothing and the function returned True.
+      It is also what makes ESC-40 unanswerable: the lessons_effect line has been computed
+      daily for 14 days and has never once reached you, so the decision that escalation asks
+      for cannot be made from anything you have seen.
+    the_recommendation: >-
+      Ship the NARROW half now and escalate only the semantic half. The narrow half
+      contradicts nothing: when the undeliverable tuple is EMPTY and per_channel is empty,
+      write one undelivered_outbox row before returning, so the body survives — the
+      assemble-time banner reader already exists and would put it in front of you on your
+      next inbound turn. That alone un-drops 40 bodies including 32 rollover summaries.
+      The semantic half is yours: should a job that attempted zero channels be a success?
+      I recommend NO — but it changes retry behaviour, so it is asked.
+    blocked_until_answered: >-
+      The success mapping. NOT blocked: writing the NACK row so nothing is silently
+      discarded, and fixing morning_brief's NULL target_channels.
+  - id: ESC-41-D09.1-every-lens-rejected-the-fork-so-what-is-the-item-now
+    raised: 2026-08-22
+    question: >-
+      All six lenses rejected a per-turn fork. Three rejected it as a SECOND ENGINE under
+      your 2026-08-17 rule. So: does D09.1 re-scope to a task ROW on the existing durable
+      loop, does it drop to P3 behind D09.2 (the review PROMPT), and how does X3 resolve —
+      compose or replace? I will not pick any of the three.
+    why_evidence_cannot_settle_it: >-
+      Evidence killed the fork-as-specified and cannot choose the replacement. Re-scoping,
+      re-prioritising and resolving a dedup target are all bookkeeping decisions about what
+      the programme does next, and one of them (X3) has two readings that fit the same
+      facts. The verdict MISSING is also a recorded decision that the measurement
+      contradicts, which your own rules say to escalate rather than reconcile.
+    what_the_evidence_DOES_settle: >-
+      * The reference does NOT fire per turn: nudge interval 10, and memory review defaults
+        OFF. The map entry overstates its own source and should be corrected either way.
+      * The stated economy is void here: cached_input_tokens is 0 on 104,899 of 104,899
+        records all-time. There is no prefix cache for a fork to inherit.
+      * One provider, no cascade; 14,898 circuit-open skips and 777 floored turns on
+        2026-08-20. A per-turn fork feeds the breaker that gates the user's next reply.
+      * The capability is NOT missing. `reflect_now` already reaches the same handler
+        in-turn — and was called ZERO times in 8 days, as were synthesize_skills and
+        evolve_now, all three of which sit in the guaranteed base set and are presented on
+        every turn. The gap is that the model never volunteers, not that it cannot.
+      * The freshness cost is p50 16 min / p90 46 min, and the cheap levers are the 15-minute
+        cron and _DEFAULT_BATCH_LIMIT=10 (saturated on 22.7% of runs) — not a new engine.
+    the_X3_disagreement_kept_rather_than_averaged: >-
+      COMPOSE (one engine, two triggers) vs REPLACE (the miner stays the single writer). The
+      replace case rests on a real collision I verified: `reflections` is UNIQUE(trace_id)
+      DO NOTHING (first writer wins) while `lessons` upserts lesson_id="reflection:<trace>"
+      DO UPDATE (last writer wins), so two producers leave the two stores disagreeing — and
+      a second writer would starve the miner, whose watermark IS the reflections table.
+      Compose is still reachable, but only if provenance and the id namespace are fixed
+      FIRST. That ordering is the one thing both sides agreed on.
+    the_recommendation: >-
+      RE-SCOPE, DEMOTE, and SEQUENCE. (1) Re-scope D09.1 from "fork" to "an automatic
+      per-turn TRIGGER as a task row on the existing durable loop" — no new engine, admission
+      -controlled at max_parallel=5, crash-recovered by lease. (2) Demote it behind D09.2 and
+      invert `D09.2.depends_on: [D09.1]`: the reference's value is in the review PROMPT, not
+      the thread, and the scheduled writer already makes the model call that prompt would
+      ride. (3) Before ANY second producer: record the producing path in lesson metadata,
+      widen the id namespace so the two cannot upsert each other, and give `lessons` a decay
+      leg. Those are the one-way doors and they are cheap only now.
+    blocked_until_answered: >-
+      D09.1's verdict, priority, and X3. NOT blocked and proceeding: the parse-failure root
+      cause is settled and its fix is ordinary work; correcting the map's per-turn claim is
+      a factual fix.
   - id: ESC-40-the-lesson-holdout-experiment-has-run-17-days-with-no-reader-and-its-answer-is-in
     raised: 2026-08-22
     CORRECTION_2026_08_22_T21_55Z_THIS_ESCALATIONS_PREMISE_WAS_WRONG: >-
@@ -14053,7 +14234,7 @@ items:
     blocks: [D09.2, D09.4]
     dedup_target: X3
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
