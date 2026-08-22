@@ -25,7 +25,12 @@ from __future__ import annotations
 
 from stackowl.scheduler.job import Job
 from stackowl.scheduler.owl_lifecycle import _job_id_for
-from stackowl.tools.scheduling.cron_helpers import find_owned_job
+from stackowl.tools.scheduling.cron_helpers import (
+    CREATED_BY_TAG,
+    count_owl_jobs,
+    filter_owl_jobs,
+    find_owned_job,
+)
 
 
 def _lifecycle_job(owl: str) -> Job:
@@ -38,6 +43,20 @@ def _lifecycle_job(owl: str) -> Job:
         next_run_at="2026-08-22T05:00:00+00:00",
         status="pending",
         params={"owl": owl},
+    )
+
+
+def _tool_job(owl: str) -> Job:
+    """A job the cron TOOL created — the only kind ownership used to recognise."""
+    return Job(
+        job_id=f"cron-{owl}-1",
+        handler_name="goal_execution",
+        schedule="every 2h",
+        idempotency_key=f"t-{owl}",
+        last_run_at=None,
+        next_run_at="2026-08-22T06:00:00+00:00",
+        status="pending",
+        params={"owl": owl, "created_by": CREATED_BY_TAG, "goal": "x"},
     )
 
 
@@ -77,3 +96,28 @@ def test_the_alias_does_NOT_bypass_the_OWNERSHIP_gate() -> None:
     # A different owl asking by name must get the same answer as for a missing job.
     assert find_owned_job(jobs, "syshealth", "someone_else") is None
     assert find_owned_job(jobs, "owl_lifecycle-syshealth", "someone_else") is None
+
+
+def test_what_an_owl_can_LIST_is_what_it_is_COUNTED_for() -> None:
+    """The two must never disagree — that disagreement was the defect.
+
+    `count_owl_jobs` carried its own inline copy of the ownership predicate. When
+    `_owns` learned that an owl's lifecycle job is its own, this did not, so a
+    scheduled owl would list three jobs and be told it had two. Nothing crashes;
+    the soft-cap nudge simply lies, and a budget that disagrees with the listing
+    is worse than no budget at all.
+
+    Pinned as an INVARIANT between the two functions rather than as a hardcoded
+    number, so it keeps holding whichever way ownership evolves next.
+    """
+    jobs = [
+        _lifecycle_job("syshealth"),
+        _tool_job("syshealth"),
+        _lifecycle_job("Brain"),
+        _tool_job("Brain"),
+    ]
+    for owl in ("syshealth", "Brain"):
+        assert count_owl_jobs(jobs, owl) == len(filter_owl_jobs(jobs, owl)), (
+            f"{owl} can list {len(filter_owl_jobs(jobs, owl))} jobs but is counted "
+            f"for {count_owl_jobs(jobs, owl)} — the soft cap contradicts the listing"
+        )

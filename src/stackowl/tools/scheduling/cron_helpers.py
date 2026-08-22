@@ -206,18 +206,26 @@ def job_summary(job: Job) -> dict[str, object]:
 
 
 def count_owl_jobs(jobs: list[Job], owl: str) -> int:
-    """Count active tool-created cron jobs owned by ``owl``.
+    """Count the active cron jobs owned by ``owl``.
 
-    A job counts when it was created by this tool (``params['created_by']``)
-    AND tagged with the caller owl (``params['owl']``). Used for the soft-cap
-    nudge — only the caller's own scheduled jobs count against their budget.
+    Used for the soft-cap nudge — only the caller's own scheduled jobs count
+    against their budget.
+
+    ASKS :func:`_owns` RATHER THAN RESTATING IT. This carried its own inline copy
+    of the ownership predicate, so when `_owns` learned that an owl's lifecycle
+    job is its own (2026-08-22) this did not, and the two disagreed: an owl would
+    LIST three jobs and be COUNTED for two. Two copies of one rule is the third of
+    this codebase's recurring shapes, and it reappeared inside the very function
+    that fixing the first copy was supposed to complete.
+
+    One consequence, deliberate: a scheduled owl's lifecycle job now counts toward
+    its soft cap. That is the honest reading — what you can list is what you are
+    counted for — and the cap is a nudge rather than an enforcement, so a count of
+    one higher costs nothing and a count that contradicts the listing costs trust.
     """
     count = 0
     for job in jobs:
-        if (
-            job.params.get("created_by") == CREATED_BY_TAG
-            and job.params.get("owl") == owl
-        ):
+        if _owns(job, owl):
             count += 1
     log.tool.debug(
         "cron_helpers.count_owl_jobs: exit",
