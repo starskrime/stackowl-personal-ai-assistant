@@ -314,9 +314,48 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  wave: 2
-  item: D05.8
-  stage: validate
+  wave: 4
+  item: D08.4
+  stage: brainstorm
+  WHY_current_MOVED_OFF_D05_8_2026_08_22_T17_50Z:
+    D05_8_is_6_of_7_and_its_last_stage_is_traffic_blocked: >-
+      Everything except validate is done and pushed. validate needs a `restrict_to` set
+      wider than the cap, whose only real producer is the self-heal BAN path, and ZERO
+      banned-capability turns have run since the 16:12:35Z boot. That is not something I
+      can make happen honestly, so the item is left at 6/7 under a standing watch in
+      designs/D05.8.md and the programme moves on — "keep working on everything that is not
+      blocked".
+    what_to_do_when_a_ban_turn_finally_runs: >-
+      Run the last three queries in designs/D05.8.md's Verification, taking the denominator
+      from `grep -c "banned capabilities excluded"` rather than from the planner's envelope
+      line. Pass is a non-zero ban count with zero turns presenting 36, and at least one
+      `planned envelope is wider` record whose `planned` exceeds its `presented`.
+  D08_4_ROUND_0_MEASUREMENT_2026_08_22:
+    item: 'D08.4 "Memory as prompt-injection surface" — verdict PARITY, track verify, P3, wave 4, order 25. All seven stages were not_started and the parity claim had never been checked.'
+    THE_SURFACE_IS_REAL_AND_UNDELIMITED: >-
+      pipeline/steps/assemble.py:430-458 builds the curated block as PLAIN PROSE with no
+      delimiter and no untrusted-content marker: `"What I know about the user:\n" +
+      user_block` and `"My own working notes:\n" + owl_block`. Whatever is in those files
+      is presented to the model as its own first-person knowledge.
+    live_volume: >-
+      `[pipeline] assemble: curated memory in prompt` fired 287 times TODAY carrying
+      blocks=2, chars=3410 for owl `secretary`. The content is re-sent on every turn, so
+      anything wrong in it is paid for 287 times a day and sits in the CACHED PREFIX.
+    the_store: >-
+      Markdown under ~/.stackowl/memory/: USER.md (1,255 bytes), secretary.md (2,147),
+      mailbutler.md (2,226), Collector.md, owl.md, agent.md, Brain.md, english_tutor.md,
+      sysdesign.md, sysfup.md — and BOTH falcon.md AND Falcon.md, a case collision that is
+      two files for one name.
+    the_writers: >-
+      tools/knowledge/memory.py (the MODEL-CALLABLE `memory` tool), memory/curated.py
+      itself, and commands/memory_command.py. So the model writes its own prompt.
+    panel: "Dispatched 2026-08-22T17:50Z as six parallel lenses. Findings recorded when they return."
+    the_question_the_panel_must_settle: >-
+      Not "is prose without a delimiter theoretically risky" — that is obvious and useless.
+      It is whether there is a REACHABLE chain from a third party's words to a later
+      prompt, what the platform's existing authz would let such an entry do, and whether any
+      defence would also break "memory that actually knows the user", which is a stated
+      pillar. A filter that rejects imperative text would reject "always reply in Turkish".
   WHERE_D05_8_STANDS_2026_08_22_T17_05Z:
     stages: "brainstorm/architect/implement/cleanup/test/document DONE. validate PARTIAL."
     the_verdict: >-
