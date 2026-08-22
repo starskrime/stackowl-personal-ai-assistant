@@ -1445,14 +1445,14 @@ async def _run_with_tools(
     # any CONVERSATION with two or more tool turns. Reports only — this never
     # changes what is sent.
     #
-    # D05.4 — `session_id` is what the audit compares on. A cached prefix lives on
+    # D05.4 — `conversation_id` is what the audit compares on. A cached prefix lives on
     # the conversation; `session_key` is the lane, which outlives many
     # conversations and is shared with runs that are not conversations (retry,
     # self-heal, goal execution, delegated children). Lane-keyed, 121 of 122
     # warnings over six days were comparisons across a boundary where no prefix
     # had ever been held.
     audit_tools_stability(
-        state.session_key, tool_schemas, owl=state.owl_name, session_id=state.session_id
+        state.session_key, tool_schemas, owl=state.owl_name, conversation_id=state.conversation_id
     )
     _tools_tokens = sum(_est_tokens(json.dumps(s)) for s in tool_schemas)
     log.engine.info(

@@ -19,7 +19,7 @@ transcript is destroyed by a rollover") was unfalsifiable until a transcript
 existed to preserve.
 
 MODEL. One ``conversations`` row per INCARNATION, whose ``id`` IS the
-``session_id``. That is not a shortcut: an incarnation is exactly "one run of one
+``conversation_id``. That is not a shortcut: an incarnation is exactly "one run of one
 lane", which is what a conversation row was always trying to describe. It makes
 the rollover boundary and the transcript boundary the same boundary by
 construction, so they cannot drift apart.
@@ -61,7 +61,7 @@ class TranscriptStore:
         self,
         *,
         session_key: str,
-        session_id: str,
+        conversation_id: str,
         owl_name: str,
         user_text: str,
         assistant_text: str | None,
@@ -79,11 +79,11 @@ class TranscriptStore:
         # 1. ENTRY
         log.memory.debug(
             "transcript.record_turn: entry",
-            extra={"_fields": {"session_key": session_key, "session_id": session_id,
+            extra={"_fields": {"session_key": session_key, "conversation_id": conversation_id,
                                "owl": owl_name, "has_assistant": assistant_text is not None,
                                "user_len": len(user_text or "")}},
         )
-        if not session_id:
+        if not conversation_id:
             # No incarnation means the turn never passed through ingress (a
             # scheduler handler, a parliament round). Those are not conversations
             # and must not invent one.
@@ -95,7 +95,7 @@ class TranscriptStore:
         if not user_text:
             log.memory.debug(
                 "transcript.record_turn: exit — nothing to record",
-                extra={"_fields": {"session_id": session_id}},
+                extra={"_fields": {"conversation_id": conversation_id}},
             )
             return 0
 
@@ -106,7 +106,7 @@ class TranscriptStore:
             rows.append((_ROLE_ASSISTANT, assistant_text))
         log.memory.debug(
             "transcript.record_turn: recording",
-            extra={"_fields": {"session_id": session_id, "rows": len(rows),
+            extra={"_fields": {"conversation_id": conversation_id, "rows": len(rows),
                                "floored": assistant_text is None}},
         )
 
@@ -120,7 +120,7 @@ class TranscriptStore:
             ON CONFLICT(id) DO UPDATE SET
                 message_count = conversations.message_count + excluded.message_count
             """,
-            (session_id, session_key, owl_name, stamp.isoformat(), len(rows),
+            (conversation_id, session_key, owl_name, stamp.isoformat(), len(rows),
              self._owner_id),
         )
         for role, content in rows:
@@ -130,14 +130,14 @@ class TranscriptStore:
                                       created_at, trace_id, owner_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (str(uuid.uuid4()), session_id, role, content, model,
+                (str(uuid.uuid4()), conversation_id, role, content, model,
                  stamp.isoformat(), trace_id, self._owner_id),
             )
 
         # 4. EXIT
         log.memory.info(
             "transcript.record_turn: exit",
-            extra={"_fields": {"session_key": session_key, "session_id": session_id,
+            extra={"_fields": {"session_key": session_key, "conversation_id": conversation_id,
                                "rows_written": len(rows)}},
         )
         return len(rows)

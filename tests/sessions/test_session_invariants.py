@@ -25,7 +25,7 @@ from stackowl.sessions import (
     build_session_key,
     is_shared_lane,
     new_entry,
-    new_session_id,
+    new_conversation_id,
     reset_notice,
     resolve,
     should_suspend_for_restart_loop,
@@ -100,11 +100,11 @@ def test_dm_is_never_shared_regardless_of_config() -> None:
 
 def test_i2_ids_are_unique_even_within_the_same_second() -> None:
     now = at(20, 12)
-    assert len({new_session_id(now) for _ in range(200)}) == 200
+    assert len({new_conversation_id(now) for _ in range(200)}) == 200
 
 
 def test_i2_id_is_time_sortable() -> None:
-    assert new_session_id(at(20, 9)) < new_session_id(at(20, 10))
+    assert new_conversation_id(at(20, 9)) < new_conversation_id(at(20, 10))
 
 
 # ---------------------------------------------------------------------------

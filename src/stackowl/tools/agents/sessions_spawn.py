@@ -235,7 +235,7 @@ class SessionsSpawnTool(Tool):
         sub_state = PipelineState(
             trace_id=trace_id or "sessions-spawn",
             session_key=lane,
-            session_id=incarnation,
+            conversation_id=incarnation,
             identity_key=identity or "",
             input_text=initial_task,
             channel=channel,

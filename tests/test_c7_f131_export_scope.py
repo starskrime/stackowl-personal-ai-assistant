@@ -10,16 +10,16 @@ SecurityError BEFORE any archive is written.
 No secret value is logged — we only assert on extracted archive members.
 """
 
-# PARLIAMENT KEEPS `session_id`, and that is deliberate rather than an oversight.
+# PARLIAMENT KEEPS `conversation_id`, and that is deliberate rather than an oversight.
 #
-# D01.7 slice 3a.1 renamed the CONVERSATION lane's session_id to session_key, and
-# these tests were swept along with it. Parliament's session_id is a different
+# D01.7 slice 3a.1 renamed the CONVERSATION lane's conversation_id to session_key, and
+# these tests were swept along with it. Parliament's conversation_id is a different
 # concept — the id of a DEBATE, not of a conversation lane — and it kept its name
 # on purpose; round_runner.py:175 makes the distinction explicit by passing
-# `session_key=session.session_id` when it hands a debate into the pipeline.
+# `session_key=session.conversation_id` when it hands a debate into the pipeline.
 #
 # Checked against production before changing anything: the live parliament_sessions
-# table has a session_id column and session_store.py queries session_id throughout.
+# table has a conversation_id column and session_store.py queries conversation_id throughout.
 # The code and schema agree; only these tests drifted.
 
 
@@ -66,7 +66,7 @@ async def _seed(db: Any) -> None:
     # parliament_sessions: a secret inside the rounds transcript JSON-text.
     await db.execute(
         "INSERT INTO parliament_sessions "
-        "(session_id, topic, owl_names, rounds, synthesis, status, started_at) "
+        "(conversation_id, topic, owl_names, rounds, synthesis, status, started_at) "
         "VALUES (?, ?, ?, ?, ?, 'complete', '2026-01-01T00:00:00+00:00')",
         (
             "ps1",
@@ -167,7 +167,7 @@ class TestExportFailsClosed:
         leaked = f"residual {_GITHUB} secret"
         await tmp_db.execute(
             "INSERT INTO parliament_sessions "
-            "(session_id, topic, owl_names, rounds, synthesis, status, started_at) "
+            "(conversation_id, topic, owl_names, rounds, synthesis, status, started_at) "
             "VALUES (?, ?, ?, ?, ?, 'complete', '2026-01-01T00:00:00+00:00')",
             ("psx", "t", json.dumps(["o"]), json.dumps([{"text": leaked}]), None),
         )

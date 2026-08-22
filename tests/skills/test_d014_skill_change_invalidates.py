@@ -29,7 +29,7 @@ RUN = "20260728_040000_d014bbbb"
 
 async def _freeze(db: DbPool, owl: str) -> None:
     await SessionPromptStore(db).save(
-        session_key=LANE, owl_name=owl, session_id=RUN,
+        session_key=LANE, owl_name=owl, conversation_id=RUN,
         prompt_text=f"frozen prompt for {owl}", model_window=None,
     )
 
@@ -55,8 +55,8 @@ async def test_toggling_a_skill_clears_every_frozen_prompt(tmp_db: DbPool) -> No
     await SkillIndexStore(tmp_db).set_enabled(skill_id, enabled=False)
 
     store = SessionPromptStore(tmp_db)
-    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
-    assert await store.load(session_key=LANE, owl_name="researcher", session_id=RUN) is None, (
+    assert await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN) is None
+    assert await store.load(session_key=LANE, owl_name="researcher", conversation_id=RUN) is None, (
         "a catalogue change must clear EVERY owl's prompt, not just one"
     )
 

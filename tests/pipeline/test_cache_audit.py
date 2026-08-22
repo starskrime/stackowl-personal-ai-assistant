@@ -49,10 +49,10 @@ def setup_function() -> None:
 def test_a_stable_tools_array_reports_nothing(caplog: Any) -> None:
     with caplog.at_level("WARNING"):
         audit_tools_stability(
-            "owl:secretary:telegram:dm:1", _schemas("shell", "memory"), session_id="s1"
+            "owl:secretary:telegram:dm:1", _schemas("shell", "memory"), conversation_id="s1"
         )
         audit_tools_stability(
-            "owl:secretary:telegram:dm:1", _schemas("shell", "memory"), session_id="s1"
+            "owl:secretary:telegram:dm:1", _schemas("shell", "memory"), conversation_id="s1"
         )
     assert [r for r in caplog.records if "tools array CHANGED" in r.message] == []
 
@@ -60,9 +60,9 @@ def test_a_stable_tools_array_reports_nothing(caplog: Any) -> None:
 def test_a_changed_tools_array_is_reported_once_it_changes(caplog: Any) -> None:
     with caplog.at_level("WARNING"):
         audit_tools_stability(
-            "owl:secretary:telegram:dm:1", _schemas("shell", "memory"), session_id="s1"
+            "owl:secretary:telegram:dm:1", _schemas("shell", "memory"), conversation_id="s1"
         )
-        audit_tools_stability("owl:secretary:telegram:dm:1", _schemas("shell"), session_id="s1")
+        audit_tools_stability("owl:secretary:telegram:dm:1", _schemas("shell"), conversation_id="s1")
     changed = [r for r in caplog.records if "tools array CHANGED" in r.message]
     assert len(changed) == 1
 
@@ -71,7 +71,7 @@ def test_the_first_turn_of_a_lane_is_not_a_change(caplog: Any) -> None:
     """There is nothing to have changed FROM. Reporting one would make every new
     conversation look like an invalidation."""
     with caplog.at_level("WARNING"):
-        audit_tools_stability("owl:secretary:telegram:dm:1", _schemas("shell"), session_id="s1")
+        audit_tools_stability("owl:secretary:telegram:dm:1", _schemas("shell"), conversation_id="s1")
     assert [r for r in caplog.records if "tools array CHANGED" in r.message] == []
 
 
@@ -84,17 +84,17 @@ def test_two_owls_on_one_lane_do_not_look_like_a_change(caplog: Any) -> None:
     keyed (session_key, owl_name).
 
     Keyed on the lane alone, this audit reported three correct prompts as three
-    violations, which is precisely what DEBT-21 says about grouping by session_id:
+    violations, which is precisely what DEBT-21 says about grouping by conversation_id:
     "three correct prompts read as three violations, so the item would be judged
     failed for behaving exactly as designed." An audit that cries wolf on every
     multi-owl lane trains its reader to ignore it.
     """
     with caplog.at_level("WARNING"):
         audit_tools_stability(
-            "incident-1", _schemas("shell", "memory"), owl="rca_gatherer", session_id="s1"
+            "incident-1", _schemas("shell", "memory"), owl="rca_gatherer", conversation_id="s1"
         )
-        audit_tools_stability("incident-1", _schemas("shell"), owl="hypothesis", session_id="s1")
-        audit_tools_stability("incident-1", _schemas("memory"), owl="verifier", session_id="s1")
+        audit_tools_stability("incident-1", _schemas("shell"), owl="hypothesis", conversation_id="s1")
+        audit_tools_stability("incident-1", _schemas("memory"), owl="verifier", conversation_id="s1")
     assert [r for r in caplog.records if "tools array CHANGED" in r.message] == []
 
 
@@ -102,10 +102,10 @@ def test_one_owl_changing_its_own_tools_is_still_reported(caplog: Any) -> None:
     """The other jaw of the vice: owl-scoping must not silence the real signal."""
     with caplog.at_level("WARNING"):
         audit_tools_stability(
-            "incident-1", _schemas("shell", "memory"), owl="rca_gatherer", session_id="s1"
+            "incident-1", _schemas("shell", "memory"), owl="rca_gatherer", conversation_id="s1"
         )
         audit_tools_stability(
-            "incident-1", _schemas("shell"), owl="rca_gatherer", session_id="s1"
+            "incident-1", _schemas("shell"), owl="rca_gatherer", conversation_id="s1"
         )
     changed = [r for r in caplog.records if "tools array CHANGED" in r.message]
     assert len(changed) == 1
@@ -123,16 +123,16 @@ def test_two_owls_on_one_lane_do_not_look_like_a_prompt_part_change(caplog: Any)
 
 def test_two_lanes_do_not_contaminate_each_other(caplog: Any) -> None:
     with caplog.at_level("WARNING"):
-        audit_tools_stability("lane-a", _schemas("shell"), session_id="sa")
-        audit_tools_stability("lane-b", _schemas("memory"), session_id="sb")
-        audit_tools_stability("lane-a", _schemas("shell"), session_id="sa")
+        audit_tools_stability("lane-a", _schemas("shell"), conversation_id="sa")
+        audit_tools_stability("lane-b", _schemas("memory"), conversation_id="sb")
+        audit_tools_stability("lane-a", _schemas("shell"), conversation_id="sa")
     assert [r for r in caplog.records if "tools array CHANGED" in r.message] == []
 
 
 def test_reordering_alone_counts_as_a_change() -> None:
     """Order is part of the cached bytes. A reordered array with identical
     members still invalidates position 0, so it must not be normalised away."""
-    audit_tools_stability("lane", _schemas("shell", "memory"), session_id="s1")
+    audit_tools_stability("lane", _schemas("shell", "memory"), conversation_id="s1")
     from stackowl.pipeline.cache_audit import tools_digest
 
     assert tools_digest(_schemas("shell", "memory")) != tools_digest(
@@ -147,7 +147,7 @@ def test_an_unhashable_schema_never_raises(caplog: Any) -> None:
 
     with caplog.at_level("ERROR"):
         audit_tools_stability(
-            "lane", [{"name": "x", "fn": _Unserialisable()}], session_id="s1"
+            "lane", [{"name": "x", "fn": _Unserialisable()}], conversation_id="s1"
         )  # must not raise
 
 
@@ -155,8 +155,8 @@ def test_an_empty_session_key_is_not_tracked(caplog: Any) -> None:
     """Background and utility calls legitimately have no lane. Bucketing them all
     under "" would report a change on every single one."""
     with caplog.at_level("WARNING"):
-        audit_tools_stability("", _schemas("shell"), session_id="s1")
-        audit_tools_stability("", _schemas("memory"), session_id="s1")
+        audit_tools_stability("", _schemas("shell"), conversation_id="s1")
+        audit_tools_stability("", _schemas("memory"), conversation_id="s1")
     assert [r for r in caplog.records if "tools array CHANGED" in r.message] != []
 
 
@@ -165,7 +165,7 @@ def test_the_tracker_is_bounded() -> None:
     from stackowl.pipeline.cache_audit import _LANE_CACHE_MAX, _tools_hashes
 
     for i in range(_LANE_CACHE_MAX + 50):
-        audit_tools_stability("lane", _schemas("shell"), session_id=f"s-{i}")
+        audit_tools_stability("lane", _schemas("shell"), conversation_id=f"s-{i}")
     assert len(_tools_hashes) <= _LANE_CACHE_MAX
 
 
@@ -178,7 +178,7 @@ def test_a_run_with_no_conversation_is_never_reported(caplog: Any) -> None:
     analyses wrong before it was noticed.
 
     A retry-queue run, a self-heal `-fix` turn, goal execution and a delegated
-    child all carry `session_id == ""` — they have a lane but no conversation, and
+    child all carry `conversation_id == ""` — they have a lane but no conversation, and
     each builds its own message list from scratch. There was never a previous turn
     of theirs to share a cached prefix with, so "position 0 invalidated this turn"
     is not merely noisy, it is FALSE.
@@ -194,15 +194,15 @@ def test_a_run_with_no_conversation_is_never_reported(caplog: Any) -> None:
 
 
 def test_a_new_conversation_on_one_lane_is_not_a_change(caplog: Any) -> None:
-    """A reset mints a new session_id (D01.7 I2) and the new conversation starts
+    """A reset mints a new conversation_id (D01.7 I2) and the new conversation starts
     with no cached prefix. Comparing its first array against the PREVIOUS
     conversation's reports an invalidation of a cache that was already gone.
 
-    9 of the 122 measured warnings were this, and every one named a session_id
+    9 of the 122 measured warnings were this, and every one named a conversation_id
     minted seconds earlier."""
     with caplog.at_level("WARNING"):
-        audit_tools_stability("lane-1", _schemas("shell", "memory"), session_id="first")
-        audit_tools_stability("lane-1", _schemas("web_fetch"), session_id="second")
+        audit_tools_stability("lane-1", _schemas("shell", "memory"), conversation_id="first")
+        audit_tools_stability("lane-1", _schemas("web_fetch"), conversation_id="second")
     assert [r for r in caplog.records if "tools array CHANGED" in r.message] == []
 
 
@@ -212,13 +212,13 @@ def test_a_change_names_what_entered_and_what_left(caplog: Any) -> None:
     two opaque hashes. A diagnostic that cannot answer its own question is a
     note."""
     with caplog.at_level("WARNING"):
-        audit_tools_stability("lane-1", _schemas("shell", "memory"), session_id="s1")
-        audit_tools_stability("lane-1", _schemas("shell", "web_fetch"), session_id="s1")
+        audit_tools_stability("lane-1", _schemas("shell", "memory"), conversation_id="s1")
+        audit_tools_stability("lane-1", _schemas("shell", "web_fetch"), conversation_id="s1")
     changed = [r for r in caplog.records if "tools array CHANGED" in r.message]
     assert len(changed) == 1
     assert changed[0]._fields["added"] == ["web_fetch"]
     assert changed[0]._fields["removed"] == ["memory"]
-    assert changed[0]._fields["session_id"] == "s1"
+    assert changed[0]._fields["conversation_id"] == "s1"
     assert changed[0]._fields["session_key"] == "lane-1"
 
 
@@ -227,8 +227,8 @@ def test_a_reorder_reports_an_empty_delta_rather_than_a_wrong_one(caplog: Any) -
     nothing entered or left. Empty on both sides is the honest answer and is the
     only thing that distinguishes a reorder from a membership change."""
     with caplog.at_level("WARNING"):
-        audit_tools_stability("lane-1", _schemas("shell", "memory"), session_id="s1")
-        audit_tools_stability("lane-1", _schemas("memory", "shell"), session_id="s1")
+        audit_tools_stability("lane-1", _schemas("shell", "memory"), conversation_id="s1")
+        audit_tools_stability("lane-1", _schemas("memory", "shell"), conversation_id="s1")
     changed = [r for r in caplog.records if "tools array CHANGED" in r.message]
     assert len(changed) == 1
     assert changed[0]._fields["added"] == []
@@ -252,10 +252,10 @@ def test_the_delta_reads_both_wire_dialects() -> None:
 def test_two_conversations_on_one_lane_do_not_contaminate_each_other(caplog: Any) -> None:
     """Two chats interleaved on one lane must not read as one oscillating array."""
     with caplog.at_level("WARNING"):
-        audit_tools_stability("lane-1", _schemas("shell"), session_id="a")
-        audit_tools_stability("lane-1", _schemas("memory"), session_id="b")
-        audit_tools_stability("lane-1", _schemas("shell"), session_id="a")
-        audit_tools_stability("lane-1", _schemas("memory"), session_id="b")
+        audit_tools_stability("lane-1", _schemas("shell"), conversation_id="a")
+        audit_tools_stability("lane-1", _schemas("memory"), conversation_id="b")
+        audit_tools_stability("lane-1", _schemas("shell"), conversation_id="a")
+        audit_tools_stability("lane-1", _schemas("memory"), conversation_id="b")
     assert [r for r in caplog.records if "tools array CHANGED" in r.message] == []
 
 

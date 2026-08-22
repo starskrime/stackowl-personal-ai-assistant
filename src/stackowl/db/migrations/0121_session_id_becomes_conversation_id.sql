@@ -1,0 +1,81 @@
+-- Migration 0121 — `session_id` becomes `conversation_id`, finishing what D01.7 started.
+--
+-- BAKIR, 2026-08-21: "i do not like how we have session_key and session_id. Lets
+-- keep only one which is correct."
+--
+-- MEASURED FIRST, because "keep only one" and "two facts exist" are different
+-- claims and only one of them survives contact with the data:
+--
+--   * `session_key` is the ADDRESS. It is what `resolve_send_target()` and
+--     `chat_id_from_session()` consume to answer "where do I deliver this", and
+--     it must outlive a reset or proactive delivery loses its recipient — the
+--     cross-delivery bug whose own guard says "a fabricated recipient IS the
+--     cross-delivery bug".
+--   * `session_id` is the CONVERSATION. Measured on 2026-08-21, ONE lane
+--     (owl:secretary:telegram:dm:72055773) carried 16 distinct conversations in a
+--     single day. Collapse to the address and those 16 become
+--     indistinguishable — which is precisely the defect D05.4 spent the day
+--     fixing, made permanent.
+--
+-- So the duality is real and the NAMES were the problem: two near-identical
+-- strings for unrelated concepts, with both docstrings saying "session". That is
+-- not a coincidence — it is the direct cause of three separate defects found on
+-- 2026-08-21 (the tools-stability audit, the presented-tools memo horizon, and
+-- the tool_search hydration set, all keyed on the lane while meaning a session).
+--
+-- BAKIR'S CALL, against my recommendation, recorded with my reasoning beside it:
+-- rename only `session_id`, keep `session_key` as it is. I argued for renaming
+-- BOTH (lane_id + conversation_id) on the grounds that `session_key` will now
+-- read as "not a session", which is the exact misreading that caused those three
+-- bugs. His choice is defensible on the same evidence: with one side named
+-- unambiguously, `conversation_id` becomes the obviously-correct thing to reach
+-- for, and the asymmetry is itself a signal. Half the churn, most of the benefit.
+--
+-- THIS FINISHES A CONVERSION ALREADY HALF-DONE. `c82ea736` (D01.7 slice 3a.1)
+-- already renamed the LANE-meaning columns: `conversations`, `thread_registry`
+-- and `task_outcomes` carry only `session_key` today. What is left below is
+-- exactly the four columns that genuinely hold a conversation, which is why the
+-- rename is safe to do mechanically — the hard classification was done then.
+--
+-- VERIFIED BEFORE WRITING THIS, per table:
+--   sessions            47 rows,     values like 20260726_183908_1ee6de91  (conversation)
+--   session_prompts     21 rows,     values like 20260821_180146_526331b9  (conversation)
+--   cost_records   102,459 rows,     2.0% populated, same format            (conversation)
+--   parliament_sessions  0 rows        uuid4()  -- NOT a conversation, EXCLUDED
+--
+-- THAT LAST EXCLUSION IS THE POINT OF CHECKING RATHER THAN TRUSTING A COLUMN
+-- NAME. `parliament_sessions.session_id` is a `uuid4()` naming a DELIBERATION
+-- (parliament/models.py:55), not a conversation — a different concept in a
+-- different format. It has zero rows, so sampling could not reveal it; only
+-- reading the model could. Renaming it would have relabelled one concept with
+-- another concept's name, which is the exact disease this migration treats.
+--
+-- `conversation_id` IS NOT A NEW NAME — it is already the established one, which
+-- only turned up while rehearsing this on a copy of the live database.
+-- `messages.conversation_id` has held exactly this format all along
+-- (20260725_205705_7a8e7782, 447 rows). So the schema already had the right word
+-- for this concept in one table and the wrong one in four; this converges them
+-- rather than inventing a convention. That is a better argument for Bakir's call
+-- than the one I originally made for it.
+--
+-- The two indexes that reference the column are updated by SQLite automatically
+-- as part of RENAME COLUMN, so no data is reindexed. But `ix_sessions_session_id`
+-- would then be an index NAMED for a column that no longer exists, which is the
+-- same stale-name trap this migration exists to remove — so it is dropped and
+-- recreated under the right name. `ix_cost_records_incarnation` is already named
+-- for the concept rather than the column and is left alone.
+--
+-- IDEMPOTENCE is the runner's version ledger, exactly as for every other ALTER
+-- migration in this directory: SQLite has no `RENAME COLUMN IF EXISTS`, and
+-- `schema_migrations` is what guarantees a migration body runs once. No data is
+-- moved, rewritten, or deleted — only the column's name changes.
+
+ALTER TABLE sessions            RENAME COLUMN session_id TO conversation_id;
+ALTER TABLE session_prompts     RENAME COLUMN session_id TO conversation_id;
+ALTER TABLE cost_records        RENAME COLUMN session_id TO conversation_id;
+-- parliament_sessions is deliberately NOT renamed — see the exclusion above.
+
+-- An index named for a column that no longer exists is the next person's
+-- confusion. Dropped and recreated rather than left mismatched.
+DROP INDEX IF EXISTS ix_sessions_session_id;
+CREATE INDEX IF NOT EXISTS ix_sessions_conversation_id ON sessions (conversation_id);

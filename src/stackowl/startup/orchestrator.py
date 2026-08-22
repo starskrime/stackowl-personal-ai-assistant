@@ -2090,6 +2090,9 @@ class StartupOrchestrator:
             try:
                 # `session_id` here is PARLIAMENT's own debate id, a different concept
                 # from the conversation lane — it just happens to be seeded from it.
+                # DELIBERATELY NOT RENAMED to conversation_id in the 2026-08-21 sweep:
+                # this is the seam between two different "session" domains, and mypy
+                # caught it when the sweep touched the caller and not the callee.
                 session = await parliament.run(topic=topic, owl_names=owl_names, session_id=session_key)
                 synthesis = session.synthesis or "Parliament session completed with no synthesis."
             except Exception as exc:
@@ -2318,7 +2321,7 @@ class StartupOrchestrator:
                     # knowledge is scoped by owner_scope_key and delivery resolves
                     # through the session store, so neither follows this value.
                     session_key=lane,
-                    session_id=incarnation,
+                    conversation_id=incarnation,
                     input_text=input_text,
                     channel=msg.channel,
                     owl_name=decision.target,

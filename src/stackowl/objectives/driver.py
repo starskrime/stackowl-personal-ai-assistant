@@ -708,7 +708,7 @@ class ObjectiveDriverHandler(JobHandler):
         state = PipelineState(
             trace_id=trace_id,
             session_key=lane,
-            session_id=incarnation,
+            conversation_id=incarnation,
             identity_key=identity or "",
             input_text=description,
             channel=objective.channel or "cli",

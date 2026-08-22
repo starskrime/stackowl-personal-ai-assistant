@@ -57,7 +57,7 @@ class PipelineState(BaseModel, frozen=True):
     #: ingress (scheduler handlers, parliament rounds, RCA): they have a lane but
     #: no conversation run, and saying so honestly beats inventing one. Defaulted
     #: so every existing construction site is byte-for-byte unaffected.
-    session_id: str = ""
+    conversation_id: str = ""
     input_text: str
     channel: str
     owl_name: str

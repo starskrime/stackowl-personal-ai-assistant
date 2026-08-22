@@ -73,7 +73,7 @@ class Resolution:
 
     branch: Branch
     reason: ResetReason | None = None
-    # True when the caller must mint a new session_id for this lane.
+    # True when the caller must mint a new conversation_id for this lane.
     mints_new_incarnation: bool = False
 
 
@@ -175,7 +175,7 @@ def resolve(entry: SessionEntry | None, now: datetime.datetime, policy: ResetPol
 
     # 4 — the process that froze this incarnation's prompt is gone (ESC-13).
     #     Measured 2026-08-15: 8 incarnations carried 2-3 distinct prompt hashes,
-    #     every one of them a snapshot re-minted under a session_id that outlived
+    #     every one of them a snapshot re-minted under a conversation_id that outlived
     #     the process holding it. A restarted core IS a new incarnation, so the id
     #     rolls and the byte-identical invariant becomes true by construction
     #     rather than by hope.

@@ -234,7 +234,7 @@ async def _drive(
     msg = IngressMessage(text=text, session_key=LANE, channel="cli", trace_id=trace_id)
     decision = scanner.scan(msg)
     state = PipelineState(
-        trace_id=trace_id, session_key=LANE, session_id=RUN,
+        trace_id=trace_id, session_key=LANE, conversation_id=RUN,
         input_text=decision.stripped_text if decision.stripped_text is not None else text,
         channel=msg.channel, owl_name="scout", pipeline_step="start", interactive=True,
     )
@@ -307,11 +307,11 @@ async def test_the_turn_after_an_edit_cold_builds_and_refreezes(
 
     store = SessionPromptStore(tmp_db)
     assert await store.load(
-        session_key=LANE, owl_name="scout", session_id=RUN
+        session_key=LANE, owl_name="scout", conversation_id=RUN
     ) is None, "the edit should have cleared the frozen row"
 
     await _drive(backend, scanner, "and now?", trace_id="d014-r2")
 
-    refrozen = await store.load(session_key=LANE, owl_name="scout", session_id=RUN)
+    refrozen = await store.load(session_key=LANE, owl_name="scout", conversation_id=RUN)
     assert refrozen is not None, "the rebuild must re-freeze, or every later turn rebuilds"
     assert _ROLE_AFTER in refrozen.prompt_text

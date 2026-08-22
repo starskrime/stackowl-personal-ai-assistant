@@ -215,7 +215,7 @@ async def test_guard_b_recall_surfaces_committed_fact(tmp_db: DbPool, tmp_path) 
     # ---- OUTCOME (b): the prompt does NOT move mid-conversation -------------
     # INVERTED, deliberately. This used to assert the fact reached turn-2's
     # system_text. D08.1 made curated memory enter the prompt from a snapshot
-    # frozen per incarnation — `curated.py:290` keys the cache on session_id, so
+    # frozen per incarnation — `curated.py:290` keys the cache on conversation_id, so
     # turn 2 re-reads the snapshot taken BEFORE turn 1's write. That is Law 1:
     # nothing mutates past context mid-conversation, because doing so would void
     # the prompt cache for every turn already in the window.
@@ -235,11 +235,11 @@ async def test_guard_b_recall_surfaces_committed_fact(tmp_db: DbPool, tmp_path) 
     # this, a write that never reaches any prompt would satisfy (b) perfectly —
     # the write-with-no-reader shape this programme keeps finding.
     # A FRESH CuratedMemory, not shared_memory(): the shared one is a PROCESS
-    # singleton whose snapshot cache is keyed on session_id, so two tests using the
-    # same session_id literal would serve each other stale snapshots across
+    # singleton whose snapshot cache is keyed on conversation_id, so two tests using the
+    # same conversation_id literal would serve each other stale snapshots across
     # different temp homes. A fresh instance reads the current files.
     next_incarnation = CuratedMemory().snapshot_for_prompt(
-        USER_TARGET, session_id="guard-b-next-incarnation"
+        USER_TARGET, conversation_id="guard-b-next-incarnation"
     )
     assert _REGION_VALUE in next_incarnation, (
         "GUARD B FAIL: the remembered fact never reaches the prompt at all — "

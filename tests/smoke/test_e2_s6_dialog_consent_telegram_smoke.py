@@ -71,11 +71,11 @@ class _DialogProvider:
     protocol = "anthropic"
 
     def __init__(self, session_key: str, page_handle: str, dialog_id: str) -> None:
-        # `session_id`, NOT `session_key`: browser_dialog's schema requires
-        # ["session_id", "action", "dialog_id"] (tools/browser/dialog.py:65). This
+        # `conversation_id`, NOT `session_key`: browser_dialog's schema requires
+        # ["conversation_id", "action", "dialog_id"] (tools/browser/dialog.py:65). This
         # double had drifted from it and the whole smoke failed on a parameter
         # name — the consent half it exists to guard was passing all along.
-        self._args = {"session_id": session_key, "page_handle": page_handle,
+        self._args = {"conversation_id": session_key, "page_handle": page_handle,
                       "action": "accept", "dialog_id": dialog_id}
         self.result = ""
 

@@ -33,7 +33,7 @@ def register_conversation_cost_consumer(event_bus: object, tracker: object) -> N
     """Subscribe a cost report to the session-rollover boundary.
 
     ``tracker`` is anything exposing ``async session_total(session_key,
-    session_id)`` — duck-typed rather than imported so this module does not
+    conversation_id)`` — duck-typed rather than imported so this module does not
     depend on ``CostTracker``'s construction order at startup.
     """
     from stackowl.sessions.store import SessionStore
@@ -41,14 +41,14 @@ def register_conversation_cost_consumer(event_bus: object, tracker: object) -> N
     async def _on_rollover(payload: dict[str, Any] | None) -> None:
         data = payload or {}
         lane = str(data.get("session_key") or "")
-        ended = str(data.get("old_session_id") or "")
-        # The sweeper legitimately publishes new_session_id=None (it finalises
+        ended = str(data.get("old_conversation_id") or "")
+        # The sweeper legitimately publishes new_conversation_id=None (it finalises
         # without minting) — that is fine. A missing OLD id is what means
         # nothing actually finished, so there is nothing to price.
         if not lane or not ended:
             log.engine.debug(
                 "[cost] conversation_cost: nothing ended — not reporting",
-                extra={"_fields": {"session_key": lane, "old_session_id": ended}},
+                extra={"_fields": {"session_key": lane, "old_conversation_id": ended}},
             )
             return
         try:
@@ -58,13 +58,13 @@ def register_conversation_cost_consumer(event_bus: object, tracker: object) -> N
             log.engine.warning(
                 "[cost] conversation_cost: could not price the boundary — skipped",
                 exc_info=exc,
-                extra={"_fields": {"session_key": lane, "ended_session_id": ended}},
+                extra={"_fields": {"session_key": lane, "ended_conversation_id": ended}},
             )
             return
         if summary.call_count == 0 or summary.total_usd <= 0:
             log.engine.debug(
                 "[cost] conversation_cost: nothing spent — not reporting",
-                extra={"_fields": {"session_key": lane, "ended_session_id": ended}},
+                extra={"_fields": {"session_key": lane, "ended_conversation_id": ended}},
             )
             return
         # DEBT-15 — hedge ONLY when the total contains guesses. This message can
@@ -82,7 +82,7 @@ def register_conversation_cost_consumer(event_bus: object, tracker: object) -> N
             "[cost] conversation_cost: exit — reporting a finished conversation",
             extra={"_fields": {
                 "session_key": lane,
-                "session_id": ended,
+                "conversation_id": ended,
                 "total_usd": summary.total_usd,
                 "call_count": summary.call_count,
                 "owl_name": data.get("owl_name"),
@@ -91,7 +91,7 @@ def register_conversation_cost_consumer(event_bus: object, tracker: object) -> N
         )
         event_bus.emit(COST_REPORT_EVENT, {  # type: ignore[attr-defined]
             "session_key": lane,
-            "session_id": ended,
+            "conversation_id": ended,
             "total_usd": summary.total_usd,
             "call_count": summary.call_count,
             "owl_name": data.get("owl_name"),

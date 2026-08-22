@@ -38,7 +38,7 @@ deployment would sit in whichever arm it hashed to forever and the interactive
 comparison could never fill. The experiment would have run indefinitely,
 withholding nothing, and answered nothing.
 
-``session_id`` is the INCARNATION of that lane (``20260807_151636_81f577e3``) and
+``conversation_id`` is the INCARNATION of that lane (``20260807_151636_81f577e3``) and
 rolls over when the conversation does — 23 distinct ones on this box. That is
 exactly the unit whose prompt must stay byte-stable: constant for a whole
 conversation, fresh for the next one. So the arm is stable where Law 1 needs it
@@ -84,7 +84,7 @@ HOLD_OUT_PERCENT = 20
 _arm: ContextVar[str] = ContextVar("lesson_arm", default=ARM_INJECTED)
 
 
-def assignment_key(session_id: str | None, session_key: str | None) -> str:
+def assignment_key(conversation_id: str | None, session_key: str | None) -> str:
     """The unit an arm is assigned to: the conversation INCARNATION if there is
     one, else the lane.
 
@@ -92,7 +92,7 @@ def assignment_key(session_id: str | None, session_key: str | None) -> str:
     keeps those stable rather than reassigning them every turn (which would put
     a machine lane in both arms at once and make its numbers meaningless).
     """
-    return (session_id or "").strip() or (session_key or "").strip()
+    return (conversation_id or "").strip() or (session_key or "").strip()
 
 
 def arm_for_session(session_key: str | None, *, hold_out_percent: int = HOLD_OUT_PERCENT) -> str:
@@ -132,7 +132,7 @@ def current_arm() -> str:
 
 
 def resolve_and_record(
-    session_id: str | None = None, session_key: str | None = None,
+    conversation_id: str | None = None, session_key: str | None = None,
 ) -> str:
     """Decide the arm for this turn, stash it, and log the withholding.
 
@@ -144,7 +144,7 @@ def resolve_and_record(
     silently degrades a fraction of traffic is indistinguishable from a bug, and
     ADR-19 I6 exists because of exactly that confusion.
     """
-    key = assignment_key(session_id, session_key)
+    key = assignment_key(conversation_id, session_key)
     arm = arm_for_session(key)
     set_arm(arm)
     if arm == ARM_HELD_OUT:
@@ -153,7 +153,7 @@ def resolve_and_record(
             "injection helps (ADR-19 #4)",
             extra={"_fields": {
                 "assignment_key": key,
-                "keyed_on": "incarnation" if session_id else "lane",
+                "keyed_on": "incarnation" if conversation_id else "lane",
                 "hold_out_percent": HOLD_OUT_PERCENT,
             }},
         )

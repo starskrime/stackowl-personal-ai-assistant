@@ -343,7 +343,7 @@ async def resolve_runner_lane(
 ) -> tuple[str, str, str | None]:
     """Resolve the conversation lane for a non-chat runner (D01.7 Q9).
 
-    Returns ``(session_key, session_id, identity_key)`` for a cron job, objective,
+    Returns ``(session_key, conversation_id, identity_key)`` for a cron job, objective,
     delegated subagent or recovery drive — the same lane machinery a chat turn
     gets, so background work earns its own incarnation, its own boundary and (with
     `D01.1`) its own stable prompt. That is a deliberate divergence from the reference platform,
@@ -389,9 +389,9 @@ async def resolve_runner_lane(
         "[pipeline] resolve_runner_lane: exit",
         extra={"_fields": {"runner": runner, "runner_id": runner_id,
                            "session_key": entry.session_key,
-                           "session_id": entry.session_id,
+                           "conversation_id": entry.conversation_id,
                            "branch": branch.value,
                            "has_identity": entry.identity_key is not None,
                            "parent": parent_session_key}},
     )
-    return entry.session_key, entry.session_id, entry.identity_key
+    return entry.session_key, entry.conversation_id, entry.identity_key

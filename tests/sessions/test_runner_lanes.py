@@ -152,7 +152,7 @@ async def test_a_runner_lane_rolls_on_the_same_daily_boundary(
     second, branch, _ = await store.resolve_for(src, at(21, 9))
     assert branch is Branch.EXPIRED
     assert second.session_key == first.session_key      # same lane (I1)
-    assert second.session_id != first.session_id        # new incarnation (I2)
+    assert second.conversation_id != first.conversation_id        # new incarnation (I2)
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ What it cost:
     where the real one has returned 3 since F125
     -> "not enough values to unpack (expected 3, got 2)", 13 tests.
   * _StubOrchestrator.run took ``session_key`` where the real orchestrator takes
-    ``session_id`` -> the command surfaced an error string instead of a result.
+    ``conversation_id`` -> the command surfaced an error string instead of a result.
 
 Every one of them failed for a reason that had NOTHING to do with what the test
 asserted, and every one sat red long enough to be assumed normal.
@@ -140,7 +140,7 @@ def _cases() -> list[tuple[str, object, object, str]]:
     ids=[f"{label}.{m}" for label, _d, _r, m in _cases()],
 )
 def test_double_accepts_every_parameter_the_real_one_does(label, double, real, method):
-    """The FakeKuzu/budget_s and session_key/session_id failures, in one check."""
+    """The FakeKuzu/budget_s and session_key/conversation_id failures, in one check."""
     d_func = getattr(double, method, None)
     assert d_func is not None, f"{label} does not implement {method}"
     if _accepts_anything(d_func):

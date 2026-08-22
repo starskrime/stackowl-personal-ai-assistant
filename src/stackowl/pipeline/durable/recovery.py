@@ -473,7 +473,7 @@ class DurableTaskRecoverer:
             trace_id=f"recover-{task_id[:12]}",
             reply_target=reply_target,
             session_key=lane,
-            session_id=incarnation,
+            conversation_id=incarnation,
             identity_key=identity or "",
             input_text=task.goal,
             channel=channel,

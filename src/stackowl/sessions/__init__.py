@@ -11,8 +11,8 @@ from stackowl.sessions.models import (
     SessionSource,
     build_session_key,
     is_shared_lane,
+    new_conversation_id,
     new_entry,
-    new_session_id,
 )
 from stackowl.sessions.policy import (
     ResetMode,
@@ -28,7 +28,7 @@ from stackowl.sessions.store import SessionStore
 
 __all__ = [
     "Branch", "ChatType", "ResetReason", "SessionEntry", "SessionSource",
-    "build_session_key", "is_shared_lane", "new_entry", "new_session_id",
+    "build_session_key", "is_shared_lane", "new_entry", "new_conversation_id",
     "ResetMode", "ResetPolicy", "Resolution", "expired_reason", "policy_from_settings",
     "reset_notice",
     "resolve", "should_suspend_for_restart_loop", "SessionStore",

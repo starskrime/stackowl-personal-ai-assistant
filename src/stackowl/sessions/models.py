@@ -5,7 +5,7 @@ identity is split in TWO.
 
 * ``session_key``  — the conversation LANE. Deterministic, derived from where the
   message came from. NEVER changes (invariant I1).
-* ``session_id``   — this INCARNATION of the lane. A reset keeps the key and mints
+* ``conversation_id``   — this INCARNATION of the lane. A reset keeps the key and mints
   a new id; ids are never reused (invariant I2).
 
 StackOwl has only ever had the second one, and it never changed — which is exactly
@@ -140,7 +140,7 @@ class SessionEntry:
     """
 
     session_key: str
-    session_id: str
+    conversation_id: str
     owl_name: str
     channel: str
     created_at: datetime.datetime
@@ -197,7 +197,7 @@ class SessionEntry:
         return replace(self, **changes)  # type: ignore[arg-type]
 
 
-def new_session_id(now: datetime.datetime) -> str:
+def new_conversation_id(now: datetime.datetime) -> str:
     """Mint an incarnation id: ``YYYYMMDD_HHMMSS_<8hex>``.
 
     Sortable by time at a glance, and unique even when two lanes roll in the same
@@ -304,7 +304,7 @@ def new_entry(source: SessionSource, now: datetime.datetime,
     return SessionEntry(
         session_key=build_session_key(source, group_per_user=group_per_user,
                                       thread_per_user=thread_per_user),
-        session_id=new_session_id(now),
+        conversation_id=new_conversation_id(now),
         owl_name=source.owl_name,
         channel=source.channel,
         created_at=now,
@@ -318,7 +318,7 @@ def new_entry(source: SessionSource, now: datetime.datetime,
 # Column order for the SQLite table and the JSON mirror. Declared once here so the
 # store, the migration and the mirror cannot drift apart.
 ENTRY_FIELDS: tuple[str, ...] = (
-    "session_key", "session_id", "owl_name", "channel", "created_at", "updated_at",
+    "session_key", "conversation_id", "owl_name", "channel", "created_at", "updated_at",
     "message_count", "suspended", "resume_pending", "resume_reason", "was_auto_reset",
     "auto_reset_reason", "is_fresh_reset", "expiry_finalized", "restart_failures",
     "chat_id", "completed_turns", "identity_key", "summary_enqueued_for",

@@ -41,7 +41,7 @@ async def resolve_turn_session(
     services: Any,
     now: datetime.datetime | None = None,
 ) -> tuple[str, str, str | None]:
-    """Return ``(session_key, session_id, notice)`` for this turn.
+    """Return ``(session_key, conversation_id, notice)`` for this turn.
 
     Called AFTER routing because the lane is keyed on the owl (Bakir's Q1: a
     different owl is a different conversation) and the owl is a routing OUTPUT
@@ -86,7 +86,7 @@ async def resolve_turn_session(
         log.gateway.info(
             "[startup] gateway: session resolved",
             extra={"_fields": {"session_key": entry.session_key,
-                               "session_id": entry.session_id,
+                               "conversation_id": entry.conversation_id,
                                "branch": branch.value,
                                "reason": reason.value if reason else None,
                                "owl": owl_name}},
@@ -94,7 +94,7 @@ async def resolve_turn_session(
         notice = reset_notice(entry) if session_settings.notify_on_reset else None
         if notice:
             entry = await session_store.consume_reset_notice(entry)
-        return entry.session_key, entry.session_id, notice
+        return entry.session_key, entry.conversation_id, notice
     except Exception as exc:
         log.gateway.error(
             "[startup] gateway: session resolution failed — turn continues "

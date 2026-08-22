@@ -1,8 +1,8 @@
 """DEBT-21 — cost_records must record WHICH OWL spent, or I1 cannot be measured.
 
-D01.1's pass/fail gate is stated as "within one session_id, every turn sends a
+D01.1's pass/fail gate is stated as "within one conversation_id, every turn sends a
 byte-identical system prompt", measured by
-``COUNT(DISTINCT prompt_hash) GROUP BY session_id``. That query counts a CORRECT
+``COUNT(DISTINCT prompt_hash) GROUP BY conversation_id``. That query counts a CORRECT
 design as a violation: a lane can run several owls — the staged RCA drives
 rca_gatherer, hypothesis and verifier against one incident lane, and the live
 prompts show persona_len cycling 291 / 252 / 255 / 303 inside a single
@@ -16,7 +16,7 @@ owls — so inference would have been right for conversations and silently wrong
 for exactly the lanes that exposed the problem.
 
 No provider signature grows: TraceContext already carries owl_name, and
-``_record_cost`` already reads session_key and session_id off it. Same seam
+``_record_cost`` already reads session_key and conversation_id off it. Same seam
 D01.6 found, for the same reason.
 """
 
@@ -34,7 +34,7 @@ async def _spend(tracker: CostTracker, owl: str, trace: str) -> None:
     await tracker.record(
         provider_name="acme", model="acme-v1",
         input_tokens=100, output_tokens=10, duration_ms=1.0, trace_id=trace,
-        session_key=LANE, session_id=RUN, owl_name=owl,
+        session_key=LANE, conversation_id=RUN, owl_name=owl,
         prompt_hash=f"hash-for-{owl}",
     )
 
@@ -50,7 +50,7 @@ async def test_the_owl_that_spent_is_recorded(tmp_db: DbPool) -> None:
 
 async def test_i1_can_now_tell_three_owls_apart_on_one_lane(tmp_db: DbPool) -> None:
     """The whole point. Three owls share ONE incarnation and each has its own
-    prompt — correct by I6. Grouped by session_id alone that reads as three
+    prompt — correct by I6. Grouped by conversation_id alone that reads as three
     violations; grouped WITH the owl it reads as three clean conversations."""
     tracker = CostTracker(db=tmp_db, event_bus=EventBus(), daily_limit_usd=None)
     for i, owl in enumerate(("rca_gatherer", "hypothesis", "verifier")):
@@ -58,11 +58,11 @@ async def test_i1_can_now_tell_three_owls_apart_on_one_lane(tmp_db: DbPool) -> N
 
     naive = await tmp_db.fetch_all(
         "SELECT COUNT(DISTINCT prompt_hash) d FROM cost_records "
-        "WHERE session_id = ? GROUP BY session_id", (RUN,),
+        "WHERE conversation_id = ? GROUP BY conversation_id", (RUN,),
     )
     honest = await tmp_db.fetch_all(
         "SELECT COUNT(DISTINCT prompt_hash) d FROM cost_records "
-        "WHERE session_id = ? GROUP BY session_id, owl_name", (RUN,),
+        "WHERE conversation_id = ? GROUP BY conversation_id, owl_name", (RUN,),
     )
 
     assert naive[0]["d"] == 3, "the old gate sees three prompts and calls it broken"
@@ -75,18 +75,18 @@ async def test_the_same_owl_drifting_is_still_caught(tmp_db: DbPool) -> None:
     tracker = CostTracker(db=tmp_db, event_bus=EventBus(), daily_limit_usd=None)
     await tracker.record(
         provider_name="acme", model="acme-v1", input_tokens=1, output_tokens=1,
-        duration_ms=1.0, trace_id="t1", session_key=LANE, session_id=RUN,
+        duration_ms=1.0, trace_id="t1", session_key=LANE, conversation_id=RUN,
         owl_name="secretary", prompt_hash="hash-A",
     )
     await tracker.record(
         provider_name="acme", model="acme-v1", input_tokens=1, output_tokens=1,
-        duration_ms=1.0, trace_id="t2", session_key=LANE, session_id=RUN,
+        duration_ms=1.0, trace_id="t2", session_key=LANE, conversation_id=RUN,
         owl_name="secretary", prompt_hash="hash-B",   # drifted!
     )
 
     rows = await tmp_db.fetch_all(
         "SELECT COUNT(DISTINCT prompt_hash) d FROM cost_records "
-        "WHERE session_id = ? GROUP BY session_id, owl_name", (RUN,),
+        "WHERE conversation_id = ? GROUP BY conversation_id, owl_name", (RUN,),
     )
     assert rows[0]["d"] == 2, "a genuine drift within one owl must still fail I1"
 

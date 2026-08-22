@@ -84,7 +84,7 @@ _NOT_NOTABLE = json.dumps({"notable": False, "summary": ""})
 def _job(**overrides: object) -> Job:
     params: dict[str, object] = {
         "session_key": LANE,
-        "ended_session_id": ENDED,
+        "ended_conversation_id": ENDED,
         "identity_key": IDENTITY,
         "owl_name": "Brain",
         "reason": "daily",
@@ -103,21 +103,21 @@ def _job(**overrides: object) -> Job:
     )
 
 
-async def _write_transcript(db: DbPool, *, session_id: str = ENDED,
+async def _write_transcript(db: DbPool, *, conversation_id: str = ENDED,
                             turns: int = 2) -> None:
     """A transcript for one incarnation, via the same tables TranscriptStore writes."""
     stamp = datetime.datetime.now(datetime.UTC)
     await db.execute(
         "INSERT INTO conversations (id, session_key, owl_name, started_at, message_count)"
         " VALUES (?, ?, ?, ?, ?)",
-        (session_id, LANE, "Brain", stamp.isoformat(), turns * 2),
+        (conversation_id, LANE, "Brain", stamp.isoformat(), turns * 2),
     )
     for i in range(turns):
         for role, text in (("user", f"question {i}"), ("assistant", f"answer {i}")):
             await db.execute(
                 "INSERT INTO messages (id, conversation_id, role, content, model,"
                 " created_at, trace_id) VALUES (?, ?, ?, ?, NULL, ?, '')",
-                (str(uuid.uuid4()), session_id, role, text,
+                (str(uuid.uuid4()), conversation_id, role, text,
                  (stamp + datetime.timedelta(seconds=i)).isoformat()),
             )
 
@@ -385,7 +385,7 @@ async def test_a_job_missing_its_incarnation_fails_loudly(tmp_db: DbPool) -> Non
     """Never guess which conversation ended. A malformed job is a bug report."""
     result = await _handler(
         tmp_db, FakeMiner(), FakeRegistry(FakeProvider(_notable())),
-    ).execute(_job(ended_session_id=""))
+    ).execute(_job(ended_conversation_id=""))
 
     assert result.success is False
     assert result.error
@@ -414,8 +414,8 @@ class _Bus:
 def _payload(**overrides: object) -> dict:
     p: dict = {
         "session_key": LANE,
-        "old_session_id": ENDED,
-        "new_session_id": "20260726_040001_bbbbbbbb",
+        "old_conversation_id": ENDED,
+        "new_conversation_id": "20260726_040001_bbbbbbbb",
         "reason": "daily",
         "owl_name": "Brain",
         "channel": "telegram",
@@ -443,7 +443,7 @@ async def test_a_rollover_enqueues_one_durable_job(tmp_db: DbPool) -> None:
     assert rows[0]["idempotency_key"] == f"rollover:{LANE}:{ENDED}"
     assert rows[0]["status"] == "pending"
     params = json.loads(rows[0]["params"])
-    assert params["ended_session_id"] == ENDED
+    assert params["ended_conversation_id"] == ENDED
     assert params["identity_key"] == IDENTITY
 
 
@@ -486,14 +486,14 @@ async def test_one_boundary_enqueues_once_even_if_announced_twice(
 async def test_a_payload_without_an_ended_incarnation_enqueues_nothing(
     tmp_db: DbPool,
 ) -> None:
-    """The sweeper publishes new_session_id=None; a MISSING OLD id means there is
+    """The sweeper publishes new_conversation_id=None; a MISSING OLD id means there is
     no conversation to summarise, and inventing one is worse than skipping."""
     from stackowl.memory.rollover_summary_handler import register_rollover_consumer
     from stackowl.sessions.store import SessionStore
 
     bus = _Bus()
     register_rollover_consumer(bus, tmp_db)
-    await bus.fire(SessionStore.ROLLOVER_EVENT, _payload(old_session_id=""))
+    await bus.fire(SessionStore.ROLLOVER_EVENT, _payload(old_conversation_id=""))
 
     assert await tmp_db.fetch_all("SELECT job_id FROM jobs") == []
 
@@ -518,14 +518,14 @@ async def test_a_failing_enqueue_never_breaks_the_boundary(tmp_db: DbPool) -> No
 
 
 async def test_the_sweeper_shape_of_the_event_is_accepted(tmp_db: DbPool) -> None:
-    """The sweeper finalises WITHOUT minting, so it publishes new_session_id=None.
+    """The sweeper finalises WITHOUT minting, so it publishes new_conversation_id=None.
     That is a real boundary and must still be summarised."""
     from stackowl.memory.rollover_summary_handler import register_rollover_consumer
     from stackowl.sessions.store import SessionStore
 
     bus = _Bus()
     register_rollover_consumer(bus, tmp_db)
-    await bus.fire(SessionStore.ROLLOVER_EVENT, _payload(new_session_id=None))
+    await bus.fire(SessionStore.ROLLOVER_EVENT, _payload(new_conversation_id=None))
 
     rows = await tmp_db.fetch_all("SELECT idempotency_key FROM jobs")
     assert len(rows) == 1

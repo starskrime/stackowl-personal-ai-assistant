@@ -183,17 +183,17 @@ class _StubOrchestrator:
         self,
         topic: str,
         owl_names: list[str],
-        session_id: str | None = None,
+        conversation_id: str | None = None,
     ) -> ParliamentSession:
-        """Mirrors ParliamentOrchestrator.run, whose kwarg is session_id.
+        """Mirrors ParliamentOrchestrator.run, whose kwarg is conversation_id.
 
         This stub still said session_key, so the command failed with
-        "unexpected keyword argument 'session_id'" and the tests asserted on an
+        "unexpected keyword argument 'conversation_id'" and the tests asserted on an
         error string instead of on a synthesis. Note that IngressMessage and
         PipelineState really DO take session_key — the two names coexist, which
         is why this drifted quietly and why a blanket rename here is wrong.
         """
-        self.run_calls.append((topic, owl_names, session_id))
+        self.run_calls.append((topic, owl_names, conversation_id))
         return self._session
 
     async def inject_interjection(self, message: str) -> bool:

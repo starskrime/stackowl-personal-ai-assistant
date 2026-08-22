@@ -229,7 +229,7 @@ class _ScriptedSecretary:
         # WHERE IT LOOKS CHANGED WITH D08.1, and this is the whole modern shape of
         # the journey. Turn 1's write goes to curated memory, whose prompt block is
         # a snapshot FROZEN per incarnation (curated.py keys the cache on
-        # session_id) — so within THIS conversation it deliberately does not appear
+        # conversation_id) — so within THIS conversation it deliberately does not appear
         # in system_text. That is Law 1: nothing mutates past context mid-
         # conversation, because it would void the prompt cache for every turn
         # already in the window.
@@ -512,13 +512,13 @@ async def test_j2_research_then_recall_without_re_searching(tmp_db: DbPool) -> N
     # next. Without this half, a write that reached NO prompt ever would satisfy the
     # assertion above perfectly: the write-with-no-reader shape.
     # A FRESH CuratedMemory, not shared_memory(): the shared one is a PROCESS
-    # singleton whose snapshot cache is keyed on session_id, so two tests using the
-    # same session_id literal would serve each other stale snapshots across
+    # singleton whose snapshot cache is keyed on conversation_id, so two tests using the
+    # same conversation_id literal would serve each other stale snapshots across
     # different temp homes.
     from stackowl.memory.curated import USER_TARGET
 
     next_incarnation = CuratedMemory().snapshot_for_prompt(
-        USER_TARGET, session_id="j2-next-incarnation"
+        USER_TARGET, conversation_id="j2-next-incarnation"
     )
     assert _FINDING_PHRASE in next_incarnation, (
         "BUSINESS OUTCOME 2 FAIL: the researched finding never reaches the prompt at "

@@ -157,7 +157,7 @@ async def test_router_tier_lookup_uses_identity_key_across_channels() -> None:
     )
 
 
-async def test_router_tier_lookup_falls_back_to_session_id_when_no_identity() -> None:
+async def test_router_tier_lookup_falls_back_to_conversation_id_when_no_identity() -> None:
     """FALLBACK: identity_key='' → router uses session_key — byte-identical to prior behaviour."""
     deps = CommandDeps()
     register_all_commands(deps, registry=CommandRegistry.instance())

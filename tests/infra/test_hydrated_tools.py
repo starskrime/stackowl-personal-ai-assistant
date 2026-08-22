@@ -23,7 +23,7 @@ def test_sessions_are_isolated() -> None:
     assert hydrated_tools.get("b") == {"cronjob"}
 
 
-def test_none_session_id_is_a_safe_noop() -> None:
+def test_none_conversation_id_is_a_safe_noop() -> None:
     hydrated_tools.record(None, ["shell"])
     assert hydrated_tools.get(None) == set()
 

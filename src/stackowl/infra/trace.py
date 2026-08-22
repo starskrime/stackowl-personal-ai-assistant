@@ -17,7 +17,7 @@ class _TraceToken(NamedTuple):
     span: Token[str | None]
     parent: Token[str | None]
     session: Token[str | None]
-    session_id: Token[str | None]
+    conversation_id: Token[str | None]
     interactive: Token[bool]
     channel: Token[str | None]
     reply_target: Token[str | int | None]
@@ -43,7 +43,7 @@ class TraceContext:
     # None is a real answer: background work that never passed through ingress has
     # a lane but no incarnation, and inventing one would attribute its cost to a
     # conversation that never happened. LOG-SAFE — included in get().
-    _session_id: ContextVar[str | None] = ContextVar("session_id", default=None)
+    _conversation_id: ContextVar[str | None] = ContextVar("conversation_id", default=None)
     _interactive: ContextVar[bool] = ContextVar("interactive", default=False)
     _channel: ContextVar[str | None] = ContextVar("channel", default=None)
     # Per-turn delivery target (a Telegram chat_id / Slack channel id) mirrored
@@ -106,7 +106,7 @@ class TraceContext:
         cls,
         session_key: str | None = None,
         *,
-        session_id: str | None = None,
+        conversation_id: str | None = None,
         trace_id: str | None = None,
         interactive: bool = False,
         channel: str | None = None,
@@ -138,7 +138,7 @@ class TraceContext:
             span=cls._span_id.set(str(uuid4())),
             parent=cls._parent_span_id.set(None),
             session=cls._session_key.set(session_key),
-            session_id=cls._session_id.set(session_id),
+            conversation_id=cls._conversation_id.set(conversation_id),
             interactive=cls._interactive.set(interactive),
             channel=cls._channel.set(channel),
             reply_target=cls._reply_target.set(reply_target),
@@ -159,7 +159,7 @@ class TraceContext:
         cls._span_id.reset(token.span)
         cls._parent_span_id.reset(token.parent)
         cls._session_key.reset(token.session)
-        cls._session_id.reset(token.session_id)
+        cls._conversation_id.reset(token.conversation_id)
         cls._interactive.reset(token.interactive)
         cls._channel.reset(token.channel)
         cls._reply_target.reset(token.reply_target)
@@ -220,7 +220,7 @@ class TraceContext:
             "span_id": cls._span_id.get(),
             "parent_span_id": cls._parent_span_id.get(),
             "session_key": cls._session_key.get(),
-            "session_id": cls._session_id.get(),
+            "conversation_id": cls._conversation_id.get(),
             "interactive": cls._interactive.get(),
             "channel": cls._channel.get(),
             "reply_target": cls._reply_target.get(),

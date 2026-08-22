@@ -159,7 +159,7 @@ class AnthropicProvider(ModelProvider):
         self._name = config.name
         self._config = config
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
-        # D01.2 — measured span sizes keyed by (session_id, model). See
+        # D01.2 — measured span sizes keyed by (conversation_id, model). See
         # _measure_spans for why the incarnation is the right cache scope.
         self._span_tokens: dict[tuple[str, str], dict[str, int]] = {}
         log.engine.debug(
@@ -218,8 +218,8 @@ class AnthropicProvider(ModelProvider):
         # TraceContext. Background work with no session in context measures once
         # per model instead, which is the honest fallback rather than a fabricated
         # session id.
-        session_id = str(TraceContext.get().get("session_id") or "")
-        cache_key = (session_id, model)
+        conversation_id = str(TraceContext.get().get("conversation_id") or "")
+        cache_key = (conversation_id, model)
         cached = self._span_tokens.get(cache_key)
         if cached is not None:
             return cached
@@ -261,7 +261,7 @@ class AnthropicProvider(ModelProvider):
         log.engine.debug(
             "[cache] breakpoints: spans measured",
             extra={"_fields": {"provider": self._name, "model": model,
-                               "session_id": session_id, **measured}},
+                               "conversation_id": conversation_id, **measured}},
         )
         return measured
 

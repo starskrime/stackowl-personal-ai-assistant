@@ -48,7 +48,7 @@ def _registry() -> OwlRegistry:
 
 async def _freeze(db: DbPool, owl: str) -> None:
     await SessionPromptStore(db).save(
-        session_key=LANE, owl_name=owl, session_id=RUN,
+        session_key=LANE, owl_name=owl, conversation_id=RUN,
         prompt_text=f"frozen prompt for {owl}", model_window=None,
     )
 
@@ -73,7 +73,7 @@ async def test_an_owl_build_edit_clears_the_frozen_prompt(
 
     assert result.success, result.error
     assert await SessionPromptStore(tmp_db).load(
-        session_key=LANE, owl_name="scout", session_id=RUN
+        session_key=LANE, owl_name="scout", conversation_id=RUN
     ) is None, (
         "owl_build edited the owl without clearing its frozen prompt — a "
         "self-extending owl would keep running on its old persona"

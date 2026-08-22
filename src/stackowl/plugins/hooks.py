@@ -100,8 +100,8 @@ class LifecycleHook:
         return type(self).__name__
 
     async def on_session_start(self, event: Mapping[str, Any]) -> None:
-        """A conversation lane opened. ``session_key``, ``session_id``, ``owl_name``,
-        ``channel``, ``previous_session_id`` (``None`` on a lane's first
+        """A conversation lane opened. ``session_key``, ``conversation_id``, ``owl_name``,
+        ``channel``, ``previous_conversation_id`` (``None`` on a lane's first
         incarnation)."""
 
     async def pre_tool_call(self, event: Mapping[str, Any]) -> None:
@@ -118,7 +118,7 @@ class LifecycleHook:
         ``duration_ms``."""
 
     async def on_session_end(self, event: Mapping[str, Any]) -> None:
-        """A lane finalised. ``session_key``, ``session_id``, ``reason``,
+        """A lane finalised. ``session_key``, ``conversation_id``, ``reason``,
         ``owl_name``, ``channel``, ``message_count``, ``completed_turns``."""
 
 

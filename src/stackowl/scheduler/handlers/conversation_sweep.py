@@ -218,7 +218,7 @@ class ConversationSweepHandler(JobHandler):
                 queued = await self._enqueue_summary(
                     self._db,
                     lane=entry.session_key,
-                    ended=entry.session_id,
+                    ended=entry.conversation_id,
                     identity_key=entry.identity_key,
                     owl_name=entry.owl_name,
                     channel=entry.channel,
@@ -233,18 +233,18 @@ class ConversationSweepHandler(JobHandler):
                     "[scheduler] conversation_sweep: summary recovery failed for a lane",
                     exc_info=exc,
                     extra={"_fields": {"session_key": entry.session_key,
-                                       "session_id": entry.session_id}},
+                                       "conversation_id": entry.conversation_id}},
                 )
                 continue
             if not queued:
                 continue
             await self._store.mark_summary_enqueued(entry.session_key,
-                                                    entry.session_id)
+                                                    entry.conversation_id)
             recovered += 1
             log.scheduler.info(
                 "[scheduler] conversation_sweep: recovered a lost summary",
                 extra={"_fields": {"session_key": entry.session_key,
-                                   "session_id": entry.session_id}},
+                                   "conversation_id": entry.conversation_id}},
             )
         return recovered
 

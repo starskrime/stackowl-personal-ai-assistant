@@ -275,10 +275,10 @@ class TestTheSessionSeam:
         )
 
         start = watcher.payload(ON_SESSION_START)
-        assert start["session_id"] == run
+        assert start["conversation_id"] == run
         assert start["owl_name"] == "secretary"
         assert start["channel"] == "telegram"
-        assert start["previous_session_id"] is None, "a first lane has no predecessor"
+        assert start["previous_conversation_id"] is None, "a first lane has no predecessor"
         assert ON_SESSION_END not in watcher.points(), "nothing ended — nothing existed"
 
     async def test_a_rollover_ends_one_session_and_starts_the_next(
@@ -297,14 +297,14 @@ class TestTheSessionSeam:
         assert run2 != run1, "the fixture must actually cross a boundary"
         assert watcher.points() == [ON_SESSION_END, ON_SESSION_START]
         end = watcher.payload(ON_SESSION_END)
-        assert end["session_id"] == run1
+        assert end["conversation_id"] == run1
         assert end["reason"], "a boundary always has a reason"
-        assert watcher.payload(ON_SESSION_START)["previous_session_id"] == run1
+        assert watcher.payload(ON_SESSION_START)["previous_conversation_id"] == run1
 
     async def test_a_process_restart_is_not_a_new_conversation(
         self, tmp_db: DbPool, watcher: _Watcher
     ) -> None:
-        """ESC-13 mints a fresh session_id when the process that froze the prompt is
+        """ESC-13 mints a fresh conversation_id when the process that froze the prompt is
         gone, and deliberately does NOT tell the user a conversation ended. A hook
         is told exactly what the user is: a start with no matching end would be an
         observer's view of a boundary the platform does not believe happened."""
@@ -386,7 +386,7 @@ class TestTheClockBoundaryTellsHooksToo:
             "the clock boundary reached no hook"
         )
         end = watcher.payload(ON_SESSION_END)
-        assert end["session_id"] == run1
+        assert end["conversation_id"] == run1
         assert end["reason"], "a boundary always has a reason"
         assert end["owl_name"] == "secretary"
         assert end["channel"] == "telegram"

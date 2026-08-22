@@ -74,7 +74,7 @@ LANE = "owl:secretary:cli:dm:d011"
 # The incarnation id. Real turns get this from sessions/ingress.py::
 # resolve_turn_session; the gateway harness does not run ingress, so it is set
 # explicitly here. It is NOT decoration: assemble gates both the cache read and
-# the freeze write on a non-empty session_id, so a blank one would silently
+# the freeze write on a non-empty conversation_id, so a blank one would silently
 # disable the very thing this file exists to test (see DEBT-27).
 RUN = "20260727_090000_d011aaaa"
 NEXT_RUN = "20260728_090000_d011bbbb"
@@ -253,7 +253,7 @@ def _build_services(
 
 async def _drive(
     backend: AsyncioBackend, scanner: GatewayScanner, text: str, *,
-    trace_id: str, session_id: str = RUN,
+    trace_id: str, conversation_id: str = RUN,
 ) -> PipelineState:
     """One user message, all the way through the real gateway path."""
     msg = IngressMessage(
@@ -264,7 +264,7 @@ async def _drive(
     state = PipelineState(
         trace_id=trace_id,
         session_key=LANE,
-        session_id=session_id,
+        conversation_id=conversation_id,
         input_text=decision.stripped_text if decision.stripped_text is not None else text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -374,7 +374,7 @@ async def test_a_new_conversation_picks_up_the_evolved_persona(
 
     # A NEW incarnation — what daily rollover mints.
     await _drive(
-        backend, scanner, "next day", trace_id="d011-r2", session_id=NEXT_RUN,
+        backend, scanner, "next day", trace_id="d011-r2", conversation_id=NEXT_RUN,
     )
 
     systems = _system_messages(client)

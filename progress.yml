@@ -443,7 +443,7 @@ current:
       success. The denominator is now readable, which it was not before: count
       `presented tools — rebuilt` records carrying no session_id, and require the
       audit to have stayed silent for all of them.
-      CLOSE WITH: jq 'select(.msg|test("tools array CHANGED"))|select(.session_id==null)'
+      CLOSE WITH: jq 'select(.msg|test("tools array CHANGED"))|select((.conversation_id // .session_id)==null)'
       ~/.stackowl/logs/stackowl.jsonl — must stay EMPTY.
     check_2_a_real_change_names_the_delta: >-
       OPEN. Needs a genuine within-conversation change, which measured ONCE in six
@@ -465,7 +465,7 @@ current:
       before the fix at 66 tools -> 53, and green after, with the REAL registry and
       REAL budgeter and only the AI provider mocked.
     the_closing_queries_which_are_INFO_or_WARNING_so_both_can_return_something: >-
-      (1) jq 'select(.msg|test("tools array CHANGED"))|select(.session_id==null)'
+      (1) jq 'select(.msg|test("tools array CHANGED"))|select((.conversation_id // .session_id)==null)'
       ~/.stackowl/logs/stackowl.jsonl — must be EMPTY after this ships, against 112
       in the six days before. (2) the same line WITH a session_id must carry
       `added`/`removed`. (3) grep -c "capability changed — dropping every memoized
@@ -845,6 +845,68 @@ current:
         one — a probe that cannot answer three sweeps running is a real signal; one
         that misses a single sweep under load is not.
       blocked_until_answered: "nothing — 0120 removes the trigger for owl_ratings specifically, not the class."
+
+  ESCALATIONS_ANSWERED_2026_08_21_EVENING:
+    by: Bakir
+    ESC_31_and_31b_the_horizon: >-
+      ANSWER: THE CONVERSATION, ALL THREE STORES. The audit (already fixed), the
+      presented-tools memo, and the tool_search hydration set all key on the
+      conversation rather than the lane. Matches my recommendation.
+      THE COUPLING HE ACCEPTED, restated so it is not lost: the browser flap is
+      currently the ONLY thing causing the learned usage ranking to be recomputed,
+      so the memo change must land WITH DEBT-D054-BROWSER-FLAP or the ranking
+      freezes for the life of every lane. NOT YET IMPLEMENTED.
+    ESC_33_a_timed_out_probe: >-
+      ANSWER: ADD `unknown`, ESCALATE ON A RUN OF THREE. A timeout logs WARNING as
+      unknown and does not enter `down`; three consecutive timeouts escalate. Matches
+      my recommendation — a probe that cannot answer three sweeps running is a real
+      signal, one that misses a single sweep under load is not. NOT YET IMPLEMENTED.
+    D05_4_closes_on_the_integration_test_bar: >-
+      ANSWER: CLOSE IT, KEEP A STANDING WATCH. validate is done on evidence from a
+      test driving execute.run with the REAL registry, REAL budgeter and REAL memo,
+      mocking only the AI provider — this repo's own mandated bar. The two
+      production queries stay in the document as a standing watch.
+    next_work: "ANSWER: the incident storm (DEBT-INCIDENT-STORM)."
+    THE_SESSION_ID_RENAME_asked_unprompted: >-
+      Bakir, unprompted: "i do not like how we have session_key and session_id. Lets
+      keep only one which is correct."
+      I PUSHED BACK WITH EVIDENCE AND HE NARROWED IT, which is the outcome the
+      pushback was for. Measured: ONE lane carried 16 distinct conversations in a
+      single day, and `session_key` is what `resolve_send_target()` consumes to
+      answer "where do I deliver this". So they are two facts, not one — collapse to
+      the address and those 16 become indistinguishable (D05.4's defect, made
+      permanent); collapse to the id and proactive delivery loses its recipient.
+      HIS CALL, against my recommendation: rename `session_id` -> `conversation_id`
+      only, keep `session_key`. I argued for renaming BOTH (lane_id +
+      conversation_id) because `session_key` now reads as "not a session", which is
+      the exact misreading that caused three defects on 2026-08-21. His choice is
+      defensible on the same evidence and I record it without rewriting my
+      reasoning: with one side named unambiguously, `conversation_id` becomes the
+      obviously-correct thing to reach for, and the asymmetry is itself a signal.
+    AND_THE_RENAME_TURNED_OUT_TO_BE_HALF_WRONG_AS_A_BLANKET: >-
+      A mechanical sweep renamed 1,060 occurrences across 120 files and was REVERTED,
+      because "session" names at least three unrelated things here. Scoped correctly:
+      543 refs in 69 files ARE the conversation; 471 refs in 37 files are NOT
+      (BrowserSessionRegistry tab handles, ParliamentSession uuid4 deliberations).
+      Four things the blanket version broke, each caught by checking rather than
+      trusting a name: (1) it rewrote 10+ HISTORICAL migrations, which the runner
+      sha256-checksums, including `0093_session_key_rename.sql` — D01.7's own rename,
+      the record of the conversion this completes; (2) it renamed a PUBLIC TOOL
+      PARAMETER (`browse` takes session_id meaning "reuse an existing browser
+      session"); (3) my own migration wrongly included `parliament_sessions`, whose
+      column is a uuid4 deliberation id — zero rows, so sampling could not reveal it,
+      only reading the model could; (4) mypy caught the domain SEAM at
+      startup/orchestrator.py calling ParliamentOrchestrator.run, where the call
+      site's own comment already said "PARLIAMENT's own debate id, a different
+      concept from the conversation lane" — and the sweep had rewritten that comment
+      into a self-contradiction.
+      `conversation_id` IS NOT A NEW NAME: `messages.conversation_id` already held
+      exactly this format. The schema had the right word in one table and the wrong
+      one in three. That is a better argument for his call than the one I made.
+      THE LOG FIELD MOVED TOO, so every recorded jq query now reads
+      `(.conversation_id // .session_id)` to span the cutover — records written
+      before it keep the old name, and a query seeing only one silently halves its
+      own denominator. Same trap as the unbounded Verification queries, one layer up.
 
   ESCALATIONS_D05_4_2026_08_21:
     raised: 2026-08-21

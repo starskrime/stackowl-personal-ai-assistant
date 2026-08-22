@@ -53,7 +53,7 @@ async def test_new_ends_the_lane_it_could_not_previously_find(tmp_db: DbPool) ->
     second, branch, _r2 = await store.resolve_for(_source(), _at(11))
 
     assert second.session_key == first.session_key, "same lane — /new does not re-key"
-    assert second.session_id != first.session_id, "but a NEW conversation"
+    assert second.conversation_id != first.conversation_id, "but a NEW conversation"
     assert branch.value != "existing"
 
 
@@ -68,7 +68,7 @@ async def test_the_pending_reset_is_consumed_exactly_once(tmp_db: DbPool) -> Non
     second, _b, _r = await store.resolve_for(_source(), _at(11))
     third, branch, _r2 = await store.resolve_for(_source(), _at(12))
 
-    assert third.session_id == second.session_id
+    assert third.conversation_id == second.conversation_id
     assert branch.value == "existing"
 
 
@@ -85,8 +85,8 @@ async def test_a_reset_for_one_chat_leaves_another_alone(tmp_db: DbPool) -> None
     mine2, _b3, _r3 = await store.resolve_for(_source(), _at(11))
     theirs2, _b4, _r4 = await store.resolve_for(other, _at(11))
 
-    assert mine2.session_id != mine.session_id
-    assert theirs2.session_id == theirs.session_id
+    assert mine2.conversation_id != mine.conversation_id
+    assert theirs2.conversation_id == theirs.conversation_id
 
 
 async def test_new_is_reported_as_deliberate_not_as_an_expiry(tmp_db: DbPool) -> None:
@@ -116,4 +116,4 @@ async def test_a_reset_requested_before_any_lane_exists_still_works(
     await store.request_new_incarnation(CHAT)
     entry, _b, _r = await store.resolve_for(_source(), _at(10))
 
-    assert entry.session_id, "the turn still gets a conversation"
+    assert entry.conversation_id, "the turn still gets a conversation"

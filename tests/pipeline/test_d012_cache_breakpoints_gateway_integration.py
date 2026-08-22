@@ -58,7 +58,7 @@ pytestmark = pytest.mark.asyncio
 
 LANE = "owl:secretary:cli:dm:d012"
 # See DEBT-27: assemble gates BOTH the cache read and the freeze write on a
-# non-empty session_id, so a blank one would silently disable the frozen prompt
+# non-empty conversation_id, so a blank one would silently disable the frozen prompt
 # this item exists to claim a discount for.
 RUN = "20260727_100000_d012aaaa"
 
@@ -266,7 +266,7 @@ async def _drive(
     state = PipelineState(
         trace_id=trace_id,
         session_key=LANE,
-        session_id=RUN,
+        conversation_id=RUN,
         input_text=decision.stripped_text if decision.stripped_text is not None else text,
         channel=msg.channel,
         owl_name=decision.target,
@@ -367,7 +367,7 @@ async def test_marking_does_not_change_what_the_model_reads(
     await _drive(backend, scanner, "hello there", trace_id="d012-t2")
 
     stored = await SessionPromptStore(tmp_db).load(
-        session_key=LANE, owl_name="secretary", session_id=RUN,
+        session_key=LANE, owl_name="secretary", conversation_id=RUN,
     )
     assert stored is not None, "assemble never froze a prompt — nothing to compare"
 

@@ -161,7 +161,7 @@ class JsonlFormatter(logging.Formatter):
             # D01.7 — which RUN of that lane. Together the pair answers "everything
             # that happened in THIS conversation" from the log alone; the lane on its
             # own spans every rollover it has ever had.
-            "session_id": ctx["session_id"],
+            "conversation_id": ctx["conversation_id"],
             "duration_ms": duration_ms,
             "fields": fields,
         }

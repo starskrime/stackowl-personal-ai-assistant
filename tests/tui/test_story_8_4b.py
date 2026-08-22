@@ -58,7 +58,7 @@ def test_parliament_panel_default_css_uses_design_tokens() -> None:
     assert "layer: overlay" in css
 
 
-def test_parliament_panel_on_started_sets_session_id_and_round_panels() -> None:
+def test_parliament_panel_on_started_sets_conversation_id_and_round_panels() -> None:
     panel = ParliamentPanel()
     panel.on_parliament_started_message(
         ParliamentStartedMessage(

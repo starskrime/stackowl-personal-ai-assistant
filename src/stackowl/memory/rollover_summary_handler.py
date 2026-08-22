@@ -135,7 +135,7 @@ class RolloverSummaryHandler(JobHandler):
         t0 = time.monotonic()
         params = dict(job.params or {})
         lane = str(params.get("session_key") or "")
-        ended = str(params.get("ended_session_id") or "")
+        ended = str(params.get("ended_conversation_id") or "")
         identity = params.get("identity_key") or None
         # The OWNER scope, not the lane. See the module docstring.
         scope = str(identity or lane)
@@ -144,7 +144,7 @@ class RolloverSummaryHandler(JobHandler):
         log.memory.info(
             "[memory] rollover_summary.execute: entry",
             extra={"_fields": {"job_id": job.job_id, "session_key": lane,
-                               "ended_session_id": ended, "scope": scope,
+                               "ended_conversation_id": ended, "scope": scope,
                                "reason": params.get("reason")}},
         )
 
@@ -152,7 +152,7 @@ class RolloverSummaryHandler(JobHandler):
             # Never guess which conversation ended: a summary attached to the
             # wrong incarnation is worse than no summary.
             return self._failed(
-                job, t0, "malformed job: session_key and ended_session_id are required",
+                job, t0, "malformed job: session_key and ended_conversation_id are required",
                 mined=0,
             )
 
@@ -161,7 +161,7 @@ class RolloverSummaryHandler(JobHandler):
         if not transcript:
             log.memory.info(
                 "[memory] rollover_summary.execute: exit — no transcript, nothing to do",
-                extra={"_fields": {"job_id": job.job_id, "ended_session_id": ended}},
+                extra={"_fields": {"job_id": job.job_id, "ended_conversation_id": ended}},
             )
             return JobResult(
                 job_id=job.job_id, effect_class="state_change", success=True,
@@ -201,7 +201,7 @@ class RolloverSummaryHandler(JobHandler):
         else:
             log.memory.info(
                 "[memory] rollover_summary.execute: nothing notable — storing nothing",
-                extra={"_fields": {"job_id": job.job_id, "ended_session_id": ended}},
+                extra={"_fields": {"job_id": job.job_id, "ended_conversation_id": ended}},
             )
 
         await self._close_task(
@@ -228,16 +228,16 @@ class RolloverSummaryHandler(JobHandler):
 
     # ------------------------------------------------------------------ steps
 
-    async def _read_transcript(self, ended_session_id: str) -> list[Message]:
+    async def _read_transcript(self, ended_conversation_id: str) -> list[Message]:
         """The WHOLE ended incarnation, up to a safety ceiling.
 
         Keyed on the incarnation rather than the lane: a ``conversations`` row IS
-        one incarnation (its id is the session_id), so this cannot accidentally
+        one incarnation (its id is the conversation_id), so this cannot accidentally
         summarise a previous run of the same conversation.
         """
         rows = await self._db.fetch_all(
             _TRANSCRIPT_SQL,
-            (ended_session_id, ended_session_id, self._max_messages),
+            (ended_conversation_id, ended_conversation_id, self._max_messages),
         )
         out: list[Message] = []
         for row in rows:
@@ -247,7 +247,7 @@ class RolloverSummaryHandler(JobHandler):
             out.append(Message(role=role, content=row["content"]))
         log.memory.debug(
             "[memory] rollover_summary._read_transcript: exit",
-            extra={"_fields": {"ended_session_id": ended_session_id,
+            extra={"_fields": {"ended_conversation_id": ended_conversation_id,
                                "messages": len(out), "capped": len(rows)
                                >= self._max_messages}},
         )
@@ -284,12 +284,12 @@ class RolloverSummaryHandler(JobHandler):
             log.memory.error(
                 "[memory] rollover_summary._stage: staging failed — summary lost",
                 exc_info=exc,
-                extra={"_fields": {"scope": scope, "ended_session_id": ended}},
+                extra={"_fields": {"scope": scope, "ended_conversation_id": ended}},
             )
             return False
         log.memory.info(
             "[memory] rollover_summary._stage: summary staged",
-            extra={"_fields": {"scope": scope, "ended_session_id": ended,
+            extra={"_fields": {"scope": scope, "ended_conversation_id": ended,
                                "fact_id": fact.fact_id, "chars": len(summary)}},
         )
         return True
@@ -418,7 +418,7 @@ async def enqueue_rollover_summary(
         status="pending",
         params={
             "session_key": lane,
-            "ended_session_id": ended,
+            "ended_conversation_id": ended,
             "identity_key": identity_key,
             "owl_name": owl_name,
             "channel": channel,
@@ -445,13 +445,13 @@ async def enqueue_rollover_summary(
             "[memory] rollover_summary.enqueue: not queued (already queued, or the "
             "queue refused it) — the boundary itself is unaffected",
             exc_info=exc,
-            extra={"_fields": {"session_key": lane, "ended_session_id": ended,
+            extra={"_fields": {"session_key": lane, "ended_conversation_id": ended,
                                "idempotency_key": job.idempotency_key}},
         )
         return False
     log.memory.info(
         "[memory] rollover_summary.enqueue: queued",
-        extra={"_fields": {"session_key": lane, "ended_session_id": ended,
+        extra={"_fields": {"session_key": lane, "ended_conversation_id": ended,
                            "job_id": job.job_id, "reason": reason}},
     )
     return True
@@ -481,14 +481,14 @@ def register_rollover_consumer(event_bus: object, db: object,
     async def _on_rollover(payload: dict[str, Any] | None) -> None:
         data = payload or {}
         lane = str(data.get("session_key") or "")
-        ended = str(data.get("old_session_id") or "")
+        ended = str(data.get("old_conversation_id") or "")
         # No ended incarnation means nothing finished, so there is nothing to
-        # summarise. The sweeper legitimately publishes new_session_id=None (it
+        # summarise. The sweeper legitimately publishes new_conversation_id=None (it
         # finalises without minting) — that is fine; a missing OLD id is not.
         if not lane or not ended:
             log.memory.debug(
                 "[memory] rollover_consumer: nothing ended — not enqueueing",
-                extra={"_fields": {"session_key": lane, "old_session_id": ended}},
+                extra={"_fields": {"session_key": lane, "old_conversation_id": ended}},
             )
             return
         queued = await enqueue_rollover_summary(
@@ -512,7 +512,7 @@ def register_rollover_consumer(event_bus: object, db: object,
                     "[memory] rollover_consumer: could not record the enqueue — the "
                     "backstop may queue it again, which the UNIQUE key absorbs",
                     exc_info=exc,
-                    extra={"_fields": {"session_key": lane, "ended_session_id": ended}},
+                    extra={"_fields": {"session_key": lane, "ended_conversation_id": ended}},
                 )
 
     event_bus.subscribe(SessionStore.ROLLOVER_EVENT, _on_rollover)  # type: ignore[attr-defined]

@@ -95,7 +95,7 @@ async def test_marking_it_enqueued_takes_it_off_the_list(
     lane = await _finalise(store)
     entry = await store.get(lane)
     assert entry is not None
-    await store.mark_summary_enqueued(lane, entry.session_id)
+    await store.mark_summary_enqueued(lane, entry.conversation_id)
     assert await store.lanes_awaiting_summary() == []
 
 
@@ -114,10 +114,10 @@ async def test_the_marker_survives_a_round_trip(store: SessionStore) -> None:
     lane = await _finalise(store)
     entry = await store.get(lane)
     assert entry is not None
-    await store.mark_summary_enqueued(lane, entry.session_id)
+    await store.mark_summary_enqueued(lane, entry.conversation_id)
     reloaded = await store.get(lane)
     assert reloaded is not None
-    assert reloaded.summary_enqueued_for == entry.session_id
+    assert reloaded.summary_enqueued_for == entry.conversation_id
 
 
 async def test_a_new_incarnation_clears_the_marker_for_the_next_boundary(
@@ -130,7 +130,7 @@ async def test_a_new_incarnation_clears_the_marker_for_the_next_boundary(
     lane = await _finalise(store)
     first = await store.get(lane)
     assert first is not None
-    await store.mark_summary_enqueued(lane, first.session_id)
+    await store.mark_summary_enqueued(lane, first.conversation_id)
 
     # The user speaks: a new incarnation is minted through the normal path.
     await store.resolve_for(src(), at(21, 10))
@@ -181,7 +181,7 @@ async def test_the_sweeper_enqueues_for_a_boundary_nobody_heard(
 
     entry = await store.get(lane)
     assert entry is not None
-    assert enqueued == [(lane, entry.session_id)]
+    assert enqueued == [(lane, entry.conversation_id)]
     # And it is marked, so the next sweep does not do it again.
     assert await store.lanes_awaiting_summary() == []
 

@@ -33,14 +33,14 @@ from stackowl.sessions.models import (
     SessionEntry,
     SessionSource,
     build_session_key,
-    new_session_id,
+    new_conversation_id,
 )
 from stackowl.sessions.policy import ResetPolicy, expired_reason, resolve
 
 _MIRROR_NAME = "sessions.json"
 
 _COLUMNS = (
-    "session_key, session_id, owl_name, channel, created_at, updated_at, "
+    "session_key, conversation_id, owl_name, channel, created_at, updated_at, "
     "message_count, suspended, resume_pending, resume_reason, was_auto_reset, "
     "auto_reset_reason, is_fresh_reset, expiry_finalized, restart_failures, "
     "chat_id, completed_turns, identity_key, summary_enqueued_for, "
@@ -53,7 +53,7 @@ def _to_entry(row: dict[str, Any]) -> SessionEntry:
     reason = row.get("auto_reset_reason")
     return SessionEntry(
         session_key=row["session_key"],
-        session_id=row["session_id"],
+        conversation_id=row["conversation_id"],
         owl_name=row["owl_name"],
         channel=row["channel"],
         created_at=datetime.datetime.fromisoformat(row["created_at"]),
@@ -194,7 +194,7 @@ class SessionStore:
                 log.gateway.info(
                     "session.resolve: explicit /new honoured",
                     extra={"_fields": {"session_key": key,
-                                       "new_session_id": fresh.session_id}},
+                                       "new_conversation_id": fresh.conversation_id}},
                 )
                 return fresh, Branch.EXPLICIT_RESET, ResetReason.EXPLICIT
             # No lane yet — /new on a brand-new chat has nothing to end. Fall
@@ -266,7 +266,7 @@ class SessionStore:
 
         if existing is None:
             entry = SessionEntry(
-                session_key=key, session_id=new_session_id(now),
+                session_key=key, conversation_id=new_conversation_id(now),
                 owl_name=source.owl_name, channel=source.channel,
                 created_at=now, updated_at=now, chat_id=target,
                 identity_key=identity, message_count=1,
@@ -274,13 +274,13 @@ class SessionStore:
             )
         elif decision.reason is ResetReason.RESTART:
             # ESC-13 — the PROCESS ended, not the conversation. A fresh
-            # session_id so the frozen prompt cannot be re-minted under an id
+            # conversation_id so the frozen prompt cannot be re-minted under an id
             # that already has one, and NOTHING else: the counters describe the
             # user's thread of talk, which did not stop just because the core
             # was redeployed. Resetting them here would also move the idle and
             # daily boundaries every time we ship.
             entry = existing.evolve(
-                session_id=new_session_id(now),
+                conversation_id=new_conversation_id(now),
                 updated_at=now,
                 message_count=existing.message_count + 1,
                 auto_reset_reason=ResetReason.RESTART,
@@ -289,14 +289,14 @@ class SessionStore:
             )
         elif decision.mints_new_incarnation:
             # A rollover ENDS an incarnation; it never destroys a transcript
-            # (invariant I6). The old session_id stays referenced by messages/
+            # (invariant I6). The old conversation_id stays referenced by messages/
             # cost_records, so the conversation remains searchable.
             #
             # Both counters restart at the boundary: they describe THIS run, not
             # the lane's lifetime. message_count starts at 1 because the message
             # that crossed the boundary belongs to the new incarnation.
             entry = existing.evolve(
-                session_id=new_session_id(now),
+                conversation_id=new_conversation_id(now),
                 created_at=now, updated_at=now,
                 message_count=1, completed_turns=0,
                 suspended=False, resume_pending=False, resume_reason=None,
@@ -319,8 +319,8 @@ class SessionStore:
             "session.resolve: branch taken",
             extra={"_fields": {"session_key": key, "branch": decision.branch.value,
                                "reason": decision.reason.value if decision.reason else None,
-                               "session_id": entry.session_id,
-                               "previous_session_id": existing.session_id if existing else None}},
+                               "conversation_id": entry.conversation_id,
+                               "previous_conversation_id": existing.conversation_id if existing else None}},
         )
         # A lane the SWEEPER already finalised was announced when it expired, on
         # the clock. Announcing again now — possibly hours later, when the user
@@ -336,8 +336,8 @@ class SessionStore:
             log.gateway.info(
                 "session.rollover: old incarnation ended",
                 extra={"_fields": {
-                    "session_key": key, "old_session_id": existing.session_id,
-                    "new_session_id": entry.session_id,
+                    "session_key": key, "old_conversation_id": existing.conversation_id,
+                    "new_conversation_id": entry.conversation_id,
                     "reason": decision.reason.value if decision.reason else None,
                     "message_count": existing.message_count,
                     "completed_turns": existing.completed_turns,
@@ -349,25 +349,25 @@ class SessionStore:
             # "a conversation ended". END before START: a hook summarising the
             # conversation that just closed must not be handed the new one first.
             await hooks.dispatch(hooks.ON_SESSION_END, {
-                "session_key": key, "session_id": existing.session_id,
+                "session_key": key, "conversation_id": existing.conversation_id,
                 "reason": decision.reason.value if decision.reason else None,
                 "owl_name": existing.owl_name, "channel": existing.channel,
                 "message_count": existing.message_count,
                 "completed_turns": existing.completed_turns,
             })
             await hooks.dispatch(hooks.ON_SESSION_START, {
-                "session_key": key, "session_id": entry.session_id,
+                "session_key": key, "conversation_id": entry.conversation_id,
                 "owl_name": entry.owl_name, "channel": entry.channel,
-                "previous_session_id": existing.session_id,
+                "previous_conversation_id": existing.conversation_id,
             })
         elif existing is None:
             # A lane's FIRST incarnation. No end, because nothing ended.
             await hooks.dispatch(hooks.ON_SESSION_START, {
-                "session_key": key, "session_id": entry.session_id,
+                "session_key": key, "conversation_id": entry.conversation_id,
                 "owl_name": entry.owl_name, "channel": entry.channel,
-                "previous_session_id": None,
+                "previous_conversation_id": None,
             })
-        # DELIBERATELY NOT on an ESC-13 RESTART, which mints a new session_id
+        # DELIBERATELY NOT on an ESC-13 RESTART, which mints a new conversation_id
         # without ending the conversation: the same condition the platform uses to
         # decide whether the USER is told a boundary happened decides whether a
         # hook is. A start with no matching end would be an observer's view of a
@@ -390,8 +390,8 @@ class SessionStore:
             return
         payload = {
             "session_key": old.session_key,
-            "old_session_id": old.session_id,
-            "new_session_id": new.session_id,
+            "old_conversation_id": old.conversation_id,
+            "new_conversation_id": new.conversation_id,
             "reason": reason.value if reason else None,
             "owl_name": old.owl_name,
             "channel": old.channel,
@@ -412,7 +412,7 @@ class SessionStore:
                 "session.rollover: publication failed — the boundary still happened",
                 exc_info=exc,
                 extra={"_fields": {"session_key": old.session_key,
-                                   "new_session_id": new.session_id}},
+                                   "new_conversation_id": new.conversation_id}},
             )
 
     # ----------------------------------------------------------------- write
@@ -424,7 +424,7 @@ class SessionStore:
             INSERT INTO sessions ({_COLUMNS})
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_key) DO UPDATE SET
-                session_id=excluded.session_id, owl_name=excluded.owl_name,
+                conversation_id=excluded.conversation_id, owl_name=excluded.owl_name,
                 channel=excluded.channel, created_at=excluded.created_at,
                 updated_at=excluded.updated_at,
                 message_count=excluded.message_count,
@@ -451,7 +451,7 @@ class SessionStore:
                                             sessions.parent_session_key)
             """,
             (
-                entry.session_key, entry.session_id, entry.owl_name, entry.channel,
+                entry.session_key, entry.conversation_id, entry.owl_name, entry.channel,
                 entry.created_at.isoformat(), entry.updated_at.isoformat(),
                 entry.message_count, int(entry.suspended), int(entry.resume_pending),
                 entry.resume_reason, int(entry.was_auto_reset),
@@ -514,7 +514,7 @@ class SessionStore:
             )
             return None
         fresh = existing.evolve(
-            session_id=new_session_id(stamp),
+            conversation_id=new_conversation_id(stamp),
             created_at=stamp, updated_at=stamp,
             message_count=0, completed_turns=0,
             suspended=False, resume_pending=False, resume_reason=None,
@@ -525,8 +525,8 @@ class SessionStore:
         log.gateway.info(
             "session.rollover: old incarnation ended",
             extra={"_fields": {
-                "session_key": session_key, "old_session_id": existing.session_id,
-                "new_session_id": fresh.session_id, "reason": reason.value,
+                "session_key": session_key, "old_conversation_id": existing.conversation_id,
+                "new_conversation_id": fresh.conversation_id, "reason": reason.value,
                 "message_count": existing.message_count,
                 "completed_turns": existing.completed_turns,
             }},
@@ -563,7 +563,7 @@ class SessionStore:
         rows = await self._db.fetch_all(
             f"SELECT {_COLUMNS} FROM sessions "
             "WHERE expiry_finalized = 1 "
-            "  AND (summary_enqueued_for IS NULL OR summary_enqueued_for != session_id) "
+            "  AND (summary_enqueued_for IS NULL OR summary_enqueued_for != conversation_id) "
             "ORDER BY updated_at ASC"
         )
         entries = [_to_entry(r) for r in rows]
@@ -574,8 +574,8 @@ class SessionStore:
         return entries
 
     async def mark_summary_enqueued(self, session_key: str,
-                                    session_id: str) -> None:
-        """Record that ``session_id``'s summary is queued, so it is queued ONCE.
+                                    conversation_id: str) -> None:
+        """Record that ``conversation_id``'s summary is queued, so it is queued ONCE.
 
         Written only after the enqueue actually succeeded. A failed enqueue must
         leave the lane recoverable, or the retry this backstop exists to provide is
@@ -583,12 +583,12 @@ class SessionStore:
         """
         await self._db.execute(
             "UPDATE sessions SET summary_enqueued_for = ? WHERE session_key = ?",
-            (session_id, session_key),
+            (conversation_id, session_key),
         )
         await self._project_mirror()
         log.gateway.info(
             "session.mark_summary_enqueued: recorded",
-            extra={"_fields": {"session_key": session_key, "session_id": session_id}},
+            extra={"_fields": {"session_key": session_key, "conversation_id": conversation_id}},
         )
 
     async def record_completed_turn(self, session_key: str) -> None:
@@ -658,7 +658,7 @@ class SessionStore:
                 log.gateway.info(
                     "session.sweep: lane is busy — expiry skipped (I4)",
                     extra={"_fields": {"session_key": entry.session_key,
-                                       "session_id": entry.session_id}},
+                                       "conversation_id": entry.conversation_id}},
                 )
                 continue
             reason = expired_reason(entry, stamp, self._policy)
@@ -669,8 +669,8 @@ class SessionStore:
                 "session.rollover: old incarnation ended",
                 extra={"_fields": {
                     "session_key": entry.session_key,
-                    "old_session_id": entry.session_id,
-                    "new_session_id": None,  # minted lazily on the next message
+                    "old_conversation_id": entry.conversation_id,
+                    "new_conversation_id": None,  # minted lazily on the next message
                     "reason": reason.value if reason else None,
                     "message_count": entry.message_count,
                     "completed_turns": entry.completed_turns,
@@ -695,7 +695,7 @@ class SessionStore:
             # the docstring), so there is no new incarnation to announce. The next
             # inbound message mints it and dispatches START through the normal path.
             await hooks.dispatch(hooks.ON_SESSION_END, {
-                "session_key": entry.session_key, "session_id": entry.session_id,
+                "session_key": entry.session_key, "conversation_id": entry.conversation_id,
                 "reason": reason.value if reason else None,
                 "owl_name": entry.owl_name, "channel": entry.channel,
                 "message_count": entry.message_count,
@@ -750,7 +750,7 @@ class SessionStore:
                          "nothing reads this file. Safe to delete — it regenerates.",
                 "lanes": {
                     e.session_key: {
-                        "session_id": e.session_id,
+                        "conversation_id": e.conversation_id,
                         "owl": e.owl_name,
                         "channel": e.channel,
                         "created_at": e.created_at.isoformat(),

@@ -41,11 +41,11 @@ class CostRecord(BaseModel):
     # spans every rollover the lane has ever had, which is why the D01.6 baseline
     # saw 10 distinct prompts on one "conversation". D01.1's stability invariant
     # groups by THIS.
-    session_id: str = ""
+    conversation_id: str = ""
     # DEBT-21 — WHICH OWL spent. Required to measure D01.1's invariant I1:
     # a lane can run several owls (the staged RCA drives three against one
     # incident lane) and each MUST have its own prompt, so grouping by
-    # session_id alone counts a correct design as a violation.
+    # conversation_id alone counts a correct design as a violation.
     owl_name: str = ""
     # Provider-reported prefix-cache hits. 0 is AMBIGUOUS by construction: it
     # means "no cache hit" OR "provider does not report" (D01.6 I4). Readers
@@ -151,7 +151,7 @@ class CostTracker(OwnedRepository):
         trace_id: str = "",
         is_local: bool = False,
         session_key: str = "",
-        session_id: str = "",
+        conversation_id: str = "",
         owl_name: str = "",
         cached_input_tokens: int = 0,
         prompt_hash: str = "",
@@ -174,7 +174,7 @@ class CostTracker(OwnedRepository):
                 "provider": provider_name, "model": model,
                 "input_tokens": input_tokens, "output_tokens": output_tokens,
                 "duration_ms": duration_ms, "session_key": session_key,
-                "session_id": session_id,
+                "conversation_id": conversation_id,
             }},
         )
         # D01.6 DECISION point — which naming the provider used for cache stats,
@@ -213,7 +213,7 @@ class CostTracker(OwnedRepository):
             provider_name=provider_name, model=model,
             input_tokens=input_tokens, output_tokens=output_tokens,
             cost_usd=cost_usd, trace_id=trace_id, recorded_at=now.isoformat(),
-            session_key=session_key, session_id=session_id, owl_name=owl_name,
+            session_key=session_key, conversation_id=conversation_id, owl_name=owl_name,
             cached_input_tokens=cached_input_tokens,
             prompt_hash=prompt_hash, system_prompt_chars=system_prompt_chars,
             ttft_ms=ttft_ms,
@@ -225,7 +225,7 @@ class CostTracker(OwnedRepository):
                 INSERT INTO cost_records (
                     provider_name, model, input_tokens, output_tokens,
                     cost_usd, trace_id, recorded_at, owner_id,
-                    session_key, session_id, cached_input_tokens, prompt_hash,
+                    session_key, conversation_id, cached_input_tokens, prompt_hash,
                     system_prompt_chars, ttft_ms, priced, owl_name
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -233,7 +233,7 @@ class CostTracker(OwnedRepository):
                     record.provider_name, record.model, record.input_tokens,
                     record.output_tokens, record.cost_usd, record.trace_id,
                     record.recorded_at, self._owner_id,
-                    record.session_key, record.session_id, record.cached_input_tokens,
+                    record.session_key, record.conversation_id, record.cached_input_tokens,
                     record.prompt_hash, record.system_prompt_chars, record.ttft_ms,
                     int(priced), record.owl_name,
                 ),
@@ -381,26 +381,26 @@ class CostTracker(OwnedRepository):
         )
         return summary
 
-    async def session_total(self, session_key: str, session_id: str) -> DailySummary:
+    async def session_total(self, session_key: str, conversation_id: str) -> DailySummary:
         """Aggregate cost_records for ONE incarnation of one lane.
 
         Scoped to BOTH identifiers on purpose: a lane outlives its
         incarnations, so ``session_key`` alone would bill a fresh conversation
         for its predecessor's spend. ``DailySummary.date`` carries the
-        ``session_id`` here — the shape is an aggregate over a conversation,
+        ``conversation_id`` here — the shape is an aggregate over a conversation,
         not over a calendar day.
         """
         log.engine.debug(
             "[cost_tracker] session_total: entry",
-            extra={"_fields": {"session_key": session_key, "session_id": session_id}},
+            extra={"_fields": {"session_key": session_key, "conversation_id": conversation_id}},
         )
         rows = await self._db.fetch_all(
             """
             SELECT provider_name, model, cost_usd, priced
             FROM cost_records
-            WHERE owner_id = ? AND session_key = ? AND session_id = ?
+            WHERE owner_id = ? AND session_key = ? AND conversation_id = ?
             """,
-            (self._owner_id, session_key, session_id),
+            (self._owner_id, session_key, conversation_id),
         )
         total = 0.0
         by_provider: dict[str, float] = {}
@@ -418,12 +418,12 @@ class CostTracker(OwnedRepository):
         log.engine.debug(
             "[cost_tracker] session_total: exit",
             extra={"_fields": {
-                "session_key": session_key, "session_id": session_id,
+                "session_key": session_key, "conversation_id": conversation_id,
                 "total_usd": total, "call_count": len(rows),
             }},
         )
         return DailySummary(
-            date=session_id,
+            date=conversation_id,
             total_usd=total,
             by_provider=by_provider,
             by_model=by_model,

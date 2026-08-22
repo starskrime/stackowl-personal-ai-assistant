@@ -279,17 +279,17 @@ class CuratedMemory:
                 )
         return out
 
-    def snapshot_for_prompt(self, target: str, *, session_id: str) -> str:
-        """The text the prompt carries — FROZEN for the life of ``session_id``.
+    def snapshot_for_prompt(self, target: str, *, conversation_id: str) -> str:
+        """The text the prompt carries — FROZEN for the life of ``conversation_id``.
 
         Re-reads only when the incarnation changes (D08.1 R2Q6), so a write made
         this turn reaches the prompt on the next ``/new``. Mid-session stability
         is the whole point: per-turn variation was measured as the single largest
         source of prompt instability, and it forfeits the prefix cache silently.
         """
-        if self._snapshot_key != session_id:
+        if self._snapshot_key != conversation_id:
             self._snapshot = {}
-            self._snapshot_key = session_id
+            self._snapshot_key = conversation_id
         if target not in self._snapshot:
             self._snapshot[target] = self._render(self.entries(target))
             # INFO, not DEBUG: production runs at INFO, so a DEBUG line here is
@@ -298,7 +298,7 @@ class CuratedMemory:
             log.memory.info(
                 "[curated] snapshot: frozen",
                 extra={"_fields": {
-                    "target": target, "session_id": session_id,
+                    "target": target, "conversation_id": conversation_id,
                     "chars": len(self._snapshot[target]),
                 }},
             )

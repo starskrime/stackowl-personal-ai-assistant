@@ -254,11 +254,11 @@ def test_the_snapshot_does_not_move_mid_session(mem):
     """THE prompt-stability test. A write lands on disk immediately and is
     visible to the tool, but the prompt keeps what it started with."""
     mem.add(USER_TARGET, "First.", "permanent")
-    before = mem.snapshot_for_prompt(USER_TARGET, session_id="incarnation-1")
+    before = mem.snapshot_for_prompt(USER_TARGET, conversation_id="incarnation-1")
 
     mem.add(USER_TARGET, "Second, written mid-session.", "permanent")
 
-    assert mem.snapshot_for_prompt(USER_TARGET, session_id="incarnation-1") == before
+    assert mem.snapshot_for_prompt(USER_TARGET, conversation_id="incarnation-1") == before
     assert "Second" not in before
     assert any("Second" in e.text for e in mem.entries(USER_TARGET)), "but disk has it"
 
@@ -267,10 +267,10 @@ def test_a_new_incarnation_picks_up_the_write(mem):
     """What /new is for. Measured caveat, accepted in R3Q9: the main Telegram
     lane has had two incarnations in its life, so this can be a long wait."""
     mem.add(USER_TARGET, "First.", "permanent")
-    mem.snapshot_for_prompt(USER_TARGET, session_id="incarnation-1")
+    mem.snapshot_for_prompt(USER_TARGET, conversation_id="incarnation-1")
     mem.add(USER_TARGET, "Second.", "permanent")
 
-    after = mem.snapshot_for_prompt(USER_TARGET, session_id="incarnation-2")
+    after = mem.snapshot_for_prompt(USER_TARGET, conversation_id="incarnation-2")
 
     assert "Second." in after
 
@@ -283,7 +283,7 @@ def test_the_write_confirmation_says_when_it_takes_effect(mem):
 
 
 def test_an_absent_file_snapshots_as_empty(mem):
-    assert mem.snapshot_for_prompt(USER_TARGET, session_id="s1") == ""
+    assert mem.snapshot_for_prompt(USER_TARGET, conversation_id="s1") == ""
 
 
 # --------------------------------------------------------------------------- #

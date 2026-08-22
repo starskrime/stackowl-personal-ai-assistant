@@ -47,7 +47,7 @@ def _registry() -> OwlRegistry:
 
 async def _freeze(db: DbPool, lane: str, owl: str) -> None:
     await SessionPromptStore(db).save(
-        session_key=lane, owl_name=owl, session_id=RUN,
+        session_key=lane, owl_name=owl, conversation_id=RUN,
         prompt_text=f"frozen prompt for {owl}", model_window=None,
     )
 
@@ -62,7 +62,7 @@ async def test_editing_an_owl_clears_its_frozen_prompt(tmp_db: DbPool) -> None:
 
     assert reply.startswith("✓"), reply
     store = SessionPromptStore(tmp_db)
-    assert await store.load(session_key=LANE, owl_name="scout", session_id=RUN) is None, (
+    assert await store.load(session_key=LANE, owl_name="scout", conversation_id=RUN) is None, (
         "the edit did not clear the frozen prompt — it would stay invisible "
         "until the session rolled over"
     )
@@ -77,8 +77,8 @@ async def test_editing_an_owl_clears_it_on_every_lane(tmp_db: DbPool) -> None:
     await command._edit("scout --role 'again'")  # noqa: SLF001
 
     store = SessionPromptStore(tmp_db)
-    assert await store.load(session_key=LANE, owl_name="scout", session_id=RUN) is None
-    assert await store.load(session_key=OTHER_LANE, owl_name="scout", session_id=RUN) is None
+    assert await store.load(session_key=LANE, owl_name="scout", conversation_id=RUN) is None
+    assert await store.load(session_key=OTHER_LANE, owl_name="scout", conversation_id=RUN) is None
 
 
 async def test_editing_one_owl_leaves_another_owls_prompt_alone(tmp_db: DbPool) -> None:
@@ -91,9 +91,9 @@ async def test_editing_one_owl_leaves_another_owls_prompt_alone(tmp_db: DbPool) 
     await command._edit("scout --role 'only scout changed'")  # noqa: SLF001
 
     store = SessionPromptStore(tmp_db)
-    assert await store.load(session_key=LANE, owl_name="scout", session_id=RUN) is None
+    assert await store.load(session_key=LANE, owl_name="scout", conversation_id=RUN) is None
     assert await store.load(
-        session_key=LANE, owl_name="researcher", session_id=RUN
+        session_key=LANE, owl_name="researcher", conversation_id=RUN
     ) is not None, "editing scout must not clear researcher's prompt"
 
 

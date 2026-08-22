@@ -268,7 +268,7 @@ async def test_health_check_degraded_when_stale_poll() -> None:
 
 
 @pytest.mark.asyncio
-async def test_session_id_does_not_contain_raw_phone() -> None:
+async def test_conversation_id_does_not_contain_raw_phone() -> None:
     """IngressMessage.session_key must not contain the raw phone number."""
     adapter = _adapter(allowed=frozenset(["15551234567"]))
     await adapter.handle_message("15551234567@s.whatsapp.net", "private message")

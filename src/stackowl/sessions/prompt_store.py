@@ -6,7 +6,7 @@ for the design and the divergences from the reference platform.
 
 The row is keyed ``(session_key, owl_name)`` and STAMPED with the incarnation it
 was built for. That stamp is what makes invariant I6 self-enforcing: after a
-rollover mints a new ``session_id`` the stored prompt no longer matches, so the
+rollover mints a new ``conversation_id`` the stored prompt no longer matches, so the
 next turn cold-builds — no invalidation job, no listener, no way to forget.
 """
 
@@ -27,7 +27,7 @@ class StoredPrompt:
 
     session_key: str
     owl_name: str
-    session_id: str
+    conversation_id: str
     prompt_text: str
     prompt_hash: str
     model_window: int | None
@@ -41,12 +41,12 @@ class SessionPromptStore:
         self._db = db
 
     async def load(
-        self, *, session_key: str, owl_name: str, session_id: str
+        self, *, session_key: str, owl_name: str, conversation_id: str
     ) -> StoredPrompt | None:
         """The frozen prompt for THIS incarnation, or ``None`` to cold-build.
 
         Returns ``None`` when the stored row was built for a different
-        ``session_id`` — the rollover case — rather than deleting it, so the
+        ``conversation_id`` — the rollover case — rather than deleting it, so the
         mismatch is a read-time rule and a still-live older incarnation can read
         its own prompt.
 
@@ -56,17 +56,17 @@ class SessionPromptStore:
         log.gateway.debug(
             "[prompt] store.load: entry",
             extra={"_fields": {"session_key": session_key, "owl": owl_name,
-                               "session_id": session_id}},
+                               "conversation_id": conversation_id}},
         )
         try:
             rows = await self._db.fetch_all(
                 """
-                SELECT session_key, owl_name, session_id, prompt_text,
+                SELECT session_key, owl_name, conversation_id, prompt_text,
                        prompt_hash, model_window, built_at
                 FROM session_prompts
-                WHERE session_key = ? AND owl_name = ? AND session_id = ?
+                WHERE session_key = ? AND owl_name = ? AND conversation_id = ?
                 """,
-                (session_key, owl_name, session_id),
+                (session_key, owl_name, conversation_id),
             )
         except Exception as exc:
             log.gateway.error(
@@ -86,7 +86,7 @@ class SessionPromptStore:
         found = StoredPrompt(
             session_key=str(row["session_key"]),
             owl_name=str(row["owl_name"]),
-            session_id=str(row["session_id"]),
+            conversation_id=str(row["conversation_id"]),
             prompt_text=str(row["prompt_text"]),
             prompt_hash=str(row["prompt_hash"]),
             model_window=int(window) if window is not None else None,
@@ -181,7 +181,7 @@ class SessionPromptStore:
         *,
         session_key: str,
         owl_name: str,
-        session_id: str,
+        conversation_id: str,
         prompt_text: str,
         model_window: int | None,
         now: datetime.datetime | None = None,
@@ -204,7 +204,7 @@ class SessionPromptStore:
                 "[prompt] store.save: refusing to freeze an EMPTY prompt — "
                 "the next turn will build again",
                 extra={"_fields": {"session_key": session_key, "owl": owl_name,
-                                   "session_id": session_id}},
+                                   "conversation_id": conversation_id}},
             )
             return
         stamp = (now or datetime.datetime.now(datetime.UTC)).isoformat()
@@ -215,17 +215,17 @@ class SessionPromptStore:
             await self._db.execute(
                 """
                 INSERT INTO session_prompts (
-                    session_key, owl_name, session_id, prompt_text,
+                    session_key, owl_name, conversation_id, prompt_text,
                     prompt_hash, model_window, built_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_key, owl_name) DO UPDATE SET
-                    session_id   = excluded.session_id,
+                    conversation_id   = excluded.conversation_id,
                     prompt_text  = excluded.prompt_text,
                     prompt_hash  = excluded.prompt_hash,
                     model_window = excluded.model_window,
                     built_at     = excluded.built_at
                 """,
-                (session_key, owl_name, session_id, prompt_text,
+                (session_key, owl_name, conversation_id, prompt_text,
                  prompt_hash, model_window, stamp),
             )
         except Exception as exc:
@@ -238,7 +238,7 @@ class SessionPromptStore:
         log.gateway.info(
             "[prompt] store.save: exit — prompt frozen for this session",
             extra={"_fields": {"session_key": session_key, "owl": owl_name,
-                               "session_id": session_id,
+                               "conversation_id": conversation_id,
                                "prompt_hash": prompt_hash,
                                "prompt_chars": len(prompt_text),
                                "model_window": model_window}},

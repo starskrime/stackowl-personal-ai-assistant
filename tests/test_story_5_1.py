@@ -1,15 +1,15 @@
 """Story 5.1 — Parliament orchestration, fan-out, persistence, timeout, budget."""
 
-# PARLIAMENT KEEPS `session_id`, and that is deliberate rather than an oversight.
+# PARLIAMENT KEEPS `conversation_id`, and that is deliberate rather than an oversight.
 #
-# D01.7 slice 3a.1 renamed the CONVERSATION lane's session_id to session_key, and
-# these tests were swept along with it. Parliament's session_id is a different
+# D01.7 slice 3a.1 renamed the CONVERSATION lane's conversation_id to session_key, and
+# these tests were swept along with it. Parliament's conversation_id is a different
 # concept — the id of a DEBATE, not of a conversation lane — and it kept its name
 # on purpose; round_runner.py:175 makes the distinction explicit by passing
-# `session_key=session.session_id` when it hands a debate into the pipeline.
+# `session_key=session.conversation_id` when it hands a debate into the pipeline.
 #
 # Checked against production before changing anything: the live parliament_sessions
-# table has a session_id column and session_store.py queries session_id throughout.
+# table has a conversation_id column and session_store.py queries conversation_id throughout.
 # The code and schema agree; only these tests drifted.
 
 
@@ -103,7 +103,7 @@ class TestParliamentSession:
         assert session.rounds == []
         assert session.interjections == []
         assert session.completed_at is None
-        assert session.session_id  # uuid auto-generated
+        assert session.conversation_id  # uuid auto-generated
 
     def test_add_round_returns_new_session(self) -> None:
         session = ParliamentSession(topic="t", owl_names=["a"])
@@ -157,9 +157,9 @@ class TestSessionStore:
         store = SessionStore(parliament_db)
         original = ParliamentSession(topic="ship it", owl_names=["a", "b"])
         await store.create(original)
-        fetched = await store.get_by_id(original.session_id)
+        fetched = await store.get_by_id(original.conversation_id)
         assert fetched is not None
-        assert fetched.session_id == original.session_id
+        assert fetched.conversation_id == original.conversation_id
         assert fetched.topic == "ship it"
         assert fetched.owl_names == ["a", "b"]
         assert fetched.status == "running"
@@ -172,7 +172,7 @@ class TestSessionStore:
         round_ = ParliamentRound(round_number=1, responses={"a": "hi"}, truncated={"a": False})
         updated = session.add_round(round_)
         await store.update_rounds(updated)
-        fetched = await store.get_by_id(session.session_id)
+        fetched = await store.get_by_id(session.conversation_id)
         assert fetched is not None
         assert len(fetched.rounds) == 1
         assert fetched.rounds[0].responses == {"a": "hi"}
@@ -291,7 +291,7 @@ class TestParliamentOrchestrator:
             max_rounds=1,
         )
         result = await orch.run("topic", ["a", "b"])
-        fetched = await store.get_by_id(result.session_id)
+        fetched = await store.get_by_id(result.conversation_id)
         assert fetched is not None
         assert fetched.status == "completed"
         assert len(fetched.rounds) == 1

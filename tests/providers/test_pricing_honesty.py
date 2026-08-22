@@ -118,14 +118,14 @@ async def test_the_conversation_report_hedges_an_estimated_total(tmp_db: DbPool)
     await tracker.record(
         provider_name="NeraAiRaw", model=UNKNOWN_CLOUD,
         input_tokens=1000, output_tokens=100, duration_ms=1.0, trace_id="t1",
-        session_key="lane", session_id="INC_A",
+        session_key="lane", conversation_id="INC_A",
     )
     seen: list[dict] = []
     bus.subscribe(COST_REPORT_EVENT, lambda p: seen.append(p))
     register_conversation_cost_consumer(bus, tracker)
 
     bus.emit(SessionStore.ROLLOVER_EVENT,
-             {"session_key": "lane", "old_session_id": "INC_A"})
+             {"session_key": "lane", "old_conversation_id": "INC_A"})
     await asyncio.sleep(0.3)
 
     assert len(seen) == 1
@@ -149,14 +149,14 @@ async def test_a_fully_priced_conversation_reports_plainly(tmp_db: DbPool) -> No
     await tracker.record(
         provider_name="openai", model=KNOWN_CLOUD,
         input_tokens=1000, output_tokens=100, duration_ms=1.0, trace_id="t1",
-        session_key="lane", session_id="INC_A",
+        session_key="lane", conversation_id="INC_A",
     )
     seen: list[dict] = []
     bus.subscribe(COST_REPORT_EVENT, lambda p: seen.append(p))
     register_conversation_cost_consumer(bus, tracker)
 
     bus.emit(SessionStore.ROLLOVER_EVENT,
-             {"session_key": "lane", "old_session_id": "INC_A"})
+             {"session_key": "lane", "old_conversation_id": "INC_A"})
     await asyncio.sleep(0.3)
 
     assert len(seen) == 1

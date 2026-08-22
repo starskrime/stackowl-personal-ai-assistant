@@ -26,11 +26,11 @@ opportunity, not success.
 **D05.4, 2026-08-21 — the tools audit was measuring the wrong unit, and the
 result was believed.** It compared arrays per ``(session_key, owl)`` — the LANE.
 A provider-side prompt cache is held across a CONVERSATION, which is
-``session_id``. Many conversations share one lane, and so do runs that are not
+``conversation_id``. Many conversations share one lane, and so do runs that are not
 conversations at all: the retry queue, self-heal ``-fix`` turns, goal execution
-and delegated children all carry ``session_id == ""``. Measured over six days,
+and delegated children all carry ``conversation_id == ""``. Measured over six days,
 2026-08-16 to 2026-08-21: **122 warnings, of which 112 were runs with no
-conversation, 9 were the first tool turn of a brand-new ``session_id``, and 1 was
+conversation, 9 were the first tool turn of a brand-new ``conversation_id``, and 1 was
 a genuine within-conversation change.** A 99.2% false-positive rate on a WARNING
 line, and it sent D05.4's root-cause analysis down the wrong path twice.
 
@@ -67,14 +67,14 @@ _LANE_CACHE_MAX = 512
 # against ONE session_key, and their tool sets and personas differ BY DESIGN
 # (invariant I6 — the same reason D01.1's prompt cache carries owl_name in its
 # key). Lane-keyed, this audit reported three correct prompts as three
-# violations, which is DEBT-21's mistake exactly: "grouped by session_id alone,
+# violations, which is DEBT-21's mistake exactly: "grouped by conversation_id alone,
 # three correct prompts read as three violations". An audit that cries wolf on
 # every multi-owl lane trains its reader to ignore it.
 #
-# The TOOLS map below is keyed (session_id, owl) — the CONVERSATION, not the
+# The TOOLS map below is keyed (conversation_id, owl) — the CONVERSATION, not the
 # lane — since D05.4. See the module docstring for the measurement. The prompt
 # map keeps the lane key: `audit_prompt_parts` is called from prompt assembly,
-# which has no session_id to offer, and its false-positive rate has not been
+# which has no conversation_id to offer, and its false-positive rate has not been
 # measured. Changing it on the strength of a neighbouring finding would be the
 # assertion this programme keeps catching.
 #
@@ -145,7 +145,7 @@ def audit_tools_stability(
     tool_schemas: list[dict[str, Any]],
     owl: str = "",
     *,
-    session_id: str = "",
+    conversation_id: str = "",
 ) -> None:
     """Report when a CONVERSATION's tools array changes between its turns.
 
@@ -154,9 +154,9 @@ def audit_tools_stability(
     removed; ``restrict_to`` narrows it), and the point is that the price of that
     variation should be visible rather than silent.
 
-    ``session_id`` IS THE UNIT, not ``session_key`` (D05.4). A prompt cache is
+    ``conversation_id`` IS THE UNIT, not ``session_key`` (D05.4). A prompt cache is
     held across one conversation; a lane outlives many of them and is also shared
-    with runs that are not conversations at all. ``PipelineState.session_id`` is
+    with runs that are not conversations at all. ``PipelineState.conversation_id`` is
     ``""`` for exactly those — its own field comment says they "have a lane but no
     conversation run, and saying so honestly beats inventing one" — so with no
     conversation there is no prefix, nothing to invalidate, and nothing to report.
@@ -165,7 +165,7 @@ def audit_tools_stability(
 
     Never raises.
     """
-    if not session_id:
+    if not conversation_id:
         # No conversation ⇒ no cached prefix ⇒ no invalidation to report. This is
         # 112 of the 122 warnings measured over six days: retry-queue runs,
         # self-heal `-fix` turns, goal execution, delegated children. Each builds
@@ -177,7 +177,7 @@ def audit_tools_stability(
     current = tools_digest(tool_schemas)
     if not current:
         return
-    key = (session_id, owl)
+    key = (conversation_id, owl)
     names = schema_names(tool_schemas)
     previous = _tools_hashes.get(key)
     _remember(_tools_hashes, key, (current, names))
@@ -187,7 +187,7 @@ def audit_tools_stability(
     log.engine.warning(
         "[cache] breakpoints: tools array CHANGED — position 0 invalidated this turn",
         extra={"_fields": {
-            "session_id": session_id,
+            "conversation_id": conversation_id,
             "session_key": session_key,
             "owl": owl,
             "prev_hash": prev_hash,

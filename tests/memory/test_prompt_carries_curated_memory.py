@@ -26,7 +26,7 @@ def test_the_user_profile_reaches_the_snapshot(mem):
     mem.add(USER_TARGET, "Bakir builds StackOwl.", "permanent")
 
     assert "Bakir builds StackOwl." in mem.snapshot_for_prompt(
-        USER_TARGET, session_id="s1",
+        USER_TARGET, conversation_id="s1",
     )
 
 
@@ -36,8 +36,8 @@ def test_owl_notes_are_separate_from_the_profile_in_the_prompt(mem):
     mem.add(USER_TARGET, "Prefers root-cause fixes.", "permanent")
     mem.add("scout", "Recovery lanes need a retry budget.", "permanent")
 
-    user = mem.snapshot_for_prompt(USER_TARGET, session_id="s1")
-    owl = mem.snapshot_for_prompt("scout", session_id="s1")
+    user = mem.snapshot_for_prompt(USER_TARGET, conversation_id="s1")
+    owl = mem.snapshot_for_prompt("scout", conversation_id="s1")
 
     assert "root-cause" in user and "retry budget" not in user
     assert "retry budget" in owl and "root-cause" not in owl
@@ -45,8 +45,8 @@ def test_owl_notes_are_separate_from_the_profile_in_the_prompt(mem):
 
 def test_a_missing_file_contributes_nothing_rather_than_failing(mem):
     """Most installs have never written one, so absence is the ORDINARY case."""
-    assert mem.snapshot_for_prompt(USER_TARGET, session_id="s1") == ""
-    assert mem.snapshot_for_prompt("nobody", session_id="s1") == ""
+    assert mem.snapshot_for_prompt(USER_TARGET, conversation_id="s1") == ""
+    assert mem.snapshot_for_prompt("nobody", conversation_id="s1") == ""
 
 
 def test_an_unreadable_file_degrades_to_empty(mem, tmp_path, monkeypatch):
@@ -58,7 +58,7 @@ def test_an_unreadable_file_degrades_to_empty(mem, tmp_path, monkeypatch):
 
     monkeypatch.setattr("pathlib.Path.read_text", _boom)
 
-    assert mem.snapshot_for_prompt(USER_TARGET, session_id="fresh") == ""
+    assert mem.snapshot_for_prompt(USER_TARGET, conversation_id="fresh") == ""
 
 
 def test_the_entry_text_is_returned_verbatim(mem):
@@ -67,4 +67,4 @@ def test_the_entry_text_is_returned_verbatim(mem):
     text = "Runs on a Jetson; never pull models locally."
     mem.add(USER_TARGET, text, "permanent")
 
-    assert text in mem.snapshot_for_prompt(USER_TARGET, session_id="s1")
+    assert text in mem.snapshot_for_prompt(USER_TARGET, conversation_id="s1")

@@ -320,11 +320,11 @@ class ModelProvider(ABC):
         session_key = str(ctx.get("session_key") or "")
         # D01.7 — the incarnation rides the same carrier. Empty for background work
         # that never passed through ingress: honest, not a fabricated conversation.
-        session_id = str(ctx.get("session_id") or "")
+        conversation_id = str(ctx.get("conversation_id") or "")
         # DEBT-21 — WHICH OWL spent, from the same carrier. Required to measure
         # D01.1's invariant I1: a lane can run several owls (the staged RCA
         # drives three against one incident lane) and each MUST have its own
-        # prompt, so grouping by session_id alone counts a correct design as a
+        # prompt, so grouping by conversation_id alone counts a correct design as a
         # violation. Empty for a call with no owl in context — background and
         # utility calls legitimately have none, and losing the attribution is
         # never worth losing the row.
@@ -340,7 +340,7 @@ class ModelProvider(ABC):
                 trace_id=trace_id,
                 is_local=self._is_local_backend,
                 session_key=session_key,
-                session_id=session_id,
+                conversation_id=conversation_id,
                 owl_name=owl_name,
                 cached_input_tokens=cached_input_tokens,
                 prompt_hash=prompt_hash,

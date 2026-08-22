@@ -2,13 +2,13 @@
 
 THE MEASUREMENT, 2026-08-15. D01.6's metric 4 asks whether the system prompt is
 byte-identical within one incarnation, which is the invariant D01.1 shipped to
-guarantee. Grouped by session_id it read 29 of 37 stable (78.4%). All 8 failures
+guarantee. Grouped by conversation_id it read 29 of 37 stable (78.4%). All 8 failures
 had one shape: same owl, same model, two internally-consistent prompt hashes
 separated by a time gap, with the prompt changing SIZE across it — a snapshot
-re-minted under a session_id that outlived the process holding it. Three of the
+re-minted under a conversation_id that outlived the process holding it. Three of the
 eight had a core restart sitting exactly between the two prompt windows.
 
-Bakir chose ROLLING THE session_id over persisting the snapshot: a restarted core
+Bakir chose ROLLING THE conversation_id over persisting the snapshot: a restarted core
 IS a new incarnation, it costs nothing, and the alternative asks a snapshot to
 outlive the process that owns it.
 
@@ -48,7 +48,7 @@ def _policy() -> ResetPolicy:
 def _entry(created: datetime.datetime, **kw: object) -> SessionEntry:
     return SessionEntry(
         session_key="owl:secretary:telegram:dm:1",
-        session_id="20260815_140000_aaaaaaaa",
+        conversation_id="20260815_140000_aaaaaaaa",
         owl_name="secretary",
         channel="telegram",
         created_at=created,

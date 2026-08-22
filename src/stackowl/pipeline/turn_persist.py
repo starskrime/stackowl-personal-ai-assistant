@@ -272,7 +272,7 @@ async def _record_transcript(state: PipelineState, floored: bool,
 
             await TranscriptStore(db_pool).record_turn(
                 session_key=state.session_key,
-                session_id=state.session_id,
+                conversation_id=state.conversation_id,
                 owl_name=state.owl_name,
                 user_text=state.input_text,
                 # None on a floored turn — the same honesty rule the staged fact
@@ -285,7 +285,7 @@ async def _record_transcript(state: PipelineState, floored: bool,
                 "[pipeline] persist_turn: transcript write failed — turn unaffected",
                 exc_info=exc,
                 extra={"_fields": {"trace_id": state.trace_id,
-                                   "session_id": state.session_id}},
+                                   "conversation_id": state.conversation_id}},
             )
 
     await _count_completed_turn(state, floored)
@@ -308,7 +308,7 @@ async def _count_completed_turn(state: PipelineState, floored: bool) -> None:
     Background work has no incarnation and no lane, so this returns early rather
     than asking the store about a conversation nobody had.
     """
-    if floored or not state.session_id:
+    if floored or not state.conversation_id:
         return
     # getattr for the same reason the transcript above uses it: a caller may
     # inject a narrower services object, and a counter is never worth an

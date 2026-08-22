@@ -129,11 +129,11 @@ async def run(state: PipelineState) -> PipelineState:
     # read and the profile read all leave the critical path of every reply after
     # the first — the latency half of this item, not just the cost half.
     _prompt_store = getattr(services, "session_prompt_store", None)
-    if _prompt_store is not None and state.session_id:
+    if _prompt_store is not None and state.conversation_id:
         try:
             cached = await _prompt_store.load(
                 session_key=state.session_key, owl_name=state.owl_name,
-                session_id=state.session_id,
+                conversation_id=state.conversation_id,
             )
         except Exception as exc:  # never let a cache cost a turn (I2)
             log.engine.error(
@@ -147,7 +147,7 @@ async def run(state: PipelineState) -> PipelineState:
                 "[pipeline] assemble: prompt source",
                 extra={"_fields": {
                     "trace_id": state.trace_id, "session_key": state.session_key,
-                    "session_id": state.session_id, "owl": state.owl_name,
+                    "conversation_id": state.conversation_id, "owl": state.owl_name,
                     "source": "cached", "system_len": prompt_chars,
                     "prompt_hash": prompt_hash,
                 }},
@@ -431,14 +431,14 @@ async def run(state: PipelineState) -> PipelineState:
         from stackowl.memory.curated import USER_TARGET, shared_memory
 
         curated = shared_memory()
-        session_id = state.session_id or state.session_key
+        conversation_id = state.conversation_id or state.session_key
         blocks = []
-        user_block = curated.snapshot_for_prompt(USER_TARGET, session_id=session_id)
+        user_block = curated.snapshot_for_prompt(USER_TARGET, conversation_id=conversation_id)
         if user_block:
             blocks.append("What I know about the user:\n" + user_block)
         if state.owl_name:
             owl_block = curated.snapshot_for_prompt(
-                state.owl_name, session_id=session_id,
+                state.owl_name, conversation_id=conversation_id,
             )
             if owl_block:
                 blocks.append("My own working notes:\n" + owl_block)
@@ -534,11 +534,11 @@ async def run(state: PipelineState) -> PipelineState:
             "prompt_hash": prompt_hash,
         }},
     )
-    if _prompt_store is not None and state.session_id and system_prompt:
+    if _prompt_store is not None and state.conversation_id and system_prompt:
         try:
             await _prompt_store.save(
                 session_key=state.session_key, owl_name=state.owl_name,
-                session_id=state.session_id, prompt_text=system_prompt,
+                conversation_id=state.conversation_id, prompt_text=system_prompt,
                 model_window=model_window,
             )
         except Exception as exc:  # a failed freeze costs a rebuild, never the turn
@@ -550,7 +550,7 @@ async def run(state: PipelineState) -> PipelineState:
         "[pipeline] assemble: prompt source",
         extra={"_fields": {
             "trace_id": state.trace_id, "session_key": state.session_key,
-            "session_id": state.session_id, "owl": state.owl_name,
+            "conversation_id": state.conversation_id, "owl": state.owl_name,
             "source": "cold_build", "system_len": prompt_chars,
             "prompt_hash": prompt_hash,
         }},

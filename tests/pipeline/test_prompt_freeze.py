@@ -36,27 +36,27 @@ class _MemoryPromptStore:
         self.loads = 0
         self._rows: dict[tuple[str, str], tuple[str, str, int | None]] = {}
 
-    async def load(self, *, session_key: str, owl_name: str, session_id: str):
+    async def load(self, *, session_key: str, owl_name: str, conversation_id: str):
         self.loads += 1
         row = self._rows.get((session_key, owl_name))
-        if row is None or row[0] != session_id:
+        if row is None or row[0] != conversation_id:
             return None
         from stackowl.sessions.prompt_store import StoredPrompt
 
         return StoredPrompt(
-            session_key=session_key, owl_name=owl_name, session_id=row[0],
+            session_key=session_key, owl_name=owl_name, conversation_id=row[0],
             prompt_text=row[1], prompt_hash="h", model_window=row[2], built_at="",
         )
 
-    async def save(self, *, session_key: str, owl_name: str, session_id: str,
+    async def save(self, *, session_key: str, owl_name: str, conversation_id: str,
                    prompt_text: str, model_window: int | None, **_kw: object) -> None:
-        self.saved.append((session_key, owl_name, session_id))
-        self._rows[(session_key, owl_name)] = (session_id, prompt_text, model_window)
+        self.saved.append((session_key, owl_name, conversation_id))
+        self._rows[(session_key, owl_name)] = (conversation_id, prompt_text, model_window)
 
 
 def _state(**kw: object) -> PipelineState:
     base = dict(
-        trace_id="t-freeze", session_key=LANE, session_id=RUN, input_text="hi",
+        trace_id="t-freeze", session_key=LANE, conversation_id=RUN, input_text="hi",
         channel="cli", owl_name="secretary", pipeline_step="assemble",
     )
     base.update(kw)
@@ -90,7 +90,7 @@ async def test_a_new_incarnation_rebuilds(
     store = _MemoryPromptStore()
 
     await _run(store, tmp_path, monkeypatch)
-    await _run(store, tmp_path, monkeypatch, session_id=NEXT_RUN)
+    await _run(store, tmp_path, monkeypatch, conversation_id=NEXT_RUN)
 
     assert len(store.saved) == 2
     assert store.saved[1][2] == NEXT_RUN
@@ -125,10 +125,10 @@ async def test_no_store_wired_still_produces_a_prompt(
 async def test_a_turn_with_no_incarnation_is_never_frozen(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Background work that never passed through ingress has no session_id.
+    """Background work that never passed through ingress has no conversation_id.
     Freezing under an empty key would collide every such turn into one prompt."""
     store = _MemoryPromptStore()
 
-    await _run(store, tmp_path, monkeypatch, session_id="")
+    await _run(store, tmp_path, monkeypatch, conversation_id="")
 
     assert store.saved == []

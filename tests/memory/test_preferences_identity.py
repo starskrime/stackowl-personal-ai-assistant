@@ -119,7 +119,7 @@ async def test_different_identities_are_isolated(tmp_db: DbPool) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_fallback_to_session_id_when_identity_key_empty(tmp_db: DbPool) -> None:
+async def test_fallback_to_conversation_id_when_identity_key_empty(tmp_db: DbPool) -> None:
     """When identity_key is empty, owner_key falls back to session_key (today's behavior)."""
     store = PreferenceStore(db=tmp_db)
     # Pref written under the session_key directly (today's format)

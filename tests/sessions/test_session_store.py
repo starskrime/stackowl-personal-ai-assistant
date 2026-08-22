@@ -46,7 +46,7 @@ async def test_first_message_creates_a_lane(store) -> None:
     assert branch is Branch.NEW
     assert reason is None
     assert entry.session_key.startswith("owl:Brain:telegram:dm:")
-    assert entry.session_id
+    assert entry.conversation_id
 
 
 @pytest.mark.asyncio
@@ -54,7 +54,7 @@ async def test_i1_the_lane_survives_a_round_trip_unchanged(store) -> None:
     first, _, _ = await store.resolve_for(src(), at(20, 12))
     second, branch, _ = await store.resolve_for(src(), at(20, 13))
     assert second.session_key == first.session_key
-    assert second.session_id == first.session_id
+    assert second.conversation_id == first.conversation_id
     assert branch is Branch.EXISTING
 
 
@@ -65,7 +65,7 @@ async def test_i2_a_rollover_keeps_the_key_and_mints_a_new_id(store) -> None:
     assert branch is Branch.EXPIRED
     assert reason is ResetReason.DAILY
     assert second.session_key == first.session_key   # lane unchanged (I1)
-    assert second.session_id != first.session_id     # incarnation new (I2)
+    assert second.conversation_id != first.conversation_id     # incarnation new (I2)
     assert second.was_auto_reset is True
     # Both counters describe THIS run, not the lane's lifetime. message_count is
     # 1 because the message that crossed the boundary belongs to the new
@@ -91,7 +91,7 @@ async def test_resume_pending_preserves_the_incarnation(store) -> None:
     await store.save(first.evolve(resume_pending=True, resume_reason="restart"))
     resumed, branch, _ = await store.resolve_for(src(), at(21, 9))
     assert branch is Branch.RESUME
-    assert resumed.session_id == first.session_id   # transcript continues
+    assert resumed.conversation_id == first.conversation_id   # transcript continues
     await store.clear_resume_pending(first.session_key)
     assert (await store.get(first.session_key)).resume_pending is False
 
@@ -101,7 +101,7 @@ async def test_i4_active_work_blocks_a_due_rollover(store) -> None:
     first, _, _ = await store.resolve_for(src(), at(20, 22))
     kept, branch, _ = await store.resolve_for(src(), at(21, 9), has_active_work=True)
     assert branch is Branch.EXISTING
-    assert kept.session_id == first.session_id
+    assert kept.conversation_id == first.conversation_id
 
 
 @pytest.mark.asyncio
@@ -145,7 +145,7 @@ async def test_mirror_projects_the_key_to_id_map(store) -> None:
     entry, _, _ = await store.resolve_for(src(), at(20, 12))
     data = json.loads(store.mirror_path().read_text(encoding="utf-8"))
     assert entry.session_key in data["lanes"]
-    assert data["lanes"][entry.session_key]["session_id"] == entry.session_id
+    assert data["lanes"][entry.session_key]["conversation_id"] == entry.conversation_id
     assert "WRITE-ONLY" in data["_note"]
 
 
@@ -157,7 +157,7 @@ async def test_a_corrupted_mirror_cannot_affect_behaviour(store) -> None:
     store.mirror_path().write_text("{ not json at all", encoding="utf-8")
     again, branch, _ = await store.resolve_for(src(), at(20, 13))
     assert branch is Branch.EXISTING
-    assert again.session_id == entry.session_id
+    assert again.conversation_id == entry.conversation_id
     assert json.loads(store.mirror_path().read_text(encoding="utf-8"))["lanes"]
 
 
@@ -212,7 +212,7 @@ async def test_a_rollover_keeps_the_send_target(store) -> None:
     first, _, _ = await store.resolve_for(source, at(20, 12))
     rolled, branch, _ = await store.resolve_for(source, at(22, 12))
     assert branch is Branch.EXPIRED
-    assert rolled.session_id != first.session_id
+    assert rolled.conversation_id != first.conversation_id
     assert rolled.chat_id == "456"
 
 
@@ -281,8 +281,8 @@ async def test_a_rollover_is_published(bus_store) -> None:
     assert len(bus.events) == 1
     name, payload = bus.events[0]
     assert name == "session.rollover"
-    assert payload["old_session_id"] == first.session_id
-    assert payload["new_session_id"] == rolled.session_id
+    assert payload["old_conversation_id"] == first.conversation_id
+    assert payload["new_conversation_id"] == rolled.conversation_id
     assert payload["reason"] == reason.value
     assert payload["owl_name"] == "Brain"
 
@@ -320,7 +320,7 @@ async def test_a_throwing_subscriber_never_blocks_the_conversation(tmp_path,
         await store.resolve_for(src(), at(20, 12))
         rolled, branch, _ = await store.resolve_for(src(), at(22, 12))
         assert branch is Branch.EXPIRED
-        assert rolled.session_id  # the new incarnation exists regardless
+        assert rolled.conversation_id  # the new incarnation exists regardless
     finally:
         await db.close()
 
@@ -331,7 +331,7 @@ async def test_no_bus_is_a_supported_configuration(store) -> None:
     await store.resolve_for(src(), at(20, 12))
     rolled, branch, _ = await store.resolve_for(src(), at(22, 12))
     assert branch is Branch.EXPIRED
-    assert rolled.session_id
+    assert rolled.conversation_id
 
 
 # --------------------------------------------------------------------------
@@ -347,7 +347,7 @@ async def test_new_ends_the_incarnation_and_starts_another(bus_store) -> None:
 
     assert fresh is not None
     assert fresh.session_key == first.session_key, "same lane (I1)"
-    assert fresh.session_id != first.session_id, "new incarnation (I2)"
+    assert fresh.conversation_id != first.conversation_id, "new incarnation (I2)"
     # /new starts an empty run: unlike an automatic boundary, no message crossed
     # into it — the next one to arrive will be its first.
     assert fresh.message_count == 0
@@ -383,7 +383,7 @@ async def test_new_announces_the_boundary_like_any_other(bus_store) -> None:
     name, payload = bus.events[0]
     assert name == "session.rollover"
     assert payload["reason"] == "explicit"
-    assert payload["old_session_id"] == first.session_id
+    assert payload["old_conversation_id"] == first.conversation_id
 
 
 @pytest.mark.asyncio
@@ -473,7 +473,7 @@ async def test_a_swept_lane_is_not_announced_twice(bus_store) -> None:
 
     rolled, branch, _ = await store.resolve_for(src(), at(22, 14))
     assert branch is Branch.EXPIRED
-    assert rolled.session_id != first.session_id, "the new incarnation is still minted"
+    assert rolled.conversation_id != first.conversation_id, "the new incarnation is still minted"
     assert len(bus.events) == 1, "but the boundary is announced only once"
 
 

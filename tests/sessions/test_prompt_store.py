@@ -8,7 +8,7 @@ measurements matter most.
 
 The row is keyed ``(session_key, owl_name)`` and STAMPED with the incarnation it
 was built for. That stamp is what makes invariant I6 self-enforcing: when a
-rollover mints a new ``session_id`` the stored prompt no longer matches, so the
+rollover mints a new ``conversation_id`` the stored prompt no longer matches, so the
 next turn cold-builds. No invalidation job, no listener, no way to forget — the
 same trick D01.7 used for ``summary_enqueued_for``, where storing the incarnation
 rather than a timestamp is what made the question answerable from the row.
@@ -31,40 +31,40 @@ NEXT_RUN = "20260728_040000_ffff9999"
 async def test_a_saved_prompt_comes_back(tmp_db: DbPool) -> None:
     store = SessionPromptStore(tmp_db)
 
-    await store.save(session_key=LANE, owl_name="secretary", session_id=RUN,
+    await store.save(session_key=LANE, owl_name="secretary", conversation_id=RUN,
                      prompt_text="you are a helpful owl", model_window=32768)
-    got = await store.load(session_key=LANE, owl_name="secretary", session_id=RUN)
+    got = await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN)
 
     assert got is not None
     assert got.prompt_text == "you are a helpful owl"
     assert got.model_window == 32768
-    assert got.session_id == RUN
+    assert got.conversation_id == RUN
 
 
 async def test_an_unknown_lane_has_no_prompt(tmp_db: DbPool) -> None:
     store = SessionPromptStore(tmp_db)
 
-    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
+    assert await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN) is None
 
 
 async def test_a_new_incarnation_does_not_inherit_the_old_prompt(tmp_db: DbPool) -> None:
     """Invariant I6, and the reason the incarnation is STAMPED on the row.
 
-    A rollover keeps the lane and mints a new session_id. The stored prompt was
+    A rollover keeps the lane and mints a new conversation_id. The stored prompt was
     built for the previous conversation, so it must not be served to the new one
     — otherwise a session boundary would change nothing about the prompt, which
     is the whole point of having a boundary.
     """
     store = SessionPromptStore(tmp_db)
-    await store.save(session_key=LANE, owl_name="secretary", session_id=RUN,
+    await store.save(session_key=LANE, owl_name="secretary", conversation_id=RUN,
                      prompt_text="built for yesterday", model_window=None)
 
     assert await store.load(session_key=LANE, owl_name="secretary",
-                            session_id=NEXT_RUN) is None
+                            conversation_id=NEXT_RUN) is None
     # ...and the old incarnation can still read its own, so this is a MISMATCH
     # rule rather than a destructive one.
     assert await store.load(session_key=LANE, owl_name="secretary",
-                            session_id=RUN) is not None
+                            conversation_id=RUN) is not None
 
 
 async def test_two_owls_on_one_lane_keep_separate_prompts(tmp_db: DbPool) -> None:
@@ -73,13 +73,13 @@ async def test_two_owls_on_one_lane_keep_separate_prompts(tmp_db: DbPool) -> Non
     the live logs show as three different persona_len values on the same lane."""
     store = SessionPromptStore(tmp_db)
 
-    await store.save(session_key=LANE, owl_name="secretary", session_id=RUN,
+    await store.save(session_key=LANE, owl_name="secretary", conversation_id=RUN,
                      prompt_text="secretary prompt", model_window=None)
-    await store.save(session_key=LANE, owl_name="scout", session_id=RUN,
+    await store.save(session_key=LANE, owl_name="scout", conversation_id=RUN,
                      prompt_text="scout prompt", model_window=None)
 
-    sec = await store.load(session_key=LANE, owl_name="secretary", session_id=RUN)
-    scout = await store.load(session_key=LANE, owl_name="scout", session_id=RUN)
+    sec = await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN)
+    scout = await store.load(session_key=LANE, owl_name="scout", conversation_id=RUN)
     assert sec is not None and scout is not None
     assert sec.prompt_text == "secretary prompt"
     assert scout.prompt_text == "scout prompt"
@@ -90,9 +90,9 @@ async def test_rebuilding_replaces_rather_than_accumulates(tmp_db: DbPool) -> No
     previous incarnation's row behind to be picked up later."""
     store = SessionPromptStore(tmp_db)
 
-    await store.save(session_key=LANE, owl_name="secretary", session_id=RUN,
+    await store.save(session_key=LANE, owl_name="secretary", conversation_id=RUN,
                      prompt_text="first", model_window=None)
-    await store.save(session_key=LANE, owl_name="secretary", session_id=NEXT_RUN,
+    await store.save(session_key=LANE, owl_name="secretary", conversation_id=NEXT_RUN,
                      prompt_text="second", model_window=None)
 
     rows = await tmp_db.fetch_all(
@@ -100,7 +100,7 @@ async def test_rebuilding_replaces_rather_than_accumulates(tmp_db: DbPool) -> No
         (LANE, "secretary"),
     )
     assert rows[0]["n"] == 1
-    got = await store.load(session_key=LANE, owl_name="secretary", session_id=NEXT_RUN)
+    got = await store.load(session_key=LANE, owl_name="secretary", conversation_id=NEXT_RUN)
     assert got is not None
     assert got.prompt_text == "second"
 
@@ -111,10 +111,10 @@ async def test_the_stored_hash_identifies_the_stored_text(tmp_db: DbPool) -> Non
     from stackowl.infra.prompt_metrics import digest
 
     store = SessionPromptStore(tmp_db)
-    await store.save(session_key=LANE, owl_name="secretary", session_id=RUN,
+    await store.save(session_key=LANE, owl_name="secretary", conversation_id=RUN,
                      prompt_text="you are a helpful owl", model_window=None)
 
-    got = await store.load(session_key=LANE, owl_name="secretary", session_id=RUN)
+    got = await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN)
     assert got is not None
     assert got.prompt_hash == digest("you are a helpful owl")
 
@@ -124,10 +124,10 @@ async def test_an_empty_prompt_is_not_persisted(tmp_db: DbPool) -> None:
     empty prompt. Persisting it would pin the failure for the whole session."""
     store = SessionPromptStore(tmp_db)
 
-    await store.save(session_key=LANE, owl_name="secretary", session_id=RUN,
+    await store.save(session_key=LANE, owl_name="secretary", conversation_id=RUN,
                      prompt_text="", model_window=None)
 
-    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
+    assert await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN) is None
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ async def test_an_empty_prompt_is_not_persisted(tmp_db: DbPool) -> None:
 #
 # Until this existed, NOTHING in the tree could clear a frozen prompt: the store
 # only ever INSERTed/UPSERTed, and the sole release was a rollover minting a new
-# session_id. So an owl edit was invisible to the conversation you made it in —
+# conversation_id. So an owl edit was invisible to the conversation you made it in —
 # for up to twelve hours, since D01.7 rolls daily at 04:00.
 # ---------------------------------------------------------------------------
 
@@ -144,7 +144,7 @@ OTHER_LANE = "owl:secretary:cli:dm:1"
 
 async def _freeze(store: SessionPromptStore, lane: str, owl: str) -> None:
     await store.save(
-        session_key=lane, owl_name=owl, session_id=RUN,
+        session_key=lane, owl_name=owl, conversation_id=RUN,
         prompt_text=f"prompt for {owl} on {lane}", model_window=None,
     )
 
@@ -162,8 +162,8 @@ async def test_invalidating_an_owl_clears_it_on_every_lane(tmp_db: DbPool) -> No
     cleared = await store.invalidate_owl(owl_name="secretary", cause="owl_edit")
 
     assert cleared == 2
-    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
-    assert await store.load(session_key=OTHER_LANE, owl_name="secretary", session_id=RUN) is None
+    assert await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN) is None
+    assert await store.load(session_key=OTHER_LANE, owl_name="secretary", conversation_id=RUN) is None
 
 
 async def test_invalidating_an_owl_leaves_other_owls_alone(tmp_db: DbPool) -> None:
@@ -174,8 +174,8 @@ async def test_invalidating_an_owl_leaves_other_owls_alone(tmp_db: DbPool) -> No
 
     await store.invalidate_owl(owl_name="secretary", cause="owl_edit")
 
-    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
-    survivor = await store.load(session_key=LANE, owl_name="researcher", session_id=RUN)
+    assert await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN) is None
+    survivor = await store.load(session_key=LANE, owl_name="researcher", conversation_id=RUN)
     assert survivor is not None, "editing one owl must not clear another's prompt"
 
 
@@ -189,12 +189,12 @@ async def test_invalidate_all_clears_every_owl_and_lane(tmp_db: DbPool) -> None:
     cleared = await store.invalidate_all(cause="skill_install")
 
     assert cleared == 2
-    assert await store.load(session_key=LANE, owl_name="secretary", session_id=RUN) is None
-    assert await store.load(session_key=OTHER_LANE, owl_name="researcher", session_id=RUN) is None
+    assert await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN) is None
+    assert await store.load(session_key=OTHER_LANE, owl_name="researcher", conversation_id=RUN) is None
 
 
 async def test_invalidating_nothing_is_not_an_error(tmp_db: DbPool) -> None:
-    """I4 — background lanes never froze a prompt (DEBT-27: empty session_id), so
+    """I4 — background lanes never froze a prompt (DEBT-27: empty conversation_id), so
     a delete clears 0 rows and costs nothing. It starts mattering automatically
     once DEBT-27 lands, with no change here."""
     store = SessionPromptStore(tmp_db)
@@ -216,10 +216,10 @@ async def test_a_rebuild_after_invalidation_is_stored_again(tmp_db: DbPool) -> N
     await store.invalidate_owl(owl_name="secretary", cause="owl_edit")
 
     await store.save(
-        session_key=LANE, owl_name="secretary", session_id=RUN,
+        session_key=LANE, owl_name="secretary", conversation_id=RUN,
         prompt_text="the REBUILT prompt", model_window=None,
     )
-    found = await store.load(session_key=LANE, owl_name="secretary", session_id=RUN)
+    found = await store.load(session_key=LANE, owl_name="secretary", conversation_id=RUN)
     assert found is not None
     assert found.prompt_text == "the REBUILT prompt"
 
