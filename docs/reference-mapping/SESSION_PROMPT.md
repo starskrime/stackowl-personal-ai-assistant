@@ -73,6 +73,13 @@ STANDING RULES (full list in progress.yml `rules`):
     A DELETION IS NOT LIVE UNTIL THE PROCESS HOLDING THE OLD CODE IS GONE.
   - Pre-existing red is not out of scope. Root-cause it, fix it, and say so.
   - Never autonomously "fix" a failing test to make your change pass — stop and tell me.
+    A red test that appears after your change is usually telling you the change is
+    incomplete, not that the test is wrong (2026-08-22: three of them revealed that the
+    ownership rule lives in FOUR functions and I had patched the one not on the path).
+  - The honesty machinery is usually RIGHT. When the overclaim gate names a failed
+    capability, the first question is whether the TOOL lied to it — twice on 2026-08-22
+    `owl_build` reported success on a write that never landed, and once its verifier was
+    blind to the very fields its own tool writes. Suspect the reporter last.
   - Commit at sub-story granularity when green. Merge to main and push when done.
 
 FOUR FAILURE MODES THIS PROGRAMME KEEPS FINDING — check for them by default:
@@ -93,17 +100,57 @@ Start by telling me what progress.yml `current` says, then continue from there.
 
 ---
 
-## What `current` says right now (2026-08-10)
+## What `current` says right now (2026-08-22)
 
-- **Item:** `D08.1` — two-file curated memory. All four closers landed; live.
-- **Shipped this arc:** `D09.3` (skill curator + consolidation, catalog 437 → 168),
-  `D10.2` (authoring standard enforced at the write, 154/154 skills migrated),
-  `D08.1` slices 1–4 + the removal, `D08.3` (absorbed as the nudge).
-- **Open acceptance check:** that the assembled prompt demonstrably carries the two
-  memory files — needs a real turn, deliberately not asserted from the code path.
-- **Next:** `D08.2` (raised to P1) — the `MemoryBridge` split plus the three channel
-  approve/reject callbacks, in one careful pass on the orchestrator block they share
-  with consent and clarify.
-- **Waiting on data:** whether `lessons.lance` (221 MB) earns its place. `n_hits` now
-  logs at INFO; one day of traffic settles it.
-- **Waiting on design:** `N01 · Dreaming` — first item in the native `N` namespace.
+- **Item:** `D05.4` — progressive tool disclosure, **stage `validate`**, at
+  `validate:partial / document:partial`. It cannot reach `done` without a shape of
+  traffic only real use produces: a multi-turn interactive lane whose memo is
+  invalidated mid-conversation. Three of its four acceptance checks WAIT ON TRAFFIC and
+  none is claimed.
+- **The map:** 112 items — 2 CONFLICT, 43 MISSING, 29 PARTIAL, 6 DIVERGENT, 15 PARITY,
+  16 AHEAD, 1 NATIVE. Completion is tracked narratively in `current`, NOT by a status
+  field on the items — do not quote a "N of 112 done" figure, there isn't one.
+- **Escalations:** 28 recorded, 5 with no `RESOLVED` key. `ESC-34` is the newest (a
+  blocked owl was shown an escape hatch that does not open).
+- **Waiting on Bakir:** `N01 · Dreaming` (his own idea, native `N` namespace, the
+  DreamWorker handler is registered and UNSCHEDULED as its seat), and the **LanceDB
+  removal arc** — decided 2026-08-14, not started.
+
+### What happened on 2026-08-22 — a platform-defect day, not a programme day
+
+The programme did not advance. A full day went to live failures Bakir hit in Telegram,
+all of them measured from the log and the database rather than reasoned about. Read the
+commits; each message carries its own evidence. In rough order:
+
+- **log retention was configured and could never fire** — `TimedRotatingFileHandler`'s
+  deletion searches for `stackowl.jsonl.DATE` while the custom namer writes
+  `stackowl-DATE.jsonl`. 772 MB across 31 files, `backupCount=30`, 0 ever deleted. Now
+  7 days and it works.
+- **one shared Python env** — four virtualenvs in the workspace (707 MB, two
+  byte-identical). The learning loop had recorded env-CREATION as a winning lesson, so
+  the platform was teaching itself to sprawl. `StackowlHome.python_env()` +
+  `WorkspaceEnvJanitor` + the two lessons rewritten.
+- **capability gaps now self-heal** — 85 bounds refusals in three days reached nobody,
+  because the refusal was recorded only into a per-TURN ContextVar. It is now durable in
+  `audit_log`, and a gap INSIDE the owl's creation ceiling is granted with no human at
+  all (the ceiling IS the operator's standing grant); only ceiling-crossing escalates.
+- **`owl_build` grant read the CEILING, not `bounds ∩ ceiling`** — so a tool in the
+  ceiling and missing from bounds reported "already allowed — nothing to grant",
+  returned success and wrote nothing.
+- **the edit verifier was blind to `lifecycle` and `schedule`** — the two fields you
+  would actually edit on a scheduled owl. Zero checked fields → UNKNOWN → the overclaim
+  gate default-denies → a landed edit reported as a failure.
+- **"Brain?" became a work order** — the vocative strip removes `[\s,:;]` but not `?`,
+  so the goal was literally `?`. Given no instruction the agent found an old
+  conversation in memory and acted on it for 266 seconds. Now a remainder with no letter
+  or digit in any script routes the original text.
+- **the secretary is ROOT** (Bakir's decision) — she was already unbounded; what stopped
+  her were the ownership rule and the task envelope, neither of which consults bounds.
+  `ROOT_OWL` / `is_root_owl` in `owls/tool_presets.py`, honoured by all four gates.
+
+**Two open items from that day, neither proven:** `secretary` editing `syshealth`
+without the ownership refusal, and `sysdesign`'s daily `web_search` refusal closing
+itself on the next 6-hourly sweep. Both should now happen unattended — if they do not,
+the fixes are not real. Also unexplained: a 20-step budget cap that truncated a turn
+mid-work, and the fact that `secretary` is the FALLBACK caller, so unattributed calls
+now carry root authority.
