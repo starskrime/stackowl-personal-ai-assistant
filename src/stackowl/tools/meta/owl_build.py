@@ -173,6 +173,43 @@ def _edit_landed(current: object | None, args: dict[str, object]) -> bool | None
                                    "observed": str(getattr(current, attr, ""))[:80]}},
             )
             return False
+    # LIFECYCLE AND SCHEDULE — the two axes a SCHEDULED owl is most often edited
+    # on, and until 2026-08-22 the verifier could see neither.
+    #
+    # MEASURED: at 14:42:16 `secretary` edited `syshealth` (a scheduled owl),
+    # `persist_owl: stored` fired, `updated_at` moved to 14:42:16.830Z — the edit
+    # LANDED — and because no field in the checklist had been requested,
+    # `_edit_landed` returned None. Unknown default-denies at the overclaim gate,
+    # so a successful edit became `overclaim.detected failed_capability=owl_build`
+    # and the operator got a "couldn't finish" floor for work that had completed.
+    #
+    # `_edit` explicitly reconciles the scheduler projection for "a changed
+    # lifecycle/trigger", so both are genuinely editable; only the reader was
+    # missing. A verifier blind to the fields its own tool writes reports UNKNOWN
+    # forever, and unknown is treated as failure.
+    lifecycle = args.get("lifecycle")
+    if lifecycle is not None and str(lifecycle).strip():
+        checked += 1
+        observed = str(getattr(current, "lifecycle", "") or "").strip()
+        if observed != str(lifecycle).strip():
+            log.tool.warning(
+                "owl_build.verify: lifecycle did not take the requested value",
+                extra={"_fields": {"wanted": str(lifecycle)[:40], "observed": observed}},
+            )
+            return False
+
+    schedule = args.get("schedule")
+    if schedule is not None and str(schedule).strip():
+        checked += 1
+        trigger = getattr(current, "trigger", None)
+        observed = str(getattr(trigger, "schedule", "") or "").strip()
+        if observed != str(schedule).strip():
+            log.tool.warning(
+                "owl_build.verify: schedule did not take the requested value",
+                extra={"_fields": {"wanted": str(schedule)[:40], "observed": observed}},
+            )
+            return False
+
     tools = args.get("explicit_tools")
     if isinstance(tools, list) and tools:
         live = {str(t) for t in (getattr(current, "tools", None) or [])}
@@ -215,6 +252,26 @@ def _edit_landed(current: object | None, args: dict[str, object]) -> bool | None
             )
             return False
     if checked == 0:
+        # SAY SO. This returned None in silence, and "no opinion" default-denies at
+        # the overclaim gate — so a successful edit became a floored turn with
+        # nothing in the log to explain why. That is the DEBUG-evidence trap this
+        # codebase already pays for, one step worse: there was no line at all.
+        #
+        # INFO because it is the line that closes the question "why was a
+        # successful edit reported as a failure", and because a request landing
+        # here means the tool wrote a field its own verifier cannot read — a gap
+        # worth seeing the moment it appears rather than after a user reports it.
+        log.tool.info(
+            "owl_build.verify: no checkable field in this edit — reporting UNKNOWN, "
+            "which the overclaim gate treats as failure",
+            extra={"_fields": {
+                "requested": sorted(
+                    k for k, v in args.items()
+                    if k not in ("action", "name") and v is not None
+                    and str(v).strip()
+                ),
+            }},
+        )
         return None
     return True
 
