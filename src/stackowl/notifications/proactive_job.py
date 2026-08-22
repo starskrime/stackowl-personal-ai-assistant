@@ -270,6 +270,48 @@ class ProactiveJobDeliverer:
                     },
                 )
 
+        # ESC-42 — PB7b wired this actuator on only SOME paths. Its loop above is
+        # `for channel in undeliverable:`, which covers a NAMED channel with no
+        # durable address. It does NOT cover a job with NO channels configured at
+        # all: `unresolved_channels()` is then empty, the loop body never runs, and
+        # the body is discarded while `job_success_for_rollup("undeliverable")`
+        # returns True — so the job is recorded a SUCCESS.
+        #
+        # MEASURED 2026-08-22: 40 drops of exactly this shape in the retained
+        # window (32 rollover_summary, 7 morning_brief, 1 skill_synthesizer), and
+        # 167 outbox rows of which every single one is `transport_failed` — none
+        # from this seam. `morning_brief-15904936` carries target_channels NULL.
+        # Among the bodies discarded is the daily lessons_effect readout, which is
+        # why that experiment's answer has never reached the operator.
+        #
+        # The sibling test passed throughout because it uses target_channels=
+        # ["telegram"] with no address — a named channel — which is the shape the
+        # loop above already handles. Failure mode 2 guarding failure mode 1.
+        #
+        # ADDITIVE, exactly like PB7b: the rollup, the return value and the success
+        # mapping are untouched. Whether a job that attempted zero channels should
+        # still count as a success is the escalated half of ESC-42 and is NOT
+        # decided here. This only stops the body being lost.
+        nothing_was_attempted = (
+            not per_channel and not undeliverable and not suppressed_replay
+        )
+        outbox = self._deliverer.outbox
+        if nothing_was_attempted and outbox is not None and surface_undelivered:
+            log.scheduler.warning(
+                "[scheduler] proactive_job.deliver_for_job: no channels configured "
+                "— nothing was attempted, persisting the body so it is not lost",
+                extra={"_fields": {"job_id": job.job_id, "category": category}},
+            )
+            await outbox.record_undelivered(
+                identity_key=DEFAULT_PRINCIPAL_ID,
+                body=message,
+                reason="no_deliverer",
+                channel=None,
+                category=category,
+                urgency=urgency,
+                job_id=job.job_id,
+            )
+
         rollup = self._rollup(per_channel, undeliverable, suppressed_replay)
         # 4. EXIT
         log.scheduler.info(

@@ -870,3 +870,87 @@ async def test_no_banner_means_no_extra_chunk(tmp_db: DbPool) -> None:
     delivered = "".join([c.content async for c in reader])
 
     assert delivered == "Just the answer."
+
+
+async def test_a_job_with_NO_channels_at_all_still_keeps_its_body(tmp_db: DbPool) -> None:
+    """The shape the live defect actually has — and the one the sibling test misses.
+
+    `test_undeliverable_rollup_writes_durable_row` above passes
+    ``target_channels=["telegram"]`` with no address: a NAMED channel with no
+    durable recipient. That yields a NON-EMPTY ``undeliverable`` tuple, so PB7b's
+    ``for channel in undeliverable:`` loop runs and the row is written. It passes,
+    and it always has.
+
+    Production is different. `morning_brief-15904936` carries ``target_channels =
+    NULL`` — no channels at all. ``spec.unresolved_channels()`` is then EMPTY,
+    ``_rollup`` falls through to its terminal "nothing to deliver to at all"
+    branch, and the NACK loop iterates an empty tuple and writes NOTHING. The body
+    is discarded, and ``job_success_for_rollup("undeliverable")`` returns True, so
+    the job is recorded a success.
+
+    MEASURED 2026-08-22: 40 drops of exactly this shape in the retained window —
+    32 rollover_summary, 7 morning_brief, 1 skill_synthesizer — and 167
+    undelivered_outbox rows, every one ``reason='transport_failed'``, none from
+    this seam. Among the discarded bodies is the daily lessons_effect readout,
+    which is why ESC-40 could not be answered: it has been computed for 14 days
+    and never reached anyone.
+
+    This is CLAUDE.md failure mode 2 — a test double that stopped resembling the
+    real thing — guarding failure mode 1, an actuator wired on only some paths.
+    The rollup and the success mapping are deliberately NOT asserted here: those
+    are ESC-42's escalated half. This pins only that the BODY SURVIVES.
+    """
+    TestModeGuard.deactivate()
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(deliverer, DeliveryLedger(tmp_db))
+    job = _scheduled_job("brief-no-channels-1", [], {})
+
+    outcome = await job_deliverer.deliver_for_job(
+        job, message="the lessons_effect line nobody ever saw", category="morning_brief"
+    )
+    assert outcome.per_channel == {}, outcome
+    assert outcome.undeliverable == (), "the live shape has NO channels to name"
+
+    rows = await UndeliveredOutbox(tmp_db).list_pending()
+    assert len(rows) == 1, (
+        "a job that attempted zero channels discarded its body — "
+        f"outbox has {len(rows)} rows"
+    )
+    assert rows[0]["body"] == "the lessons_effect line nobody ever saw"
+    assert rows[0]["reason"] in ALLOWED_REASONS
+
+
+async def test_a_probe_with_no_channels_is_still_not_surfaced(tmp_db: DbPool) -> None:
+    """`surface_undelivered=False` must keep gating the new write too.
+
+    A synthetic canary's marker is not lost user content and must never reach the
+    next-contact banner. The existing flag governs both PB7b writes; it has to
+    govern this one as well, or the canary starts nagging the operator.
+    """
+    TestModeGuard.deactivate()
+    router = NotificationRouter(
+        db=tmp_db, settings=_settings(), clock=lambda: datetime(2026, 6, 30, tzinfo=UTC)
+    )
+    deliverer = ProactiveDeliverer(
+        router=router,
+        registry=ChannelRegistry.instance(),
+        settings=_settings(),
+        outbox=UndeliveredOutbox(tmp_db),
+    )
+    job_deliverer = ProactiveJobDeliverer(deliverer, DeliveryLedger(tmp_db))
+    job = _scheduled_job("canary-no-channels-1", [], {})
+
+    await job_deliverer.deliver_for_job(
+        job, message="canary marker", category="canary", surface_undelivered=False
+    )
+
+    rows = await UndeliveredOutbox(tmp_db).list_pending()
+    assert rows == [], "a synthetic probe must never surface as a banner"
