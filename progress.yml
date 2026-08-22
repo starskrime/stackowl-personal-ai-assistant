@@ -13608,15 +13608,80 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       partial
+      validate:   partial
+      document:   done
+    doc: "docs/reference-mapping/designs/D08.4.md"
+    doc_last_verified: "2026-08-22 against core boot 18:02:22Z — Verification section RUN"
+    ARCHITECT_AND_IMPLEMENT_2026_08_22:
+      ladder_rung: "1 — extend existing code. No new module, no config key, no migration."
+      laws: >-
+        Law 1 untouched: all three changes alter CONTENT rules, never prompt layout, so no
+        cached prefix moves. Law 2 untouched: no tool added or removed.
+      files:
+        - src/stackowl/memory/curated.py
+        - tests/memory/test_curated_entry_boundaries.py
+        - tests/memory/test_curated.py
+        - tests/tools/knowledge/test_curated_memory_decays.py
+      what_shipped: >-
+        (1) `_contain` neutralises ENTRY_DELIMITER in content on BOTH add and replace —
+        replace included because it is the verb the consolidation protocol pushes the model
+        toward, so leaving it ungated would have kept the forgery reachable through the door
+        the design recommends. (2) A per-entry ceiling, MAX_ENTRY_BUDGET_FRACTION = 0.5,
+        checked BEFORE the budget: consolidation frees space by dropping OTHER entries and
+        can never make one oversized entry fit, so asking for it would be asking for
+        something that provably cannot work. (3) snapshot_for_prompt returns an EMPTY block
+        for a target that does not resolve, instead of raising past assemble.py's single
+        try and taking the user profile with it — reading degrades, WRITING still raises.
+      THE_CEILING_IS_CALIBRATED_NOT_PICKED: >-
+        Measured against the live store: the largest real entry is 878 chars against a 2,200
+        budget — 39.9%. A 50% ceiling therefore refuses ZERO of the 32 entries that exist,
+        with margin. The number is in the source beside the constant, so the next reader does
+        not have to re-derive it.
+      TWO_PRE_EXISTING_TESTS_WENT_RED_AND_THIS_IS_NOT_ME_BENDING_THEM: >-
+        `test_a_successful_write_resets_the_failure_budget` and
+        `test_a_mislabelled_rule_is_protected_by_marking_it_permanent` both failed after the
+        change. In BOTH cases the invariant under test was intact and a new, stricter guard
+        simply sat in front of the input they used — synthetic ~700-char probes against the
+        smaller 1,375-char `user` budget, i.e. just over the new ceiling. I verified the
+        invariants still hold by re-running each with an input that reaches the behaviour
+        it names: the failure counter still resets (done=False), and eviction still selects
+        by age with durability protecting the small rule.
+        SO THE PROBES CHANGED AND THE ASSERTIONS DID NOT, and both probes are now DERIVED
+        from the constant rather than hardcoded, so they cannot drift out of step with it
+        again. A new test pins the other half — an entry over the ceiling is refused
+        TERMINALLY and its message must not ask for consolidation — so neither branch can
+        silently swap for the other later.
+        Recorded at length because "never fix a test to make your change pass" is a standing
+        rule and this is the shape that most resembles breaking it.
+      what_was_deliberately_NOT_changed: >-
+        The unmarked-entry default stays `permanent`. A lens proposed flipping it to
+        `until_changed` since that is what let forgery mint an immortal entry, but
+        Entry.parse's docstring gives a real reason — an unmarked line is what hand-editing
+        produces, and this design exists to allow hand-editing. Once the delimiter cannot be
+        forged, an unmarked line can only come from a hand edit, where `permanent` is right.
+        The defect was the forgery, not the default. No live entry is unmarked (checked).
+      baselines: "ruff 37 -> 37, mypy 65 -> 65. Neither rose."
+      the_restart_was_verified_not_assumed: >-
+        Last src write 2026-08-22T18:01:22Z, core boot 18:02:22Z — 60 seconds later, so the
+        running image carries all three guards.
+    VALIDATE_2026_08_22:
+      status: "PARTIAL — the code is live and the boot is clean; all three guards are UNEXERCISED in production."
+      platform_health: "40 minutes on the new image: 1,351 INFO, 27 WARNING, ZERO ERROR."
+      I1_live_and_it_PASSES_on_a_real_denominator: >-
+        Every one of the 12 live memory files has exactly (entries - 1) bare `§` delimiters —
+        checked file by file. So no forged entry exists in the store today, which is both a
+        pass for the invariant and a useful negative: the forgery was reachable and had not
+        yet been hit.
+      I2_I3_I4_are_OPEN_because_the_denominator_is_ZERO: >-
+        Zero curated writes since the 18:02:22Z boot, so the containment and the ceiling have
+        had no opportunity. No owl on this deployment has a non-ASCII name, so the
+        unresolvable-target warning has none either. That is no opportunity, not success, and
+        it is recorded as OPEN with the closing queries in the doc's Standing watch.
     decisions: []
     changes: []
     notes: null

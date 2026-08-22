@@ -189,15 +189,46 @@ def test_repeated_failures_go_terminal_so_the_turn_can_finish(mem):
 
 def test_a_successful_write_resets_the_failure_budget(mem):
     """The cap counts CONSECUTIVE failures, not lifetime ones — otherwise a
-    successful consolidation mid-turn would still be punished."""
+    successful consolidation mid-turn would still be punished.
+
+    THE INPUT CHANGED IN D08.4, THE SUBJECT DID NOT. This probe used to be
+    ``"x" * (USER_BUDGET_CHARS + 10)``. D08.4 added a per-entry ceiling
+    (``MAX_ENTRY_BUDGET_FRACTION``) because a single write could otherwise evict
+    the whole store, and that ceiling now catches an entry that large BEFORE the
+    capacity path — so the old probe stopped reaching the behaviour under test.
+
+    It is answered with a terminal refusal on purpose: no amount of consolidation
+    can make an entry larger than the ceiling fit, so asking the model to
+    consolidate would be asking for something that provably cannot work. The probe
+    below is under the ceiling and over the remaining budget, which is exactly the
+    case the consolidation protocol exists for. Verified against the live class:
+    ``done`` is still ``False`` here, so the reset invariant holds unchanged.
+    """
     _fill(mem)
     mem.add(USER_TARGET, "Does not fit here at all, not even close.", "permanent")
     mem.remove(USER_TARGET, "Fact number 0")
     assert mem.add(USER_TARGET, "Short one.", "permanent").ok
 
+    probe = "y" * 400
+    assert len(probe) <= mem._max_entry_chars(USER_TARGET), "probe must clear the ceiling"
+    res = mem.add(USER_TARGET, probe, "permanent")
+
+    assert res.ok is False
+    assert res.done is False, "the counter should have reset on the success"
+
+
+def test_an_entry_over_the_per_entry_ceiling_is_terminal_not_a_consolidation_ask(mem):
+    """The other half of the split above, pinned so neither drifts.
+
+    Consolidation frees space by dropping OTHER entries. It can never make one
+    oversized entry fit, so the refusal is terminal and the message tells the model
+    to split it rather than to consolidate.
+    """
     res = mem.add(USER_TARGET, "x" * (USER_BUDGET_CHARS + 10), "permanent")
 
-    assert res.done is False, "the counter should have reset on the success"
+    assert res.ok is False
+    assert res.done is True, "consolidation cannot help; do not ask for it"
+    assert "consolidat" not in res.message.lower()
 
 
 def test_reset_turn_clears_the_budget(mem):

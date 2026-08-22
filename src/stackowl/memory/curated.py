@@ -78,6 +78,22 @@ ENTRY_DELIMITER = "\n§\n"
 USER_BUDGET_CHARS = 1375
 OWL_BUDGET_CHARS = 2200
 
+#: The largest share of a target's budget ONE entry may claim (D08.4). Without
+#: this a single write could evict the whole store: measured on the real class,
+#: four facts went in and one 1,300-character `add` left one standing. The budget
+#: is the mechanism this design rests on ("adding forces dropping"), and a write
+#: able to consume all of it turns that mechanism into a memory-wipe primitive
+#: available to anything that can write once. A fraction rather than a constant so
+#: it cannot drift out of step with the budgets above — one source, not three.
+#:
+#: 0.5 is CALIBRATED, not picked: measured against the live store on 2026-08-22, the
+#: largest real entry is 878 chars against a 2,200 budget — 39.9% — so a 50% ceiling
+#: refuses ZERO of the 32 entries that exist, with margin. Two tests did break on it,
+#: both using synthetic ~700-char probes against the smaller 1,375 `user` budget;
+#: their probes are now derived from this fraction rather than hardcoded, so they
+#: cannot drift out of step with it again.
+MAX_ENTRY_BUDGET_FRACTION = 0.5
+
 #: The global profile's target name. Anything else is an owl.
 USER_TARGET = "user"
 
@@ -218,6 +234,31 @@ class CuratedMemory:
     def budget_for(self, target: str) -> int:
         return USER_BUDGET_CHARS if target == USER_TARGET else OWL_BUDGET_CHARS
 
+    def _max_entry_chars(self, target: str) -> int:
+        """Ceiling for a SINGLE entry — see MAX_ENTRY_BUDGET_FRACTION."""
+        return int(self.budget_for(target) * MAX_ENTRY_BUDGET_FRACTION)
+
+    @staticmethod
+    def _contain(text: str) -> str:
+        """Keep one entry's content inside one entry (D08.4).
+
+        `entries()` splits the file on ENTRY_DELIMITER, and until now `add`/
+        `replace` never looked for it in content — so ONE write whose text
+        contained the delimiter produced TWO entries, and the second, having no
+        `[durability]` marker of its own, parsed back as `permanent`: the single
+        class `_evict_to_fit` refuses to touch. A one-line forgery minted an entry
+        immune to every decay path this design depends on.
+
+        THIS NEEDS NO ATTACKER, which is why it is fixed here rather than in a
+        scanner: a legitimate multi-paragraph fact that happens to carry the
+        sentinel on its own line does it by accident, and nothing would report it.
+
+        The delimiter is neutralised rather than the write refused, because a
+        model writing prose that contains a rare punctuation mark has not done
+        anything wrong. Structural — no word list, no language assumption.
+        """
+        return text.replace(ENTRY_DELIMITER, "\n").strip()
+
     # ------------------------------------------------------------------- read
 
     def entries(self, target: str) -> list[Entry]:
@@ -291,7 +332,26 @@ class CuratedMemory:
             self._snapshot = {}
             self._snapshot_key = conversation_id
         if target not in self._snapshot:
-            self._snapshot[target] = self._render(self.entries(target))
+            try:
+                rendered = self._render(self.entries(target))
+            except ValueError:
+                # D08.4 — a target this store cannot resolve yields an EMPTY block,
+                # never an exception. `assemble.py` wraps BOTH snapshot calls in one
+                # try, so a raise on the owl block discarded the USER block that had
+                # already succeeded: one owl named `сова`, `梟` or `Bakır` (the
+                # operator's own name — Turkish dotless i) silently removed the
+                # global user profile from every turn of its conversations.
+                # READING degrades; WRITING still raises, because a silent write to
+                # nowhere is how this store grew five files nothing ever read.
+                log.memory.warning(
+                    "[curated] snapshot: target does not resolve to a file — "
+                    "empty block for it, the rest of the profile is unaffected",
+                    extra={"_fields": {
+                        "target": target, "conversation_id": conversation_id,
+                    }},
+                )
+                rendered = ""
+            self._snapshot[target] = rendered
             # INFO, not DEBUG: production runs at INFO, so a DEBUG line here is
             # a line that never exists when it is needed. Fires once per target
             # per incarnation, so the volume is a handful of records a day.
@@ -323,9 +383,18 @@ class CuratedMemory:
                 "target": target, "durability": durability, "chars": len(text),
             }},
         )
-        text = text.strip()
+        text = self._contain(text)
         if not text:
             return self._failure(target, "Content cannot be empty.")
+        if len(text) > self._max_entry_chars(target):
+            return self._failure(
+                target,
+                f"That entry is {len(text)} characters; one entry may use at most "
+                f"{self._max_entry_chars(target)} of this target's "
+                f"{self.budget_for(target)}-character budget. Split it, or say the "
+                f"same thing in fewer words — a single fact that fills the file "
+                f"would evict everything else you know.",
+            )
         if durability not in DURABILITIES:
             return self._failure(
                 target,
@@ -393,9 +462,20 @@ class CuratedMemory:
             "[curated] replace: entry",
             extra={"_fields": {"target": target, "chars": len(new_text)}},
         )
-        new_text = new_text.strip()
+        # D08.4 — the SAME containment and per-entry ceiling as `add`. `replace` is
+        # the verb the consolidation protocol actively pushes the model toward, so
+        # leaving it ungated would have kept the forgery reachable through the door
+        # the design recommends. One rule, both writers.
+        new_text = self._contain(new_text)
         if not new_text:
             return self._failure(target, "Replacement content cannot be empty.")
+        if len(new_text) > self._max_entry_chars(target):
+            return self._failure(
+                target,
+                f"That entry is {len(new_text)} characters; one entry may use at "
+                f"most {self._max_entry_chars(target)} of this target's "
+                f"{self.budget_for(target)}-character budget.",
+            )
         if durability not in DURABILITIES:
             return self._failure(
                 target, f"durability must be one of {', '.join(DURABILITIES)}.",

@@ -158,13 +158,28 @@ class TestTheEvictionRuleIsAgeAndNothingCleverer:
         REVERTED: size is not a staleness signal, and it selected the oldest
         sufficient entry — the small rule it was meant to protect. Age is the only
         staleness evidence this format carries. Durability is the control, and it
-        works: the same rule marked permanent survives the same pressure."""
+        works: the same rule marked permanent survives the same pressure.
+
+        THE PROBE SIZE CHANGED IN D08.4, THE SUBJECT DID NOT. It used to be a
+        literal 713 characters. D08.4 added a per-entry ceiling
+        (``MAX_ENTRY_BUDGET_FRACTION``) because a single write could otherwise
+        evict the whole store, and 713 sits just over it for the ``user`` budget —
+        so the write was refused and no eviction was triggered at all, which tested
+        nothing. The probe is now derived from the ceiling rather than hardcoded,
+        so it cannot drift out of step with it again. It is still large enough to
+        force eviction, which is what this test is about.
+
+        The ceiling is not arbitrary and it is not tuned to make this pass: measured
+        against the live store, the largest real entry is 39.9% of its target's
+        budget, so a 50% ceiling refuses ZERO of the 32 entries that exist."""
         mem.add("user", "Telegram replies must stay under 2048 tokens",
                 durability="permanent")
         mem.add("user", "a big stale block " + "s" * 600,
                 durability="until_changed")
 
-        mem.add("user", "the new fact " + "n" * 700, durability="until_changed")
+        biggest_allowed = mem._max_entry_chars("user")
+        mem.add("user", "the new fact " + "n" * (biggest_allowed - 13),
+                durability="until_changed")
 
         kept = [e.text for e in mem.entries("user")]
         assert any("2048 tokens" in t for t in kept)
