@@ -44,6 +44,7 @@ from stackowl.interaction.reversibility_resolver import (
 from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.tool_presets import APPEAL_TOOLS as _APPEAL_TOOLS
+from stackowl.owls.tool_presets import is_root_owl
 from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
@@ -1866,11 +1867,24 @@ async def _run_with_tools(
         # asking. ESC-29 made this envelope a real boundary and its refusal already
         # carries an appeal in words; an appeal the agent cannot act on is a
         # sentence, not a recovery.
+        # ROOT ADMINISTRATOR is not narrowed by a plan. Bakir, 2026-08-22:
+        # "Secretary should have access to everything. She is root administrator of
+        # platform." MEASURED the same day: `secretary` refused `cronjob` and
+        # `session_search`, both `denied_by=task` — her bounds and ceiling are BOTH
+        # None, so she was already unbounded and it was the ENVELOPE that stopped
+        # her. An administrator whose plan can revoke her administration is not one.
+        #
+        # This is the weaker of the two gates by construction: the envelope is an
+        # LLM-derived least-privilege HINT for one task, not a boundary the operator
+        # set. Exempting root here removes a guess, not a decision — her real limits
+        # remain `bounds ∩ creation_ceiling`, which the operator controls and which
+        # this does not touch.
         if (
             te is not None
             and te.tools is not None
             and name not in te.tools
             and name not in _APPEAL_TOOLS
+            and not is_root_owl(state.owl_name)
         ):
             log.engine.warning(
                 "[authz] task plan: off-plan tool REFUSED",

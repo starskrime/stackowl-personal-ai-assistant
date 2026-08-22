@@ -41,6 +41,7 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.interaction.clarify_gateway import CLARIFY_TTL_SECONDS, OUTCOME_ANSWERED
 from stackowl.owls.registry import _SECRETARY_NAME, internal_owl_requirements
+from stackowl.owls.tool_presets import is_root_owl
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.meta.owl_build_authz import build_agent_manifest, clamp_bounds
@@ -286,6 +287,23 @@ def can_modify(manifest: object, *, caller: str, target_name: str) -> str | None
     """
     if target_name.lower() == _SECRETARY_NAME:
         return "the secretary owl cannot be modified or retired."
+    # ROOT ADMINISTRATOR. Bakir, 2026-08-22: "Secretary should have access to
+    # everything. She is root administrator of platform."
+    #
+    # MEASURED, the refusal that prompted it: asked to change `syshealth`, the
+    # platform answered "'syshealth' was created by another owl — you may only
+    # modify owls you created". Correct under the old rule and useless to the
+    # operator, whose own administrator could not administer.
+    #
+    # `can_retire` ALREADY reasoned this way — "something the human explicitly
+    # asking (via the root/secretary caller) may legitimately want" — and never
+    # implemented it here. One rule, understood in two places, enforced in one.
+    #
+    # The secretary-cannot-be-modified check above stays FIRST and deliberately
+    # applies to root too: it protects the platform's entry point, and being
+    # trusted with every other owl is not a reason to be able to delete yourself.
+    if is_root_owl(caller):
+        return None
     origin = getattr(manifest, "origin", None)
     if origin != "agent":
         return f"'{target_name}' is a {origin} owl and cannot be modified by owl_build."
@@ -317,6 +335,12 @@ def can_retire(manifest: object, *, caller: str, target_name: str) -> str | None
             "would be automatically recreated at the next restart — retiring it would "
             "have no lasting effect."
         )
+    # ROOT ADMINISTRATOR — see :data:`ROOT_OWL`. Placed AFTER the target-protection
+    # checks above (which guard WHAT is being touched) and before the ownership
+    # checks below (which guard WHO is touching it): root changes who may act, never
+    # what may be destroyed.
+    if is_root_owl(caller):
+        return None
     origin = getattr(manifest, "origin", None)
     if origin == "builtin":
         return None
@@ -337,6 +361,8 @@ def can_rename(manifest: object, *, caller: str, target_name: str) -> str | None
     changes no tool, no authority, and no schedule. The one boundary that still
     applies: an agent-minted owl you did not create may not be relabeled by you
     either — a rename is still an edit of someone else's owl, just a smaller one."""
+    if is_root_owl(caller):
+        return None  # ROOT ADMINISTRATOR — see :data:`ROOT_OWL`.
     origin = getattr(manifest, "origin", None)
     if origin == "agent" and getattr(manifest, "created_by", None) != caller:
         return f"'{target_name}' was created by another owl — you may only rename owls you created."
@@ -367,6 +393,14 @@ def can_edit(manifest: object, *, caller: str, target_name: str) -> str | None:
     Preserves /owls edit's historical scope (e.g. changing the Secretary's tier)
     so retiring /owls loses no capability. Still refuses an agent-minted owl you
     did not create — unchanged from can_modify."""
+    # ROOT ADMINISTRATOR — and THIS is the gate that produced the refusal Bakir
+    # actually saw. `_edit` calls `can_edit`, not `can_modify`; exempting root in
+    # `can_modify` alone would have left his exact failure untouched while looking
+    # fixed. The rule lives in FOUR functions here (modify/retire/rename/edit), and
+    # only the failing tests revealed that the one I had patched was not the one on
+    # the path. Two copies of one rule, found by the tests rather than by reading.
+    if is_root_owl(caller):
+        return None
     origin = getattr(manifest, "origin", None)
     if origin in ("builtin", "human"):
         return None

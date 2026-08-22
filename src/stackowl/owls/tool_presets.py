@@ -86,3 +86,37 @@ PRESETS: dict[str, OwlPreset] = {
         capability_profile=("analysis",),
     ),
 }
+
+
+#: The platform's ROOT ADMINISTRATOR.
+#:
+#: BAKIR, 2026-08-22: "Secretary should have access to everything. She is root
+#: administrator of platform."
+#:
+#: This is an authority DECISION by the platform's owner, recorded here as one
+#: constant rather than as a string literal repeated at each seam — `_SECRETARY_NAME`
+#: was already defined twice (registry.py, dispatch.py), which is exactly how a rule
+#: ends up enforced in some places and not others.
+#:
+#: WHAT IT CHANGES, measured from the failures that prompted it. On 2026-08-22
+#: `secretary` was refused `cronjob` and `session_search` by the task envelope, and
+#: refused editing `syshealth` with "created by another owl — you may only modify
+#: owls you created". Her `bounds` and `creation_ceiling` are BOTH None, so she was
+#: already unbounded on tools; what stopped her were the two guards that do not
+#: consult bounds at all.
+#:
+#: WHAT IT DOES NOT CHANGE. The secretary still cannot be modified or retired
+#: THROUGH `owl_build` — that is a registry-level mandatory invariant protecting the
+#: platform's own entry point, not an authority limit, and root status is a reason
+#: to trust her with other owls rather than a reason to let her delete herself.
+ROOT_OWL = "secretary"
+
+
+def is_root_owl(name: str | None) -> bool:
+    """True when ``name`` is the platform's root administrator.
+
+    Case- and whitespace-insensitive: this is compared against values that arrive
+    from a manifest, a trace context and an LLM-supplied spec, and a rule that
+    silently fails on "Secretary" is worse than no rule.
+    """
+    return bool(name) and str(name).strip().casefold() == ROOT_OWL
