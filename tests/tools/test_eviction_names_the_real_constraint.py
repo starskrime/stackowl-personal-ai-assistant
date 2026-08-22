@@ -101,10 +101,32 @@ class TestItNamesTheConstraintThatBound:
 
         assert _fields(caplog).get("limited_by") == "token_budget"
 
-    def test_the_dropped_list_says_it_is_truncated(self, caplog) -> None:
-        """`dropped` is sliced to 20 while `dropped_count` carries the real figure. I
-        read the truncated list as the answer once while measuring this very defect, so
-        the field now says what it is."""
+    def test_the_dropped_list_is_complete(self, caplog) -> None:
+        """`dropped` names EVERY evicted tool. It used to be sliced to 20.
+
+        THIS TEST PREVIOUSLY ASSERTED THE OPPOSITE, and the reversal is deliberate
+        rather than a test bent to fit a change. Its original form pinned
+        `dropped_truncated is True` because a reader (me) had once mistaken the
+        truncated list for the whole answer, so the flag was added to say what the
+        field was. That mitigation was correct about the danger and wrong about the
+        remedy, and D05.8 measured why:
+
+        * the flag read `true` on 178 of 178 records in a day — never once false, so
+          it marked the permanent state rather than an edge case, and a reader learns
+          nothing from a constant;
+        * the slice was not arbitrary. `dropped` follows rank order, and rank order
+          for a tool with neither a usage score nor a declared priority is the
+          ALPHABET, so the field had a fixed alphabetical ceiling. `objective`,
+          `run_tests`, `send_message`, `session_search`, `shell`, `todo`,
+          `update_plan` and `web_search` could never appear in it however often they
+          were dropped — and this programme read that field as evidence for a week.
+
+        The list is bounded by construction (at most the catalog, of short strings),
+        which is the same reasoning `cache_audit` already applies to its own name
+        lists. So the honest fix is to emit all of it; `dropped_truncated` stays in
+        the record as a permanently-false contract marker so a consumer parsing the
+        field does not have to guess which era wrote it.
+        """
         caplog.set_level(logging.INFO)
         reg = ToolRegistry()
         for i in range(60):
@@ -116,10 +138,12 @@ class TestItNamesTheConstraintThatBound:
         )
 
         f = _fields(caplog)
-        assert f.get("dropped_count", 0) > len(f.get("dropped", [])), (
-            "this case is meant to exercise truncation"
+        dropped = f.get("dropped", [])
+        assert f.get("dropped_count", 0) > 20, "this case must exceed the old slice"
+        assert len(dropped) == f.get("dropped_count"), (
+            "the emitted list is shorter than the count beside it — still truncated"
         )
-        assert f.get("dropped_truncated") is True
+        assert f.get("dropped_truncated") is False
 
     def test_nothing_is_logged_when_everything_fits(self, caplog) -> None:
         """A line that fires every turn stops being read."""

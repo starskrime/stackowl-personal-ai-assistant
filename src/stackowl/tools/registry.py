@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from stackowl.tools._infra.presentation import PresentationConfig
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool
@@ -175,6 +178,28 @@ class ConsequentialActionGate:
         if len(text) > _MAX_CONSENT_SUMMARY_CHARS:
             text = text[:_MAX_CONSENT_SUMMARY_CHARS] + "…[truncated]"
         return text
+
+
+def _presentation_config(max_tools: int | None) -> PresentationConfig | None:
+    """Build the presentation policy for a turn's configured tool-count cap.
+
+    ONE source for the cap across all three presentation paths. Until D05.8 the
+    budgeted path read ``OrchestratorSettings.tool_count_cap`` and both ``select()``
+    paths were constructed with no config at all, so they were pinned to
+    ``PresentationConfig``'s own default and the operator's lever silently did not
+    reach them — two copies of one rule, with only one of them wired. Measured live
+    2026-08-22: 80 turns presented exactly 36 tools (the ``select()`` default
+    saturating) while the configured cap was 30 and then 40.
+
+    ``None`` returns ``None`` so a caller that supplies nothing keeps the previous
+    default exactly. Widening silently would be the same class of surprise in the
+    other direction.
+    """
+    if max_tools is None or max_tools <= 0:
+        return None
+    from stackowl.tools._infra.presentation import PresentationConfig
+
+    return PresentationConfig(cap=max_tools)
 
 
 class ToolRegistry:
@@ -412,6 +437,7 @@ class ToolRegistry:
         restrict_to: frozenset[str] | None = None,
         usage_scores: Mapping[str, float] | None = None,
         budget: dict[str, int] | None = None,
+        max_tools: int | None = None,
     ) -> list[dict[str, object]]:
         """Emit tool schemas for the given provider protocol.
 
@@ -495,7 +521,7 @@ class ToolRegistry:
         if restrict_to is not None:
             from stackowl.tools._infra.presentation import ToolPresentation
 
-            tools = ToolPresentation().select(
+            tools = ToolPresentation(_presentation_config(max_tools)).select(
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated,
                 restrict_to=restrict_to,
             )
@@ -525,7 +551,12 @@ class ToolRegistry:
             # Cap the COUNT too: a weak model derails when offered too many tools
             # even if they fit in tokens. Effective cap comes from the budget dict's
             # optional "max_tools" (OrchestratorSettings.tool_count_cap), default 40.
-            hard_cap = resolve_tool_count_cap(budget.get("max_tools"))
+            # D05.8 — the explicit kwarg wins, then the budget dict's own key. One
+            # cap per turn, chosen in one place, so the budgeted path and the two
+            # select() paths can never disagree about what the operator asked for.
+            hard_cap = resolve_tool_count_cap(
+                max_tools if max_tools is not None else budget.get("max_tools")
+            )
             if len(guaranteed) >= hard_cap:
                 # The non-evictable guaranteed set alone already meets/exceeds the
                 # configured cap — every discretionary/profile-group/tool_search-
@@ -571,12 +602,22 @@ class ToolRegistry:
                     f"registry.to_provider_schema: eligible tools NOT presented — {reason}",
                     extra={"_fields": {
                         "limited_by": limited_by,
-                        # `dropped` is capped at 20 names to bound the line; the real
-                        # figure is `dropped_count`, and the flag says so — a truncated
-                        # list reads exactly like a complete one otherwise.
-                        "dropped": dropped[:20],
+                        # D05.8 — the WHOLE list. This used to be `dropped[:20]` with a
+                        # `dropped_truncated` flag beside it, and the flag was honest but
+                        # useless: it read `true` on 178 of 178 records in a day, so it
+                        # marked the permanent state rather than an edge case. Worse, the
+                        # slice was not arbitrary — `dropped` follows rank order, and rank
+                        # order for a tool with neither a usage score nor a declared
+                        # priority is the ALPHABET, so the field had a fixed alphabetical
+                        # ceiling. `send_message`, `objective`, `todo`, `run_tests`,
+                        # `session_search`, `shell` and `web_search` could never appear in
+                        # it however often they were dropped, and this programme read that
+                        # field as evidence for a week. Bounded by construction: at most
+                        # the catalog, of short strings — the same reasoning cache_audit
+                        # already applies to its own name lists.
+                        "dropped": dropped,
                         "dropped_count": len(dropped),
-                        "dropped_truncated": len(dropped) > 20,
+                        "dropped_truncated": False,
                         "presented": len(fitted),
                         "hard_cap": hard_cap,
                     }},
@@ -588,7 +629,7 @@ class ToolRegistry:
         else:
             from stackowl.tools._infra.presentation import ToolPresentation
 
-            tools = ToolPresentation().select(
+            tools = ToolPresentation(_presentation_config(max_tools)).select(
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated
             )
         return _emit(tools)

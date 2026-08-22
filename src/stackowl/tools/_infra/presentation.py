@@ -189,6 +189,26 @@ class ToolPresentation:
             ordered = list(always)
             budget = max(cfg.cap - len(ordered), 0)
             ordered.extend(planned[:budget])
+            # D05.8 — SAY WHAT WAS CUT. This branch returned above BOTH log sites,
+            # so a planned envelope wider than the cap lost its tail with no line
+            # in any log at any level: `[presentation] select: eligible tools NOT
+            # presented` fired ZERO times in eight days while its sibling on
+            # to_provider_schema fired 955. Measured live: 80 turns presented
+            # exactly 36 tools — this branch saturating — and nothing said so.
+            # A cut with no witness is the same defect as a write with no reader.
+            envelope_dropped = planned[budget:]
+            if envelope_dropped:
+                log.tool.info(
+                    "[presentation] select: eligible tools NOT presented — the "
+                    "planned envelope is wider than the tool-count cap",
+                    extra={"_fields": {
+                        "dropped": envelope_dropped,
+                        "dropped_count": len(envelope_dropped),
+                        "presented": len(ordered),
+                        "cap": cfg.cap,
+                        "planned": len(planned),
+                    }},
+                )
             return [by_name[n] for n in ordered]
 
         profile_groups = {g for g in (profile or []) if isinstance(g, str)}
@@ -267,8 +287,14 @@ class ToolPresentation:
             log.tool.info(
                 "[presentation] select: eligible tools NOT presented — the owl's "
                 "tool-count cap could not fit them",
+                # D05.8 — the whole list, not the first 20. `dropped_names` follows
+                # rank order, and rank order for a tool with no usage score and no
+                # declared priority is the ALPHABET — so a `[:20]` slice was a fixed
+                # alphabetical prefix that `send_message`, `objective`, `todo`,
+                # `run_tests`, `session_search` and `web_search` could never appear
+                # in. Bounded by construction: at most the catalog, of short strings.
                 extra={"_fields": {
-                    "dropped": dropped_names[:20],
+                    "dropped": dropped_names,
                     "dropped_count": len(dropped_names),
                     "presented": len(selected),
                     "cap": cfg.cap,

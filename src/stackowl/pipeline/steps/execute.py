@@ -1407,9 +1407,16 @@ async def _run_with_tools(
             # NOT memoized: a planned envelope is per-task by construction and
             # already routes through the deterministic select() path, never the
             # budgeter. It has neither the ordering nor the budget defect.
+            # D05.8 — `max_tools` is passed HERE too, not only on the budgeted
+            # branch below. Until now this path was capped by PresentationConfig's
+            # own default and the operator's `tool_count_cap` never reached it, so
+            # the settings docstring telling him to "lower it for weak/quantized
+            # models" was false for every enveloped turn. Measured: 80 turns
+            # presented exactly 36 — that default saturating — while the configured
+            # cap was 30 and then 40.
             schemas = tool_registry.to_provider_schema(
                 prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
-                restrict_to=restrict_to,
+                restrict_to=restrict_to, max_tools=_max_tools,
             )
         else:
             memo_key = presented_tools.make_key(
