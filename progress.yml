@@ -1739,6 +1739,50 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-34-a-blocked-owl-is-shown-an-escape-hatch-that-does-not-open
+    raised: 2026-08-22
+    question: >-
+      ROUTER_TOOLS grants `delegate_task` through the bounds gate so a blocked owl can
+      route around a limit — and the task envelope then REFUSES it as off-plan. Which of
+      the two is wrong? Either `delegate_task` leaves ROUTER_TOOLS (a blocked owl keeps
+      only `owl_build` to appeal with), or the envelope stops refusing it (and an owl can
+      delegate outside its plan). I will not pick.
+    why_evidence_cannot_settle_it: >-
+      Both gates behave exactly as designed and the designs contradict. Taking the
+      envelope's side contradicts nothing; taking the router's side contradicts a RECORDED
+      decision — 8c403494, "the task envelope is a real boundary — off-plan tools are
+      refused" — and `delegate_task` is precisely the escalation vector that decision
+      protects: an owl blocked from a tool delegating to an owl that has it. That is an
+      authority question, not a measurement.
+    what_was_measured_2026_08_22: >-
+      Observed live in syshealth's first scheduled run, not reconstructed. 05:01:26
+      `execute: tool refused by bounds tool=send_message owl=syshealth`; 05:01:32
+      `tool_search.execute: exit` with 8 results of a 78-tool catalog — the owl went
+      looking for a way through; 05:01:37 `[authz] task plan: off-plan tool REFUSED
+      tool=delegate_task owl=syshealth`. Seven tool calls; the run completed at 05:01:43.
+    the_owl_diagnosed_it_ITSELF: >-
+      Its own report: "I could not push a proactive message (send was outside this run's
+      permitted actions and delegation to secretary was also blocked by the plan), so
+      reporting here instead." It named both gates and did not fail silently — the
+      boundary-honesty behaviour held. The CONTRADICTION is the defect, not the refusal.
+    the_thing_it_never_tried: >-
+      `owl_build` — the actual appeal path, granted and NOT envelope-refused. The owl
+      reached for send_message, then tool_search, then delegate_task, and never appealed.
+      So a second, smaller question sits underneath: an appeal path nothing points at is a
+      write with no reader wearing a permissions uniform. Whether the prompt should name
+      it is answerable by evidence and is NOT blocked on this escalation.
+    the_recommendation: >-
+      Drop `delegate_task` from ROUTER_TOOLS and leave the envelope alone. It is the only
+      option that contradicts no recorded decision, it keeps the escalation vector shut,
+      and `owl_build` already IS the appeal path — a blocked owl should ask for the
+      capability, not borrow someone else's. Then make that path discoverable, which is
+      the smaller question above.
+    blocked_until_answered: >-
+      Nothing ships either way. The contradiction is live but harmless today: the owl
+      completed its work, wrote its log, and reported honestly. Recorded rather than
+      resolved because three of this programme's rules point here at once — escalate when
+      a finding contradicts a recorded decision, never decide authority unilaterally, and
+      do not change a user-facing capability without asking.
   - id: ESC-27-D05.4s-deferral-premise-expired-when-D04.1-was-rescoped
     RESOLVED: "RESOLVED 2026-08-21 \u2014 RESUME RE-FRAMED. Give the presented tool array ONE owner; do NOT adopt the reference disclosure mechanism (it still cannot fire). D05.4 is the current item."
     raised: 2026-08-21
