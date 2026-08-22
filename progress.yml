@@ -3164,6 +3164,108 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ARC-2026-08-22-agents-forget-granted-access
+    found: 2026-08-22
+    found_by: "Bakir, live: 'Agent losses granted tool access on next run' / 'never saved permanently'"
+    status: SHIPPED — b670bf82, 8c17eaf2. Root cause found and mutation-checked.
+    THE_ROOT_CAUSE_is_one_word: >-
+      `owl_build._grant` called `registry.register(updated)`. `register` guards
+      against DUPLICATES, and a grant is BY DEFINITION applied to an owl that
+      already exists — so it raised `duplicate owl name` on every attempt, the
+      surrounding except ran `restore_owl(snapshot)`, and the durable write was
+      rolled back. NO GRANT HAS EVER SURVIVED. Every sibling mutation already had
+      it right: `_edit` and both rebuild paths call `replace`, which documents
+      itself as "the dual of register's duplicate guard". `create` correctly keeps
+      `register` — that owl is genuinely new.
+      MEASURED LIVE: three grant attempts on mailbutler at 01:26:50, 01:34:31 and
+      01:45:01, all rolled back on that exception.
+    IT_WAS_ONLY_VISIBLE_BECAUSE_A_PRIOR_FIX_STOPPED_A_LIE: >-
+      `persist_owl` returned an ignorable `bool` and documented itself "never
+      raises", so a failed write would not crash the turn. The intent was right and
+      the mechanism defeated it: ALL SIX call sites ignored the return. Five were
+      already wrapped in try + restore_owl rollback, WRITTEN AS THOUGH IT RAISED —
+      the callers were correct and the function was lying to them. It now raises
+      OwlPersistError, which is what surfaced the register/replace bug underneath.
+      Fixing the silence was the step that made the real defect findable.
+    A_SECOND_CORE_DEFECT_FOUND_ON_THE_WAY: >-
+      `compute_effective_bounds` is owl.bounds ∩ creation_ceiling and never unioned
+      ROUTER_TOOLS — the set that exists so an owl can always reach `owl_build` to
+      ASK for authority. Honoured in builder.py when an owl is CREATED and in
+      owl_build_authz.py when a ceiling is minted; never at DISPATCH, where the
+      refusal happens. So mailbutler was refused `owl_build` twice and `owls_list`
+      three times and could not appeal. That is the defect the record already named
+      once ("a ceiling that cannot be APPEALED is not a legitimate choice") — fixed
+      for owl creation, left open for owl execution. An actuator wired on only some
+      paths, the first of the four shapes.
+      PROVEN LIVE: `[authz] compose: boundary-router tools added` firing for
+      owl=mailbutler added=["owl_build","owls_list"] from 01:45 onward.
+    AN_INVARIANT_LOCK_CAUGHT_MY_FIRST_VERSION_WIDENING_TOO_FAR: >-
+      `test_empty_allowlist_blocks_even_discovery_meta_tools` states that
+      tools=frozenset() denies everything "with no auto-exemption". An EMPTY
+      allowlist is an operator saying "this owl may do nothing" — complete and
+      deliberate. A NON-EMPTY one is a working list that may simply predate
+      ROUTER_TOOLS. Widening the first is privilege escalation; widening the second
+      restores a promised appeal. The lock was right and the carve-out is now
+      pinned, along with the inversion this must never perform (never narrow an
+      unbounded owl into a five-tool allowlist).
+    WHY_IT_SURVIVED_and_this_is_the_useful_half: >-
+      The grant path already had SEVEN tests — valid action, spec accepts it,
+      always-ask category, schema advertises it, handler requests the category,
+      ceiling widens, refusal text honest. NOT ONE drove a grant end to end to a
+      persisted result. Seven tests around the grant and none asserting it lands.
+      The new test uses the REAL tool, REAL registry and REAL store and asserts the
+      EFFECT; mutation-checked both ways, since asserting `result.success` alone
+      would have passed against the broken version (which reported failure
+      honestly — what was missing was any test expecting SUCCESS).
+    AND_FIVE_TESTS_BROKE_WHICH_MADE_THE_DIAGNOSIS_CERTAIN: >-
+      Every one ran with NO database wired, passed while nothing was saved, and
+      only failed once persist_owl stopped lying.
+      `test_edit_builtin_owl_tier` is the defect in miniature: it passed
+      db_pool=None, asserted the IN-MEMORY registry, and went green while the edit
+      reached no store at all. It now wires a real store and asserts
+      `owl_is_persisted`.
+
+  - id: ARC-2026-08-22-the-database-never-reclaimed-its-own-space
+    found: 2026-08-22
+    found_by: "Bakir: agents failing; then 'Why system itself doesnot have capability to vacuum database'"
+    status: SHIPPED AND LIVE — migration ran by hand, db_reclaim handler scheduled hourly.
+    THE_MEASUREMENT: >-
+      file 922 MB, live data 279 MB (dbstat), FREE pages 643 MB = 70% of the file,
+      auto_vacuum NONE. The platform deletes constantly — knowledge_prune,
+      downloads_janitor, browser_cache_eviction, skill decay, the 107k-fact purge,
+      task pruning — and SQLite never returns a freed page to the OS unless asked.
+      Nothing ever asked.
+    why_it_became_an_OUTAGE: >-
+      The host root filesystem was at 99% (706 MB free of 56 GB), so those 643
+      wasted megabytes were most of the remaining headroom. The symptom was NOT
+      "disk full": it was `database is locked`, `[loop] tick failed` every tick,
+      a dead telegram liveness heartbeat, and one Telegram send taking three
+      minutes. "database is locked" per day ran 0, 13, 3, 20, 51 across
+      2026-08-17..21 — a straight climb tracking the file's growth.
+    the_fix: >-
+      auto_vacuum=INCREMENTAL in the pool (new databases are born correct) plus a
+      `db_reclaim` scheduler handler mirroring downloads_janitor, hourly and
+      BOUNDED (2000 pages ~ 8 MB) so the reclaimer never becomes the blocking
+      writer. The live file was converted by hand: 922 MB -> 273 MB in 35.5s,
+      integrity ok, free space 706 MB -> 1.4 GB, platform restarted clean.
+    THE_TEST_THAT_MATTERS: >-
+      `incremental_vacuum` on an auto_vacuum=NONE database is a SILENT NO-OP — it
+      succeeds and reclaims nothing forever. A handler that ran it and reported
+      success would be indistinguishable from one that works, which is exactly how
+      643 MB accumulated unnoticed. So the handler detects that state and says so
+      at WARNING, and a second WARNING fires when reclaim falls behind churn.
+    MY_OWN_CONDUCT_RECORDED: >-
+      I made it briefly worse: copying the DB to measure a VACUUM consumed the last
+      706 MB. Removed immediately, space restored. My test suites were also loading
+      the box Bakir was using — the lock events do track my test windows — and I
+      killed them the moment I saw the incident. The locks predate me (0,13,3,20,51
+      across five days) so I did not cause the defect, but I was amplifying it.
+    A_COMMIT_HYGIENE_MISS: >-
+      `git add -A` bundled the db_reclaim work into b670bf82, which is titled
+      `fix(authz)`. Already pushed, and rewriting pushed history is forbidden here,
+      so it stands and is recorded instead. A future bisect finds db_reclaim under
+      the wrong title.
+
   - id: DEBT-SKILL-CATALOG-ALERT
     found: 2026-08-21
     found_by: "checking whether anything shipped today misbehaved live — it did not, and this was the only warning left"
