@@ -320,7 +320,19 @@ class SessionStore:
             extra={"_fields": {"session_key": key, "branch": decision.branch.value,
                                "reason": decision.reason.value if decision.reason else None,
                                "conversation_id": entry.conversation_id,
-                               "previous_conversation_id": existing.conversation_id if existing else None}},
+                               "previous_conversation_id": existing.conversation_id if existing else None,
+                               # BAKIR, 2026-08-22: "No idea why but i got 2 times of
+                               # '— new conversation (the previous one went quiet) —'
+                               # today in 1 hour." The reason was already here; what
+                               # was missing is the NUMBER behind it, so an idle
+                               # rollover can be confirmed rather than inferred from
+                               # a database excavation. (His was real: 40h against a
+                               # 24h threshold.) Added to THIS line rather than a
+                               # second one — a rollover has one story.
+                               "idle_minutes": (
+                                   round((now - existing.updated_at).total_seconds() / 60.0, 1)
+                                   if existing is not None else None),
+                               "idle_threshold_minutes": self._policy.idle_minutes}},
         )
         # A lane the SWEEPER already finalised was announced when it expired, on
         # the clock. Announcing again now — possibly hours later, when the user
