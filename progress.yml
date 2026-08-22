@@ -12397,15 +12397,15 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  blocked
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       partial
       validate:   not_started
       document:   not_started
-    blocked_on: "INTERACTIVE TRAFFIC. All 64 measured turns are goal (background) lanes; the interactive path is unmeasured. Bakir chose to measure it before deciding rather than close on background data alone."
-    doc: null
-    doc_last_verified: null
+    blocked_on: null   # CLEARED 2026-08-22 — 159 live interactive turns measured; see current.D05_8_ROUND_0_MEASUREMENT_2026_08_22
+    doc: "docs/reference-mapping/designs/D05.8.md"
+    doc_last_verified: "2026-08-22 against af8cf60e — Verification section RUN, not trusted"
     decisions:
       - date: 2026-08-04
         stage: brainstorm
@@ -12454,7 +12454,51 @@ items:
             ~/.stackowl/logs/stackowl.jsonl | grep -v $'\tgoal-' | grep -v $'\tincident-'
           Non-empty output = interactive turns measured. Compare the distribution
           against Hermes' 54-tool default and against our 40 cap.
-    changes: []
+    ARCHITECT_AND_IMPLEMENT_2026_08_22:
+      ladder_rung: "1 — extend existing code. No new module, no config key, no migration."
+      laws: >-
+        Law 1 untouched: the memo key is unchanged, so a live conversation's array cannot
+        move because of this. Law 2 untouched: no tool is added to or removed from the
+        waist — what changed is which CAP applies on two paths, and what the log says about
+        a cut that was already happening.
+      files:
+        - src/stackowl/tools/_infra/presentation.py
+        - src/stackowl/tools/registry.py
+        - src/stackowl/pipeline/steps/execute.py
+        - tests/tools/test_presented_set_cuts_are_witnessed.py
+        - tests/tools/test_eviction_names_the_real_constraint.py
+      A_the_operators_cap_now_reaches_every_path: >-
+        `max_tools` is a parameter on to_provider_schema and builds the PresentationConfig
+        for BOTH select() paths; execute.py passes `_max_tools` on the envelope call site as
+        it already did on the budgeted one. Omitting it keeps _DEFAULT_CAP exactly, so no
+        existing caller changes behaviour — widening silently would be the same class of
+        surprise in the other direction.
+      B_the_envelope_path_now_leaves_a_witness: >-
+        The restrict_to branch emits the INFO drop record it used to return above, carrying
+        `planned` beside `dropped` so a reader can distinguish "the plan was too big" from
+        "the cap was too small".
+      C_the_eviction_record_names_every_tool: >-
+        Both drop lines emit the full list. `dropped_truncated` stays in the record as a
+        permanently-false contract marker so a consumer parsing the field does not have to
+        guess which era wrote the line.
+      A_TEST_THAT_ASSERTED_THE_OPPOSITE_and_why_reversing_it_is_not_bending_it: >-
+        tests/tools/test_eviction_names_the_real_constraint.py pinned
+        `dropped_truncated is True` as a DECISION, with a docstring saying the flag existed
+        because a reader had once mistaken the truncated list for the whole answer. That
+        mitigation was right about the danger and wrong about the remedy, and the
+        measurement says why: the flag read true on 178 of 178 records in one day — never
+        once false — and the slice was a fixed ALPHABETICAL prefix, so the very tools most
+        worth knowing about could never appear in it. The test now asserts completeness and
+        the old reasoning is kept in its docstring rather than deleted.
+      baselines_checked_before_and_after: "ruff 37 -> 37, mypy 65 -> 65. Neither rose."
+      the_restart_was_verified_not_assumed: >-
+        Last src write 2026-08-22T16:11:36Z, core boot 16:12:35Z — 59 seconds later. The
+        running image therefore loaded every module AFTER the last write, which is the check
+        this programme has paid for skipping. Boot clean: 347 INFO, 8 WARNING, ZERO ERROR.
+    changes:
+      - date: 2026-08-22
+        what: "The configured tool-count cap reaches all three presentation paths; the envelope path logs its cut; both eviction records name every dropped tool."
+        commit: af8cf60e
     notes: null
 
   - id: D06.1
