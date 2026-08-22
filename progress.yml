@@ -11584,10 +11584,42 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial
-      document:   partial
+      validate:   done
+      document:   done
     doc: "docs/reference-mapping/designs/D05.4.md"
     doc_last_verified: "2026-08-21 against 76dfd48c — Verification RUN, and running it found three defects in the document itself"
+    VALIDATE_AND_DOCUMENT_CLOSED_2026_08_22:
+      closed_on: >-
+        Bakir's recorded call (5df33c61, doc section "Standing watch"): close the item on
+        the integration-test evidence — a test driving execute.run with the REAL
+        ToolRegistry, the REAL budgeter and the REAL memo, mocking only the AI provider,
+        which is this repo's mandated bar — rather than hold it open on a traffic shape
+        nobody controls. The standing watch stays live in the document.
+      what_was_re_measured_2026_08_22_before_closing: >-
+        The document's Verification section was RUN, not trusted, bounded to the current
+        core incarnation (BOOT 2026-08-22T15:27:19Z).
+          I1  PASS WITH A NON-ZERO DENOMINATOR: 0 `tools array CHANGED` warnings carrying
+              no conversation, over 15 `presented tools — rebuilt` records. Yesterday this
+              check was 0-over-0 and proved nothing; today the denominator is real.
+          I3  Vacuously clean — 0 CHANGED warnings at all since boot, so no record could
+              fail to carry added/removed.
+          I2  STILL NOT EXERCISED IN PRODUCTION, and this is stated rather than glossed.
+              All 15 rebuilds read measured == basis. Every one is a distinct `incident-*`
+              lane x owl seen EXACTLY ONCE (5 incidents x 3 owls: rca_gatherer, hypothesis,
+              verifier), so every key was stamped for the first time. A reused basis can
+              only appear as measured != basis, which needs a SECOND rebuild on the same
+              key. Proven by unit test, not by observation — the standing watch is exactly
+              this gap and it is open on purpose.
+          TESTS 45 green: 24 tests/pipeline/test_cache_audit.py + 21
+              tests/pipeline/test_d052_tools_array_is_wired_stable.py and
+              tests/infra/test_presented_tools_memo.py.
+      one_thing_the_re_run_showed_that_yesterday_did_not: >-
+        `tools` is NOT constant at 40 any more. incident-8ebb22112452 rebuilt at tools=19
+        for `verifier` and `hypothesis` while `rca_gatherer` on the SAME lane rebuilt at
+        40. That is per-OWL profile narrowing, not per-turn drift — different owls
+        legitimately present different sets — and it is consistent with the invariant,
+        which is keyed on (conversation, owl). Recorded because a bare "tools=40 on every
+        rebuild" note from yesterday would now read as stale.
     DOCUMENT_STAGE_2026_08_21:
       the_verification_section_WAS_BROKEN_and_running_it_is_what_found_that: >-
         Its log queries were UNBOUNDED IN TIME. The JSONL is append-only for a whole
