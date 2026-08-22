@@ -1,13 +1,18 @@
 # Session kickoff prompt
 
 Copy the block below into a new Claude Code session in this repo. It re-establishes the
-working method without needing the previous conversation.
+working method without needing the previous conversation, and it runs AUTONOMOUSLY — it
+does not stop to ask questions.
 
 ---
 
 ```
-We are rebuilding StackOwl against a reference architecture. Read these first, in order,
-before doing anything else:
+/loop /item-loop
+
+Run the reference-mapping programme autonomously. Do not wait for me. I may be asleep;
+assume no answer is coming and keep working on everything that is not blocked.
+
+Read these first, in order, before doing anything else:
 
   1. progress.yml                            — state of record. `current` says where we are
                                                and carries the lessons that cost the most.
@@ -45,11 +50,28 @@ HOW WE WORK, per item:
   to build>"`. An item was once designed, built and shipped before anyone noticed it was
   already mapped.
 
-  BRAINSTORM = 25 questions, batched 4 per round via AskUserQuestion, each with your
-  recommended answer. Ask the ones whose answers change what you build. FIND FACTS
-  YOURSELF — never ask me something you could measure. Hunt contradictions in my answers
-  and put them back to me; do not silently reconcile them. /grill-me runs this as a
-  design-tree interview when the shape is unclear.
+  BRAINSTORM = the same 25 questions, but I do not answer the ones evidence can. Draft
+  them, then route each:
+
+    * DERIVABLE — the answer is in the code, the live database,
+      ~/.stackowl/logs/stackowl.jsonl, the reference clone, or a decision already in
+      progress.yml. The panel answers it. Record the answer AND the evidence. A question
+      is only derivable if you can NAME the evidence; "the panel agreed" is not evidence.
+    * IRREDUCIBLY MINE — product intent, priority, appetite for risk, whether a
+      user-facing thing may change. Do NOT answer it and do NOT guess. Append it to
+      `current.ESCALATIONS` with: the question, why evidence cannot settle it, your
+      recommendation, and what is blocked until I answer. Then CARRY ON with everything
+      it does not block.
+
+  Round 0 is always MEASUREMENT, dispatched before any question is drafted; every other
+  lens cites its numbers. Run the panel as parallel subagents in one message —
+  Measurement, Stability, Improvement, Killer-functionality, Ease-of-use, Future-proof —
+  each returning a position, its evidence, and its objection to the others. Where two
+  lenses disagree, that disagreement IS the finding: put it in the record rather than
+  averaging it away.
+
+  DO NOT USE AskUserQuestion. There is nobody at the keyboard. An escalation queued in
+  progress.yml is how you ask; I clear them in one sitting.
 
   MEASURE BEFORE YOU ARGUE. Every significant call this programme got right came from a
   number off the live database or the JSONL log, and most of the wrong ones came from
@@ -95,7 +117,42 @@ FOUR FAILURE MODES THIS PROGRAMME KEEPS FINDING — check for them by default:
   4. NO DECAY. Anything that only ever appends will reach 100k rows and poison whatever
      reads it. When you remove a writer, ask what was BOUNDING the thing it wrote to.
 
-Start by telling me what progress.yml `current` says, then continue from there.
+STOP AND ESCALATE — do not decide these alone. Write the brief into
+`current.ESCALATIONS` and move to work that is not blocked:
+
+  1. Removing or disabling anything user-facing.
+  2. A destructive migration, or any data deletion.
+  3. Editing a code block shared with consent or clarify while its smoke suite is red.
+  4. Three failed fix attempts on one problem — that is an architecture question, not a
+     fourth attempt.
+  5. A panel answer that contradicts a decision already recorded in progress.yml.
+
+RUNNING UNATTENDED — the rules that only matter when nobody is watching:
+
+  - ruff and mypy baselines are 37 and 65 in src/. Check BOTH before every commit;
+    neither may rise. If your change raises one, that is the change's problem to fix.
+  - Real suite durations on this box: tests/providers ~185s, tests/pipeline ~740s,
+    tests/tools ~990s, tests/tools/meta ~250s, tests/scheduler ~1200s. Under-budgeting
+    produces exit 143, which is SIGTERM from your own timeout and NOT a red test — never
+    report it as one. Run the whole directory suite before claiming green.
+  - NEVER write a claim into progress.yml or a document you did not measure. A stage you
+    could not evidence is `blocked` or `partial` with the reason — never `done`.
+  - progress.yml is edited by careful surgical scripts ONLY, bounded to one item. Diff
+    every OTHER item before and after and assert nothing else changed, then run
+    scripts/progress_lint.py.
+  - Restart only via ./start.sh, verify via the JSONL log, and NEVER while I have a turn
+    in flight. The core self-restarts ~35s after a .py edit; check its boot time against
+    your last commit before believing any measurement.
+  - If a log line is the evidence for a claim it must be INFO, not DEBUG — production
+    runs at INFO. Run the query that would CLOSE an acceptance check before you need it.
+  - Everything ships ENABLED. Never ask me to turn a capability on; an operator switch is
+    an opt-out only.
+  - Scope your counts and say which you are quoting: "last 3 days" and "all-time" answer
+    different questions and have embarrassed this programme before.
+
+Start by stating what progress.yml `current` says and what you are picking up, then work
+the item to done without checking in. Report when the item is closed, when you have
+queued escalations, or when you are genuinely blocked on all fronts.
 ```
 
 ---
