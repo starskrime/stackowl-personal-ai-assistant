@@ -3216,6 +3216,47 @@ known_debt:
       query is `jq 'select(.msg|test("authority WIDENED"))'` returning a record
       whose owl was previously blocked.
 
+  - id: LESSON-2026-08-22-shape-1-in-four-disguises
+    found: 2026-08-22
+    kind: pattern — not a defect, the thing FOUR defects had in common
+    status: RECORDED. Worth more than any single fix in this session.
+    what_happened: >-
+      One night produced FOUR separate instances of CLAUDE.md's defect shape #1 —
+      "a write with no reader, or an actuator wired on only some paths" — and not
+      one of them looked like the others while it was being found:
+      (1) `persist_owl` returned a bool saying whether the write landed, and ALL
+      SIX call sites ignored it, so a grant was confirmed to the user and lived
+      only in RAM. A RETURN VALUE with no reader.
+      (2) `presented_tools`' memo documented losing it as "never a correctness
+      issue" while it was the only thing holding Law 1. A COMMENT asserting what no
+      code checked.
+      (3) A Monitor I armed watched `banned capabilities excluded`, which logs the
+      RAW input rather than the filtered result, and nearly had me revert a correct
+      fix. AN INSTRUMENT reading a proxy.
+      (4) `auto_restart.delay_minutes` declared `hot_reload: True` while
+      CodeWatcher read it once at construction. A CONFIG MARKER with no reader.
+      Plus a fifth in my own hands: I measured `check_effective_bounds` against the
+      RAW stored bounds and nearly reported `owl_build refused` — the union lives
+      in `compute_effective_bounds`, the function production actually calls.
+    the_question_that_found_every_one: >-
+      "WHO READS THIS?" — and for a measurement, "is this the function production
+      calls?" Every instance survived because something wrote a true value and
+      nothing consumed it, and every one was found by measuring the EFFECT instead
+      of trusting the call, the comment, the marker, or the nearest log line.
+    WHY_IT_MATTERS_MORE_THAN_THE_FIXES: >-
+      The four are in unrelated subsystems — persistence, prompt caching,
+      observability, config — so no amount of care in any one would have caught the
+      others. What generalises is the CHECK, not the location. When adding anything
+      that reports a result (a bool, a status, a log field, a settings flag), the
+      reviewable question is not "is it correct" but "what changes its behaviour
+      when it says no".
+    AND_A_COROLLARY_ABOUT_INSTRUMENTS: >-
+      Instance (3) is the sharpest, because the instrument built to catch this very
+      trap fell into it. A monitor, a test or a query is code too, and it can read a
+      proxy exactly as easily as production can. Rearming that same Monitor to watch
+      EFFECTS rather than inputs surfaced a genuine defect within minutes — the
+      nonexistent-tool misdiagnosis. Same instrument, one field different, opposite
+      value.
   - id: ARC-2026-08-22-a-nonexistent-tool-was-reported-as-a-permission-problem
     found: 2026-08-22
     found_by: "the corrected Monitor — watching EFFECTS instead of inputs, within minutes of arming it"
