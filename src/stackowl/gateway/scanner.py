@@ -50,6 +50,43 @@ _VOCATIVE_INITIAL_RE = re.compile(r"^\s*(\w+)", re.UNICODE)
 _VOCATIVE_TERMINAL_RE = re.compile(r",\s*(\w+)\W*$", re.UNICODE)
 
 
+
+def _has_content(text: str) -> bool:
+    """True when ``text`` carries at least one letter or digit, in ANY script.
+
+    Unicode categories rather than a word list: this platform is multilingual and
+    a keyword check would answer correctly only in the language it was written in.
+    """
+    return any(ch.isalpha() or ch.isdigit() for ch in text)
+
+
+def _addressed_only(original: str, remainder: str) -> str:
+    r"""The text to route onward once the owl's name has been taken out.
+
+    BAKIR, 2026-08-22: "I did ask something else and platform did total different."
+
+    MEASURED. He sent **"Brain?"** — getting an owl's attention, nothing more. The
+    vocative strip removes leading ``[\s,:;]`` but not ``?``, so the name came off
+    and the remainder was the single character ``?``. That became the stored message
+    AND the durable task's goal::
+
+        messages.content : '?'
+        tasks.goal       : ?
+
+    With no instruction to follow, the agent improvised for 266 seconds: it searched
+    memory, surfaced an unrelated conversation about a drill list, tried to edit
+    `syshealth`, was refused ("created by another owl"), reported "The capability
+    that failed: owl_build", and then scheduled a cron job about that old topic. A
+    bare address was turned into invented work.
+
+    A remainder with no letter or digit in it is not an instruction — it is
+    punctuation left behind by the strip. In that case the ORIGINAL text is routed
+    on, so the owl receives "Brain?" and can answer it for what it is. Routing is
+    unchanged: the message still reaches Brain.
+    """
+    return remainder if _has_content(remainder) else original
+
+
 @dataclass(frozen=True)
 class IngressMessage:
     """A raw incoming message before routing."""
@@ -243,10 +280,12 @@ class GatewayScanner:
         m_init = _VOCATIVE_INITIAL_RE.match(text)
         if m_init is not None:
             remainder = re.sub(r"^[\s,:;]+", "", text[m_init.end() :])
-            probes.append((m_init.group(1), remainder))
+            probes.append((m_init.group(1), _addressed_only(text, remainder)))
         m_term = _VOCATIVE_TERMINAL_RE.search(text)
         if m_term is not None:
-            probes.append((m_term.group(1), text[: m_term.start()].rstrip()))
+            probes.append((
+                m_term.group(1), _addressed_only(text, text[: m_term.start()].rstrip())
+            ))
 
         keys = list(candidates)
         for token, stripped in probes:
