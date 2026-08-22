@@ -316,7 +316,37 @@ deployment:
 current:
   wave: 2
   item: D05.8
-  stage: brainstorm
+  stage: validate
+  WHERE_D05_8_STANDS_2026_08_22_T17_05Z:
+    stages: "brainstorm/architect/implement/cleanup/test/document DONE. validate PARTIAL."
+    the_verdict: >-
+      PARITY, and D05.8's own subject needs no change. What shipped is three defects the
+      measurement exposed while proving that — none of which the item was scoped to see.
+    what_is_pushed: "8 commits, 06897de1..de4fce6c, on main."
+    WHY_VALIDATE_IS_PARTIAL_and_it_is_a_denominator_not_a_failure: >-
+      I3 — the item's central claim — is CLOSED on live production data with a decisive
+      contrast in the same log file: 179 of 179 eviction records truncated before the boot,
+      16 of 16 complete after. I1 and I2 both need a PLANNED ENVELOPE WIDER THAN THE CAP,
+      and `[planner] plan: envelope set` has fired ONCE since the boot — a plan that fitted,
+      which produces neither a 36 nor an eviction record, so it cannot distinguish "the cap
+      is now 40" from "the plan was smaller than either cap".
+      This is the same shape D05.4 ended in, and Bakir's D05.4 ruling is deliberately NOT
+      applied here by analogy — that was a call about that item. Recorded as a standing
+      watch in designs/D05.8.md with the queries and their denominators.
+    WAVE_2_IS_OTHERWISE_COMPLETE: >-
+      D05.1 through D05.7 are all 7/7. D05.8 is the last, at 6/7. The next item by order is
+      wave 4's D08.4 (order 25).
+    WHAT_IS_WAITING_ON_BAKIR: >-
+      ESC-35 and ESC-36 are new today and neither blocks anything shipped. Still open from
+      before: ESC-34, ESC-31 + ESC-31b (now carrying a MEASUREMENT rather than a suspicion —
+      the memo keying on the lane is what makes one of D05.4's own invariants unobservable),
+      ESC-32, ESC-33, ESC-26, ESC-17, ESC-19, ESC-20.
+    NOT_STARTED_AND_STILL_DELIBERATELY_SO: >-
+      DEBT-INCIDENT-STORM and DEBT-SKILL-CATALOG-ALERT. The second gained a number today
+      without being worked: `skill injection: catalog truncated by budget` is a WARNING
+      firing on essentially every turn and dropping 148 skills — 2,242 events across the
+      retained window, an order of magnitude more than the tool eviction this item spent
+      the day on. Recorded so the next session starts from a measurement.
   WHERE_THIS_SESSION_IS_2026_08_22:
     headline: >-
       D05.4 is CLOSED 7/7 (cc0617d0) on Bakir's recorded call, with its Verification
