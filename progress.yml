@@ -12401,8 +12401,8 @@ items:
       implement:  done
       cleanup:    done
       test:       partial
-      validate:   not_started
-      document:   not_started
+      validate:   partial
+      document:   done
     blocked_on: null   # CLEARED 2026-08-22 — 159 live interactive turns measured; see current.D05_8_ROUND_0_MEASUREMENT_2026_08_22
     doc: "docs/reference-mapping/designs/D05.8.md"
     doc_last_verified: "2026-08-22 against af8cf60e — Verification section RUN, not trusted"
@@ -12495,6 +12495,36 @@ items:
         Last src write 2026-08-22T16:11:36Z, core boot 16:12:35Z — 59 seconds later. The
         running image therefore loaded every module AFTER the last write, which is the check
         this programme has paid for skipping. Boot clean: 347 INFO, 8 WARNING, ZERO ERROR.
+    VALIDATE_2026_08_22:
+      status: "PARTIAL — I3 CLOSED live with a real contrast; I1 and I2 OPEN with their denominators printed."
+      the_restart_was_verified_not_assumed: >-
+        Last src write 2026-08-22T16:11:36Z, core boot 16:12:35Z — 59 seconds later, so the
+        running image loaded every module AFTER the change. Boot clean: 347 INFO, 8 WARNING,
+        ZERO ERROR.
+      I3_CLOSED_and_the_contrast_is_in_the_same_log_file: >-
+        Since the boot: 16 of 16 eviction records emit exactly `dropped_count` names.
+        EARLIER IN THE SAME FILE, before the boot: 179 of 179 emitted exactly 20 names
+        against a count of 39. Not "most" — every single record on each side of the change.
+        WHAT IT ACTUALLY COST, stated as names rather than counts: twenty tool names became
+        visible in the eviction record that STRUCTURALLY COULD NOT APPEAR BEFORE, all of
+        them sorting after the old 20th entry — pdf, process, read_logs, run_tests,
+        search_files, send_message, session_search, sessions_send, sessions_spawn,
+        set_output_preference, task_status, todo, transcripts, tts, undo_write, update_plan,
+        vision_analyze, wait, web_search. `send_message` is the tool that delivers a task's
+        outcome to its destination, which is this platform's own definition of a completed
+        task, and it could never be reported as dropped.
+      I1_and_I2_are_OPEN_because_the_denominator_is_ZERO_not_because_they_failed: >-
+        Both need a PLANNED ENVELOPE WIDER THAN THE CAP. `[planner] plan: envelope set`
+        fired 14 times in the previous day and ZERO times since this boot, so: 0 turns
+        presented 36 (I1) over 0 envelopes, and 0 envelope-eviction records (I2) over the
+        same 0 envelopes. That is no opportunity, not success, and it is recorded as OPEN
+        rather than read as a pass — the D05.4 lesson applied before the fact instead of
+        after it. Both queries ship in the doc's Verification section with the count that
+        must be non-zero first.
+      I4_is_test_proven_not_production_observed: >-
+        The discovery pair being non-evictable under any cap is covered by
+        tests/tools/test_presented_set_cuts_are_witnessed.py and has no production
+        observation. Said plainly so the closed item is not later read as "I4 passed live".
     changes:
       - date: 2026-08-22
         what: "The configured tool-count cap reaches all three presentation paths; the envelope path logs its cut; both eviction records name every dropped tool."
