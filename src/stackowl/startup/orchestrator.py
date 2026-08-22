@@ -4129,6 +4129,26 @@ class StartupOrchestrator:
                 )
                 code_watcher.capture_loop(loop)
                 code_watcher.start()
+                # `delay_minutes` is declared hot_reload:True and was not — this
+                # watcher is built once and nothing re-read the value, so lowering
+                # the delay did nothing until the next restart, which still used
+                # the OLD window. Subscribed the same way provider_reload and
+                # webhook_reload are, rather than adding a second mechanism.
+                try:
+                    from stackowl.startup.auto_restart_reload import (
+                        make_auto_restart_reload_handler,
+                    )
+
+                    event_bus.subscribe(
+                        "settings_reloaded",
+                        make_auto_restart_reload_handler(code_watcher),
+                    )
+                except Exception as exc:  # never block startup on a subscription
+                    log.warning(
+                        "[startup] core: auto-restart reload not subscribed — "
+                        "delay_minutes will need a restart to take effect",
+                        exc_info=exc,
+                    )
                 log.info(
                     "[startup] core: code watcher armed",
                     extra={"_fields": {

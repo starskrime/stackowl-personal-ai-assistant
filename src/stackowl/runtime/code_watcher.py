@@ -119,6 +119,29 @@ class CodeWatcher(PolledDaemonThread):
         except OSError:
             return None
 
+    def apply_quiet_period(self, quiet_period_s: float) -> None:
+        """Change the settle window on a LIVE watcher (2026-08-22).
+
+        `auto_restart.delay_minutes` is declared ``hot_reload: True`` and was not:
+        this thread is constructed once at startup with
+        ``quiet_period_s=delay_minutes*60`` and nothing ever re-read it, so editing
+        the value did nothing until the next restart — which still used the OLD
+        window. A setting that advertises hot-reload with no reader for the change
+        is the write-with-no-reader shape wearing a config marker.
+
+        Applied to the PENDING debounce as well as future ones: shortening the
+        window while a change is already waiting should release it on the next
+        poll, not make the operator wait out the old timer they just shortened.
+        """
+        if quiet_period_s < 0:
+            return
+        previous, self._quiet_period = self._quiet_period, float(quiet_period_s)
+        if previous != self._quiet_period:
+            log.info(
+                "[runtime] CodeWatcher quiet period changed: %.0fs -> %.0fs",
+                previous, self._quiet_period,
+            )
+
     def _check_once(self) -> None:
         """One poll tick: detect → quiet-period settle → fire once.
 
