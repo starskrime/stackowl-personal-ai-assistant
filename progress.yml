@@ -3164,6 +3164,58 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ARC-2026-08-22-loop-self-healing-was-already-built-and-severed
+    found: 2026-08-22
+    found_by: "Bakir: 'Agents should be integrated on loop corr where they will heal himself'"
+    status: THE CHAIN EXISTS AND IS NOW UNBLOCKED. Last hop is prompt-steered, not deterministic — see the open question.
+    WHAT_ALREADY_EXISTS_and_it_is_well_designed: >-
+      `pipeline/durable/turn_task.py` catches a turn blocked on a capability and
+      calls `fail_and_requeue` with `BLOCKED_CAPABILITY_CLASS` and an error string
+      that NAMES THE REMEDY VERBATIM: "Either route around it (delegate_task to an
+      owl that holds it), or ask the user to grant it — owl_build action='grant'
+      with explicit_tools=['<blocked>'] — and say plainly that you need it."
+      `retry_actuator._augment_goal` then feeds that `last_error` into the retry's
+      goal, so the next attempt is constrained rather than blind. The class gets the
+      tighter 3-attempt ceiling and dead-letters with `_escalate`, which reuses the
+      EXISTING notification transport ("a second send path would be the duplication
+      CLAUDE.md forbids").
+      So the loop already had the shape Bakir is asking for: blocked -> requeue with
+      the remedy -> retry asks -> operator approves -> owl heals. NOTHING NEW WAS
+      NEEDED, which is the "check existing code before writing new" rule paying for
+      itself on a request that sounded like a build.
+    IT_WAS_SEVERED_AT_TWO_POINTS_BOTH_FIXED_2026_08_22: >-
+      (1) `owl_build` was REFUSED BY BOUNDS at dispatch — `compute_effective_bounds`
+      never unioned ROUTER_TOOLS — so the model could not call `grant` even when the
+      loop told it to, in the exact words. (2) `_grant` called `registry.register()`
+      on an owl that by definition already exists, so every grant raised "duplicate
+      owl name" and was rolled back. The healing instruction was correct, delivered,
+      and impossible to obey.
+      THE CODE ALREADY RECORDED HALF OF THIS and nobody could act on it:
+      retry_actuator's own docstring says "the retry reached for owl_build
+      action='edit' ... instead of action='grant', which exists to do exactly that.
+      `grant` was called ZERO times." That was read as a prompting problem and fixed
+      by passing `last_error` into the goal — a correct fix that landed on top of two
+      broken mechanisms, so it could never have worked. A prompt fix over a
+      structural break is invisible until the structure is repaired.
+    THE_OPEN_QUESTION_which_is_Bakirs_to_answer: >-
+      The last hop is PROMPT-STEERED: the loop tells the model to call
+      `owl_build action='grant'` and hopes it does. retry_actuator says so plainly —
+      "capability avoidance is PROMPT-STEERED ... The model can still pick a banned
+      capability if it insists. Upgrade path: thread banned_capabilities into
+      execute.py's tool-selection as a real exclusion list if soft steering proves
+      unreliable." The same question applies to ACQUISITION: should the loop ITSELF
+      raise the grant request deterministically when a turn is blocked on a
+      capability the owl does not hold, rather than asking a weak model to do it?
+      NOT DECIDED, and deliberately not built. It is a real design choice with a
+      real cost — a deterministic request fires on every block including the ones
+      where routing around was the better answer, and it moves an authority request
+      from something an agent CHOSE to ask into something the platform asks
+      automatically. That is Bakir's call, not a measurement.
+      MEASURE FIRST: the chain has never once run end to end unbroken. It should be
+      given the chance now that both severed points are repaired, and the closing
+      query is `jq 'select(.msg|test("authority WIDENED"))'` returning a record
+      whose owl was previously blocked.
+
   - id: ARC-2026-08-22-agents-forget-granted-access
     found: 2026-08-22
     found_by: "Bakir, live: 'Agent losses granted tool access on next run' / 'never saved permanently'"
