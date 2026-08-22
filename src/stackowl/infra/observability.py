@@ -207,6 +207,58 @@ def _log_dir() -> Path:
     return StackowlHome.logs_dir()
 
 
+class DailyJsonlRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
+    """A daily rotator whose retention can actually FIND the files it named.
+
+    MEASURED 2026-08-22: ``getFilesToDelete()`` returned 0 of 5 rotated files, so
+    ``backupCount`` had never deleted anything and ``~/.stackowl/logs`` had grown
+    to 772 MB across 31 files reaching back to 2026-07-23.
+
+    WHY. ``setup_logging`` installs a custom ``namer`` so rotated files are called
+    ``stackowl-2026-07-23.jsonl`` — which is what ``read_logs`` and the CLI glob
+    for. The stdlib's deletion pass does NOT use the namer: it lists the log
+    directory and keeps only names starting with ``baseFilename + "."``, i.e.
+    ``stackowl.jsonl.``. No file the namer produces can ever match that prefix, so
+    the search returned empty every single midnight and every rotated file was
+    kept forever.
+
+    Both halves were individually correct and nobody owned the pair — a write with
+    no reader, wearing a retention uniform. The setting was honest
+    (``STACKOWL_LOG_RETAIN_DAYS``), the handler accepted it, and nothing downstream
+    could act on it. That is the first of this codebase's four recurring shapes,
+    and it is the same one the auto-restart delay wore two days ago.
+
+    Overriding the deletion rather than dropping the namer, because the NAMES are
+    load-bearing: `read_logs`, `trace_cli` and every operator habit glob
+    ``stackowl-*.jsonl``. Reverting to stdlib naming would fix retention by
+    breaking log reading.
+    """
+
+    def getFilesToDelete(self) -> list[str]:  # noqa: N802 — stdlib override
+        """Rotated files beyond ``backupCount``, oldest first.
+
+        Matches what :func:`setup_logging`'s namer actually writes. The live
+        ``stackowl.jsonl`` has no date segment and so never matches — it must
+        never be a deletion candidate.
+        """
+        if self.backupCount <= 0:
+            return []
+        log_dir = Path(self.baseFilename).parent
+        stem = Path(self.baseFilename).stem  # "stackowl"
+        suffix = Path(self.baseFilename).suffix  # ".jsonl"
+        pattern = re.compile(rf"^{re.escape(stem)}-(\d{{4}}-\d{{2}}-\d{{2}})"
+                             rf"{re.escape(suffix)}$")
+        dated: list[tuple[str, str]] = []
+        for path in log_dir.iterdir():
+            match = pattern.match(path.name)
+            if match:
+                dated.append((match.group(1), str(path)))
+        dated.sort()  # ISO dates sort chronologically
+        if len(dated) <= self.backupCount:
+            return []
+        return [path for _, path in dated[: len(dated) - self.backupCount]]
+
+
 def setup_logging() -> logging.Handler:
     """Configure JSONL file logging for the stackowl logger hierarchy.
 
@@ -214,13 +266,16 @@ def setup_logging() -> logging.Handler:
     """
     level_name = os.environ.get("STACKOWL_LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
-    retain_days = int(os.environ.get("STACKOWL_LOG_RETAIN_DAYS", "30"))
+    # 7 days, chosen by Bakir 2026-08-22. At the measured ~25 MB/day average
+    # (one day hit 95.6 MB) 30 days meant 772 MB of logs on a 56 GB root disk
+    # that had 1.3 GB free.
+    retain_days = int(os.environ.get("STACKOWL_LOG_RETAIN_DAYS", "7"))
 
     log_dir = _log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "stackowl.jsonl"
 
-    handler = logging.handlers.TimedRotatingFileHandler(
+    handler = DailyJsonlRotatingFileHandler(
         filename=str(log_file),
         when="midnight",
         utc=True,
