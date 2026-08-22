@@ -998,6 +998,29 @@ current:
         runs that are not conversations at all. Every OTHER bug found in this area today
         was the same confusion.
       blocked_until_answered: "DEBT-D054-BROWSER-FLAP's fix; nothing in D05.4."
+      NEW_EVIDENCE_2026_08_22_the_D05_4_watch_answers_THIS_question_not_its_own: >-
+        Running D05.4's standing watch over the FULL window since its evidence line was
+        promoted to INFO — 233 rebuild records, 2026-08-21 onward, not just the current
+        boot — turned "I2 is waiting on traffic" into something sharper and it lands here.
+        220 of the 233 rebuilds carry NO conversation_id at all; only 13 do; and ZERO
+        (conversation_id, owl) pairs appear more than once. Not "few" — none. So a
+        within-conversation rebuild, the only event I2 as phrased can observe, has not
+        occurred once in two days.
+        THE BASIS MECHANISM IS NEVERTHELESS PROVABLY LIVE: three records read
+        `measured != basis` — scout 01:45:21 (23 tools, 5929 vs 5459), scout 01:47:51 (24,
+        7333 vs 5459) and secretary 14:40:23 (23, 6403 vs 5909). All three are the SAME
+        LANE across DIFFERENT conversations, and in all three `tools` changed anyway, so
+        D05.4's stated pass (`measured != basis` with `tools` unchanged) is still unmet.
+        THE REASON IS STRUCTURAL, NOT STATISTICAL. `memo_key` is built from
+        `state.session_key` at pipeline/steps/execute.py:1415-1425 — the LANE — so the
+        basis persists ACROSS conversations and is never re-derived WITHIN one. A check
+        phrased on within-conversation reuse cannot be satisfied by a store keyed on the
+        lane. That is this escalation, now carrying a measurement instead of a suspicion:
+        the memo horizon is not merely a preference question, it is currently making one
+        of D05.4's own invariants unobservable.
+        WHAT THIS DOES NOT DO: it does not reopen D05.4. The item closed on the
+        integration-test bar Bakir chose, the basis is provably reused and the rebuild path
+        is provably live. What is unproven is narrower than it was, and now named.
     ESC_31b_THE_SAME_QUESTION_IN_A_THIRD_STORE_measured_2026_08_21:
       what_this_adds_to_ESC_31: >-
         It is not two stores, it is THREE, and they should be answered together or
