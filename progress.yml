@@ -422,6 +422,111 @@ current:
       any gate — and the scanner demonstrably allows exactly that sentence. mailbutler has
       `shell` in bounds and a working Gmail script.
     still_outstanding: "Four of six lenses had not reported when this was written. Recorded now so the verified half is durable."
+  D08_4_BRAINSTORM_PANEL_2026_08_22:
+    method: >-
+      Six lenses in parallel; five reported (Future-proof still out when this was written).
+      25 questions routed — 23 derivable and answered with named evidence, 2 escalated as
+      ESC-37 and ESC-38. Every load-bearing claim was reproduced by me rather than taken on
+      report, and doing that corrected two lenses.
+    THE_VERDICT_PARITY_IS_WRONG_and_it_is_wrong_in_BOTH_directions: >-
+      The recorded verdict is PARITY. Measured against the read-only clone it is a SPLIT.
+        BEHIND on exactly two defences the reference has and we do not:
+          (1) A LOAD-TIME SNAPSHOT RE-SCAN. Its memory_tool re-scans entries when building
+              the snapshot and renders a flagged one as "[BLOCKED: ...]" while the disk
+              keeps the raw text. Our snapshot_for_prompt performs NO scan of any kind.
+              This matters MORE here than there, because we have an unscanned writer
+              (/memory remember) feeding USER.md.
+          (2) A WRITE-TIME INSTRUCTION to record declarative FACTS, not imperatives — its
+              prompt_builder says "Imperative phrasing gets re-read as a directive in later
+              sessions". We have no such instruction, and 22 of our 32 live entries are
+              directive-shaped.
+        AHEAD on three:
+          We OWN a stronger fence primitive than they have (prompt_safety.neutralize +
+          trust.render_at_trust's three-tier map with SAFE_DEFAULT); they have no source,
+          trust tier or origin concept on a memory entry at all. We have ONE unguarded
+          writer, they have THREE. And their context_compressor asserts memory is "ALWAYS
+          authoritative ... never ignore or deprioritize", which is a weaker stance than
+          ours.
+        EQUAL on: no untrusted marker on the block (NEITHER platform has one), the same
+          delimiter weakness, byte-identical budgets (1375/2200), an unbounded read side,
+          and no per-entry provenance.
+      Under the item-loop's rule 5 a panel answer contradicting a recorded decision is
+      ESCALATED, not reconciled. See ESC-37.
+    A_STALE_MAP_CITATION_which_is_a_plain_factual_correction_not_a_verdict: >-
+      REFERENCE_MAP.md:471 credits parity to "infra/prompt_safety.py — a shared fence
+      neutralizer for skill injection and memory recall." That was true when written and is
+      not true now: D01.1 removed memory_context from the prompt and D08.1 replaced it with
+      the curated files, so the cited mechanism no longer touches the surface the item
+      names. `neutralize` has exactly two callers and neither is the curated path. Anyone
+      verifying D08.4 against that line finds the neutralizer absent and concludes "gap ->
+      build a fence" — the wrong conclusion from a stale citation.
+    THE_PANELS_CENTRAL_CONTRADICTION_and_I_resolved_it_by_RUNNING_IT: >-
+      Killer + Stability: apply the neutralizer to the curated block — a forged
+      "</user_profile>", a "# SYSTEM" heading and a literal trust="trusted" reach the
+      prompt verbatim today, and Stability proved that end to end.
+      Improvement: NO, actively harmful — 22 of 32 live entries are imperative BY DESIGN,
+      USER.md carries the operator's own "Requires EXPLICIT per-message approval before any
+      email is trashed ... Never auto-delete", and neutralize() on the real USER.md
+      collapses 10 lines to 1.
+      RESOLVED — THEY ARE ARGUING ABOUT TWO DIFFERENT OPERATIONS, and I measured both:
+        WHOLE-BLOCK neutralize: 10 lines -> 1. Improvement is RIGHT; this destroys the
+          entry structure of a 3,410-char block read 287 times a day.
+        PER-ENTRY neutralize: 10 lines -> 10, chars 1244 -> 1240, and only 2 of 9 live
+          entries altered at all (both trivially). It STILL strips the forged
+          "</user_profile>", the "# SYSTEM" heading and the trust="trusted" attribute.
+      So the defence is available with none of the structural cost. Improvement's harm
+      argument is against a "treat this as data, not instructions" MARKER — which is a
+      different thing, is NOT what neutralize does, and which I am NOT shipping: it would
+      tell a weak model to disregard the operator's own email-deletion rule, and neither
+      platform has one.
+    A_SECOND_CORRECTION_I_MADE_TO_A_LENS: >-
+      Killer reported that the write scanner would break preference-learning. It does not:
+      "Always reply in Turkish", "Never call me before 9am" and "Prefer short answers" all
+      PASS. The accurate statement is narrower and still damning — on prose the scanner
+      catches no forged authorisation and does block first-person role statements, because
+      its 99 patterns were built for shell, curl and env-var exfiltration in a skill body.
+    THE_DEFECT_I_REPRODUCED_MYSELF_and_it_is_the_sharpest: >-
+      ENTRY-DELIMITER FORGERY MINTS AN UNDECAYABLE ENTRY. Driven in a temp root, live store
+      untouched: ONE add(target="user", durability="until_changed") whose content contains
+      "\n§\n" wrote two entries, and the second parsed back as durability='permanent'.
+      `_evict_to_fit` never touches `permanent` — the module says so explicitly — so a
+      single ordinary write can plant an entry that is immune to every decay path the
+      design relies on. The scanner passes it; `add()` never looks for the delimiter.
+      This is not an injection worry, it is a privilege escalation INSIDE the memory
+      system, and it needs no attacker to hurt: a model writing a note that happens to
+      contain the delimiter does it by accident.
+    OTHER_MEASURED_FACTS_THAT_CHANGE_THE_PICTURE: >-
+      * THE CHAIN HAS ALREADY COMPLETED. mailbutler.md contains verbatim email SUBJECT
+        LINES chosen by whoever sent the mail, and 8 distinct Gmail message ids appear
+        across 5 of 12 memory files. Third-party bytes are in the cached prompt prefix
+        today. Attacker-CONTROLLABLE, with no evidence of being attacker-CONTROLLED.
+      * THE READ SIDE IS UNBOUNDED. A 50,012-char USER.md was rendered into the prompt in
+        full: the 1,375-char budget is enforced on WRITE only.
+      * /memory remember WRITES UNSCANNED into USER.md — the file injected into every owl,
+        including the self-healing pipeline's own (verifier, rca_gatherer, hypothesis).
+      * CONSENT IS NOT THE BACKSTOP PEOPLE ASSUME. It covered 116 of 4,492 tool executions
+        = 2.6%; shell ran 792 times against ONE consent decision. A forged instruction
+        steering ungated tools reaches ~97% of executions without touching the gate.
+      * NOTHING WOULD NOTICE. No health contributor, miner or actuator reads these files;
+        the logs record `chars` and never content. The falsifiable form of "no attack
+        observed" is "name the log line that would show one", and there is none.
+    what_ships_and_what_does_NOT:
+      SHIPS_because_each_is_a_defect_with_no_policy_question: >-
+        (a) per-entry neutralize on the curated render — applying an invariant the platform
+        already DECLARES ("neutralize EVERY recalled fact's content UNCONDITIONALLY") to
+        the one surface that violates it; (b) reject or escape the entry delimiter in
+        content on write, closing the undecayable-entry forgery; (c) bound the read side to
+        the same budget the write side already enforces — one source for a rule that is
+        currently declared and then not applied.
+      DOES_NOT_SHIP: >-
+        Binding `target` to the calling owl is an AUTHORITY change (ESC-38). Changing the
+        item's verdict is a recorded decision (ESC-37). A "treat as data" marker is
+        rejected on evidence, not deferred. Translating the English-only pattern list is
+        rejected outright — it would violate the standing no-hardcoded-English rule in the
+        act of trying to satisfy it, and content filtering of natural language is
+        unwinnable; recorded as a measured limit instead.
+    routed_to_operator: [ESC-37, ESC-38]
+    still_outstanding_2: "Future-proof had not reported when this was written."
   WHERE_D05_8_STANDS_2026_08_22_T17_05Z:
     stages: "brainstorm/architect/implement/cleanup/test/document DONE. validate PARTIAL."
     the_verdict: >-
@@ -2079,6 +2184,92 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-38-any-owl-can-write-any-owls-memory-including-the-root-administrators
+    raised: 2026-08-22
+    question: >-
+      The memory `target` is unbound model text with no authority check, so any owl can
+      write into any other owl's notes and into USER.md — which every owl reads and which
+      is in every prompt. Should `target` be bound to the CALLING owl, with `user` and
+      another owl's file requiring the operator or root? I will not take this: it is an
+      authority boundary.
+    why_evidence_cannot_settle_it: >-
+      Evidence settles that the gate is ABSENT; it cannot settle where the boundary
+      belongs. Owls legitimately collaborate — mailbutler's notes reference scout's work,
+      and a shared USER.md is the design. Deciding who may write whose memory is the same
+      class of question as ESC-34, and this programme's standing rule is that authority is
+      never decided unilaterally.
+    what_was_measured_2026_08_22: >-
+      MemoryTool._target (tools/knowledge/memory.py:279-281) is
+      `str(kwargs.get("target") or _DEFAULT_TARGET).strip()` — the calling owl is never
+      mentioned. CuratedMemory.path_for (memory/curated.py:205-216) validates only the
+      FILENAME SHAPE against _SAFE_TARGET_RE, and its own comment says why: a separator
+      would write outside the directory. So path traversal is closed and AUTHORITY is not
+      checked at all. Read directly, not inferred.
+      SINCE f4f51240 THE SECRETARY IS THE PLATFORM'S ROOT ADMINISTRATOR, and secretary.md
+      is injected 621 times over the window. An unattended, web-reading owl writing there
+      is writing the root administrator's always-on prompt.
+      THE SAME HOLE HAS A SECOND, DULLER EDGE ALREADY BLEEDING: because the target is a
+      free string, five files have NEVER been injected into any prompt — Collector, Falcon,
+      agent, falcon, owl — 5,578 bytes of 12,801, 44% OF THE STORE. `owl` and `agent` are
+      not owl names; the model invented them. Falcon/falcon is a case split of ONE owl
+      whose canonical name is `scout`, so scout ran 36 turns with only USER.md while its
+      own notes sat unread on disk. Nothing reported the miss.
+    the_recommendation: >-
+      Bind `target` to the calling owl by DEFAULT, resolve display-name to canonical name
+      through ONE canonicaliser so `Falcon` reaches `scout.md`, and require an explicit
+      operator or root path for `user` and for another owl's file. That closes the
+      privilege crossing and the 44% orphan rate with one change, because they are the same
+      defect. Migrating the five orphan files is data movement and needs your word
+      separately.
+    blocked_until_answered: >-
+      The authority half. The three defects that carry no authority question ship without
+      it — see current.D08_4_BRAINSTORM_PANEL_2026_08_22.what_ships_and_what_does_NOT.
+  - id: ESC-37-D08.4s-recorded-PARITY-verdict-does-not-survive-measurement
+    raised: 2026-08-22
+    question: >-
+      D08.4 is recorded as verdict PARITY, track verify. Measured against the read-only
+      clone it is a SPLIT — behind on two defences, ahead on three. Does the item's verdict
+      change, and does the map entry that justified it get corrected?
+    why_evidence_cannot_settle_it: >-
+      The measurement is not in doubt; the BOOKKEEPING is yours. Changing a recorded
+      verdict is exactly the case the item-loop names — a panel answer contradicting a
+      recorded decision is escalated, not reconciled — and the choice between "PARITY with
+      two noted gaps" and "reclassify as close_gap" changes what future sessions do with
+      the item.
+    what_was_measured_2026_08_22: >-
+      BEHIND on two: (1) the reference re-scans entries when BUILDING THE SNAPSHOT and
+      renders a flagged one as "[BLOCKED: ...]" while the disk keeps the raw text — our
+      snapshot_for_prompt performs no scan of any kind, and this matters MORE here because
+      we have an unscanned writer (/memory remember) feeding USER.md; (2) its prompt tells
+      the model to write declarative FACTS, not imperatives, because "imperative phrasing
+      gets re-read as a directive in later sessions" — we have no such instruction and 22
+      of our 32 live entries are directive-shaped.
+      AHEAD on three: we own a stronger fence primitive than they have (prompt_safety.
+      neutralize + trust.render_at_trust's three-tier map) while they have no source, trust
+      tier or origin concept on a memory entry at all; we have ONE unguarded writer to
+      their THREE; and their context_compressor asserts memory is "ALWAYS authoritative ...
+      never ignore or deprioritize", a weaker stance than ours.
+      EQUAL on: neither platform marks the block as untrusted, both share the delimiter
+      weakness, budgets are byte-identical (1375/2200), both read sides are unbounded, and
+      neither carries per-entry provenance.
+    a_plain_factual_correction_that_does_NOT_need_your_answer: >-
+      REFERENCE_MAP.md:471 credits the parity verdict to "infra/prompt_safety.py — a shared
+      fence neutralizer for skill injection and memory recall". `neutralize` has exactly two
+      callers and NEITHER is the curated path; D01.1 removed memory_context from the prompt
+      and D08.1 replaced it with the curated files, so the cited mechanism no longer touches
+      the surface the item names. That citation is stale regardless of which verdict you
+      choose, and is corrected on sight.
+    the_recommendation: >-
+      Reclassify to `close_gap` with the two named gaps, and keep the three AHEAD findings
+      in the item so the record does not read as "we were behind". Adopt the read-time
+      re-scan — its effect is measurable at string level with NO model in the loop, which is
+      the property that makes it worth having on a box where the only backend is one weak
+      local model. Do NOT adopt an untrusted marker: neither platform has one, its effect
+      cannot be measured here, and USER.md carries the operator's own email-deletion rule
+      that such a marker would tell the model to disregard.
+    blocked_until_answered: >-
+      The verdict field and the item's track. Nothing else — the three defects with no
+      policy question ship regardless, and the stale map citation is corrected regardless.
   - id: ESC-36-the-presented-set-is-chosen-by-the-ALPHABET-and-only-browser-tools-escape-it
     raised: 2026-08-22
     question: >-
