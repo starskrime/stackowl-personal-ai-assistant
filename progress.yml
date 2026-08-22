@@ -315,8 +315,70 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 2
-  item: D05.4
-  stage: validate
+  item: D05.8
+  stage: brainstorm
+  WHERE_THIS_SESSION_IS_2026_08_22:
+    headline: >-
+      D05.4 is CLOSED 7/7 (cc0617d0) on Bakir's recorded call, with its Verification
+      section re-run rather than trusted. Picked up D05.8 "Tool count" — the last
+      unfinished item in wave 2 — whose blocker was named and is now CLEARED.
+    what_unblocked_D05_8: >-
+      Its `blocked_on` read "INTERACTIVE TRAFFIC. All 64 measured turns are goal
+      (background) lanes; the interactive path is unmeasured." That is no longer true.
+      159 LIVE interactive turns are now on record across 2026-08-15..22, plus 148
+      self-heal retries on the same conversations. The stated settling query
+      (`tools_count` on non-goal, non-incident lanes) returns data.
+    what_D05_4_left_open_ON_PURPOSE: >-
+      I2 — a reused budget basis surfacing as `measured != basis` — has never been
+      observed in production and is proven by unit test only. It is a STANDING WATCH in
+      designs/D05.4.md, not a passed check, and the item closed on the integration-test
+      bar Bakir chose. Do not later read the closed item as "I2 passed".
+  D05_8_ROUND_0_MEASUREMENT_2026_08_22:
+    method: >-
+      Round 0 before any question was drafted, per the item-loop. Window is
+      ~/.stackowl/logs/stackowl-2026-08-{15..21}.jsonl plus the live stackowl.jsonl,
+      read at 2026-08-22T15:50Z. Source records are the INFO line
+      `[pipeline] execute: context budget`, which already carries `tools_count` — the
+      2026-08-04 brainstorm was right that no new instrument was needed.
+    THE_BLOCKER_IS_CLEARED_and_the_old_number_was_the_wrong_population: >-
+      1,415 context-budget records. By lane: 765 incident, 307 interactive, 152
+      self-heal retry, 122 goal, 51 recovery, 18 other. Splitting the interactive 307 by
+      trace shape (`retry-*` / `*-fix` is a self-heal retry OF an interactive
+      conversation, not a fresh turn):
+        INTERACTIVE-LIVE   n=159  avg 21.9  MEDIAN 30  min 3  max 40
+        INTERACTIVE-RETRY  n=148  avg 23.9  median 26  min 4  max 40
+      The 2026-08-04 figure that raised the whole "are we starving the model" question —
+      64 turns, avg 4.0, max 24 — was GOAL LANES ONLY. On the interactive path the
+      median is 30, not 4. The open question was asked about the wrong population, which
+      is precisely why Bakir refused to close the item on background data.
+    the_headline_finding_the_2026_08_04_VERDICT_SURVIVES: >-
+      ZERO of 159 live interactive turns ever presented 54 tools or more. The reference
+      platform's CLI default set is 54. So "the gap is INVERTED — we present FEWER tools
+      than the reference" holds on the interactive path too, and holds by a wide margin:
+      our median interactive turn shows 30 against their default 54.
+    the_cap_binds_and_the_token_budget_NEVER_does: >-
+      14 of 159 live interactive turns (9%) sat exactly at the configured cap. Across the
+      whole window `limited_by` names `tool_count_cap` on 265 of 265 populated records and
+      `token_budget` on ZERO. Tool schemas cost at most 9,369 tokens against a 262,144
+      window — 3.57%. The constraint that actually shapes the array is a COUNT, and the
+      token budget is unreachable on this hardware.
+    the_30_was_a_DEPLOYMENT_SETTING_not_a_second_code_path: >-
+      `hard_cap` reads 30 on every record through 2026-08-20 and 40 from 2026-08-21.
+      ~/.stackowl/stackowl.yaml.bak-2026-08-21 carries `tool_count_cap: 30` and the live
+      ~/.stackowl/stackowl.yaml carries 40. Bakir raised it by hand on 2026-08-21. Checked
+      rather than assumed, because a cap appearing in the logs under two values looks like
+      two call sites and is not.
+    the_rising_line: >-
+      `eligible tools NOT presented` (INFO) fired 955 times over the window and rises
+      monotonically by day: 6, 18, 34, 93, 119, 165, 342, 178 (2026-08-22 partial, to
+      15:50Z). On INTERACTIVE lanes: 59 events, 51 DISTINCT tools dropped, dominated by
+      `browser_*`, and NO tool is dropped in every event — so the presented set still
+      varies turn to turn on the interactive path.
+    a_field_that_looks_complete_and_is_not: >-
+      The `dropped` list on that record is truncated at 20 by registry.py; `dropped_count`
+      carries the real figure (49 on 641 of the 955 records). This already misled a reader
+      once during D05.4 and is repeated here so it does not mislead a third time.
+    panel: "Dispatched 2026-08-22 as six parallel lenses — Measurement, Stability, Improvement, Killer-functionality, Ease-of-use, Future-proof. Findings recorded below when they return."
   WHERE_THIS_SESSION_ENDED_2026_08_21:
     headline: >-
       D05.4 is at validate:partial / document:partial and CANNOT reach done without
