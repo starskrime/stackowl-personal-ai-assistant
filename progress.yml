@@ -13612,7 +13612,7 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       partial
+      test:       done
       validate:   partial
       document:   done
     doc: "docs/reference-mapping/designs/D08.4.md"
@@ -13669,6 +13669,24 @@ items:
       the_restart_was_verified_not_assumed: >-
         Last src write 2026-08-22T18:01:22Z, core boot 18:02:22Z — 60 seconds later, so the
         running image carries all three guards.
+    TEST_2026_08_22:
+      whole_directories_not_a_targeted_subset: >-
+        tests/memory 406 PASSED, 0 failed, 1,130s. tests/tools/knowledge 200 PASSED, 0
+        failed, 740s. Plus 58 on the three directly affected files. ruff 37, mypy 65 — both
+        at baseline.
+      a_TERMINATED_run_that_was_NOT_a_red_test_and_was_checked_rather_than_assumed: >-
+        Two earlier tests/memory sweeps printed "Terminated" under a 1,500s budget, after an
+        earlier run of the SAME suite had finished in 944s. That looked like my change having
+        introduced a hang, which would have been the honest reading — a hanging test is a
+        failing test. It was not: run alone with a 2,700s budget the suite completes in
+        1,130s. The difference is machine contention (the live core plus a second pytest
+        process on a Jetson), and exit 143 is SIGTERM from my own timeout. Recorded because
+        "it was just slow" is exactly the excuse that hides a real hang, so the distinction
+        was measured rather than asserted.
+      no_pre_existing_red_left: >-
+        Two failures appeared and both were root-caused rather than reclassified — see
+        TWO_PRE_EXISTING_TESTS_WENT_RED_AND_THIS_IS_NOT_ME_BENDING_THEM above. Nothing was
+        deferred.
     VALIDATE_2026_08_22:
       status: "PARTIAL — the code is live and the boot is clean; all three guards are UNEXERCISED in production."
       platform_health: "40 minutes on the new image: 1,351 INFO, 27 WARNING, ZERO ERROR."
@@ -13677,6 +13695,17 @@ items:
         checked file by file. So no forged entry exists in the store today, which is both a
         pass for the invariant and a useful negative: the forgery was reachable and had not
         yet been hit.
+      RE_CHECKED_2026_08_22_T19_35Z_after_a_LATER_boot: >-
+        The core restarted again at 18:47:11Z — 76 seconds after the last src write
+        (18:45:55Z), so the running image also carries the calibration comment. 49 minutes
+        on it: 1,356 INFO, 18 WARNING, 1 ERROR. THE ONE ERROR IS NOT MINE and is worth
+        naming: `tool_build.execute: no channel/session to scope consent — refused`, a
+        background lane with no address — the same "consent had no address" family already
+        on record. It is a CORRECT fail-closed refusal logged at ERROR, which is arguably
+        level inflation; not this item's to fix, recorded so the next reader does not spend
+        the search.
+        The watch is unchanged: 0 curated writes, 0 unresolvable targets, 15 injections,
+        and 0 of 12 files carry a stray delimiter.
       I2_I3_I4_are_OPEN_because_the_denominator_is_ZERO: >-
         Zero curated writes since the 18:02:22Z boot, so the containment and the ceiling have
         had no opportunity. No owl on this deployment has a non-ASCII name, so the
