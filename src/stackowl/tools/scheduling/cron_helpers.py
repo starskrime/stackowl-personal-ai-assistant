@@ -227,11 +227,39 @@ def count_owl_jobs(jobs: list[Job], owl: str) -> int:
 
 
 def _owns(job: Job, owl: str) -> bool:
-    """True iff ``job`` is a cron-tool job owned by ``owl`` (single source of truth)."""
-    return (
-        job.params.get("created_by") == CREATED_BY_TAG
-        and job.params.get("owl") == owl
-    )
+    """True iff ``job`` is owned by ``owl`` (single source of truth).
+
+    TWO LEGITIMATE CREATORS, not one. This required
+    ``created_by == CREATED_BY_TAG`` — the cron-TOOL tag — and an owl's own
+    scheduled job is projected by `owl_build`/the lifecycle reconciler, which
+    stamps no such tag. MEASURED 2026-08-22: all three lifecycle rows
+    (owl_lifecycle-Brain, -sysdesign, -syshealth) carry ``created_by=None``, so
+    EVERY scheduled owl's job was invisible to the `cronjob` tool — not merely
+    unfindable by one spelling, but absent from list, update, run and delete
+    alike.
+
+    That is what "the platform cannot create an agent without issue" looked like
+    from inside: at 04:00 an agent created `syshealth`, granted it its tools, saw
+    its row land pending and enabled — then asked `cronjob` about it and was told
+    "no such job", so it reported the whole task failed. The create worked; the
+    CONFIRMATION could not.
+
+    A lifecycle job is recognised by construction rather than by a tag: its id is
+    exactly ``_job_id_for(params["owl"])``, the same deterministic function that
+    minted it. Asking the minter keeps one source of truth instead of restating
+    its prefix here.
+
+    THE PRIVILEGE GUARD IS UNCHANGED. Both arms still require the job's own
+    ``owl`` to be the caller, so this widens WHICH of an owl's jobs it can see and
+    never WHOSE.
+    """
+    if job.params.get("owl") != owl:
+        return False
+    if job.params.get("created_by") == CREATED_BY_TAG:
+        return True
+    from stackowl.scheduler.owl_lifecycle import _job_id_for
+
+    return job.job_id == _job_id_for(owl)
 
 
 def filter_owl_jobs(jobs: list[Job], owl: str) -> list[Job]:
@@ -250,6 +278,31 @@ def find_owned_job(jobs: list[Job], job_id: str, owl: str) -> Job | None:
     """
     for job in jobs:
         if job.job_id == job_id and _owns(job, owl):
+            return job
+    # AN OWL NAME RESOLVES TO THAT OWL'S LIFECYCLE JOB (2026-08-22).
+    #
+    # `owl_build` creates a scheduled owl and projects its row under the
+    # deterministic id `owl_lifecycle-<name>` (scheduler/owl_lifecycle._job_id_for).
+    # An agent that had just created one then asked `cronjob` about it BY THE OWL'S
+    # NAME and was told "no such job: 'syshealth'" — so it reported the whole task
+    # failed. MEASURED 2026-08-22 04:00:50, on a create that had fully succeeded:
+    # the owl existed, was granted its tools, and its job row was pending and
+    # enabled. The platform could create an agent and could not confirm it, which
+    # reads to the agent — and to the operator — as "creating agents is broken".
+    #
+    # Two tools disagreeing about one entity's identity is the "two copies of one
+    # rule" shape: `owl_build` mints the id and `cronjob` demanded a different
+    # spelling of it. Resolved by ASKING the minter rather than restating the
+    # prefix here.
+    #
+    # THE OWNERSHIP GATE IS UNCHANGED: the alias still runs through `_owns`, so it
+    # can never resolve another owl's job and is not an existence oracle. It only
+    # accepts a spelling of a job the caller could already reach.
+    from stackowl.scheduler.owl_lifecycle import _job_id_for
+
+    aliased = _job_id_for(job_id)
+    for job in jobs:
+        if job.job_id == aliased and _owns(job, owl):
             return job
     return None
 
