@@ -32,6 +32,7 @@ from stackowl.exceptions import (
     CommandParseError,
     ManifestValidationError,
     OwlNotFoundError,
+    OwlPersistError,
 )
 from stackowl.infra import presented_tools
 from stackowl.infra.observability import log
@@ -406,7 +407,22 @@ class OwlsCommand(SlashCommand):
         # over unchanged while enforcing every field constraint (e.g. the tier Literal).
         updated = type(current).model_validate({**current.model_dump(), **changes})
         self._registry.replace(updated)
-        await persist_owl(updated)
+        # persist_owl RAISES since 2026-08-22 (it used to return an ignorable
+        # bool, which is how grants were silently lost). Caught here so an edit
+        # that cannot be saved is REPORTED rather than confirmed — and the
+        # in-memory registry is put back, so the reply and the stored state agree.
+        try:
+            await persist_owl(updated)
+        except OwlPersistError as exc:
+            self._registry.replace(current)
+            log.gateway.error(
+                "[commands] owls.edit: the change could NOT be persisted — reverted",
+                exc_info=exc, extra={"_fields": {"name": updated.name}},
+            )
+            return (
+                f"✗ /owls edit: '{updated.name}' was NOT saved — {exc.reason}. "
+                "Nothing was changed; the previous settings are still in effect."
+            )
         # D01.4 — clear this owl's frozen prompt on EVERY lane, so the edit
         # reaches the very next turn instead of waiting for a rollover that
         # D01.7 may not perform until 04:00. Awaited HERE, before the

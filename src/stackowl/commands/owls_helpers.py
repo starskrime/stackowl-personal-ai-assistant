@@ -10,7 +10,7 @@ from __future__ import annotations
 import shlex
 from typing import Any, cast, get_args
 
-from stackowl.exceptions import CommandParseError
+from stackowl.exceptions import CommandParseError, OwlPersistError
 from stackowl.infra.observability import log
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
@@ -382,9 +382,27 @@ async def persist_owl(manifest: OwlAgentManifest) -> bool:
     write-with-no-reader shape, inverted, and it would have looked exactly like
     the rename bug it came from — "I renamed it and it came back".
 
-    Returns whether the write landed. Never raises: an owl change that cannot be
-    persisted must still be reported honestly by its caller (owl_build.verify now
-    measures the effect), not crash the turn.
+    RAISES :class:`OwlPersistError` when the write does not land. It used to return
+    ``bool`` and never raise, so that "an owl change that cannot be persisted must
+    still be reported honestly by its caller, not crash the turn". The intent was
+    right and the mechanism defeated it: a bool is ignorable, and ALL SIX call
+    sites ignored it.
+
+    Bakir, 2026-08-22: "agents and platform forget granted accesses, looks like it
+    is never saved permanently". That is this defect. `owl_build._grant` widened
+    the IN-MEMORY registry, logged "authority WIDENED with the user's approval",
+    and returned success — while the durable write had failed into a variable
+    nobody read. The grant then lived exactly as long as the process.
+
+    RAISING DOES NOT CRASH THE TURN, which is why the original intent survives.
+    Five of the six call sites were ALREADY wrapped in ``try`` + ``restore_owl``
+    rollback, written as though this raised; they now roll back and return an
+    honest error instead of a false success. The sixth (``/owls edit``) is wrapped
+    for the same reason. The turn still ends politely — it just stops lying about
+    what was saved.
+
+    Returns ``True`` on success, so a caller that wants to assert the effect still
+    can.
     """
     from stackowl.infra.observability import log
 
@@ -400,7 +418,7 @@ async def persist_owl(manifest: OwlAgentManifest) -> bool:
                 "[owls] persist_owl: no db wired — the owl change was NOT persisted",
                 extra={"_fields": {"name": manifest.name}},
             )
-            return False
+            raise OwlPersistError(manifest.name, "no db wired")
         await OwlStore(db).upsert(manifest)
         log.tool.info(
             "[owls] persist_owl: stored",
@@ -408,12 +426,14 @@ async def persist_owl(manifest: OwlAgentManifest) -> bool:
                                "display_name": manifest.display_name or ""}},
         )
         return True
+    except OwlPersistError:
+        raise
     except Exception as exc:
         log.tool.error(
             "[owls] persist_owl: could not persist the owl change",
             exc_info=exc, extra={"_fields": {"name": getattr(manifest, "name", "?")}},
         )
-        return False
+        raise OwlPersistError(getattr(manifest, "name", "?"), str(exc)) from exc
 
 
 async def _owl_store() -> object | None:

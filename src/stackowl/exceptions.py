@@ -306,6 +306,29 @@ class ToolUseUnsupportedError(DomainError):
         )
 
 
+class OwlPersistError(InfrastructureError):
+    """An owl change could not be written to its durable home.
+
+    EXISTS BECAUSE THE PREVIOUS CONTRACT WAS SILENTLY IGNORABLE. `persist_owl`
+    returned ``bool`` and documented itself "never raises" so a failed write would
+    not crash the turn. All SIX call sites ignored the return value — and every one
+    of the five in `owl_build` was already wrapped in ``try`` + ``restore_owl``
+    rollback, written as though it raised. The callers were right; the function
+    was lying to them.
+
+    The measured consequence, reported by Bakir on 2026-08-22: "agents and platform
+    forget granted accesses, looks like it is never saved permanently". A grant
+    updated the IN-MEMORY registry, told the user "authority WIDENED with the
+    user's approval", and vanished at the next restart, because the durable write
+    had returned False into a variable nobody read.
+    """
+
+    def __init__(self, owl_name: str, reason: str) -> None:
+        self.owl_name = owl_name
+        self.reason = reason
+        super().__init__(f"could not persist owl '{owl_name}': {reason}")
+
+
 class AllProvidersUnavailableError(InfrastructureError):
     """Raised when cascade finds all providers OPEN.
 

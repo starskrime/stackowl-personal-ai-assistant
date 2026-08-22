@@ -147,6 +147,7 @@ class SchedulerAssembly:
         # Deferred imports — keep this module cheap when scheduler isn't used.
         from stackowl.scheduler.base import HandlerRegistry
         from stackowl.scheduler.handlers.check_in import CheckInHandler
+        from stackowl.scheduler.handlers.db_reclaim import register_db_reclaim_handler
         from stackowl.scheduler.handlers.downloads_janitor import (
             register_downloads_janitor_handler,
         )
@@ -233,6 +234,11 @@ class SchedulerAssembly:
         # Downloads janitor — needs no browser runtime/services, so it registers
         # directly here (its own factory defaults to StackowlHome.downloads_dir()).
         register_downloads_janitor_handler()
+        # The database file needs a decay leg like every other store here. Without
+        # it SQLite keeps every page it has ever freed: measured 643 MB of waste in
+        # a 922 MB file on a disk at 99%, which surfaced as `database is locked`
+        # and a task loop failing every tick.
+        register_db_reclaim_handler(db)
 
         tool_pruning_handler = ToolPruningHandler()
         HandlerRegistry.instance().register(tool_pruning_handler)
@@ -816,6 +822,16 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="downloads_janitor", schedule="every 12h",
             interval_minutes=720,
+        )
+        # Database reclaim — hand freed SQLite pages back to the OS. Hourly and
+        # BOUNDED (2000 pages ~ 8 MB per pass), so it is never the writer that
+        # everything else queues behind — which is the contention this exists to
+        # prevent, not cause. Deliberately more frequent than the 12h janitors: the
+        # pages it reclaims are produced by THEM, so it must keep up with their
+        # combined churn rather than run alongside them.
+        await _seed_minutes_schedule(
+            db, handler_name="db_reclaim", schedule="every 1h",
+            interval_minutes=60,
         )
         # Dynamic-injection arc, sub-project 1 — weekly diff/backfill/prune between
         # SQLite (authoritative) and the derived graph mirror. 168h = 7 days,

@@ -20,6 +20,7 @@ from stackowl.db.pool import DbPool
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
+from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.sessions.prompt_store import SessionPromptStore
 
 pytestmark = pytest.mark.asyncio
@@ -34,6 +35,29 @@ def _owl(name: str, role: str = "a test owl") -> OwlAgentManifest:
         name=name, role=role, system_prompt="Be helpful and accurate.",
         model_tier="fast", dna=OwlDNA(),
     )
+
+
+@pytest.fixture(autouse=True)
+def _persistence_is_wired(tmp_db: DbPool):  # noqa: ANN201
+    """Give these tests a real owl store.
+
+    THEY ARE ABOUT PROMPT INVALIDATION (D01.4), not about persistence — but they
+    never wired `StepServices`, so `get_services().db_pool` was None and
+    `persist_owl` silently returned False. That went unnoticed for as long as a
+    failed persist was ignorable.
+
+    Since 2026-08-22 `persist_owl` RAISES when the write cannot land (it is how
+    grants were being lost: confirmed to the user, alive only in memory, gone at
+    the next restart). Without this fixture these tests would exercise that
+    failure path instead of the invalidation they are named for. The `db=None`
+    passed to OwlsCommand below is a DIFFERENT store — the invalidation one — and
+    stays None on purpose.
+    """
+    token = set_services(StepServices(db_pool=tmp_db))
+    try:
+        yield
+    finally:
+        reset_services(token)
 
 
 def _registry() -> OwlRegistry:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from stackowl.commands.owls_helpers import owl_is_persisted
+from stackowl.db.pool import DbPool
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.services import StepServices, reset_services, set_services
@@ -12,7 +14,17 @@ from stackowl.tools.meta.owl_build import OwlBuildTool
 pytestmark = pytest.mark.asyncio
 
 
-async def test_edit_builtin_owl_tier() -> None:
+async def test_edit_builtin_owl_tier(tmp_db: DbPool) -> None:
+    """THIS TEST WAS THE DEFECT IN MINIATURE.
+
+    It passed `db_pool=None` and then asserted the IN-MEMORY registry — so it went
+    green while the edit was never written anywhere. That is precisely what Bakir
+    reported on 2026-08-22 ("agents forget granted accesses ... never saved
+    permanently"): the registry says yes, the database never heard about it, and
+    the change dies at the next restart.
+
+    A real store is wired now, and the assertion reaches through to it.
+    """
     reg = OwlRegistry()
     reg.register(
         OwlAgentManifest(
@@ -21,11 +33,16 @@ async def test_edit_builtin_owl_tier() -> None:
         ),
         source_name="t",
     )
-    token = set_services(StepServices(owl_registry=reg, db_pool=None))
+    token = set_services(StepServices(owl_registry=reg, db_pool=tmp_db))
     try:
         result = await OwlBuildTool().execute(action="edit", name="scout", model_tier="powerful")
         assert result.success, result.error
         assert reg.get("scout").model_tier == "powerful"
+        # AND IT ACTUALLY LANDED. Asserting the registry alone is what let the
+        # original defect hide: an in-memory update is not a saved one.
+        assert await owl_is_persisted("scout"), (
+            "the edit was reported successful but never reached the store"
+        )
     finally:
         reset_services(token)
 

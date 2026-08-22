@@ -42,6 +42,23 @@ _PRAGMAS = [
     # the OTHER process), and a confirmed-live liveness-heartbeat write failed
     # both attempts. 15000ms per attempt gives real headroom over that burst.
     "PRAGMA busy_timeout=15000",
+    # THE DATABASE FILE NEEDS A DECAY LEG TOO (2026-08-22). SQLite never returns a
+    # freed page to the OS unless something asks; with auto_vacuum=NONE nothing
+    # ever could. Measured on the live box before this shipped: a 922 MB file of
+    # which 643 MB (70%) was free pages, on a root filesystem at 99% — which
+    # surfaced not as "disk full" but as `database is locked`, a task loop failing
+    # every tick, and a three-minute Telegram send.
+    #
+    # INCREMENTAL rather than FULL: FULL reclaims on every commit and pays for it
+    # on the write path, which is the last thing a Jetson under lock contention
+    # needs. INCREMENTAL parks freed pages on a freelist for the `db_reclaim`
+    # scheduler handler to hand back in bounded chunks.
+    #
+    # THIS ONLY TAKES EFFECT ON A DATABASE CREATED WITH IT. Converting an existing
+    # auto_vacuum=NONE file requires one full VACUUM; the pragma is a silent no-op
+    # otherwise. `db_reclaim.needs_one_time_vacuum()` detects that state and the
+    # handler says so at WARNING rather than reporting a successful no-op forever.
+    "PRAGMA auto_vacuum=INCREMENTAL",
 ]
 
 # Primary SQLite error codes that indicate a transient connection-level failure
