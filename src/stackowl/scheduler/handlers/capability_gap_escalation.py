@@ -121,12 +121,17 @@ def within_ceiling(manifest: object, tool: str) -> bool:
 async def find_recurring_gaps(
     db: DbPool, *, min_occurrences: int, window_days: int
 ) -> list[CapabilityGap]:
-    """Owl+tool pairs refused at least ``min_occurrences`` times and not yet raised.
+    """Every owl+tool pair refused in the window and not already raised.
 
-    Counts `capability.denied` and subtracts nothing for `capability.escalated`;
-    instead a pair is skipped when it has already been escalated AT OR ABOVE its
-    current count, so a gap that keeps recurring escalates again only once it has
-    grown. Without that, a gap firing every run would alert every sweep.
+    RETURNS ALL OF THEM, including single refusals — ``min_occurrences`` is applied
+    LATER and only to escalation. The threshold exists to protect the operator's
+    attention, so it has no business gating a self-heal he is never told about: a
+    tool already inside the ceiling was authorised at mint time, and making an owl
+    fail three more times before using it buys nothing. `sysdesign` runs DAILY, so
+    a threshold of 3 would have left a within-ceiling gap open for three days.
+
+    A pair already carrying `capability.escalated` is skipped, so a gap that fires
+    every run alerts once rather than every sweep.
     """
     since = time.time() - (window_days * 86_400)
     rows = await db.fetch_all(
@@ -146,8 +151,6 @@ async def find_recurring_gaps(
 
     gaps: list[CapabilityGap] = []
     for (owl, tool), count in denied.items():
-        if count < min_occurrences:
-            continue
         # Escalated once already, and it has not meaningfully worsened since.
         if escalated_at.get((owl, tool)):
             continue
@@ -348,7 +351,33 @@ class CapabilityGapEscalationHandler(JobHandler):
                           "escalated": 0, "delivered": False},
             )
 
-        gaps = remaining
+        # THE THRESHOLD APPLIES HERE AND ONLY HERE. A single refusal may be an owl
+        # probing what it has; interrupting a human for that is the cries-wolf shape
+        # this codebase already pays for. Nothing was healed for these, so they stay
+        # unraised until they recur — and the sweep says so rather than dropping
+        # them silently.
+        below = [g for g in remaining if g.occurrences < min_occurrences]
+        gaps = [g for g in remaining if g.occurrences >= min_occurrences]
+        if below:
+            log.scheduler.info(
+                "[scheduler] capability_gap_escalation: gaps below the escalation "
+                "threshold — held, not dropped",
+                extra={"_fields": {
+                    "job_id": job.job_id, "min_occurrences": min_occurrences,
+                    "held": json.dumps([[g.owl, g.tool, g.occurrences] for g in below]),
+                }},
+            )
+        if not gaps:
+            duration_ms = (time.monotonic() - t0) * 1000
+            return JobResult(
+                job_id=job.job_id,
+                effect_class="state_change" if healed else "read_only",
+                success=True,
+                output=f"healed={len(healed)} escalated=0 held={len(below)}",
+                error=None, duration_ms=duration_ms,
+                metadata={"gaps": len(remaining), "healed": len(healed),
+                          "escalated": 0, "delivered": False},
+            )
 
         # 3b. STEP — one message for what is left, then stamp what was raised.
         log.scheduler.warning(

@@ -90,19 +90,33 @@ async def test_the_real_measured_shape_is_found(tmp_db: DbPool) -> None:
     assert [(g.owl, g.tool, g.occurrences) for g in gaps] == [
         ("mailbutler", "shell", 24),
         ("syshealth", "send_message", 3),
+        ("sysdesign", "web_search", 2),
     ], gaps
 
 
 async def test_a_ONE_OFF_refusal_never_bothers_the_operator(tmp_db: DbPool) -> None:
-    """An owl probing once for a tool it does not have is not a capability gap.
+    """An owl probing once for a tool it lacks must not interrupt a human.
 
-    Escalating it would make the channel noise, and the whole value here is that a
-    message about a blocked owl is worth reading.
+    The threshold now lives at the ESCALATION boundary rather than in the query, so
+    `find_recurring_gaps` surfaces the single refusal and the HANDLER holds it back.
+    That split matters: the threshold protects the operator's attention, and a
+    self-heal he is never told about has no reason to wait. `sysdesign` runs DAILY,
+    so gating heals at 3 would have left a within-ceiling gap open for three days.
     """
     await _audit_table(tmp_db)
     await _deny(tmp_db, "scout", "browser_navigate", 1)
 
-    assert await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7) == []
+    found = await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7)
+    assert [(g.owl, g.tool, g.occurrences) for g in found] == [
+        ("scout", "browser_navigate", 1)
+    ]
+
+    # ...and the handler does NOT escalate it.
+    result = await CapabilityGapEscalationHandler(tmp_db).execute(
+        _job(min_occurrences=3)
+    )
+    assert result.metadata["escalated"] == 0
+    assert result.metadata["delivered"] is False
 
 
 async def test_a_gap_is_raised_ONCE_not_once_per_occurrence(tmp_db: DbPool) -> None:
