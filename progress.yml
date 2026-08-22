@@ -315,8 +315,71 @@ deployment:
 # ---------------------------------------------------------------------------
 current:
   wave: 4
-  item: D08.5
+  item: D09.1
   stage: brainstorm
+  D08_5_BLOCKED_ON_ESC_39_2026_08_22: >-
+    Round 0 answered the item's Ask definitively (the graph did not survive D08.1 —
+    0 of 2,321 prompts) and every remaining stage turns on whether the capability is
+    re-fed, retired or left. That is ESC-39 and it is product intent, so D08.5 stops at
+    brainstorm rather than guessing. Picking up D09.1, which is not blocked.
+  D09_1_ROUND_0_MEASUREMENT_2026_08_22:
+    item: 'D09.1 "Background review fork" — MISSING, adopt, P1, wave 4, order 27, dedup_target X3, blocks D09.2 and D09.4.'
+    the_maps_ask: >-
+      "Fork-per-turn vs. scheduled miner — or both? The fork is what makes their loop feel
+      instant." The stated gap: "Learning is not tied to the moment the lesson exists, and
+      does not see the live conversation."
+    THE_SCHEDULED_PATH_IS_NOT_THE_PROBLEM_it_produces_plenty: >-
+      Measured over the 8-day retained window: 948 `[reflections] write: stored`, 945
+      `[learning] lessons_store.publish: stored`, 721 reflection_writer runs, 242 incident
+      miner passes. The FEEDBACK leg is closed — classify calls `_gather_lessons`
+      unconditionally on every turn. So the item's premise, that we lack learning, is not
+      what the numbers say. What the numbers say is worse and more specific, below.
+    THE_FINDING_a_live_experiment_with_a_complete_substrate_and_NO_READER: >-
+      `infra/lesson_experiment.py` (ADR-19 intervention #4) has been holding the lessons
+      block out of a fraction of conversations since 2026-08-05 to answer "does injecting
+      lessons change anything". Its own docstring states the design: "compare
+      task_outcomes.quality_score between the two arms", and it is honest about the cost —
+      "if lessons help, held-out sessions get slightly worse answers. That is the price of
+      finding out."
+      THE LABEL LANDS: task_outcomes.lessons_arm holds 946 `held_out`, 5,543 `injected`,
+      10,572 pre-experiment NULLs — 6,489 labelled rows.
+      NOTHING READS IT. Repo-wide, the only references outside the module are the decision
+      site (classify.py:725) and the writer (outcome_store.py:182,211). There is no
+      comparator anywhere. So the experiment has withheld lessons from 946 turns over 17
+      days and the answer it was buying has sat computable and uncomputed.
+    SO_I_COMPUTED_IT_and_the_confounds_are_the_headline: >-
+      Pooled, the arms look different — held_out mean quality 0.8157 (194 scored) against
+      injected 0.6535 (1,461 scored). THAT COMPARISON IS INVALID and saying so is the
+      point: the arms are not balanced on channel. Held-out rate is 18.9% on `rca`, 10.4%
+      on `telegram` and 0.2% on `cli` (1 row of 431), because the arm is hashed from the
+      conversation id and the channels have very different conversation counts.
+      STRATIFIED, WHICH IS THE HONEST READ:
+        rca      n=3,742, 801 scored — held_out mean_q 0.8792 vs injected 0.8919;
+                 median 0.9500 both; success 0.2172 vs 0.2133.  NO DIFFERENCE.
+        telegram n=2,266 — held_out mean_q 0.5603 on 39 scored vs injected 0.5142 on 544;
+                 success 0.1653 vs 0.2680. UNDERPOWERED AND CONTRADICTORY: quality slightly
+                 favours held-out, success favours injected, and 39 scored rows cannot
+                 settle either.
+        cli      effectively single-arm (1 held-out row). UNMEASURABLE.
+        secretary only: held_out mean_q 0.5969 on 32 scored vs injected 0.5196 on 380.
+      READ IT AS: on the only stratum with adequate power, lesson injection makes NO
+      MEASURABLE DIFFERENCE to quality or success. On the interactive path the experiment
+      is underpowered and will stay so at a 10.4% hold-out rate.
+    what_I_am_NOT_claiming: >-
+      Not that lessons are useless — an underpowered null is not a refutation, and only ~25%
+      of rows carry a quality_score at all, with no evidence that scoring is arm-
+      independent. Not that success rate means what it looks like: it sits at 0.21-0.26
+      overall, which is low enough that I do not trust it as a quality proxy without
+      understanding its definition. Both stated rather than glossed.
+    WHY_THIS_REFRAMES_D09_1: >-
+      The item proposes adopting a per-turn fork so learning feels instant. Before building
+      a faster path to inject lessons, the platform has 17 days of evidence that the lessons
+      it already injects on every turn have no measured effect on the one stratum that can
+      show one. Building the fork first would make an unverified mechanism faster. That is
+      not an argument against D09.1 — it is an argument that D09.1's brainstorm must answer
+      "does the learning we already do help?" before "how do we do it sooner", and the
+      instrument for that already exists and merely needs reading.
+    routed_to_operator: [ESC-40]
   D08_4_LEFT_AT_6_OF_7_2026_08_22_T20_10Z:
     why: >-
       Everything except validate is done and pushed. All three guards have a ZERO
@@ -2245,6 +2308,63 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-40-the-lesson-holdout-experiment-has-run-17-days-with-no-reader-and-its-answer-is-in
+    raised: 2026-08-22
+    question: >-
+      The lesson-injection hold-out has been degrading a fraction of conversations since
+      2026-08-05 to buy an answer nothing was computing. I have now computed it. Does the
+      experiment STOP, CONTINUE with a fixed hold-out rate, or continue as is? Stopping and
+      changing the rate are both user-facing, so I will not take either.
+    why_evidence_cannot_settle_it: >-
+      Evidence settles what the data currently says and that the arms are not comparable
+      as assigned. It cannot settle how much answer you want to buy, nor how many degraded
+      conversations that is worth. The module's own docstring frames this as a deliberate
+      price — "if lessons help, held-out sessions get slightly worse answers. That is the
+      price of finding out" — which makes continuing a choice rather than a default.
+    what_was_measured_2026_08_22: >-
+      SUBSTRATE COMPLETE, READER ABSENT. task_outcomes.lessons_arm holds 946 `held_out`,
+      5,543 `injected` and 10,572 pre-experiment NULLs. Repo-wide the only references
+      outside infra/lesson_experiment.py are the decision site (classify.py:725) and the
+      writer (outcome_store.py:182,211). No comparator exists anywhere. The experiment has
+      been running 17 days and nothing has ever read its result.
+      THE POOLED COMPARISON IS INVALID AND THAT IS THE HEADLINE. Held-out rate is 18.9% on
+      `rca`, 10.4% on `telegram`, 0.2% on `cli` (ONE row of 431) — the arm is hashed from
+      the conversation id and the channels have very different conversation counts, so the
+      arms are different populations. Pooled they read 0.8157 vs 0.6535 mean quality, which
+      means nothing.
+      STRATIFIED:
+        rca      n=3,742, 801 scored — held_out 0.8792 vs injected 0.8919 mean quality,
+                 median 0.9500 both, success 0.2172 vs 0.2133. NO DIFFERENCE.
+        telegram n=2,266 — held_out 0.5603 on 39 scored vs injected 0.5142 on 544; success
+                 0.1653 vs 0.2680. UNDERPOWERED and internally contradictory.
+        cli      single-arm. UNMEASURABLE.
+      So on the only stratum with power, injecting lessons changes nothing measurable; on
+      the interactive path the experiment cannot answer at a 10.4% hold-out rate and will
+      not get there soon.
+    what_I_explicitly_do_NOT_claim: >-
+      That lessons are useless. An underpowered null is not a refutation. Only ~25% of rows
+      carry a quality_score and I have NOT established that scoring is arm-independent — if
+      it is not, every number above is biased. And `success` sits at 0.21-0.26 overall,
+      low enough that I do not trust it as a quality proxy without knowing its definition.
+    the_recommendation: >-
+      Three things. (1) BUILD THE READER regardless of the decision — a comparator that
+      prints the stratified table above, so the answer stops depending on someone thinking
+      to ask. It is the missing third leg of ADR-19's own VERIFY obligation, which is the
+      very thing this experiment was created to satisfy. (2) FIX THE ASSIGNMENT or accept
+      it cannot answer the interactive question: stratify the hold-out by channel so
+      telegram gets a real arm, or raise the rate there. As assigned it is 0.2% on cli and
+      will never answer for that path at all. (3) Then decide whether to stop. My
+      recommendation is to keep it running only if (1) and (2) ship — an experiment nobody
+      reads and that cannot reach power on the path you care about is pure cost.
+    blocked_until_answered: >-
+      Whether the experiment stops or its rate changes. NOT blocked: building the reader,
+      which changes no user-facing behaviour and is what makes the decision informed.
+    why_it_matters_beyond_itself: >-
+      It reframes D09.1. That item proposes a per-turn fork so learning feels instant.
+      Before building a faster way to inject lessons, there are 17 days of evidence that the
+      lessons already injected on every turn have no measured effect on the one stratum that
+      could show one. D09.1's brainstorm should answer "does the learning we already do
+      help?" before "how do we do it sooner".
   - id: ESC-39-the-graph-memory-did-not-survive-D08.1-and-the-map-still-calls-it-AHEAD
     raised: 2026-08-22
     question: >-
