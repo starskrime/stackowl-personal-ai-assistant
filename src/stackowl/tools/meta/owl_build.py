@@ -754,7 +754,28 @@ class OwlBuildTool(Tool):
             )
 
         ceiling = current.creation_ceiling
-        held: set[str] = set(ceiling.tools or ()) if ceiling is not None else set()
+        ceiling_tools: set[str] = set(ceiling.tools or ()) if ceiling is not None else set()
+        bounds_tools: set[str] = (
+            set(current.bounds.tools or ())
+            if current.bounds is not None and current.bounds.tools is not None
+            else set(ceiling_tools)  # unbounded: effective authority IS the ceiling
+        )
+        # WHAT THE OWL CAN ACTUALLY USE is `bounds ∩ ceiling`, not the ceiling.
+        #
+        # MEASURED 2026-08-22: this read the CEILING alone, so a tool sitting in the
+        # ceiling and MISSING from bounds answered "already allowed to hold —
+        # nothing to grant", returned SUCCESS, and wrote nothing. The owl still
+        # could not use it. `sysdesign` is refused `web_search` on every run while
+        # `web_search` sits in its ceiling; granting it was a guaranteed no-op that
+        # reported success. A write with no effect, behind an affirmative message.
+        #
+        # It also explains a failure Bakir kept seeing: the grant reports success,
+        # the durable record is never touched (Brain's `updated_at` sat six days
+        # stale through a "successful" grant at 14:07:01), and the overclaim gate —
+        # correctly refusing to let a turn claim an effect it cannot prove — then
+        # names owl_build the failed capability. The gate was right; the tool was
+        # lying to it.
+        held = bounds_tools & ceiling_tools
         adding = sorted(requested - held)
         if not adding:
             return self._ok(
@@ -763,19 +784,36 @@ class OwlBuildTool(Tool):
                 t0, extra={"owl": spec.name, "op": "grant"},
             )
 
+        # WITHIN THE CEILING IS NOT NEW AUTHORITY. Widening bounds up to a ceiling
+        # the operator already approved at mint time grants nothing he has not
+        # already agreed to, so it must not demand `authority_widening` consent —
+        # that gate is always-ask, and asking again for permission already given is
+        # what made the platform unable to heal itself. Only tools that CROSS the
+        # ceiling move the ratchet outward, and only those go to the operator.
+        crossing = sorted(set(adding) - ceiling_tools)
+
         summary = (
             f"GRANT NEW AUTHORITY to owl '{spec.name}': {', '.join(adding)}.\n"
             f"This permanently widens what that owl may do — it is not undone by "
             f"editing the owl afterwards. It currently may use: "
             f"{', '.join(sorted(held)) or '(nothing)'}."
+            + (f"\nOf these, {', '.join(crossing)} go beyond its creation ceiling."
+               if crossing else "")
         )
-        refusal = await self._consent_or_refuse(
-            summary, spec.name, category=_WIDENING_CATEGORY,
-        )
-        if refusal is not None:
-            return self._err(refusal, t0)
+        if crossing:
+            refusal = await self._consent_or_refuse(
+                summary, spec.name, category=_WIDENING_CATEGORY,
+            )
+            if refusal is not None:
+                return self._err(refusal, t0)
+        else:
+            log.tool.info(
+                "owl_build.grant: widening bounds WITHIN the existing ceiling — "
+                "already-delegated authority, no operator approval needed",
+                extra={"_fields": {"owl": spec.name, "adding": adding}},
+            )
 
-        widened_tools = sorted(held | requested)
+        widened_tools = sorted(ceiling_tools | requested)
         new_ceiling = (
             ceiling.model_copy(update={"tools": frozenset(widened_tools)})
             if ceiling is not None
