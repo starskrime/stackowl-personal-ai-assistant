@@ -102,9 +102,17 @@ async def enqueue_turn_task(
 ) -> None:
     """Record this turn as a durable task. Never raises.
 
-    Keyed by ``trace_id``: it is already unique per turn, already threaded through
-    every step, and already the key the response stream is registered under — so
-    the completion seam can find the row without inventing a second identifier.
+    Keyed by ``trace_id``: already threaded through every step and already the key
+    the response stream is registered under, so the completion seam can find the
+    row without inventing a second identifier.
+
+    IT IS NOT ALWAYS UNIQUE, and this docstring used to claim it was. A RETRY
+    DERIVES its trace id from the turn it is retrying — `retry-eba4141b-fix`,
+    `retry-eba4141b-fix-fix`, `<trace>-fix` — so a retry re-entering this path
+    collides with the row its own first attempt wrote. Measured twice (2026-08-21
+    and 2026-08-22) as `UNIQUE constraint failed: tasks.owner_id, tasks.task_id`.
+    That collision is handled below rather than by minting a second identifier: the
+    existing row IS this turn's row, which is exactly what recovery needs.
 
     ``loop_produces`` decides WHO answers, and the row's initial status is the whole
     mechanism. Exactly one producer must exist: a turn both run by the fast path and
@@ -146,6 +154,24 @@ async def enqueue_turn_task(
                     exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
                 )
     except Exception as exc:
+        # A UNIQUE COLLISION IS NOT A FAILURE, and reporting it as one was wrong in
+        # both directions. This turn is already recorded — a retry re-entered with
+        # the trace id its first attempt wrote — so the row exists, the loop can
+        # claim it, and the turn IS recoverable. The old handler logged ERROR and
+        # told the operator the exact opposite of the truth: "NOT recoverable if it
+        # fails", about a turn whose row was sitting in the table.
+        #
+        # Distinguished by the constraint name rather than by catching
+        # IntegrityError broadly: a UNIQUE violation on some OTHER column would be
+        # a real defect and must keep surfacing at ERROR.
+        if "UNIQUE constraint failed" in str(exc) and "task_id" in str(exc):
+            log.tasks.info(
+                "[loop] this turn is already recorded as a task — a retry reused "
+                "its trace id, so the existing row stands and the turn stays "
+                "recoverable",
+                extra={"_fields": {"trace_id": trace_id}},
+            )
+            return
         # The reply must not depend on the task table being writable.
         log.tasks.error(
             "[loop] could not record this turn as a task — the turn proceeds, but "
