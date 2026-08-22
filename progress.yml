@@ -2310,6 +2310,45 @@ current:
   ESCALATIONS:
   - id: ESC-40-the-lesson-holdout-experiment-has-run-17-days-with-no-reader-and-its-answer-is-in
     raised: 2026-08-22
+    CORRECTION_2026_08_22_T21_55Z_THIS_ESCALATIONS_PREMISE_WAS_WRONG: >-
+      I titled this "no reader" and said so in the body. THAT IS FALSE and the error is
+      mine. A reader has existed since commit f405b25b: brief/assemblers.py:281-321 reads
+      `lessons_arm`, splits by LANE, and prints a `lessons_effect[...]` line — its own
+      comment says "an experiment nobody reads is precisely the failure this ADR is about".
+      HOW I GOT IT WRONG: I grepped for `lesson_experiment|ARM_HELD_OUT|current_arm|
+      lesson_arm`. The column is `lessons_arm` — PLURAL. A one-character search miss became
+      a filed claim that a mechanism did not exist. Same shape as reading "command not
+      found" as "no such table" earlier today, and as the lens that reported
+      failure_outcome_miner dead because it logs under `[incident] miner.*`. Three
+      string-match artifacts in one session; the lesson is that a NEGATIVE from a grep is
+      the weakest evidence there is and must be confirmed by finding the thing another way.
+    WHAT_THE_REAL_READER_SAYS_reproduced_by_me_with_its_own_query: >-
+      interactive: injected 0.462 (n=373) vs held_out 0.550 (n=38), diff -0.088, t=-1.28.
+      machine:     injected 0.719 (n=1,092) vs held_out 0.880 (n=156), diff -0.161, t=-8.93.
+      BOTH LANES NEGATIVE, and the machine lane strongly so on a randomised assignment.
+      NOTE MY EARLIER STRATIFICATION DISAGREES IN MAGNITUDE AND I AM NOT QUIETLY DROPPING
+      IT: I cut by `channel` (rca/telegram/cli) over the 8-day window and got rca 0.8792 vs
+      0.8919 — no difference. The brief cuts by SESSION_KEY PREFIX (`goal-`/`incident-` =
+      machine) over all labelled rows. Different slices of the same table, and the brief's
+      is the one the platform actually reports. The honest statement is that the sign is
+      negative on the platform's own cut and flat on mine, so "injection is not helping" is
+      supported and "injection is actively harming" is not yet established.
+    THE_LIVE_DEFECT_IS_ONE_LAYER_FURTHER_OUT_AND_IS_THE_REAL_FINDING: >-
+      The brief carrying that line has been UNDELIVERABLE for 14 days. `morning_brief-
+      15904936` has target_channels NULL and target_addresses NULL, so deliver_for_job exits
+      with rollup="undeliverable", per_channel={}, undeliverable=[] — and because the
+      undeliverable tuple is EMPTY, the PA5(b) NACK loop at notifications/proactive_job.py:206
+      writes nothing, so the body is discarded outright. Then
+      job_success_for_rollup (proactive_job.py:323-336) maps "undeliverable" -> TRUE, so the
+      job is recorded a SUCCESS. Verified by reading both functions.
+      That is this platform's own loop contract broken in one line — "a task is complete when
+      its outcome reached its DESTINATION" — on the jobs whose entire purpose is telling
+      Bakir what the platform learned.
+    WHAT_THIS_CHANGES_ABOUT_THE_ASK: >-
+      The question is no longer "should the experiment stop, nobody is reading it". It is:
+      the answer has been computed daily for 14 days and NEVER REACHED YOU. Fix delivery
+      first, let you read it, then decide. My recommendation to build a reader is WITHDRAWN
+      — it exists. The recommendation to fix the assignment imbalance stands.
     question: >-
       The lesson-injection hold-out has been degrading a fraction of conversations since
       2026-08-05 to buy an answer nothing was computing. I have now computed it. Does the
