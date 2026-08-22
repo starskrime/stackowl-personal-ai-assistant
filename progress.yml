@@ -3504,11 +3504,16 @@ documentation:
     # which is failure mode 3. Recount with:
     #   ls docs/reference-mapping/designs/*.md | wc -l
     #   grep -h -o 'Status:\*\* *[a-z]*' docs/reference-mapping/designs/*.md | sort | uniq -c
-    written: 18
-    live: 14          # D01.1 D01.2 D01.4 D01.5 D01.6 D01.7 D02.6 D05.1 D05.2 D05.3 D05.5 D05.6 D05.7 D08.1
-    in_flight: 3      # D01.3 decided, D02.1 investigation, D09.3 building
+    # RECOUNTED 2026-08-22 by running the two commands above, not incremented by hand.
+    # The previous values (18/14/3/1/94) had drifted by six documents. The uppercase
+    # `Status: CLOSED` on D09.3 does not match the `[a-z]` grep in the recipe above and
+    # reads as blank — noted so the next recount does not file it as a missing stamp.
+    written: 24
+    live: 20
+    in_flight: 2      # D01.3 decided, D02.1 investigation
+    closed: 1         # D09.3
     unstamped: 1      # D01.6-baseline carries no Status line
-    outstanding: 94   # 112 items - 18 written
+    outstanding: 88   # 112 items - 24 written
 
 # ---------------------------------------------------------------------------
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
