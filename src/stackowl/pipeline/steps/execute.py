@@ -877,6 +877,59 @@ def _restrict_to_for_turn(
     return remaining
 
 
+def _record_capability_gap(
+    *, owl: str, tool: str, denied_by: str, trace_id: str
+) -> None:
+    """Persist a bounds refusal so it OUTLIVES the turn that hit it.
+
+    MEASURED 2026-08-22: 85 bounds refusals across three days (36 / 37 / 12) and
+    not one ever reached the user. `mailbutler` was refused `shell` 24 TIMES —
+    it needs the tool, asks on every run, is refused, reports honestly, and starts
+    again from nothing the next run. That is what "my agents keep failing at their
+    jobs" looks like from inside.
+
+    WHY IT WAS INVISIBLE. The refusal was already recorded — by
+    `tool_outcome_ledger.record_denied_capability`, into a ContextVar that `reset()`
+    clears at the end of the turn. Its one reader is the honest-reporting path, so
+    the platform knew the owl was blocked WHILE the turn ran and forgot the instant
+    it finished. Nothing accumulated, so nothing could ever cross a threshold, so
+    nothing ever asked you to decide. Per-turn state doing a durable job: this
+    codebase's first shape, one scope too narrow rather than missing outright.
+
+    Writes to `audit_log`, which already carries exactly this class of event
+    (`consent.decision`, `job_failed_terminal`) and is append-only and
+    integrity-chained. NOT a new table and NOT a new queue —
+    :class:`CapabilityGapEscalationHandler` reads these rows on the existing
+    scheduler loop and raises a recurring gap to the user ONCE.
+
+    BEST-EFFORT BY CONTRACT. Bookkeeping must never cost a turn: the refusal has
+    already been decided and returned by the time this runs, so a failure here is
+    logged and swallowed rather than converted into a second failure on top of the
+    one the owl is already handling.
+    """
+    try:
+        services = get_services()
+        audit = services.audit_logger
+        if audit is None:
+            log.engine.debug(
+                "[pipeline] execute: no audit logger — capability gap not persisted",
+                extra={"_fields": {"tool": tool, "owl": owl}},
+            )
+            return
+        audit.append(
+            event_type="capability.denied",
+            actor=owl or "unknown",
+            target=tool,
+            details={"denied_by": denied_by, "trace_id": trace_id},
+        )
+    except Exception as exc:  # noqa: BLE001 — never let bookkeeping fail a turn
+        log.engine.warning(
+            "[pipeline] execute: could not persist capability gap",
+            exc_info=exc,
+            extra={"_fields": {"tool": tool, "owl": owl}},
+        )
+
+
 def _measured_absent_effects(outcomes: object) -> tuple[str, ...]:
     """Tools whose durable effect was LOOKED FOR and observed to be ABSENT.
 
@@ -1787,6 +1840,10 @@ async def _run_with_tools(
                     "tool": name, "owl": state.owl_name, "trace_id": state.trace_id,
                     "axis": "tools", "denied_by": denied_by,
                 }},
+            )
+            _record_capability_gap(
+                owl=state.owl_name, tool=name, denied_by=denied_by,
+                trace_id=state.trace_id,
             )
             return bounds_block
         # E2-S3 — the task envelope is a REAL BOUNDARY (ESC-29, Bakir 2026-08-21).

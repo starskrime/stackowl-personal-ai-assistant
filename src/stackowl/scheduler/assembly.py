@@ -146,6 +146,9 @@ class SchedulerAssembly:
 
         # Deferred imports — keep this module cheap when scheduler isn't used.
         from stackowl.scheduler.base import HandlerRegistry
+        from stackowl.scheduler.handlers.capability_gap_escalation import (
+            register_capability_gap_escalation_handler,
+        )
         from stackowl.scheduler.handlers.check_in import CheckInHandler
         from stackowl.scheduler.handlers.db_reclaim import register_db_reclaim_handler
         from stackowl.scheduler.handlers.downloads_janitor import (
@@ -247,7 +250,6 @@ class SchedulerAssembly:
         # referenced anywhere in src/ — built ad hoc through `shell` because the
         # learning loop had recorded env-CREATION as the winning move.
         register_workspace_env_janitor_handler()
-
         tool_pruning_handler = ToolPruningHandler()
         HandlerRegistry.instance().register(tool_pruning_handler)
 
@@ -262,6 +264,28 @@ class SchedulerAssembly:
             goal_job_deliverer = ProactiveJobDeliverer(
                 proactive_deliverer, delivery_ledger, settings=settings
             )
+
+        # An owl repeatedly refused a tool it NEEDS is the operator's decision, and
+        # nothing was ever asking him. MEASURED 2026-08-22: 85 bounds refusals in
+        # three days, `mailbutler` refused `shell` 24 times, not one escalated. The
+        # refusal was recorded only into a per-TURN ContextVar that reset() clears,
+        # so nothing accumulated, nothing crossed a threshold, and nothing asked.
+        # Reads audit_log on this same loop and grants NOTHING — widening bounds is
+        # authority, and the platform deciding its own authority is the inversion
+        # this whole arc started from.
+        #
+        # Registered HERE, below `goal_job_deliverer`, not up with the other
+        # janitors: placing it there referenced both this deliverer and an audit
+        # logger before either existed, which would have raised NameError and taken
+        # the entire scheduler assembly down at boot.
+        from stackowl.audit.logger import AuditLogger as _AuditLogger
+        from stackowl.db.pool import default_db_path as _default_db_path
+
+        register_capability_gap_escalation_handler(
+            db,
+            audit_logger=_AuditLogger(_default_db_path()),
+            job_deliverer=goal_job_deliverer,
+        )
 
         # PB-CANARY — ONE ChannelLivenessStore instance shared by PB0b's receive
         # contributor, the new send-path canary contributor, AND this handler's
@@ -848,6 +872,13 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="workspace_env_janitor", schedule="every 24h",
             interval_minutes=1440,
+        )
+        # Capability gaps — every 6h. Frequent enough that a blocked owl is not
+        # stuck for a whole day, rare enough that the once-per-gap escalation never
+        # becomes the flood it exists to prevent.
+        await _seed_minutes_schedule(
+            db, handler_name="capability_gap_escalation", schedule="every 6h",
+            interval_minutes=360,
         )
         # Dynamic-injection arc, sub-project 1 — weekly diff/backfill/prune between
         # SQLite (authoritative) and the derived graph mirror. 168h = 7 days,
