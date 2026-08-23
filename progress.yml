@@ -14438,6 +14438,32 @@ items:
       budget, self-resolving, no repeat since. Same SHAPE as the owl_ratings probe D05.4
       fixed with migration 0120, but ONE occurrence is not a pattern and is recorded as one
       occurrence, not a trend.
+    WATCH_2026_08_23_T17_20Z_three_opportunities_now_including_the_two_that_matter: >-
+      Since the 01:29:22Z boot the guards have had THREE real writes, and two of them
+      exercise paths a single plain `add` would not have:
+        14:19:01  add     target=jobmarket  until_changed  used=2105/2200
+        16:29:12  add     target=owl        permanent      used=1872/2200
+                  -> and it fired `[curated] decay: evicted the oldest until_changed entry
+                     to make room`, so the budget/eviction interaction the ceiling check
+                     sits in front of has now actually run.
+        16:33:06  REPLACE target=user       used=1162
+                  -> `replace` is the verb containment was extended to on purpose, because
+                     the consolidation protocol pushes the model toward it and leaving it
+                     ungated would have kept the forgery reachable through the recommended
+                     door. It has now run in production.
+      I1 HOLDS ACROSS ALL THREE: every one of the 13 memory files still carries exactly
+      (entries - 1) delimiters, checked file by file after each.
+    STILL_UNEXERCISED_and_stated_as_such: >-
+      No entry has exceeded MAX_ENTRY_BUDGET_FRACTION, so the ceiling refusal (I2/I4) has
+      never fired — unsurprising, since the largest real entry measured 39.9% of budget. No
+      owl with a non-ASCII name exists, so the unresolvable-target path (I3) still has zero
+      opportunities. Those two remain OPEN.
+    AN_ESC_38_DATA_POINT_ACCRUING_QUIETLY: >-
+      The 16:29:12 write went to target `owl` — one of the five ORPHAN files that has never
+      been injected into any prompt. So a permanent entry was just written to a file nothing
+      reads, and an eviction was performed to make room for it. The free-string target keeps
+      producing both correct writes (jobmarket, a real owl) and dead ones (owl), which is
+      exactly the shape ESC-38 asks you to rule on.
     VALIDATE_2026_08_22:
       status: "PARTIAL — the code is live and the boot is clean; all three guards are UNEXERCISED in production."
       platform_health: "40 minutes on the new image: 1,351 INFO, 27 WARNING, ZERO ERROR."
