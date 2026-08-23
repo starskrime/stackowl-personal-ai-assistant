@@ -317,6 +317,50 @@ current:
   wave: 4
   item: D09.1
   stage: brainstorm
+  REFLECTION_PARSE_ARC_2026_08_23:
+    what_shipped: >-
+      Three commits, all evidence-led work surfaced by D09.1's brainstorm and none of it
+      blocked by ESC-41. 5dd33e89 `describe_parse_failure` (shape / keys / missing);
+      a6e7f358 the decoder's own error on the malformed branch; f735fee5 the repair itself.
+    THE_SEQUENCE_IS_THE_POINT: >-
+      Three reviewers read 50 failure previews, saw them all begin `{"summary": ...`, and
+      proposed relaxing `required_keys`. The preview is `content[:200]` and ALL 50 were
+      exactly 200 characters, so the second key is always beyond the window and every
+      response — good or bad — looks identical there. I repaired the INSTRUMENT instead, and
+      five production records later the answer was in and it was not theirs:
+        json_not_object chars=691  "Expecting ',' delimiter: line 1 column 310"
+        json_not_object chars=482  "Expecting ',' delimiter: line 1 column 240"
+        json_not_object chars=466  "Unterminated string starting at: line 1 column 13"
+        json_not_object chars=502  (logged before the decoder error was captured)
+        json_object     chars=519  keys=["summary"] missing=["suggested_strategy"]
+      FOUR OF FIVE are one fault — a literal `"` left unescaped inside the summary string.
+      The relaxation they proposed would have recovered ONE. The repair recovers FOUR, and
+      leaves the parser's stated contract intact, pinned by a test so it is not a backdoor.
+    A_LIMIT_PINNED_RATHER_THAN_PAPERED_OVER: >-
+      A stray quote FOLLOWED BY A COMMA is byte-for-byte indistinguishable from a string
+      ending and the next element beginning. No lookahead separates them. That shape has not
+      appeared in any measured failure — all four repairable ones had the quote followed by
+      a letter or a space — so it is deliberately unrecovered and has its own test explaining
+      why. Building for an unobserved case is how a repair pass grows into something that
+      corrupts good input.
+    VALIDATE_IS_UNEXERCISED_AND_THE_ARITHMETIC_SAYS_SO: >-
+      The running image HAS the repair — reflection_prompt.py mtime 01:29:13Z, core boot
+      01:29:22Z, nine seconds later. Since that boot: 2 reflection batches, 14 reflections
+      STORED, ZERO parse failures, ZERO recovery lines.
+      THAT PROVES NOTHING YET, and the honest reason is arithmetic rather than a shrug. At
+      the pre-fix rate of 5.1% (51 failures / 1,035 pending), the probability of seeing zero
+      failures in 14 attempts is 0.48 — a coin flip. n=30 would give 0.21, n=60 gives 0.043,
+      n=90 gives 0.009. So the check needs roughly SIXTY clean reflections before silence
+      means anything, and 14 is consistent both with the fix working and with nothing having
+      changed.
+      CLOSE IT WITH: count `[reflection] parse: recovered a response whose only fault was an
+      unescaped quote` (INFO) against `reflections. write: stored` over the same window. A
+      non-zero recovery count is direct proof; a zero recovery count is only meaningful once
+      `stored` passes ~60.
+    a_hazard_this_arc_walked_into_and_the_docs_now_guard: >-
+      Every one of these readings had to come from the CORE's log file, which after a UTC
+      midnight is the ROTATED one — the gateway reopens the new file and the core does not.
+      See the entry above; the three Verification sections now glob `stackowl*.jsonl`.
   A_MEASUREMENT_HAZARD_THAT_INVALIDATED_MY_OWN_REPORTING_2026_08_23:
     headline: >-
       EVERY "the watches are dry" report I made after 00:00Z was WRONG, and the cause is a
