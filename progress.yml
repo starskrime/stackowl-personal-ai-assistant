@@ -3210,6 +3210,50 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-49-ESC-19-needs-one-more-choice-WHICH-conversation-a-proactive-message-joins
+    raised: 2026-08-23
+    continues: ESC-19
+    question: >-
+      You decided a delivered proactive message should be written into the recipient's buffer
+      as an assistant turn. Implementing it needs one thing your answer did not cover, and
+      which I will not pick: does it join the user's CURRENT incarnation, START a new one, or
+      attach ONLY if a conversation is already open?
+    why_evidence_cannot_settle_it: >-
+      All three are coherent and the measurement cannot rank them, because they differ in what
+      the NEXT prompt contains rather than in whether the write succeeds. Joining the current
+      incarnation makes the agent able to discuss what it sent — the behaviour you asked for —
+      but silently lengthens a live conversation's history, which changes assembly, recall and
+      cost on a turn the user did not initiate. Starting a new one keeps the cost isolated and
+      loses the continuity that motivated the request. Attaching only when a conversation is
+      open is the cheapest and makes the feature intermittent, which is the worst property for
+      something whose whole purpose is "it remembers what it told me".
+    WHAT_I_MEASURED: >-
+      Conversations are keyed on the user's LANE plus an INCARNATION id — live rows read
+      session_key='owl:secretary:telegram:dm:72055773' with ids like '20260823_090753_dc88c5d2'.
+      Several owls (jobmarket, mailbutler) already write under that same lane with owl_name
+      distinguishing them, so attaching a proactive message there is structurally fine. Those
+      existing rows are all message_count=2 — a user turn plus a reply — i.e. USER-INITIATED
+      turns routed to an owl. No purely scheduler-originated message has a conversation row at
+      all, which is exactly the gap you hit.
+    A_RECORDED_DECISION_THIS_WOULD_CROSS_and_why_i_think_it_survives: >-
+      TranscriptStore.record_turn refuses this case TWICE, deliberately and with reasons:
+        `if not conversation_id: return 0`  — "No incarnation means the turn never passed
+           through ingress (a scheduler handler, a parliament round). Those are not
+           conversations and must not invent one."
+        `if not user_text: return 0`        — "nothing to record".
+      So the store structurally rejects an assistant-only, no-incarnation turn.
+      I think that rule's RATIONALE does not actually cover this case — it is about a turn
+      that never reached a human, and a proactive delivery is precisely egress TO a human.
+      But it is a recorded decision written by someone who thought about it, and extending it
+      adds a THIRD turn shape (assistant-only) alongside floored and normal. That is your call
+      to make deliberately, not mine to slip in.
+    the_recommendation: >-
+      Join the user's CURRENT incarnation, and if none is open, do NOT start one — record the
+      message against the lane and let the next real turn pick it up. That gives you the
+      behaviour you asked for whenever it can matter (you were mid-conversation all three
+      times you hit this) and never manufactures a conversation nobody was having.
+    blocks: >-
+      ESC-19's implementation, and only that. Everything else in the queue is independent.
   - id: ESC-48-i-deviated-from-ESC-38s-letter-to-keep-its-intent
     raised: 2026-08-23
     deviates_from: ESC-38
