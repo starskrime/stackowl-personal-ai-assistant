@@ -305,7 +305,9 @@ def describe_for_prompt() -> str:
     return (
         "SKILL AUTHORING STANDARD (a write that breaks these is rejected):\n"
         f"- Frontmatter must include: {', '.join(REQUIRED_FRONTMATTER)}.\n"
-        f"- `description` is ONE sentence, at most {MAX_DESCRIPTION_CHARS} characters.\n"
+        f"- `description` is ONE sentence, at most {MAX_DESCRIPTION_CHARS} characters. "
+        "COUNT the characters after you write it; if it is over, cut it down before "
+        "saving — do not ship a sentence and hope.\n"
         "- `when_to_use` is 1-3 sentences and carries the retrieval signal — say "
         "when someone should reach for this, and when they should not.\n"
         "- The name must NOT end in a number. If a skill with that name already "
