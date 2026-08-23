@@ -315,6 +315,47 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_34_IMPLEMENTED_2026_08_23_T21_05Z:
+    decided: >-
+      Drop `delegate_task` from ROUTER_TOOLS, leave the task envelope alone, and make the
+      appeal path discoverable. The only option contradicting no recorded decision
+      (8c403494 — "the task envelope is a real boundary").
+    MEASURING_FIRST_CHANGED_THE_FIX_TWICE: >-
+      (1) THE REFUSAL'S ONLY NAMED REMEDY WAS `delegate_task`. bounds_guard.py said "To use
+      'X' anyway, delegate_task to an owl that holds it" and nothing else. Removing the tool
+      without changing that message would have left "answer the user directly" as the sole
+      option — REDUCING the recovery surface while intending to improve it.
+      (2) THREE OF SIX BOUNDED OWLS HAVE NO `owl_build` AT ALL — headhunter, english_tutor,
+      mailbutler, read from the live `owls` table. They predate owl_build joining
+      ROUTER_TOOLS on 2026-08-21, and ROUTER_TOOLS is applied at BUILD time, so that
+      addition was never retroactive either. Naming owl_build to them would name a tool they
+      are ALSO refused — precisely the defect this message exists to fix ("the model picked
+      another tool it also lacked and was refused again").
+      So the rule became: name what this owl HOLDS, never what the platform wishes it held.
+    A_PASSING_TEST_IS_WHAT_CAUGHT_THE_CHANGE_BEING_INCOMPLETE: >-
+      `test_persona_instructs_delegation_of_out_of_scope_work` asserted "delegate_task" in
+      m.system_prompt and kept PASSING after I removed the tool. That meant every newly built
+      owl would be INSTRUCTED to use a tool it no longer holds — the same ESC-34 defect one
+      layer up, and my change would have made things worse rather than better. The persona
+      now points at the appeal (owl_build action='grant'), and that test is rewritten to
+      assert the invariant that actually matters: the persona must name a tool the owl HOLDS,
+      checked against its own bounds.
+      The standing rule says a RED test after a change usually means the change is
+      incomplete. Here a GREEN one did.
+    NOT_RETROACTIVE_stated_rather_than_glossed: >-
+      All six bounded owls already hold delegate_task in their stored manifests and keep it.
+      ROUTER_TOOLS governs what NEW owls are granted. "The escalation vector is shut" is
+      therefore true going forward and false for the existing six — written into the code
+      comment so it cannot read as more complete than it is.
+    two_tests_INVERTED_not_deleted: >-
+      test_router_tools_are_discovery_and_the_appeal and
+      test_boundary_router_tools_always_included pinned the invariant Bakir overturned. Both
+      now assert delegate_task is ABSENT, so a silent re-add fails in two places and whoever
+      does it has to say why. The equality assertion was kept deliberately — this set lands
+      in every built owl's ceiling, so what is in it is a security decision.
+    green: >-
+      tests/authz + tests/owls, 393 passed (2 failed on the first run — both pinning the old
+      invariant — plus the persona incompleteness they exposed). Baselines ruff 37 / mypy 65.
   ESC_35_HOT_RELOAD_FIXED_2026_08_23_T20_40Z:
     the_defect: >-
       `OrchestratorSettings.tool_count_cap` is declared json_schema_extra={"hot_reload":

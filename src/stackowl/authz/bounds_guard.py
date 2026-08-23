@@ -87,6 +87,27 @@ def check_effective_bounds(effective: BoundsSpec | None, tool_name: str) -> str 
         # cannot choose it, and goes back to guessing. The text is longer on an
         # owl with many tools; that is the correct trade against another refusal.
         lines.append("This owl may use: " + ", ".join(allowed) + ".")
+    # ESC-34 — NAME ONLY WHAT THIS OWL HOLDS. Measured 2026-08-23 against the live
+    # `owls` table: 3 of the 6 bounded owls (headhunter, english_tutor, mailbutler)
+    # have NO `owl_build` in their bounds at all — they predate it joining
+    # ROUTER_TOOLS on 2026-08-21, and ROUTER_TOOLS is applied at BUILD time so the
+    # addition was never retroactive. Naming a remedy the owl is ALSO refused
+    # reproduces the exact defect this message was written to fix: "the model
+    # picked another tool it also lacked and was refused again".
+    #
+    # owl_build first, because it is the APPEAL — the sanctioned path that widens a
+    # ceiling, and the one that survives the retry ban and the envelope. It confers
+    # no power to act: `grant` is always-ask, so this raises the question and never
+    # answers it.
+    if "owl_build" in allowed:
+        lines.append(
+            f"To be granted '{tool_name}', use owl_build action='grant' — this asks "
+            "the operator to widen this owl's bounds; it does not widen them itself."
+        )
+    # delegate_task left OUT of ROUTER_TOOLS by ESC-34, but every owl built before
+    # 2026-08-23 still carries it. While they do, it is a real remedy for them and
+    # the message must say so — the removal is not retroactive and pretending
+    # otherwise would strand every existing owl.
     if "delegate_task" in allowed:
         lines.append(
             f"To use '{tool_name}' anyway, delegate_task to an owl that holds it "

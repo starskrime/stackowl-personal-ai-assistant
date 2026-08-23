@@ -1,10 +1,21 @@
 """Role presets for the owl-builder — curated, least-privilege tool allowlists.
 
 Each preset is safe-by-construction: it grants only the tools its role needs.
-The builder always adds ROUTER_TOOLS on top (the boundary-router): delegate_task
-(so the owl can hand off out-of-scope work) + the discovery meta-tools (so a
-present-but-narrow tools allowlist never strands the owl — an empty/over-narrow
-frozenset would otherwise deny tool_search itself; see BoundsSpec footgun)."""
+The builder always adds ROUTER_TOOLS on top (the boundary-router): the APPEAL path
+(owl_build/owls_list, so a ceiling can always be questioned) + the discovery
+meta-tools (so a present-but-narrow tools allowlist never strands the owl — an
+empty/over-narrow frozenset would otherwise deny tool_search itself; see BoundsSpec
+footgun).
+
+`delegate_task` was here until 2026-08-23 "so the owl can hand off out-of-scope
+work", and ESC-34 measured that this never actually worked: the bounds gate granted
+it so a blocked owl could route around a limit, and the task envelope then REFUSED
+it as off-plan (8c403494 — "the task envelope is a real boundary"). Two gates
+behaving exactly as designed, with contradictory designs. Observed live in
+syshealth's first scheduled run: send_message refused by bounds, then tool_search
+across a 78-tool catalog looking for a way through, then delegate_task refused
+off-plan. Bakir's call was to keep the boundary and drop the vector: an owl should
+ASK for the capability via owl_build, not borrow someone else's."""
 
 from __future__ import annotations
 
@@ -28,8 +39,11 @@ from dataclasses import dataclass
 # question, never answer it. `owls_list` rides along at far lower stakes — an owl told
 # to delegate cannot name a target it may not enumerate, and it was refused 11 times
 # across two owls in the same window.
+# ESC-34, Bakir 2026-08-23 — `delegate_task` REMOVED. Note this is applied at BUILD
+# time, so it is NOT retroactive: the six already-bounded owls keep it in their
+# stored manifests and are unaffected. It changes what NEW owls are granted.
 ROUTER_TOOLS: frozenset[str] = frozenset(
-    {"delegate_task", "tool_search", "tool_describe", "owl_build", "owls_list"}
+    {"tool_search", "tool_describe", "owl_build", "owls_list"}
 )
 
 #: THE TOOLS BY WHICH AN AGENT ASKS FOR HELP. These must survive EVERY gate that

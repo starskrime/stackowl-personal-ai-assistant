@@ -2,9 +2,16 @@
 
 One lifecycle: derive (preset|explicit) -> validate -> instantiate. Pure: no I/O,
 no persistence (the command layer persists). The generated persona is the owl's
-"compass": it states the specialty AND instructs delegating out-of-scope work to
-the secretary via delegate_task (the boundary-router), so a narrow owl is additive
-and self-healing rather than a dead-end."""
+"compass": it states the specialty AND tells the owl what to do when a request
+falls outside it, so a narrow owl is additive and self-healing rather than a
+dead-end.
+
+ESC-34 (2026-08-23) changed WHAT it is told. The persona used to name
+`delegate_task`; that tool left ROUTER_TOOLS because the bounds gate granted it so
+a blocked owl could route around a limit while the task envelope refused it as
+off-plan — two gates behaving as designed, with contradictory designs. A persona
+that names a tool the owl no longer holds is the same defect one layer up, so the
+compass now points at the APPEAL (owl_build) instead of the escape hatch."""
 
 from __future__ import annotations
 
@@ -45,8 +52,9 @@ def generate_persona(name: str, role: str, specialty: str) -> str:
     return (
         f"Persona: {name}. Role: {role}. Specialty: {specialty}. "
         f"Handle {specialty} directly using your own tools. "
-        f"For any request outside {specialty}, hand it off to the secretary using "
-        f"the delegate_task tool — do not attempt tools you do not have. "
+        f"For any request outside {specialty}, say so plainly and do not attempt "
+        f"tools you do not have. If you need a capability you lack, ask for it with "
+        f"owl_build action='grant' — that asks the operator to widen your bounds. "
         f"Respond in the language of the user."
     )
 

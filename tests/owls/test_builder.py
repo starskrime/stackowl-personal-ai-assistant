@@ -17,13 +17,24 @@ def test_preset_specialist_has_bounds_excluding_shell():
 
 
 def test_boundary_router_tools_always_included():
+    """ESC-34: `delegate_task` left ROUTER_TOOLS on 2026-08-23; discovery and the
+    APPEAL remain, so a narrow owl is never stranded and can always ask."""
     m = _build(name="rsr", preset="researcher")
-    assert {"delegate_task", "tool_search", "tool_describe"} <= m.bounds.tools
+    assert {"tool_search", "tool_describe", "owl_build", "owls_list"} <= m.bounds.tools
+    assert "delegate_task" not in m.bounds.tools
 
 
-def test_persona_instructs_delegation_of_out_of_scope_work():
+def test_persona_points_at_a_tool_the_owl_ACTUALLY_HOLDS():
+    """This test PASSING is what caught the change being incomplete.
+
+    Removing `delegate_task` from ROUTER_TOOLS without touching the persona would
+    have left every new owl instructed to use a tool it no longer holds — the exact
+    defect ESC-34 is about, one layer up. The compass now points at the appeal.
+    """
     m = _build(name="rsr", preset="researcher")
-    assert "delegate_task" in m.system_prompt
+    assert "delegate_task" not in m.system_prompt
+    assert "owl_build" in m.system_prompt
+    assert "owl_build" in m.bounds.tools, "the persona must name a tool it holds"
 
 
 def test_explicit_tools_validated_against_catalog_drops_unknown():
