@@ -156,14 +156,90 @@ def describe_parse_failure(raw: str) -> dict[str, object]:
         return out
 
 
+def _escape_stray_quotes(text: str) -> str:
+    """Escape literal ``"`` characters the model left unescaped inside a string.
+
+    THE ONE FAULT FOUR OF FIVE PRODUCTION FAILURES SHARE. Gathered from the core's
+    own log after `describe_parse_failure` shipped:
+      chars=691  "Expecting ',' delimiter: line 1 column 310"
+      chars=482  "Expecting ',' delimiter: line 1 column 240"
+      chars=466  "Unterminated string starting at: line 1 column 13"
+    Reproduced deliberately: an unescaped quote mid-string yields exactly
+    ``Expecting ',' delimiter``. A raw newline would yield ``Invalid control
+    character``, which has NOT appeared in production — so this is targeted at the
+    fault that actually occurs, not a general "repair the model's JSON" heuristic.
+
+    THE RULE. Walk the text tracking string state. Inside a string, a ``"`` is a
+    real terminator only if the next non-space character is one of ``,:}]`` or the
+    end of input — that is the only place JSON permits a string to end. Anything
+    else means the model wrote a literal quote, so escape it.
+
+    Deliberately conservative: it runs ONLY after strict parsing has already
+    failed, so it can recover a response and can never regress one that already
+    parsed, and it leaves correctly-escaped quotes exactly as they are.
+
+    KNOWN LIMIT, pinned by test rather than papered over: a stray quote FOLLOWED BY
+    A COMMA is byte-for-byte indistinguishable from a string ending and the next
+    element beginning, so it is not recovered. That shape has not appeared in any
+    measured failure — all four repairable ones had the quote followed by a letter
+    or a space — and building for an unobserved case is how a repair pass grows
+    into something that corrupts good input.
+    """
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for i, ch in enumerate(text):
+        if not in_string:
+            out.append(ch)
+            if ch == '"':
+                in_string = True
+            continue
+        if escaped:
+            out.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escaped = True
+            continue
+        if ch == '"':
+            nxt = next((c for c in text[i + 1:] if not c.isspace()), "")
+            if nxt in (",", ":", "}", "]", ""):
+                out.append(ch)
+                in_string = False
+            else:
+                out.append('\\"')
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
 def parse_reflection_response(raw: str) -> tuple[str, str] | None:
     """Parse the LLM reflection response into (summary, suggested_strategy).
 
     Returns None if the response doesn't contain both keys with non-empty
     string values. Delegates fence-stripping/JSON-extraction to the shared
     :func:`parse_json_response` helper.
+
+    ONE RETRY, and only after strict parsing has failed: four of five measured
+    production failures were a literal ``"`` left unescaped inside the summary
+    string, so :func:`_escape_stray_quotes` gets a second attempt. Ordering
+    matters — a response that already parses never reaches the repair, so this
+    can recover and cannot regress.
     """
-    obj = parse_json_response(raw, required_keys=["summary", "suggested_strategy"])
+    obj = parse_json_response(raw, required_keys=list(REFLECTION_REQUIRED_KEYS))
+    if obj is None:
+        repaired = _escape_stray_quotes(raw)
+        if repaired != raw:
+            obj = parse_json_response(
+                repaired, required_keys=list(REFLECTION_REQUIRED_KEYS)
+            )
+            if obj is not None:
+                log.memory.info(
+                    "[reflection] parse: recovered a response whose only fault was "
+                    "an unescaped quote",
+                    extra={"_fields": {"chars": len(raw)}},
+                )
     if obj is None:
         return None
     summary = obj.get("summary")
