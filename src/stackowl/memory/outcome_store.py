@@ -424,25 +424,63 @@ class TaskOutcomeStore(OwnedRepository):
                 "owl_name": owl_name, "since_epoch": since_epoch, "limit": limit,
             }},
         )
+        return await self._tool_usage_rows(
+            owl_name=owl_name, since_epoch=since_epoch, limit=limit,
+        )
+
+    async def list_tool_usage_global(
+        self, *, since_epoch: float = 0.0, limit: int = 500,
+    ) -> list[TaskOutcome]:
+        """The same read, across ALL owls — the platform's collective evidence.
+
+        ESC-36. Feeds :func:`tool_usage.score_tools_globally`, which supplies the
+        tie-break for tools THIS owl has no history for. Measured 2026-08-23: even
+        an owl with plenty of history has it for a small slice of the catalog —
+        ``headhunter`` 14 distinct tools of 77, ``secretary`` 23 — so without this
+        the great majority of every owl's ranking fell through to the ALPHABET.
+
+        Shares :meth:`_tool_usage_rows` with the per-owl read rather than copying
+        its SQL, so the three deliberate choices documented above (DESC ordering,
+        no quality filter, ``approach_rating`` selected) cannot drift between them.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[outcomes] list_tool_usage_global: entry",
+            extra={"_fields": {"since_epoch": since_epoch, "limit": limit}},
+        )
+        return await self._tool_usage_rows(
+            owl_name=None, since_epoch=since_epoch, limit=limit,
+        )
+
+    async def _tool_usage_rows(
+        self, *, owl_name: str | None, since_epoch: float, limit: int,
+    ) -> list[TaskOutcome]:
+        """ONE query behind both tool-usage reads. `owl_name=None` means global."""
+        owl_clause = "AND owl_name = ?" if owl_name is not None else ""
+        params: tuple[object, ...] = (
+            (self._owner_id, owl_name, since_epoch, limit)
+            if owl_name is not None
+            else (self._owner_id, since_epoch, limit)
+        )
         rows = await self._db.fetch_all(
-            """SELECT outcome_id, trace_id, session_key, owl_name, channel,
+            f"""SELECT outcome_id, trace_id, session_key, owl_name, channel,
                       success, latency_ms, tool_call_count, failure_class,
                       quality_score, step_durations, input_text, response_text,
                       captured_at, scored_at, tool_sequence, dna_snapshot,
                       approach_rating
                FROM task_outcomes
                WHERE owner_id = ?
-                 AND owl_name = ?
+                 {owl_clause}
                  AND captured_at >= ?
                  AND tool_sequence != '[]'
                ORDER BY captured_at DESC
                LIMIT ?""",
-            (self._owner_id, owl_name, since_epoch, limit),
+            params,
         )
         results = [_row_to_outcome(r) for r in rows]
         # 4. EXIT
         log.memory.debug(
-            "[outcomes] list_tool_usage_for_owl: exit",
+            "[outcomes] _tool_usage_rows: exit",
             extra={"_fields": {"owl_name": owl_name, "n": len(results)}},
         )
         return results

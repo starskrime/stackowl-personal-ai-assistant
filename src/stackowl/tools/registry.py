@@ -436,6 +436,7 @@ class ToolRegistry:
         hydrated: set[str] | None = None,
         restrict_to: frozenset[str] | None = None,
         usage_scores: Mapping[str, float] | None = None,
+        global_usage_scores: Mapping[str, float] | None = None,
         budget: dict[str, int] | None = None,
         max_tools: int | None = None,
     ) -> list[dict[str, object]]:
@@ -540,6 +541,7 @@ class ToolRegistry:
             guaranteed, ranked = ToolPresentation().rank_candidates(
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated,
                 usage_scores=usage_scores,
+                global_usage_scores=global_usage_scores,
             )
             b = tool_budget_tokens(
                 window=budget["window"], fixed_cost_tokens=budget["fixed_cost_tokens"],

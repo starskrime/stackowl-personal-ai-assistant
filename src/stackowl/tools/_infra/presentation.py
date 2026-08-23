@@ -136,7 +136,18 @@ _DEFAULT_BASE = frozenset({
 #: eviction — four independent gates, one of which was protected. The others were
 #: fixed together rather than one at a time, because fixing one and calling it
 #: done is exactly how this recurred.
-_DEFAULT_ALWAYS = frozenset({"tool_search", "tool_describe"}) | _APPEAL_TOOLS
+# ESC-36 — `clarify` JOINED 2026-08-23, decided by Bakir. APPEAL_TOOLS already
+# guaranteed {owl_build, owls_list} under "an agent must always be able to ASK for
+# what it lacks" — so asking for a new OWL was guaranteed while asking the USER was
+# discretionary and, for a tool with no usage score and no declared priority, was
+# evicted by SPELLING. Same principle, one addressee over.
+#
+# The cap is NOT bumped, and the symmetry is deliberate: ESC-46 removed
+# `synthesize_skills` from _DEFAULT_BASE the same day (0 calls in 55 days), so the
+# guaranteed floor is the same size it was. clarify takes the slot that tool held.
+_DEFAULT_ALWAYS = (
+    frozenset({"tool_search", "tool_describe", "clarify"}) | _APPEAL_TOOLS
+)
 
 
 def _capability_ok(tool: Tool) -> bool:
@@ -340,6 +351,7 @@ class ToolPresentation:
         pins: list[str] | None,
         hydrated: set[str] | None,
         usage_scores: Mapping[str, float] | None = None,
+        global_usage_scores: Mapping[str, float] | None = None,
     ) -> tuple[list[Tool], list[Tool]]:
         """Return (guaranteed, discretionary-ranked) for budgeted presentation.
 
@@ -396,14 +408,40 @@ class ToolPresentation:
         # must not order by list position, or the array would depend on registry
         # iteration order and the stability this exists for would be luck.
         scores = usage_scores or {}
+        global_scores = global_usage_scores or {}
 
         # ESC-9 — measured usage first (evidence beats a declaration), then the
         # tool's DECLARED priority, then the name. Before the middle term the key
         # collapsed to the alphabet whenever an owl had no usage history, which is
         # how a browser owl lost the tools that let it see and type.
+        #
+        # ESC-36 adds the THIRD term, and the measurement that earned it is not the
+        # cold-start owl. Only 3 of 18 owls have no history at all — but `headhunter`
+        # has history for 14 distinct tools OUT OF 77 and `secretary` for 23, so for
+        # every owl the great majority of the catalog scores 0, ties, and fell
+        # through to the last term. Which of ~60 unscored tools filled the remaining
+        # cap slots was therefore decided by SPELLING, for owls with and without
+        # history alike. `presentation_priority` cannot rescue them: it is declared
+        # on 8 of 77 tools and all eight are browser tools.
+        #
+        # So when THIS owl has no evidence, fall back to the PLATFORM's — already
+        # recorded in the same task_outcomes rows (web_search 3,506 dispatches,
+        # web_fetch 1,132, memory 408, shell 283 over 30 days). Data-derived rather
+        # than hand-ranked, because a curated ordering of 77 tools is a constant
+        # that rots exactly as the eight lockstep cap bumps did.
+        #
+        # `t.name` REMAINS THE FINAL TERM, so the order stays TOTAL and the
+        # presented array stays byte-stable within a session — the property
+        # D01.2's position-0 cache marker depends on. A better tie-break, not a
+        # less stable one.
         ranked = sorted(
             candidates,
-            key=lambda t: (-scores.get(t.name, 0.0), -_declared_priority(t), t.name),
+            key=lambda t: (
+                -scores.get(t.name, 0.0),
+                -_declared_priority(t),
+                -global_scores.get(t.name, 0.0),
+                t.name,
+            ),
         )
 
         log.tool.debug(

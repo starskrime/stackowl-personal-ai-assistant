@@ -1282,6 +1282,38 @@ async def _tool_usage_scores(state: PipelineState) -> dict[str, float]:
     return scores
 
 
+async def _tool_global_usage_scores(state: PipelineState) -> dict[str, float]:
+    """The PLATFORM's tool usage — ESC-36's tie-break for tools THIS owl lacks.
+
+    Sibling to :func:`_tool_usage_scores`, and read on exactly the same path so it
+    inherits the session memo: `to_provider_schema`'s result is cached per
+    session_key, so this is not a per-turn query.
+
+    Returns {} on no db or any failure. That is a real fallback, not a degraded
+    one — unscored tools then keep by-name order, which is what they had before.
+    """
+    services = get_services()
+    db = services.db_pool
+    if db is None:
+        log.engine.debug(
+            "[pipeline] execute: _tool_global_usage_scores: exit — no db_pool",
+        )
+        return {}
+    try:
+        from stackowl.memory.outcome_store import TaskOutcomeStore
+        from stackowl.tools._infra.tool_usage import score_tools_globally
+
+        return await score_tools_globally(TaskOutcomeStore(db))
+    except Exception as exc:  # no-hidden-errors: ordering must not break the turn
+        log.engine.error(
+            "[pipeline] execute: _tool_global_usage_scores FAILED — unscored "
+            "tools keep by-name order this turn",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return {}
+
+
 async def _run_with_tools(
     state: PipelineState,
     choice: ToolProviderChoice | ModelProvider,
@@ -1445,6 +1477,9 @@ async def _run_with_tools(
                 schemas = cached
             else:
                 usage_scores = await _tool_usage_scores(state)
+                # ESC-36 — the tie-break for the ~60 tools this owl has no history
+                # for. Same call site, so it rides the same per-session memo.
+                global_usage_scores = await _tool_global_usage_scores(state)
                 # D05.4 — fit against the SESSION'S basis, not this turn's. A memo
                 # HIT already ignores the budget completely; without this the MISS
                 # did not, so a rebuild mid-conversation re-measured a longer
@@ -1464,6 +1499,7 @@ async def _run_with_tools(
                 schemas = tool_registry.to_provider_schema(
                     prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
                     usage_scores=usage_scores,
+                    global_usage_scores=global_usage_scores,
                     budget={
                         "window": _window,
                         "fixed_cost_tokens": _basis,

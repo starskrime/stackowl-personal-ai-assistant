@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_36_IMPLEMENTED_2026_08_23_T19_50Z:
+    what_bakir_decided: >-
+      Guarantee `clarify`, and fix the tie-break for unscored tools — explicitly NOT
+      hand-ranking 77 tools, because a curated ordering is a constant that rots exactly as
+      the eight lockstep cap bumps did.
+    ROUND_0_and_it_MOVED_THE_TARGET: >-
+      I expected the harm to be cold-start owls. It is not. Measured over the 30-day window,
+      9,349 task_outcomes rows: 15 of 18 owls HAVE usable usage history and only 3 are cold.
+      But even a busy owl has history for a small slice of the catalog — headhunter 15
+      distinct tools of 77, secretary 30, scout 8. Every remaining tool scored 0, tied, and
+      fell through to the key's last term. So SPELLING decided which of ~60 unscored tools
+      filled the remaining slots, for owls WITH history and without alike. The cold-start
+      framing would have fixed 3 owls; the real fix reaches all 18.
+    the_change: >-
+      Rank key gains a THIRD term: (-owl_usage, -declared_priority, -GLOBAL_usage, name).
+      When this owl has no evidence for a tool, use the platform's — already recorded in the
+      same task_outcomes rows (web_search 3,506 dispatches, web_fetch 1,132, memory 408,
+      shell 283). Data-derived, not hand-ranked. `name` REMAINS THE FINAL TERM so the order
+      stays total and the presented array stays byte-stable within a session, which is what
+      D01.2's position-0 cache marker depends on — the same argument as ESC-44 for skills.
+      And `clarify` joins _DEFAULT_ALWAYS. The cap is NOT bumped, deliberately: ESC-46
+      removed synthesize_skills from the base the same day, so the guaranteed floor is the
+      same size and clarify takes the slot that tool held.
+    ONE_RULE_ONE_HOME_both_places_it_could_have_forked: >-
+      The SQL is shared — list_tool_usage_for_owl and the new list_tool_usage_global both
+      call _tool_usage_rows, so the three deliberate choices documented on the original
+      (DESC ordering, no quality filter, approach_rating selected) cannot drift. The SCORING
+      is shared — score_tools_for_owl and score_tools_globally both call _score_rows, so the
+      quality floor, the positive-only gate and the half-life cannot drift either.
+    THE_EFFECT_MEASURED_and_my_FIRST_measurement_was_WRONG: >-
+      My first simulation omitted the declared-priority term and showed owls losing
+      browser_click and browser_snapshot. THAT WAS FALSE and I nearly reported it. Modelling
+      the real three-term key: ALL EIGHT prioritised browser tools (snapshot 100, click 90,
+      navigate 90, type 90, extract/scroll/wait_for 70, screenshot 60) are STILL PRESENTED
+      for every owl — ESC-9's fix is completely intact. What is traded away is only the
+      UNPRIORITISED browser tail (browser_back, browser_browse, browser_close,
+      browser_console, browser_cookies_*), plus batch_approve.
+      What is gained, per owl: headhunter +execute_code, owl_schedule, session_search,
+      claude_code. scout +note_applied_lesson, search_files, read_logs, delegate_task,
+      execute_code, owl_schedule, session_search, claude_code.
+      THE LESSON: simulating a multi-term sort key while omitting a term does not
+      approximate it, it models a different function. Same family as the contaminated
+      baseline earlier today — a comparison is only as good as its control.
+    wiring_verified_not_assumed: >-
+      An unwired parameter is failure mode 1, so the chain was walked link by link in
+      process: execute reads -> passes to to_provider_schema -> registry accepts -> registry
+      forwards -> rank_candidates accepts -> the rank key reads it -> scorer exists -> store
+      read exists -> one SQL shared. All nine connected.
   ESC_44_VERIFIED_ON_LIVE_TRAFFIC_2026_08_23_T19_10Z:
     verdict: PASS — but the pass criterion I wrote in advance was the WRONG TEST, and reading
       it literally I first called this a FAIL. Recorded in full because the mistake is more
