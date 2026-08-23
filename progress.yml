@@ -14,8 +14,9 @@
 # ============================================================================
 
 schema_version: 1
-updated: 2026-08-19
-updated_by: "claude-opus-5 — RECONCILED: 41 commits between 2026-08-17 and 2026-08-19 were live and unrecorded here (the ONE LOOP arc, the authority-vs-action authz fix, curated-memory decay). Recorded as ARC-2026-08-17-to-19-one-loop-authz-memory in known_debt. D16.1 corrected from implement:not_started to implement:partial — two of its commits already shipped (fed6968d, e3434952) and plugin loading at boot is PROVEN LIVE. Now working the rest of D16.1 implement: the LifecycleHook extension point."
+updated: 2026-08-23
+updated_by: "claude-opus-5 — UNATTENDED SESSION 2026-08-22/23. D05.4 CLOSED 7/7. D05.8 and D08.4 at 6/7 (validate partial, unexercised — not failed). D08.5 and D09.1 brainstormed to a verdict then BLOCKED on escalations. SIX fixes shipped and live: three memory-containment guards, the tool-cap reaching every path, the delivery seam that discarded 40 self-reports, and the reflection JSON repair — plus three instrument repairs that made the last two findable. EIGHT escalations queued (ESC-35..42) and none decided; four of them gate current items, so the queue is the bottleneck, not the work. THREE corrections to my own record are in here too: ESC-40 was filed on a one-character grep miss, the D05.8 36-tool attribution named the wrong producer, and a night of 'watches dry' readings were the rotated-log bug. Read WHERE_TO_RESUME below first."
+superseded_updated_by_2026_08_19: "claude-opus-5 — RECONCILED: 41 commits between 2026-08-17 and 2026-08-19 were live and unrecorded here (the ONE LOOP arc, the authority-vs-action authz fix, curated-memory decay). Recorded as ARC-2026-08-17-to-19-one-loop-authz-memory in known_debt. D16.1 corrected from implement:not_started to implement:partial — two of its commits already shipped (fed6968d, e3434952) and plugin loading at boot is PROVEN LIVE. Now working the rest of D16.1 implement: the LifecycleHook extension point."
 superseded_updated_by: "claude-opus-5 — D08.1 CLOSED: all four acceptance checks proven live (blocks=2 chars=205), doc closed with its Verification section run. Also fixed a live incident: conversational turns died on any tool-requiring question; the leak now escalates. Next: D08.2."
 
 program:
@@ -317,6 +318,58 @@ current:
   wave: 4
   item: D09.1
   stage: brainstorm
+  WHERE_TO_RESUME_2026_08_23_T03_15Z:
+    read_this_first: >-
+      Nothing here is mid-flight. Every item is either CLOSED, blocked on a decision that is
+      yours, or blocked on traffic that is not happening. The tree is clean and everything is
+      pushed. What follows is ordered by what unblocks the most.
+    THE_BOTTLENECK_IS_THE_ESCALATION_QUEUE_NOT_THE_WORK: >-
+      Eight are open and FOUR of them gate a current item:
+        ESC-37  D08.4's PARITY verdict does not survive measurement — a SPLIT. Gates D08.4.
+        ESC-39  the graph memory did not survive D08.1: 0 of 2,321 prompts. Gates D08.5.
+        ESC-41  every lens rejected the D09.1 fork — re-scope, demote, and resolve X3. Gates D09.1.
+        ESC-42  a job that attempts zero channels is recorded a SUCCESS. Half shipped; the
+                semantic half gates the rest.
+      The other four are live findings that block nothing: ESC-35 (a count cannot express the
+      tool cap), ESC-36 (the presented set is chosen by the alphabet), ESC-38 (any owl can write
+      any owl's memory), ESC-40 (the lesson hold-out — CORRECTED, see below).
+    WHY_THE_THREE_VALIDATE_STAGES_ARE_STALLED_and_it_is_not_a_defect: >-
+      MEASURED at 03:12Z: ZERO task_outcomes in the last hour and ZERO eligible-but-unreflected
+      rows. The reflection writer ran 7 times since boot with nothing to write. The box is idle
+      overnight, so the traffic each watch needs is simply not being produced:
+        D05.8  needs a restrict_to set wider than the cap — its only real producer is the
+               self-heal ban path. One ban turn occurred and logged presented:null, so the
+               branch was never entered.
+        D08.4  needs a curated write that exercises the ceiling or carries the delimiter.
+        reflection repair needs ~60 clean reflections before silence means anything (at the
+               pre-fix 5.1% rate, P(0 failures in 14) = 0.48 — a coin flip). It is at 14.
+      None of these is failing. All three are UNEXERCISED, and the closing queries are in each
+      document's Verification section.
+    THREE_CORRECTIONS_TO_MY_OWN_RECORD_because_they_are_the_most_useful_thing_here: >-
+      (1) ESC-40 was filed titled "no reader". FALSE — brief/assemblers.py:281 has read
+      lessons_arm since f405b25b. I grepped `lesson_arm`; the column is `lessons_arm`. A
+      one-character miss became a filed claim that a mechanism did not exist.
+      (2) D05.8's 80 turns at exactly 36 tools were attributed to the PLANNER's envelope. Wrong
+      producer: the planner's largest plan in eight days was 7 tools. It is the self-heal BAN
+      path, which builds all_names-minus-banned and routes 75-78 names through a branch built
+      for a small plan.
+      (3) A night of "the watches are dry" readings were wrong. At UTC midnight the core keeps
+      writing the ROTATED file while the gateway reopens the new one, so every query pinned to
+      stackowl.jsonl went blind. The three Verification sections now glob stackowl*.jsonl.
+      THE COMMON SHAPE, and it is worth more than the three fixes: in every case a NEGATIVE
+      result from a narrow probe was read as an absence. A grep that finds nothing, a preview
+      truncated at 200 chars, a log file with no lines. None of them is evidence until you have
+      confirmed the probe could have seen the thing at all.
+    WHAT_IS_LIVE_AND_UNPROVEN_so_it_is_not_mistaken_for_settled: >-
+      Six fixes are in the running image and only two have production evidence: the eviction
+      record naming every tool (179 truncated before, 16 complete after) and the delivery seam
+      (1 body saved, and it was a failure alert). The other four — the three memory guards and
+      the reflection repair — are test-proven and production-unexercised. Said plainly so a
+      later reader does not promote them.
+    IF_YOU_WANT_MORE_WORK_WITHOUT_ANSWERING_ANYTHING: >-
+      D09.4, D09.5 and D09.6 are unblocked P2 items. I did not start one: with four items
+      already parked on your decisions, a fifth would deepen the queue rather than clear it,
+      and that is a judgement worth stating rather than making silently.
   REFLECTION_PARSE_ARC_2026_08_23:
     what_shipped: >-
       Three commits, all evidence-led work surfaced by D09.1's brainstorm and none of it
