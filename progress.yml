@@ -14926,7 +14926,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: partial
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -14937,6 +14937,43 @@ items:
     doc_last_verified: null
     decisions: []
     changes: []
+    BRAINSTORM_CLOSED_2026_08_23: >-
+      Round 0 measured, 25 questions routed, five lenses run in parallel, four escalations
+      filed (ESC-43..46). All five lenses rejected the item as written; see
+      current.D09_5_BRAINSTORM_PANEL_2026_08_23 for the verdict, the one disagreement I
+      resolved by measuring rather than averaging, and the two corrections to my own Round 0.
+    ARCHITECT_IS_BLOCKED_ON_ESC_43: >-
+      The item's scope is the open question. The map's Ask ("move synthesize_skills to a slash
+      command") compares the wrong pair — the reference's learn_prompt targets `skill_manage`,
+      which StackOwl already has and which authored a skill at 16:29:08 today. I will not
+      re-scope a mapped item myself.
+    SHIPPED_ANYWAY_because_neither_needed_a_decision_2026_08_23_T17_49Z: >-
+      Commit 978abc0f. (1) authoring._known_tool_names returned an EMPTY frozenset instead of
+      None because ToolRegistry has no `names` member — killing autonomous skill authoring for
+      16 days, 41 refusals in the retained window, five this morning, job reported completed
+      every time. Now reads the real accessor and treats an empty answer as no-knowledge.
+      (2) The truncated-catalogue escape hatch named skill_view, the one tool that cannot
+      enumerate; it now names skills_list and the record carries last_presented/first_dropped.
+      Green: 329 in tests/skills + 24 injector/journey tests re-run after the second edit.
+      Baselines held exactly, ruff 37 / mypy 65.
+    VALIDATE_IS_OPEN_WITH_ITS_CLOSING_QUERY_ALREADY_PROVEN_TO_RUN: >-
+      THE RESTART WAS VERIFIED, NOT ASSUMED: last src write 17:48:41Z, core boot 17:49:17Z,
+      36 seconds later. But a restart is not the proof — the synthesizer runs daily@03:30, so
+      the fix has not yet met the path it repairs. The check stays OPEN until the 2026-08-24
+      03:30Z run.
+      CLOSING QUERY, run today so it is known to work rather than discovered broken later:
+      count `gated write refused` and `[skills] standard: the tool registry named no tools`
+      across ~/.stackowl/logs/stackowl*.jsonl. Baseline at 17:50Z is refused=46, skip=0.
+      PASS = the 03:30 run yields at least one `agent:synthesizer` create in skill_audit (or a
+      `lesson ALREADY KNOWN — reinforcing`) and its five refusals do not recur; the skip
+      warning must stay at 0, since a nonzero value would mean the registry still answers
+      nothing and the rule is being skipped rather than satisfied.
+      FALSIFIABLE THE OTHER WAY TOO: if refusals continue at five a night with the same
+      tool_names reason, the accessor fix did not reach the running path and I should suspect
+      a second consulted registry rather than declare it fixed.
+      NOTE the residual reason class that this fix does NOT address: two of the refusals were
+      descriptions at 61 and 62 characters against a 60-char limit. Those are real violations
+      and should still be refused.
     notes: >-
       ROUND 0 MEASURED 2026-08-23T17:30Z. Picked up because D09.1 (ESC-41), D08.5
       (ESC-39) and D08.4 (traffic) are all blocked, and D09.5 is the earliest item
