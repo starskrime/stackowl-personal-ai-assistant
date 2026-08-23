@@ -315,6 +315,28 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_36_VALIDATED_LIVE_2026_08_23_T20_19Z:
+    verdict: PASS on production traffic.
+    evidence: >-
+      RESTART VERIFIED, NOT ASSUMED: last src write 19:55:32Z, core boot 19:56:11Z.
+      `[tool_usage] score_tools_globally: exit` — deliberately INFO, not debug, precisely so
+      this claim would be closable — has fired 13 times, most recently 20:18:56Z, reporting
+      rows=500 positive_rows=270 tools_scored=29 and
+      top=[shell, web_search, web_fetch, memory, note_applied_lesson].
+      So the tie-break is not merely wired, it is computing a real ranking every session.
+    A_LIMITATION_THE_TESTS_COULD_NOT_HAVE_SHOWN_and_the_live_data_did: >-
+      `rows=500` is EXACTLY MAX_ROWS, so the global read is saturating its cap. That bound is
+      deliberate and inherited from the per-owl scorer, but the two reads have very different
+      denominators: 500 rows is a generous slice of ONE owl's history and a thin one across
+      EIGHTEEN — the 30-day window holds 9,349 rows, so the global score sees roughly 5% of
+      it, and that 5% is whichever owls were most recently active. `headhunter` alone
+      accounts for 2,755 dispatches, so the global signal currently leans toward its habits
+      more than the phrase "the platform's evidence" suggests.
+      NOT FILED AS A BUG, and not fixed silently either. The ordering it produces is still
+      far better than the alphabet, the scores are recency-weighted by design, and raising
+      MAX_ROWS for the global read is a cost/benefit call on query size that belongs with
+      Bakir rather than in a quiet constant change. Recorded so that whoever reads
+      "the platform's evidence" later knows exactly how wide that evidence actually is.
   ESC_36_IMPLEMENTED_2026_08_23_T19_50Z:
     what_bakir_decided: >-
       Guarantee `clarify`, and fix the tie-break for unscored tools — explicitly NOT
