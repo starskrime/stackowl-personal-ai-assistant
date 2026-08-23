@@ -319,6 +319,41 @@ current:
   item: D09.1
   stage: brainstorm
   LIVE_OUTAGE_2026_08_23_T11_44Z_NOT_MINE_and_you_were_notified:
+    RESOLVED_2026_08_23_T13_29Z_by_Bakir_asking_me_to_restart_the_VPN: >-
+      He woke, read the notification, and told me to restart the VPN. ROOT CAUSE CONFIRMED
+      EXACTLY, not circumstantially: `gp-vpn.service` (GlobalProtect via OpenConnect) FAILED
+      at 06:42:43 CDT = 11:42:43Z with "Reconnect failed ... Cookie was rejected by server;
+      exiting" — its session cookie expired and the reconnect was refused. The platform's
+      first failure was 11:44:28Z, 105 seconds later.
+      After `systemctl restart gp-vpn.service`: tun0 up, configured 10.10.100.4, ESP tunnel
+      established, DNS resolving 172.30.104.100, the gateway answering HTTP 401 in 0.67s
+      (auth required — what a working route looks like), session auth valid to Aug 26.
+    THE_SELF_HEAL_RULE_WAS_APPLIED_AS_A_TEST_AND_IT_PASSED: >-
+      I deliberately did NOT restart the core, so this stayed a real test of Bakir's own
+      rule — fix the root cause and the platform should drain its own damage. It did,
+      unaided, in eleven minutes:
+        13:34:29  [resilient_round] decision — short-circuit (breaker OPEN)
+        13:39:59  [circuit] state transition OPEN -> HALF_OPEN
+        13:40:03  [circuit] state transition HALF_OPEN -> CLOSED (probe succeeded)
+        13:40:03  [cost] NeraAiRaw/neraai-v1-raw — the first successful call
+      Then further successful probes at 13:45:33 and 13:51:03.
+      ERRORS: 31 in the last nine minutes of the outage, ZERO after 13:34:30. The last
+      error PRECEDES the breaker closing, so the ordering is right rather than coincidental.
+    A_CLAIM_I_HELD_BACK_AND_THEN_EARNED: >-
+      When I first reported recovery I said the absence of failures was strong but that a
+      SUCCESSFUL end-to-end call was the confirming evidence and had not happened. Three
+      have now happened. Recorded because holding that distinction for eleven minutes is
+      the same discipline as the 0-over-0 denominators elsewhere in this file.
+    WHAT_IS_STILL_NOT_PROVEN_by_this: >-
+      task_outcomes in the last hour is STILL ZERO. The three successful calls are 13-token
+      provider health probes, not user turns. So the platform is healthy and the three open
+      validates STILL have no traffic — the outage was a second blocker on top of the idle
+      box, and only the first one has lifted.
+    AN_INFRASTRUCTURE_GAP_LEFT_ALONE_because_it_is_his: >-
+      The unit has an ExecStartPre that waits up to 30s for DNS, but nothing restarts it
+      when the SESSION expires — which is exactly what happened. `Restart=on-failure` is not
+      set. Session auth expires Wed Aug 26 08:28:57, so this recurs on a schedule. Naming it
+      rather than editing his systemd unit: that is his machine and his call.
     what: >-
       The platform's ONLY enabled LLM backend is unreachable. `llm-gateway.dev.nera.gov`
       DOES NOT RESOLVE — `[Errno -5] No address associated with hostname` — confirmed both
