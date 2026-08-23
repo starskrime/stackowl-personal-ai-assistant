@@ -318,6 +318,32 @@ current:
   wave: 4
   item: D09.1
   stage: brainstorm
+  AN_OVERNIGHT_OBSERVATION_2026_08_23_T07_20Z_recorded_not_acted_on:
+    what_looked_alarming: >-
+      ERRORs since boot jumped 1 -> 11 and WARNINGs 19 -> 48 in one hour, while
+      task_outcomes in that hour stayed at ZERO. An error spike with no traffic reads like
+      a fault.
+    what_it_actually_is_and_I_checked_before_reporting: >-
+      A nightly DNA evolution pass, running exactly as designed.
+        10 x `[dna] coordinator.promote: shadow gate REJECTED` — the gate rejecting
+             candidates. Across the retained window it is 75 REJECTED to 6 promoted, so
+             rejection is its normal output, not an incident.
+        12 x `[pipeline] deliver: no registry in services — discarding responses` — every
+             one on a `shadow-validate-*` lane. A shadow validation runs a candidate DNA
+             with NO user-visible effect, so discarding its response is the POINT. Steady at
+             12-19/day for eight days; the single 0 on 2026-08-20 is the provider outage.
+      I nearly filed this as a silent-drop finding in the ESC-42 family. It is not: the same
+      log string means "a body was lost" on a real lane and "the probe worked" on a shadow
+      lane, and only the session_key separates them.
+    THE_SMALL_REAL_FINDING_underneath: >-
+      `shadow gate REJECTED` is logged at ERROR for a DESIGNED, EXPECTED outcome that
+      occurs 75 times in 81. That is the second instance today of the same shape — the other
+      being `tool_build.execute: no channel/session to scope consent — refused`, a correct
+      fail-closed refusal also at ERROR. An ERROR level spent on expected outcomes trains
+      its reader to skip ERRORs, which is the one thing the level exists to prevent.
+      NOT FIXED: changing a log level is cheap but it is a judgement about what deserves
+      attention, and two instances is a pattern worth naming rather than a mandate to act.
+      If a third shows up it is worth a pass over the ERROR vocabulary as a whole.
   WHERE_TO_RESUME_2026_08_23_T03_15Z:
     read_this_first: >-
       Nothing here is mid-flight. Every item is either CLOSED, blocked on a decision that is
