@@ -315,8 +315,64 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  WHY_current_MOVED_OFF_D09_1_2026_08_23_T17_30Z: >-
+    D09.1 is blocked on ESC-41 (every lens rejected the fork), D08.5 on ESC-39, and D08.4's
+    remaining two invariants need traffic shapes that have not occurred. D09.2 and D09.4 both
+    declare depends_on: [D09.1], so they inherit the block. D09.5 and D09.6 declare depends_on:
+    [] — D09.5 is the earlier by order (31). Nothing here is waiting on Bakir.
+  D09_5_ROUND_0_MEASUREMENT_2026_08_23:
+    the_headline: >-
+      THE MAP'S ASK IS ANSWERABLE BUT IT IS NOT THE FINDING. The map asks whether to move
+      `synthesize_skills` from a tool to a slash command for "zero schema cost". Measurement says
+      the schema cost is real AND the tool is already dead — but it also found a live defect the
+      map does not mention, which fired TODAY.
+    tool_is_dead_two_independent_sources: >-
+      `synthesize_skills` has ZERO calls in the JSONL log (2026-08-15..2026-08-23, the full
+      retained window, 2,018 tool executions across 23 distinct tools) AND zero rows in
+      `side_effect_ledger` (2026-06-29..2026-08-22, 1,752 rows). Two record types agree. It
+      nonetheless sits in the ALWAYS-PRESENT base set at tools/_infra/presentation.py:76, so it
+      holds a GUARANTEED slot in every owl's presented tool list under a cap measured at median
+      30 / p90 36 (see D05.8). `skill_manage` ran ONCE in nine days; `skills_list` twice.
+    only_23_of_77_tools_ran_at_all: >-
+      In nine days, 23 distinct tools executed. web_search 463, memory 410, web_fetch 312,
+      search_files 301, delegate_task 149, owls_list 138, owl_build 73, cronjob 67. The
+      long tail is almost entirely unused, which is the same economics D05.8 measured from
+      the other end.
+    the_corpus: >-
+      169 skills — 155 `learned`, 14 `builtin`. Authored by FOUR distinct writers, per
+      skill_audit: `agent:synthesizer` 101 creates, `agent_self:skill_manage` 17, `secretary`
+      15, `agent_self:tool_build` 2.
+    ONLY_27_OF_155_LEARNED_SKILLS_HAVE_EVER_RUN: >-
+      212 executions total across the whole learned corpus. 128 have never executed once.
+      92 carry lifecycle_state='stale' — and ALL 155 are enabled=1. For contrast, 6 of the 14
+      builtins have ever run. There is a builtin literally named `write-your-own-skill`, with
+      one execution.
+    duplication_measured_then_CORRECTED: >-
+      77 near-duplicate NAME pairs (Jaccard >= 0.5 over name tokens) covering 54 of the 155
+      learned skills, including three pairs at Jaccard 1.0 — the same words reordered
+      (`report-task-status` / `task-status-report`, `check-stock-price-alert` /
+      `stock-price-alert-check`, `download-instagram-video` / `instagram-video-download`).
+      MY FIRST READING WAS THAT THE SYNTHESIZER MINTS 35% DUPLICATES. THAT IS WRONG. Dating
+      every pair against DEBT-42 (commit 48dbffd4, 2026-08-04, which added conclusion-dedup):
+      73 of the 77 pairs PREDATE the fix and only 4 postdate it. The fix largely worked; the
+      35% is historical residue, and nothing decays it.
+    BUT_ONE_FIRED_TODAY_AND_IT_NAMES_THE_ROOT_CAUSE: >-
+      2026-08-23T16:29:08Z, actor `agent_self:skill_manage`, created `instagram-video-download`
+      while `download-instagram-video` was already active, enabled, 5 executions, near-identical
+      description. ROOT CAUSE: `synthesizer._synthesize_one` calls `_reinforce_if_known(...)` —
+      that is DEBT-42's dedup. `skill_manage._create` (tools/knowledge/skill_manage.py:242)
+      checks ONLY `if target_dir.exists()`, an exact directory-name collision, and nothing else.
+      TWO WRITERS INTO ONE CORPUS WITH THE DEDUP RULE WIRED ON ONE PATH — failure mode 1 (an
+      actuator wired on only some paths) and failure mode 3 (two copies of one rule) at once.
+      There are FOUR writers in the audit trail, so any fix must have ONE source the others ask.
+    a_path_error_worth_recording: >-
+      ~/.stackowl/stackowl.db is a 0-byte file dated 2026-07-25 and has no tables. The live
+      database is ~/.stackowl/workspace/stackowl.db (273 MB, 72 tables). A query against the
+      wrong path returns "no such table", which reads exactly like "the feature does not exist".
+      Same shape as the rotated-log hazard recorded on 2026-08-23: a NEGATIVE from a narrow
+      probe is not an absence until the probe itself is verified.
   wave: 4
-  item: D09.1
+  item: D09.5
   stage: brainstorm
   LIVE_OUTAGE_2026_08_23_T11_44Z_NOT_MINE_and_you_were_notified:
     RESOLVED_2026_08_23_T13_29Z_by_Bakir_asking_me_to_restart_the_VPN: >-
@@ -14716,7 +14772,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: partial
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -14727,7 +14783,10 @@ items:
     doc_last_verified: null
     decisions: []
     changes: []
-    notes: null
+    notes: >-
+      ROUND 0 MEASURED 2026-08-23T17:30Z. Picked up because D09.1 (ESC-41), D08.5
+      (ESC-39) and D08.4 (traffic) are all blocked, and D09.5 is the earliest item
+      whose depends_on is empty. The measurement moved the item off the map Ask.
 
   - id: D09.6
     title: "Learning made visible"
