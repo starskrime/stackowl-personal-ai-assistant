@@ -14927,7 +14927,7 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  blocked
       implement:  not_started
       cleanup:    not_started
       test:       not_started
