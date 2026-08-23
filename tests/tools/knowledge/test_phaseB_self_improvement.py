@@ -356,21 +356,32 @@ async def test_synthesize_skills_missing_service_degrades_structurally(
 
 
 def test_self_improvement_tools_in_presented_schema() -> None:
-    """skill_manage/reflect_now/synthesize_skills are in the per-owl presented set.
+    """skill_manage/reflect_now/evolve_now are in the per-owl presented set.
 
     Drive ``to_provider_schema`` with the per-owl gating path (an EMPTY profile /
     no pins / no hydration) so ONLY the non-evictable base+always tiers appear —
-    proving these three are wired into that guaranteed base, not merely registered.
+    proving these are wired into that guaranteed base, not merely registered.
+
+    ``synthesize_skills`` WAS in this list and was removed from the guaranteed base
+    by Bakir's decision on ESC-46, 2026-08-23: zero calls in two independent
+    sources over 55 days while holding a guaranteed slot, because it is lane-less
+    (its ``parameters`` are ``{}``, and its own description redirects the model to
+    ``skill_manage``). The assertion is inverted below rather than dropped, so the
+    change stays visible and a silent re-addition would fail here.
     """
     registry = ToolRegistry.with_defaults()
     schemas = registry.to_provider_schema(
         "openai", profile=[], pins=[], hydrated=set()
     )
     names = {s["function"]["name"] for s in schemas}  # type: ignore[index]
-    for expected in ("skill_manage", "reflect_now", "synthesize_skills", "evolve_now"):
+    for expected in ("skill_manage", "reflect_now", "evolve_now"):
         assert expected in names, (
             f"{expected!r} not in the per-owl presented base set: {sorted(names)}"
         )
+    assert "synthesize_skills" not in names, (
+        "ESC-46 removed synthesize_skills from the guaranteed base; it is still "
+        "registered and still driven nightly, but it no longer holds a slot"
+    )
 
 
 # ===========================================================================

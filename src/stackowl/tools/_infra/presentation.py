@@ -71,9 +71,28 @@ _DEFAULT_CAP = 36
 # consent-gated at dispatch — surfacing them does not bypass consent. The cap is
 # bumped in lockstep with each base addition so base growth does NOT shrink the
 # discretionary per-turn headroom a full owl profile already had.
+# ESC-46, decided by Bakir 2026-08-23 — `synthesize_skills` REMOVED from this
+# set. It is still registered, still consent-gated, still driven nightly by its
+# scheduler handler; it simply no longer holds a guaranteed slot.
+#
+# MEASURED: zero calls in two independent sources — the full retained JSONL
+# window, and `side_effect_ledger` over 55 days / 1,752 rows. It is not
+# unreachable (a reachability probe confirms it was presented on every turn); it
+# is LANE-LESS. Its `parameters` are literally `{}`, so it cannot be aimed at a
+# directory, a URL or "what we just did", and its own description carries an
+# ANTI-LANE telling the model to use `skill_manage` for exactly the job a user
+# ever asks for. What remains — "mine my own past successes" — is a cron's job
+# description, and the cron already runs it. Zero calls is the correct behaviour
+# of a correctly-presented tool with an empty lane.
+#
+# The cap is deliberately NOT decremented. The lockstep rule above exists so base
+# GROWTH does not shrink discretionary headroom; removing a member therefore
+# returns that slot to the discretionary pool, which is the reclaim ESC-46 asked
+# for. Self-extension is untouched: skill_manage, tool_build, owl_build,
+# reflect_now and evolve_now all remain guaranteed.
 _DEFAULT_BASE = frozenset({
     "read_file", "write_file", "shell", "web_fetch",
-    "skill_manage", "reflect_now", "synthesize_skills",
+    "skill_manage", "reflect_now",
     # Story 3.1 — evolve_now: on-demand DNA evolution mid-turn, the
     # self-improvement trio's third sibling (see cap-bump comment above).
     "evolve_now",
