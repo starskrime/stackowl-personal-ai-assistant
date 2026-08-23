@@ -315,6 +315,44 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_44_VERIFIED_ON_LIVE_TRAFFIC_2026_08_23_T19_10Z:
+    verdict: PASS — but the pass criterion I wrote in advance was the WRONG TEST, and reading
+      it literally I first called this a FAIL. Recorded in full because the mistake is more
+      instructive than the result.
+    THE_REAL_BEFORE_AND_AFTER_both_from_production: >-
+      17:59:41Z  presented=11  last_presented=check-stock-price-alert   <- the OLD sort
+      19:07:58Z  presented=12  last_presented=evidence-brief            <- the NEW sort
+      Both reproduced EXACTLY by driving the real SkillInstructionInjector over the live
+      160-skill set with each key in turn: the old key yields presented=11 /
+      check-stock-price-alert / dropped=149; the new key yields presented=12 /
+      evidence-brief / jarvis-greeting-protocol / dropped=148, which is the logged record
+      field for field. Two keys, two predictions, one match. That is far stronger than the
+      boundary heuristic I originally wrote as the criterion.
+    WHY_I_FIRST_READ_IT_AS_A_FAIL_and_this_is_the_hazard_worth_keeping: >-
+      I compared post-reboot records against records from 18:34 that I called a "pre-change
+      baseline". THEY WERE NOT. THE CORE SELF-RESTARTS ON ANY .py WRITE, so my ESC-44 edit
+      went live at the 18:17:47 boot — roughly 38 minutes BEFORE I committed it at 18:55 and
+      39 before the 18:56:29 boot I was treating as the cutover. Both sides of my comparison
+      were post-change, so of course they were identical, and identical looked exactly like
+      "the change never reached the running path".
+      ON THIS BOX THE WORKING TREE IS PRODUCTION. A measurement taken after you have started
+      editing is not a baseline, and "before my commit" is not "before my change". The only
+      honest baseline is one timestamped before the first WRITE, which here was 17:59:41.
+      Same family as the rotated-log hazard recorded earlier today: a comparison whose
+      control was quietly contaminated.
+    WHAT_SAVED_IT: >-
+      Not judgement — the FAIL branch was written down in advance and named its own suspect
+      ("a second catalogue producer"). Checking that suspect took one grep, found exactly ONE
+      producer at assemble.py:325, and forced me to explain the disagreement instead of
+      filing it. The simulation that then reproduced both records is what settled it.
+      A pass criterion that can only ever confirm is not a check; this one was wrong but it
+      was falsifiable, and being wrong out loud is what produced the right answer.
+    also_corrected: >-
+      A PID's start time cannot verify a core restart here — the core re-execs via os.execv,
+      which REPLACES the process image and KEEPS the pid, so `ps` showed Aug 21 for a process
+      running code written minutes earlier. This is why the standing rule says verify via the
+      JSONL log and never a PID; the rule is not merely a preference, the PID is actively
+      misleading.
   ESC_44_SHIPPED_AND_LIVE_2026_08_23_T18_56Z:
     commit: 20593b9a
     what_changed: >-
