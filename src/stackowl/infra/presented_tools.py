@@ -51,7 +51,10 @@ from typing import Any
 
 from stackowl.infra.observability import log
 
-__all__ = ["budget_basis", "clear", "clear_owl", "get", "make_key", "put"]
+__all__ = [
+    "apply_tool_count_cap", "budget_basis", "clear", "clear_owl",
+    "get", "make_key", "put",
+]
 
 #: Bounded LRU across all sessions. Each entry is a list of schema dicts, so the
 #: cap is on memory, not correctness — an eviction just rebuilds next turn.
@@ -104,6 +107,50 @@ def _on_capability_change(capability: str) -> None:
     # `run_tests` and nine more, gone mid-conversation because a subprocess
     # bounced.
     _drop_memo(None)
+
+
+#: Last `orchestrator.tool_count_cap` this process has seen. None until the first
+#: settings payload arrives, so the first call never wipes a warm memo for nothing.
+_last_tool_count_cap: int | None = None
+
+
+def apply_tool_count_cap(cap: int) -> bool:
+    """Drop every memoized array when the operator changes the tool-count cap.
+
+    ESC-35. `tool_count_cap` is declared ``json_schema_extra={"hot_reload": True}``
+    and it was NOT hot-reloadable. The presented array is memoized per session
+    (`_memo`), and the only `clear()` callers in ``src/`` were the skill store and
+    two owl paths — none of them a config-reload path. So changing the cap took
+    effect only for sessions STARTED afterwards, and nothing said so: the operator
+    set it, was told "✓ tool_count_cap = 40" with no "restart required" suffix
+    (because the field claims hot_reload), and every live conversation carried on
+    with the old roster.
+
+    That is the same defect `auto_restart.delay_minutes` had, fixed 2026-08-22,
+    whose own comment names the shape: a setting that advertises hot-reload with no
+    reader for the change is the write-with-no-reader wearing a config marker.
+
+    THE MEMO ONLY, never the basis — the distinction `_drop_memo` exists for. A cap
+    change says "this array may be stale, rebuild it". It does NOT say "re-measure
+    how much room the history leaves", and conflating the two is what let a
+    3-second browser recycle shrink a live agent's toolset.
+
+    Returns True if anything was dropped, so the caller can log an EFFECT rather
+    than an intention.
+    """
+    global _last_tool_count_cap
+    with _lock:
+        previous, _last_tool_count_cap = _last_tool_count_cap, int(cap)
+        if previous is None or previous == int(cap):
+            return False
+        dropped = len(_memo)
+    log.infra.info(
+        "[presented_tools] tool_count_cap changed — dropping every memoized tool "
+        "array so live conversations pick up the new roster",
+        extra={"_fields": {"previous": previous, "cap": int(cap), "dropped": dropped}},
+    )
+    _drop_memo(None)
+    return True
 
 
 def _subscribe_once() -> None:

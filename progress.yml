@@ -315,6 +315,41 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_35_HOT_RELOAD_FIXED_2026_08_23_T20_40Z:
+    the_defect: >-
+      `OrchestratorSettings.tool_count_cap` is declared json_schema_extra={"hot_reload":
+      True} and was NOT hot-reloadable. The presented tool array is memoized per session in
+      infra/presented_tools.py, and the only clear() callers in src/ were the skill store and
+      two owl paths — none of them a config-reload path. So a cap change reached only sessions
+      STARTED afterwards.
+      WHAT MAKES IT WORTH FIXING RATHER THAN DOCUMENTING is the operator's experience: because
+      the field claims hot_reload, /config set returns "✓ tool_count_cap = 40" with NO
+      "restart required" suffix, while every live conversation carries on with the old roster.
+      The setting was honest about its intent and nothing downstream honoured it.
+    precedent_it_mirrors: >-
+      Exactly the defect `auto_restart.delay_minutes` had, fixed 2026-08-22, whose own comment
+      names the shape: "a setting that advertises hot-reload with no reader for the change is
+      the write-with-no-reader shape wearing a config marker". tool_cap_reload.py mirrors
+      auto_restart_reload.py deliberately — same event, same type-guard against the dict
+      payloads the slash commands emit, same never-raise contract, same named-factory shape.
+      A second reload mechanism would be the duplication CLAUDE.md forbids.
+    where_the_rule_lives: >-
+      The DECISION ("did the cap change, so should the memo drop?") lives with the memo, in
+      presented_tools.apply_tool_count_cap — exactly as apply_quiet_period lives on
+      CodeWatcher. The startup module is only the wire.
+    the_two_ways_an_over_eager_fix_would_be_WRONG_both_pinned_by_test: >-
+      (1) Dropping on EVERY settings_reloaded: an unrelated config edit re-emits that event,
+      so wiping every live conversation's roster because someone changed a log level would be
+      a worse bug than the one being fixed. It drops only when the value actually changed, and
+      never on first sight.
+      (2) Dropping the budget BASIS along with the memo: a cap change says "this array may be
+      stale", NOT "re-measure how much room the history leaves". Conflating those is what let
+      a 3-second browser recycle shrink a live agent's toolset (D05.4). The basis survives,
+      and a test asserts it.
+    green: >-
+      tests/startup + tests/gateway + tests/infra — 473 passed. Baselines held at ruff 37 /
+      mypy 65. One test initially failed because Settings are FROZEN; the fix was to construct
+      a new Settings the way ConfigWatcher actually does, not to unfreeze anything.
   ESC_36_VALIDATED_LIVE_2026_08_23_T20_19Z:
     verdict: PASS on production traffic.
     evidence: >-
@@ -2993,6 +3028,54 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-47-window-relative-sizing-would-RAISE-the-cap-on-the-model-it-protects
+    raised: 2026-08-23
+    supersedes_half_of: ESC-35
+    question: >-
+      You decided ESC-35 as "window-relative, but only after ESC-36". I implemented the
+      smaller half (the hot_reload defect) and then measured the main half before building
+      it. The measurement says window-relative sizing does the OPPOSITE of what the cap is
+      for on this box. Do you still want it, want a different signal, or want the cap left
+      as an operator integer?
+    why_evidence_cannot_settle_it: >-
+      Evidence settles that the mechanism misfires here; it cannot settle whether you want
+      the cap keyed to capability, to window, or to nothing at all. And this is a panel
+      finding that CONTRADICTS A RECORDED DECISION — yours, from earlier today — which the
+      process says I escalate rather than reconcile.
+    THE_MEASUREMENT: >-
+      The cap's stated purpose is a claim about the MODEL, not the context: execute.py:
+      1409-1411 reads "weak/quantized models derail when offered too many tools".
+      The live backend is `neraai-v1-raw` — 1,002 calls today, the only generation model on
+      the box — and its RESOLVED WINDOW IS 262,144 TOKENS (120 records today, all identical).
+      LEAN_WINDOW_THRESHOLD is 8,192. So 262,144 is nowhere near lean, a window-relative rule
+      classifies this model as capable, and the derived cap becomes HARD_TOOL_COUNT_CAP = 150
+      — effectively no count cap at all, presenting the whole ~77-tool catalog.
+      That RAISES the roster from 40 to 77 on precisely the weak model the cap exists to
+      protect. Window size is the wrong proxy for model capability: this backend is
+      simultaneously very wide and very weak, and the two are independent.
+    a_thing_worth_noticing_about_the_seam_i_was_told_to_reuse: >-
+      resolve_no_progress_threshold IS the right shape and I do not dispute it — but note it
+      only ever makes the platform MORE cautious on a lean window (threshold 3 -> 2). It has
+      no branch that relaxes anything. Reusing its shape for the tool cap inverts that: here
+      the wide window would relax a limit. The shape is sound; the direction is not.
+    also_true_and_it_weakens_the_case_further: >-
+      Your own ESC-35 text recorded that the harm test is clean — not one turn in 8 days
+      called a tool that existed in the catalog and had been dropped by the cap, and the 12
+      interactive turns where the cap bound produced 0 searches, 0 refusals and 0 guardrail
+      warnings. So the change would relax a limit that is not currently costing anything,
+      on the model least able to absorb it.
+    the_recommendation: >-
+      LEAVE THE COUNT CAP AS AN OPERATOR INTEGER for now, and treat "what should size the
+      roster" as a capability question rather than a window question. If you want it derived
+      rather than set, the honest signal is model CAPABILITY — which this platform does not
+      currently measure. A cheap first proxy already exists in the data: tool-call failure
+      and overclaim rates per model, both in task_outcomes. That is a real item, not a
+      one-line constant, and it should be scoped deliberately.
+    what_shipped_regardless: >-
+      ESC-35's other half, which contradicts nothing and is precedented. See
+      ESC_35_HOT_RELOAD_FIXED below.
+    blocks: >-
+      Only the window-relative half. Nothing else — the hot_reload fix is in and green.
   - id: ESC-43-D09.5s-premise-was-rejected-by-all-five-lenses-so-what-is-the-item
     raised: 2026-08-23
     question: >-

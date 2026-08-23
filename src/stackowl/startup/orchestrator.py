@@ -1474,6 +1474,7 @@ class StartupOrchestrator:
             from stackowl.config.watcher import ConfigWatcher
             from stackowl.startup.identity_reload import make_identity_reload_handler
             from stackowl.startup.provider_reload import make_settings_reload_handler
+            from stackowl.startup.tool_cap_reload import make_tool_cap_reload_handler
 
             event_bus.subscribe(
                 "settings_reloaded", make_settings_reload_handler(provider_registry)
@@ -1483,6 +1484,14 @@ class StartupOrchestrator:
             # no restart. Mirrors the provider reload above on the same event.
             event_bus.subscribe(
                 "settings_reloaded", make_identity_reload_handler(identity_resolver)
+            )
+            # ESC-35 — LIVE tool-count-cap reload. The field declares
+            # hot_reload:True and was not: the presented array is memoized per
+            # session and no config path invalidated it, so a cap change reached
+            # only sessions started afterwards while /config reported success with
+            # no "restart required". Same event, same shape as the two above.
+            event_bus.subscribe(
+                "settings_reloaded", make_tool_cap_reload_handler()
             )
             config_watcher = ConfigWatcher(
                 config_path=StackowlHome.config_file(),
