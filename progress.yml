@@ -15101,7 +15101,7 @@ items:
     stages:
       brainstorm: done
       architect: done
-      implement:  not_started
+      implement: partial
       cleanup:    not_started
       test:       not_started
       validate:   not_started
@@ -15176,6 +15176,46 @@ items:
       model to skill_manage, which is what the reference's prompt targets too. The authoring
       CAPABILITY was never missing (17 agent_self:skill_manage creates, one at 16:29:08 the
       same day). What was missing is a named front door that also carries the standards.
+    IMPLEMENT_PARTIAL_2026_08_23_T19_35Z: >-
+      THREE OF FOUR PIECES ARE IN AND GREEN. (1) build_learn_prompt — one pure function,
+      purity ENFORCED by monkeypatching get_services to raise, so it cannot quietly grow into
+      an engine. (2) SlashCommand.build_turn_prompt — the seam, defaulting to None so all ~30
+      existing commands are byte-for-byte unaffected; a test asserts no OTHER shipped command
+      overrides it, so a second opt-in cannot happen SILENTLY. (3) LearnCommand, registered
+      and declared in SHIPPED_COMMANDS. (4) The gateway rewrite in _dispatch_turn: written,
+      baselines held, but see the coverage gap below.
+      Green so far: tests/commands 358 passed (includes the reachability + SHIPPED_COMMANDS
+      guard, so /learn is genuinely reachable), tests/skills learn_prompt 12, plus the
+      authoring-standard suites. ruff 37 / mypy 65 unchanged.
+    THE_SEAM_IN_ONE_SENTENCE: >-
+      A command may return TEXT from build_turn_prompt; the gateway then rewrites the message
+      as though the user had typed that text, re-scans it, and dispatches an ordinary turn. No
+      second dispatch path, no engine, no tool schema — ladder rung 2.
+    A_NEW_FINDING_THE_ITEM_DID_NOT_GO_LOOKING_FOR: >-
+      `_dispatch_turn` IS HAND-COPIED IN THREE TEST FILES — tests/journeys/
+      test_p2p3_steer_merge_gate.py:347, tests/journeys/test_p1_concurrent_foundation.py:290,
+      and tests/startup/test_slack_gateway_wiring.py:174 — in addition to the real one, which
+      is a closure inside _phase_gateway and therefore unreachable from any test.
+      So the gateway's core dispatch now exists in FOUR places and a change to the real one
+      silently diverges from all three copies. This is defect shape 2 (a double that stopped
+      resembling the real thing) institutionalised, and it is PRE-EXISTING — the same file
+      already carries the comment "this closure is unreachable from outside _phase_gateway,
+      so the test hand-copies it" about _deliver_command_stub.
+      CONSEQUENCE FOR THIS ITEM, STATED RATHER THAN GLOSSED: the three copies do not have the
+      seam, so they exercise the OLD shape and give the seam ZERO gateway-level coverage. I
+      have NOT added the seam to the copies — that would deepen the drift and buy a test that
+      proves nothing about production.
+    HOW_THE_SEAM_WILL_ACTUALLY_BE_VALIDATED: >-
+      On live traffic, which is the stronger evidence anyway. The rewrite emits at INFO:
+      "[startup] gateway: command contributed a TURN PROMPT — running it as this turn's input,
+      not replying with it", carrying cmd and chars.
+      PASS = one real `/learn` on Telegram produces that line, followed IN THE SAME TRACE by
+      a skill_manage create in skill_audit — and NOT by the prompt text being streamed back to
+      the user as a reply.
+      FAIL, named in advance: if the prompt text appears as the user-visible reply, the seam
+      did not fire and the command fell through to _deliver_command_stub — which is exactly
+      what LearnCommand.handle deliberately returns, so the failure is visible rather than
+      silent.
     notes: >-
       ROUND 0 MEASURED 2026-08-23T17:30Z. Picked up because D09.1 (ESC-41), D08.5
       (ESC-39) and D08.4 (traffic) are all blocked, and D09.5 is the earliest item

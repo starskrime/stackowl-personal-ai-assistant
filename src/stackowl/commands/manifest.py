@@ -34,6 +34,8 @@ SHIPPED_COMMANDS: frozenset[str] = frozenset({
     # direction from "staged", and just as invisible while the guard was red.
     "new",
     # ── DI commands currently live (Pattern B, Epic A wired) ───────────────
+    # /learn — D09.5. Contributes a turn PROMPT rather than a reply.
+    "learn",
     "skill",
     "memory",
     "owl",

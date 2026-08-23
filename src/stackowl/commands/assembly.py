@@ -275,6 +275,12 @@ def _register_di_commands(deps: CommandDeps, registry: CommandRegistry) -> None:
     from stackowl.commands.why import WhyCommand
     _safe_register(registry, "why", lambda: WhyCommand())
 
+    # /learn — D09.5. Dependency-free: it contributes a PROMPT and no machinery,
+    # so it needs nothing injected. The gateway runs its text as the turn's input
+    # (SlashCommand.build_turn_prompt), and skill_manage does the writing.
+    from stackowl.commands.learn_command import LearnCommand
+    _safe_register(registry, "learn", lambda: LearnCommand())
+
     # /whoami
     from stackowl.commands.whoami import WhoamiCommand
     _safe_register(registry, "whoami", lambda: WhoamiCommand(owl_registry=deps.owl_registry))

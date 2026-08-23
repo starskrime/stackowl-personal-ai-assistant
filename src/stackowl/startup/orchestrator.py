@@ -2237,6 +2237,7 @@ class StartupOrchestrator:
             msg: IngressMessage,
             decision: RouteDecision,
             input_text: str,
+            _prompt_depth: int = 0,
         ) -> None:
             """Build + launch ONE turn: create stream, route, register, spawn send.
 
@@ -2246,6 +2247,68 @@ class StartupOrchestrator:
             shared by both loops so the intake/queue/drain semantics live in ONE
             place.
             """
+            # D09.5 — THE TURN-PROMPT SEAM, and the ONE place it lives.
+            #
+            # A command may contribute a PROMPT rather than a reply (see
+            # SlashCommand.build_turn_prompt). When it does we do not dispatch it
+            # as a command at all: the message is rewritten as though the user had
+            # typed that text, re-scanned, and dispatched as an ordinary turn — so
+            # routing, consent, tools and the pipeline are all the normal ones and
+            # there is no second dispatch path to keep in sync. That is what keeps
+            # such a command at ladder rung 2: it adds a prompt and no machinery.
+            #
+            # Placed at the TOP, before the stream is created, so the rewritten
+            # turn creates the only stream — intercepting further down would
+            # abandon one. And placed inside _dispatch_turn rather than at its six
+            # call sites, so the rule has ONE home.
+            #
+            # RE-SCANNING rather than hardcoding a target is deliberate: the
+            # scanner's own fallback is `secretary`, and naming it here would be a
+            # second copy of a routing rule.
+            # The rewritten text cannot begin with a slash (the builders prefix a
+            # tag like "[/learn]"), so the scanner cannot route it back to a
+            # command and the recursion is one level deep. `_prompt_depth` does
+            # not rely on that reasoning staying true — a future builder that
+            # emitted a leading slash would otherwise spin the gateway.
+            if decision.route == "command" and _prompt_depth < 1:
+                import dataclasses
+
+                from stackowl.commands.registry import CommandRegistry
+
+                _turn_prompt: str | None = None
+                try:
+                    _cmd_obj = CommandRegistry.instance().get(decision.target)
+                    if _cmd_obj is not None:
+                        _cmd_args = (
+                            input_text.split(" ", 1)[1] if " " in input_text else ""
+                        )
+                        _turn_prompt = _cmd_obj.build_turn_prompt(_cmd_args)
+                except Exception as exc:
+                    # Never let this cost the user their command. A command that
+                    # cannot build a prompt simply stays an ordinary command.
+                    log.warning(
+                        "[startup] gateway: build_turn_prompt failed — falling back "
+                        "to ordinary command dispatch",
+                        exc_info=exc,
+                        extra={"_fields": {"cmd": decision.target}},
+                    )
+                if _turn_prompt:
+                    log.info(
+                        "[startup] gateway: command contributed a TURN PROMPT — "
+                        "running it as this turn's input, not replying with it",
+                        extra={"_fields": {
+                            "cmd": decision.target,
+                            "session_key": msg.session_key,
+                            "chars": len(_turn_prompt),
+                        }},
+                    )
+                    _rewritten = dataclasses.replace(msg, text=_turn_prompt)
+                    await _dispatch_turn(
+                        pump, channel_adapter, _rewritten,
+                        scanner.scan(_rewritten), _turn_prompt,
+                        _prompt_depth=_prompt_depth + 1,
+                    )
+                    return
             # §4.1 stream re-key: register the response stream by trace_id (the key
             # deliver looks the writer up by), so the turn's output is never
             # stream-missed.
