@@ -317,6 +317,58 @@ current:
   wave: 4
   item: D09.1
   stage: brainstorm
+  A_MEASUREMENT_HAZARD_THAT_INVALIDATED_MY_OWN_REPORTING_2026_08_23:
+    headline: >-
+      EVERY "the watches are dry" report I made after 00:00Z was WRONG, and the cause is a
+      known, recorded, unfixed bug that I walked straight into.
+    what_happened: >-
+      At UTC midnight the log rotates. The GATEWAY reopens the new
+      ~/.stackowl/logs/stackowl.jsonl; the CORE keeps an open file descriptor on the
+      ROTATED file and goes on writing to it. Verified at the fd level, not inferred:
+        pid 2533776 (gateway) -> stackowl.jsonl              24 lines, 19 of them telegram
+        pid 2533831 (core)    -> stackowl-2026-08-22.jsonl   1,236 lines AFTER 00:00Z
+      This is `project_gateway_core_dual_log_writer_bug` (2026-07-18, recorded NOT FIXED).
+      It has now bitten the programme rather than just sitting in the record.
+    WHAT_I_NEARLY_REPORTED: >-
+      "The platform has been silent for 30 minutes with no scheduler activity at all" — i.e.
+      a total outage. It was not down. It was writing 1,236 lines to a file I was not
+      reading. Caught by asking why objective_driver and retry_sweep, which fire constantly,
+      had vanished, instead of accepting the silence.
+    THE_BLAST_RADIUS_IS_THIS_PROGRAMME_ITSELF: >-
+      Every standing-watch query, and every Verification section in designs/D05.4.md,
+      D05.8.md and D08.4.md, hardcodes ~/.stackowl/logs/stackowl.jsonl. After any UTC
+      midnight those queries read the GATEWAY-ONLY file and are blind to the core until the
+      core next restarts. A watch that reads the wrong file returns 0 and looks exactly like
+      a watch that passed — the 0-over-0 trap this programme has already paid for twice,
+      wearing a filename.
+    WHAT_THE_WATCHES_ACTUALLY_SAID_once_pointed_at_the_core: >-
+      D08.4 — THREE curated writes since boot, not zero: target `jobmarket`, one permanent
+      and two until_changed, used 632 -> 831 -> 1354 of a 2,200 budget. All 13 memory files
+      still carry exactly (entries - 1) delimiters, so I1 holds on a denominator of 3.
+      D05.8 — ONE ban-path turn, not zero: trace `retry-931677f2`, banned ["owl_build"].
+      0 turns presented 36 and 0 envelope-eviction records.
+    BUT_D05_8_IS_STILL_OPEN_AND_HERE_IS_THE_HONEST_REASON: >-
+      That ban turn logged `presented: null` — the field is
+      `len(restrict_to) if restrict_to else None`, so `_restrict_to_for_turn` returned
+      NOTHING and the restrict_to path was never entered. Its trace carried tools_count=16,
+      not 36 or 40. So the one opportunity did not exercise the branch after all, and I1/I2
+      stay OPEN rather than being claimed on a turn that never reached the code.
+      A NEW QUESTION FALLS OUT OF IT, unmeasured and recorded as such: why did banning ONE
+      capability (`owl_build`) produce no restriction at all? Either the ban path no-ops for
+      a single tool or the intersection with an absent envelope collapses it. Worth a look;
+      not chased tonight.
+    A_HEALTHY_COUNTER_EXAMPLE_worth_recording_because_not_everything_is_broken: >-
+      The three curated writes went to `jobmarket`, a target that did not exist earlier
+      today. It IS a registered owl, and `jobmarket.md` has already been injected into 8
+      prompts. So the free-string target that produced five orphan files (ESC-38) also
+      produced a correct one here: a real owl wrote its own notes and read them back. The
+      defect is the absence of a check, not that every write is wrong.
+    what_ships_from_this: >-
+      The docs' Verification queries must stop hardcoding one filename. Fixed in the same
+      pass: they now read every ~/.stackowl/logs/stackowl*.jsonl so a rotation cannot hide
+      the core. The dual-writer bug itself is a src fix in the logging setup and is NOT
+      taken here — it is recorded as ESC-43 because a rotation handler that reopens under a
+      live core is exactly the kind of change that wants your call on timing.
   D08_5_BLOCKED_ON_ESC_39_2026_08_22: >-
     Round 0 answered the item's Ask definitively (the graph did not survive D08.1 —
     0 of 2,321 prompts) and every remaining stage turns on whether the capability is
