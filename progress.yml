@@ -315,6 +315,43 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_44_SHIPPED_AND_LIVE_2026_08_23_T18_56Z:
+    commit: 20593b9a
+    what_changed: >-
+      The injected skill catalogue's sort key moved from `name` alone to
+      (n_executions desc, lifecycle_state, name), in ONE named function
+      (skills/store.py::catalogue_order_key) so no second consumer can grow a divergent copy.
+    measured_effect_against_the_live_store: >-
+      BEFORE (by name):  visible=14  dropped=146  carried  18 of 217 executions  (8%)
+      AFTER  (by value): visible=16  dropped=144  carried 196 of 217 executions  (90%)
+      Slightly MORE skills fit, because the high-usage ones have shorter summaries.
+    law_1_untouched: >-
+      Byte-identity needs a DETERMINISTIC key, not an alphabetical one. `name` remains the
+      final term so the key is TOTAL — two distinct skills can never compare equal, so the
+      block cannot depend on SQLite's row order. Forward/reverse/shuffled input producing
+      identical output is the property the tests guard hardest.
+    green: >-
+      tests/pipeline 1439 passed (owns assemble.py); tests/skills 341 passed (owns store.py —
+      329 before, +12 new). Baselines held at exactly ruff 37 / mypy 65. The first baseline
+      check after this change read 38, from a UP037 quoted annotation of my own; fixed before
+      the commit rather than carried.
+    RESTART_VERIFIED_NOT_ASSUMED: >-
+      Last src write 18:55:52Z, core boot 18:56:29Z — 37 seconds later, confirmed from the
+      startup phase records in the JSONL, never a PID.
+    THE_LIVE_CHECK_IS_OPEN_and_its_query_already_runs: >-
+      This is falsifiable on production traffic because the truncation record was given
+      `last_presented` and `first_dropped` earlier the same session (commit 978abc0f). So the
+      cut point itself is now logged at WARNING and can simply be read.
+      BASELINE, from the 131 truncation records logged today BEFORE the reboot — every one
+      reads `last_presented=evidence-brief, first_dropped=jarvis-greeting-protocol`, an
+      alphabetical boundary.
+      PASS = truncation records with ts > 18:56:30Z whose `last_presented` is a HIGH-USAGE
+      skill (the structure-incident-evidence family, 45/43/23 runs) rather than an
+      alphabetically-early one, and whose `first_dropped` carries fewer executions than
+      `last_presented`.
+      FAIL, and worth stating so it cannot be explained away: if post-reboot records still
+      show an alphabetical boundary, the sort did not reach the running path and the right
+      suspicion is a second catalogue producer, not a successful change.
   ESCALATIONS_ANSWERED_2026_08_23:
     context: >-
       Bakir cleared the ENTIRE queue in one sitting — sixteen decisions covering every open
