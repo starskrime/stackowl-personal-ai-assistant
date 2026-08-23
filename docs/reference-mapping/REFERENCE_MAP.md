@@ -470,11 +470,31 @@ standalone repos.
 + tool results.
 **StackOwl.** `infra/prompt_safety.py` — a shared fence neutralizer for skill injection and memory recall.
 **Ask.** None. Both solved this.
+> **CORRECTED 2026-08-22 — this citation is STALE and the verdict does not survive it.**
+> `neutralize` has exactly two callers (`memory/trust.py`, `skills/instruction_injector.py`)
+> and **neither is the curated path**. It was true when written: "memory recall" then meant the
+> archive renders. `D01.1` removed `memory_context` from the prompt and `D08.1` replaced it with
+> the curated markdown files, so the mechanism cited here no longer touches the surface this item
+> names. Curated memory reaches the system prompt as **plain prose with no fence at all**.
+> Measured against the clone, the verdict is a **SPLIT**, not parity — behind on a load-time
+> snapshot re-scan and on a write-time "declarative facts, not imperatives" instruction; ahead on
+> the fence primitive, on having one unguarded writer to their three, and on trust tiering.
+> See `ESC-37` and `designs/D08.4.md`.
 
 ### D08.5 · Graph memory — `AHEAD`
 **Hermes.** One optional plugin (`holographic`) does retrieval over a store; no first-class graph.
 **StackOwl.** Kuzu adapter + entity extractor + graph reconciliation job, first-class.
 **Ask.** Keep — but does it survive the D08.1 decision?
+> **ANSWERED 2026-08-22 — it did NOT survive, and `AHEAD` now describes an inert subsystem.**
+> `graph_context_len` on `[pipeline] classify: exit` is **non-zero on 0 of 2,321 turns** over
+> eight days, while on the same records `prefs_len` and `stable_len` are non-zero on 2,321 of
+> 2,321. The one reader (`classify.py:97`) traverses entities mirrored `FROM committed_facts`,
+> and that table holds **zero rows** against `staged_facts`' 4,654. The tree already records why,
+> at `commands/memory_helpers.py:160-168`: the stage-then-promote chokepoint went with
+> `FactPromoter` in `D08.2`, `D08.1` retargeted both writers at curated memory, and
+> `committed_facts` "has held 0 rows since migration 0112 and now has no writer at all".
+> So the graph's feeder lost its writer as a **consequence** of `D08.1`. Whether it is re-fed,
+> retired or left is `ESC-39`.
 
 ---
 
@@ -492,6 +512,17 @@ conversation and its cache are never touched. Writes land directly in the stores
 detached from the turn that produced the material.
 **Gap.** Learning is not tied to the moment the lesson exists, and does not see the live conversation.
 **Ask.** Fork-per-turn vs. scheduled miner — or both? The fork is what makes their loop feel instant.
+> **CORRECTED 2026-08-22 — this entry overstates its own source on two points.**
+> (1) **It is not "after a turn".** The reference gates the review on `_memory_nudge_interval = 10`
+> and fires only when turns-since >= 10; the skill nudge is the same. And `memory_enabled`
+> **defaults to `False`**. So it is roughly 1 turn in 10, opt-in.
+> (2) **"hits the same prefix cache" buys nothing here.** `cached_input_tokens` is **0 on 104,899
+> of 104,899 cost records, all-time** — this deployment has no prompt cache for a fork to inherit.
+> Two further facts the entry's `MISSING` verdict does not survive: `tools/knowledge/reflect_now.py`
+> already reaches the SAME `ReflectionWriterHandler` in-turn, and it — along with
+> `synthesize_skills` and `evolve_now`, all three in the **guaranteed** base set and presented on
+> every turn — was called **zero times in eight days**. The gap is that the model never
+> volunteers, not that it cannot. See `ESC-41`.
 
 ### D09.2 · The review prompt itself — `MISSING`
 **Hermes.** Worth reading verbatim. It tells the fork that **"a pass that does nothing is a missed
