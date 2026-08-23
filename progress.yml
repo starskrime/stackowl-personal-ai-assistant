@@ -315,6 +315,104 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESCALATIONS_ANSWERED_2026_08_23:
+    context: >-
+      Bakir cleared the ENTIRE queue in one sitting — sixteen decisions covering every open
+      escalation, including the four raised the same evening. Two of them OVERRODE my
+      recommendation; both are recorded as his call with my reasoning kept rather than quietly
+      dropped, per the standing convention.
+    ESC_43_D09_5_scope: >-
+      BUILD /learn AS THE MAP SAYS. This OVERRIDES my recommendation to re-scope the item to
+      the read path. My objection stays on the record — a user-authored skill currently has
+      roughly a 7% chance of ever being visible — but ESC-44 largely dissolves it: the read
+      path is being fixed in the same breath, so /learn no longer ships onto a broken channel.
+      Build it in full, not narrowed.
+    ESC_44_skill_ordering: >-
+      SORT BY VALUE, KEEP BYTE-IDENTITY. The catalogue key becomes (n_executions desc,
+      lifecycle_state, name) instead of name alone. Still fully deterministic, so the block
+      stays byte-identical across turns and Law 1 is untouched — the same guarantee with a
+      better tie-break. Moves the visible ~12 slots from carrying 18 of 217 executions to
+      carrying roughly 180.
+    ESC_45_archive_cliff: >-
+      FIX RETRIEVAL FIRST, THEN RE-JUDGE. The ~92-skill archive pass does not run on a corpus
+      whose members were never SHOWN. Re-anchor or pause the idle clock until ESC-44 has
+      landed, then let decay run on skills that genuinely had a chance to be chosen. This also
+      means the 8 archived builtins are not simply accepted as correct.
+    ESC_46_synthesize_skills: >-
+      DROP FROM THE GUARANTEED BASE SET. Presentation only — the class and its nightly handler
+      stay untouched, so the capability is intact and reversal is one line.
+    ESC_39_graph_memory: >-
+      RE-FEED IT. Not retired. It died by accident of the D08.1 curated-memory migration, not
+      by judgement. CARRY THE CAVEAT FORWARD: writer and reader hash differently — the writer
+      hashes an extracted entity NAME, the reader hashes a RAW QUERY WORD across six guessed
+      types — so they match only when a name is exactly one query token, case-sensitively.
+      That is unmeasurable while the feeder is empty, so re-feeding is what will expose it and
+      the acceptance check must look for a NON-ZERO graph_context_len, never for a successful
+      write.
+    ESC_38_memory_authority: >-
+      BIND `target` TO THE CALLING OWL. Default to the caller, resolve display-name to
+      canonical name through ONE canonicaliser so "Falcon" reaches scout.md, and require an
+      explicit operator/root path for `user` and for another owl's file. Note he chose the
+      option WITHOUT orphan migration, so the five orphan files stay where they are for now —
+      moving them is separate data movement and still needs his word.
+    ESC_41_D09_1_scope: >-
+      RE-SCOPE TO A TASK ROW ON THE EXISTING DURABLE LOOP. Not a fork, not a second engine: an
+      automatic per-turn TRIGGER as a row, admission-controlled at max_parallel=5 and
+      crash-recovered by lease. Demote behind D09.2 and INVERT D09.2.depends_on so the review
+      PROMPT leads. The map's "fires per turn" claim about the reference is factually wrong
+      (nudge interval 10, memory review defaults OFF) and gets corrected regardless.
+    ESC_41_X3_dedup: >-
+      REPLACE — the miner stays the single writer. The trigger enqueues work the existing miner
+      performs. This keeps the watermark meaningful and avoids the collision I verified:
+      `reflections` is UNIQUE(trace_id) DO NOTHING (first writer wins) while `lessons` upserts
+      DO UPDATE (last writer wins), so two producers would leave the two stores disagreeing.
+    ESC_40_lesson_holdout: >-
+      CONTINUE, BUT FIX THE CONFOUND FIRST. The machine lane's t=-8.93 is too strong to dismiss
+      and too confounded to act on. Establish whether quality_score is arm-independent, THEN
+      re-read. The experiment keeps paying its price only while the price buys something
+      trustworthy. Build the comparator regardless — it needs no decision.
+    ESC_42_job_success: >-
+      JUST FIX THE JOB, LEAVE THE MAPPING. This OVERRIDES my recommendation to split the two
+      cases. Repair morning_brief's NULL target_channels so the brief is delivered; the success
+      semantics stay as designed. MY OBJECTION KEPT ON THE RECORD so a future session does not
+      re-derive it as new: the next misconfigured job will repeat this silently, because
+      "nothing was attempted because nothing was configured" still maps to True. The narrow
+      NACK-row half already shipped 2026-08-22 (a4555725), so no body is silently discarded
+      even under the unchanged mapping — which is what makes leaving it defensible.
+    ESC_19_sent_messages: >-
+      WRITE IT TO THE RECIPIENT'S BUFFER, in full, as an assistant turn at delivery time. Also
+      settles which conversation a proactive message belongs to, where reader and writer
+      currently disagree.
+    ESC_34_blocked_owl: >-
+      DROP `delegate_task` FROM ROUTER_TOOLS, leave the envelope alone. The only option that
+      contradicts no recorded decision (8c403494 — "the task envelope is a real boundary").
+      A blocked owl asks for capability via owl_build rather than borrowing someone else's —
+      AND that path must be made discoverable, since syshealth never tried it. An appeal path
+      nothing points at is a write with no reader wearing a permissions uniform.
+    ESC_36_tool_ordering: >-
+      GUARANTEE `clarify`, AND FIX THE TIE-BREAK. Promote clarify into the guaranteed set
+      beside the existing appeal tools — the same principle, one addressee over — and make the
+      tie-break for unscored tools something other than spelling. Explicitly NOT hand-ranking
+      77 tools: that is a constant that would rot exactly like the eight lockstep cap bumps.
+    ESC_35_tool_count_cap: >-
+      WINDOW-RELATIVE, BUT ONLY AFTER ESC-36. Demote tool_count_cap to an opt-out ceiling and
+      size the presented set against the resolved model window, reusing the existing
+      resolve_no_progress_threshold shape. THE ORDERING IS THE DECISION: re-sizing a set that
+      is chosen by the alphabet only changes which letters survive.
+    ESC_17_owner_key: >-
+      MAKE IT DETERMINISTIC — CAUSE FIRST. Diagnose the intermittency before migrating:
+      identity-resolution misses now log at INFO, so a few days of traffic will say why. 4 of
+      8 known misses are the retry/redraft path; the other 4 are unexplained. Migrating onto a
+      key that still resolves inconsistently would freeze the bug in place.
+    ESC_37_D08_4_verdict: >-
+      RECLASSIFY TO close_gap with the two named gaps, keeping the three AHEAD findings in the
+      item so the record does not read as "we were behind". Adopt the read-time re-scan; do NOT
+      adopt an untrusted marker. The stale REFERENCE_MAP citation is corrected regardless.
+    THE_ORDERING_THESE_DECISIONS_IMPLY: >-
+      Two hard sequencing constraints came out of the answers and must not be lost:
+      ESC-36 (tool tie-break) BEFORE ESC-35 (window-relative cap); and ESC-44 (skill ordering)
+      BEFORE ESC-45's re-judgement of the archive cliff. Both are the same principle — do not
+      re-size or prune a set until you have fixed how it is CHOSEN.
   D09_5_BRAINSTORM_PANEL_2026_08_23:
     the_verdict: >-
       ALL FIVE LENSES REJECTED THE ITEM AS WRITTEN, independently, and converged on the same
