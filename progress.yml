@@ -318,6 +318,38 @@ current:
   wave: 4
   item: D09.1
   stage: brainstorm
+  LIVE_OUTAGE_2026_08_23_T11_44Z_NOT_MINE_and_you_were_notified:
+    what: >-
+      The platform's ONLY enabled LLM backend is unreachable. `llm-gateway.dev.nera.gov`
+      DOES NOT RESOLVE — `[Errno -5] No address associated with hostname` — confirmed both
+      from the platform's own startup probe and by resolving it directly from this shell.
+    when_and_how_much: >-
+      First failure 11:44:28Z, still failing at 12:20:30Z when this was written: 36+ minutes.
+      In that hour: 180 `[registry] get_with_cascade: exit — all providers unavailable`,
+      28 `[pipeline] execute: all providers unavailable — flooring`, 127
+      `apology.resolve_cascade_tier: get_with_cascade failed`, 32 critical-failure neutral
+      fallbacks, 7 UNHEALTHY sweeps. ERRORs since boot went 11 -> 248 and WARNINGs 70 -> 410
+      in a single hour.
+    it_is_infrastructure_not_code_and_nothing_I_shipped_touches_it: >-
+      DNS for the operator's gateway host. Nothing in this session's six fixes goes near
+      provider resolution, and the failure mode is the platform's own startup probe
+      reporting a name that will not resolve. The apology/floor path is behaving correctly:
+      turns floor with a neutral fallback rather than lying.
+    THIS_IS_THE_SINGLE_PROVIDER_EXPOSURE_ESC_41_ALREADY_NAMES: >-
+      `provider_count: 1` with no cascade target, so an unreachable backend is a TOTAL
+      outage rather than a degradation. It happened on 2026-08-20 too — 14,898 circuit-open
+      skips and 777 floored turns — and that measurement is already recorded under ESC-41's
+      evidence as the reason a per-turn fork would be reckless here. This is the second
+      occurrence in four days, which strengthens that argument rather than adding a new one.
+    action_taken: >-
+      A push notification was sent, because the platform cannot answer any question while
+      this lasts and the fix is on the operator's side (DNS / VPN / the gateway host). No
+      code change and no config change was made: switching providers or editing the
+      base_url is a live user-facing decision and is not mine to take.
+    what_it_does_to_the_watches: >-
+      Nothing directly — they were already at zero for want of traffic. But it does mean the
+      idle hours were not purely "the operator is asleep": from 11:44Z onward no turn COULD
+      have succeeded, so the three open validates are now blocked twice over.
   AN_OVERNIGHT_OBSERVATION_2026_08_23_T07_20Z_recorded_not_acted_on:
     what_looked_alarming: >-
       ERRORs since boot jumped 1 -> 11 and WARNINGs 19 -> 48 in one hour, while
