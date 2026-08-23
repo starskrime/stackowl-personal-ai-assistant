@@ -15025,13 +15025,13 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  blocked
+      architect: done
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
+    doc: docs/reference-mapping/designs/D09.5.md
     doc_last_verified: null
     decisions: []
     changes: []
@@ -15072,6 +15072,35 @@ items:
       NOTE the residual reason class that this fix does NOT address: two of the refusals were
       descriptions at 61 and 62 characters against a 60-char limit. Those are real violations
       and should still be refused.
+    ARCHITECT_DONE_2026_08_23_T18_40Z: >-
+      designs/D09.5.md written to DOC_STANDARD. Ladder rung 2 — a prompt plus one thin edge
+      over the existing authoring path; explicitly NOT rung 6 (no engine, no tool schema, no
+      queue). Three pieces: a PURE build_learn_prompt(), a LearnCommand, and the seam that
+      makes the second possible.
+    THE_SEAM_IS_THE_REAL_ARCHITECTURAL_CONTENT_and_it_does_not_exist_yet: >-
+      MEASURED, not assumed. The reference feeds the built prompt back into a NORMAL turn —
+      `event.text = build_learn_prompt(...)` at gateway/run.py:11768, and the TUI returns
+      {"type":"send","message": ...}. Every surface replaces the user's message text and lets
+      the ordinary turn do the work: no engine, no schema, no second model call.
+      StackOwl cannot express that today. SlashCommand.handle() returns `str |
+      CommandResponse` (commands/base.py:39); CommandResponse is {text, actions} — display
+      text plus buttons (commands/response.py); and dispatch happens in
+      _deliver_command_stub (startup/orchestrator.py:2132), which streams the reply straight
+      to the user and NEVER enters the pipeline. `Action` replays COMMANDS, not turns. So the
+      item needs exactly ONE new response shape meaning "this text is the TURN'S INPUT, not a
+      reply". That is the durable commitment here, and it is reusable by every future command
+      that wants to steer the agent rather than answer for it.
+    A_HARD_PREREQUISITE_recorded_so_the_order_is_not_lost: >-
+      ESC-44 must be LIVE before /learn ships. My recorded objection on ESC-43 was that an
+      authored skill had roughly a 7% chance of ever being visible; Bakir's answers dissolve
+      it by fixing both, but only in that order. Shipping the front door first manufactures a
+      promise the platform cannot keep.
+    WHAT_THE_MAP_GOT_WRONG_corrected_in_the_doc: >-
+      `synthesize_skills` is not the counterpart to the reference's /learn — its parameters
+      are literally {} so it cannot be aimed at anything, and its own ANTI-LANE redirects the
+      model to skill_manage, which is what the reference's prompt targets too. The authoring
+      CAPABILITY was never missing (17 agent_self:skill_manage creates, one at 16:29:08 the
+      same day). What was missing is a named front door that also carries the standards.
     notes: >-
       ROUND 0 MEASURED 2026-08-23T17:30Z. Picked up because D09.1 (ESC-41), D08.5
       (ESC-39) and D08.4 (traffic) are all blocked, and D09.5 is the earliest item
