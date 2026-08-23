@@ -69,6 +69,47 @@ class Skill:
     standard_version: int = 0
 
 
+#: Rank for the catalogue's second term. `archived` is already excluded from
+#: every read path, so it only appears here for completeness; an unrecognised
+#: state sorts last rather than raising, because a row written by a future
+#: migration must never be able to break prompt assembly.
+_LIFECYCLE_ORDER: dict[str, int] = {"active": 0, "stale": 1, "archived": 2}
+
+
+def catalogue_order_key(sk: Skill) -> tuple[int, int, str]:
+    """Order skills for the injected catalogue by VALUE, not by spelling.
+
+    ESC-44, decided by Bakir 2026-08-23. The catalogue is capped at 4,000
+    characters against 160 enabled skills, so it truncates on essentially every
+    turn — 2,460 truncation records in the retained window, dropping 146-149 each
+    time. Sorting by name meant the survivors were chosen by the ALPHABET: the
+    visible dozen carried ~18 executions while the invisible tail carried ~199,
+    so roughly 92% of all measured skill usage never reached the model. The four
+    most-used skills in the corpus all begin with "s" and were dropped every turn.
+
+    LAW 1 IS PRESERVED, AND THAT IS THE POINT. The previous sort existed so the
+    block would be byte-identical across turns (see the caller's comment) — that
+    needs a DETERMINISTIC key, not an alphabetical one. This key is equally
+    deterministic and, because `name` is its final term, TOTAL: two distinct
+    skills can never compare equal, so the rendered block can never depend on the
+    order SQLite happened to return rows in. A value-ordered catalogue that was
+    not perfectly stable would defeat the caching the old sort was careful to keep.
+
+    Second term is the lifecycle state because the only stale penalty anywhere in
+    the tree is `_STALE_RANK_PENALTY`, applied inside :meth:`hybrid_recall` — which
+    has ZERO callers in ``src/``. So 92 stale skills were competing on equal terms
+    with active ones. This is the first place that penalty actually applies.
+
+    On a fresh install with no usage anywhere the first two terms are constant and
+    the order collapses to the alphabetical one it has always been, so nothing
+    regresses before there is a signal to order by.
+    """
+    runs = getattr(sk, "n_executions", 0) or 0
+    state = str(getattr(sk, "lifecycle_state", "active") or "active")
+    return (-int(runs), _LIFECYCLE_ORDER.get(state, len(_LIFECYCLE_ORDER)),
+            str(getattr(sk, "name", "") or ""))
+
+
 @dataclass(frozen=True)
 class SkillAuditEntry:
     """Read-side projection of one ``skill_audit`` row."""

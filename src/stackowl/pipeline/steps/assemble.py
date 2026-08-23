@@ -23,6 +23,7 @@ from stackowl.skills.instruction_injector import (
     SkillInstructionInjector,
     SkillTier,
 )
+from stackowl.skills.store import catalogue_order_key
 
 #: THE ONE LIST. Every part of the composed system prompt, in composed ORDER.
 #:
@@ -302,9 +303,17 @@ async def run(state: PipelineState) -> PipelineState:
             # the order the store happens to return rows in — an unstable
             # ordering would defeat the whole point as surely as an unstable
             # selection.
-            catalogue: list[Any] = sorted(
-                [*owned, *unowned], key=lambda sk: (getattr(sk, "name", "") or ""),
-            )
+            #
+            # ESC-44: the key used to be the NAME alone, and since the catalogue
+            # truncates on essentially every turn (2,460 truncation records in the
+            # retained window, dropping 146-149 of 160) that meant the survivors
+            # were chosen by the alphabet — the visible dozen carried ~18
+            # executions against ~199 in the invisible tail. `catalogue_order_key`
+            # is equally deterministic and still TOTAL (name is its final term),
+            # so byte-identity and Law 1 are untouched; only the tie-break moves
+            # from spelling to measured value. One source, so no second caller can
+            # grow a divergent copy of the rule.
+            catalogue: list[Any] = sorted([*owned, *unowned], key=catalogue_order_key)
             # SUMMARY, not CATALOG. Q9 asks for names AND descriptions; the
             # CATALOG tier renders bare names ("deploy, pdf") while SUMMARY
             # renders "- name: description — when_to_use (skill_view name)",
