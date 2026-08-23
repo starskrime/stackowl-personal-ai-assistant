@@ -15101,11 +15101,11 @@ items:
     stages:
       brainstorm: done
       architect: done
-      implement: partial
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: partial
     doc: docs/reference-mapping/designs/D09.5.md
     doc_last_verified: null
     decisions: []
@@ -15216,6 +15216,39 @@ items:
       did not fire and the command fell through to _deliver_command_stub — which is exactly
       what LearnCommand.handle deliberately returns, so the failure is visible rather than
       silent.
+    IMPLEMENT_DONE_AND_LIVE_2026_08_23_T19_23Z: >-
+      Commit 2379f351. RESTART VERIFIED, NOT ASSUMED: last src write 19:22:20Z, core boot
+      19:22:56Z — 36 seconds later. And REGISTRATION verified from the running process rather
+      than from the code: `[commands] assembly.register_all_commands: exit` at 19:23:18 lists
+      33 commands with "learn" among them, and the shipped-surface guard flagged nothing.
+      That is the difference between "registered" and "reachable" this codebase has paid for
+      repeatedly.
+    CLEANUP_no_change_needed: >-
+      dedup_target is None and the item created no duplicate rule. The one thing it could have
+      duplicated — the authoring standard — is REFERENCED via standard.describe_for_prompt(),
+      and a test reads learn_prompt.py's own source to assert the standard's text does not
+      appear there as a literal.
+    TEST_DONE: >-
+      tests/commands 358 passed (includes the reachability + SHIPPED_COMMANDS guard),
+      tests/startup + tests/gateway 284 passed, tests/skills learn_prompt 12, plus the
+      authoring-standard suites. Baselines held at exactly ruff 37 / mypy 65 throughout.
+    VALIDATE_IS_OPEN_AND_NEEDS_ONE_REAL_INVOCATION: >-
+      Everything that can be evidenced without a user has been. What remains cannot: the seam
+      only fires when someone actually types /learn, and I will not invoke it on Bakir's own
+      platform to manufacture my own evidence.
+      CLOSING QUERY, already known to run: grep the JSONL for "[startup] gateway: command
+      contributed a TURN PROMPT". PASS = that INFO line appears with cmd=learn, followed IN
+      THE SAME TRACE by a skill_manage create in skill_audit.
+      FAIL, named in advance so it cannot be explained away: if the PROMPT TEXT appears as the
+      user-visible reply, the seam did not fire and dispatch fell through to
+      _deliver_command_stub. LearnCommand.handle returns that text deliberately, so this
+      failure is loud rather than silent.
+      NOTE the coverage gap this compensates for: _dispatch_turn is hand-copied in three test
+      files, none of which carry the seam, so live traffic is the ONLY evidence available for
+      the rewrite itself.
+    DOCUMENT_PARTIAL: >-
+      designs/D09.5.md is written to DOC_STANDARD but its Verification section has four checks
+      that pass and one (the live invocation) that is open, so it is not stamped Last-verified.
     notes: >-
       ROUND 0 MEASURED 2026-08-23T17:30Z. Picked up because D09.1 (ESC-41), D08.5
       (ESC-39) and D08.4 (traffic) are all blocked, and D09.5 is the earliest item
