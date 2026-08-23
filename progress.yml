@@ -14636,8 +14636,8 @@ items:
   - id: D08.4
     title: "Memory as prompt-injection surface"
     domain: D08
-    verdict: PARITY
-    track: verify
+    verdict: SPLIT
+    track: close_gap
     priority: P3
     wave: 4
     order: 25
@@ -14832,12 +14832,12 @@ items:
     domain: D09
     verdict: MISSING
     track: adopt
-    priority: P1
+    priority: P2
     wave: 4
     order: 27
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d091"
     gap: "Learning is not tied to the moment the lesson exists, and does not see the live conversation."
-    depends_on: [D01.1]
+    depends_on: ['D01.1', 'D09.2']
     blocks: [D09.2, D09.4]
     dedup_target: X3
     stages:
@@ -14864,7 +14864,7 @@ items:
     order: 28
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d092"
     gap: "We treat correction as a setting; they treat it as procedural knowledge."
-    depends_on: [D09.1]
+    depends_on: []
     blocks: []
     dedup_target: null
     stages:
