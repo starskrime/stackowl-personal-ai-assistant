@@ -168,10 +168,30 @@ class SkillInstructionInjector:
             dropped = len(catalog) - len(shown)
             line = ", ".join(shown)
             if dropped > 0:
-                line += f" (+{dropped} more — skill_view to list)"
+                # skills_list ENUMERATES; skill_view LOADS ONE BY EXACT NAME.
+                # This line used to say "skill_view to list", which is the one
+                # thing skill_view cannot do — its schema is
+                # {"required": ["name"]} and its own not-found message says
+                # "Use skills_list to see available skills". So the only pointer
+                # out of the dropped tail named a tool that cannot enumerate,
+                # and a name the model has not already seen is unguessable.
+                # presentation.py:81 states the intended pairing directly: an owl
+                # must "always find (skills_list) and load (skill_view)".
+                line += f" (+{dropped} more — skills_list to enumerate them)"
                 log.engine.warning(
                     "skill injection: catalog truncated by budget",
-                    extra={"_fields": {"owl": owl_name, "dropped": dropped}},
+                    extra={"_fields": {
+                        "owl": owl_name,
+                        "dropped": dropped,
+                        "presented": len(full) + len(summary) + len(shown),
+                        # The COUNT alone cannot say which capability went
+                        # missing, and the selection is by name order, so the
+                        # boundary is the fact worth recording. Same lesson as
+                        # D05.8's dropped[:20]: a truncated field read as a
+                        # complete answer.
+                        "last_presented": shown[-1] if shown else None,
+                        "first_dropped": catalog[len(shown)] if dropped else None,
+                    }},
                 )
             parts.append(line)
         result = "\n".join(parts)

@@ -149,6 +149,29 @@ def _known_tool_names() -> frozenset[str] | None:
 
     None means the tool-name rule is SKIPPED rather than failed — a registry
     that is unavailable must never block the agent from learning.
+
+    THIS FAILED CLOSED FOR SIXTEEN DAYS. It used to read
+    ``getattr(registry, "names", None)`` and return
+    ``frozenset(names() if callable(names) else names or ())``. ``ToolRegistry``
+    has no ``names`` member — its accessor is :meth:`ToolRegistry.all`, returning
+    ``list[Tool]`` — so the getattr yielded None, ``None or ()`` yielded ``()``,
+    and the function returned an EMPTY FROZENSET instead of the ``None`` promised
+    directly above. ``validate_body`` then took its ``known_tools is not None``
+    branch with nothing known, so every backticked tool name in every skill body
+    became a violation.
+
+    MEASURED CONSEQUENCE: ``agent:synthesizer``'s last successful create was
+    2026-08-07T08:30:40Z. It kept drafting five skills a night and having all
+    five refused — 41 ``gated write refused`` lines across the retained window,
+    five of them this morning — with ``web_fetch`` and ``web_search``, both in the
+    guaranteed always-present base set, reported as "not registered tools". The
+    scheduler recorded the job as completed every time.
+
+    So there are two defects here and the fix addresses both. The accessor is now
+    the real one, and — the part that matters more — an empty answer is treated as
+    NO KNOWLEDGE rather than as knowledge that nothing exists. A registry which is
+    merely not populated yet (boot, a partial init) must skip the rule, exactly as
+    the docstring has always said.
     """
     try:
         from stackowl.pipeline.services import get_services
@@ -156,10 +179,35 @@ def _known_tool_names() -> frozenset[str] | None:
         registry = getattr(get_services(), "tool_registry", None)
         if registry is None:
             return None
-        names = getattr(registry, "names", None)
-        return frozenset(names() if callable(names) else names or ())
+
+        names: set[str] = set()
+        # Honour a `names` accessor if some registry shape offers one — the fix
+        # is to WIDEN what can answer, not to swap one hard-coded accessor for
+        # another and re-run this bug from the other side.
+        accessor = getattr(registry, "names", None)
+        if accessor is not None:
+            raw = accessor() if callable(accessor) else accessor
+            names = {str(n) for n in (raw or ())}
+        if not names:
+            all_tools = getattr(registry, "all", None)
+            if callable(all_tools):
+                names = {
+                    str(t.name) for t in (all_tools() or ())
+                    if getattr(t, "name", None)
+                }
+
+        if not names:
+            # An empty set is not an answer. Returning it would fail every write
+            # that cites any tool at all, which is precisely the outage above.
+            log.skills.warning(
+                "[skills] standard: the tool registry named no tools — SKIPPING "
+                "the tool-name rule rather than failing every backticked name",
+                extra={"_fields": {"registry": type(registry).__name__}},
+            )
+            return None
+        return frozenset(names)
     except Exception as exc:  # noqa: BLE001 — never block authoring on this
-        log.skills.debug(
+        log.skills.warning(
             "[skills] standard: tool registry unavailable — skipping the "
             "tool-name rule for this write",
             exc_info=exc,

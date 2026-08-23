@@ -315,6 +315,63 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D09_5_BRAINSTORM_PANEL_2026_08_23:
+    the_verdict: >-
+      ALL FIVE LENSES REJECTED THE ITEM AS WRITTEN, independently, and converged on the same
+      replacement. Nobody argued for building /learn. The disagreements were about what to do
+      instead, and one of them turned out to be the finding of the round.
+    what_they_agreed_on: >-
+      The corpus is write-mostly and its READ path is broken. Authoring is not the bottleneck:
+      the user-initiated path already exists (`skill_manage`, 17 creates, one today) and the
+      autonomous one already produced 101 skills. What no path provides is FINDING a skill
+      once written. Adding a sixth way to write into a corpus whose reader discards ~92% of
+      it makes the measured defect worse, not better.
+    THE_FINDING_OF_THE_ROUND_and_it_is_a_LIVE_OUTAGE: >-
+      The Improvement lens found that autonomous skill authoring has been DEAD FOR SIXTEEN
+      DAYS. `agent:synthesizer`'s last successful create was 2026-08-07T08:30:40Z. It has run
+      every night since, drafted five skills, and had all five refused — 41 `[synth]
+      synthesize_one: gated write refused` records across the retained window, five of them
+      this morning at 08:31-08:36 — while the scheduler recorded the job COMPLETED each time.
+      Nothing noticed for sixteen days. FIXED THIS SESSION; see below.
+    A_DISAGREEMENT_I_RESOLVED_BY_MEASURING_RATHER_THAN_AVERAGING: >-
+      Improvement said the synthesizer dies at the authoring-standard gate. Future-proof said
+      it dies on an open provider circuit, citing the job row's last_error ("no provider for
+      tier fast ... circuit open"). Both cited real evidence. The log settles it and shows
+      they describe DIFFERENT PHASES of the same run: today at 08:30:27 `run_all: entry`, then
+      five `gated write refused` at 08:31:57-08:36:50, then `discover: exit` — the drafts were
+      produced (so the LLM worked) and the VALIDATOR refused them. The circuit-open error is
+      stamped afterwards by the refine phase. Improvement's root cause is the one on the
+      create path. Reading the job row alone would have sent the fix to the wrong subsystem.
+    CORRECTIONS_TO_MY_OWN_ROUND_0_both_material: >-
+      (1) I wrote that DEBT-42 "largely worked" because only 4 of 77 near-duplicate pairs
+      postdate it. That inference is CONFOUNDED: the synthesizer stopped producing anything at
+      all on 2026-08-07, duplicates included. The low post-fix rate is mostly an outage, not a
+      fix working. (2) I recommended wiring the synthesizer's dedup into `skill_manage._create`.
+      Two lenses refuted it and I verified them: `_reinforce_if_known` matches on
+      `standard.base_name`, which only strips a `-N` suffix, so it would NOT have caught
+      today's `instagram-video-download` / `download-instagram-video` permutation either.
+      Worse, it calls `increment_n_executions`, which stamps `last_used_at` and revives the
+      row to `active` — copying it into a create path would fake a use that never happened and
+      corrupt the only usage signal there is. The recommendation is withdrawn.
+    WHAT_I_SHIPPED_because_neither_needed_a_decision_from_you: >-
+      (1) The 16-day outage: `authoring._known_tool_names` read `getattr(registry, "names")`,
+      but ToolRegistry has no such member — its accessor is `all()`. So it returned an EMPTY
+      frozenset instead of the None its own docstring promises, and `validate_body` treated
+      "nothing is known" as knowledge, making every backticked tool name a violation. Now
+      reads the real accessor AND treats an empty answer as no-knowledge (skip the rule), which
+      is the fail-open the docstring always described. Both skip paths raised debug -> warning.
+      (2) The escape hatch out of the truncated catalogue said "skill_view to list";
+      skill_view is the one tool that cannot list (required: ["name"], and its own miss message
+      says to use skills_list). Now names skills_list, and the truncation record carries
+      last_presented / first_dropped so the cut is diagnosable instead of just counted.
+    WHY_NO_TEST_CAUGHT_THE_OUTAGE_defect_shape_2_verbatim: >-
+      All twelve `known_tools=` call sites in test_authoring_standard.py pass a literal
+      frozenset. Not one ever constructed a real ToolRegistry. The validator was covered; the
+      BRIDGE from registry to validator was not, and the entire bug lived in the bridge. The
+      new test derives its expectation from the registry itself rather than a hand-written
+      list, so it cannot drift the same way.
+    ESCALATED_not_decided: ESC-43 (what the item becomes), ESC-44 (alphabetical selection),
+      ESC-45 (the ~9-day archive cliff), ESC-46 (drop synthesize_skills from the base set).
   WHY_current_MOVED_OFF_D09_1_2026_08_23_T17_30Z: >-
     D09.1 is blocked on ESC-41 (every lens rejected the fork), D08.5 on ESC-39, and D08.4's
     remaining two invariants need traffic shapes that have not occurred. D09.2 and D09.4 both
@@ -2693,6 +2750,103 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-43-D09.5s-premise-was-rejected-by-all-five-lenses-so-what-is-the-item
+    raised: 2026-08-23
+    question: >-
+      The map records D09.5 as MISSING / adopt and asks "move ours to a slash command? Same
+      capability, zero schema cost." All five lenses rejected that framing, independently and
+      for the same measured reason. Is D09.5 (a) re-scoped to the read path, (b) demoted, or
+      (c) kept as written and I build /learn anyway?
+    why_evidence_cannot_settle_it: >-
+      Evidence settled the FACTS and they are not in dispute. What is left is your call on
+      product scope, and re-scoping a mapped item contradicts a recorded verdict — which the
+      process says I escalate rather than decide.
+    what_the_evidence_says: >-
+      The map compares the wrong pair. The reference's learn_prompt.py targets `skill_manage`
+      (action=create) — which StackOwl already has, in the guaranteed base set, and which has
+      authored 17 skills including one at 16:29:08 today. `synthesize_skills` is not its
+      counterpart: its parameters are literally `{}` (it cannot be pointed at a directory, a
+      URL, or "what we just did") and its own description carries an ANTI-LANE telling the
+      model to use `skill_manage` for exactly the job /learn does. So the user-initiated
+      capability already exists and is used; what does not exist is a way to FIND what was
+      authored.
+    recommendation: >-
+      (a) Re-scope to the read path, keeping the item id. The one genuinely portable thing in
+      learn_prompt.py is its authoring-standards text — put it where every writer passes
+      rather than behind a new command.
+    blocks: D09.5 architect. Nothing else.
+  - id: ESC-44-which-skills-the-model-can-see-is-decided-by-the-ALPHABET
+    raised: 2026-08-23
+    question: >-
+      `assemble.py:305` sorts the skill catalogue by NAME, and `instruction_injector`
+      truncates it at a 4,000-char cap. May I change the sort key to something value-ordered
+      (e.g. n_executions desc, then lifecycle_state, then name)?
+    why_evidence_cannot_settle_it: >-
+      Because the alphabetical sort is a RECORDED DELIBERATE DECISION, not an oversight. The
+      comment at assemble.py:302-304 says it exists so the block is byte-identical across
+      turns — that is Law 1, prompt caching, and D01.1 slice 4b chose it on purpose. A panel
+      answer that contradicts a recorded decision is yours, not mine.
+    THE_MEASUREMENT: >-
+      2,460 `skill injection: catalog truncated by budget` records in the retained 9-day
+      window, carrying dropped=146..149. Reproducing the render against the live store: the
+      model sees roughly 12-14 of 160 enabled skills, cut alphabetically around the letter
+      "c". The selection is ANTI-CORRELATED with value — skills inside the visible window
+      account for ~18 executions; the invisible tail accounts for ~199. Roughly 92% of all
+      measured skill usage is invisible to the model. The four most-used skills in the whole
+      corpus (structure-incident-evidence and its near-twins, 45/43/23/13 runs) all begin
+      with "s" and are dropped on every single turn.
+    the_reason_this_is_safe_to_change_if_you_want_it: >-
+      Byte-identity is preserved by ANY deterministic key. Sorting by (n_executions desc,
+      lifecycle_state, name) is still identical turn-to-turn, so Law 1 is untouched — it is
+      the same guarantee with a better tie-break. That is why two lenses independently
+      proposed it. I have NOT made this change.
+    blocks: >-
+      The largest single improvement available in this subsystem. Also gates any honest
+      answer to "are the 128 never-executed skills dead weight, or were they never shown?"
+  - id: ESC-45-92-stale-skills-reach-the-archive-cliff-in-about-nine-days
+    raised: 2026-08-23
+    question: >-
+      92 enabled learned skills are `stale` and sit around 51 days idle against
+      ARCHIVE_AFTER_DAYS = 60 (lifecycle.py). The curator is live and ran today at 09:00Z.
+      In roughly nine days it will archive them in essentially one pass. Do you want that?
+    why_evidence_cannot_settle_it: >-
+      It is bulk removal of user-facing capability, which the process says I stop on — and it
+      collides head-on with two of your standing rules: everything ships ENABLED, and never
+      disable existing features without asking.
+    IT_HAS_ALREADY_HAPPENED_ONCE_QUIETLY: >-
+      8 of the 14 hand-shipped BUILTINS are already archived for non-use — chunked-pdf-summary,
+      code-exec-sandboxed, delegate-or-debate, document-extract, media-generate, plan-and-track,
+      recover-and-retry, web-automation. Every one is enabled=1 and excluded from every read
+      path. Read together with ESC-44 this is the sharp part: they were not shown, then
+      retired for not being used. Lifecycle punished them for retrieval's failure.
+      Also relevant: 0 of 169 skills are pinned, so the operator's only veto has never been used.
+    recommendation: >-
+      Do not let the pass run unexamined. Either anchor idle-time on something that reflects
+      whether a skill could ever have been CHOSEN, or pin the survivors first. But this is
+      your decision and I have changed nothing.
+    blocks: nothing mechanically. It is on a ~9-day timer.
+  - id: ESC-46-may-I-drop-synthesize_skills-from-the-guaranteed-base-set
+    raised: 2026-08-23
+    question: >-
+      `synthesize_skills` has ZERO calls in two independent sources — the JSONL log over the
+      full retained window and side_effect_ledger over 55 days / 1,752 rows — yet holds a
+      GUARANTEED slot in every owl's presented tool list (presentation.py:76) under a cap
+      measured at median 30 / p90 36. May I remove it from the base set?
+    why_evidence_cannot_settle_it: >-
+      It is removing something user-facing, and it touches the self-extension rule. Evidence
+      says it is unused; only you can say whether unused means removable.
+    what_the_evidence_says: >-
+      It is not unreachable — a reachability probe asserts it is presented on every turn. It
+      is LANE-LESS: its parameters are `{}` so it cannot be aimed at anything, and its own
+      ANTI-LANE forbids the one thing a user ever asks for. What is left ("mine my own past
+      successes") is a cron's job description, and the cron already runs it nightly. Zero
+      calls is the correct behaviour of a correctly-presented tool with an empty lane.
+      Removing it costs no capability: skill_manage, tool_build, owl_build, reflect_now and
+      evolve_now all stay, so self-extension survives intact.
+    recommendation: >-
+      Yes — remove it from the base set only, leaving the class and its nightly handler
+      untouched. Reversal is one line. I have NOT done it.
+    blocks: nothing. Pure reclaim of one guaranteed slot.
   - id: ESC-42-the-platforms-self-reports-are-dropped-and-recorded-as-successes
     raised: 2026-08-22
     THE_UNBLOCKED_HALF_SHIPPED_AND_IS_VALIDATED_LIVE_2026_08_22_T23_52Z: >-
