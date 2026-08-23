@@ -22,6 +22,7 @@ Per the wiring plan (gleaming-finding-puppy.md, Commit E):
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -1217,6 +1218,95 @@ def _next_local_hour_iso(hour: int) -> str:
     return candidate.astimezone(UTC).isoformat()
 
 
+_REPAIR_TARGET_SQL = (
+    "UPDATE jobs SET target_channels = ?, target_addresses = ? WHERE job_id = ?"
+)
+_SELECT_TARGETS_SQL = (
+    "SELECT job_id, target_channels, target_addresses FROM jobs "
+    "WHERE handler_name = ?"
+)
+
+
+async def _repair_missing_target(
+    db: DbPool,
+    *,
+    handler_name: str,
+    target_channels: list[str] | None,
+    target_addresses: dict[str, str | int] | None,
+) -> bool:
+    """Stamp a destination onto an EXISTING job row that has none. ESC-42.
+
+    WHY THIS EXISTS. `_seed_daily_schedule` is create-only: if a row is present it
+    returns a noop, and that noop is logged at DEBUG, which production does not
+    emit. So a row seeded when no address was resolvable — before the target
+    columns existed, or before telegram had a resolvable owner — is frozen in that
+    state forever, and correcting the SETTINGS afterwards changes nothing.
+
+    MEASURED 2026-08-23: `morning_brief-15904936` has target_channels NULL, so
+    deliver_for_job attempts zero channels and returns "undeliverable"; the
+    operator's daily brief had not reached him in 14 days. And the configuration
+    was CORRECT the whole time — settings.brief.channels is ['telegram'] and
+    _resolve_owner_addresses returns {'telegram': 72055773} right now. The seeder
+    would produce a deliverable row today; it simply can never run again.
+
+    A REPAIR, NOT A RE-SEED. The row may carry operator intent — a changed
+    schedule, a disable, a status. This writes ONLY the two target columns, only
+    when they are empty, and only when a destination actually resolves. It never
+    overwrites a target the operator set.
+
+    Never raises: this runs during startup assembly, and a delivery address must
+    not be able to take the scheduler down.
+    """
+    if not target_channels or not target_addresses:
+        # Nothing to stamp. Writing an empty target would rewrite the row to the
+        # state it is already in and claim a repair that did nothing.
+        return False
+    try:
+        rows = await db.fetch_all(_SELECT_TARGETS_SQL, (handler_name,))
+        if not rows:
+            return False  # the create path owns this case; never invent a row
+        repaired = False
+        for row in rows:
+            existing = row.get("target_channels")
+            if isinstance(existing, str | bytes):
+                try:
+                    existing = json.loads(existing)
+                except (ValueError, TypeError):
+                    existing = None
+            if existing:
+                continue  # a real destination — the operator's, not ours to move
+            job_id = row.get("job_id")
+            await db.execute(
+                _REPAIR_TARGET_SQL,
+                (
+                    json.dumps(list(target_channels), separators=(",", ":")),
+                    json.dumps(dict(target_addresses), separators=(",", ":")),
+                    job_id,
+                ),
+            )
+            repaired = True
+            # INFO, not debug. The DEBUG "already present — noop" is precisely why
+            # this went unnoticed for 14 days; the repair must be visible.
+            log.scheduler.info(
+                "[scheduler] schedule seed: REPAIRED a target-less job row — it "
+                "was created before a destination resolved and could never be "
+                "delivered",
+                extra={"_fields": {
+                    "handler": handler_name, "job_id": job_id,
+                    "channels": list(target_channels),
+                }},
+            )
+        return repaired
+    except Exception as exc:  # noqa: BLE001 — must never break startup assembly
+        log.scheduler.error(
+            "[scheduler] schedule seed: target repair failed — the job keeps its "
+            "current (possibly undeliverable) target",
+            exc_info=exc,
+            extra={"_fields": {"handler": handler_name}},
+        )
+        return False
+
+
 async def _seed_daily_schedule(
     db: DbPool,
     *,
@@ -1236,6 +1326,14 @@ async def _seed_daily_schedule(
     """
     existing = await db.fetch_all(_SELECT_EXISTING_SQL, (handler_name,))
     if existing:
+        # ESC-42 — NOT an unconditional noop any more. A row seeded before a
+        # destination resolved could never be repaired, and the brief went
+        # undeliverable for 14 days while the settings were correct throughout.
+        # Fills in a MISSING target only; never moves one the operator set.
+        await _repair_missing_target(
+            db, handler_name=handler_name,
+            target_channels=target_channels, target_addresses=target_addresses,
+        )
         log.scheduler.debug(
             "[scheduler] schedule seed: already present — noop",
             extra={"_fields": {"handler": handler_name}},

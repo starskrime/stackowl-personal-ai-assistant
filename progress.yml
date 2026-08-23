@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_42_JOB_FIX_SHIPPED_AND_LIVE_2026_08_23_T21_17Z:
+    what_bakir_decided: Just fix the job, leave the success mapping.
+    MEASURING_FIRST_FOUND_THE_JOB_WAS_NOT_MISCONFIGURED: >-
+      settings.brief.channels is ['telegram'] and _resolve_owner_addresses returns
+      {'telegram': 72055773} — read live, both correct, and correct all along. The seeder
+      would produce a deliverable row today if it ran.
+    THE_ROOT_CAUSE_is_that_it_cannot_run: >-
+      _seed_daily_schedule is CREATE-ONLY: `existing = fetch_all(...); if existing: log.debug
+      ("already present — noop"); return`. So a row seeded before a destination resolved —
+      before the target columns existed, or before telegram had a resolvable owner — is
+      frozen in that state forever, and correcting the settings afterwards changes nothing.
+      The noop that decides this is logged at DEBUG, which production does not emit, which is
+      why it hid for 14 days. Failure mode 1 again: the create path wired, the repair path
+      absent.
+      Hand-editing morning_brief's row would have "fixed the job" and left the same latent
+      trap on every other seeded handler.
+    a_measurement_that_reframed_the_whole_escalation: >-
+      NULL target_channels is the NORM, not the anomaly — only 6 of ~100 job rows carry a
+      destination, and nearly all the rest are internal sweeps (retry_sweep, db_reclaim,
+      turn_sweep) that correctly have none. So "NULL channels" was never the signal. The
+      signal is a USER-FACING handler whose row lacks one.
+    the_fix_is_a_REPAIR_not_a_reseed: >-
+      Writes ONLY the two target columns, only when they are empty, only when a destination
+      actually resolves, and never moves one the operator set. Six tests pin the ways an
+      over-eager version would be wrong: overwriting a real target, stamping an empty one,
+      inventing a row, touching schedule/enabled/status/next_run_at/params, and raising
+      during startup assembly. Logs at INFO — the DEBUG noop is precisely what hid this.
+    LIVE_EFFECT_VERIFIED_IN_THE_DATABASE_not_the_log: >-
+      RESTART VERIFIED: last src write 21:16:21Z, core boot 21:16:59Z (38s). At 21:17:21Z:
+      "[scheduler] schedule seed: REPAIRED a target-less job row" for
+      morning_brief-15904936, channels ['telegram'].
+      The row now reads target_channels ["telegram"], target_addresses
+      {"telegram":72055773} — with schedule daily@08:00, enabled 1, status pending and
+      next_run_at ALL PRESERVED, which is the invariant that distinguishes a repair from a
+      re-seed. Jobs holding a durable target went 6 -> 7, and there is exactly ONE repair
+      record across every retained log, so nothing else was touched.
+    a_false_alarm_i_raised_against_myself_and_then_withdrew: >-
+      I nearly reported the 6 -> 7 delta as untrustworthy because `owl_lifecycle-*` rows
+      appeared to vanish and `goal_execution` seemed to double. Investigating rather than
+      asserting: the owl_lifecycle-* JOB_IDS are stored under handler_name='goal_execution'.
+      I had grouped an earlier dump by job_id prefix and read them as a separate handler. The
+      population never shifted and the delta is sound. Recorded because the instinct to check
+      was right and the suspicion was wrong — a job_id prefix is not a handler name.
+    still_open_by_bakirs_choice: >-
+      The SUCCESS MAPPING is unchanged, as decided. My objection stays on the record: the next
+      misconfigured user-facing job will still map "nothing was attempted because nothing was
+      configured" to True. The narrow NACK-row half shipped 2026-08-22 (a4555725), so no body
+      is silently discarded even under the unchanged mapping — which is what makes leaving it
+      defensible rather than merely accepted.
   ESC_34_IMPLEMENTED_2026_08_23_T21_05Z:
     decided: >-
       Drop `delegate_task` from ROUTER_TOOLS, leave the task envelope alone, and make the
