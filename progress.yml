@@ -315,6 +315,98 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  A_PROCESS_FAILURE_I_SHIPPED_2026_08_23_T22_40Z:
+    what_happened: >-
+      ESC-34 was committed (7a6ed508) and reported GREEN on tests/authz + tests/owls, 393
+      passed. It was not green. `tests/tools/meta/test_an_owl_can_reach_the_ask.py::
+      test_the_router_still_carries_what_it_always_did` asserts
+      {"delegate_task","tool_search","tool_describe"} <= ROUTER_TOOLS and had been RED from
+      the moment that commit landed. It surfaced only because an unrelated ESC-38 run
+      happened to include tests/tools.
+    THE_ROOT_CAUSE_IS_HOW_I_CHOSE_THE_SUITES: >-
+      I picked test directories by WHERE I EDITED — I changed owls/tool_presets.py and
+      authz/bounds_guard.py, so I ran tests/owls and tests/authz. The rule I was following
+      says "run the whole directory suite before claiming green", and I did: the WRONG
+      directories. What matters is not where the edit lives but WHO IMPORTS IT.
+      `grep -rln "ROUTER_TOOLS\|tool_presets" tests/` returns EIGHT files across FIVE
+      directories — tests/tools/meta, tests/pipeline, tests/journeys, tests/authz,
+      tests/owls. I ran two of the five. One grep, which I did not run, would have told me.
+    THE_STANDING_RULE_THIS_SHARPENS: >-
+      "Run the whole directory suite before claiming green" is necessary and not sufficient.
+      The operative question is: run the suites that IMPORT WHAT YOU CHANGED. For a shared
+      constant like ROUTER_TOOLS — a frozenset that lands in every built owl's ceiling — the
+      blast radius is wherever it is imported, which is exactly what a shared constant means
+      and exactly why edit-location is the wrong proxy.
+    what_made_it_visible_was_luck_not_diligence: >-
+      A DIFFERENT test caught it: tests/tools/knowledge/test_memory_target_is_steered.py::
+      test_it_stays_short_enough_to_ship_every_call failed because my new memory `target`
+      description was 497 chars against a documented <420 budget (Law 2 — this text ships on
+      EVERY call). That failure is legitimate and mine; I shortened the description to 344
+      rather than raise the limit. But it is the only reason tests/tools ran at all in that
+      window, and therefore the only reason the ESC-34 red surfaced instead of sitting there.
+    the_correction: >-
+      test_the_router_still_carries_what_it_always_did is renamed
+      test_the_router_never_strands_a_narrow_owl and now asserts the discovery pair remains
+      AND delegate_task is absent, with the ESC-34 reasoning in its docstring — so a silent
+      re-add fails in a THIRD place. Every one of the eight importing files has now been run:
+      657 passed across tests/tools/meta + tests/authz + tests/owls + the memory tests, with
+      tests/pipeline and tests/journeys following.
+  ESC_38_IMPLEMENTED_2026_08_23_T22_00Z:
+    decided: >-
+      Bind `target` to the calling owl by default, resolve display-name to canonical name
+      through ONE canonicaliser, require operator/root for `user` and for another owl's file.
+      Bakir chose the option WITHOUT orphan migration, so the eight existing orphan files
+      stay where they are.
+    THE_AUTHORITY_HOLE_AND_THE_ORPHANS_ARE_ONE_DEFECT: >-
+      MemoryTool._target was `str(kwargs.get("target") or "user").strip()` — a @staticmethod
+      taking only kwargs, so the calling owl was structurally unavailable to it. Path
+      traversal was already closed (CuratedMemory.path_for validates the filename SHAPE), but
+      SHAPE IS NOT IDENTITY: `Collector` is a perfectly safe filename and entirely the wrong
+      file.
+    THE_DEFAULT_WAS_THE_WORST_PART: >-
+      _DEFAULT_TARGET was "user", so every write that merely OMITTED `target` landed in
+      USER.md — the file every owl reads and which sits in every prompt — by omission rather
+      than by intent. The default is now the calling owl's own notes.
+    THE_ORPHAN_MECHANISM_MEASURED_2026_08_23: >-
+      8 of 13 files in ~/.stackowl/memory/ are read by nothing (up from the 44% recorded when
+      ESC-38 was raised — owl.md was added the same day). Lining the files up against the
+      owls table shows why: the model writes the DISPLAY name the prompt shows it.
+      Collector.md -> archivist. Falcon.md AND falcon.md -> both scout. agent.md, owl.md,
+      Brain.md -> no owl at all, just a generic word. sysdesign.md, sysfup.md -> owls that no
+      longer exist.
+    the_canonicaliser_is_deliberately_NOT_fuzzy: >-
+      owls/canonical.py matches an exact name, a case variant, or a display name — nothing
+      else. A near-miss resolver would route one owl's notes into another owl's file, which
+      is WORSE than the orphan it set out to prevent: an orphan loses a write, a
+      mis-resolution corrupts a reader. A canonical name beats another owl's display name,
+      pinned by test, because that ordering is the difference between the two outcomes.
+    root_is_ASKED_not_reimplemented: >-
+      is_root_owl (owls/tool_presets.py) is the one source. The secretary is the platform's
+      root administrator, so the ordinary "record what the user told me" flow is untouched —
+      which is what makes this shippable rather than a regression.
+    THE_SCHEMA_CHANGED_WITH_THE_BEHAVIOUR_the_ESC_34_lesson_applied_early: >-
+      The advertised `"default": "user"` was REMOVED, because the default is now the calling
+      owl, which the schema cannot name — leaving it would have told the model the opposite
+      of what happens. That is exactly the trap ESC-34 sprang (a persona naming a tool the
+      owl no longer held), caught before shipping this time rather than by a passing test
+      afterwards. A test asserts the schema no longer advertises it.
+    A_JUDGEMENT_THE_CODE_COULD_NOT_MAKE_and_how_i_resolved_it: >-
+      When TraceContext carries no owl — a CLI or utility turn — refusing would break the
+      operator's own path, and allowing silently is a fail-open on authority. It FAILS OPEN
+      BUT LOUDLY: today's behaviour is preserved and an INFO line records the write as
+      unattributed. If owl-driven traces ever land in that branch the log will say so,
+      instead of the gap being invisible. Chosen because an unmeasured fail-open is the shape
+      this whole session has been removing.
+    VALIDATE_IS_OPEN_and_stated_as_such: >-
+      RESTART VERIFIED: last src write 21:59:21Z, core boot 21:59:57Z (36s).
+      But there have been ZERO memory writes since that boot, so the three new branches have
+      had zero opportunities — 0 unattributed, 0 orphan fallbacks, 0 refusals is NOT evidence
+      they work. The `memory` tool averages ~2 calls/hour (410 in 9 days).
+      CLOSING QUERY, already known to run: grep the JSONL for "UNATTRIBUTED write",
+      "not a known owl", and "may not write". PASS = a real write resolves to the calling
+      owl with no refusal; the interesting readings are a non-zero unattributed count (which
+      would mean the fail-open branch is load-bearing and needs revisiting) or a refusal
+      (which would mean an owl really was crossing the boundary).
   ESC_42_JOB_FIX_SHIPPED_AND_LIVE_2026_08_23_T21_17Z:
     what_bakir_decided: Just fix the job, leave the success mapping.
     MEASURING_FIRST_FOUND_THE_JOB_WAS_NOT_MISCONFIGURED: >-
@@ -3118,6 +3210,45 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-48-i-deviated-from-ESC-38s-letter-to-keep-its-intent
+    raised: 2026-08-23
+    deviates_from: ESC-38
+    question: >-
+      You decided "bind `target` to the calling owl by DEFAULT". Taken literally that broke
+      the platform's primary memory flow, so I made ONE exception: the ROOT administrator's
+      default stays `user`; every other owl defaults to its own notes. Do you accept the
+      exception, or do you want the literal rule with the consequence below?
+    why_evidence_cannot_settle_it: >-
+      Evidence settles that the literal rule regresses a real flow. It cannot settle whether
+      you would rather have the regression than the exception — that is a product call about
+      whose job it is to curate USER.md. And deviating from a decision you made today is
+      exactly the case the process says to surface rather than absorb.
+    WHAT_THE_LITERAL_RULE_DID_measured_by_three_journey_tests: >-
+      The user says "remember I prefer X". The secretary calls memory(add) with NO target —
+      which is the normal, correct call — and under the literal rule that wrote to
+      secretary.md instead of USER.md.
+      THE TOOL STILL RETURNED "Saved." So the write SUCCEEDED, to the wrong file, and the
+      user was told it was remembered. In production that failure is SILENT: the fact simply
+      stops being visible to every other owl and nothing anywhere says so. Caught by
+      test_j2_research_and_remember and two guards in test_memory_fix_guards, all three of
+      which pass at HEAD and failed only against my working tree.
+    what_i_did: >-
+      `if is_root_owl(caller): return USER_TARGET` before the caller-default. The privilege
+      crossing you actually named is still closed: USER.md was reachable BY OMISSION from any
+      owl, and is now reachable by omission only from the one owl whose job is curating it.
+      A non-root owl writing `user` explicitly is still refused, and a test asserts the
+      passphrase case does not leak into the shared profile.
+    the_case_that_got_STRICTLY_BETTER: >-
+      One of the three guards is a browser owl asked to "remember my favorite PASSPHRASE".
+      Under the old default that went into USER.md — the file every owl reads and every
+      prompt carries. It now lands on the owl's own notes. That is not merely different, it
+      is safer, and it is a good argument that the caller-default is right for non-root owls.
+    the_recommendation: >-
+      KEEP THE EXCEPTION. The alternative is that "remember this about me" silently stops
+      working platform-wide, which is a worse outcome than the hole it would close — and the
+      hole is closed either way for every owl that is not root.
+    blocks: >-
+      Nothing. ESC-38 ships with the exception; reverting it later is one `if`.
   - id: ESC-47-window-relative-sizing-would-RAISE-the-cap-on-the-model-it-protects
     raised: 2026-08-23
     supersedes_half_of: ESC-35

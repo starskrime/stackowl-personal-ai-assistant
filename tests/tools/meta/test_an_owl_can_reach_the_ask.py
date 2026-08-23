@@ -58,11 +58,24 @@ class TestTheAppealIsReachable:
         told to delegate cannot name a target it may not enumerate."""
         assert "owls_list" in ROUTER_TOOLS
 
-    def test_the_router_still_carries_what_it_always_did(self) -> None:
-        """Additive only. The boundary-router's original job — hand off out-of-scope
-        work, and never strand an owl whose allowlist is too narrow to find a tool —
-        is unchanged."""
-        assert {"delegate_task", "tool_search", "tool_describe"} <= ROUTER_TOOLS
+    def test_the_router_never_strands_a_narrow_owl(self) -> None:
+        """The half of the router's original job that SURVIVES.
+
+        It had two: never strand an owl whose allowlist is too narrow to find a
+        tool (discovery), and hand off out-of-scope work (delegate_task). ESC-34
+        removed the second on 2026-08-23 — the bounds gate granted delegate_task so
+        a blocked owl could route around a limit, and the task envelope then
+        refused it as off-plan (8c403494). Two gates behaving as designed, with
+        contradictory designs; Bakir kept the boundary and dropped the vector.
+
+        Discovery is untouched, which is what keeps a narrow owl from being
+        stranded — and the APPEAL replaces the escape hatch, which the two tests
+        above pin.
+        """
+        assert {"tool_search", "tool_describe"} <= ROUTER_TOOLS
+        assert "delegate_task" not in ROUTER_TOOLS, (
+            "removed by ESC-34; a silent re-add must fail here"
+        )
 
     def test_the_router_grants_no_ability_to_ACT(self) -> None:
         """The line this must not cross. Reaching the ask is not being granted the

@@ -64,7 +64,12 @@ USER_ID = 717171
 _OWL = "rsr"
 _IN_BOUNDS_TOOL = "web_fetch"  # in the researcher preset
 _OUT_OF_BOUNDS_TOOL = "shell"  # NOT in the researcher preset
-_ROUTER_TOOL = "delegate_task"  # the boundary-router (ROUTER_TOOLS)
+# ESC-34 (Bakir, 2026-08-23) removed `delegate_task` from ROUTER_TOOLS: the bounds
+# gate granted it so a blocked owl could route around a limit, and the task envelope
+# then refused it as off-plan (8c403494). What a built owl now carries is the APPEAL
+# — owl_build — which is what keeps a narrow owl additive rather than a dead-end.
+_ROUTER_TOOL = "owl_build"  # the appeal path (ROUTER_TOOLS)
+_REMOVED_ROUTER_TOOL = "delegate_task"  # must NOT be granted any more
 _IN_BOUNDS_OUTPUT = "FETCH-RESULT: page fetched"
 _FINAL_REPLY = "I fetched that for you; I'm not permitted to run shell, so I stopped there."
 # Punctuation-free fragment — the Telegram adapter MarkdownV2-escapes outbound.
@@ -364,10 +369,16 @@ async def test_owl_builder_journey_build_route_enforce_persist(
         f"researcher preset must INCLUDE '{_IN_BOUNDS_TOOL}'; "
         f"got tools={sorted(manifest.bounds.tools)}"
     )
-    # The boundary-router is present so a narrow owl is additive, not a dead-end.
+    # The APPEAL is present so a narrow owl is additive, not a dead-end: it can
+    # always ASK for a capability it lacks, even though it can no longer borrow
+    # one via delegate_task.
     assert _ROUTER_TOOL in manifest.bounds.tools, (
-        f"the boundary-router '{_ROUTER_TOOL}' must be in the built owl's bounds; "
+        f"the appeal path '{_ROUTER_TOOL}' must be in the built owl's bounds; "
         f"got tools={sorted(manifest.bounds.tools)}"
+    )
+    assert _REMOVED_ROUTER_TOOL not in manifest.bounds.tools, (
+        f"ESC-34 removed '{_REMOVED_ROUTER_TOOL}' from ROUTER_TOOLS; a silent "
+        f"re-add must fail here. got tools={sorted(manifest.bounds.tools)}"
     )
 
     # --- 2 + 3. ROUTE a turn to rsr and ENFORCE bounds at the real seam ------
@@ -415,7 +426,7 @@ async def test_owl_builder_journey_build_route_enforce_persist(
         f"got tools={sorted(reloaded.bounds.tools)}"
     )
     assert _ROUTER_TOOL in reloaded.bounds.tools, (
-        f"after reload, the boundary-router '{_ROUTER_TOOL}' was lost; "
+        f"after reload, the appeal path '{_ROUTER_TOOL}' was lost; "
         f"got tools={sorted(reloaded.bounds.tools)}"
     )
 

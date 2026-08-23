@@ -52,8 +52,15 @@ class _BudgetSensitiveRegistry:
 
     def to_provider_schema(
         self, protocol, *, profile=None, pins=None, hydrated=None,
-        restrict_to=None, usage_scores=None, budget=None,
+        restrict_to=None, usage_scores=None, global_usage_scores=None,
+        budget=None, max_tools=None,
     ):
+        # `global_usage_scores` + `max_tools` mirror the REAL
+        # ToolRegistry.to_provider_schema. This double pinned an explicit
+        # signature, so it went red the moment production grew a parameter —
+        # which is the point of an explicit signature and why it is widened here
+        # rather than loosened to **kwargs: a double that silently swallows new
+        # arguments stops telling you the real thing moved.
         fixed = (budget or {}).get("fixed_cost_tokens", 0)
         self.calls.append(fixed)
         # 10 tools with an empty history, dropping one per 100 tokens of it.
