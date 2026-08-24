@@ -484,8 +484,18 @@ class JobScheduler(SupervisedTask):
         # one-shot can never be re-polled, so skipping its row here loses
         # nothing.
         rows_affected = await self._db.execute_returning_rowcount(
+            # `last_error` is cleared with the rest of the failure record. It is
+            # ONE record — retry_count, retry_at, failure_count and the reason —
+            # and clearing three of four left rows claiming zero failures beside a
+            # populated error string. Measured 2026-08-24: three healthy jobs
+            # (skill_synthesizer, retry_sweep, dream_worker) were reporting errors
+            # from runs that had long since succeeded, and the string is read back
+            # through scheduler_helpers into the TUI job list. requeue(),
+            # owl_lifecycle and resume_job already clear it on recovery; this was
+            # the one path that did not.
             "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
-            "retry_count = 0, retry_at = NULL, failure_count = 0 WHERE job_id = ?",
+            "retry_count = 0, retry_at = NULL, failure_count = 0, last_error = NULL "
+            "WHERE job_id = ?",
             (now_iso, next_run, job.job_id),
         )
         if rows_affected == 0:

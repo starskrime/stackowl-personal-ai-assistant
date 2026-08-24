@@ -315,6 +315,64 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT_A_SUCCEEDING_JOB_KEPT_REPORTING_ITS_OLD_FAILURE_2026_08_24:
+    map_check: >-
+      "clear last_error when a scheduled job completes successfully" — NO mapped item
+      matches. Evidence-led work, recorded here per PROCESS.
+    stages:
+      brainstorm: no_change_needed (one measured defect, one line, three sibling paths already correct)
+      architect: done — footprint ladder rung 1, extend the UPDATE that already resets the siblings
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN — needs a restart and a job that had failed then succeeds
+      document: no_change_needed (the test file carries the record)
+    HOW_IT_WAS_FOUND: >-
+      It caught ME. Reading the jobs table to confirm the synthesizer's cadence for ESC-52,
+      I saw skill_synthesizer carrying last_error "no provider for tier fast: All providers
+      unavailable (circuit open)" and began writing down that its last run had failed on the
+      same fault as ESC-53's 54 lost summaries. The log said otherwise: its 08:30 run logged
+      `[synth] run_all: exit` and `exit — completed` at 08:38:12. The field was stale.
+    THE_MEASUREMENT: >-
+      THREE healthy jobs were reporting failures that were no longer true —
+      skill_synthesizer (completed 08:38:12), retry_sweep ("handler timed out after 1200s",
+      while it actually runs every 90s, completes in 2.1ms, and has ZERO timeout warnings in
+      the whole day's log), and dream_worker (an 08-11 migration note). Not one had failed.
+    the_defect: >-
+      `_mark_completed` resets retry_count, retry_at AND failure_count but not last_error.
+      Those four fields are ONE failure record; clearing three left rows claiming zero
+      failures beside a populated error string — a row that disagrees with itself. The value
+      is read back through scheduler_helpers into the TUI job list, so the stale string is
+      shown, not merely stored.
+    ONE_COPY_OF_A_RULE_THAT_IS_RIGHT_ELSEWHERE: >-
+      Failure mode 3. THREE sibling recovery paths already clear it — retry_queue_store's
+      requeue ("status='pending', last_error = NULL"), owl_lifecycle:273 and
+      scheduler.resume_job (both "failure_count = 0, last_error = NULL"). Only
+      `_mark_completed` was missed. The rule was never in doubt; one path just did not
+      apply it.
+    why_it_matters_beyond_tidiness: >-
+      Same shape as the web_fetch DNS message this programme already fixed: state that
+      misnames its own cause costs its reader the same detour every time. Here the reader
+      was me, and the detour was a false claim I nearly committed. Anything that reads job
+      health off this column — the TUI list, a person debugging, a future self-heal rule —
+      inherits the same error.
+    guard_that_had_to_hold: >-
+      Clearing on success is only safe while the FAILURE path still writes the reason;
+      otherwise it trades a stale truth for no truth, which is worse. A test drives the real
+      scheduler with a failing handler and asserts the reason is still recorded.
+    files:
+      - src/stackowl/scheduler/scheduler.py (_mark_completed — one column added to an existing reset)
+      - tests/scheduler/test_a_succeeding_job_clears_its_stale_error.py (new, 4 tests, fixtures are the LIVE error strings)
+    validate_OPEN_the_query_that_would_close_it: >-
+      After a restart, a job that carries a last_error must show it CLEARED once it next
+      succeeds. Closing query:
+      SELECT job_id, status, failure_count, last_error FROM jobs
+      WHERE status='pending' AND last_error IS NOT NULL AND last_error != '';
+      Baseline before the fix: THREE rows (skill_synthesizer, retry_sweep, dream_worker).
+      PASS = retry_sweep drops out within ~90s of the restart (it runs every 90s and
+      succeeds). dream_worker is enabled=0 and will NOT clear — it never runs — which is
+      correct behaviour, not a failure of this fix; do not count it.
+
   ESC_53_ROLLOVER_SUMMARIES_DIE_TERMINALLY_ON_A_TRANSIENT_FAULT_2026_08_24:
     status: ESCALATED — measured, NOT acted on. Both remedies are Bakir's call.
     found_incidentally: >-
