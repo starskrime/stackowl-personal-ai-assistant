@@ -315,6 +315,43 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESCALATIONS_ANSWERED_2026_08_24:
+    DEDUP_canonical_form_plus_REINFORCE_not_refuse: >-
+      Match on a canonical form — lowercase, separators normalised, tokens SORTED — which
+      collapses all six identical-token families to one key each and catches BOTH blind spots
+      of `base_name` (separator variants and word-order permutations). On a collision,
+      REINFORCE the existing skill rather than refuse the write: a re-derived lesson is
+      confirmation, and confirmation should strengthen one skill rather than be discarded.
+      CARRY THIS WARNING INTO THE BUILD: the synthesizer's existing _reinforce_if_known calls
+      increment_n_executions, which stamps last_used_at AND revives the row to 'active'. The
+      Stability lens flagged that during ESC-34 and store.py:710 documents the rule it breaks
+      — "claiming a use here would revive an archived survivor on a merge nobody ran".
+      Reinforcement must NOT fake an execution; whatever it records, it cannot be a use.
+    MEMORY_TARGETING_route_on_the_facts_SUBJECT_not_the_caller: >-
+      Confirms the inference I recorded as a guess when ESC-38 was parked: "is this about the
+      PERSON, or about this owl's work" is a semantic question that an authority check cannot
+      answer, which is why binding to the calling owl was the wrong axis. The new design
+      routes on what the content is ABOUT.
+      AND THE ONE THING THAT MUST SURVIVE FROM THE FAILED ATTEMPT: the tool returned "Saved."
+      regardless of destination. That is what made my version dangerous rather than merely
+      wrong — the regression was invisible by construction. Whatever routes the write, the
+      confirmation must NAME where it landed.
+    GRAPH_SOURCE_curated_memory: >-
+      Not a revived extractor. Curated memory is what D08.1 chose as the replacement, needs no
+      extraction step, and cannot restart the mining loop by accident.
+      The acceptance check stays as recorded: a NON-ZERO graph_context_len on a real turn,
+      never "the sync wrote N nodes". The writer hashes entity NAMES and the reader hashes raw
+      QUERY WORDS across six guessed types, so a populated graph nothing can read is the same
+      defect one layer along and "N nodes written" would hide it.
+    OWNER_KEY_fix_the_writers_AND_the_constructor: >-
+      The deeper option: make `session_key` mean ONE thing everywhere rather than only
+      pointing owner-meaning tables at identity_key. That removes the cause (two PipelineState
+      sites forty lines apart supplying different values) instead of routing around it.
+      RISK HE ACCEPTED, recorded so it is not a surprise: the command path currently sees the
+      RAW channel key, and something may depend on that. _deliver_command_stub is passed
+      msg.session_key separately, and the command path's PipelineState is what slash commands
+      read. This needs the importers checked before the change, not after.
+      Existing rows are NOT migrated under this choice — no destructive data change.
   THE_BRIEF_DELIVERED_AND_VALIDATED_THREE_FIXES_2026_08_24_T13_00Z:
     verdict: PASS. Bakir's first morning_brief in 14 days, and one delivery closed three
       open validations at once.
