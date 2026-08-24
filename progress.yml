@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_17_CAUSE_DIAGNOSED_2026_08_24_T03_15Z:
+    what_bakir_decided: "Make it deterministic — cause first."
+    THE_CAUSE_two_constructors_forty_lines_apart_one_field: >-
+      startup/orchestrator.py builds PipelineState on two paths and puts DIFFERENT things in
+      `session_key`:
+        line 2359 (COMMAND path): session_key=msg.session_key  -> the RAW channel key,
+                                  "72055773" for telegram.
+        line 2390 (TURN path):    session_key=lane             -> the composite
+                                  "owl:secretary:telegram:dm:72055773", with an explicit
+                                  comment saying so.
+      Any store keyed on state.session_key therefore records whichever shape its originating
+      path used. That is the whole of ESC-17's five-table split — not intermittency, not a
+      resolver failure, just one field with two meanings.
+    AND_identity_key_IS_ALREADY_DETERMINISTIC: >-
+      Both paths set identity_key=resolve_identity_key(services, msg.session_key), and all
+      four callers of that helper pass msg.session_key. So identity_key has ONE meaning on
+      every path. The determinism Bakir asked for already exists — on the other field. The
+      fix is therefore "owner-meaning tables read identity_key", not "make session_key
+      deterministic", which would break the lane semantics the turn path deliberately wants.
+    MEASURED_the_split_is_live: >-
+      task_outcomes.session_key  lane 440 / identity 799
+      staged_facts.source_ref    lane 103 / identity 100
+      tasks.owner_id             lane 189 / identity 126
+      conversations.session_key  lane 237 / identity 0    (internally consistent — lane)
+      message_ledger.session_key lane 0   / identity 351  (internally consistent — identity)
+      The last two are each self-consistent and disagree with EACH OTHER, which is the same
+      defect showing up as a cross-table inconsistency rather than an intra-table one.
+    A_CORRECTION_TO_ESC_17s_OWN_PLAN: >-
+      It said "identity resolution now logs its misses at INFO (added today), so a few days of
+      traffic will say WHY it fails". THAT INSTRUMENT DOES NOT EXIST. IdentityResolver.resolve
+      is `return self._handle_to_identity.get(handle, handle)` — silent by construction — and
+      the only log.tenancy calls in identity.py are two .error paths for malformed config.
+      8 days of logs contain 19 tenancy records, none of them a resolve miss. Waiting for that
+      data would have waited forever.
+      THIRD TIME TONIGHT a promised instrument turned out absent: quality_score's success gate
+      (ESC-40), the missing model column (ESC-50), and now this. Escalations record what was
+      INTENDED, and intent reads like completion a week later.
+      The cause needed no instrument anyway — reading the four call sites answered it.
+    WHAT_I_DID_NOT_DO_and_why: >-
+      Not started the re-keying. Migrating five tables onto identity_key is a destructive data
+      change, which is first on this programme's stop-and-escalate list, and 03:15 after a
+      session this long is the wrong time to begin one. The diagnosis is the deliverable here;
+      the migration is a separate, deliberate piece of work.
   ESC_40_THE_CONFOUND_IS_REAL_AND_IT_REVERSES_THE_RESULT_2026_08_24_T03_00Z:
     what_bakir_asked_for: >-
       "Continue, but fix the confound first" — establish whether quality_score is
