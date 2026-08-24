@@ -69,6 +69,27 @@ STALE_AFTER_DAYS = 30.0
 #: a real cost.
 ARCHIVE_AFTER_DAYS = 60.0
 
+#: ESC-45 — THE MOMENT SKILLS BECAME VISIBLE, and the floor under every idle
+#: clock. 2026-08-23T18:17:47Z, the boot at which ESC-44's value-ordered
+#: catalogue went live (measured: the last alphabetically-cut truncation record
+#: is 17:59:41Z presenting 11, the first value-ordered one is 18:34 presenting 12).
+#:
+#: WHY A CLOCK NEEDS A FLOOR AT ALL. Idle time is charged to a skill as evidence
+#: that nobody wanted it. Until ESC-44 the catalogue was cut ALPHABETICALLY at
+#: ~12 of 160, so 92 stale skills had never been shown to anyone — their idle
+#: clocks were measuring RETRIEVAL's failure and billing it to them, and they sat
+#: ~51 days into a 60-day archive window because of it.
+#:
+#: It had already happened once: 8 of 14 shipped BUILTINS are archived for
+#: non-use, plan-and-track and recover-and-retry among them. They were not
+#: chosen and rejected; they were never offered.
+#:
+#: A skill cannot have been ignored before it could be seen. Bakir chose "reset
+#: the clock, then let decay run" — so this buys a fair window, NOT immunity: a
+#: skill visible for a full archive window and still unused ages out normally.
+#: It also expires by itself, becoming a no-op once the window has passed.
+VISIBILITY_FLOOR_EPOCH = 1787509067.0  # 2026-08-23T18:17:47Z
+
 #: The QUALITY trigger, absorbed from the synthesizer's deprecate path (X11).
 #: A skill that has been used enough to have a verdict and fails most of the
 #: time is retired without waiting out the unused windows — "nobody used it" and
@@ -276,7 +297,17 @@ class SkillCurator:
             # timestamp must never be read as "infinitely old" — that would
             # archive on a data defect instead of on evidence.
             return 0.0
-        return max(now - anchor, 0.0)
+        # ESC-45 — never age a skill from before it could be SEEN. See
+        # VISIBILITY_FLOOR_EPOCH: until ESC-44 the catalogue was cut
+        # alphabetically, so an unshown skill's idle time measured retrieval's
+        # failure rather than its own uselessness.
+        #
+        # A FLOOR RATHER THAN A DATA MIGRATION, deliberately. Bumping `loaded_at`
+        # on the affected rows would mutate a provenance field to mean something
+        # it does not, and would be a one-shot to get right in a single pass over
+        # live data. This needs no migration, is idempotent, and stops mattering
+        # by itself once the window has passed.
+        return max(now - max(anchor, VISIBILITY_FLOOR_EPOCH), 0.0)
 
     def _is_failing(self, row: _CurationRow) -> bool:
         """The QUALITY trigger (X11): used enough to have a verdict, and losing.

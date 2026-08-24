@@ -315,6 +315,44 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_49_ARCHITECT_2026_08_24_T02_00Z:
+    decided: >-
+      A delivered proactive message joins the user's CURRENT incarnation, and does NOT start
+      one if none is open.
+    the_seam_measured_not_guessed: >-
+      SessionStore.get(session_key) -> SessionEntry | None is the READ-ONLY accessor, and its
+      None is exactly the "no conversation open" case — so the "do not start one" half needs
+      no new code, only the discipline to use `get` rather than `resolve_for`/
+      `resolve_turn_session`, which are the INGRESS resolvers and may MINT an incarnation.
+      Picking the wrong one of those two is the whole risk in this item.
+      SessionEntry.conversation_id IS the incarnation (sessions/models.py:143).
+      channels/chat_id.py maps a lane <-> a channel-native chat id, which is what turns a
+      job's target_addresses {"telegram": 72055773} into `owl:secretary:telegram:dm:72055773`.
+    the_shape: >-
+      At delivery: resolve the recipient's lane from target_addresses -> session_store.get(lane)
+      -> if None, record NOTHING -> else TranscriptStore.record_turn against that
+      conversation_id with the delivered body as the assistant turn.
+    THE_ONE_THING_THAT_MUST_CHANGE_IN_A_SHARED_STORE: >-
+      record_turn refuses this case twice, deliberately: `if not conversation_id: return 0`
+      ("a scheduler handler ... those are not conversations and must not invent one") and
+      `if not user_text: return 0`. The first guard stops mattering because we now SUPPLY a
+      conversation_id from the live lane — we are no longer inventing one, we are joining an
+      existing one, which is precisely the distinction that rule was protecting. The second
+      must be relaxed to admit an ASSISTANT-ONLY turn, giving the store a third shape beside
+      floored (user-only) and normal (user+assistant). Bakir approved this crossing by
+      answering ESC-49; it is recorded here so the extension reads as deliberate.
+    a_discrepancy_i_measured_and_am_NOT_chasing: >-
+      _resolve_incarnation's docstring says the lane is keyed on the OWL — "a different owl is
+      a different conversation" (Bakir's Q1). The live data disagrees: conversations rows read
+      session_key='owl:secretary:telegram:dm:72055773' with owl_name of jobmarket, mailbutler
+      and secretary against that SAME lane. So the lane is per-USER-channel and the owl is a
+      column, not part of the key. Recorded because ESC-49's implementation must use the lane
+      that actually exists rather than the one the docstring describes — and because if the
+      docstring is the intended design, something else is already wrong.
+    what_i_will_NOT_do: >-
+      Not touch resolve_for/resolve_turn_session, not mint an incarnation, and not record when
+      the lane has none — all three would turn "join the conversation" into "manufacture one",
+      which is the option Bakir explicitly did not choose.
   ESC_38_REVERTED_ON_BAKIRS_CALL_2026_08_23_T23_55Z:
     what_he_said: >-
       ESC-48 answer: "Fix it. It is not correct." On the clarifying question he chose
