@@ -315,6 +315,91 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_52_CANONICAL_DEDUP_2026_08_24:
+    decision: >-
+      Bakir, 2026-08-24: "Canonical form + reinforce instead of refuse." Match on a
+      canonical form — lowercase, separators normalised, tokens SORTED — and when it hits,
+      strengthen the skill we already hold rather than minting a second copy.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: OPEN
+    measurement_that_drove_it: >-
+      171 non-archived skills, 2026-08-24: 168 near-duplicate pairs covering 102 of them
+      (60%), and SIX families sharing an IDENTICAL token set. Three of the six differ only
+      by hyphen-vs-underscore. `base_name` strips a trailing `-N` and nothing else, so it
+      could see none of the six.
+    the_probe_that_lied_first: >-
+      My first duplicate count used `re.findall(r"\w+")` and reported 77 pairs / 35%.
+      `\w` INCLUDES the underscore, so `incident_evidence_brief` tokenised as ONE token and
+      every separator-variant pair read as unrelated. The real figures are 168 / 60%. Fourth
+      false negative from an unverified probe this session.
+    why_it_was_still_producing_duplicates: >-
+      `incident_evidence_brief` was minted by the synthesizer at 08:33 on 2026-08-24, beside
+      the existing `incident-evidence-brief` — hours after commit 978abc0f revived autonomous
+      authoring. Restoring the loop restored duplicate production, because the gate could not
+      see the collision.
+    THE_NON_OBVIOUS_PART: >-
+      Reinforcement previously called `increment_n_executions`, which bumps n_executions AND
+      stamps last_used_at AND flips lifecycle to active — three effects where only the third
+      was ever wanted. That was harmless when nothing read the counter. It is NOT harmless
+      now: ESC-44 made the catalogue sort by n_executions, so a faked use would push a skill
+      up the list the model actually sees. Reinforcement would have been buying visibility
+      with invented evidence — store.py already states the rule ("claiming a use here would
+      revive an archived survivor on a merge nobody ran"). Reinforcement now calls
+      `set_lifecycle_state(..., "active")` and records the re-derivation as an audit row with
+      op="reinforce". Provenance kept; the usage counter stays honest.
+    test_updated_not_deleted: >-
+      tests/skills/test_synthesizer_no_duplicate_lessons.py asserted `n_executions ==
+      before + 1`. Its INVARIANT (strengthen, do not mint a copy) is unchanged and still
+      asserted — via lifecycle_state plus the audit row. The counter is now asserted
+      UNCHANGED, so the old behaviour cannot return silently.
+    validate_OPEN_the_query_that_would_close_it: >-
+      The synthesizer must reinforce a real cluster in production. PASS = a skill_audit row
+      with op='reinforce' and details.re_derived_as set, AND no new skills row whose
+      canonical_key collides with an existing one. Cannot be claimed until the miner runs a
+      cluster whose name canonicalises onto a skill already held — not forced, so it waits
+      for real traffic. Counting query:
+      SELECT op, details FROM skill_audit WHERE op='reinforce' ORDER BY rowid DESC LIMIT 5;
+    files:
+      - src/stackowl/skills/standard.py (canonical_key, beside base_name — THE ONE COPY)
+      - src/stackowl/skills/synthesizer.py (_reinforce_if_known consults BOTH keys)
+      - tests/skills/test_canonical_dedup.py (fixtures are the REAL six families)
+    not_retroactive: >-
+      The 102 skills already duplicated are NOT merged by this. It stops the sprawl
+      compounding; collapsing the back-catalogue is a separate, destructive item and needs
+      Bakir. Filed as such — a merge deletes user-visible skills.
+
+  ESC_34_VALIDATED_ON_LIVE_TRAFFIC_2026_08_24_T14_08Z:
+    verdict: PASS, and on exactly the case the measurement was taken for.
+    the_event: >-
+      14:08:44 `[pipeline] execute: tool refused by bounds` tool=shell owl=headhunter
+      denied_by="owl" (its own bounds, not a ceiling), trace retry-4f689c4f.
+    why_this_owl_is_the_interesting_one: >-
+      headhunter is one of the THREE bounded owls that do NOT hold `owl_build` — measured
+      2026-08-23 from the live owls table alongside english_tutor and mailbutler. They predate
+      owl_build joining ROUTER_TOOLS on 2026-08-21, and ROUTER_TOOLS is applied at BUILD time,
+      so that addition was never retroactive.
+    WHAT_THE_MODEL_ACTUALLY_RECEIVED: >-
+      "The action 'shell' is not permitted by this owl's bounds and was not run. This owl may
+      use: delegate_task, memory, read_file, tool_describe, tool_search, web_fetch,
+      web_search. To use 'shell' anyway, delegate_task to an owl that holds it (the secretary)
+      — state the exact action you need and use its result. Otherwise answer the user directly
+      with what you have."
+      It names delegate_task, which headhunter HOLDS. It says nothing about owl_build, which
+      headhunter does NOT hold. The full permitted list is present, unabbreviated.
+    what_the_obvious_implementation_would_have_done: >-
+      ESC-34's decision was "make the appeal path discoverable", and the obvious reading is
+      "point refusals at owl_build". For this owl that would have named a tool it is ALSO
+      refused — reproducing precisely the defect bounds_guard exists to fix, recorded in its
+      own comment: "the model picked another tool it also lacked and was refused again".
+      The rule shipped instead — NAME ONLY WHAT THIS OWL HOLDS — came from measuring the
+      owls table rather than assuming the appeal path was universal. This refusal is the case
+      that measurement was for, and it arrived on its own within a day.
   ESCALATIONS_ANSWERED_2026_08_24:
     DEDUP_canonical_form_plus_REINFORCE_not_refuse: >-
       Match on a canonical form — lowercase, separators normalised, tokens SORTED — which

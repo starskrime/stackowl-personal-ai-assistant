@@ -86,6 +86,7 @@ _MIN_EXECUTIONS_FOR_RATE = MIN_RUNS_FOR_RATE
 
 #: One copy of the rule, owned by the module that defines it (D10.2 I8).
 _base_name = standard.base_name
+_canonical_key = standard.canonical_key
 
 
 
@@ -480,17 +481,60 @@ class SkillSynthesizer:
         """
         try:
             existing = await self._skills.list_for_source("learned")
-            base = {_base_name(sk.name): sk for sk in existing}
-            match = base.get(_base_name(proposed_name))
+            # TWO KEYS, ONE LOOKUP. base_name answers "is this a `-N` variant of
+            # something we know?"; canonical_key answers "is this the same NAME,
+            # rearranged?" — separators normalised and tokens SORTED. They compose:
+            # canonical_key applies base_name first, so `foo-2` still collapses.
+            #
+            # ESC-52. base_name alone was blind to both separator variants and
+            # word-order permutations, and the corpus shows six families it could
+            # never see — including `incident_evidence_brief`, which THIS
+            # synthesizer minted at 08:33 on 2026-08-24 beside the existing
+            # `incident-evidence-brief`, hours after the fix that revived it.
+            by_base = {_base_name(sk.name): sk for sk in existing}
+            by_canon = {_canonical_key(sk.name): sk for sk in existing}
+            match = (
+                by_base.get(_base_name(proposed_name))
+                or by_canon.get(_canonical_key(proposed_name))
+            )
             if match is None:
                 return False
-            await self._skills.increment_n_executions(match.skill_id)
+            # REVIVE, BUT DO NOT CLAIM A USE. This called increment_n_executions,
+            # which bumps n_executions AND stamps last_used_at AND flips the row to
+            # 'active' — three effects where only the third was wanted. store.py's
+            # own set_n_executions documents the rule it broke: "claiming a use
+            # here would revive an archived survivor on a merge nobody ran".
+            #
+            # It now has a measurable cost as well as a principled one: ESC-44's
+            # catalogue ordering sorts by n_executions, so a faked use would push a
+            # skill up the list the model actually sees. Reinforcement would have
+            # been quietly buying visibility with invented evidence.
+            await self._skills.set_lifecycle_state(
+                match.skill_id, "active", time.time(),
+            )
+            # The re-derivation is recorded where provenance lives, not by
+            # inflating a usage counter. `op` is free-form and audited.
+            try:
+                await self._skills.audit_write(
+                    skill_name=match.name, source="learned", op="reinforce",
+                    actor="agent:synthesizer", skill_id=match.skill_id,
+                    details={"re_derived_as": proposed_name,
+                             "cluster_size": cluster.size},
+                )
+            except Exception as audit_exc:  # provenance is best-effort
+                log.skills.warning(
+                    "[synth] synthesize_one: reinforcement audit failed",
+                    exc_info=audit_exc,
+                )
             log.skills.info(
                 "[synth] synthesize_one: lesson ALREADY KNOWN — reinforcing "
                 "instead of minting a duplicate",
                 extra={"_fields": {
                     "proposed": proposed_name,
                     "reinforced": match.name,
+                    "matched_on": (
+                        "base" if by_base.get(_base_name(proposed_name)) else "canonical"
+                    ),
                     "sequence": list(cluster.sequence),
                     "cluster_size": cluster.size,
                 }},

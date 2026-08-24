@@ -35,6 +35,7 @@ __all__ = [
     "STANDARD_VERSION",
     "Violation",
     "base_name",
+    "canonical_key",
     "blocking",
     "describe_for_prompt",
     "validate_body",
@@ -86,6 +87,13 @@ ALLOWED_SUPPORT_DIRS: frozenset[str] = frozenset({"scripts", "references", "temp
 #: A long skill is a smell, not an error — a hard cap would reject a genuinely
 #: detailed procedure. Warn only.
 SOFT_MAX_LINES = 200
+
+#: Any run of non-alphanumerics separates words — hyphen, underscore, space, dot.
+#: `\w` would NOT do: it INCLUDES the underscore, so `a_b_c` arrives as one token
+#: while `a-b-c` splits into three. That exact mistake made my own duplicate
+#: measurement read 35% when the truth was 60%, and hid three of the six
+#: identical-token families outright.
+_CANONICAL_SPLIT_RE = re.compile(r"[^a-z0-9]+")
 
 #: The ``-N`` suffix existed for exactly one reason: the synthesizer needed a
 #: free directory name. Forbidding it makes a collision LOUD, so the writer must
@@ -140,6 +148,40 @@ class Violation:
 
     def __str__(self) -> str:
         return f"{self.rule}: {self.detail}"
+
+
+def canonical_key(name: str) -> str:
+    """Same words in any arrangement -> one key. THE ONE COPY, beside base_name.
+
+    ESC-52, decided by Bakir 2026-08-24. `base_name` answers "is this a `-N`
+    variant of something we know?" and nothing answered "is this the same NAME,
+    rearranged?" — so the corpus grew families that are obviously identical to a
+    human and invisible to the gate.
+
+    MEASURED 2026-08-24 across 171 non-archived skills: 168 near-duplicate pairs
+    covering 102 skills, and SIX families sharing an identical token set::
+
+        download-instagram-video          / instagram-video-download
+        incident-evidence-brief           / incident_evidence_brief
+        check-stock-price-today           / check_stock_price_today
+        memory_unachieved_effect_fallback / unachieved_effect_memory_fallback
+        report-task-status                / task-status-report
+        check-stock-price-alert           / stock-price-alert-check
+
+    Three of those six differ ONLY by separator, and the last one was minted by
+    the synthesizer at 08:33 that morning — hours after the fix that revived it.
+
+    TWO BLIND SPOTS, ONE KEY. Splitting on any non-alphanumeric run catches the
+    separator variants; SORTING the tokens catches the word-order permutations.
+    `base_name` is applied first so `foo-2` and `foo` still collapse together —
+    the two rules compose rather than compete, and neither is a copy of the other.
+
+    DELIBERATELY NOT FUZZY, for the reason the memory canonicaliser was not: a
+    near-miss would merge two skills that are genuinely different, and a wrong
+    merge corrupts a reader where a duplicate only wastes a row.
+    """
+    tokens = sorted(t for t in _CANONICAL_SPLIT_RE.split(base_name(name).lower()) if t)
+    return " ".join(tokens)
 
 
 def base_name(name: str) -> str:

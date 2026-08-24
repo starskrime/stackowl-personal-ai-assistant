@@ -79,9 +79,35 @@ async def test_a_known_lesson_is_reinforced_not_duplicated(tmp_db):
     known = await _Synth(store)._reinforce_if_known("recover_tool_search", _Cluster())
 
     assert known is True, "must refuse to mint a second copy"
+
+    # THE INVARIANT IS UNCHANGED — re-deriving strengthens the skill we hold
+    # rather than minting a copy — but HOW it is expressed changed on 2026-08-24
+    # (ESC-52). This asserted `n_executions == before + 1`, i.e. reinforcement
+    # counted as a USE.
+    #
+    # It cannot, for a measured reason as well as a principled one. ESC-44's
+    # catalogue ordering now sorts by n_executions, so a faked use would push a
+    # skill up the list the model actually sees — reinforcement would be buying
+    # visibility with invented evidence. store.py's set_n_executions already
+    # documented the principle: "claiming a use here would revive an archived
+    # survivor on a merge nobody ran".
+    #
+    # Strengthening is now a lifecycle revival plus an audit row, and the counter
+    # is asserted UNCHANGED so the old behaviour cannot return silently.
     after = (await tmp_db.fetch_all(
-        "SELECT n_executions FROM skills WHERE skill_id = ?", (sid,)))[0]["n_executions"]
-    assert after == before + 1, "re-deriving a lesson must STRENGTHEN the one we hold"
+        "SELECT n_executions, lifecycle_state FROM skills WHERE skill_id = ?", (sid,)))[0]
+    assert after["n_executions"] == before, (
+        "reinforcement must NOT claim an execution — n_executions is the usage "
+        "signal ESC-44's catalogue ordering reads"
+    )
+    assert after["lifecycle_state"] == "active", (
+        "re-deriving a lesson must STRENGTHEN the one we hold — as a revival"
+    )
+    audit = await tmp_db.fetch_all(
+        "SELECT op, details FROM skill_audit WHERE skill_id = ? AND op = 'reinforce'",
+        (sid,),
+    )
+    assert audit, "the re-derivation must be recorded as provenance, not as usage"
 
 
 @pytest.mark.asyncio
