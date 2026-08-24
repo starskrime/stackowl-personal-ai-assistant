@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_40_THE_CONFOUND_IS_REAL_AND_IT_REVERSES_THE_RESULT_2026_08_24_T03_00Z:
+    what_bakir_asked_for: >-
+      "Continue, but fix the confound first" — establish whether quality_score is
+      arm-independent before acting on the holdout result.
+    THE_ANSWER_IT_IS_NOT_and_the_mechanism_is_in_one_SQL_line: >-
+      The critic scorer selects `WHERE quality_score IS NULL AND success = 1 AND
+      failure_class IS NULL` (outcome_store list_pending_critic). ONLY SUCCESSFUL TURNS ARE
+      EVER SCORED. So quality_score exists only for rows that already passed the success
+      gate, and any cross-arm quality comparison is conditioned on surviving it.
+    THE_MEASUREMENT: >-
+      6,890 rows carry an arm (5,874 injected / 1,016 held_out).
+      Scoring coverage: held_out 23.9% vs injected 29.6%, z = -3.67.
+      Success rate:     held_out 23.9% vs injected 29.6%, z = -3.68.
+      THOSE ARE THE SAME NUMBERS — 243/1016 and 1737/5874 — because "scored" is
+      effectively "succeeded".
+      By lane: machine held_out 21.2% vs injected 26.4% (z = -3.41); interactive
+      74.5% vs 80.2% (z = -0.93, n=51 held-out, underpowered).
+      Arm ASSIGNMENT is balanced (held-out share 12.9% interactive / 14.9% machine), so the
+      randomisation is sound — it is the OBSERVATION that is biased.
+    WHAT_THIS_DOES_TO_THE_EARLIER_READING_and_it_reverses_it: >-
+      I previously reported "both lanes negative, machine lane strongly so (t = -8.93)" —
+      i.e. lessons look HARMFUL. That reading is an artifact.
+      On the metric that is NOT conditioned on the gate — SUCCESS ITSELF — injection is
+      associated with a 5.7-point HIGHER success rate, significant at z = -3.68.
+      The quality inversion is a textbook COLLIDER: conditioning on success, which both the
+      treatment and the turn's quality cause, induces a spurious negative association among
+      survivors. Concretely, if lessons rescue marginal turns that would otherwise have
+      failed, those marginal turns join the INJECTED scored pool and pull its mean down,
+      while the held-out scored pool contains only turns good enough to succeed unaided.
+      That is precisely the observed shape: injected 0.719 vs held_out 0.880.
+    what_i_do_and_do_NOT_claim: >-
+      CLAIM: quality_score is not arm-independent; the confound Bakir asked about is present,
+      significant, and mechanically explained by one WHERE clause. The success-rate
+      difference is real and favours injection.
+      DO NOT CLAIM: that lessons are proven beneficial. Success is a coarse binary, this is
+      observational rather than an intervention on the gate, and I have not ruled out that
+      something else correlates with both arm and success. What is established is that the
+      HARM reading cannot stand, because the metric it rests on is selected on the outcome.
+    the_recommendation: >-
+      Read the experiment on SUCCESS RATE, not on quality_score, for as long as scoring is
+      gated on success. Either is fine as a metric; only one of them is comparable across
+      arms. If quality is wanted, the gate has to change — score a sample of FAILED turns too
+      — and that is a scorer-cost decision rather than a bug.
   LIVE_INCIDENT_2026_08_24_T02_15Z_a_budget_stop_was_SILENT:
     reported_by_bakir: >-
       "I did ask clear question and he did answer: 'Found the provider API. Now let me find
