@@ -3375,6 +3375,53 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-50-capability-relative-sizing-has-no-signal-to-derive-from-yet
+    raised: 2026-08-24
+    continues: ESC-47
+    question: >-
+      You chose "make the tool-count cap CAPABILITY-relative, task_outcomes holds per-model
+      failure/overclaim rates as a first proxy". Measurement says that proxy does not exist
+      and could not be relative to anything if it did. Do you want the PREREQUISITE built
+      (record the model on every outcome, a schema migration), or the cap left as an operator
+      integer until a second model exists?
+    why_evidence_cannot_settle_it: >-
+      Evidence settles that the formula cannot be computed today. It cannot settle whether
+      building the instrument now is worth a migration for a signal that has one data point,
+      or whether you would rather wait until there is something to compare.
+    BLOCKER_1_the_proxy_is_not_in_the_data: >-
+      task_outcomes records NO model identifier. 9,490 rows over 30 days, every one
+      "(none recorded)". TaskOutcome's fields are trace/session/owl/channel/latency/
+      failure_class/quality_score/... and `dna_snapshot`, which holds DNA TRAITS, not model
+      info. So "per-model failure and overclaim rates" cannot be computed at all — not
+      poorly, not approximately. The column does not exist.
+    BLOCKER_2_there_is_only_one_model: >-
+      `[config] Loaded providers: NeraAiRaw[fast/standard/powerful]` — three TIERS of the same
+      backend, and every generation call today resolved to `neraai-v1-raw`. A capability-
+      RELATIVE number needs at least two capabilities to sit between. With one model, any
+      derived figure is a constant wearing a formula, which is what the current integer
+      already is — honestly.
+    AND_THE_SIGNAL_ITSELF_IS_NEARLY_FLAT: >-
+      Excluding infrastructure failures (AllProvidersUnavailable / ProviderError /
+      CircuitOpen, which are 6,227 of 9,490 rows and are the VPN, not the model), the turns
+      that actually REACHED the model succeeded 3,151 of 3,263 — 97%. Overclaim blocked on
+      5.3%. There is barely any degradation to key a cap on.
+      The one real gradient is by TOOL-CALL COUNT: 0 calls 98% (n=1,623), 1-3 99% (n=575),
+      4-9 98% (n=486), 10+ 89% (n=579). But that measures tools USED, not tools PRESENTED,
+      and a turn making 10+ calls is doing harder work — so reading it as "too many tools
+      offered" is a guess, and it is the same guess-from-a-correlation that made
+      window-relative wrong.
+    the_prerequisite_if_you_want_it: >-
+      Add a `model` column to task_outcomes (idempotent migration), a field on TaskOutcome,
+      and thread the resolved model from the provider call through to capture. That is the
+      write that must exist before ANY per-model rate can be read. It is a schema change plus
+      threading, not a one-liner.
+    the_recommendation: >-
+      BUILD THE PREREQUISITE, LEAVE THE CAP ALONE FOR NOW. Recording the model is right
+      regardless of the cap — it is currently impossible to answer "did this model get worse"
+      about anything at all — and it costs one migration. But do not derive a cap from it
+      until a second model exists, because a formula over one data point is less honest than
+      the integer it replaces.
+    blocks: ESC-47's implementation, and only that.
   - id: ESC-49-ESC-19-needs-one-more-choice-WHICH-conversation-a-proactive-message-joins
     raised: 2026-08-23
     continues: ESC-19
