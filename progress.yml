@@ -3461,6 +3461,50 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-51-re-feeding-the-graph-needs-a-SOURCE-and-the-obvious-one-is-the-pipeline-you-deleted
+    raised: 2026-08-24
+    continues: ESC-39
+    question: >-
+      You decided RE-FEED the graph memory rather than retire it. Round 0 says the feeder
+      reads `committed_facts`, which has ZERO rows because D08.1 removed its writer. So the
+      decision needs a source. The only populated table of the right shape would mean
+      re-extracting entities from conversation text — which is the pipeline D08.1 deliberately
+      deleted. Which source do you want?
+    why_evidence_cannot_settle_it: >-
+      Evidence settles that the feeder is starved and names the candidates. It cannot choose
+      between reviving a form of extraction you removed on purpose and pointing the graph at
+      curated memory instead, because that is a question about what the graph is FOR.
+    THE_MEASUREMENT: >-
+      kuzu_sync_handler's query is `SELECT cf.fact_id, cf.content FROM committed_facts cf ...`.
+      committed_facts: 0 rows. staged_facts: 5,030 rows but they are RAW CONVERSATION TURNS —
+      sampled content begins "User: You are the VERIFIER owl in a fixed-stage incident
+      root-cause analysis..." — not extracted entities. conversations 237, messages 548.
+      Curated memory holds 13 files of short human-written durable facts.
+    THE_THREE_SOURCES_AND_WHAT_EACH_COMMITS_TO: >-
+      (1) staged_facts — populated, wrong shape. Turning raw turns into graph entities needs
+      an extractor, which is the 107k-fact pipeline D08.1 removed and which CLAUDE.md records
+      as having kept mining for ~18,500 facts after its modules were deleted. Reviving any
+      form of it contradicts a recorded decision, which is why this is your call and not mine.
+      (2) CURATED MEMORY — the natural successor, because D08.1 replaced the extraction
+      pipeline WITH it. Short, durable, human-scale, already the thing every prompt carries.
+      Small (13 files) — a graph over it would be modest, which may be the honest size.
+      (3) Leave the feeder starved and retire the graph — you already rejected this.
+    THE_SECOND_DEFECT_THAT_SURVIVES_WHICHEVER_SOURCE_YOU_PICK: >-
+      ESC-39 recorded that writer and reader hash differently: the WRITER hashes
+      sha256("{entity_type}|{entity.name}") from an extracted entity NAME
+      (kuzu_sync_handler.py:100-103); the READER hashes sha256("{ent_type}|{token}") from a
+      RAW QUERY WORD across six guessed types (classify.py:70-77). They match only when an
+      entity's name is exactly one query token, case-sensitively. That was unmeasurable while
+      the feeder was empty and it stays unmeasurable until it is fed — so whichever source is
+      chosen, the acceptance check must be a NON-ZERO graph_context_len on a real turn, never
+      "the sync wrote N nodes". A populated graph nothing can read is the same defect one
+      layer along.
+    the_recommendation: >-
+      CURATED MEMORY. It is what D08.1 chose as the replacement, it needs no extractor, and it
+      cannot resurrect the mining loop by accident. Accept that the resulting graph is small —
+      a graph over 13 files of real facts is more useful than 107,000 mined ones nothing read,
+      which is the lesson D08.1 already paid for.
+    blocks: ESC-39's implementation, and only that.
   - id: ESC-50-capability-relative-sizing-has-no-signal-to-derive-from-yet
     raised: 2026-08-24
     continues: ESC-47
