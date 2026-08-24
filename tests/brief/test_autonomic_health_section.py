@@ -154,10 +154,43 @@ async def test_both_arms_are_reported_once_both_have_data(tmp_db):
 
     section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
 
-    line = next(i for i in section.items if i.startswith("lessons_effect"))
+    line = next(i for i in section.items if i.startswith("lessons_quality"))
     assert "[interactive]" in line
     assert "injected:0.70(n=2)" in line
     assert "held_out:0.40(n=1)" in line
+
+
+@pytest.mark.asyncio
+async def test_the_COMPARABLE_metric_is_reported_beside_the_quality_one(tmp_db):
+    """ESC-40. The quality line averages quality_score, which the critic scorer
+    only ever writes for `success = 1` rows — so it compares SURVIVORS of a gate
+    the treatment itself affects, and a collider makes the sign come out backwards.
+
+    Measured 2026-08-24 over 6,890 arm-carrying rows: held_out succeeded 23.9% and
+    injected 29.6% (z = -3.68), while the quality line said the opposite. Bakir's
+    first brief in 14 days carried only the quality line and therefore told him
+    withholding lessons produced better work.
+
+    The success line is computed WITHOUT a quality_score filter, which is the whole
+    point — filtering would reproduce the selection effect it exists to avoid.
+    """
+    store = SkillIndexStore(tmp_db)
+    await store.upsert(_loaded("a"))
+    await _outcome(tmp_db, "t1", "injected", 0.8)
+    await _outcome(tmp_db, "t2", "injected", None)   # unscored — still counts here
+    await _outcome(tmp_db, "t3", "held_out", 0.4)
+
+    section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
+
+    succ = next(i for i in section.items if i.startswith("lessons_success"))
+    # n=2 for injected proves the UNSCORED row is counted: the quality line sees
+    # one injected turn, this one must see both.
+    assert "injected:100.0%(n=2)" in succ, succ
+    assert "held_out:100.0%(n=1)" in succ, succ
+
+    quality = next(i for i in section.items if i.startswith("lessons_quality"))
+    assert "injected:0.80(n=1)" in quality, quality
+    assert "success-gated" in quality, "the quality line must say what it is conditioned on"
 
 
 @pytest.mark.asyncio
@@ -170,7 +203,7 @@ async def test_a_ONE_SIDED_result_is_not_reported(tmp_db):
 
     section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
 
-    assert not any(i.startswith("lessons_effect") for i in section.items)
+    assert not any(i.startswith("lessons_quality") for i in section.items)
 
 
 @pytest.mark.asyncio
@@ -186,7 +219,7 @@ async def test_unlabelled_and_unscored_turns_are_excluded(tmp_db):
 
     section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
 
-    line = next(i for i in section.items if i.startswith("lessons_effect"))
+    line = next(i for i in section.items if i.startswith("lessons_quality"))
     assert "injected:0.80(n=1)" in line, line
     assert "held_out:0.40(n=1)" in line, line
 
@@ -205,7 +238,7 @@ async def test_machine_and_interactive_lanes_are_reported_SEPARATELY(tmp_db):
     await _outcome(tmp_db, "m2", "held_out", 0.80, session="incident-y")
 
     section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
-    lines = [i for i in section.items if i.startswith("lessons_effect")]
+    lines = [i for i in section.items if i.startswith("lessons_quality")]
 
     assert len(lines) == 2, lines
     inter = next(i for i in lines if "[interactive]" in i)
@@ -225,7 +258,7 @@ async def test_a_lane_with_only_one_arm_is_skipped_while_the_other_reports(tmp_d
     await _outcome(tmp_db, "m1", "injected", 0.90, session="goal-x")
 
     section = await AutonomicHealthAssembler(store, tmp_db).assemble(_ctx())
-    lines = [i for i in section.items if i.startswith("lessons_effect")]
+    lines = [i for i in section.items if i.startswith("lessons_quality")]
 
     assert len(lines) == 1
     assert "[interactive]" in lines[0]

@@ -308,7 +308,52 @@ class AutonomicHealthAssembler:
             by_lane.setdefault(str(r["lane"]), {})[str(r["arm"])] = (
                 int(str(r["n"])), float(str(r["q"])),
             )
+        # SUCCESS RATE — the comparison that is actually COMPARABLE across arms,
+        # and the reason the quality line alone was misleading.
+        #
+        # The critic scorer selects `WHERE quality_score IS NULL AND success = 1
+        # AND failure_class IS NULL`, so ONLY SUCCESSFUL TURNS ARE EVER SCORED.
+        # The quality query above therefore averages over survivors of that gate,
+        # and conditioning on success — which both the treatment and the turn's
+        # quality cause — induces a spurious NEGATIVE association among them: if
+        # lessons rescue marginal turns that would otherwise have failed, those
+        # turns join the INJECTED scored pool and pull its mean down, while the
+        # held-out pool keeps only turns good enough to succeed unaided.
+        #
+        # MEASURED 2026-08-24 over 6,890 arm-carrying rows: on success itself the
+        # sign is the other way — held_out 23.9% vs injected 29.6%, z = -3.68.
+        # Bakir's 13:00 brief that day, his first in 14 days, reported only the
+        # quality line and so told him withholding lessons produced better work.
+        #
+        # NOTE the deliberate absence of `quality_score IS NOT NULL` here. Adding
+        # it would reproduce the exact selection effect this line exists to avoid.
+        succ_rows = await self._db.fetch_all(
+            f"SELECT lessons_arm AS arm, "  # noqa: S608 — prefixes are module constants
+            f"CASE WHEN {lane_case} THEN 'machine' ELSE 'interactive' END AS lane, "
+            f"COUNT(*) AS n, SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) AS ok "
+            f"FROM task_outcomes "
+            f"WHERE owner_id = ? AND lessons_arm IS NOT NULL "
+            f"GROUP BY lessons_arm, lane",
+            (DEFAULT_PRINCIPAL_ID,),
+        )
+        succ_by_lane: dict[str, dict[str, tuple[int, int]]] = {}
+        for r in succ_rows:
+            succ_by_lane.setdefault(str(r["lane"]), {})[str(r["arm"])] = (
+                int(str(r["n"])), int(str(r["ok"] or 0)),
+            )
+
         for lane in ("interactive", "machine"):
+            # Same both-arms guard as below: one side is not a comparison.
+            succ = succ_by_lane.get(lane, {})
+            if len(succ) == 2:
+                i_n, i_ok = succ["injected"]
+                h_n, h_ok = succ["held_out"]
+                if i_n and h_n:
+                    items.append(
+                        f"lessons_success[{lane}] "
+                        f"injected:{100 * i_ok / i_n:.1f}%(n={i_n}) "
+                        f"held_out:{100 * h_ok / h_n:.1f}%(n={h_n})"
+                    )
             scored = by_lane.get(lane, {})
             # Only once BOTH arms have scored turns: one side is not a
             # comparison, and printing it invites a conclusion from noise.
@@ -317,8 +362,9 @@ class AutonomicHealthAssembler:
             inj_n, inj_q = scored["injected"]
             held_n, held_q = scored["held_out"]
             items.append(
-                f"lessons_effect[{lane}] injected:{inj_q:.2f}(n={inj_n}) "
-                f"held_out:{held_q:.2f}(n={held_n})"
+                f"lessons_quality[{lane}] injected:{inj_q:.2f}(n={inj_n}) "
+                f"held_out:{held_q:.2f}(n={held_n}) [scored turns only — "
+                f"success-gated, not comparable across arms]"
             )
 
         # 3. STEP — are replies staying inside the budget the system prompt asks

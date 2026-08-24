@@ -315,6 +315,52 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  THE_BRIEF_DELIVERED_AND_VALIDATED_THREE_FIXES_2026_08_24_T13_00Z:
+    verdict: PASS. Bakir's first morning_brief in 14 days, and one delivery closed three
+      open validations at once.
+    ESC_42_seed_repair_PASS: >-
+      `proactive_job.deliver_for_job: exit` — rollup "delivered", per_channel
+      {"telegram": "delivered"}, undeliverable []. Before the repair it was rollup
+      "undeliverable", per_channel {}, undeliverable [] — zero channels attempted, mapped to
+      SUCCESS. The FAIL branch was named in advance (a repair that writes the row but is not
+      read back would be an actuator on only some paths — my own fix repeating this
+      programme's first failure mode). It did not fire: the delivery path read the repaired
+      target_channels and target_addresses.
+    ESC_19_PASS_on_the_same_delivery: >-
+      "[notifications] deliverer: recorded the delivered message" target 72055773, 700 chars,
+      and the staged_facts row carries the empty-user-half shape. So the brief is in his
+      conversation buffer and the agent can discuss what it sent.
+    ESC_45_visibility_floor_PASS_and_it_reported_itself: >-
+      The brief's own AUTONOMIC_HEALTH section reads "skills active:157 stale:0 archived:1".
+      It was 92 stale and ~8 days from the archive cliff. The floor's effect showed up
+      unprompted in the operator's daily report, which is the strongest kind of evidence
+      available for it.
+    BUT_THE_BRIEF_TOLD_HIM_THE_WRONG_THING_ABOUT_LESSONS: >-
+      It carried only "lessons_effect[machine] injected:0.75 held_out:0.89" — read plainly,
+      withholding lessons produces better work. That is the collider artifact: the critic
+      scorer writes quality_score ONLY for success=1 rows, so averaging it compares SURVIVORS
+      of a gate the treatment itself affects. After 14 days of silence his first brief
+      delivered the reversed conclusion.
+    the_fix_is_ADDITIVE: >-
+      `lessons_success[lane]` now sits beside it, computed over ALL arm-carrying rows with NO
+      quality_score filter — the absence of that filter is the entire point and is pinned by
+      a test. The quality line is renamed `lessons_quality[lane]` and labelled "[scored turns
+      only — success-gated, not comparable across arms]". Nothing is removed: the number was
+      never wrong, only unlabelled, and with a real effect line present leaving the other one
+      called "effect" would have been actively misleading.
+      Computed against live data, tomorrow's brief will read:
+        lessons_success[interactive] injected:79.9%(n=344)  held_out:74.5%(n=51)
+        lessons_success[machine]     injected:26.5%(n=5534) held_out:21.2%(n=965)
+      Both lanes now show injection HIGHER — the opposite sign from the quality line.
+    two_of_my_own_errors_on_the_way: >-
+      (1) My new test first failed because it pinned the SPELLING of a guard (`!= 2`) while I
+      had written it as `== 2`. I corrected the test, not the code — pinning syntax is how a
+      test starts costing more than it protects.
+      (2) Four existing brief tests then failed with "coroutine raised StopIteration" and I
+      hypothesised a DB double exhausting canned responses. WRONG — it is a real tmp_db, and
+      the cause was `next(i for i in items if i.startswith("lessons_effect"))` finding nothing
+      after my rename. Reading the traceback took one command; the hypothesis would have sent
+      me to rewrite a fixture that was never involved.
   A_CORRECTION_TO_MY_OWN_DUPLICATE_NUMBERS_AND_A_SIDE_EFFECT_OF_MY_FIX_2026_08_24_T09_30Z:
     HOW_I_FOUND_IT: >-
       After the 08:30 run revived authoring I checked whether the three new skills duplicated
