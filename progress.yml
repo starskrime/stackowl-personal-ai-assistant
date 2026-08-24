@@ -315,6 +315,45 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  THE_16_DAY_AUTHORING_OUTAGE_IS_CLOSED_2026_08_24_T08_38Z:
+    verdict: PASS on production traffic, on every criterion written in advance.
+    the_fix: >-
+      Commit 978abc0f — authoring._known_tool_names read `getattr(registry, "names")`, which
+      ToolRegistry does not have, so it returned an EMPTY frozenset instead of the None its
+      own docstring promised. validate_body then treated "nothing is known" as knowledge and
+      failed every backticked tool name.
+    WHAT_THE_08_30_RUN_DID: >-
+      agent:synthesizer authored THREE skills — 08:31:46 rca_claim_verifier, 08:33:40
+      incident_evidence_brief, 08:35:02 verify_rca_hypothesis. Its create count went 101 ->
+      104 and its last-create moved from 2026-08-07 08:30:40, where it had been stuck for
+      SIXTEEN DAYS, to 2026-08-24 08:35:02. One `lesson ALREADY KNOWN — reinforcing` also
+      fired, so the dedup path works as well.
+    refusals_collapsed: >-
+      `[synth] synthesize_one: gated write refused` ran at exactly 5 per day every day from
+      2026-08-15 to 2026-08-23 (6 on the 19th). Today: 2.
+    THE_FALSE_PASS_GUARD_HELD: >-
+      "[skills] standard: the tool registry named no tools" — 0 occurrences. That line was
+      added with the fix precisely so a SKIPPED rule could not masquerade as a satisfied one.
+      Zero means the registry answered, the rule ran, and the writes passed it. Had this been
+      non-zero the create count would have risen for the wrong reason.
+    THE_RESIDUAL_REFUSALS_ARE_REAL_VIOLATIONS_and_one_is_worth_reading_carefully: >-
+      08:38:12 english-tutor-analysis — when_to_use empty AND description 77 chars over a
+      60 limit. Correct refusal.
+      08:35:42 list-owls — "tool_names: backticked token(s) that are not registered tools:
+      on_demand". THIS STILL CITES tool_names, and it is NOT the old bug: `on_demand` is a
+      LIFECYCLE VALUE the model backticked as though it were a tool. The rule is doing
+      exactly its job. The bug rejected `web_fetch` and `web_search` — genuinely registered,
+      always-present tools. That class is gone; this class should stay.
+      (A third refusal at 02:37, incident_shell_stop / description 197 chars, is not a synth
+      write — it carries no [synth] marker and comes from the failure-outcome miner. The
+      by-day count of 2 is synth-only; the printed list of 3 included it. Stated because the
+      two numbers disagree and the reason is not obvious.)
+    what_this_proves_beyond_the_fix: >-
+      The platform's self-improvement loop has been dead since 2026-08-07 and is alive again.
+      Sixteen nights of five drafts each were produced, refused, and reported as a COMPLETED
+      job — roughly eighty skills the platform wrote and threw away while telling itself it
+      had succeeded. The guide-star question ("if this degrades silently, what notices?") had
+      the answer "nothing", for sixteen days, inside the very loop that exists to notice.
   ESC_17_CAUSE_DIAGNOSED_2026_08_24_T03_15Z:
     what_bakir_decided: "Make it deterministic — cause first."
     THE_CAUSE_two_constructors_forty_lines_apart_one_field: >-
