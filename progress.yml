@@ -315,6 +315,43 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  A_CORRECTION_TO_MY_OWN_DUPLICATE_NUMBERS_AND_A_SIDE_EFFECT_OF_MY_FIX_2026_08_24_T09_30Z:
+    HOW_I_FOUND_IT: >-
+      After the 08:30 run revived authoring I checked whether the three new skills duplicated
+      anything. My probe said "no near-duplicate" for all three. That negative was suspicious —
+      `incident_evidence_brief` against the existing `incident-evidence-brief` is obviously the
+      same name — so I verified rather than reported it, and the probe was wrong.
+    THE_PROBE_BUG: >-
+      My tokenizer was `re.findall(r'\w+', name.lower())`. In Python `\w` INCLUDES the
+      underscore, so `incident_evidence_brief` tokenises as ONE token while
+      `incident-evidence-brief` splits into three. Jaccard 0 instead of 1.0. Every
+      hyphen-vs-underscore pair was invisible to me, and separator variance is precisely the
+      naming variation that produces these duplicates.
+    THE_NUMBERS_I_REPORTED_WERE_ROUGHLY_HALF: >-
+      I recorded 77 near-duplicate pairs covering 54 of 155 skills (35%). Tokenising on
+      hyphen AND underscore: 168 pairs covering 102 of 171 (60%). SIX families now share an
+      IDENTICAL token set — download-instagram-video/instagram-video-download,
+      incident-evidence-brief/incident_evidence_brief, check-stock-price-today/
+      check_stock_price_today, memory_unachieved_effect_fallback/
+      unachieved_effect_memory_fallback, report-task-status/task-status-report,
+      check-stock-price-alert/stock-price-alert-check. Three of those six are PURE separator
+      variants my old probe could never have seen.
+      Note one of them, check-stock-price-today/check_stock_price_today, was listed verbatim
+      by the Future-proof lens during ESC-34 and I tokenised straight past it.
+    AND_MY_OWN_FIX_HAS_A_SIDE_EFFECT_worth_stating_plainly: >-
+      The revived synthesizer minted `incident_evidence_brief` at 08:33:40 today, duplicating
+      the existing `incident-evidence-brief`. Restoring authoring restored duplicate
+      production. `_reinforce_if_known` matches on `standard.base_name`, which strips only a
+      `-N` suffix — blind to separator variants AND to word-order permutations, exactly as
+      measured during ESC-34 for instagram-video-download.
+      This is NOT an argument against the outage fix: eighty drafts a fortnight written and
+      silently discarded was the worse state. But the fix landed with this consequence and it
+      should not arrive as a surprise later.
+    what_a_real_dedup_would_have_to_match_on: >-
+      A CANONICAL FORM — lowercase, separators normalised, tokens SORTED — which collapses all
+      six families above to one key each. That is a small function and a much better rule than
+      base_name. It is not built here: it changes what the writer accepts, and after the
+      ESC-38 rejection I am not redesigning a write path unprompted at 09:30.
   THE_16_DAY_AUTHORING_OUTAGE_IS_CLOSED_2026_08_24_T08_38Z:
     verdict: PASS on production traffic, on every criterion written in advance.
     the_fix: >-
