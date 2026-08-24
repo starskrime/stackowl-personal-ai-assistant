@@ -325,7 +325,7 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN — needs a restart and a job that had failed then succeeds
+      validate: done — closed 2026-08-24T15:35Z by a natural experiment, see below
       document: no_change_needed (the test file carries the record)
     HOW_IT_WAS_FOUND: >-
       It caught ME. Reading the jobs table to confirm the synthesizer's cadence for ESC-52,
@@ -363,15 +363,30 @@ current:
     files:
       - src/stackowl/scheduler/scheduler.py (_mark_completed — one column added to an existing reset)
       - tests/scheduler/test_a_succeeding_job_clears_its_stale_error.py (new, 4 tests, fixtures are the LIVE error strings)
-    validate_OPEN_the_query_that_would_close_it: >-
-      After a restart, a job that carries a last_error must show it CLEARED once it next
-      succeeds. Closing query:
-      SELECT job_id, status, failure_count, last_error FROM jobs
+    VALIDATE_CLOSED_2026_08_24_T15_35Z: >-
+      PASS, and on better evidence than the check I had planned. The jobs table contained
+      its own control group, so the result discriminates rather than merely agreeing.
+        retry_sweep        ran 15:34:26 — AFTER the fix went live — last_error CLEARED
+        skill_synthesizer  last ran 08:38:12 — BEFORE it        — last_error still set
+        dream_worker       enabled=0, never runs                 — last_error still set
+      The ONLY row that cleared is the ONLY row that executed under the new code. Query:
+      SELECT job_id,status,failure_count,last_error FROM jobs
       WHERE status='pending' AND last_error IS NOT NULL AND last_error != '';
-      Baseline before the fix: THREE rows (skill_synthesizer, retry_sweep, dream_worker).
-      PASS = retry_sweep drops out within ~90s of the restart (it runs every 90s and
-      succeeds). dream_worker is enabled=0 and will NOT clear — it never runs — which is
-      correct behaviour, not a failure of this fix; do not count it.
+      returns TWO rows, down from three, and both survivors are jobs that have not run.
+      Unforced — nobody reset anything; retry_sweep cleared its own error on an ordinary
+      90-second success.
+    THE_FIX_WENT_LIVE_WITHOUT_ME_RESTARTING: >-
+      Worth recording because it corrects an operating assumption. A CodeWatcher polls
+      `src/` every 2.0s with a 30s quiet period and exec-replaces the core on any change:
+      "[runtime] code change settled → requesting core restart" at 15:15:01, then
+      "[startup] core: exec-replacing with fresh code (restart)" at 15:15:05 — twenty
+      minutes BEFORE the ./start.sh I ran at 15:34:57. The working tree is production more
+      literally than "restart to deploy" implies: an edit to src/ is live within ~30s
+      whether or not anyone restarts. Two consequences for this programme — a measurement
+      taken shortly after an edit may ALREADY reflect the new code, so "the old process is
+      still holding the old code" cannot be assumed either way; and the PID rule is
+      reinforced, since an exec-replace keeps the PID and only the JSONL shows the swap.
+      It also means an accidental save to src/ deploys itself.
 
   ESC_53_ROLLOVER_SUMMARIES_DIE_TERMINALLY_ON_A_TRANSIENT_FAULT_2026_08_24:
     status: ESCALATED — measured, NOT acted on. Both remedies are Bakir's call.
