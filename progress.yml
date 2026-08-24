@@ -315,6 +315,51 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  LIVE_INCIDENT_2026_08_24_T02_15Z_a_budget_stop_was_SILENT:
+    reported_by_bakir: >-
+      "I did ask clear question and he did answer: 'Found the provider API. Now let me find
+      the request shape.' 358,961 in / 4,654 out and nothing come after."
+    THE_TURN_trace_0e568f1ad39a4da485aa5552ac279f3b: >-
+      02:12:29 his 160-char question routed to secretary.
+      02:12:39 browser_navigate hcpdirectory.cigna.com -> BrowserSessionLimitError (runtime
+      recycled during session open). 02:13:00 again -> TimeoutError after 30s. 02:13:37 again
+      -> BrowserSessionLimitError. web_fetch x3 -> blocked by the SSRF egress guard. Two
+      same-tool circuit-opens.
+      02:15:24 [budget] gate: cap reached — cap="steps", limit=20, actual=20.
+      02:15:27 delivered ONE chunk, total_len=58 — the last PROGRESS line, as the answer.
+      success=False, failure_class="stop", 177,557ms.
+    the_token_figure_is_not_the_defect: >-
+      358,961 in is CUMULATIVE across 20 model calls in the tool loop, not one oversized
+      request. model_window is 262,144 and the context-budget line shows the turn fitting
+      inside it (system 3,690 + history 1,595 + 40 tools). Worth stating because 358k against
+      a 262k window looks exactly like a window overflow and is not one.
+    WHY_NOTHING_CAUGHT_IT: >-
+      The honest give-up floor arms on CONSEQUENTIAL failures. Every tool that failed here is
+      severity='read' with effect_class=None — browser_navigate, web_fetch, web_search. A
+      RESEARCH turn fails on READ failures, so cons_failures was 0 and the floor never armed.
+      A budget-capped turn that never tried to change anything had no honesty gate at all.
+    THE_ASYMMETRY_THAT_MAKES_IT_A_BUG: >-
+      Two neighbouring paths through the same handler were already honest. A user-requested
+      stop appends "[stopped: you asked me to stop — ending this turn here.]" and an EXPLICIT
+      operator cap appends "[stopped: budget cap 'steps' reached (limit 20, used 20)]". Only
+      the DEFAULT backstop was silent — and it is the one the user never set and cannot
+      predict. Its stated reason was sound (keep `budget:stop:steps:limit=20` out of user
+      content) but silence was never the only alternative to a leak.
+    fixed: >-
+      The default backstop now appends, in plain English: "[stopped: I ran out of steps for
+      this turn before I could finish. Ask me to continue and I'll pick up from here.]" A test
+      asserts the note exists, that it carries NO developer-facing detail, and that it offers a
+      next step rather than only announcing a stop. The empty-partial path still routes to
+      synthesize_floor, and both neighbouring notes are pinned unchanged.
+    TWO_THINGS_I_FOUND_AND_DID_NOT_FIX_because_they_are_Bakirs_call: >-
+      (1) THE BROWSER RUNTIME IS UNSTABLE. It recycled mid-open twice inside 90 seconds
+      ("browser process gone — marking unavailable", "sessions.open: runtime recycled
+      mid-open — discarding context"). That instability is what BURNED the step budget; the
+      silent stop is what hid it. Fixing the honesty does not make the browser work.
+      (2) THE SSRF GUARD BLOCKED hcpdirectory.cigna.com three times, closing the fallback
+      path once the browser failed. That is either correct (the guard doing its job) or a
+      false positive on a legitimate healthcare provider directory, and I have not
+      established which — it needs the blocked URL and the rule that matched.
   ESC_19_WAS_ALREADY_SHIPPED_AND_ESC_49_IS_WITHDRAWN_2026_08_24_T02_10Z:
     the_correction: >-
       ESC-19 is NOT open. It is implemented, live, and has been for long enough to have had a

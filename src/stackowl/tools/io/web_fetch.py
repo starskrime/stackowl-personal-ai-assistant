@@ -92,13 +92,46 @@ class WebFetchTool(Tool):
         # E0-S2 — SSRF egress guard: reject internal/metadata targets before navigating.
         ok, reason = _SSRF_GUARD.is_allowed(url)
         if not ok:
+            # A DNS FAILURE IS NOT A POLICY REFUSAL, and the remedies are
+            # opposite: "blocked" means stop, "did not resolve" means the
+            # hostname is wrong — try another one.
+            #
+            # MEASURED 2026-08-24 on Bakir's stalled turn
+            # (trace 0e568f1ad39a4da485aa5552ac279f3b): the agent was told
+            # "URL blocked by egress policy: host 'www.hcpdirectory.cigna.com'
+            # did not resolve" three times and never tried the bare host —
+            # which resolves perfectly well; only the `www.` subdomain does not
+            # exist. Reading a policy refusal, it had no reason to vary the
+            # hostname, so it burned steps on the browser instead and the turn
+            # hit its step cap with no answer.
+            #
+            # The same wording sent ME to the wrong hypothesis while diagnosing
+            # it — I went looking for an over-strict egress rule on a legitimate
+            # healthcare directory. A message that misnames its own cause costs
+            # its reader the same detour every time, model or human.
+            _unresolved = "did not resolve" in str(reason)
             log.tool.warning(
-                "web_fetch.execute: blocked by SSRF egress guard",
-                extra={"_fields": {"url": log_url, "reason": reason}},
+                "web_fetch.execute: host did not resolve — NOT an egress refusal"
+                if _unresolved
+                else "web_fetch.execute: blocked by SSRF egress guard",
+                extra={"_fields": {
+                    "url": log_url, "reason": reason,
+                    "kind": "dns" if _unresolved else "policy",
+                }},
             )
+            if _unresolved:
+                _err = (
+                    f"That hostname does not exist: {reason}. This is a DNS "
+                    "failure, NOT a blocked or forbidden URL — the site may be "
+                    "reachable under a different hostname. Try it without a "
+                    "'www.' prefix (or with one), or search for the correct "
+                    "address, rather than retrying this exact host."
+                )
+            else:
+                _err = f"URL blocked by egress policy: {reason}"
             return ToolResult(
                 success=False, output="",
-                error=f"URL blocked by egress policy: {reason}",
+                error=_err,
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
 

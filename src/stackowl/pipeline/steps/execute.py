@@ -2776,9 +2776,38 @@ async def _run_with_tools(
             # developer-facing budget marker in the content.  If partial is empty,
             # route to the synthesize_floor path (same never-empty guarantee as the
             # general exception handler).
+            #
+            # BUT NEVER SILENTLY. Reported by Bakir 2026-08-24: he asked a question,
+            # got back the single line "Found the provider API. Now let me find the
+            # request shape.", and nothing else. Trace 0e568f1ad39a4da485aa5552ac279f3b
+            # spent all 20 steps on browser_navigate failures against one host
+            # (runtime recycled mid-open twice, a 30s timeout once) with web_fetch
+            # blocked by the SSRF guard, hit the step cap, and delivered its last
+            # PROGRESS line as though it were the answer. success=False and
+            # failure_class="stop" were both recorded. He was told none of it.
+            #
+            # Nothing caught it because the honest give-up floor arms on
+            # CONSEQUENTIAL failures, and every tool that failed here is
+            # severity='read' — a research turn fails on READ failures, so
+            # cons_failures was 0. A budget-capped turn that never tried to change
+            # anything had no honesty gate at all.
+            #
+            # The two neighbouring paths were already honest: a user-requested stop
+            # appends "[stopped: you asked me to stop...]" and an EXPLICIT operator
+            # cap appends "[stopped: budget cap ...]". Only the default backstop —
+            # the one the user never set and cannot predict — said nothing.
+            #
+            # The original concern is preserved: no developer-facing marker
+            # (`budget:stop:steps:limit=20`) in user content. Plain English is the
+            # alternative to silence; silence was never the only way to avoid a leak.
+            _backstop_note = (
+                "[stopped: I ran out of steps for this turn before I could finish. "
+                "Ask me to continue and I'll pick up from here.]"
+            )
             if exc.partial_text:
                 _breach_chunks = (ResponseChunk(
-                    content=exc.partial_text, is_final=False, chunk_index=0,
+                    content=f"{exc.partial_text}\n\n{_backstop_note}",
+                    is_final=False, chunk_index=0,
                     trace_id=state.trace_id, owl_name=state.owl_name,
                 ),)
                 # D2 — stamp the consequential snapshot on the budget-cap return so the
