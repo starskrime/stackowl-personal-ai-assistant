@@ -35,6 +35,9 @@ class _AlwaysFailsHandler(JobHandler):
     def __init__(self, name: str) -> None:
         self._name = name
         self.calls = 0
+        #: Overridable so a test can drive a PERMANENT failure through the same
+        #: handler (ESC-53). Default stays the transient-looking original.
+        self._error = "transient boom"
 
     @property
     def handler_name(self) -> str:
@@ -50,7 +53,7 @@ class _AlwaysFailsHandler(JobHandler):
             job_id=job.job_id,
             success=False,
             output=None,
-            error="transient boom",
+            error=self._error,
             duration_ms=1.0,
         )
 
@@ -175,6 +178,19 @@ async def test_one_shot_job_stays_terminal_failed(
         "stackowl.config.test_mode.TestModeGuard.assert_not_test_mode",
         lambda *_a, **_kw: None,
     )
+    # CONTRACT CHANGED 2026-08-24 (ESC-53), by owner decision. This asserted that a
+    # one-shot "must stay terminal failed" after exhausting retries. It measured
+    # its cost: 54 conversation rollover summaries died across 16 days because a
+    # provider circuit was open for minutes, while recurring jobs sailed through
+    # the same outages by re-arming. Whether work survived was decided by CADENCE.
+    #
+    # A one-shot now re-arms too, on a backoff ladder, UNLESS repeating it cannot
+    # work. `_AlwaysFailsHandler` raises "transient boom", which classifies as
+    # unknown — and unknown defaults to retryable by the classifier's own
+    # load-bearing rule. So this job now survives.
+    #
+    # The terminal path is NOT gone; it is asserted directly below on a failure
+    # that genuinely cannot succeed by repeating.
     handler = _AlwaysFailsHandler("goal_execution")
     sched = _sched(tmp_db, handler)
     job = _job("goal_execution", params={"run_once": True})  # one-shot
@@ -183,7 +199,36 @@ async def test_one_shot_job_stays_terminal_failed(
     await _exhaust_retries(tmp_db, sched, job.job_id)
 
     rows = await tmp_db.fetch_all(
+        "SELECT status, failure_count FROM jobs WHERE job_id = ?", (job.job_id,)
+    )
+    assert len(rows) == 1, "the row must never be deleted"
+    assert rows[0]["status"] == "pending", (
+        "a one-shot that failed on a fault that may pass must live to try again"
+    )
+
+
+async def test_one_shot_STILL_dies_on_a_failure_that_can_never_succeed(
+    tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of ESC-53's contract, and the guard against turning a fix
+    into the no-decay failure mode: work that can never succeed must still stop.
+    """
+    monkeypatch.setattr(
+        "stackowl.config.test_mode.TestModeGuard.assert_not_test_mode",
+        lambda *_a, **_kw: None,
+    )
+    handler = _AlwaysFailsHandler("goal_execution")
+    handler._error = "malformed job: session_key and ended_conversation_id are required"
+    sched = _sched(tmp_db, handler)
+    job = _job("goal_execution", params={"run_once": True})
+    await insert_job(tmp_db, job)
+
+    await _exhaust_retries(tmp_db, sched, job.job_id)
+
+    rows = await tmp_db.fetch_all(
         "SELECT status FROM jobs WHERE job_id = ?", (job.job_id,)
     )
-    assert len(rows) == 1
-    assert rows[0]["status"] == "failed", "one-shot must stay terminal failed (unchanged)"
+    assert rows[0]["status"] == "failed", (
+        "a job created without the fields its handler requires never succeeded "
+        "ONCE — re-arming it forever is not persistence"
+    )

@@ -50,6 +50,12 @@ _PATTERNS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("timeout", "timed out", "deadline exceeded"), "timeout"),
     (("connection refused", "connection reset", "temporarily unavailable",
       "503", "502", "econnrefused"), "transient"),
+    # ESC-53. Work created without the fields its handler requires cannot be
+    # rescued by repeating it — the nine malformed rollover_summary jobs never
+    # succeeded ONCE. Classified into the pre-existing "permanent" class rather
+    # than a new name, so the vocabulary does not grow for one case. Checked LAST:
+    # a message that also mentions a timeout or a 503 is better described by that.
+    (("malformed job",), "permanent"),
 )
 
 
@@ -97,6 +103,50 @@ def classify_failure(error: str | BaseException | None) -> str:
         if any(n in text for n in needles):
             return cls
     return ""
+
+
+#: Fallback when no settings are wired. The REAL list is
+#: ``settings.task_loop.permanent_failure_classes`` — which failures are truly
+#: permanent is deployment-specific (what is unrecoverable behind one gateway is a
+#: transient blip behind another), so it must not be a constant compiled in here.
+#:
+#: MOVED HERE from ``pipeline/durable/store.py`` on 2026-08-24 (ESC-53). The
+#: scheduler needed the same answer for one-shot re-arm, and a second copy of
+#: "which failures are permanent" is the exact shape this module exists to
+#: prevent. The leaf property is preserved: the settings import is lazy, inside
+#: the function, so importing this module still pulls in nothing but the logger.
+_PERMANENT_CLASSES_FALLBACK = frozenset({"permanent", "auth", "not_found", "refused"})
+
+
+def permanent_classes() -> frozenset[str]:
+    """The configured permanent-failure classes, or the fallback.
+
+    Read at call time, not import time, so a settings change takes effect without
+    a redeploy — and never raises: an unreadable config degrades to the fallback
+    rather than making every failure look retryable.
+    """
+    try:
+        from stackowl.pipeline.services import get_services
+
+        cfg = getattr(get_services(), "settings", None)
+        if cfg is not None:
+            return frozenset(cfg.task_loop.permanent_failure_classes)
+    except Exception as exc:
+        log.tasks.warning(
+            "[loop] could not read permanent_failure_classes — using the fallback",
+            exc_info=exc,
+        )
+    return _PERMANENT_CLASSES_FALLBACK
+
+
+def is_permanent(failure_class: str) -> bool:
+    """Can repeating this work ever succeed?
+
+    False for the unknown class (""), which is the load-bearing default stated at
+    the top of this module: a wrong "permanent" strands work that would have
+    succeeded; a wrong "retryable" only spends attempts that backoff bounds.
+    """
+    return bool(failure_class) and failure_class in permanent_classes()
 
 
 def wants_reshaping(failure_class: str) -> bool:

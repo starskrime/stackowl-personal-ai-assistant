@@ -38,6 +38,9 @@ class _AlwaysFailsHandler(JobHandler):
     def __init__(self, name: str) -> None:
         self._name = name
         self.calls = 0
+        #: Overridable so a test can drive a PERMANENT failure through the same
+        #: handler (ESC-53) and still reach the terminal path. Default unchanged.
+        self._error = "boom"
 
     @property
     def handler_name(self) -> str:
@@ -50,7 +53,8 @@ class _AlwaysFailsHandler(JobHandler):
     async def execute(self, job: Job) -> JobResult:
         self.calls += 1
         return JobResult(
-            job_id=job.job_id, success=False, output=None, error="boom", duration_ms=1.0
+            job_id=job.job_id, success=False, output=None, error=self._error,
+            duration_ms=1.0,
         )
 
 
@@ -173,9 +177,42 @@ async def _exhaust_retries(db: DbPool, sched: JobScheduler, job_id: str) -> None
 # ---------------------------------------------------------------------------
 
 
-async def test_terminal_one_shot_failure_routes_notification(tmp_db: DbPool) -> None:
+async def test_one_shot_RE_ARM_still_routes_a_notification(tmp_db: DbPool) -> None:
+    """ESC-53 changed the one-shot OUTCOME, not the never-silent guarantee.
+
+    This test used to drive a one-shot to terminal `failed`. A transient failure
+    now re-arms instead — but the alert must still fire, because "the platform
+    quietly retried something for hours" is exactly the silence F-61 exists to
+    end. The terminal path keeps its own test directly below.
+    """
     deliverer = _RecordingDeliverer()
     sched = _sched(tmp_db, _AlwaysFailsHandler("goal_execution"), deliverer=deliverer)
+    job = _job("goal_execution", params={"run_once": True})
+    await insert_job(tmp_db, job)
+
+    await _exhaust_retries(tmp_db, sched, job.job_id)
+
+    rows = await tmp_db.fetch_all(
+        "SELECT status FROM jobs WHERE job_id = ?", (job.job_id,)
+    )
+    assert rows[0]["status"] == "pending", "transient one-shot re-arms (ESC-53)"
+    assert deliverer.calls, "a re-armed one-shot must still route an operator alert"
+    assert deliverer.calls[-1]["job_id"] == job.job_id
+    # The alert must not describe a one-shot's backoff as a cadence slot. The
+    # default non-terminal wording says "re-armed to its next slot", which a
+    # one-shot does not have; _rearm_one_shot overrides it.
+    assert "slot" not in deliverer.calls[-1].get("message", ""), (
+        "a one-shot has no next slot — the alert must not invent one"
+    )
+
+
+async def test_terminal_one_shot_failure_routes_notification(tmp_db: DbPool) -> None:
+    """The original test, preserved verbatim in intent, driven by a failure that
+    genuinely cannot succeed by repeating so it still reaches the terminal path."""
+    deliverer = _RecordingDeliverer()
+    handler = _AlwaysFailsHandler("goal_execution")
+    handler._error = "malformed job: session_key and ended_conversation_id are required"
+    sched = _sched(tmp_db, handler, deliverer=deliverer)
     job = _job("goal_execution", params={"run_once": True})
     await insert_job(tmp_db, job)
 

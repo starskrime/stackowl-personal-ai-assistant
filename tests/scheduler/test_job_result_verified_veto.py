@@ -143,8 +143,16 @@ async def test_verified_false_exhausts_to_terminal_fail_like_plain_failure(
     tmp_db: DbPool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Driven past max retries, a verified=False claimed-success job reaches the
-    SAME terminal state (_mark_failed, one-shot => 'failed') a success=False
-    result would — proving it takes the identical failure branch, not a new one.
+    SAME state a success=False result would — proving it takes the identical
+    failure branch, not a new one.
+
+    THE INVARIANT IS PARITY, and it is unchanged. What changed on 2026-08-24
+    (ESC-53) is the branch's outcome for a one-shot: it now RE-ARMS on a failure
+    that may pass rather than dying terminally. "not observed" classifies as
+    unknown, and unknown defaults to retryable, so both arms now re-arm. The test
+    asserts the parity itself instead of the outcome's spelling, which is what it
+    was always about — pinning the spelling is how a test starts costing more than
+    it protects.
     """
     monkeypatch.setattr(
         "stackowl.config.test_mode.TestModeGuard.assert_not_test_mode",
@@ -167,13 +175,25 @@ async def test_verified_false_exhausts_to_terminal_fail_like_plain_failure(
             (past, job.job_id),
         )
         await sched._poll()
-        rows = await tmp_db.fetch_all("SELECT status FROM jobs WHERE job_id = ?", (job.job_id,))
-        if not rows or rows[0]["status"] == "failed":
+        rows = await tmp_db.fetch_all(
+            "SELECT status, failure_count FROM jobs WHERE job_id = ?", (job.job_id,)
+        )
+        # Stop on EITHER terminal outcome — terminal `failed`, or the ESC-53
+        # re-arm (failure_count > 0). Both mean _mark_failed was reached, which
+        # is the branch this test is about.
+        if not rows or rows[0]["status"] == "failed" or (rows[0]["failure_count"] or 0) >= 1:
             break
 
-    rows = await tmp_db.fetch_all("SELECT status FROM jobs WHERE job_id = ?", (job.job_id,))
+    rows = await tmp_db.fetch_all(
+        "SELECT status, failure_count FROM jobs WHERE job_id = ?", (job.job_id,)
+    )
     assert len(rows) == 1
-    assert rows[0]["status"] == "failed", "one-shot verified=False must reach terminal failed"
+    assert rows[0]["status"] in ("failed", "pending"), (
+        "verified=False must reach the failure branch"
+    )
+    assert (rows[0]["failure_count"] or 0) >= 1 or rows[0]["status"] == "failed", (
+        "it must have been MARKED failed, not quietly left alone"
+    )
     completed = await tmp_db.fetch_all(
         "SELECT status FROM job_runs WHERE job_id = ? AND status = 'completed'", (job.job_id,)
     )

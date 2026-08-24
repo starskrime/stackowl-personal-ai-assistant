@@ -315,6 +315,103 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_53_ONE_SHOT_REARM_2026_08_24:
+    decision: >-
+      Bakir: "Re-arm one-shots too." Transient failure re-queues with backoff; genuine
+      permanent faults (malformed job, missing handler) still terminate.
+    stages:
+      brainstorm: no_change_needed — the measurement and the decision settled it
+      architect: done — rung 1, extend _mark_failed's existing one-shot branch
+      implement: done
+      cleanup: done — ruff back to 37 after an I001 the new import introduced
+      test: RUNNING — 132 importing suites
+      validate: OPEN
+      document: OPEN
+    WHAT_HAD_TO_CHANGE_FIRST: >-
+      MEASURED before writing any code: the shared classify_failure returned "" for BOTH
+      "All providers unavailable ... (circuit open)" AND "malformed job: session_key and
+      ended_conversation_id are required". It could not tell the 54 that must retry from
+      the 9 that must never retry. So the classifier was the real blocker, not the branch.
+    the_three_changes:
+      - >-
+        failure_class.py — one pattern added, ("malformed job",) -> the PRE-EXISTING
+        "permanent" class. No new vocabulary for one case. Checked LAST so a message that
+        also mentions a timeout or a 503 is still described by that instead.
+      - >-
+        failure_class.py — `permanent_classes()` and `is_permanent()` MOVED here from
+        pipeline/durable/store.py, where they were private. The scheduler needed the same
+        answer and a second copy of "which failures are permanent" is precisely the shape
+        this module's own docstring says it exists to prevent. The leaf property is
+        preserved: the settings import stays lazy INSIDE the function, so importing the
+        module still pulls in nothing but the logger. store.py keeps the old private name
+        as a re-export alias, so its callers are untouched and there is still ONE
+        implementation. A test asserts both sides return the same set.
+      - >-
+        scheduler.py — `_rearm_one_shot`. Mirrors the recurring re-arm (clear transient
+        retry state, return to pending) but places the next attempt on a backoff ladder
+        (300/900/1800/3600s) that widens with failure_count and then HOLDS at hourly. That
+        bounds the RATE without ever bounding the number of attempts, which is what "never
+        give up on the job" has to mean for work that cannot regenerate by waiting. Logs
+        INFO (production runs at INFO, so a DEBUG line would be no evidence at all) and
+        writes a `job_rearmed_one_shot` audit row. last_error is deliberately KEPT — a row
+        that is waiting must still say what it is waiting on.
+    what_the_deployment_override_buys: >-
+      Because permanence reads settings.task_loop.permanent_failure_classes at CALL time,
+      an operator who finds a class mis-judged in their environment can change it without
+      a redeploy — and that now governs the scheduler too, not just the durable loop.
+    NOTED_NOT_ACTED_ON_the_tree_deploys_before_tests_finish: >-
+      The CodeWatcher exec-replaced the core within ~30s of the scheduler.py edit, so this
+      change was LIVE in production while its 132 test suites were still running. That is
+      the documented design (auto_restart defaults true) and not a defect, but it means
+      there is no staging step: any save to src/ ships. Recorded so the risk is visible;
+      no change proposed, because the same property is what makes iteration fast here.
+    still_to_do_in_this_item: >-
+      Bakir also decided "Delete these 63 only" — a ONE-OFF cleanup of the current
+      terminal rollover_summary corpses, explicitly NOT a recurring retention sweep. Do it
+      only after the re-arm is green, and count the rows before and after.
+
+  ESCALATIONS_ANSWERED_2026_08_24_EVENING:
+    note: >-
+      Eight decisions from Bakir in one sitting, verbatim below. Recorded BEFORE any of
+      them was worked, so the record is the instruction and not a reconstruction.
+    ESC_53_one_shot_rearm: >-
+      "Re-arm one-shots too." Extend the 2026-07-22 never-give-up rule to one-shots: on a
+      TRANSIENT failure re-queue with backoff instead of dying terminally. Genuine
+      permanent faults (malformed job, missing handler) still terminate. Cadence currently
+      decides whether work survives, and cadence has nothing to do with whether the work
+      still needs doing.
+    ESC_53_the_54_lost_summaries: >-
+      "Fix forward only." Accept the historical loss; do NOT regenerate. Ship the re-arm so
+      it cannot recur. Do not go looking for the source conversations.
+    ESC_53_the_63_spent_rows: >-
+      "Delete these 63 only." A ONE-OFF cleanup of the current corpses. NO recurring
+      retention sweep — he chose the narrower option deliberately, so do not add one.
+    ESC_48_memory_routing: >-
+      "Infer from the fact text." Route a memory write on the SUBJECT of the fact, derived
+      from the fact itself, not on the calling owl and not on an explicit argument.
+    ESC_48_when_inference_is_unclear: >-
+      "Default user, always name it." Low confidence falls back to the USER's file, and the
+      confirmation ALWAYS states where it landed. This is the load-bearing half: inference
+      was the option whose failure mode sank the previous attempt (a wrong destination that
+      still returned a bare "Saved."). Naming the destination every time converts a silent
+      misroute into a visible one the user corrects in a sentence. The tool must never again
+      return a confirmation that does not name its destination.
+    ESC_47_50_model_column: >-
+      "Add the column, start recording." ALTER task_outcomes to carry the model, populate it
+      from now on. NO behaviour change to the cap today — the data simply has to exist
+      before anything can be relative to it.
+    ESC_51_graph_refeed: >-
+      "Build it now." Wire curated memory as the graph's source. Acceptance is a NON-ZERO
+      graph_context_len on a REAL turn — never "the sync wrote N nodes". The previously
+      removed extractor stays removed.
+    ESC_17_session_key: >-
+      "Go, importers checked first." Audit every importer of the command path's raw-key
+      behaviour, report what would break, THEN change writers and constructor together.
+      Existing rows are NOT migrated and keep their old meaning.
+    order_of_work: >-
+      One item to done, never two. ESC-53's re-arm goes first: it is the only one of the
+      eight that is still actively losing work every time the provider circuit blips.
+
   DEBT_A_SUCCEEDING_JOB_KEPT_REPORTING_ITS_OLD_FAILURE_2026_08_24:
     map_check: >-
       "clear last_error when a scheduled job completes successfully" — NO mapped item

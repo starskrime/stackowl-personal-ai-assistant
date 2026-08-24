@@ -13,6 +13,11 @@ from stackowl.db.pool import DbPool
 from stackowl.infra import retry_ledger
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
+
+# A leaf module by design — it imports nothing of the platform but the logger —
+# so the scheduler can ask it at module level without dragging in the durable
+# loop's database chain. ONE home for 'what kind of failure is this'.
+from stackowl.pipeline.durable.failure_class import classify_failure, is_permanent
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler_helpers import (
@@ -45,6 +50,14 @@ _MAX_DEFER_SEC = 900.0
 # ordinary handler exception already takes — recurring jobs self-heal (F-60),
 # one-shots retry up to _MAX_RETRIES.
 _HANDLER_TIMEOUT_SEC = 1200.0
+# ESC-53. Backoff ladder for RE-ARMING a one-shot that failed transiently. Bakir,
+# 2026-08-24: "Re-arm one-shots too." Backoff is what makes never-give-up safe —
+# it bounds the RATE rather than the number of attempts, exactly as a recurring
+# job's cadence does. The last entry is the steady state: a one-shot blocked on
+# something genuinely long-lived retries hourly forever rather than spinning or
+# dying. Measured cause: 54 rollover summaries lost across 16 days to provider
+# circuit-opens lasting minutes.
+_ONE_SHOT_REARM_BACKOFF_SEC: tuple[int, ...] = (300, 900, 1800, 3600)
 
 
 def _unify_scheduler_enabled() -> bool:
@@ -534,6 +547,60 @@ class JobScheduler(SupervisedTask):
         """
         return not bool(job.params.get("run_once"))
 
+    async def _rearm_one_shot(
+        self, job: Job, last_error: str | None, failure_class: str
+    ) -> None:
+        """Re-queue a one-shot that failed on something that may yet pass (ESC-53).
+
+        Mirrors the recurring re-arm: transient retry state is cleared and the row
+        returns to ``pending``. The difference is WHEN — a one-shot has no cadence
+        slot to advance to, so the next attempt is placed on a backoff ladder that
+        widens with ``failure_count`` and then holds at its last entry. That bounds
+        the RATE without ever bounding the number of attempts, which is what
+        "never give up on the job" has to mean for work that cannot regenerate
+        itself by waiting.
+
+        ``last_error`` is deliberately KEPT: the row is waiting, and a row that is
+        waiting must still say what it is waiting on.
+        """
+        attempt = (job.failure_count or 0) + 1
+        idx = min(attempt - 1, len(_ONE_SHOT_REARM_BACKOFF_SEC) - 1)
+        delay = _ONE_SHOT_REARM_BACKOFF_SEC[idx]
+        next_run = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
+        await self._db.execute(
+            "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
+            "retry_count = 0, retry_at = NULL, failure_count = ?, "
+            "last_error = ? WHERE job_id = ?",
+            (now_iso, next_run, attempt, last_error, job.job_id),
+        )
+        # INFO, not DEBUG: this line is the evidence that a one-shot survived a
+        # transient fault, and production runs at INFO.
+        log.heartbeat.info(
+            "[scheduler] %s: one-shot RE-ARMED after transient failure — retry in %ss",
+            job.job_id,
+            delay,
+            extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name,
+                               "attempt": attempt, "delay_sec": delay,
+                               "failure_class": failure_class or "unknown",
+                               "next_run": next_run}},
+        )
+        await write_audit(
+            self._db,
+            "job_rearmed_one_shot",
+            job.job_id,
+            actor="scheduler",
+            details={"handler": job.handler_name, "attempt": attempt,
+                     "delay_sec": delay, "failure_class": failure_class,
+                     "last_error": last_error},
+        )
+        await self._notify_failure(
+            job, last_error, terminal=False,
+            disposition=(
+                f"failed transiently and will retry in {delay}s (attempt {attempt})"
+            ),
+        )
+
     async def _mark_failed(self, job: Job, last_error: str | None = None) -> None:
         """Terminate a one-shot job, or RE-ARM a recurring one (F-60).
 
@@ -546,14 +613,28 @@ class JobScheduler(SupervisedTask):
         lifecycle transition does) so a re-arm-after-failure is never silent.
         """
         if not self._is_recurring(job):
+            # ESC-53 — a one-shot dies terminally only when repeating it CANNOT
+            # work. Anything else re-arms with backoff, because the alternative is
+            # what actually happened: 54 conversation rollover summaries lost
+            # across 16 days because a provider circuit was open for minutes. The
+            # recurring branch below has re-armed since F-60 with the explicit
+            # note that "the job itself is never given up on"; whether work
+            # survived a blip was being decided by CADENCE, which has nothing to
+            # do with whether the work still needs doing.
+            failure_class = classify_failure(last_error)
+            if not is_permanent(failure_class):
+                await self._rearm_one_shot(job, last_error, failure_class)
+                return
             await self._db.execute(
                 "UPDATE jobs SET status = 'failed', last_error = ? WHERE job_id = ?",
                 (last_error, job.job_id),
             )
             log.heartbeat.error(
-                "[scheduler] %s: max retries reached — one-shot marked permanently failed",
+                "[scheduler] %s: one-shot marked permanently failed — %s",
                 job.job_id,
-                extra={"_fields": {"job_id": job.job_id, "retries": job.retry_count + 1}},
+                failure_class,
+                extra={"_fields": {"job_id": job.job_id, "retries": job.retry_count + 1,
+                                   "failure_class": failure_class}},
             )
             await write_audit(
                 self._db,
@@ -620,6 +701,7 @@ class JobScheduler(SupervisedTask):
         last_error: str | None,
         *,
         terminal: bool,
+        disposition: str | None = None,
     ) -> None:
         """Route an operator alert for a retry-exhausted job (F-61).
 
@@ -645,7 +727,17 @@ class JobScheduler(SupervisedTask):
                 extra={"_fields": {"job_id": job.job_id}},
             )
             return
-        disposition = "permanently failed" if terminal else "is failing repeatedly (re-armed to its next slot)"
+        # `disposition` is overridable because the default non-terminal wording
+        # ("re-armed to its next slot") describes a RECURRING job's cadence, and a
+        # re-armed one-shot has no slot. An alert that misnames its own cause
+        # costs its reader the same detour every time — the defect fixed in
+        # web_fetch and again in the stale last_error, and not one to reintroduce
+        # in the very alert that reports a rescue.
+        if disposition is None:
+            disposition = (
+                "permanently failed" if terminal
+                else "is failing repeatedly (re-armed to its next slot)"
+            )
         message = f"Scheduled job '{job.handler_name}' {disposition} after exhausting retries."
         if last_error:
             message += f" Last error: {last_error}"

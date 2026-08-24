@@ -22,6 +22,7 @@ from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
 from stackowl.pipeline.durable.failure_class import (
     classify_failure,
+    permanent_classes,
     wants_reshaping,
 )
 from stackowl.pipeline.durable.task import DEFAULT_MAX_ATTEMPTS, DurableTask, TaskStatus
@@ -67,32 +68,11 @@ DEFAULT_LEASE_SECONDS = 900
 #: retry weeks out, which for the user is indistinguishable from "it gave up".
 _BACKOFF_SECONDS = (5, 15, 60, 300, 900)
 
-#: Fallback when no settings are wired. The REAL list is
-#: ``settings.task_loop.permanent_failure_classes`` — which failures are truly
-#: permanent is deployment-specific (what is unrecoverable behind one gateway is a
-#: transient blip behind another), so it must not be a constant compiled in here.
-_PERMANENT_CLASSES_FALLBACK = frozenset({"permanent", "auth", "not_found", "refused"})
-
-
-def _permanent_classes() -> frozenset[str]:
-    """The configured permanent-failure classes, or the fallback.
-
-    Read at call time, not import time, so a settings change takes effect without
-    a redeploy — and never raises: an unreadable config degrades to the fallback
-    rather than making every failure look retryable.
-    """
-    try:
-        from stackowl.pipeline.services import get_services
-
-        cfg = getattr(get_services(), "settings", None)
-        if cfg is not None:
-            return frozenset(cfg.task_loop.permanent_failure_classes)
-    except Exception as exc:
-        log.tasks.warning(
-            "[loop] could not read permanent_failure_classes — using the fallback",
-            exc_info=exc,
-        )
-    return _PERMANENT_CLASSES_FALLBACK
+# The permanent-class rule moved to `failure_class` on 2026-08-24 (ESC-53) so the
+# scheduler could ask the SAME question for one-shot re-arm. Re-exported under the
+# original private name: every existing caller here keeps working, and there is
+# still exactly one implementation.
+_permanent_classes = permanent_classes
 
 
 #: See fail_and_requeue — an already-measured-absent effect retries a few times,
