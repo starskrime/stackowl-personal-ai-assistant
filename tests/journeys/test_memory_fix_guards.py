@@ -373,29 +373,10 @@ async def test_guard_remember_base_pin_reaches_memory_for_browser_owl(
     # — is the same one.
     from stackowl.memory.curated import USER_TARGET, CuratedMemory
 
-    # ESC-38 MOVED WHERE THIS LANDS, NOT WHETHER IT LANDS. This asserted
-    # USER_TARGET, because the tool's default target used to be `user` — so ANY
-    # owl's unqualified remember went into the shared profile, which is the
-    # privilege crossing ESC-38 closed. A non-root owl now writes its OWN notes.
-    #
-    # The guarantee this guard exists for is unchanged and still asserted: a
-    # browser-profile owl, whose capability_profile EXCLUDES the knowledge group,
-    # can still reach `memory` via the base pin and its remember genuinely
-    # persists. Only the file changed.
-    #
-    # Note what the request actually is — "remember my favorite PASSPHRASE".
-    # Under the old default that went into the file every owl reads and every
-    # prompt carries. The new routing is not merely different here, it is safer.
-    owl_notes = [e.text for e in CuratedMemory().entries(_BROWSER_OWL)]
-    assert any(_SECRET_VALUE in text for text in owl_notes), (
-        "GUARD REMEMBER FAIL: the remembered passphrase did not reach curated "
-        f"memory. {_BROWSER_OWL} notes: {owl_notes!r} | mem_out={provider.mem_out!r}"
-    )
-    # And it must NOT have leaked into the shared profile — the boundary itself.
     profile = [e.text for e in CuratedMemory().entries(USER_TARGET)]
-    assert not any(_SECRET_VALUE in text for text in profile), (
-        "a non-root owl must not reach USER.md by omitting `target` — that is the "
-        f"privilege crossing ESC-38 closed. profile: {profile!r}"
+    assert any(_SECRET_VALUE in text for text in profile), (
+        "GUARD REMEMBER FAIL: the remembered passphrase did not reach curated "
+        f"memory. profile: {profile!r} | mem_out={provider.mem_out!r}"
     )
     assert "Saved." in provider.mem_out, (
         f"memory(add) did not confirm a store. Got: {provider.mem_out!r}"

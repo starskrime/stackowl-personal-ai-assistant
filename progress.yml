@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_38_REVERTED_ON_BAKIRS_CALL_2026_08_23_T23_55Z:
+    what_he_said: >-
+      ESC-48 answer: "Fix it. It is not correct." On the clarifying question he chose
+      "The whole approach is wrong — rethink it": park the change, revert memory targeting to
+      how it was before ESC-38, and bring a fresh design.
+    what_was_reverted: >-
+      tools/knowledge/memory.py (back to `_target` = kwargs target or 'user', no authority
+      check, original schema description), owls/canonical.py DELETED, and the two test files
+      built for that design deleted (test_memory_owl_boundary, test_canonical_owl_name).
+      tests/journeys/test_memory_fix_guards.py restored to asserting USER_TARGET.
+      DELIBERATELY KEPT from the same commit, because they are unrelated to the rejected
+      approach: the ESC-34 corrections (test_an_owl_can_reach_the_ask,
+      test_owl_builder_journey) and the two widened to_provider_schema doubles.
+      canonical.py was removed rather than left in place: with its only caller gone it would
+      be an unwired module, which is the exact defect shape this programme keeps finding.
+    WHAT_THE_REVERT_COSTS_stated_plainly: >-
+      The authority hole is OPEN again. `target` is unbound model text with no authority
+      check, so any owl can write any other owl's notes and USER.md — the file every owl
+      reads and which sits in every prompt. Path traversal remains closed (path_for validates
+      the filename shape); only IDENTITY is unchecked. That is a known, accepted state while
+      the approach is redesigned, not an oversight.
+    THE_FINDINGS_SURVIVE_THE_REVERT_and_the_next_design_should_start_from_them: >-
+      1. 8 of 13 files in ~/.stackowl/memory/ are read by NOTHING, and the mechanism is
+         display names: Collector.md is archivist's, Falcon.md AND falcon.md are both
+         scout's, agent.md / owl.md / Brain.md match no owl at all, sysdesign.md and
+         sysfup.md outlived their owls.
+      2. The default target was `user`, so every write that merely OMITTED the field landed
+         in the most privileged file on the platform by omission.
+      3. `CuratedMemory.path_for` validates the filename SHAPE, not identity — `Collector` is
+         a perfectly safe filename and entirely the wrong file. Shape and identity are
+         different questions and only one of them was being asked.
+      4. THE PART THAT MADE MY FIX DANGEROUS, and which any future design must handle: the
+         tool returns "Saved." regardless of where the write landed. A write to the wrong
+         file is reported as success. Whatever replaces this, the confirmation must name the
+         destination — otherwise a targeting bug is invisible to the user by construction.
+    my_read_of_why_it_was_rejected_recorded_as_a_guess_not_a_fact: >-
+      I do not actually know which part he judged wrong, and asked rather than assume. The
+      likeliest reading is that binding authority to the CALLING OWL is the wrong axis
+      altogether — an owl is not a security principal in the way a user is, and the question
+      "where does this fact belong" is a semantic one (is this about the person, or about
+      this owl's work) that an authority check cannot answer. If so, the next design should
+      route on the CONTENT's subject rather than on the caller's identity. Flagged as my
+      inference so the next session does not inherit it as his reasoning.
   A_PROCESS_FAILURE_I_SHIPPED_2026_08_23_T22_40Z:
     what_happened: >-
       ESC-34 was committed (7a6ed508) and reported GREEN on tests/authz + tests/owls, 393

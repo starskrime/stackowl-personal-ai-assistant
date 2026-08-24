@@ -48,17 +48,11 @@ incompatible with our tri-store; porting would create a second store). See
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from stackowl.commands.memory_helpers import forget_fact
 from stackowl.infra.observability import log
-from stackowl.infra.trace import TraceContext
-from stackowl.memory.curated import (
-    DURABILITIES,
-    USER_TARGET,
-    CuratedMemory,
-    note_write,
-)
+from stackowl.memory.curated import DURABILITIES, CuratedMemory, note_write
 from stackowl.memory.trust import render_at_trust
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -128,17 +122,15 @@ class MemoryTool(Tool):
                 "target": {
                     "type": "string",
                     "description": (
-                        "OMIT to write your OWN notes — the default, and "
-                        "usually right. 'user' = lasting facts about the "
-                        "PERSON; it is shared with every owl and only the root "
-                        "administrator may write it. Another owl's name needs "
-                        "root too. Job config, credentials, schedules and "
-                        "delivery logs are NOT user preferences — put them on "
-                        "the owl that owns the work, or nowhere."
+                        "'user' = durable facts about the PERSON (preferences, "
+                        "how they want you to work). It is shared with EVERY owl "
+                        "and is the smallest budget, so keep it to a handful of "
+                        "lasting facts. An owl's name = that owl's own working "
+                        "notes. Job config, credentials, schedules, and logs of "
+                        "what you already delivered are NOT user preferences — "
+                        "put them on the owl that owns the work, or nowhere."
                     ),
-                    # No "default" advertised any more: the default is now the
-                    # CALLING owl, which the schema cannot name. Stating 'user'
-                    # here would tell the model the opposite of what happens.
+                    "default": _DEFAULT_TARGET,
                 },
                 "durability": {
                     "type": "string",
@@ -285,118 +277,8 @@ class MemoryTool(Tool):
         return None
 
     @staticmethod
-    def _resolve_target(kwargs: dict[str, object]) -> tuple[str, str | None]:
-        """Resolve the memory target, and refuse a write across an owl boundary.
-
-        ESC-38, decided by Bakir 2026-08-23. `target` was unbound model text with
-        no authority check at all: any owl could write into any other owl's notes
-        and into USER.md, which every owl reads and which sits in every prompt.
-        Path traversal was already closed — `CuratedMemory.path_for` validates the
-        filename SHAPE — but shape is not identity, and nothing asked WHOSE file
-        this was.
-
-        Returns ``(target, refusal)``. A non-None refusal means the caller should
-        return a structured error rather than write.
-
-        THREE RULES, and each is a measured defect rather than a precaution:
-
-        1. NO TARGET -> THE CALLING OWL'S OWN NOTES. The default used to be `user`,
-           so every unqualified write landed in the shared profile — the single
-           most privileged file on the platform — by omission.
-        2. A TARGET IS CANONICALISED. 8 of 13 memory files were orphans nothing
-           reads, because the model writes the DISPLAY name it sees in the prompt:
-           `Collector.md` is archivist's, `Falcon.md` and `falcon.md` are both
-           scout's. An unresolvable target falls back to the caller's own file
-           rather than minting a ninth orphan.
-        3. `user`, OR ANOTHER OWL'S FILE, REQUIRES ROOT. `is_root_owl` is the one
-           source for that (owls/tool_presets.py) — the secretary is the platform's
-           root administrator, so the ordinary "record what the user told me" flow
-           is untouched.
-        """
-        from stackowl.owls.canonical import canonical_owl_name
-        from stackowl.owls.tool_presets import is_root_owl
-
-        raw = str(kwargs.get("target") or "").strip()
-        caller = None
-        owls: list[Any] = []
-        try:
-            caller = TraceContext.get().get("owl_name")
-            registry = getattr(get_services(), "owl_registry", None)
-            if registry is not None:
-                owls = list(registry.all())
-        except Exception as exc:  # noqa: BLE001 — authority must not raise here
-            log.tool.warning(
-                "memory: could not resolve the calling owl — treating the write "
-                "as unattributed",
-                exc_info=exc,
-            )
-
-        if not caller:
-            # UNATTRIBUTED. A CLI or utility turn acts for the operator, not for an
-            # owl, so refusing would break the operator's own path. This therefore
-            # fails OPEN — but LOUDLY, at INFO, so the gap is measurable instead of
-            # assumed. If these records ever carry an owl-driven trace, the branch
-            # is wrong and the log will say so.
-            log.tool.info(
-                "memory: UNATTRIBUTED write — no calling owl in the trace context, "
-                "so the owl-boundary check is not applied to this write",
-                extra={"_fields": {"target": raw or _DEFAULT_TARGET}},
-            )
-            return (raw or _DEFAULT_TARGET), None
-
-        caller_canonical = canonical_owl_name(caller, owls) or str(caller)
-
-        if not raw:
-            # RULE 1, WITH THE ROOT EXCEPTION THE JOURNEYS FORCED.
-            #
-            # The plain reading of ESC-38 — "bind target to the calling owl by
-            # DEFAULT" — broke the platform's PRIMARY memory flow, and three
-            # journey tests caught it: the user says "remember I prefer X", the
-            # secretary calls memory(add) without a target, and the fact landed in
-            # secretary.md where no other owl reads it. `"Saved."` was still
-            # returned, so the write SUCCEEDED to the wrong file — the failure
-            # would have been silent in production.
-            #
-            # The root administrator's job IS curating the shared profile, so its
-            # default stays `user`. Every OTHER owl defaults to its own notes,
-            # which is what actually closes the privilege crossing: USER.md was
-            # reachable by omission from any owl, and now it is reachable by
-            # omission only from the one owl that is supposed to write it.
-            #
-            # This is a deliberate deviation from the letter of the decision to
-            # preserve its INTENT; ESC-48 puts it in front of Bakir to overrule.
-            if is_root_owl(caller):
-                return USER_TARGET, None
-            return caller_canonical, None
-
-        if raw.casefold() == USER_TARGET:
-            if is_root_owl(caller):
-                return USER_TARGET, None
-            return "", (
-                f"'{caller}' may not write the shared user profile. USER.md is read "
-                f"by EVERY owl and sits in every prompt, so only the root "
-                f"administrator writes it. Put this on '{caller_canonical}' instead "
-                f"(omit 'target'), or ask the user to record it."
-            )
-
-        resolved = canonical_owl_name(raw, owls)
-        if resolved is None:
-            # rule 2 — not an owl. Falling back beats minting an orphan: the write
-            # survives somewhere a reader actually looks.
-            log.tool.info(
-                "memory: target is not a known owl — writing to the caller's own "
-                "notes instead of creating a file nothing reads",
-                extra={"_fields": {"requested": raw, "used": caller_canonical}},
-            )
-            return caller_canonical, None
-
-        if resolved != caller_canonical and not is_root_owl(caller):
-            return "", (
-                f"'{caller}' may not write '{resolved}'\u2019s notes. Each owl keeps its "
-                f"own. Omit 'target' to write your own, or ask '{resolved}' to "
-                f"record it."
-            )
-        return resolved, None
+    def _target(kwargs: dict[str, object]) -> str:
+        return str(kwargs.get("target") or _DEFAULT_TARGET).strip()
 
     async def _add(
         self, bridge: MemoryBridge, kwargs: dict[str, object], t0: float,
@@ -417,10 +299,7 @@ class MemoryTool(Tool):
         if refusal is not None:
             return refusal
 
-        target, target_refusal = self._resolve_target(kwargs)
-        if target_refusal:
-            return self._err(target_refusal, t0)
-        result = self._curated().add(target, content, durability)
+        result = self._curated().add(self._target(kwargs), content, durability)
         return self._from_curated(result, t0)
 
     async def _replace(
@@ -443,10 +322,7 @@ class MemoryTool(Tool):
         refusal = self._scanned(content, t0)
         if refusal is not None:
             return refusal
-        target, target_refusal = self._resolve_target(kwargs)
-        if target_refusal:
-            return self._err(target_refusal, t0)
-        result = self._curated().replace(target, old, content, durability)
+        result = self._curated().replace(self._target(kwargs), old, content, durability)
         return self._from_curated(result, t0)
 
     async def _remove(
@@ -458,10 +334,7 @@ class MemoryTool(Tool):
                 "action='remove' requires 'content' — the text of the entry to drop.",
                 t0,
             )
-        target, target_refusal = self._resolve_target(kwargs)
-        if target_refusal:
-            return self._err(target_refusal, t0)
-        result = self._curated().remove(target, text)
+        result = self._curated().remove(self._target(kwargs), text)
         return self._from_curated(result, t0)
 
     def _from_curated(self, result: object, t0: float) -> ToolResult:
