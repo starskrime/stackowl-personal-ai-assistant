@@ -315,6 +315,45 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_19_WAS_ALREADY_SHIPPED_AND_ESC_49_IS_WITHDRAWN_2026_08_24_T02_10Z:
+    the_correction: >-
+      ESC-19 is NOT open. It is implemented, live, and has been for long enough to have had a
+      bug found and fixed on real traffic. ProactiveDeliverer._remember_what_we_said runs on
+      every successful delivery (deliverer.py: `if result == "delivered"`), and its own
+      docstring records a follow-up fix "caught on live traffic 20 minutes after ESC-19
+      shipped" — two telegram canaries had been written into Bakir's history before
+      `ephemeral` was excluded.
+    MEASURED_not_assumed: >-
+      16 rows in staged_facts carry ESC-19's exact signature — content starting "User:" with
+      an EMPTY user half followed by "Assistant:" — every one keyed to source_ref 72055773,
+      Bakir's telegram id. Most recent 2026-08-23T23:41:00: a News Desk update delivered
+      tonight. The feature works.
+    ESC_49_IS_WITHDRAWN_and_the_error_was_mine: >-
+      I asked Bakir "which conversation does a proactive message join — current incarnation,
+      a new one, or only if one is open?" That question had no premise. The implementation
+      does not use incarnations at all: it keys on `notification.target`, the same identity
+      the undelivered outbox attributes a failed send to, and writes to the memory bridge's
+      conversation buffer rather than to TranscriptStore. He answered "current incarnation;
+      don't start one" — an answer to a question that did not need asking, and I cost him a
+      decision for nothing.
+      The ARCHITECT block I wrote for ESC-49 an hour ago is therefore describing a system
+      that does not need building. It is left in place as a record of the error rather than
+      deleted.
+    THE_PROCESS_DEFECT_UNDERNEATH_and_it_is_failure_mode_4: >-
+      I took current.ESCALATIONS as the list of what is UNBUILT. It is not — it is the list
+      of what was ASKED. ESC-19 was raised, answered by Bakir, and implemented, but its entry
+      was never marked shipped, so it still reads as open. The escalation list only appends;
+      nothing decays it, and an append-only store poisons its reader. That is the fourth
+      failure mode this programme checks for by default, sitting in the programme's OWN
+      bookkeeping.
+      WHAT WOULD HAVE CAUGHT IT: reading the code before filing the escalation, not after.
+      `grep -rn "ESC-19" src/` returns the implementation immediately — the codebase
+      cross-references its own escalation ids, which is exactly the affordance I did not use.
+    what_i_am_NOT_doing: >-
+      Not "fixing" the escalation list wholesale — auditing every entry against the code is a
+      real task and doing it half-attentively at 02:00 would produce a worse record than the
+      stale one. Recorded here so the next session starts by checking, and so ESC-19 is not
+      rebuilt a third time.
   ESC_49_ARCHITECT_2026_08_24_T02_00Z:
     decided: >-
       A delivered proactive message joins the user's CURRENT incarnation, and does NOT start
