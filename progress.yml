@@ -548,6 +548,40 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  PROCESS_LESSON_EDITING_SRC_DURING_A_TEST_RUN_FAKES_A_FAILURE_2026_08_25:
+    what_happened: >-
+      tests/memory/ reported "1 failed, 469 passed" —
+      test_delete_routes_base_and_fts_through_one_transaction. It passed in isolation and
+      passed as a whole file. The failure text was the giveaway:
+      assert 'transaction(' in '        self, query: str, limit: int = 10, *, scope_key...'
+      `inspect.getsource(SqliteMemoryBridge.delete)` had returned ANOTHER METHOD'S signature.
+    the_cause_was_mine: >-
+      `inspect.getsource` resolves a function's `co_firstlineno` against the source file as
+      it is ON DISK NOW. I inserted `_embed_content` (~43 lines) at line 193 WHILE that
+      background run already had the module imported. delete() moved from ~397 to 440;
+      inspect read the stale line number against the new file and handed back recall()'s
+      signature at 398. Verified after the fact: _embed_content is at 193, recall at 397,
+      delete at 440.
+    why_it_matters_HERE_specifically: >-
+      This repo makes the mistake easy. A CodeWatcher exec-replaces the core on every src/
+      edit, so editing while things run is the normal working mode, and long suites are run
+      in the background precisely so work can continue. Any test that uses
+      `inspect.getsource` — and this codebase has several, because source-scan guards are a
+      deliberate pattern here — will produce a CONFIDENT WRONG failure under that
+      combination. It does not look like a flake; it looks like a regression, with a
+      plausible message.
+    THE_RULE: >-
+      Do not edit a file while a background suite that imports it is running. If the edit
+      cannot wait, treat any `inspect.getsource` failure from that run as UNPROVEN and
+      re-run it in isolation before believing it. Three checks settled this one in under a
+      minute: isolation (passed), whole file (passed), then reading the assertion text
+      instead of hypothesising about monkeypatch leaks — which is what I did first and was
+      wrong about.
+    tenth_false_signal_and_the_third_I_caused_myself: >-
+      After the closing query naming a column that does not exist, and `pgrep -f pytest`
+      matching its own command line. The pattern is consistent: my own probes and my own
+      timing are now a larger source of false signals than the platform is.
+
   DEDUP_GATE_MEASUREMENTS_THAT_CHANGE_THE_DESIGN_2026_08_25:
     status: measured before building, per PROCESS. These constrain what "cross-store" can mean today.
     THE_ROOT_OF_THE_WHOLE_FACT_DUPLICATION_a_three_layer_chain: >-
