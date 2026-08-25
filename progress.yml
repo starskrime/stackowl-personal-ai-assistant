@@ -888,6 +888,43 @@ current:
       predates the machine-lane guard and the owl: row predates this fix — neither will
       change; judge only rows written after 2026-08-25T16:xx.
 
+  OBSERVED_NOT_DIAGNOSED_incident_escalation_row_stuck_running_2026_08_25:
+    status: MEASURED ONLY. Not diagnosed, not fixed. Recorded so it is not lost.
+    what_the_numbers_say:
+      - "jobs row: status='running' continuously from ~22:56 to at least 23:26 (30 min)."
+      - "next_run_at 2026-08-25T22:56:18 — 29 minutes in the PAST."
+      - "last_run_at 22:46:18 (the last COMPLETED run); last_error NULL."
+      - "[scheduler] incident_escalation-9fb1c485: handler timed out — freed for retry/re-arm at 23:16:19, ERROR."
+      - "AND YET nine further incident_escalation lines after that timeout, the last being 'incident opened' at 23:25:15."
+    why_I_did_NOT_call_it_a_stuck_job: >-
+      That was my first hypothesis and the log refutes it. A row stuck in 'running' with no
+      live work would be silent; this one is still opening incidents nine minutes after its
+      own timeout. The timeout path builds a failed JobResult and falls through to the normal
+      re-arm, so the row SHOULD be pending — but the work is demonstrably alive, so "the
+      marking is stuck" and "the handler leaked tasks that outlive cancellation" and
+      "slow but working" all still fit. asyncio.wait_for cancels the awaited coroutine, not
+      tasks that coroutine spawned with create_task, and incident RCA spawns sub-agent turns.
+      Choosing between those needs evidence I do not have.
+    WHY_IT_MATTERS_IF_IT_IS_REAL: >-
+      The CAS claim is `UPDATE jobs SET status='running' WHERE status='pending'`, so a row
+      left 'running' can never be re-claimed. `reap_stale_running` exists and its docstring
+      says it "Runs at startup (from recover())" — startup ONLY. If a timeout can strand a
+      row mid-life, the job is dead until the next process restart, and the thing that dies
+      is the self-healing RCA loop. That is worth resolving even if this instance turns out
+      benign.
+    THE_MEASUREMENT_THAT_WOULD_SETTLE_IT: >-
+      Watch the row across a quiet period with no incident_escalation log lines. If it stays
+      'running' while producing nothing, it is stranded. If it flips to 'pending' once the
+      leaked work finishes, the row was merely late and the only defect is that the scheduler
+      reports a timeout for work that is still running — which is its own honesty problem,
+      because "freed for retry/re-arm" is not what happened.
+    also_seen_and_recovered: >-
+      health_sweep reported down=["provider_registry"] at 23:00:54. It recovered on its own —
+      real completions at 23:23:26 and 23:24:18 — and health_sweep itself is healthy
+      (last_run 23:22:50, failure_count 0, 11 lines since). A transient provider blip, the
+      same class ESC-53's re-arm work addresses. The earlier degraded=["telegram_canary_send"]
+      at 20:32:49 PREDATES my incident and is unrelated to it.
+
   INCIDENT_I_BROKE_THE_GATEWAY_CORE_LINK_FOR_3_5_MINUTES_2026_08_25:
     what_bakir_asked: >-
       "you can act like a person and ask something to your platform depending what you want
