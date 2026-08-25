@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  MEMORY_DEDUP_RESEARCH_AND_FACT_WIPE_2026_08_25:
+    bakir_asked_for: >-
+      "Remove the stored facts — they were created incorrectly, so many duplicates... Owls
+      and platform remember duplicate and semantically same facts, memories and preferences.
+      It just adds, adds, adds and memory is shrinking. There is no similarity check.
+      We need something lightweight and powerful to avoid remembering the same thing again.
+      We need to do research about this." Then: "remove the facts. I don't need that. We
+      need to create it from zero correctly."
+    ACTION_TAKEN_deletion: >-
+      All 5,212 rows of `staged_facts` DELETED on his explicit, twice-stated instruction.
+      Verified safe first: every row was status='staged' (NONE had ever been promoted), no
+      table holds a foreign key to staged_facts, and there are no triggers — so nothing
+      downstream lost anything. A gzipped JSON of all 5,212 rows (embeddings hex-encoded)
+      is in the session scratchpad as staged_facts_backup.json.gz — reversible.
+    THE_MEASUREMENT:
+      staged_facts: >-
+        5,212 rows. 66% were EXACT duplicates (3,462 rows in only 50 families). 0% carried
+        an embedding. And 85% (4,480) were NOT FACTS — they were the incident RCA's own
+        sub-agent system prompts ("You are the VERIFIER owl in a fixed-stage incident
+        root-cause analysis...") captured as source_type='conversation'. One appeared 1,505
+        times.
+      lessons: 5,084 rows, 100% embedded, 0% exact dup, 22% removable at cosine>=0.90, 48% at >=0.85.
+      reflections: 4,730 rows, 100% embedded, 0% exact dup, 4% at cosine>=0.90, 18% at >=0.85.
+      curated_md_THE_CONTROL_GROUP: >-
+        37 facts across 14 .md files: ZERO duplicates by exact OR token-set matching. The
+        one store a human curates is the one store that is clean. Every store the machine
+        writes without a gate is duplicated.
+      write_sites: EXACTLY ONE INSERT per store — sqlite_bridge, lessons_store, reflection_store, preferences. Skills already gated.
+    ROOT_CAUSE_a_chain_of_four: >-
+      (1) No write path consults an existing row before inserting. (2) `FactReinforcer` —
+      "increments reinforcement_count for similar staged facts", threshold 0.75 — has ZERO
+      CALLERS anywhere in src/; built and never wired. (3) Even if wired it could not have
+      worked: its query requires `embedding IS NOT NULL` and staged_facts was 0% embedded.
+      (4) So `reinforcement_count` read 0 on all 5,212 rows — the schema anticipated
+      reinforce-instead-of-insert and the column has been recording that it never happened.
+    RECOMMENDATION_one_gate_not_four: >-
+      A LADDER, cheapest rung first, asked by every store through ONE implementation:
+      normalised-hash (free, catches the 66% case) -> canonical token-set (free, catches
+      rearrangement — ALREADY SHIPPED for skills as canonical_key) -> embedding cosine (the
+      only rung needing a vector, reached by the minority). On a hit, REINFORCE rather than
+      reject: a second sighting is evidence the thing matters, and recall_ranker already
+      consumes reinforcement_count with a saturating 1 + k*ln(1+n) boost, so the signal has
+      a reader waiting. Four call sites. Threshold is per-store CONFIGURATION derived from a
+      labelled sample, never a constant that looked reasonable — measured sensitivity shows
+      pairs jumping 9,159 -> 87,585 across the 0.90->0.85 band.
+    ARTIFACT: docs/research/remember-once.html — published, full measurement + design space.
+    OPEN_QUESTIONS_FOR_BAKIR:
+      - Reinforce or supersede when the new phrasing is better than the stored one?
+      - Should the gate span stores (a preference and a fact can say the same thing)?
+      - The 22% already in `lessons` — compact them, or only stop accumulation? Compaction is destructive.
+      - Where does the prompt-capture bug get fixed? It is ABOVE the gate and worth more than the gate.
+    NOT_BUILT_YET: The gate itself. This entry is research + the wipe he asked for.
+
   ESC_51_THE_REFEED_PREMISE_WAS_WRONG_2026_08_25:
     STOP_AND_ESCALATE_REASON: >-
       A measurement contradicts a recorded decision. Bakir chose "Build it now — re-feed the

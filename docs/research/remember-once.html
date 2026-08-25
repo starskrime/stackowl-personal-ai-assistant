@@ -1,0 +1,493 @@
+<title>Remember Once</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap">
+
+<style>
+:root {
+  --ground:   #F3F5F4;
+  --surface:  #FFFFFF;
+  --sunk:     #E9EDEC;
+  --ink:      #17212A;
+  --muted:    #5D6E78;
+  --hair:     #D3DAD9;
+  --accent:   #0E7C86;
+  --accent-w: #0E7C8618;
+  --waste:    #A8452C;
+  --good:     #3F7A56;
+  --shadow:   0 1px 2px #17212A0D, 0 8px 24px #17212A08;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:   #10151A;
+    --surface:  #171E25;
+    --sunk:     #1D262E;
+    --ink:      #E4EAEF;
+    --muted:    #92A4B0;
+    --hair:     #2A343D;
+    --accent:   #45BCC7;
+    --accent-w: #45BCC71F;
+    --waste:    #E9866B;
+    --good:     #79C79A;
+    --shadow:   0 1px 2px #0006, 0 8px 24px #0004;
+  }
+}
+:root[data-theme="dark"] {
+  --ground:   #10151A;
+  --surface:  #171E25;
+  --sunk:     #1D262E;
+  --ink:      #E4EAEF;
+  --muted:    #92A4B0;
+  --hair:     #2A343D;
+  --accent:   #45BCC7;
+  --accent-w: #45BCC71F;
+  --waste:    #E9866B;
+  --good:     #79C79A;
+  --shadow:   0 1px 2px #0006, 0 8px 24px #0004;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  margin: 0;
+  padding: 0 1.5rem 6rem;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 62rem; margin: 0 auto; }
+
+/* ---------- masthead ---------- */
+.mast {
+  display: flex; flex-direction: column; gap: 1.1rem;
+  padding: 4.5rem 0 2.2rem;
+  border-bottom: 2px solid var(--ink);
+}
+.kicker {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .72rem; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--accent); font-weight: 600;
+}
+h1 {
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-weight: 500; font-size: clamp(2.6rem, 6vw, 4rem);
+  line-height: 1.02; letter-spacing: -.02em;
+  margin: 0; text-wrap: balance;
+}
+.standfirst {
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-size: clamp(1.1rem, 2.2vw, 1.32rem); line-height: 1.5;
+  color: var(--muted); max-width: 46ch; margin: 0;
+}
+.meta {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .74rem; color: var(--muted);
+  display: flex; flex-wrap: wrap; gap: 1.4rem; padding-top: .4rem;
+}
+
+/* ---------- headline stat ---------- */
+.verdict {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1px; background: var(--hair);
+  border: 1px solid var(--hair); border-radius: 3px;
+  margin: 2.5rem 0 0; overflow: hidden;
+}
+.vcell { background: var(--surface); padding: 1.15rem 1.25rem; }
+.vnum {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 1.85rem; font-weight: 600; line-height: 1.1;
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+.vlab {
+  font-size: .78rem; color: var(--muted); margin-top: .3rem; line-height: 1.35;
+}
+.is-waste .vnum { color: var(--waste); }
+.is-good  .vnum { color: var(--good); }
+
+/* ---------- sections ---------- */
+section { padding-top: 3.4rem; }
+h2 {
+  font-family: Newsreader, ui-serif, Georgia, serif;
+  font-size: 1.72rem; font-weight: 600; letter-spacing: -.01em;
+  margin: 0 0 .35rem; text-wrap: balance;
+}
+h3 {
+  font-size: .96rem; font-weight: 600; margin: 2rem 0 .5rem;
+  letter-spacing: -.005em;
+}
+.lede { color: var(--muted); max-width: 68ch; margin: 0 0 1.5rem; }
+p { max-width: 68ch; }
+
+/* ---------- tables ---------- */
+.tscroll { overflow-x: auto; margin: 1.2rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: .87rem; min-width: 40rem; }
+caption {
+  text-align: left; font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .72rem; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); padding-bottom: .6rem;
+}
+th {
+  text-align: left; font-weight: 600; font-size: .74rem;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--ink); padding: .5rem .7rem;
+  white-space: nowrap;
+}
+td {
+  padding: .62rem .7rem; border-bottom: 1px solid var(--hair);
+  vertical-align: top;
+}
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; white-space: nowrap; }
+tr.hi td { background: var(--accent-w); }
+.store { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 500; }
+
+/* severity bar inside a cell */
+.bar { display: flex; align-items: center; gap: .55rem; justify-content: flex-end; }
+.bar i {
+  display: block; height: 7px; border-radius: 1px; background: var(--waste);
+  opacity: .85;
+}
+.bar.zero i { background: var(--good); }
+
+/* ---------- causal chain ---------- */
+.chain { list-style: none; padding: 0; margin: 1.4rem 0 0; display: grid; gap: 1px;
+  background: var(--hair); border: 1px solid var(--hair); border-radius: 3px; overflow: hidden; }
+.chain li {
+  background: var(--surface); padding: 1.1rem 1.25rem;
+  display: grid; grid-template-columns: 2.2rem 1fr; gap: 1rem; align-items: start;
+}
+.chain .n {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .78rem; font-weight: 600; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 2px;
+  width: 1.85rem; height: 1.85rem; display: grid; place-items: center;
+}
+.chain b { font-weight: 600; display: block; margin-bottom: .2rem; }
+.chain p { margin: 0; color: var(--muted); font-size: .9rem; max-width: 62ch; }
+
+/* ---------- callout ---------- */
+.note {
+  border-left: 3px solid var(--accent); background: var(--surface);
+  padding: 1.05rem 1.25rem; margin: 1.6rem 0; border-radius: 0 3px 3px 0;
+  box-shadow: var(--shadow);
+}
+.note p:last-child { margin-bottom: 0; }
+.note .tag {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .68rem; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--accent); font-weight: 600; display: block; margin-bottom: .4rem;
+}
+.note.warn { border-left-color: var(--waste); }
+.note.warn .tag { color: var(--waste); }
+
+/* ---------- code ---------- */
+pre {
+  background: var(--sunk); border: 1px solid var(--hair); border-radius: 3px;
+  padding: 1rem 1.15rem; overflow-x: auto; font-size: .82rem; line-height: 1.55;
+  font-family: "IBM Plex Mono", ui-monospace, monospace; margin: 1.1rem 0;
+}
+code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .875em; }
+p code, li code, td code { background: var(--sunk); padding: .08em .34em; border-radius: 2px; }
+
+ul.plain { padding-left: 1.1rem; max-width: 68ch; }
+ul.plain li { margin-bottom: .5rem; }
+
+.foot {
+  margin-top: 4rem; padding-top: 1.4rem; border-top: 1px solid var(--hair);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .74rem; color: var(--muted);
+}
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <span class="kicker">StackOwl · memory research</span>
+  <h1>Remember Once</h1>
+  <p class="standfirst">The platform has no similarity check on any memory write. Four stores, four insert sites, and nothing between the agent and the row it is about to duplicate.</p>
+  <div class="meta">
+    <span>2026-08-25</span>
+    <span>measured on the live box</span>
+    <span>15,205 rows examined</span>
+  </div>
+</header>
+
+<div class="verdict">
+  <div class="vcell is-waste">
+    <div class="vnum">66%</div>
+    <div class="vlab">of staged facts were exact duplicates — 3,462 of 5,212 rows in only 50 families</div>
+  </div>
+  <div class="vcell is-waste">
+    <div class="vnum">85%</div>
+    <div class="vlab">of staged facts were not facts at all, but system prompts captured as conversation</div>
+  </div>
+  <div class="vcell is-waste">
+    <div class="vnum">22%</div>
+    <div class="vlab">of lessons are semantic near-duplicates at cosine ≥ 0.90, by their own stored vectors</div>
+  </div>
+  <div class="vcell is-good">
+    <div class="vnum">0</div>
+    <div class="vlab">callers of <code>FactReinforcer</code>, the deduplicator that already exists</div>
+  </div>
+</div>
+
+<section>
+  <h2>What is actually duplicated</h2>
+  <p class="lede">Every store was counted three ways: exact match after Unicode normalisation, token-set match (the same words rearranged), and cosine similarity over the embeddings the rows already carry. Nothing here is estimated.</p>
+
+  <div class="tscroll">
+  <table>
+    <caption>Duplication by store, live database, 2026-08-25</caption>
+    <thead>
+      <tr>
+        <th>Store</th>
+        <th class="num">Rows</th>
+        <th class="num">Embedded</th>
+        <th class="num">Exact dup</th>
+        <th class="num">cos ≥ 0.90</th>
+        <th class="num">cos ≥ 0.85</th>
+        <th>Write sites</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="hi">
+        <td class="store">staged_facts</td>
+        <td class="num">5,212</td>
+        <td class="num">0%</td>
+        <td class="num"><span class="bar"><i style="width:44px"></i>66%</span></td>
+        <td class="num">n/a</td>
+        <td class="num">n/a</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td class="store">lessons</td>
+        <td class="num">5,084</td>
+        <td class="num">100%</td>
+        <td class="num"><span class="bar zero"><i style="width:2px"></i>0%</span></td>
+        <td class="num"><span class="bar"><i style="width:15px"></i>22%</span></td>
+        <td class="num"><span class="bar"><i style="width:32px"></i>48%</span></td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td class="store">reflections</td>
+        <td class="num">4,730</td>
+        <td class="num">100%</td>
+        <td class="num"><span class="bar zero"><i style="width:2px"></i>0%</span></td>
+        <td class="num"><span class="bar"><i style="width:3px"></i>4%</span></td>
+        <td class="num"><span class="bar"><i style="width:12px"></i>18%</span></td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td class="store">skills</td>
+        <td class="num">172</td>
+        <td class="num">100%</td>
+        <td class="num">6 families</td>
+        <td class="num">—</td>
+        <td class="num">60% pairs</td>
+        <td>1 (gated)</td>
+      </tr>
+      <tr>
+        <td class="store">user_preferences</td>
+        <td class="num">7</td>
+        <td class="num">—</td>
+        <td class="num"><span class="bar zero"><i style="width:2px"></i>0%</span></td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td>1</td>
+      </tr>
+      <tr>
+        <td class="store">curated <code>.md</code></td>
+        <td class="num">37</td>
+        <td class="num">—</td>
+        <td class="num"><span class="bar zero"><i style="width:2px"></i>0%</span></td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td>curated</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="tag">The control group</span>
+    <p>Curated memory — the 37 <code>§</code>-separated facts across 14 <code>.md</code> files — has <strong>zero</strong> duplicates by either exact or token-set matching. It is the one store a human deliberately curates. Every store the machine writes without a gate is duplicated; the one store with a gate, however manual, is clean. That is the whole thesis in one comparison.</p>
+  </div>
+
+  <h3>What semantic duplication actually looks like here</h3>
+  <p>Two reflections, cosine <strong>0.945</strong>, both stored, both retrieved, both spending context:</p>
+<pre>A: Reflection on secretary task (stop): The agent's unbounded shell
+   execution hung indefinitely, causing a timeout…
+
+B: Reflection on secretary task (stop): The agent stalled because a
+   shell command hung for over two minutes during…</pre>
+  <p>No exact matcher will ever catch that pair. No token-set key will either — they share barely half their words. This is the class of duplicate that only a vector can see, and the vectors are already sitting in the rows.</p>
+</section>
+
+<section>
+  <h2>Why it happens</h2>
+  <p class="lede">Not one bug. A chain of four, each of which alone would be enough.</p>
+
+  <ol class="chain">
+    <li>
+      <span class="n">1</span>
+      <div>
+        <b>Nothing checks before writing</b>
+        <p>Each store has exactly one <code>INSERT</code> site, and not one of them consults an existing row first. The write path is: produce text → embed → insert. There is no step between.</p>
+      </div>
+    </li>
+    <li>
+      <span class="n">2</span>
+      <div>
+        <b>The deduplicator exists and has never run</b>
+        <p><code>FactReinforcer</code> — "increments <code>reinforcement_count</code> for similar staged facts", cosine threshold 0.75 — has <strong>zero callers anywhere in <code>src/</code></strong>. It was built, and never wired to anything.</p>
+      </div>
+    </li>
+    <li>
+      <span class="n">3</span>
+      <div>
+        <b>And it could not have worked if it had been</b>
+        <p>Its query requires <code>embedding IS NOT NULL</code>. Staged facts were embedded <strong>0% of the time</strong> — 0 of 5,212. Two independent reasons for the same silence, which is why nothing ever surfaced it.</p>
+      </div>
+    </li>
+    <li>
+      <span class="n">4</span>
+      <div>
+        <b>So the counter that proves it stayed at zero</b>
+        <p><code>reinforcement_count</code> was <code>0</code> on all 5,212 rows. The schema anticipated reinforcement-instead-of-insert; the column has been sitting there recording that it never once happened.</p>
+      </div>
+    </li>
+  </ol>
+
+  <div class="note warn">
+    <span class="tag">A separate defect, found on the way</span>
+    <p>85% of staged facts were not facts. The incident RCA pipeline's own sub-agent system prompts — <em>"You are the VERIFIER owl in a fixed-stage incident root-cause analysis…"</em> — were being captured as <code>source_type='conversation'</code> and staged for learning. One of them appeared <strong>1,505 times</strong>. Deduplication would have compressed that to one row; it would still have been the wrong row. A similarity gate is not a substitute for not writing rubbish.</p>
+  </div>
+</section>
+
+<section>
+  <h2>The design space</h2>
+  <p class="lede">Five mechanisms, ordered by cost. The useful observation is that they are not alternatives — they are a ladder, and the cheap rungs remove most of the volume before the expensive rung is reached.</p>
+
+  <div class="tscroll">
+  <table>
+    <caption>Candidate gates</caption>
+    <thead>
+      <tr>
+        <th>Mechanism</th>
+        <th>Catches</th>
+        <th>Cost per write</th>
+        <th>Status here</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="store">Normalised hash</td>
+        <td>Byte-identical after case/punctuation folding</td>
+        <td>O(1), one indexed lookup</td>
+        <td>Not built. Would have caught 66% of facts.</td>
+      </tr>
+      <tr>
+        <td class="store">Canonical token set</td>
+        <td>Same words, reordered or re-separated</td>
+        <td>O(1), one indexed lookup</td>
+        <td><strong>Already shipped for skills</strong> as <code>canonical_key()</code></td>
+      </tr>
+      <tr>
+        <td class="store">SimHash / MinHash</td>
+        <td>Near-identical wording, no model needed</td>
+        <td>O(1) with banded buckets</td>
+        <td>Not built. Useful as a prefilter.</td>
+      </tr>
+      <tr class="hi">
+        <td class="store">Embedding cosine</td>
+        <td>Same meaning, different words</td>
+        <td>O(n) naive; O(log n) via ANN</td>
+        <td>Vectors already stored on every row</td>
+      </tr>
+      <tr>
+        <td class="store">Reinforce, don't insert</td>
+        <td>—</td>
+        <td>An UPDATE instead of an INSERT</td>
+        <td>Columns exist; <code>FactReinforcer</code> unwired</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Choosing the threshold is the hard part, and it is a data question</h3>
+  <p>The measured sensitivity, on the real lessons store:</p>
+  <div class="tscroll">
+  <table>
+    <caption>Lessons — rows removable at each cosine threshold</caption>
+    <thead><tr><th class="num">Threshold</th><th class="num">Pairs</th><th class="num">Rows removable</th><th>Reading</th></tr></thead>
+    <tbody>
+      <tr><td class="num">0.95</td><td class="num">42</td><td class="num">30 (0.6%)</td><td>Too tight — misses the 0.945 pair above</td></tr>
+      <tr class="hi"><td class="num">0.90</td><td class="num">9,159</td><td class="num">1,153 (22%)</td><td>Plausible working point</td></tr>
+      <tr><td class="num">0.85</td><td class="num">87,585</td><td class="num">2,491 (48%)</td><td>Almost certainly merges distinct lessons</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>The jump from 9,159 pairs to 87,585 across a 0.05 band is the signal: precision falls off a cliff below 0.90. But <strong>0.90 is a hypothesis, not a finding</strong> — it needs a labelled sample before it becomes a constant, and the threshold almost certainly differs per store, because a reflection and a preference are not the same kind of text.</p>
+</section>
+
+<section>
+  <h2>Recommendation</h2>
+  <p class="lede">One gate, asked by every store. Not a deduplicator per store — that is four copies of one rule, and this codebase has paid for that shape repeatedly.</p>
+
+<pre>async def remember(store, candidate) -> Decision:
+    # rung 1 — free, catches the 66% case
+    if row := store.by_hash(normalised(candidate.text)):
+        return Reinforce(row)
+
+    # rung 2 — free, catches rearrangement. Already exists for skills.
+    if row := store.by_canonical(canonical_key(candidate.text)):
+        return Reinforce(row)
+
+    # rung 3 — the only rung that needs a vector, reached by the minority
+    if row := store.nearest(candidate.embedding, threshold=store.threshold):
+        return Reinforce(row)
+
+    return Insert(candidate)</pre>
+
+  <ul class="plain">
+    <li><strong>It is a ladder, so it is cheap.</strong> Two-thirds of the volume never reaches the vector comparison. That is what makes it lightweight without giving up the semantic catch.</li>
+    <li><strong>Reinforce is the action, not reject.</strong> A second sighting is evidence the thing matters. Bump the counter, refresh recency, keep the better-worded version — never silently drop. <code>recall_ranker</code> already reads <code>reinforcement_count</code> with a saturating <code>1 + k·ln(1 + n)</code> boost, so the signal has a consumer waiting.</li>
+    <li><strong>Four call sites.</strong> <code>sqlite_bridge</code>, <code>lessons_store</code>, <code>reflection_store</code>, <code>preferences</code>. Skills already have their gate and are the working precedent.</li>
+    <li><strong>The threshold is configuration, per store, derived from a labelled sample</strong> — never a constant chosen because it looked reasonable.</li>
+    <li><strong>Use the existing ANN index.</strong> LanceDB is already in the stack. A linear scan is fine at 5k rows and quietly stops being fine at 50k.</li>
+  </ul>
+
+  <div class="note">
+    <span class="tag">What this does not fix</span>
+    <p>Deduplication would have turned 1,505 copies of an RCA system prompt into one copy of an RCA system prompt. The upstream question — why the fact-staging path treats sub-agent conversation as material to learn from — is separate, and worth more than the gate.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Already done</h2>
+  <ul class="plain">
+    <li><strong>All 5,212 staged facts deleted</strong>, per instruction, to rebuild from zero. None had ever been promoted (<code>status='staged'</code> on every row), nothing holds a foreign key to the table, and there are no triggers — so nothing downstream lost anything. A gzipped JSON of every deleted row is in the session scratchpad; it is reversible.</li>
+    <li><strong>Skills already have this gate.</strong> <code>canonical_key()</code> plus reinforce-instead-of-mint shipped for the skill synthesizer on 2026-08-24, and it is the template the other four stores should follow rather than each inventing one.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Open questions</h2>
+  <ul class="plain">
+    <li><strong>Reinforce or supersede?</strong> When the new phrasing is better than the stored one, does the gate keep the old text and bump a counter, or replace the text and keep the counter? These differ, and only one of them can be right.</li>
+    <li><strong>Should the gate span stores?</strong> A preference and a fact can say the same thing. A cross-store check is strictly better and strictly more expensive.</li>
+    <li><strong>What happens to the 22% already in <code>lessons</code>?</strong> The gate stops accumulation; it does not compact what is there. Compaction is a destructive migration and needs its own decision.</li>
+    <li><strong>Where does the prompt-capture bug get fixed?</strong> Above the gate, in whatever decides that a sub-agent turn is worth learning from.</li>
+  </ul>
+</section>
+
+<p class="foot">Measured on the live StackOwl instance, 2026-08-25. Sources: <code>~/.stackowl/workspace/stackowl.db</code>, <code>~/.stackowl/memory/*.md</code>, and <code>src/</code> at HEAD. Every figure in this document came from a query run against production, not an estimate.</p>
+
+</div>
