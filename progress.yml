@@ -548,6 +548,98 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  LIVE_DEFECT_TASK_ENVELOPE_CONTRADICTS_A_PERMANENT_USER_DIRECTIVE_2026_08_25:
+    severity: >-
+      LIVE and user-facing. It is blocking jobmarket's job search right now, and it defeats
+      a PERMANENT directive in USER.md. Caught by the grant-failure monitor, which is the
+      only reason that monitor was kept armed through 14 idle hours.
+    THE_MEASUREMENT:
+      the_refusals: >-
+        FIVE "[authz] task plan: off-plan tool REFUSED" events, 14:04:25 (x4) and 14:15:54,
+        all tool=browser_navigate owl=jobmarket, trace goal-4e578c3e, axis=tools,
+        denied_by=TASK_ENVELOPE — not the owl's bounds.
+      the_owl_IS_authorised: >-
+        jobmarket's manifest `bounds.tools` INCLUDES browser_navigate. The authz boundary
+        permits it. Only the task plan does not.
+      the_envelope_omits_it_CONSISTENTLY: >-
+        Three task rows read from `tasks`, spanning two days (2026-08-24T14:00, 08-25T14:00,
+        08-25T14:14), all for the same recurring goal, ALL with
+        envelope.tools = [tool_describe, web_search, search_files, tool_search, read_file,
+        web_fetch]. browser_navigate absent every time. This is systematic, not a one-off.
+    WHY_IT_IS_WORSE_THAN_A_MISSING_TOOL: >-
+      USER.md carries a PERMANENT directive dated 2026-08-22: "when fetching web content,
+      use the browser tools (browser_navigate/extract) instead of web_fetch/shell curl to
+      avoid bot-blocking. Prefer browser for any site that might block datacenter IPs."
+      The envelope permits exactly the two tools the directive tells the owl NOT to use, and
+      forbids the one it tells the owl to prefer. So the owl obeys Bakir and the platform
+      refuses it — and the fallback it is pushed onto is the one he already found gets
+      bot-blocked. The job search is failing for precisely the reason he wrote that
+      directive to prevent.
+    IT_IS_THE_SECOND_OWL: >-
+      secretary.md records the same shape on 2026-08-22 for Brain: "the tick's plan allowed
+      only planning tools ... web_search/web_fetch refused mid-run ('outside this task's
+      plan'). Owl-level grants already include both web tools -> fix is platform-side plan
+      builder, not grants; cannot patch from here." That was written by the secretary, which
+      could not fix it. The platform can. A week later it is still open and has spread to a
+      second owl.
+    WHERE_IT_LIVES: >-
+      The envelope is PERSISTED on the `tasks` row (tasks.task_envelope) and read back in
+      pipeline/durable/store.py:1518, so it is fixed at ENQUEUE time, not at run time. The
+      refusal is enforced in pipeline/steps/execute.py:1374 via
+      `restrict_to = state.task_envelope.tools`. It does NOT come from owls/tool_presets.py
+      PRESETS — the stored list contains tool_describe/tool_search/search_files, which no
+      preset carries — so the builder is elsewhere and was not located in this pass.
+    NOT_FIXED_and_why: >-
+      Bakir had just answered four escalations and asked to start the loop on them. Chasing
+      the envelope builder would have derailed ordered work for an item he has not seen yet.
+      The evidence above is complete enough to fix from cold: owl bounds, stored envelope,
+      enforcement site, and the contradiction with the directive.
+    RECOMMENDATION: >-
+      The envelope should be the INTERSECTION of the plan's intent with what the owl
+      actually holds, and it should never exclude a tool the owl holds when a standing user
+      directive names that tool as preferred. Simplest correct version: seed the envelope
+      from the owl's bounds rather than from an inferred task profile, and narrow only for
+      genuine least-privilege reasons — the owl's bounds ARE the authorisation decision, and
+      a second, narrower, silently-derived list is a duplicate rule.
+
+  ESCALATIONS_ANSWERED_2026_08_25_AFTERNOON:
+    note: >-
+      Four decisions from Bakir, recorded BEFORE any of them was worked. Two OVERRIDE my
+      stated recommendation; both are recorded as his call with the concern noted once, not
+      re-argued.
+    ESC_17_identity_key: >-
+      "Fix core issue." -> resolve_identity_key returns the RAW HANDLE instead of "" when no
+      resolver is wired. This collapses the key-shape split at its SOURCE rather than
+      patching /reset, and matches his standing rule "fix CORE not patch one symptom". ONE
+      change closes TWO defects: owner_scope_key then agrees on the command and turn paths,
+      and /reset stops missing the lane-shaped third of staged_facts. Existing rows are NOT
+      migrated and keep their old meaning.
+    DEDUP_reinforce_vs_supersede: >-
+      "Keep stored, bump the counter." The stored text never changes under the reader;
+      reinforcement_count rises and recency refreshes. recall_ranker already consumes that
+      counter with a saturating boost, so the signal has a reader waiting.
+    DEDUP_scope_CROSS_STORE: >-
+      "Cross-store." OVERRIDES my per-store recommendation. Every write is checked against
+      the other stores too, because a preference and a fact can say the same thing in
+      different tables. COST I FLAGGED AND HE ACCEPTED: each write pays N lookups instead of
+      one, and the stores need per-store thresholds even while the gate spans them. Build it
+      so the cheap rungs still run per-store first — the ladder is what keeps cross-store
+      affordable, since only the minority reaching the embedding rung pays the fan-out.
+    DEDUP_backlog_COMPACT_AUTOMATICALLY: >-
+      "Compact automatically." OVERRIDES my recommendation to stop accumulation only. The
+      1,153 near-duplicate lessons (cosine >= 0.90) are merged with no review step.
+      THE CONCERN, STATED ONCE AND NOT RE-ARGUED: this deletes user-visible learning on a
+      threshold that has not been validated against a labelled sample, and 0.90 was chosen
+      from a knee in the pair-count curve (9,159 pairs at 0.90 vs 87,585 at 0.85), not from
+      judged examples. HOW IT WILL BE MADE SAFE WITHOUT CONTRADICTING HIM: a full backup of
+      every merged row is written first, exactly as the staged_facts wipe was, so the
+      compaction is reversible. That is not a review gate — it is the difference between an
+      irreversible and a reversible destructive action, and he asked for neither slower nor
+      less safe.
+    order_of_work: >-
+      ESC-17 first: it is the smallest change, it closes two measured defects, and it is the
+      one with no unresolved design questions. Then the gate.
+
   EVIDENCE_FOR_THE_DEDUP_GATE_FROM_TODAYS_SYNTHESIZER_RUN_2026_08_25:
     what_happened: >-
       The 08:30Z run minted TWO new skills: `rca_evidence_verifier` and
