@@ -177,7 +177,24 @@ class SqliteLessonsStore:
             from stackowl.memory.gate_corpus import load_corpus
             from stackowl.memory.remember_gate import Candidate, should_remember
 
-            corpus = await load_corpus(self._db)
+            # REFLECTIONS ARE EXCLUDED, and this is not an optimisation.
+            # A lesson IS the published form of its source: lesson_id is
+            # "reflection:<trace_id>" and its content restates that reflection's
+            # summary. Comparing a derived artifact against its own source is a
+            # guaranteed false positive.
+            #
+            # MEASURED, 40 minutes after this gate went live: FOUR lessons were
+            # suppressed at rung 3 with matched_store="reflections", similarity
+            # 0.900-0.931. One of them, lesson reflection:7023170b-..., matched
+            # reflection 4934 — whose trace_id IS 7023170b-.... The gate was
+            # blocking a lesson because the reflection it was written from still
+            # exists. That is the "gate must not turn learning off" failure mode,
+            # arriving through the one door my tests did not cover: they asserted
+            # it within a store, and this came from across stores.
+            #
+            # Facts and preferences stay in the corpus, so the cross-store check
+            # still spans everything a lesson is NOT derived from.
+            corpus = await load_corpus(self._db, stores=("facts", "lessons", "preferences"))
             existing = [c for c in corpus.candidates if c.row_id != lesson.lesson_id]
             if not existing:
                 return False

@@ -31,6 +31,7 @@ import pytest
 
 from stackowl.learning.lesson import Lesson
 from stackowl.learning.lessons_store import SqliteLessonsStore
+from stackowl.memory.sqlite_helpers import pack_embedding
 
 MODEL = "all-MiniLM-L6-v2"
 
@@ -139,3 +140,40 @@ async def test_a_gate_failure_never_costs_the_lesson(
     rows = await tmp_db.fetch_all("SELECT content FROM lessons")
     assert len(rows) == 1
     assert rows[0]["content"] == "do not lose me"
+
+@pytest.mark.asyncio
+async def test_a_lesson_is_NOT_suppressed_by_its_own_SOURCE_reflection(
+    tmp_db: Any,
+) -> None:
+    """THE regression this cost. A lesson is the published form of a reflection —
+    lesson_id is "reflection:<trace_id>" and the content restates that
+    reflection's summary — so comparing the two is a guaranteed false positive.
+
+    MEASURED 40 minutes after the gate went live: four lessons suppressed at rung
+    3 with matched_store="reflections", similarity 0.900-0.931. Lesson
+    reflection:7023170b-... matched reflection 4934, whose trace_id IS
+    7023170b-.... The gate was refusing to store a lesson because the reflection
+    it was written from still existed.
+
+    The earlier tests could not catch it: they asserted "the gate must not turn
+    learning off" WITHIN a store, and this arrived from across stores.
+    """
+    trace = "7023170b-8a22-4bdf-a8cb-ad01cb0a3dc3"
+    summary = "The agent anchored the diagnosis to concrete evidence from the trace."
+    v = _vec(11)
+    await tmp_db.execute(
+        "INSERT INTO reflections (trace_id, owl_name, summary, suggested_strategy, "
+        "failure_class, quality_score, embedding, embedding_model, created_at, owner_id) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (trace, "secretary", summary, "", None, 0.9,
+         pack_embedding(v), MODEL, 1787000000.0, "principal-default"),
+    )
+
+    store = SqliteLessonsStore(tmp_db, embedding_model=MODEL)
+    await store.publish(_lesson(f"reflection:{trace}", summary, v))
+
+    rows = await tmp_db.fetch_all("SELECT lesson_id FROM lessons")
+    assert len(rows) == 1, (
+        "a lesson must not be blocked by the reflection it was derived from — "
+        "that suppression stops learning entirely for reflection-derived lessons"
+    )

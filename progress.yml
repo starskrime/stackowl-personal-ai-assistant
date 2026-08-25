@@ -548,6 +548,40 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  THE_GATE_SUPPRESSED_LESSONS_VIA_THEIR_OWN_SOURCE_2026_08_25:
+    status: FIXED, and found in production 40 minutes after the gate went live.
+    what_happened: >-
+      The gate fired FOUR times, all rung 3, all matched_store="reflections", similarity
+      0.900-0.931 — and every one was wrong. A lesson's lesson_id is "reflection:<trace_id>"
+      and its content restates that reflection's summary, so a lesson IS the published form
+      of its source. VERIFIED against the live rows: blocked lesson reflection:7023170b-...
+      matched reflection 4934, whose trace_id IS 7023170b-.... The gate was refusing to store
+      a lesson because the reflection it was written from still existed.
+    WHY_THE_TESTS_DID_NOT_CATCH_IT: >-
+      They asserted "the gate must not turn learning off" WITHIN a store — publish two
+      different lessons, expect two rows. This arrived from ACROSS stores, which is exactly
+      what Bakir's cross-store decision introduced. The invariant was right and its scope was
+      too narrow. A regression test now covers the cross-store direction by inserting the
+      real reflection and publishing its derived lesson.
+    the_fix: >-
+      lessons_store loads the corpus with stores=("facts","lessons","preferences") —
+      reflections excluded. Comparing a DERIVED artifact against its own SOURCE is a
+      guaranteed false positive, not a tuning problem. Facts and preferences stay, so the
+      cross-store check still spans everything a lesson is not derived from.
+    WHAT_WAS_LOST_say_it_plainly: >-
+      FOUR lessons between ~19:43 and ~20:00 were never stored. They are recoverable — the
+      reflections still exist and the miner re-derives lessons from them — but they were
+      dropped, and "nothing was lost" would be false.
+    THE_GENERAL_LESSON_worth_carrying: >-
+      Cross-store deduplication needs a notion of DERIVATION, not just similarity. Any store
+      whose rows are published forms of another store's rows will match its source at ~1.0
+      forever. Today that is lessons<-reflections; if skills or tool heuristics are ever
+      published into lessons the same way, they need the same exclusion. The corpus API
+      already supports it (`stores=`), so the shape is there — what is missing is a declared
+      derivation map rather than a hand-maintained exclusion at each call site. Recorded, not
+      built: one exclusion is a fix, two would be a pattern worth encoding.
+    tests: 136 passed across 21 importing suites. ruff 37 / mypy 65 held.
+
   LESSONS_COMPACTION_DONE_and_the_naive_method_would_have_destroyed_DATA_2026_08_25:
     decision: Bakir, "Compact automatically" — no review step, over my recommendation.
     RESULT: 5,197 lessons -> 4,296. 901 removed (17%). Full gzipped backup written FIRST.
