@@ -803,7 +803,10 @@ current:
     VALIDATE_OPEN_the_query_that_would_close_the_REARM_half: >-
       The re-arm cannot be evidenced without a real transient one-shot failure, and one
       cannot honestly be manufactured. Closing query:
-      SELECT * FROM audit_log WHERE action='job_rearmed_one_shot' ORDER BY rowid DESC;
+      SELECT * FROM audit_log WHERE event_type='job_rearmed_one_shot' ORDER BY rowid DESC;
+      (The column is `event_type`, NOT `action` — the query first recorded here used
+      `action` and would have RAISED "no such column", which a careless reader could take
+      for "no rows". Verify the probe before believing its negative.)
       plus the INFO line "[scheduler] <job_id>: one-shot RE-ARMED after transient failure".
       PASS = at least one such row for a job that later SUCCEEDS. Baseline now: zero.
       FAIL, named in advance: a one-shot re-arming repeatedly and never succeeding means the
