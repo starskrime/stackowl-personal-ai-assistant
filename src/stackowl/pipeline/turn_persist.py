@@ -31,6 +31,7 @@ from stackowl.pipeline.delivery_gate import (
 )
 from stackowl.pipeline.services import get_services, owner_scope_key
 from stackowl.pipeline.state import PipelineState
+from stackowl.sessions.models import is_machine_lane
 
 
 def _turn_floored(state: PipelineState) -> bool:
@@ -227,6 +228,34 @@ async def persist_turn(state: PipelineState) -> None:
     # 3. STEP — the transcript first, because the staged-fact store below returns
     # early on failure and the two are independent records of the same turn.
     await _record_transcript(state, floored, assistant_text)
+
+    # 3b. DECISION — a lane the PLATFORM minted for its own work cannot contain a
+    # fact about the user, by construction. Measured 2026-08-25 before the table
+    # was wiped: 4,480 of 5,212 staged facts (85%) were the incident RCA's own
+    # sub-agent prompts ("You are the VERIFIER owl in a fixed-stage incident
+    # root-cause analysis..."), because a sub-agent's `input_text` IS its prompt
+    # and RCA runs through this same pipeline. One of them was stored 1,505
+    # times, which is also most of the table's 66% duplicate rate — three prompts
+    # recur on every incident, forever.
+    #
+    # `is_machine_lane` already existed for exactly this, docstring and all
+    # ("lanes that cannot contain a user fact by construction"), with zero
+    # callers. Keyed on state.session_key, NOT on the scope key passed below:
+    # owner_scope_key is `identity_key or session_key`, so the store cannot tell
+    # a machine lane from a person once an identity resolves.
+    #
+    # The TRANSCRIPT above is deliberately still written — the turn happened and
+    # remains inspectable; what is refused is filing it as durable knowledge.
+    if is_machine_lane(state.session_key):
+        log.memory.info(
+            "[pipeline] persist_turn: machine lane — transcript kept, fact NOT staged",
+            extra={"_fields": {
+                "trace_id": state.trace_id,
+                "session_key": state.session_key,
+                "content_len": len(content),
+            }},
+        )
+        return
 
     # 3b. STEP — best-effort store (B5: never raise; never block delivery).
     try:

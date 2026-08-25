@@ -315,6 +315,44 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  MACHINE_LANES_NO_LONGER_STAGED_AS_FACTS_2026_08_25:
+    why_this_came_first: >-
+      Bakir said "we need to create it from zero correctly". Forty minutes after the wipe
+      the table held THREE rows, ALL THREE prompt-shaped, all from lane
+      incident-b5545c2ec371. Deleting without this guard buys about an hour. It is also the
+      one part of his memory request that was NOT blocked on his four open questions.
+    the_defect: >-
+      `persist_turn` stores "User: {input_text}\n\nAssistant: {...}" for EVERY pipeline
+      turn. Incident RCA runs its sub-agents through that same pipeline, and a sub-agent's
+      input_text IS its constructed prompt. So the platform filed its own instructions as
+      things a person said: 4,480 of 5,212 rows (85%), one of them 1,505 times — which is
+      also most of the table's 66% duplicate rate, because three prompts recur on every
+      incident forever.
+    THE_PREDICATE_ALREADY_EXISTED: >-
+      `is_machine_lane()` in sessions/models.py, docstring: "Used by the conversation miner
+      to skip lanes that cannot contain a user fact by construction." ZERO CALLERS. That is
+      the THIRD such thing found today — after FactReinforcer (the deduplicator with no
+      callers) and add_relation (the graph edge writer with no callers). The pattern itself
+      is worth Bakir's attention: this platform's recurring defect is not missing design, it
+      is design that was never wired to anything.
+    where_the_guard_went_and_why_not_the_obvious_place: >-
+      In turn_persist, keyed on state.session_key — NOT in the store. `store()` receives
+      owner_scope_key(state), which is `identity_key or session_key`, so it cannot tell a
+      machine lane from a person once an identity resolves. The TRANSCRIPT is still written:
+      the turn happened and stays inspectable; what is refused is filing it as durable
+      knowledge.
+    VALIDATE_PASS_2026_08_25_T02_23Z: >-
+      Measured live WITH the control that makes a zero meaningful. Since the guard went live
+      (~01:45Z): SIX incidents opened, NINETEEN "[pipeline] persist_turn: machine lane —
+      transcript kept, fact NOT staged" INFO lines (last 02:21:57), and staged_facts still
+      holds exactly the THREE rows written at 01:30-01:32 BEFORE the guard. Before: 3
+      prompt rows in 40 minutes. After: ZERO in 38 minutes while incidents kept running.
+      The INFO level is deliberate — at DEBUG this claim could never have been closed.
+    tests: tests/pipeline/test_machine_lanes_are_not_staged_as_facts.py — 5 tests. ruff 37 / mypy 65 held.
+    NOT_the_dedup_gate: >-
+      This stops the platform learning its own prompts. It does NOT deduplicate. The gate
+      Bakir asked for is still unbuilt and still waiting on his four questions.
+
   MEMORY_DEDUP_RESEARCH_AND_FACT_WIPE_2026_08_25:
     bakir_asked_for: >-
       "Remove the stored facts — they were created incorrectly, so many duplicates... Owls
