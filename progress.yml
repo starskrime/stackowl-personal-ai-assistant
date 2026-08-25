@@ -375,6 +375,47 @@ current:
       decision was for.
     blocked_until_answered: >-
       Nothing. The traversal fix proceeds on the acceptance criterion he already set.
+    FIX_SHIPPED_commit_09bd4e15:
+      what_changed: >-
+        sync_traverse_many walks BOTH edge types — RELATED_TO at its own hop depth, and
+        co-mention (Fact-MENTIONS->Entity twice) as ONE semantic step — UNIONed, deduped and
+        bounded. classify makes ONE batched call instead of ~30. _MAX_QUERY_TOKENS raised
+        5 -> 12.
+      A_DEFECT_MY_FIRST_VERSION_INTRODUCED: >-
+        I merged both edge types into -[:RELATED_TO|MENTIONS*1..2*max_hops]-, which broke
+        RELATED_TO's hop contract: co-mention needs TWO physical hops to mean ONE semantic
+        step, RELATED_TO needs one for one, so a shared depth let max_hops=1 reach a two-hop
+        neighbour. Caught by T17 (story 6.5), a PRE-EXISTING test I would not have run had I
+        chosen suites by where I edited rather than by who imports.
+      tests: 191 passed across the 36 suites importing kuzu_helpers/kuzu_adapter/classify.
+    VALIDATE_PARTIAL_2026_08_25_T00_5xZ:
+      pre_validation_STRONG_but_not_the_criterion: >-
+        Ran the REAL `_gather_graph_context` against a byte copy of the REAL live graph.
+        Results: "what did we do with Telegram and OpenAI" -> 226 chars in 79.4ms
+        (alexeevweb, OpenAI, OpenAI Realtime API); "is the Instagram downloader still
+        working" -> 234 chars in 34.4ms (Python, instagrapi, carousel posts); "hello" -> 0
+        chars, correctly. Before the fix every one of these was 0.
+      why_it_is_still_only_PARTIAL: >-
+        Bakir's criterion is a non-zero graph_context_len on a REAL TURN, and that needs
+        real traffic. The sweeps due tonight (retry_sweep, session_sweep, ...) do not run a
+        pipeline turn; the turn-producing jobs (check_in, goal_execution, owl_lifecycle) are
+        hours away. Running the function myself is evidence the code works, NOT evidence the
+        platform used it — the exact distinction this programme keeps paying for.
+      the_closing_query: >-
+        Count "[pipeline] classify: exit" lines with fields.graph_context_len > 0 in
+        ~/.stackowl/logs/ AFTER 2026-08-25T00:54Z. Baseline: 0 of 2,267 across all history.
+        PASS = at least one. Read BOTH the dated file and stackowl.jsonl — the log rotates
+        at midnight UTC and that has already produced two false negatives.
+    MEASURED_PRECISION_CONCERN_not_fixed: >-
+      "remind me about the dentist appointment in Plano" returned PowerSchool, loanDepot and
+      "Senior Staff Software Engineer" — noise. The cause is that common tokens ("me",
+      "the", "check") match entities literally named that, and the reader hashes one token
+      at a time so it cannot tell a proper noun from a filler word. Deliberately NOT fixed
+      with a stopword list — that violates the standing no-hardcoded-word-lists rule and
+      would be English-only. A data-driven fix exists: rank candidate entities by how many
+      of the query's OTHER entities share a fact with them, so a token that co-occurs with
+      nothing scores last. Filed rather than built: the item'"'"'s goal was reachability, this
+      is precision, and mixing them would make neither measurable.
 
   ESC_53_ONE_SHOT_REARM_2026_08_24:
     decision: >-
