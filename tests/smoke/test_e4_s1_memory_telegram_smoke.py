@@ -203,7 +203,12 @@ async def test_smoke_memory_add_then_search_through_telegram(
     # SAVED and tells the user WHEN it reaches the prompt — D08.1 made that
     # second half mandatory, because the frozen snapshot means a write made now
     # is not visible to this conversation and the agent must say so.
-    assert "Saved." in provider.results[0], provider.results[0]
+    # ESC-48 — the confirmation now NAMES its destination ("Saved to USER.md."),
+    # because "Saved." regardless of where the fact landed made a misroute
+    # invisible. This asserts the store was CONFIRMED, which is what it always
+    # meant; matching the destination-bearing prefix keeps that and adds the
+    # guarantee that a destination is stated at all.
+    assert "Saved to " in provider.results[0], provider.results[0]
     assert "next /new" in provider.results[0], provider.results[0]
     # Provenance now lives in the CURATED FILE, not a staged fact: the write
     # landed where the system prompt will actually read it.

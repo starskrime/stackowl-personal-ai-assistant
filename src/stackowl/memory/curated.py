@@ -114,6 +114,11 @@ _DURABILITY_RE = re.compile(r"^\[(permanent|until_changed)\]\s*(.*)$", re.DOTALL
 
 #: A file name we are willing to create. Owl names reach this from a registry,
 #: but the path is built from them, so it is validated rather than trusted.
+#: Word tokenizer for subject inference. Unicode-aware by construction (`\w`
+#: with re.UNICODE), because owl names and facts are not English-only — the
+#: standing rule here is that keyword logic must never be an English word list.
+_WORD_RE = re.compile(r"\w+", re.UNICODE)
+
 _SAFE_TARGET_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
 
 
@@ -230,6 +235,75 @@ class CuratedMemory:
                 f"invalid memory target {target!r} — expected 'user' or an owl name"
             )
         return self._root / f"{target}.md"
+
+    def _describe(self, target: str) -> str:
+        """How a destination is named back to the reader — the FILE, not the key.
+
+        "USER.md" and "jobmarket.md" are what the operator sees on disk, so they
+        are what a confirmation should say. `path_for` already owns the mapping;
+        this asks it rather than rebuilding the filename.
+        """
+        try:
+            return self.path_for(target).name
+        except ValueError:
+            return target
+
+    def known_targets(self) -> list[str]:
+        """Every target that exists RIGHT NOW — user, plus one per owl file.
+
+        Read from disk rather than compiled in, so an owl created a minute ago
+        routes correctly with no code change, and a renamed owl stops matching
+        its old name. Same enumeration `search` uses; kept here so there is one
+        copy of "what targets exist".
+        """
+        try:
+            return [USER_TARGET] + sorted(
+                p.stem for p in self._root.glob("*.md") if p.name != "USER.md"
+            )
+        except Exception as exc:  # B5 — inference must never cost the turn
+            log.memory.warning(
+                "[curated] known_targets: could not list — assuming user only",
+                exc_info=exc, extra={"_fields": {"root": str(self._root)}},
+            )
+            return [USER_TARGET]
+
+    def infer_target(self, text: str) -> str:
+        """Which target is this fact ABOUT? Falls back to the user (ESC-48).
+
+        Bakir, 2026-08-24: "Infer from the fact text", and on low confidence
+        "default user, always name it".
+
+        The inference is deliberately NOT a heuristic over language: it matches
+        the fact's words against the names of owls that actually exist. That
+        keeps it multilingual (no English keyword list, which is a standing rule
+        here), keeps it correct across renames, and makes a wrong answer possible
+        only when a real owl's name genuinely appears in a fact about something
+        else.
+
+        EXACTLY ONE match routes. Zero matches, or more than one, falls back to
+        the user — two owls named is less information than one, not more, and
+        guessing there is precisely the silent-misroute failure mode this design
+        exists to avoid.
+
+        The match is case-insensitive but RESOLVES TO THE EXISTING SPELLING: the
+        live memory dir holds both `falcon.md` and `Falcon.md` because `path_for`
+        builds the filename verbatim from whatever the model typed. Inference
+        must not mint a third case.
+        """
+        tokens = {t.casefold() for t in _WORD_RE.findall(text or "")}
+        if not tokens:
+            return USER_TARGET
+        hits = [
+            t for t in self.known_targets()
+            if t != USER_TARGET and t.casefold() in tokens
+        ]
+        if len(hits) != 1:
+            log.memory.debug(
+                "[curated] infer_target: falling back to user",
+                extra={"_fields": {"n_hits": len(hits), "hits": hits}},
+            )
+            return USER_TARGET
+        return hits[0]
 
     def budget_for(self, target: str) -> int:
         return USER_BUDGET_CHARS if target == USER_TARGET else OWL_BUDGET_CHARS
@@ -451,8 +525,16 @@ class CuratedMemory:
             )
         return self._success(
             target,
-            "Saved. It reaches the system prompt on the next /new — this "
-            "conversation keeps the prompt it started with." + note,
+            # NAME THE DESTINATION. This said only "Saved." regardless of where
+            # the fact went, so a misroute was invisible — the failure mode that
+            # sank the previous attempt at subject-routing (ESC-48). The target
+            # was already in the payload; the sentence a person actually reads
+            # never carried it. Naming it converts a silent misroute into one the
+            # user corrects in a sentence, and it is what makes INFERRING the
+            # target safe enough to do at all.
+            f"Saved to {self._describe(target)}. It reaches the system prompt on "
+            "the next /new — this conversation keeps the prompt it started "
+            "with." + note,
         )
 
     def replace(self, target: str, old_text: str, new_text: str,

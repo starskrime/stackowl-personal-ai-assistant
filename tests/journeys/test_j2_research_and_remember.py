@@ -441,7 +441,12 @@ async def test_j2_research_then_recall_without_re_searching(tmp_db: DbPool) -> N
     # D08.1 retargeted /memory at curated memory and changed the confirmation to
     # "Saved." + when it reaches the prompt. The GUARANTEE — the tool confirms a
     # durable store rather than the agent merely claiming it — is unchanged.
-    assert "Saved." in env.provider.mem_out, (
+    # ESC-48 — the confirmation now NAMES its destination ("Saved to USER.md."),
+    # because "Saved." regardless of where the fact landed made a misroute
+    # invisible. This asserts the store was CONFIRMED, which is what it always
+    # meant; matching the destination-bearing prefix keeps that and adds the
+    # guarantee that a destination is stated at all.
+    assert "Saved to " in env.provider.mem_out, (
         f"BUSINESS OUTCOME 1 FAIL: memory(add) did not confirm a store. Got: {env.provider.mem_out!r}"
     )
     # Production read path. This asserted bridge.recall(), which reads

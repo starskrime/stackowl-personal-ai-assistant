@@ -315,6 +315,64 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_48_MEMORY_ROUTES_ON_THE_SUBJECT_2026_08_25:
+    decision: >-
+      Bakir, 2026-08-24, after rejecting the previous attempt outright ("the whole approach
+      is wrong — rethink it"): route on the fact's SUBJECT inferred from the fact text; on
+      low confidence default to the USER's file; the confirmation must ALWAYS name where it
+      landed.
+    stages:
+      brainstorm: no_change_needed — his decision settled the design
+      architect: done — rung 1, extend CuratedMemory and the tool's existing _target seam
+      implement: done
+      cleanup: done
+      test: done — 307 passed across the 29 importing suites
+      validate: OPEN — needs one real memory(add); do not manufacture one
+      document: no_change_needed (the test file carries the record)
+    WHAT_WAS_ALREADY_RIGHT: >-
+      `_DEFAULT_TARGET` was ALREADY "user", so the "default user" half of his decision was
+      live before this change. Measuring that first stopped me rebuilding something that
+      already worked — the previous attempt's mistake was changing exactly this default.
+    THE_REAL_GAP_WAS_THE_NAMING: >-
+      CuratedMemory.add returned "Saved. It reaches the system prompt on the next /new..."
+      REGARDLESS of destination. MemoryResult carried `target` in its payload, but the
+      sentence a person actually reads never spoke it. That is the failure mode that sank
+      the previous attempt — a wrong destination answered with a bare "Saved." is invisible.
+      It now reads "Saved to USER.md." / "Saved to jobmarket.md.", via a `_describe()` that
+      asks `path_for` rather than rebuilding the filename (one copy of the mapping).
+    THE_INFERENCE_uses_DATA_not_a_word_list: >-
+      `infer_target()` matches the fact's tokens against the names of owls that ACTUALLY
+      EXIST, read from the live .md roster — the same enumeration `search()` already used,
+      now extracted to `known_targets()` so there is one copy. No English keyword list
+      (standing rule), renames handled for free, and an owl created a minute ago routes
+      with no code change. EXACTLY ONE match routes; zero or two fall back to the user,
+      because two names is LESS information than one and guessing there is precisely the
+      silent-misroute this design exists to prevent.
+    THE_CASE_COLLISION_HE_FLAGGED: >-
+      ~/.stackowl/memory/ holds BOTH falcon.md and Falcon.md, because `path_for` builds the
+      filename verbatim from whatever the model typed. Matching is case-insensitive but
+      RESOLVES TO THE EXISTING FILE'S SPELLING, so inference cannot mint a third case. A
+      test asserts no second-case file is created.
+    explicit_always_wins: >-
+      Inference fills a GAP, it never overrides an instruction. An explicit `target=` is
+      returned untouched. Any inference failure degrades to the user file and logs a
+      WARNING — a routing guess must never cost the write.
+    SIX_TESTS_PINNED_THE_OLD_MESSAGE: >-
+      All six failures in the first run were one cause: assertions on the literal "Saved.".
+      Their stated invariant was "memory(add) did not confirm a store" — which the new
+      message confirms strictly better — so each was updated to assert the
+      destination-bearing prefix, keeping the invariant and ADDING the guarantee that a
+      destination is stated at all. The naming was not reverted; it is the decision.
+    VALIDATE_OPEN_the_query_that_would_close_it: >-
+      One real memory(add) through a channel. PASS = a tool result or log line containing
+      "Saved to ". Baseline: the message was "Saved." with the target only in the payload.
+      Also assert no third-case file: `ls ~/.stackowl/memory/ | grep -i falcon` must still
+      show exactly falcon.md and Falcon.md.
+    files:
+      - src/stackowl/memory/curated.py (_describe, known_targets, infer_target, named message)
+      - src/stackowl/tools/knowledge/memory.py (_target takes the text; explicit wins)
+      - tests/memory/test_memory_routes_on_the_subject.py (new, 11 tests)
+
   MACHINE_LANES_NO_LONGER_STAGED_AS_FACTS_2026_08_25:
     why_this_came_first: >-
       Bakir said "we need to create it from zero correctly". Forty minutes after the wipe

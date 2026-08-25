@@ -276,9 +276,32 @@ class MemoryTool(Tool):
             )
         return None
 
-    @staticmethod
-    def _target(kwargs: dict[str, object]) -> str:
-        return str(kwargs.get("target") or _DEFAULT_TARGET).strip()
+    def _target(self, kwargs: dict[str, object], text: str = "") -> str:
+        """Where this write goes (ESC-48).
+
+        An EXPLICIT target always wins — inference fills a gap, it never
+        overrides an instruction. With none given, the destination is inferred
+        from the fact's own words against the live roster of owls, falling back
+        to the user. Bakir, 2026-08-24: "Infer from the fact text" and, when it
+        is unclear, "default user, always name it".
+
+        The naming half is not decoration. Inference is only safe because every
+        confirmation now states the destination, so a wrong guess is visible
+        immediately instead of being answered with a bare "Saved."
+        """
+        explicit = str(kwargs.get("target") or "").strip()
+        if explicit:
+            return explicit
+        if not text:
+            return _DEFAULT_TARGET
+        try:
+            return self._curated().infer_target(text)
+        except Exception as exc:  # B5 — a routing guess must never cost the write
+            log.memory.warning(
+                "[tools] memory._target: inference failed — using the user file",
+                exc_info=exc,
+            )
+            return _DEFAULT_TARGET
 
     async def _add(
         self, bridge: MemoryBridge, kwargs: dict[str, object], t0: float,
@@ -299,7 +322,7 @@ class MemoryTool(Tool):
         if refusal is not None:
             return refusal
 
-        result = self._curated().add(self._target(kwargs), content, durability)
+        result = self._curated().add(self._target(kwargs, content), content, durability)
         return self._from_curated(result, t0)
 
     async def _replace(
@@ -322,7 +345,9 @@ class MemoryTool(Tool):
         refusal = self._scanned(content, t0)
         if refusal is not None:
             return refusal
-        result = self._curated().replace(self._target(kwargs), old, content, durability)
+        result = self._curated().replace(
+            self._target(kwargs, content), old, content, durability
+        )
         return self._from_curated(result, t0)
 
     async def _remove(
@@ -334,7 +359,7 @@ class MemoryTool(Tool):
                 "action='remove' requires 'content' — the text of the entry to drop.",
                 t0,
             )
-        result = self._curated().remove(self._target(kwargs), text)
+        result = self._curated().remove(self._target(kwargs, text), text)
         return self._from_curated(result, t0)
 
     def _from_curated(self, result: object, t0: float) -> ToolResult:

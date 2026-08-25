@@ -172,7 +172,12 @@ async def test_guard_b_recall_surfaces_committed_fact(tmp_db: DbPool, tmp_path) 
 
     # ---- TURN 1: remember --------------------------------------------------
     delivered1 = await _turn(env, "Remember that my deploy region is eu-west-1.")
-    assert "Saved." in provider.mem_out, (
+    # ESC-48 — the confirmation now NAMES its destination ("Saved to USER.md."),
+    # because "Saved." regardless of where the fact landed made a misroute
+    # invisible. This asserts the store was CONFIRMED, which is what it always
+    # meant; matching the destination-bearing prefix keeps that and adds the
+    # guarantee that a destination is stated at all.
+    assert "Saved to " in provider.mem_out, (
         f"memory(add) did not confirm a store. Got: {provider.mem_out!r}"
     )
     assert delivered1, f"Turn 1 produced no reply. Delivered: {delivered1!r}"
@@ -378,7 +383,7 @@ async def test_guard_remember_base_pin_reaches_memory_for_browser_owl(
         "GUARD REMEMBER FAIL: the remembered passphrase did not reach curated "
         f"memory. profile: {profile!r} | mem_out={provider.mem_out!r}"
     )
-    assert "Saved." in provider.mem_out, (
+    assert "Saved to " in provider.mem_out, (
         f"memory(add) did not confirm a store. Got: {provider.mem_out!r}"
     )
     assert delivered, f"browser owl produced no reply. Delivered: {delivered!r}"
@@ -702,7 +707,11 @@ async def test_guard_memory_command_registered_via_orchestrator(
     # "Saved.", not "Remembered": D08.1 changed the confirmation when /memory was
     # retargeted at curated memory, and the second half of that message — when it
     # reaches the prompt — is the part that matters to the user.
-    assert remember_out.startswith("✓ Saved."), remember_out
+    # ESC-48 — the confirmation NAMES its destination now ("✓ Saved to USER.md."),
+    # because a bare "Saved." was identical whichever file the fact landed in.
+    # The invariant is that the command CONFIRMED a store; the destination-bearing
+    # prefix asserts that and additionally that a destination was stated.
+    assert remember_out.startswith("✓ Saved to "), remember_out
 
     # Persistence via an INDEPENDENT bridge over the same tmp DB.
     # Persistence is checked through an INDEPENDENT reader, as before — only the

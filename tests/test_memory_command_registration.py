@@ -68,7 +68,11 @@ async def test_memory_command_registered_remember_then_search(db: DbPool) -> Non
     # D08.1 retargeted /memory at curated memory and made the reply state WHEN the
     # write reaches the prompt — "on the next /new" — because the prompt block is a
     # snapshot frozen per incarnation and a bare "Remembered" implied otherwise.
-    assert remember_out.startswith("✓ Saved."), remember_out
+    # ESC-48 — the confirmation NAMES its destination now ("✓ Saved to USER.md."),
+    # because a bare "Saved." was identical whichever file the fact landed in.
+    # The invariant is that the command CONFIRMED a store; the destination-bearing
+    # prefix asserts that and additionally that a destination was stated.
+    assert remember_out.startswith("✓ Saved to "), remember_out
     assert "next /new" in remember_out, (
         f"the reply must say when the write reaches the prompt: {remember_out!r}"
     )
