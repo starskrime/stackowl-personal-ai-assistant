@@ -543,6 +543,25 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  EVIDENCE_FOR_THE_DEDUP_GATE_FROM_TODAYS_SYNTHESIZER_RUN_2026_08_25:
+    what_happened: >-
+      The 08:30Z run minted TWO new skills: `rca_evidence_verifier` and
+      `rca_verifier_lesson_log`. The corpus already held `verify_rca_hypothesis` and
+      `incident-evidence-brief`.
+    why_it_matters_to_Bakir_s_question: >-
+      Those four names are semantically adjacent and CANONICALLY DISTINCT — they share
+      almost no tokens, so canonical_key correctly does not merge them and the family count
+      stayed at six. This is precisely the duplicate class that neither exact matching nor
+      token-set matching can ever catch, and that only the EMBEDDING rung of the proposed
+      ladder would. It is live, dated evidence for the third rung rather than an argument
+      for it: the cheap rungs are working exactly as designed and are still letting this
+      through.
+    it_also_shows_the_ladder_is_the_right_shape: >-
+      Two duplicates WERE caught for free today by the name match, and two semantic ones
+      slipped past. That is the ladder doing its job — the free rungs removing what they
+      can, leaving a small remainder for the expensive rung. It is the argument for
+      building the gate as a ladder rather than as one embedding comparison per write.
+
   MEMORY_DEDUP_RESEARCH_AND_FACT_WIPE_2026_08_25:
     bakir_asked_for: >-
       "Remove the stored facts — they were created incorrectly, so many duplicates... Owls
@@ -1051,6 +1070,35 @@ current:
       The 102 skills already duplicated are NOT merged by this. It stops the sprawl
       compounding; collapsing the back-catalogue is a separate, destructive item and needs
       Bakir. Filed as such — a merge deletes user-visible skills.
+    VALIDATE_PASS_2026_08_25_T08_37Z:
+      the_job_ran_verified_first: >-
+        `[scheduler] skill_synthesizer-48e2f4d1: entry` 08:30:12 -> `[synth] run_all: exit`
+        08:37:39 -> `exit — completed`. Job row last_run_at 2026-08-25T08:37:39, next_run
+        2026-08-26T08:30, failure_count 0. Checked BEFORE the closing query, because a zero
+        from a job that never ran proves nothing.
+      the_result: >-
+        TWO reinforce rows, both actor=agent:synthesizer, both with details.re_derived_as
+        set: {"re_derived_as":"incident-evidence-brief","cluster_size":44} and the same at
+        cluster_size 47. The INFO line "[synth] synthesize_one: lesson ALREADY KNOWN —
+        reinforcing instead of minting a duplicate" fired at 08:32:10 and 08:33:33.
+      the_FAIL_case_did_not_occur: >-
+        Collision families still SIX, exactly the baseline set. Skills moved 171 -> 173, so
+        TWO were minted this run and NEITHER canonicalised onto an existing skill. A mint
+        that collided would have been the failure even without a seventh family.
+      THE_COUNTER_STAYED_HONEST_which_was_the_point: >-
+        `incident-evidence-brief` has n_executions=1 AFTER TWO reinforcements. The previous
+        implementation called increment_n_executions, which would have left it at least 2.
+        Reinforcement revived the skill (state=active) and recorded provenance without
+        claiming a use — so ESC-44's catalogue ordering, which sorts by n_executions, is not
+        being fed invented evidence.
+      HONEST_CAVEAT_the_canonical_path_was_NOT_exercised: >-
+        Both hits re-derived the name "incident-evidence-brief" onto the skill
+        "incident-evidence-brief" — an EXACT match that `base_name` alone would have caught.
+        The canonical_key-specific case (separator or word-order variants) did not arise this
+        run. So what is PROVEN is the reinforce-instead-of-mint behaviour and the honest
+        counter; what remains unproven in production is canonical_key's own contribution.
+        Its six families are still measured live and its unit tests use the real corpus, so
+        this is a gap in production evidence, not a doubt about the function.
     validate_window_MEASURED: >-
       skill_synthesizer-48e2f4d1 last ran 2026-08-24T08:38:12Z and next runs
       2026-08-25T08:30:00Z. skill_audit currently holds ZERO op='reinforce' rows. The
