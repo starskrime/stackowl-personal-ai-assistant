@@ -324,9 +324,9 @@ current:
       architect: done — rung 1, extend _mark_failed's existing one-shot branch
       implement: done
       cleanup: done — ruff back to 37 after an I001 the new import introduced
-      test: RUNNING — 132 importing suites
-      validate: OPEN
-      document: OPEN
+      test: done — 893 passed across the 132 importing suites
+      validate: PARTIAL — deletion half MEASURED, re-arm half OPEN (see below)
+      document: no_change_needed (the test file and this record carry it)
     WHAT_HAD_TO_CHANGE_FIRST: >-
       MEASURED before writing any code: the shared classify_failure returned "" for BOTH
       "All providers unavailable ... (circuit open)" AND "malformed job: session_key and
@@ -365,10 +365,53 @@ current:
       the documented design (auto_restart defaults true) and not a defect, but it means
       there is no staging step: any save to src/ ships. Recorded so the risk is visible;
       no change proposed, because the same property is what makes iteration fast here.
-    still_to_do_in_this_item: >-
-      Bakir also decided "Delete these 63 only" — a ONE-OFF cleanup of the current
-      terminal rollover_summary corpses, explicitly NOT a recurring retention sweep. Do it
-      only after the re-arm is green, and count the rows before and after.
+    THREE_TESTS_PINNED_THE_OLD_CONTRACT: >-
+      Updated, each keeping the invariant it actually protects rather than its spelling.
+      F-60's one-shot counterpart asserted "must stay terminal failed" — updated, and a NEW
+      test asserts a one-shot still dies on a failure that can never succeed. The
+      verified=False veto's invariant is PARITY with a plain failure plus never reaching
+      _mark_completed — both intact, only the outcome's spelling moved. The S2 notification
+      test guards a real past bug (an invalid urgency silently stranded every alert) and was
+      SPLIT: a re-armed one-shot must still route an alert, and the terminal case survives
+      verbatim on a genuinely permanent failure.
+    THAT_THIRD_TEST_CAUGHT_A_DEFECT_IN_MY_OWN_FIX: >-
+      The default non-terminal alert says "re-armed to its next slot". A one-shot has no
+      slot. That is the same misnaming defect as web_fetch's DNS message and the stale
+      last_error — an alert that misnames its own cause costs its reader the same detour
+      every time, and it would have been in the very message that reports a rescue.
+      _notify_failure now takes an accurate `disposition`, and a test asserts the word
+      "slot" never appears in a one-shot's alert.
+    DELETION_DONE_2026_08_24_T23_5xZ: >-
+      Bakir: "Delete these 63 only" — a ONE-OFF cleanup, explicitly NOT a recurring
+      retention sweep. Re-measured first rather than trusting the earlier count, because
+      the re-arm change means new transient failures no longer land in status='failed'.
+      MEASURED BEFORE: 63 rows matched exactly (53 circuit-open, 9 malformed, 1 other), all
+      status='failed', all retry_count=2, none pending or enabled.
+      THE PREDICATE WAS PROVEN NARROW FIRST: it left 9 non-failed rollover_summary rows and
+      1 failed goal_execution row untouched, and all three counts were verified afterwards.
+      THE NON-OBVIOUS PART: job_runs carries `REFERENCES jobs(job_id) ON DELETE CASCADE`,
+      and 237 job_runs rows referenced these 63 — but SQLite's foreign_keys pragma is OFF
+      by default on a fresh connection, so a naive DELETE would have ORPHANED them instead
+      of cascading. The delete was run with PRAGMA foreign_keys=ON; 237 cascaded, 0 orphans
+      remained, verified by query.
+      RESULT: jobs 105 -> 42, job_runs 219,344 -> 219,107. A full backup of all 63 jobs and
+      237 job_runs rows was written to the session scratchpad first, so it is reversible.
+      NOT a migration, deliberately: a migration would run on every deployment and delete
+      rollover_summary failures everywhere, which is precisely the recurring sweep he
+      declined.
+    VALIDATE_OPEN_the_query_that_would_close_the_REARM_half: >-
+      The re-arm cannot be evidenced without a real transient one-shot failure, and one
+      cannot honestly be manufactured. Closing query:
+      SELECT * FROM audit_log WHERE action='job_rearmed_one_shot' ORDER BY rowid DESC;
+      plus the INFO line "[scheduler] <job_id>: one-shot RE-ARMED after transient failure".
+      PASS = at least one such row for a job that later SUCCEEDS. Baseline now: zero.
+      FAIL, named in advance: a one-shot re-arming repeatedly and never succeeding means the
+      failure is not actually transient and the classifier is too generous — the opposite
+      error from the one this fixed, and the reason the permanent branch was kept.
+      Restart verified 2026-08-24T23:55:18Z: 863 lines, 10 phases ok on both roles, ZERO
+      ERRORs. NOTE the log rotated at midnight, so the boot lines landed in
+      stackowl-2026-08-24.jsonl and a probe of stackowl.jsonl alone showed ONE line — the
+      rotated-log false negative this programme has already paid for once.
 
   ESCALATIONS_ANSWERED_2026_08_24_EVENING:
     note: >-
