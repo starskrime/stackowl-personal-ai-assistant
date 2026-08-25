@@ -324,11 +324,34 @@ def conversation_scope_keys(state: PipelineState) -> tuple[str, ...]:
 def resolve_identity_key(services: StepServices, session_key: str) -> str:
     """Resolve the inbound channel handle to a cross-channel identity_key.
 
-    Returns "" when no resolver is wired (consumers fall back to session_key),
-    and the handle unchanged when the resolver has no alias for it.
+    Returns the HANDLE when no resolver is wired, and the handle unchanged when
+    the resolver has no alias for it. Either way the answer names a PERSON.
+
+    IT USED TO RETURN "" (ESC-17, Bakir 2026-08-25: "fix core issue"), and that
+    empty string was the whole defect. `owner_scope_key` is
+    ``state.identity_key or state.session_key``, so "" silently handed the scope
+    to `session_key` — which is the composite LANE on the turn path and the RAW
+    channel handle on the command path. One field, two meanings, and which one you
+    got depended on whether a resolver happened to be wired.
+
+    That defeated owner_scope_key's own stated purpose, which is why this is a
+    defect rather than a preference: "Knowledge is about a PERSON, not about which
+    owl happened to hear it. Scoping it to the owl-prefixed lane would mean
+    telling Brain your timezone and having Scout not know it." The "" return
+    produced exactly the owl-prefixed scoping that comment forbids.
+
+    Two live consequences, both closed by this one line. The five-table key-shape
+    split (task_outcomes lane 440 / identity 799; staged_facts 103 / 100; tasks
+    189 / 126). And /reset's silent under-delete — measured 2026-08-25 on a
+    naturally refilled table, staged_facts.source_ref held 8 raw-handle rows
+    against 4 lane-shaped ones, and /reset passes the raw handle, so it missed a
+    third of them.
+
+    Existing rows are NOT migrated (his decision) and keep their old meaning; this
+    changes what is written from here on.
     """
     if services.identity_resolver is None:
-        return ""
+        return session_key
     return services.identity_resolver.resolve(session_key)
 
 

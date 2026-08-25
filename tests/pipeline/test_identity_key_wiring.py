@@ -121,12 +121,31 @@ class TestResolveIdentityKey:
     returned ``session_key`` unconditionally, the mapped-handle case would fail.
     """
 
-    def test_none_resolver_returns_empty_string(self) -> None:
-        """Returns '' when no resolver is wired (consumers fall back to session_key)."""
+    def test_none_resolver_returns_the_handle(self) -> None:
+        """Returns the HANDLE when no resolver is wired — never ''.
+
+        CONTRACT CHANGED 2026-08-25 (ESC-17), by owner decision "fix core issue".
+        This asserted `== ""` and its docstring called the consequence a feature:
+        "consumers fall back to session_key". That fallback WAS the defect.
+        `owner_scope_key` is `identity_key or session_key`, so "" silently handed
+        the scope to session_key — the composite LANE on the turn path and the RAW
+        handle on the command path. One field, two meanings, decided by whether a
+        resolver happened to be wired.
+
+        It defeated owner_scope_key's own docstring — "Knowledge is about a
+        PERSON, not about which owl happened to hear it" — and cost two measured
+        defects: the five-table key-shape split, and /reset silently missing the
+        lane-shaped third of staged_facts.
+
+        The invariant this test protects is stronger now, not weaker: whatever
+        comes back must NAME AN OWNER.
+        """
         from stackowl.pipeline.services import StepServices, resolve_identity_key
 
         svc = StepServices(identity_resolver=None)
-        assert resolve_identity_key(svc, "telegram:123") == ""
+        result = resolve_identity_key(svc, "telegram:123")
+        assert result == "telegram:123"
+        assert result, "an empty identity hands the scope to session_key"
 
     def test_mapped_session_returns_identity_key(self) -> None:
         """A known handle resolves to its canonical identity_key."""

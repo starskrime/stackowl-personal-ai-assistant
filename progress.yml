@@ -548,6 +548,52 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  ESC_17_CORE_FIX_SHIPPED_2026_08_25:
+    decision: Bakir, "Fix core issue" — collapse the split at its source, not patch /reset.
+    stages:
+      brainstorm: no_change_needed — the audit settled it
+      architect: done — one line, at the function the whole split flows from
+      implement: done
+      cleanup: done
+      test: done — 374 passed across 33 importing suites, one contract test updated
+      validate: OPEN — needs new rows written after the change; query below
+      document: no_change_needed (the docstring and test carry it)
+    THE_ONE_LINE: >-
+      `resolve_identity_key` returns the HANDLE instead of "" when no resolver is wired.
+    why_it_is_a_DEFECT_and_not_a_preference: >-
+      `owner_scope_key` is `identity_key or session_key`, so "" silently handed the scope to
+      session_key — the composite LANE on the turn path, the RAW handle on the command path.
+      That defeated owner_scope_key's OWN docstring: "Knowledge is about a PERSON, not about
+      which owl happened to hear it. Scoping it to the owl-prefixed lane would mean telling
+      Brain your timezone and having Scout not know it." The "" return produced exactly the
+      owl-prefixed scoping that comment forbids. The fix restores the stated design rather
+      than imposing a new one.
+    two_defects_closed_by_it: >-
+      (1) the five-table key-shape split — task_outcomes lane 440 / identity 799,
+      staged_facts 103 / 100, tasks 189 / 126. (2) /reset's silent under-delete, measured
+      2026-08-25 on a naturally refilled table: source_ref held 8 raw-handle rows against 4
+      lane-shaped, and /reset passes the raw handle, so it missed a THIRD of them.
+    ONE_TEST_PINNED_THE_DEFECT: >-
+      test_none_resolver_returns_empty_string asserted `== ""` and its docstring called the
+      consequence a feature ("consumers fall back to session_key") — that fallback WAS the
+      bug. Updated to assert the handle AND that the result is non-empty, so the invariant
+      is stronger than before: whatever comes back must NAME AN OWNER. Checked its siblings
+      first: none assert that two lanes stay separate, which would have been a real
+      regression rather than a stale assertion.
+    left_alone_deliberately: >-
+      orchestrator.py:1957 writes `resolve_identity_key(...) or cli_session_key`. That inline
+      fallback is now redundant but harmless, and removing it would be an unrelated edit in a
+      commit about a scoping contract. Noted so it does not get mistaken for a live rule.
+    existing_rows_NOT_migrated: His decision. Rows already written under a lane keep their old meaning.
+    VALIDATE_OPEN_the_query_that_would_close_it: >-
+      After new traffic, staged_facts.source_ref should stop gaining LANE-shaped rows from
+      the TURN path:
+      SELECT source_ref, COUNT(*) FROM staged_facts GROUP BY source_ref;
+      Baseline at 11:2xZ: 8 raw-handle, 4 lane-shaped (owl:jobmarket:recovery:task-86b2571,
+      incident-b5545c2ec371). PASS = new rows are raw-handle shaped. NOTE the incident- row
+      predates the machine-lane guard and the owl: row predates this fix — neither will
+      change; judge only rows written after 2026-08-25T16:xx.
+
   LIVE_DEFECT_TASK_ENVELOPE_CONTRADICTS_A_PERMANENT_USER_DIRECTIVE_2026_08_25:
     severity: >-
       LIVE and user-facing. It is blocking jobmarket's job search right now, and it defeats
