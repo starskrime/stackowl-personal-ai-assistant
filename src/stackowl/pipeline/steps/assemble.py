@@ -178,7 +178,9 @@ async def run(state: PipelineState) -> PipelineState:
             )
             _p = _choice.provider
             _pc = getattr(_p, "_config", None)
-            _resolved_model = _choice.model or (_pc.default_model if _pc is not None else "") or ""
+            # ONE copy of the fallback, on the choice itself (ESC-47/50) — this
+            # expression was the original, and execute needs the same answer.
+            _resolved_model = _choice.resolved_model
             model_window = await resolve_window(
                 provider_name=getattr(_p, "name", "") or "",
                 base_url=_pc.base_url if _pc is not None else None,

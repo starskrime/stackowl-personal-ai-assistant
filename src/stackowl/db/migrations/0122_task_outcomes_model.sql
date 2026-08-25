@@ -1,0 +1,17 @@
+-- Migration 0122 — record WHICH MODEL ran the turn.
+--
+-- BAKIR, 2026-08-24: "Add the column, start recording." No behaviour change to
+-- the tool cap today.
+--
+-- WHY NOW, WHEN THERE IS ONLY ONE MODEL. That is exactly the reason. ESC-47
+-- asked for a capability-relative tool cap and ESC-50 established the blocker:
+-- `task_outcomes` carries 26 columns and 17,673 rows and not one says what
+-- produced the row. A comparison across models cannot be made retroactively —
+-- the data has to already exist when the second model appears. Adding it while
+-- the answer is boring is cheap; adding it afterwards means a gap that can
+-- never be filled.
+--
+-- The existing 17,673 rows stay NULL and are NOT backfilled. Nobody recorded
+-- what ran them, and writing today's model into yesterday's rows would fabricate
+-- exactly the evidence a later comparison would trust.
+ALTER TABLE task_outcomes ADD COLUMN model TEXT;

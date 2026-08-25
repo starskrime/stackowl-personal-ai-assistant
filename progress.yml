@@ -315,6 +315,64 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_47_50_TASK_OUTCOMES_RECORD_THE_MODEL_2026_08_25:
+    decision: >-
+      Bakir, 2026-08-24: "Add the column, start recording." NO behaviour change to the tool
+      cap today — the data simply has to exist before anything can be relative to it.
+    stages:
+      brainstorm: no_change_needed — his decision settled it
+      architect: done — rung 1; one migration, one carrier, one property, one stamp
+      implement: done
+      cleanup: done — removed a pre-existing duplicate rather than adding one
+      test: done — 1,125 passed across the 145 importing suites
+      validate: OPEN — needs a real turn; query recorded
+      document: no_change_needed (migration + test file carry it)
+    why_now_when_there_is_only_one_model: >-
+      That is the reason. task_outcomes carries 26 columns and 17,673 rows and not one said
+      what produced the row, so a cross-model comparison could never be made retroactively.
+      Adding the column while the answer is boring is cheap; adding it later leaves a gap
+      nothing can fill.
+    NO_BACKFILL_deliberately: >-
+      The 17,673 existing rows stay NULL. Nobody recorded what ran them, and writing today's
+      model into yesterday's rows would fabricate precisely the evidence a later comparison
+      would trust. A test asserts old rows survive as NULL.
+    WHERE_THE_STAMP_GOES_AND_WHY_NOT_THE_OBVIOUS_PLACE: >-
+      NOT inside select_tool_provider_plan, though that is the selection choke point.
+      `assemble` calls the same selector purely to size the context window and is
+      "side-effect-free" by its own comment — if the probe stamped, a cached-prompt turn
+      would record the PLAN instead of what actually ran. The stamp sits in execute at
+      `choice = choice_or_err`, which the tool-loop and plain-stream paths SHARE, so one
+      edit covers both real paths and neither probe.
+    IT_REMOVED_A_DUPLICATE_RATHER_THAN_ADDING_ONE: >-
+      `choice.model` is deliberately "" for a pinned owl-named provider, meaning "use the
+      provider's default_model" — so the field alone under-reports which model runs.
+      assemble had that fallback written inline. It is now
+      `ToolProviderChoice.resolved_model`, and assemble ASKS it. One home for the rule
+      instead of a second copy at every site needing the real answer.
+    why_a_ContextVar_is_not_a_second_engine: >-
+      record() ALREADY reads lesson_experiment.current_arm() this exact way, with the
+      comment "classify decides the arm, and this recorder is several hops away". The model
+      has the identical shape, and the streaming path yields TEXT rather than a
+      CompletionResult, so there is nothing to carry it back in. A blank stamp never
+      overwrites a real one, so the window probe cannot erase a live selection.
+    empty_is_NULL_never_a_placeholder: >-
+      "" is written as NULL. A string like "unknown" is a value a later GROUP BY would
+      treat as naming a real model.
+    VALIDATE_OPEN_the_query_that_would_close_it: >-
+      SELECT model, COUNT(*) FROM task_outcomes GROUP BY model ORDER BY 2 DESC LIMIT 5;
+      Baseline: the column did not exist; all 17,673 old rows are NULL.
+      PASS = new rows carry a non-NULL model (expect 'neraai-v1-raw', the only model here).
+      FAIL, named in advance: new rows ALSO NULL means the stamp is not reaching the
+      recorder — but confirm a turn actually RAN first, because a NULL on an idle box
+      proves nothing.
+    files:
+      - src/stackowl/db/migrations/0122_task_outcomes_model.sql
+      - src/stackowl/infra/turn_model.py (new carrier)
+      - src/stackowl/pipeline/provider_select.py (resolved_model property)
+      - src/stackowl/pipeline/steps/execute.py (the stamp), steps/assemble.py (now asks)
+      - src/stackowl/memory/outcome_store.py (writes the column)
+      - tests/memory/test_task_outcomes_record_the_model.py (new, 7 tests)
+
   ESC_48_MEMORY_ROUTES_ON_THE_SUBJECT_2026_08_25:
     decision: >-
       Bakir, 2026-08-24, after rejecting the previous attempt outright ("the whole approach

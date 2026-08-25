@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 
 from stackowl.db.pool import DbPool
-from stackowl.infra import lesson_experiment
+from stackowl.infra import lesson_experiment, turn_model
 from stackowl.infra.observability import log
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
@@ -189,8 +189,8 @@ class TaskOutcomeStore(OwnedRepository):
                    step_durations, input_text, response_text, captured_at,
                    tool_sequence, dna_snapshot, owner_id, overclaim_blocked,
                    recovered_via_tool, failed_capability, retry_lineage_id,
-                   retry_event_count, lessons_arm, response_chars
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   retry_event_count, lessons_arm, response_chars, model
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(trace_id) DO NOTHING""",
             (
                 trace_id, session_key, owl_name, channel, int(success),
@@ -212,6 +212,13 @@ class TaskOutcomeStore(OwnedRepository):
                 # Measured BEFORE the [:8000] truncation two lines above — that
                 # is the entire point of the column.
                 len(response_text),
+                # ESC-47/50 — which model ran this turn. Read from the turn-scoped
+                # carrier for the same reason lessons_arm is: the choice is made in
+                # execute and this recorder is several hops later, and the streaming
+                # path yields text rather than a CompletionResult to carry it back.
+                # "" means nobody stamped one, and that is written as NULL rather
+                # than a placeholder a later comparison would group on.
+                turn_model.current_model() or None,
             ),
         )
         log.memory.info(

@@ -172,6 +172,21 @@ class ToolProviderChoice:
     pinned: bool
     floor_tier: str = "fast"
 
+    @property
+    def resolved_model(self) -> str:
+        """The model this choice actually means. "" only when nothing is known.
+
+        ``model`` is deliberately empty for a pinned owl-named provider ("use the
+        provider's own default_model"), so the field alone under-reports which
+        model runs a turn. `assemble` already spelled this fallback out inline to
+        size the context window; putting it here gives the rule ONE home instead
+        of a second copy at every site that needs the real answer.
+        """
+        if self.model:
+            return self.model
+        config = getattr(self.provider, "_config", None)
+        return (getattr(config, "default_model", "") or "") if config is not None else ""
+
 
 def select_tool_provider(
     registry: ProviderRegistry,

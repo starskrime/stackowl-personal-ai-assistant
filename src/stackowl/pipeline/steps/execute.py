@@ -31,6 +31,7 @@ from stackowl.infra import (
     presented_tools,
     recovery_context,
     tool_outcome_ledger,
+    turn_model,
 )
 from stackowl.infra.clock import now_local
 from stackowl.infra.observability import log
@@ -3298,6 +3299,13 @@ async def run(state: PipelineState) -> PipelineState:
     if isinstance(choice_or_err, PipelineState):
         return choice_or_err
     choice = choice_or_err
+    # ESC-47/50 — stamp WHICH MODEL runs this turn, here because both the
+    # tool-loop path and the plain-stream path below share this one `choice`, so
+    # one stamp covers both. Deliberately NOT in select_tool_provider_plan:
+    # `assemble` calls that same selector purely to size the context window
+    # ("side-effect-free" by its own comment), and letting the probe stamp would
+    # make a cached-prompt turn record the plan instead of what actually ran.
+    turn_model.set_model(choice.resolved_model)
     provider = choice.provider
 
     # Clarify branch: an interactive clarify turn surfaces ONE question and yields
