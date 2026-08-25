@@ -360,9 +360,12 @@ current:
           the store is written with the same shape the command reads. No defect.
         AT RISK, NOT YET PROVEN:
           reset.py:54 clear_session(state.session_key) deletes conversation staged facts by
-          source_ref. staged_facts.source_ref was measured lane 103 / identity 100, so a raw
-          key would miss the lane-shaped minority. UNPROVEN NOW because staged_facts was
-          emptied on 2026-08-25 — re-measure after it refills rather than trusting this.
+          source_ref. NOW PROVEN, 2026-08-25T11:2xZ, on a table that refilled naturally after
+          the wipe: source_ref holds 8 raw-handle rows and 4 LANE-shaped ones
+          (owl:jobmarket:recovery:task-86b2571, incident-b5545c2ec371). /reset passes the RAW
+          handle on the command path, so it would silently miss 4 of 12 — a THIRD of them.
+          This was recorded UNPROVEN last night and is no longer; the table refilling is what
+          made it measurable. It is user-facing and under-deletes silently.
         UNVERIFIED (writes keyed on it; not traced to a store this pass):
           parliament_command.py:185 and :280 (session_id=), owls_command.py:340 and :1119.
       conversations.session_key is 240/240 LANE — internally consistent, and NOT what
@@ -383,8 +386,10 @@ current:
         and is far smaller than re-keying five tables. It is a behaviour change on an
         identity boundary, so it is yours.
       - >-
-        /reset: worth proving the miss once staged_facts refills, then fixing? It is
-        user-facing and silently under-deletes today.
+        /reset: the miss is now PROVEN (4 of 12 rows lane-shaped, and /reset passes the raw
+        handle), so the only question left is whether to fix it. It is user-facing and
+        under-deletes silently. Recommend yes, and note it is fixed for free by the
+        identity_key fallback in the question above — one change closes both.
     blocked_until_answered: Nothing else. ESC-17 does not block any other item.
 
   ESC_47_50_TASK_OUTCOMES_RECORD_THE_MODEL_2026_08_25:
