@@ -881,6 +881,64 @@ current:
       predates the machine-lane guard and the owl: row predates this fix — neither will
       change; judge only rows written after 2026-08-25T16:xx.
 
+  ESC_54_THE_PLANNER_CANNOT_SEE_THE_USERS_STANDING_DIRECTIVES_2026_08_25:
+    status: ROOT CAUSE FOUND, NOT FIXED — needs Bakir, because the envelope is ENFORCED.
+    THE_CHAIN_end_to_end: >-
+      task_runner.py:97 calls PreflightPlanner.plan(goal, creation_ceiling, catalog), which
+      calls ToolProposer.propose(goal, catalog) — an LLM choosing which tools a goal needs
+      from the tool NAMES and DESCRIPTIONS alone. For jobmarket's "search for Staff/Senior
+      Lead/Principal Engineer roles" it chose web_search + web_fetch + read_file +
+      search_files and omitted browser_navigate. The result is unioned with
+      MANDATORY_DISCOVERY {tool_search, tool_describe}, checked against the owl's bounds, and
+      PERSISTED on tasks.task_envelope at enqueue. execute.py:1928 then refuses any tool
+      outside it.
+    THE_PROPOSER_SEES_ONLY_goal_AND_catalog: >-
+      That is the defect in one line. USER.md carries a PERMANENT directive dated 2026-08-22
+      — "when fetching web content, use the browser tools (browser_navigate/extract) instead
+      of web_fetch/shell curl to avoid bot-blocking" — and the planner has no access to it.
+      So it planned the exact two tools Bakir forbade and omitted the one he requires. His
+      job search then failed for precisely the reason he wrote the directive to prevent.
+    IT_IS_NOT_AN_OVERSIGHT_IN_THE_REFUSAL: >-
+      `_off_plan_block`'s own docstring is explicit and honest: "THE REFUSAL CARRIES THE
+      APPEAL... There is no runtime API to widen a durable task's envelope, so the honest
+      appeal is to say so and name the reachable route... Promising a widening mechanism that
+      does not exist would be worse than refusing plainly." The author knew and chose an
+      honest dead end. The refusal even tells the agent to stop and report that the plan was
+      insufficient. So the failure is not a missing appeal — it is a plan that was wrong
+      before the task ever started, and cannot be corrected afterwards.
+    measured: >-
+      FIVE refusals on 2026-08-25 (four at 14:04:25 — one parallel batch — and one at
+      14:15:54), all tool=browser_navigate owl=jobmarket, denied_by=task_envelope.
+      jobmarket's manifest bounds.tools INCLUDES browser_navigate, so the owl is authorised;
+      only the plan is not. Three task rows spanning two days carry the identical envelope,
+      so it is systematic. Second owl affected — secretary.md recorded the same shape for
+      Brain on 2026-08-22 and concluded "fix is platform-side plan builder, not grants".
+    WHY_I_DID_NOT_FIX_IT: >-
+      The envelope IS enforced (denied_by=task_envelope), so widening what the planner may
+      propose changes what durable tasks are permitted to do. That is an authorisation-
+      adjacent design change on a security path, and this programme's stop-and-escalate rules
+      cover exactly that. The analysis is complete enough to implement from cold.
+    OPTIONS_FOR_BAKIR:
+      - >-
+        FEED THE DIRECTIVES TO THE PLANNER (recommended). Pass durable user preferences /
+        curated USER memory into ToolProposer.propose alongside the goal, so a permanent
+        instruction shapes every plan. Fixes the class, not the instance — any future
+        directive ("never use shell for X") would be honoured automatically. Cost: the
+        proposer prompt grows, and a bad directive could widen plans.
+      - >-
+        UNION THE ENVELOPE WITH DIRECTIVE-NAMED TOOLS. Narrower: parse permanent directives
+        for tool names the owl already holds and add them to every envelope. Smaller blast
+        radius, but it is a second place that reads directives, and it only helps when a
+        directive names a tool explicitly.
+      - >-
+        ADD A RUNTIME WIDENING API. The thing `_off_plan_block` says does not exist. Largest
+        change, and it weakens least-privilege by design — I would not recommend it unless
+        the first two prove insufficient.
+    NOT_the_fix: >-
+      Granting jobmarket browser_navigate would be a no-op: it already holds it. The refusal
+      is the PLAN's, not the owl's. Worth stating because that is the obvious first move and
+      it would waste a cycle.
+
   LIVE_DEFECT_TASK_ENVELOPE_CONTRADICTS_A_PERMANENT_USER_DIRECTIVE_2026_08_25:
     severity: >-
       LIVE and user-facing. It is blocking jobmarket's job search right now, and it defeats
