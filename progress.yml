@@ -888,6 +888,50 @@ current:
       predates the machine-lane guard and the owl: row predates this fix — neither will
       change; judge only rows written after 2026-08-25T16:xx.
 
+  INCIDENT_I_BROKE_THE_GATEWAY_CORE_LINK_FOR_3_5_MINUTES_2026_08_25:
+    what_bakir_asked: >-
+      "you can act like a person and ask something to your platform depending what you want
+      to test and do real calculation and validation of fixes. Only rule is send message like
+      it received from telegram." A grant to generate real traffic to validate the fixes.
+    WHAT_I_DID_WRONG: >-
+      I read the socket's direction backwards. ~/.stackowl/runtime/core.sock is bound by the
+      GATEWAY (`IpcServer(gateway_socket_path); await gateway_server.start(_accept_core)`),
+      and the CORE dials IN as a client. I assumed the core was the server and connected to
+      inject an IngressFrame. The gateway accepted me as "the core reattaching" —
+      `gateway_link.set_connection(conn)`, whose own comment says "every later one is the
+      fresh core after an exec-replace" — and pointed its OUTBOUND frames at me instead of
+      the real core.
+    THE_EFFECT_measured: >-
+      "[ipc] gateway link: core connection bound" 22:44:46. My frame was never dispatched
+      (no classify/execute lines) because I was sending ingress TO the side that emits it.
+      On kill, "[ipc] gateway link: core connection dropped — buffering" 22:47:42. For ~3.5
+      minutes any real Telegram message from Bakir would have BUFFERED rather than reached
+      the core. Zero ERRORs throughout, and nothing was lost — but the live service was
+      degraded by a test.
+    recovery: >-
+      ./start.sh at 22:48:14. Verified: 764 INFO, 10 WARNING, ZERO ERROR, 10 phases ok,
+      "[telegram] adapter.receive: entry" — the receive loop is live again.
+    WHAT_I_SHOULD_HAVE_DONE: >-
+      Read the direction before connecting to a live IPC socket. The answer was one grep
+      away, and I had already read `_accept_core` earlier in the same investigation without
+      registering that it accepts the CORE. "Measure before you argue" applies to
+      architecture, not only to data.
+    THE_REAL_BLOCKER_and_it_is_not_a_bug: >-
+      There is NO supported external injection point. The gateway owns the channel adapters
+      in-process; the core only dials out; and the CLI exposes start/stop/setup/backup/
+      restore — no `ask` or `send`. A Telegram inbound cannot be faked from outside the
+      process, because the only thing that mints one is the adapter's own update handler.
+    PROPOSAL_FOR_BAKIR_not_built: >-
+      A small DEV-INGRESS facility on the gateway: a command (or a guarded local socket)
+      that constructs an IngressMessage exactly as channels/telegram/adapter.py:1412 does —
+      session_key = the raw user id, channel "telegram", chat_id stamped, is_direct True —
+      and hands it to the same dispatch a real update takes. That is the ONLY way to honour
+      his rule ("like it received from telegram") without faking a different path. It is a
+      gateway change on the message-intake seam, and I have just demonstrated why that seam
+      deserves care, so it is his call rather than mine.
+      Until then the honest alternative is that he sends the message from his phone — one
+      message, and it is genuinely from Telegram.
+
   ESC_54_THE_PLANNER_CANNOT_SEE_THE_USERS_STANDING_DIRECTIVES_2026_08_25:
     status: ROOT CAUSE FOUND, NOT FIXED — needs Bakir, because the envelope is ENFORCED.
     THE_CHAIN_end_to_end: >-
