@@ -548,6 +548,42 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  THE_META_PATTERN_worth_a_standing_sweep_2026_08_25:
+    claim: >-
+      SEVEN defects this session share one shape: something that EXISTS and WORKS but is not
+      reached on the path that matters. Not missing design — design without a caller.
+    the_seven:
+      - FactReinforcer — the deduplicator Bakir asked for. ZERO callers, and its query
+        needed embeddings that were never written. Two independent reasons it could not fire.
+      - add_relation — the only writer of RELATED_TO edges. Zero callers, while the graph's
+        ONLY traversal read RELATED_TO exclusively. graph_context_len was 0 on 2,267 turns.
+      - is_machine_lane — docstring "lanes that cannot contain a user fact by construction".
+        Zero callers, while 85% of staged_facts were sub-agent prompts.
+      - reinforcement_count — column read 0 on all 5,212 rows; its only writer had no callers.
+      - CuratedMemory's `target` — returned in the payload, never spoken in the message, so a
+        misroute answered "Saved." and was invisible.
+      - SqliteMemoryBridge's `embedding_registry` — accepted, assigned, never used. Root of
+        the 66% duplicate rate.
+      - SqliteLessonsStore's `embedding_model` — cli/app.py supplied it, memory/assembly.py
+        did not, so 5,146 production rows recorded '' and the gate's rung 3 went inert.
+    TWO_SUB_SHAPES_and_the_second_is_cheap_to_hunt:
+      no_caller_at_all: >-
+        FactReinforcer, add_relation, is_machine_lane. Findable by a static sweep for
+        module-level functions/classes never referenced outside their own file and tests.
+      a_default_only_one_caller_overrides: >-
+        The bridge's embedding_registry and the lessons store's embedding_model. HARDER and
+        more dangerous, because the symbol IS referenced — a grep finds callers, and the
+        code looks wired. The defect is that the path that actually runs takes the default.
+        Findable by listing every keyword parameter with a default and checking whether the
+        PRODUCTION construction site passes it.
+    why_it_matters_more_than_the_individual_fixes: >-
+      Each of the seven presented as a different symptom — duplicates, an empty graph, prompt
+      pollution, a silent misroute. Each cost measurement to find, because the code reads as
+      correct: the function is right, the column is right, the parameter is right. Only the
+      EFFECT is missing. That is why "measure the effect, never the call" keeps paying here,
+      and why a mechanical sweep would be cheaper than seven investigations.
+    NOT_BUILT: A sweep script is not written. Recorded as a recommendation for Bakir.
+
   I_WIRED_THE_GATE_ON_ONE_PATH_OF_FOUR_AND_MEASURING_CAUGHT_IT_2026_08_25:
     what_I_did_wrong: >-
       Put the embedding and the dedup gate in `SqliteMemoryBridge.store()`. store() is ONE

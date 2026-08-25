@@ -267,7 +267,18 @@ class MemoryAssembly:
         # D08.2 — the lessons corpus lives in SQLite now, ranked by a numpy scan.
         # LanceDB was 236MB of dependency (with pyarrow) for a 5.4MB corpus, and
         # brute force over 3,680 x 384 is one matmul. See learning/lessons_store.py.
-        lessons_adapter = SqliteLessonsStore(db)
+        # The MODEL is passed, not defaulted. `embedding_model` defaults to "" and
+        # only cli/app.py was supplying it, so every lesson written in production
+        # recorded '' — all 5,146 of them. That makes the dedup gate's semantic
+        # rung INERT for the largest store, because the gate refuses to compare two
+        # vectors unless their model matches and is non-empty (reflections mix
+        # all-MiniLM-L6-v2 with the degraded hash-v1-384d fallback, both 384-dim,
+        # so the arithmetic succeeds and the answer is meaningless). Lessons already
+        # dedupe EXACTLY via the upsert on a deterministic lesson_id, so rung 3 is
+        # the only rung that can see their 1,153 near-duplicates at cosine >= 0.90.
+        lessons_adapter = SqliteLessonsStore(
+            db, embedding_model=embedding_registry.active_model
+        )
         # ESC-7 — the flag now gates LESSONS recall, the one place embeddings
         # still rank anything. It gates reads only; see LessonsIndex.__init__.
         lessons_index = LessonsIndex(
