@@ -548,6 +548,48 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  LESSONS_COMPACTION_DONE_and_the_naive_method_would_have_destroyed_DATA_2026_08_25:
+    decision: Bakir, "Compact automatically" — no review step, over my recommendation.
+    RESULT: 5,197 lessons -> 4,296. 901 removed (17%). Full gzipped backup written FIRST.
+    THE_SPECIFIED_METHOD_WAS_WRONG_AND_MEASURING_CAUGHT_IT: >-
+      "1,153 rows at cosine >= 0.90" came from counting PAIRS. Turning that into a merge
+      needs GROUPING, and the obvious grouping — transitive/single-linkage union of every
+      pair above the threshold — chains: A~B and B~C merge A with C even when A and C are
+      unrelated. MEASURED on the real corpus: it produced 97 groups including one of 660 rows
+      and one of 465, and inside the 660-group the two most distant members sit at cosine
+      0.539. Every large group was chained (min pairwise 0.539, 0.546, 0.668, 0.726, 0.779,
+      0.770). Executing it would have collapsed 660 genuinely different lessons into one and
+      deleted 1,417 rows.
+    WHAT_SHIPPED_INSTEAD_leader_clustering: >-
+      Rows in age order; each either joins the nearest KEPT leader when cosine >= 0.90, or
+      becomes a leader itself. Every deleted row is therefore DIRECTLY >= 0.90 to the row
+      that absorbed it — verified: min similarity among the 901 deletions is exactly 0.900,
+      max 0.999. No transitive chains. The OLDEST row survives, which matches his
+      "keep stored, bump the counter" decision: the original wording is the one kept.
+      901 deleted instead of 1,417 — 516 rows that single-linkage would have destroyed.
+    THIS_IS_NOT_A_REVIEW_GATE: >-
+      He declined a review step and did not get one. What changed is the ALGORITHM, not the
+      autonomy: "compact automatically" is an instruction about who approves, not a licence
+      to use a method that deletes rows it cannot justify. Every deletion here can name its
+      survivor and its similarity.
+    I_DID_NOT_STAMP_THE_BACK_CATALOGUE_and_that_is_deliberate: >-
+      My own earlier note called stamping embedding_model on the 5,146 existing rows
+      "strongly preferred" because it would make rung 3 live for them. I did not do it. I
+      cannot know which of those rows were embedded by the DEGRADED hash-v1-384d fallback —
+      reflections prove the fallback does get used — so writing a model name I did not verify
+      would fabricate provenance. That is exactly what I refused for task_outcomes ("writing
+      today's model into yesterday's rows would fabricate the evidence a later comparison
+      would trust"), and the principle does not change because it is inconvenient here.
+      CONSEQUENCE, stated plainly: rung 3 stays INERT for the back-catalogue. Only the 7
+      lessons written since the assembly fix carry a real model. The gate works going
+      forward, not backward.
+    THE_ONE_ASSUMPTION_I_DID_MAKE: >-
+      The compaction itself compared those un-stamped vectors, which the GATE would refuse.
+      Defensible for a one-off SINGLE-STORE merge — one table, one writer, presumably one
+      space — and it is recorded as an assumption rather than passed over in silence. It is
+      reversible: lessons_compaction_backup.json.gz holds every deleted row plus its
+      survivor's lesson_id and the similarity that justified the deletion.
+
   GATE_WIRING_COMPLETE_two_stores_deliberately_NOT_gated_2026_08_25:
     gated:
       staged_facts: >-
