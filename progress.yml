@@ -888,6 +888,27 @@ current:
       predates the machine-lane guard and the owl: row predates this fix — neither will
       change; judge only rows written after 2026-08-25T16:xx.
 
+  SETTLED_2026_08_25_T23_27Z_the_timeout_stops_NOTHING: >-
+    The settling measurement I recorded was run and it did NOT settle — which is itself the
+    answer. At 23:27:21 the row is STILL status='running', and the handler is STILL doing
+    real work: "RCA complete", "verdict UNVERIFIED", "miner pass", "incident opened", all at
+    23:25:15 — thirty-one minutes into a run the scheduler declared timed out at twenty.
+    So two things are now MEASURED rather than hypothesised.
+    (1) THE TIMEOUT DOES NOT STOP THE HANDLER. asyncio.wait_for cancels the awaited
+    coroutine, not tasks that coroutine spawned with create_task, and incident RCA spawns
+    sub-agent turns. The work outlives its own cancellation.
+    (2) THE LOG LINE IS DISHONEST. It says "handler timed out — freed for retry/re-arm",
+    and the row was not freed (still 'running' 11 minutes later) and the handler was not
+    stopped. That wording is what a reader — including me, an hour ago — uses to conclude
+    the job recovered. It is the same class as the stale last_error fixed this morning:
+    state that misnames what happened costs its reader the same detour every time.
+    WHAT IS STILL NOT MEASURED: whether the row is freed when the leaked work eventually
+    ends. If it is, the defect is honesty plus a long window; if it is not, the job is dead
+    until restart, because the CAS claim is WHERE status='pending' and reap_stale_running
+    runs at STARTUP ONLY.
+    NOT FIXED: this is the scheduler's timeout path — the same seam class I damaged earlier
+    today — and it is a substantial change. Bakir's call.
+
   OBSERVED_NOT_DIAGNOSED_incident_escalation_row_stuck_running_2026_08_25:
     status: MEASURED ONLY. Not diagnosed, not fixed. Recorded so it is not lost.
     what_the_numbers_say:
