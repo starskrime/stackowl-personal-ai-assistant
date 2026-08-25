@@ -315,6 +315,67 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_51_THE_REFEED_PREMISE_WAS_WRONG_2026_08_25:
+    STOP_AND_ESCALATE_REASON: >-
+      A measurement contradicts a recorded decision. Bakir chose "Build it now — re-feed the
+      graph from curated memory" on the strength of MY diagnosis that the graph was unfed.
+      It is not unfed. Re-feeding it would have changed nothing, and I would have reported
+      an item complete while the acceptance criterion stayed at zero.
+    THE_MEASUREMENT_THAT_SETTLES_IT:
+      turns_measured: >-
+        2,267 real turns carry `graph_context_len` on the INFO line "[pipeline] classify:
+        exit". It is ZERO on every single one. Not low — zero, 2267/2267. Every other block
+        is populated on the same turns (context 2267, prefs 2267, skills 2246, lessons 1861,
+        actions 412).
+      the_graph_is_NOT_empty: >-
+        Read from a byte copy of ~/.stackowl/kuzu/graph.kuzu (copied so the core's
+        single-writer lock was never touched): 8,282 Entity nodes, 20,065 Fact nodes,
+        37,483 MENTIONS edges, 101 OWNS, 91 HAS_TRAIT. kuzu_sync_log holds 20,065 rows.
+        The graph was fed, thoroughly, and the adapter opens fine in the core ("[memory]
+        assembly: kuzu adapter ready", 125 times; ZERO "kuzu traverse failed" warnings).
+      THE_ACTUAL_ROOT_CAUSE: >-
+        RELATED_TO edges: ZERO. And `sync_traverse` is
+        "MATCH (start:Entity {id: $id})-[:RELATED_TO*1..N]->(other:Entity)" — it traverses
+        RELATED_TO and nothing else. `add_relation`, the only function that creates a
+        RELATED_TO edge, has ZERO CALLERS anywhere in src/. So the traversal reads an edge
+        type nothing has ever written, returns [] for every entity on every turn, and the
+        37,483 MENTIONS edges that DO exist are never read.
+      it_is_failure_mode_1_inverted: >-
+        Not a write with no reader — a READ WITH NO WRITER. The same shape from the other
+        end, and it produced a subsystem that has never once contributed to a turn.
+      the_lookup_itself_is_FINE: >-
+        Verified against real ids: sha256("ORG|Telegram")[:16] reproduces the stored
+        ent_9996aaad0158e29d exactly, and for "Telegram is broken" the reader's candidate
+        ids DO resolve to real entities. Writer and reader agree on identity. Only the edge
+        type disagrees.
+    SECONDARY_DEFECT_MEASURED_the_first_five_words_only: >-
+      `_candidate_entity_ids(query, limit=5)` uses `tokens[:5]`, so only the first FIVE
+      tokens of a question are ever looked up. Measured: "can you please check my email on
+      Gmail today" tokenises to [can, you, please, check, email, Gmail, today] — Gmail is
+      token SIX and is never considered; the only hit was the junk entity "check". Real
+      questions put the subject late, so even with the edge bug fixed this alone would keep
+      most turns at zero.
+    THIRD_OBSERVATION_75_percent_are_unaddressable: >-
+      Only 2,114 of 8,282 entity names are single-token (25%). The reader hashes ONE token
+      at a time, so a multi-word name like "OpenAI Realtime API" can never be produced by
+      any query. Not fixed here; recorded because it caps how much the graph can ever
+      contribute under token-exact lookup.
+    WHAT_I_AM_DOING_ABOUT_IT: >-
+      Bakir's ACCEPTANCE criterion is unchanged and unambiguous — a NON-ZERO
+      graph_context_len on a real turn — and it is the goal, not the means. Re-feeding was
+      the assumed means and the measurement disproves it. Fixing the traversal to read the
+      edges that exist delivers exactly the stated goal, so that is what ships. The re-feed
+      is NOT being built: it would add MENTIONS edges that nothing traverses.
+    QUESTION_FOR_BAKIR: >-
+      Do you still want a curated-memory feed AFTER the traversal is fixed? It is a separate
+      question now, and a real one — the graph's 20,065 facts come from the old
+      committed_facts pipeline, which is empty (0 rows) and no longer running, so the graph
+      is a snapshot that stops at whenever that stopped. Curated memory would make it live
+      again. But it is no longer needed to make the graph WORK, which is what the original
+      decision was for.
+    blocked_until_answered: >-
+      Nothing. The traversal fix proceeds on the acceptance criterion he already set.
+
   ESC_53_ONE_SHOT_REARM_2026_08_24:
     decision: >-
       Bakir: "Re-arm one-shots too." Transient failure re-queues with backoff; genuine

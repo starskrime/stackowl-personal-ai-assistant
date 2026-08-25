@@ -118,10 +118,15 @@ async def test_pipeline_classify_calls_kuzu_traverse(
     traversals: list[str] = []
 
     class _SpyAdapter:
-        async def traverse(
-            self, entity_id: str, max_hops: int = 2
+        # ESC-51 — classify now calls traverse_many ONCE for every candidate id
+        # rather than traverse per id. This double had to move with it: a stub
+        # that keeps the old method name goes on passing while the real adapter
+        # is called differently, which is this codebase's second failure mode
+        # (test doubles that stopped resembling the real thing).
+        async def traverse_many(
+            self, entity_ids: list[str], max_hops: int = 2, limit: int = 25
         ) -> list[dict[str, Any]]:
-            traversals.append(entity_id)
+            traversals.extend(entity_ids)
             return [{"name": "Spy", "entity_type": "TOPIC"}]
 
     class _NullBridge:

@@ -54,7 +54,17 @@ _LESSONS_DEGRADED_BLOCK = (
 )
 
 
-def _candidate_entity_ids(query: str, limit: int = 5) -> list[str]:
+#: How many query tokens are looked up. Was 5, which meant only the FIRST FIVE
+#: WORDS of a question were ever considered — and real questions put their subject
+#: late. Measured 2026-08-25: "can you please check my email on Gmail today"
+#: tokenises to [can, you, please, check, email, Gmail, today], so Gmail is token
+#: SIX and was never looked up; the only hit was the junk entity "check". Raising
+#: this is only affordable because the traversal is now ONE batched query — at
+#: one query per id it would have multiplied a 545ms loop.
+_MAX_QUERY_TOKENS = 12
+
+
+def _candidate_entity_ids(query: str, limit: int = _MAX_QUERY_TOKENS) -> list[str]:
     """Derive deterministic entity ids from query tokens.
 
     Mirrors :func:`stackowl.memory.kuzu_sync_handler._entity_id_for` so the
@@ -91,24 +101,28 @@ async def _gather_graph_context(query: str) -> str:
     candidates = _candidate_entity_ids(query)
     if not candidates:
         return ""
+    # ONE query for every candidate, not one per candidate. Measured against the
+    # live graph: the per-id loop cost 545.6ms and returned 11 rows (a per-id
+    # limit truncated it); batched it costs 59.4ms and returns 25.
+    try:
+        rows = await adapter.traverse_many(candidates, max_hops=1)
+    except Exception as exc:
+        # B5 — never crash classify on a graph hiccup
+        log.engine.warning(
+            "[pipeline] classify: kuzu traverse failed — skipping",
+            exc_info=exc,
+            extra={"_fields": {"n_candidates": len(candidates)}},
+        )
+        return ""
     collected: list[str] = []
-    for entity_id in candidates:
-        try:
-            rows = await adapter.traverse(entity_id, max_hops=1)
-        except Exception as exc:
-            # B5 — never crash classify on a graph hiccup
-            log.engine.warning(
-                "[pipeline] classify: kuzu traverse failed — skipping",
-                exc_info=exc,
-                extra={"_fields": {"entity_id": entity_id}},
-            )
+    seen: set[str] = set()
+    for row in rows:
+        name = row.get("name") or ""
+        ent_type = row.get("entity_type") or ""
+        if not name or name in seen:
             continue
-        for row in rows:
-            name = row.get("name") or ""
-            ent_type = row.get("entity_type") or ""
-            if not name:
-                continue
-            collected.append(f"- {name} ({ent_type})")
+        seen.add(name)
+        collected.append(f"- {name} ({ent_type})")
     if not collected:
         return ""
     lines = ["Related entities:"]

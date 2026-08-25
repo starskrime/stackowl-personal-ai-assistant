@@ -178,13 +178,78 @@ def sync_traverse(
     """
     if max_hops < 1:
         return []
+    return sync_traverse_many(conn, [entity_id], max_hops)
+
+
+#: Default ceiling on entities returned from one traversal. A hub entity in the
+#: live graph reaches hundreds; the prompt block shows ten. Bounding in the QUERY
+#: rather than after it keeps the cost proportional to what is used.
+_TRAVERSE_LIMIT = 25
+
+
+def sync_traverse_many(
+    conn: kuzu.Connection,
+    entity_ids: list[str],
+    max_hops: int,
+    limit: int = _TRAVERSE_LIMIT,
+) -> list[dict[str, Any]]:
+    """Entities related to ANY of ``entity_ids``, in a single query.
+
+    TWO EDGE TYPES, ON PURPOSE. This walked ``RELATED_TO`` alone, and measured
+    2026-08-25 the live graph holds ZERO RELATED_TO edges against 37,483
+    MENTIONS — ``add_relation`` (its only writer) has no callers anywhere. So the
+    traversal returned [] for every entity on every turn, and `graph_context_len`
+    was zero on 2,267 of 2,267 logged turns. Co-mention is the relation the graph
+    actually records: two entities named by the SAME fact are related. RELATED_TO
+    stays in the pattern so the first caller of ``add_relation`` works at once
+    rather than meeting this same silence from the other side.
+
+    BATCHED, also for a measured reason. classify derives ~30 candidate ids per
+    turn. Against the real graph the per-id loop cost 545.6ms and returned 11 rows
+    (a per-id limit truncated it); this one query cost 59.4ms and returned 25.
+    Without batching, fixing the edge bug would have added half a second to every
+    turn — trading a silent subsystem for a slow one.
+
+    THE TWO PATTERNS ARE SEPARATE, and that is not cosmetic. A first attempt
+    merged them as ``-[:RELATED_TO|MENTIONS*1..2*max_hops]-``, which broke
+    RELATED_TO's hop contract: co-mention needs TWO physical hops
+    (Entity<-MENTIONS-Fact-MENTIONS->Entity) to mean ONE semantic step, while
+    RELATED_TO is one hop for one step. Sharing a depth made ``max_hops=1`` reach
+    a two-hop RELATED_TO neighbour. A pre-existing test (T17, story 6.5) caught
+    it. Each pattern now keeps its own depth and they are UNIONed.
+    """
+    if not entity_ids or max_hops < 1:
+        return []
     cypher = (
-        f"MATCH (start:Entity {{id: $id}})-[:RELATED_TO*1..{max_hops}]->(other:Entity) "
-        "RETURN DISTINCT other.id AS id, other.name AS name, "
-        "other.entity_type AS entity_type, other.source_fact_id AS source_fact_id"
+        # Explicit relations, at their own hop depth — unchanged semantics.
+        f"MATCH (s:Entity)-[:RELATED_TO*1..{int(max_hops)}]->(o:Entity) "
+        "WHERE list_contains($ids, s.id) AND o.id <> s.id "
+        "RETURN DISTINCT o.id AS id, o.name AS name, "
+        "o.entity_type AS entity_type, o.source_fact_id AS source_fact_id "
+        "UNION ALL "
+        # Co-mention: two entities named by the same fact. ONE semantic step,
+        # whatever max_hops is — this is the edge the graph actually holds.
+        "MATCH (f:Fact)-[:MENTIONS]->(s2:Entity), (f)-[:MENTIONS]->(o2:Entity) "
+        "WHERE list_contains($ids, s2.id) AND o2.id <> s2.id "
+        "RETURN DISTINCT o2.id AS id, o2.name AS name, "
+        "o2.entity_type AS entity_type, o2.source_fact_id AS source_fact_id"
     )
-    result = conn.execute(cypher, {"id": entity_id})
-    return _rows_from_result(result)
+    result = conn.execute(cypher, {"ids": list(entity_ids)})
+    rows = _rows_from_result(result)
+    # UNION ALL can repeat an entity reached both ways; dedupe by id and bound
+    # here rather than with a LIMIT inside the union, which would truncate the
+    # first branch before the second ever ran.
+    seen: set[str] = set()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        rid = str(row.get("id") or "")
+        if rid in seen:
+            continue
+        seen.add(rid)
+        out.append(row)
+        if len(out) >= int(limit):
+            break
+    return out
 
 
 def sync_probe(conn: kuzu.Connection) -> int:

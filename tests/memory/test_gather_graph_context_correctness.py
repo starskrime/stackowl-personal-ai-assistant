@@ -117,7 +117,11 @@ async def test_gather_graph_context_logs_then_degrades_on_traverse_failure(
     async def _boom(*_a: object, **_k: object) -> None:
         raise RuntimeError("simulated traverse failure")
 
-    monkeypatch.setattr(adapter, "traverse", _boom)
+    # ESC-51: classify now makes ONE batched call (traverse_many) instead of one
+    # traverse per candidate id — 59.4ms vs 545.6ms against the live graph. The
+    # log-then-degrade CONTRACT this test exists for is unchanged; only the method
+    # it degrades from moved.
+    monkeypatch.setattr(adapter, "traverse_many", _boom)
 
     try:
         services = StepServices(kuzu_adapter=adapter)
