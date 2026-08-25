@@ -548,6 +548,38 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  PRE_EXISTING_RED_FIXED_the_rename_caught_what_it_documented_as_EXCLUDED_2026_08_25:
+    found_by: >-
+      The gate-wiring importer run. FOUR failures in parliament tests, none of them mine —
+      my working tree touched only memory/sqlite_bridge.py plus two new files.
+    THE_DEFECT: >-
+      Commit 9984342d, titled "session_id becomes conversation_id — scoped by DOMAIN, not by
+      string match", renamed parliament's `session_id` to `conversation_id` IN THE TESTS.
+      Migration 0121 — the same change's own migration file — explicitly excludes it:
+      "parliament_sessions 0 rows uuid4() -- NOT a conversation, EXCLUDED",
+      "`parliament_sessions.session_id` is a `uuid4()` naming a DELIBERATION, not a
+      conversation — a different concept", and "parliament_sessions is deliberately NOT
+      renamed". So the commit that promised domain scoping caught parliament by string match
+      anyway, which is precisely what its title claims it avoided.
+    THE_PROOF_IS_THE_COMMENT_IT_CORRUPTED: >-
+      tests/test_story_6_7b.py carried a header explaining the exclusion. The sweep rewrote
+      THAT TOO, leaving "PARLIAMENT KEEPS `conversation_id`" and "parliament_sessions has
+      conversation_id and session_store queries it" — both false. The live table's columns
+      are session_id/topic/owl_names/... A rename that rewrites the note explaining why it
+      should not apply is self-documenting evidence.
+    what_the_source_says: >-
+      ParliamentSession.session_id (models.py:55), six reads in pellet_generator.py, and the
+      live parliament_sessions table all still say session_id. The SOURCE was never renamed —
+      only the tests were, which is why they failed: pydantic's extra="forbid" rejected
+      conversation_id outright.
+    fix: >-
+      Reverted the tests to session_id, header comment included. 24 passed. No source change:
+      the source was already correct.
+    lint_note: >-
+      Five ruff errors exist in those two test files (3x B017 blind-exception, I001, F811).
+      Verified PRE-EXISTING by stashing my changes and re-running: same five. Not folded into
+      this item — they are unrelated to the rename and to the gate.
+
   PROCESS_LESSON_EDITING_SRC_DURING_A_TEST_RUN_FAKES_A_FAILURE_2026_08_25:
     what_happened: >-
       tests/memory/ reported "1 failed, 469 passed" —

@@ -12,6 +12,7 @@ from stackowl.infra.observability import log
 from stackowl.memory.bridge import HealthReport, MemoryBridge
 from stackowl.memory.models import MemoryRecord, StagedFact
 from stackowl.memory.recall_ranker import RecallRanker
+from stackowl.memory.remember_gate import Candidate, should_remember
 from stackowl.memory.sqlite_helpers import (
     filter_by_scope,
     fts_recall,
@@ -190,6 +191,72 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         return out
 
+    async def _reinforce_if_known(
+        self, content: str, embedding: list[float] | None, embedding_model: str | None
+    ) -> bool:
+        """True when this is already remembered — bump the counter, write nothing new.
+
+        Bakir, 2026-08-25: "Keep stored, bump the counter." The stored TEXT is
+        never rewritten; a fact must not change wording under a reader who already
+        learned it. `recall_ranker` consumes ``reinforcement_count`` with a
+        saturating ``1 + k*ln(1 + n)`` boost, so the bump has a consumer.
+
+        CROSS-STORE, his call: the candidate is checked against lessons,
+        reflections and preferences too, because "a preference and a fact can say
+        the same thing". The corpus read is bounded — see gate_corpus — and the
+        ladder runs cheapest-first, so an exact match is decided before any vector
+        is touched and only the minority surviving rungs 1-2 pays the fan-out.
+
+        B5: remembering is the point and deduplicating is the improvement. Any
+        failure here returns False and the fact is stored — the opposite trade
+        would lose what the user said to protect a tidiness feature.
+        """
+        try:
+            from stackowl.memory.gate_corpus import load_corpus
+
+            corpus = await load_corpus(self._db)
+            if not corpus.candidates:
+                return False
+            packed = pack_embedding(embedding)
+            decision = should_remember(
+                Candidate(
+                    text=content,
+                    store="facts",
+                    embedding=packed,
+                    embedding_model=str(embedding_model or ""),
+                ),
+                corpus.candidates,
+            )
+            if decision.action != "reinforce" or not decision.matched_row_id:
+                return False
+            if decision.matched_store == "facts":
+                await self._db.execute(
+                    "UPDATE staged_facts SET reinforcement_count = "
+                    "reinforcement_count + 1 WHERE fact_id = ?",
+                    (decision.matched_row_id,),
+                )
+            # INFO, not DEBUG. This line is the ONLY way the gate's effect is ever
+            # measurable in production, and a DEBUG line would be no evidence at
+            # all — the mistake that left an acceptance check open for days.
+            log.memory.info(
+                "[gate] already remembered — reinforced instead of inserting",
+                extra={"_fields": {
+                    "rung": decision.rung,
+                    "matched_store": decision.matched_store,
+                    "matched_row_id": decision.matched_row_id,
+                    "similarity": decision.similarity,
+                    "truncated_stores": list(corpus.truncated),
+                    "content_len": len(content),
+                }},
+            )
+            return True
+        except Exception as exc:  # B5 — the gate must never cost the write
+            log.memory.warning(
+                "[gate] check failed — storing the fact WITHOUT deduplication",
+                exc_info=exc, extra={"_fields": {"content_len": len(content)}},
+            )
+            return False
+
     async def _embed_content(self, content: str) -> tuple[list[float] | None, str | None]:
         """Vector for `content`, plus the MODEL that produced it. (None, None) on failure.
 
@@ -243,6 +310,9 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         resolved_trust = trust if trust is not None else trust_for_source("conversation")
         embedding, embedding_model = await self._embed_content(content)
+        # 2. DECISION — is this already remembered? (Bakir 2026-08-25)
+        if await self._reinforce_if_known(content, embedding, embedding_model):
+            return
         fact = StagedFact(
             content=content,
             source_type="conversation",
