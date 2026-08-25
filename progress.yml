@@ -315,6 +315,78 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_17_AUDIT_COMPLETE_REPORT_BEFORE_CHANGE_2026_08_25:
+    status: >-
+      AUDIT DONE, NOTHING CHANGED — which is exactly what Bakir asked for ("Go, importers
+      checked first ... REPORT what would break, THEN change"). The report contradicts the
+      plan's second half, so it stops here for his decision.
+    THE_HEADLINE_the_command_path_CANNOT_carry_the_lane: >-
+      Not an oversight — a causal ordering constraint, and one already paid for. From
+      new_conversation.py's own comment, written after the bug was found live on
+      2026-07-27: "Commands dispatch at the gateway, BEFORE routing, and the composite lane
+      is keyed on the OWL — a routing OUTPUT. So state.session_key here is still the
+      channel-native id (72055773) while the stored lane is
+      owl:secretary:telegram:dm:72055773." The command branch never calls
+      _resolve_incarnation at all; there is no lane in scope to put in the field. So ESC-17's
+      "change writers AND the constructor together" cannot be done as written: making the
+      command path's session_key a lane would require running routing before dispatching a
+      command, which inverts the gateway.
+      This CONFIRMS the correction already recorded on 2026-08-24 ("owner-meaning tables
+      read identity_key, not make session_key deterministic") and supplies the reason it is
+      not merely preferable but forced.
+    THE_ACTUAL_SWITCH_is_whether_a_resolver_is_wired: >-
+      Sharper than "two constructors". `resolve_identity_key` returns "" when NO resolver is
+      wired, and the handle unchanged when the resolver has no alias. So:
+        command path: session_key = raw handle, identity_key = raw handle (or "")
+        turn path:    session_key = LANE,       identity_key = raw handle (or "")
+      and `owner_scope_key = identity_key or session_key` therefore agrees on both paths
+      WHEN identity resolves, and splits to (raw vs lane) only when it does not. The measured
+      staged_facts split (lane 103 / identity 100) is that switch, not the constructors alone.
+      An instrument for it DOES exist and is INFO: "session.resolve: NO identity for this
+      turn — it will be filed under the lane". It has fired TWICE in eight days, so identity
+      resolves on nearly every turn — which is why the split is a minority of rows rather
+      than half of them.
+    EVERY_FUNCTIONAL_READER_CLASSIFIED: >-
+      Across 51 command files, the reads of state.session_key that are not log fields:
+        NEEDS THE RAW KEY (would break if changed):
+          browser_command.py:78 — builds the channel address f"telegram:{session_key}".
+          new_conversation.py:72 — request_new_incarnation; documented above.
+        ALREADY CORRECT (ask identity first, lane second):
+          preferences_command.py:74, style_command.py:56, tier_command.py:169 —
+          all `state.identity_key or state.session_key`.
+        MEASURED SAFE (my hypothesis was WRONG):
+          explain_command.py:58 reads TurnDecisionStore.latest(session_key). I expected a
+          mismatch. MEASURED: turn_decisions holds 336 rows, 335 of them raw-key shaped —
+          the store is written with the same shape the command reads. No defect.
+        AT RISK, NOT YET PROVEN:
+          reset.py:54 clear_session(state.session_key) deletes conversation staged facts by
+          source_ref. staged_facts.source_ref was measured lane 103 / identity 100, so a raw
+          key would miss the lane-shaped minority. UNPROVEN NOW because staged_facts was
+          emptied on 2026-08-25 — re-measure after it refills rather than trusting this.
+        UNVERIFIED (writes keyed on it; not traced to a store this pass):
+          parliament_command.py:185 and :280 (session_id=), owls_command.py:340 and :1119.
+      conversations.session_key is 240/240 LANE — internally consistent, and NOT what
+      /reset touches.
+    WHAT_I_DID_NOT_DO: >-
+      No writers changed, no constructor changed, no migration. The plan's premise does not
+      survive the audit, and changing half of it would leave the system in a state neither
+      design describes.
+    QUESTIONS_FOR_BAKIR:
+      - >-
+        Accept the reframe? The achievable fix is "owner-meaning tables read identity_key,
+        with an explicit fallback", NOT "one meaning for session_key". Recommend yes: the
+        turn path's lane semantics are deliberate and load-bearing, and the command path
+        structurally cannot produce a lane.
+      - >-
+        Should `identity_key` fall back to the RAW handle rather than "" when no resolver is
+        wired? That single change would collapse the remaining split at its actual source,
+        and is far smaller than re-keying five tables. It is a behaviour change on an
+        identity boundary, so it is yours.
+      - >-
+        /reset: worth proving the miss once staged_facts refills, then fixing? It is
+        user-facing and silently under-deletes today.
+    blocked_until_answered: Nothing else. ESC-17 does not block any other item.
+
   ESC_47_50_TASK_OUTCOMES_RECORD_THE_MODEL_2026_08_25:
     decision: >-
       Bakir, 2026-08-24: "Add the column, start recording." NO behaviour change to the tool
