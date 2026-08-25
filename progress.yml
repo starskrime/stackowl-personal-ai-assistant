@@ -464,7 +464,7 @@ current:
       implement: done
       cleanup: done
       test: done — 307 passed across the 29 importing suites
-      validate: OPEN — needs one real memory(add); do not manufacture one
+      validate: done — PASS 2026-08-25T14:26Z on two real writes, see below
       document: no_change_needed (the test file carries the record)
     WHAT_WAS_ALREADY_RIGHT: >-
       `_DEFAULT_TARGET` was ALREADY "user", so the "default user" half of his decision was
@@ -500,11 +500,18 @@ current:
       message confirms strictly better — so each was updated to assert the
       destination-bearing prefix, keeping the invariant and ADDING the guarantee that a
       destination is stated at all. The naming was not reverted; it is the decision.
-    VALIDATE_OPEN_the_query_that_would_close_it: >-
-      One real memory(add) through a channel. PASS = a tool result or log line containing
-      "Saved to ". Baseline: the message was "Saved." with the target only in the payload.
-      Also assert no third-case file: `ls ~/.stackowl/memory/ | grep -i falcon` must still
-      show exactly falcon.md and Falcon.md.
+    VALIDATE_PASS_2026_08_25_T14_26Z: >-
+      TWO real memory(add) calls, unforced. Both logged
+      "[tools] memory.execute: exit" with message "Saved to jobmarket.md. It reaches the
+      system prompt on the next /new..." and fields target="jobmarket", and jobmarket.md is
+      the file whose mtime moved. Baseline: the message was a bare "Saved." with the target
+      only in the payload — a misroute would have been invisible.
+      The case-collision guarantee also holds: `ls ~/.stackowl/memory/ | grep -i falcon`
+      still returns exactly falcon.md and Falcon.md, no third case.
+      NOT YET EXERCISED: both writes carried an EXPLICIT target, so the naming half is proven
+      and the INFERENCE half is not. Closing the item on the acceptance criterion Bakir set
+      ("the confirmation must always name where it landed"), and saying plainly that
+      infer_target has not been observed choosing a destination in production.
     files:
       - src/stackowl/memory/curated.py (_describe, known_targets, infer_target, named message)
       - src/stackowl/tools/knowledge/memory.py (_target takes the text; explicit wins)
