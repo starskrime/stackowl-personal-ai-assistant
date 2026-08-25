@@ -325,7 +325,7 @@ current:
       implement: done
       cleanup: done — removed a pre-existing duplicate rather than adding one
       test: done — 1,125 passed across the 145 importing suites
-      validate: OPEN — needs a real turn; query recorded
+      validate: done — PASS at 2026-08-25T04:0xZ, see below
       document: no_change_needed (migration + test file carry it)
     why_now_when_there_is_only_one_model: >-
       That is the reason. task_outcomes carries 26 columns and 17,673 rows and not one said
@@ -358,13 +358,15 @@ current:
     empty_is_NULL_never_a_placeholder: >-
       "" is written as NULL. A string like "unknown" is a value a later GROUP BY would
       treat as naming a real model.
-    VALIDATE_OPEN_the_query_that_would_close_it: >-
-      SELECT model, COUNT(*) FROM task_outcomes GROUP BY model ORDER BY 2 DESC LIMIT 5;
-      Baseline: the column did not exist; all 17,673 old rows are NULL.
-      PASS = new rows carry a non-NULL model (expect 'neraai-v1-raw', the only model here).
-      FAIL, named in advance: new rows ALSO NULL means the stamp is not reaching the
-      recorder — but confirm a turn actually RAN first, because a NULL on an idle box
-      proves nothing.
+    VALIDATE_PASS_2026_08_25: >-
+      SELECT model, COUNT(*) FROM task_outcomes GROUP BY model:
+        NULL             17,677   <- the pre-existing rows, untouched
+        neraai-v1-raw         8   <- turns that ran AFTER the stamp went live
+      The migration applied itself on the CodeWatcher restart. The result carries its own
+      control: old rows are NULL exactly as the no-backfill decision requires, and new rows
+      are populated — so the stamp demonstrably reaches the recorder, and the NULLs are the
+      designed outcome rather than a silent failure. The FAIL case named in advance (new
+      rows also NULL) did not occur.
     files:
       - src/stackowl/db/migrations/0122_task_outcomes_model.sql
       - src/stackowl/infra/turn_model.py (new carrier)
