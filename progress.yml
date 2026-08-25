@@ -548,6 +548,46 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  DEDUP_GATE_MEASUREMENTS_THAT_CHANGE_THE_DESIGN_2026_08_25:
+    status: measured before building, per PROCESS. These constrain what "cross-store" can mean today.
+    THE_ROOT_OF_THE_WHOLE_FACT_DUPLICATION_a_three_layer_chain: >-
+      `SqliteMemoryBridge.__init__` takes an `embedding_registry`, stores it as
+      `self._embeddings` — and NEVER USES IT. The only other reference is the constructor's
+      own log line. So `store()` builds a StagedFact with no embedding, staged_facts is 0%
+      embedded, `FactReinforcer`'s query (`WHERE embedding IS NOT NULL`) matches nothing, and
+      66% of the table became exact duplicates. ONE unused constructor parameter, three
+      layers down. This is the SIXTH thing this session built for its stated purpose and
+      never wired to a caller — after FactReinforcer, add_relation, is_machine_lane,
+      reinforcement_count, and CuratedMemory's `target`.
+      Fixing THIS is what makes rung 3 possible for facts at all, and it simultaneously makes
+      FactReinforcer's precondition true. It is the highest-leverage line in the item.
+    EMBEDDING_SPACES_ARE_NOT_ALL_THE_SAME_which_cross_store_cosine_requires: >-
+      Measured per store: lessons 5,146 rows with embedding_model = '' (UNRECORDED);
+      reflections 4,790 rows split across TWO models — 4,772 all-MiniLM-L6-v2 and 18
+      `hash-v1-384d`; skills 174 all all-MiniLM-L6-v2. All are 384-dim, which is exactly the
+      trap: the dimensions match so the arithmetic succeeds, and the answer is meaningless.
+      `hash-v1-384d` is the DEGRADED FALLBACK (embeddings/hash_provider.py; registry.py says
+      "when degraded to the hash fallback"), so those 18 vectors are not in the same space as
+      the real ones.
+    CONSEQUENCE_FOR_BAKIRS_CROSS_STORE_DECISION: >-
+      Cross-store cosine is still what he asked for and is still buildable, but rung 3 MUST
+      compare only rows whose embedding_model MATCHES and is non-empty. Unknown ('') or
+      hash-fallback vectors are UN-COMPARABLE and must skip rung 3 rather than be silently
+      compared — a wrong merge corrupts a reader, and this is the precise mechanism that
+      would produce one. Note this also means my earlier "22% of lessons are near-duplicates"
+      figure is internally valid (one store, one space) but must NOT be extended across
+      stores until lessons records its model.
+    user_preferences_has_NO_embedding_column: >-
+      7 rows, columns are pref_id/owner_key/key/value/updated_at/owner_id. Rungs 1 and 2 work
+      there unchanged; rung 3 does not apply unless a column is added. Not adding one in this
+      item — 7 rows do not justify a schema change, and the cheap rungs cover them.
+    DESIGN_THAT_FOLLOWS: >-
+      Rungs 1-2 (normalised hash, canonical token-set) work for EVERY store with no vector
+      and no schema change, including preferences. Rung 3 runs only when both sides carry the
+      same non-empty embedding_model. Cross-store fan-out happens at rungs 1-2 cheaply, and
+      at rung 3 only between stores whose model matches — which is what keeps his cross-store
+      choice affordable rather than N full scans per write.
+
   ESC_17_CORE_FIX_SHIPPED_2026_08_25:
     decision: Bakir, "Fix core issue" — collapse the split at its source, not patch /reset.
     stages:

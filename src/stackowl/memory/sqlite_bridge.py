@@ -190,6 +190,45 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         return out
 
+    async def _embed_content(self, content: str) -> tuple[list[float] | None, str | None]:
+        """Vector for `content`, plus the MODEL that produced it. (None, None) on failure.
+
+        THIS BRIDGE HELD AN EMBEDDING REGISTRY AND NEVER USED IT. `__init__` took
+        `embedding_registry` and assigned `self._embeddings`, and the only other
+        reference in the file was the constructor's own log field. The chain that
+        followed, measured 2026-08-25: `store()` wrote a StagedFact with no
+        embedding -> staged_facts was 0% embedded -> `FactReinforcer`'s query
+        (`WHERE embedding IS NOT NULL`) matched nothing on every run -> the table
+        reached 66% exact duplicates. Bakir's "there is no similarity check" was
+        half right: there was one, and the vectors it needed were never written.
+
+        THE MODEL IS RETURNED WITH THE VECTOR on purpose. The dedup gate refuses
+        to compare two embeddings unless their `embedding_model` matches and is
+        non-empty — lessons carry '' on all 5,146 rows and reflections mix
+        all-MiniLM-L6-v2 with the degraded `hash-v1-384d` fallback, both 384-dim,
+        so the arithmetic succeeds and the answer is meaningless. Writing a vector
+        without its model would just move the defect one step along.
+
+        B5: embedding is an enhancement to later recall, never a gate on
+        remembering. Any failure degrades to (None, None) and the fact is still
+        stored.
+        """
+        if self._embeddings is None:
+            return None, None
+        try:
+            vectors = await self._embeddings.get().embed([content])
+            if not vectors:
+                return None, None
+            return list(vectors[0]), str(getattr(self._embeddings, "active_model", "") or "") or None
+        except Exception as exc:
+            log.memory.warning(
+                "[memory] sqlite_bridge._embed_content: embedding failed — "
+                "storing the fact WITHOUT a vector (recall degrades, nothing is lost)",
+                exc_info=exc,
+                extra={"_fields": {"content_len": len(content)}},
+            )
+            return None, None
+
     async def store(self, content: str, session_key: str, *, trust: Trust | None = None) -> None:
         """Store conversation content as a staged fact (source_type=conversation).
 
@@ -203,12 +242,15 @@ class SqliteMemoryBridge(MemoryBridge):
             extra={"_fields": {"session_key": session_key, "content_len": len(content), "trust_override": trust}},
         )
         resolved_trust = trust if trust is not None else trust_for_source("conversation")
+        embedding, embedding_model = await self._embed_content(content)
         fact = StagedFact(
             content=content,
             source_type="conversation",
             source_ref=session_key,
             confidence=0.5,
             trust=resolved_trust,
+            embedding=embedding,
+            embedding_model=embedding_model,
         )
         # 3. STEP
         await self.stage(fact)
