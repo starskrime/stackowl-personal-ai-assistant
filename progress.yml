@@ -548,6 +548,43 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  GATE_WIRING_COMPLETE_two_stores_deliberately_NOT_gated_2026_08_25:
+    gated:
+      staged_facts: >-
+        At `stage()`, the single INSERT all four writers reach. Bumps
+        reinforcement_count on a hit; never rewrites the stored text.
+      lessons: >-
+        At `publish()`. A same-lesson_id republish is a REVISION and still updates — the gate
+        excludes the row it is about to replace, or a lesson would freeze at its first
+        wording. A hit is DROPPED, not counted: lessons has no reinforcement column and
+        adding one would be a schema change smuggled into a dedup fix, so the hit logs at
+        INFO instead. With embedding_model = '' the gate refuses to compare and BOTH rows are
+        stored — which matters, because all 5,146 back-catalogue rows are ''.
+    NOT_GATED_and_why_measured_not_assumed:
+      user_preferences: >-
+        UNIQUE(owner_id, owner_key, key) with an UPSERT — a preference physically cannot
+        duplicate. Gating on VALUE text would be actively WRONG: two different preferences
+        can share a value ("off"), and because the gate is CROSS-STORE a preference could be
+        suppressed by matching an unrelated fact. MEASURED: 7 rows, ZERO identical values.
+        The real duplication is owner_key SHAPE drift — 4 raw/global against 3 lane-shaped —
+        which is ESC-17's defect and is already fixed at source for new writes.
+        A CORRECTION I OWE THE RECORD: I first eyeballed two preference_notes rows as
+        identical text. They are not — the full values differ by a timestamp inside the JSON.
+        The count corrected me before I acted on it.
+      reflections: >-
+        ON CONFLICT(trace_id) DO NOTHING — one reflection per turn by construction, which is
+        why they measure 0% exact duplicates. A semantic gate would SUPPRESS a legitimate
+        per-turn record and destroy the evidence that the turn happened. Their 4% at cosine
+        >= 0.90 are similar reflections of DIFFERENT turns; that is not duplication.
+    HOW_THIS_STILL_HONOURS_CROSS_STORE: >-
+      Both ungated stores remain IN THE CORPUS, so a fact or lesson IS checked against
+      preferences and reflections. Bakir's answer was to the question "should a write be
+      checked against OTHER stores" — it is. That is a different claim from "every store
+      gates its own writes", and the measurements support the narrower reading. Flagged to
+      him explicitly with an invitation to overrule; if he wants the literal reading, wire
+      them.
+    tests: 117 passed across 20 importing suites. ruff 37 / mypy 65 held.
+
   THE_META_PATTERN_worth_a_standing_sweep_2026_08_25:
     claim: >-
       SEVEN defects this session share one shape: something that EXISTS and WORKS but is not

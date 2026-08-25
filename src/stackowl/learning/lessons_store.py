@@ -135,6 +135,16 @@ class SqliteLessonsStore:
                 f"lesson {lesson.lesson_id!r} has no embedding — it could never be "
                 "recalled, so it is refused rather than silently stored"
             )
+        # 2. DECISION — is this lesson already known, in different words?
+        # The upsert below already collapses an IDENTICAL re-mining, because
+        # lesson_id is the deterministic "<source>:<source_ref>" — which is why
+        # this store measures 0% exact duplicates. What it cannot see is the SAME
+        # lesson learned again from a different source and worded differently:
+        # 1,153 of 5,146 rows (22%) sit at cosine >= 0.90 and share barely half
+        # their words. Rungs 1-2 are blind to those by construction; rung 3 is the
+        # only thing that sees them.
+        if await self._reinforce_if_known(lesson):
+            return
         # 3. STEP
         await self._db.execute(_UPSERT_SQL, self._row(lesson))
         # 4. EXIT
@@ -146,6 +156,60 @@ class SqliteLessonsStore:
                 "duration_ms": (time.monotonic() - t0) * 1000,
             }},
         )
+
+    async def _reinforce_if_known(self, lesson: Lesson) -> bool:
+        """True when this lesson is already held under a different id.
+
+        A HIT IS DROPPED, NOT COUNTED, and that is a deliberate difference from
+        staged_facts. `lessons` has no reinforcement column, and inventing one
+        here would be a schema change smuggled into a dedup fix. The hit is logged
+        at INFO instead — that line is the only evidence this rung ever fires, and
+        at DEBUG it would be no evidence at all.
+
+        An UPSERT on the same lesson_id is NOT routed here: it is a revision of a
+        known row, which the ON CONFLICT clause already handles correctly, and
+        suppressing it would freeze a lesson at its first wording.
+
+        B5: any failure publishes the lesson. Learning is the point; deduplicating
+        is the improvement.
+        """
+        try:
+            from stackowl.memory.gate_corpus import load_corpus
+            from stackowl.memory.remember_gate import Candidate, should_remember
+
+            corpus = await load_corpus(self._db)
+            existing = [c for c in corpus.candidates if c.row_id != lesson.lesson_id]
+            if not existing:
+                return False
+            decision = should_remember(
+                Candidate(
+                    text=lesson.content,
+                    store="lessons",
+                    embedding=pack_embedding(list(lesson.embedding)),
+                    embedding_model=self._embedding_model,
+                ),
+                existing,
+            )
+            if decision.action != "reinforce":
+                return False
+            log.memory.info(
+                "[gate] lesson already known — not stored again",
+                extra={"_fields": {
+                    "lesson_id": lesson.lesson_id,
+                    "rung": decision.rung,
+                    "matched_store": decision.matched_store,
+                    "matched_row_id": decision.matched_row_id,
+                    "similarity": decision.similarity,
+                    "truncated_stores": list(corpus.truncated),
+                }},
+            )
+            return True
+        except Exception as exc:  # B5 — the gate must never cost the lesson
+            log.memory.warning(
+                "[gate] lesson check failed — publishing WITHOUT deduplication",
+                exc_info=exc, extra={"_fields": {"lesson_id": lesson.lesson_id}},
+            )
+            return False
 
     async def publish_many(self, lessons: list[Lesson]) -> int:
         """Insert or update many lessons. Returns how many were written.
