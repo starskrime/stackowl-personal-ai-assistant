@@ -388,7 +388,25 @@ current:
         neighbour. Caught by T17 (story 6.5), a PRE-EXISTING test I would not have run had I
         chosen suites by where I edited rather than by who imports.
       tests: 191 passed across the 36 suites importing kuzu_helpers/kuzu_adapter/classify.
-    VALIDATE_PARTIAL_2026_08_25_T00_5xZ:
+    VALIDATE_CLOSED_PASS_2026_08_25_T01_22Z: >-
+      SEVENTEEN real pipeline turns since the fix went live, and graph_context_len is
+      NON-ZERO on ALL SEVENTEEN (246-322 chars). Baseline was ZERO on 2,267 of 2,267.
+      Query: "[pipeline] classify: exit" lines with fields.graph_context_len > 0 after
+      2026-08-25T00:54:05Z, read across BOTH stackowl-2026-08-24.jsonl and stackowl.jsonl
+      because the log rotated at midnight.
+      IT IS A CONTROLLED COMPARISON, which is better than I expected to get. All 17 turns
+      come from `incident-*` sessions — the incident_escalation job's own RCA, which runs
+      every 10 minutes and has been running all along. The SAME job producing the SAME kind
+      of turn measured zero before the change and non-zero after it. Nothing was
+      manufactured: these are the platform's own turns, not an invocation of mine.
+      Checked they were not damage I caused: 6 incidents opened, 5 RCA complete, 4 verdict
+      UNVERIFIED (chat suppressed), ZERO ERRORs — the self-healing loop behaving normally.
+    NOTED_UNFIXED_seen_while_validating: >-
+      "[skills] skill injection: catalog truncated by budget" fired as a WARNING on all 17
+      turns. Pre-existing and unrelated to this item, but it means the skill catalogue is
+      being cut on every turn — worth measuring against ESC-44's ordering work, which exists
+      precisely so the surviving portion is the useful portion. Not investigated here.
+    SUPERSEDED_VALIDATE_PARTIAL_2026_08_25_T00_5xZ:
       pre_validation_STRONG_but_not_the_criterion: >-
         Ran the REAL `_gather_graph_context` against a byte copy of the REAL live graph.
         Results: "what did we do with Telegram and OpenAI" -> 226 chars in 79.4ms
