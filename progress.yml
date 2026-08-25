@@ -548,6 +548,38 @@ current:
       This stops the platform learning its own prompts. It does NOT deduplicate. The gate
       Bakir asked for is still unbuilt and still waiting on his four questions.
 
+  I_WIRED_THE_GATE_ON_ONE_PATH_OF_FOUR_AND_MEASURING_CAUGHT_IT_2026_08_25:
+    what_I_did_wrong: >-
+      Put the embedding and the dedup gate in `SqliteMemoryBridge.store()`. store() is ONE
+      of FOUR writers into staged_facts — pellet_generator, rollover_summary_handler and
+      incident_escalation all call `stage()` directly. So three of four writers kept
+      inserting unembedded, ungated rows. That is this codebase's FIRST failure mode, "an
+      actuator wired on only some paths", and I committed it myself in 6997c09c while
+      writing commit prose about that very pattern.
+    HOW_IT_WAS_CAUGHT_within_the_hour: >-
+      By checking the EFFECT, not the call. `SELECT COUNT(*) FROM staged_facts WHERE
+      embedding IS NOT NULL` still read 0 after the fix was live (exec-replace 18:28:41).
+      The newest row was written 18:56:11 — after the deploy — with source_ref
+      "outcome:shell:stop", i.e. the incident path, straight to stage(). ZERO embed-failure
+      warnings, because the `self._embeddings is None` branch returns silently. A test
+      asserting "store() calls embed" passed the whole time and would have passed forever.
+    the_fix: >-
+      Both moved to `stage()` — the single INSERT and the only place all four writers
+      converge. `_embedded(fact)` fills a missing vector and NEVER overwrites one a caller
+      supplied: pellet_generator embeds its own, and the model recorded on a row must be the
+      one that actually produced it.
+    the_test_moved_with_it: >-
+      test_store_actually_uses_the_embedding_registry became
+      test_stage_actually_uses_the_embedding_registry. Its invariant — "the registry the
+      bridge was handed is actually used" — is unchanged and now covers all four writers
+      instead of one.
+    WHAT_THIS_BUYS_beyond_the_bug: >-
+      The embedding fix now has a REAL acceptance check it did not have before: new rows
+      must carry vectors REGARDLESS of which writer produced them. Confirm via source_ref
+      that a non-conversation writer (outcome:*, parliament:*) also embeds — a
+      conversation-only check would go green while three writers wrote nothing.
+    tests: 500 passed across 77 importing suites. ruff 37 / mypy 65 held.
+
   PRE_EXISTING_RED_FIXED_the_rename_caught_what_it_documented_as_EXCLUDED_2026_08_25:
     found_by: >-
       The gate-wiring importer run. FOUR failures in parliament tests, none of them mine —

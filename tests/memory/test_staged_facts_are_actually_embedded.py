@@ -80,14 +80,23 @@ class _StubRegistry:
 # The unused parameter
 # ---------------------------------------------------------------------------
 
-def test_store_actually_uses_the_embedding_registry() -> None:
+def test_stage_actually_uses_the_embedding_registry() -> None:
     """The defect, asserted on the CALLS rather than the source text — grepping
-    for a name matches this test's own explanatory comments."""
-    called = _awaited_attrs(SqliteMemoryBridge.store)
-    assert "embed" in called or "_embed_content" in called, (
-        "store() must use the embedding_registry the bridge was handed; it held "
-        "it unused, which is why staged_facts was 0% embedded and FactReinforcer "
-        "could never match a row"
+    for a name matches this test's own explanatory comments.
+
+    IT ASSERTS `stage()`, NOT `store()`, and the move was measured rather than
+    tidied. The embedding started in store(), which is ONE of four writers into
+    staged_facts; pellet_generator, rollover_summary and incident_escalation all
+    call stage() directly. A fact written AFTER that fix went live still had no
+    vector — source_ref "outcome:shell:stop", straight from the incident path —
+    which is this codebase's first failure mode: an actuator wired on some paths.
+    stage() is the single INSERT and the only place all four converge.
+    """
+    called = _awaited_attrs(SqliteMemoryBridge.stage)
+    assert "_embedded" in called, (
+        "stage() must embed — it is the ONE insert every writer reaches, and the "
+        "registry the bridge was handed sat unused, which is why staged_facts was "
+        "0% embedded and FactReinforcer could never match a row"
     )
 
 

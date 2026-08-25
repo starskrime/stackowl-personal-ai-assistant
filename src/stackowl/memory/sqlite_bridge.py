@@ -191,9 +191,7 @@ class SqliteMemoryBridge(MemoryBridge):
         )
         return out
 
-    async def _reinforce_if_known(
-        self, content: str, embedding: list[float] | None, embedding_model: str | None
-    ) -> bool:
+    async def _reinforce_if_known(self, fact: StagedFact) -> bool:
         """True when this is already remembered — bump the counter, write nothing new.
 
         Bakir, 2026-08-25: "Keep stored, bump the counter." The stored TEXT is
@@ -217,13 +215,12 @@ class SqliteMemoryBridge(MemoryBridge):
             corpus = await load_corpus(self._db)
             if not corpus.candidates:
                 return False
-            packed = pack_embedding(embedding)
             decision = should_remember(
                 Candidate(
-                    text=content,
+                    text=fact.content,
                     store="facts",
-                    embedding=packed,
-                    embedding_model=str(embedding_model or ""),
+                    embedding=pack_embedding(fact.embedding),
+                    embedding_model=str(fact.embedding_model or ""),
                 ),
                 corpus.candidates,
             )
@@ -246,16 +243,30 @@ class SqliteMemoryBridge(MemoryBridge):
                     "matched_row_id": decision.matched_row_id,
                     "similarity": decision.similarity,
                     "truncated_stores": list(corpus.truncated),
-                    "content_len": len(content),
+                    "content_len": len(fact.content),
                 }},
             )
             return True
         except Exception as exc:  # B5 — the gate must never cost the write
             log.memory.warning(
                 "[gate] check failed — storing the fact WITHOUT deduplication",
-                exc_info=exc, extra={"_fields": {"content_len": len(content)}},
+                exc_info=exc, extra={"_fields": {"content_len": len(fact.content)}},
             )
             return False
+
+    async def _embedded(self, fact: StagedFact) -> StagedFact:
+        """`fact` with a vector, unless it already has one or embedding is down.
+
+        A caller that already embedded (pellet_generator does) keeps its own
+        vector and model — re-embedding would be a second opinion about the same
+        text, and the model recorded on the row must be the one that produced it.
+        """
+        if fact.embedding is not None:
+            return fact
+        vector, model = await self._embed_content(fact.content)
+        if vector is None:
+            return fact
+        return fact.model_copy(update={"embedding": vector, "embedding_model": model})
 
     async def _embed_content(self, content: str) -> tuple[list[float] | None, str | None]:
         """Vector for `content`, plus the MODEL that produced it. (None, None) on failure.
@@ -309,18 +320,17 @@ class SqliteMemoryBridge(MemoryBridge):
             extra={"_fields": {"session_key": session_key, "content_len": len(content), "trust_override": trust}},
         )
         resolved_trust = trust if trust is not None else trust_for_source("conversation")
-        embedding, embedding_model = await self._embed_content(content)
-        # 2. DECISION — is this already remembered? (Bakir 2026-08-25)
-        if await self._reinforce_if_known(content, embedding, embedding_model):
-            return
+        # Embedding and the dedup gate both live in `stage()` — the SINGLE insert,
+        # and the only place all four writers pass through. They were here first
+        # and covered one writer of four; the row that proved it was written by
+        # the incident path (source_ref "outcome:shell:stop"), straight to
+        # stage(), with no vector and no warning.
         fact = StagedFact(
             content=content,
             source_type="conversation",
             source_ref=session_key,
             confidence=0.5,
             trust=resolved_trust,
-            embedding=embedding,
-            embedding_model=embedding_model,
         )
         # 3. STEP
         await self.stage(fact)
@@ -376,6 +386,17 @@ class SqliteMemoryBridge(MemoryBridge):
             "[memory] sqlite_bridge.stage: entry",
             extra={"_fields": {"fact_id": fact.fact_id, "source_type": fact.source_type}},
         )
+        # 2. DECISION — embed, then ask whether this is already remembered.
+        # HERE, not in store(): this is the ONE insert into staged_facts and all
+        # FOUR writers reach it — store(), pellet_generator, rollover_summary and
+        # incident_escalation. Placing it in store() covered the conversation
+        # path only, which is this codebase's first failure mode (an actuator
+        # wired on some paths) and was caught by measuring the effect: a fact
+        # written after the fix went live still had no vector, because it came
+        # from the incident path.
+        fact = await self._embedded(fact)
+        if await self._reinforce_if_known(fact):
+            return
         embedding_blob = pack_embedding(fact.embedding)
         try:
             # 3. STEP — write to DB
