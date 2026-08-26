@@ -1016,6 +1016,52 @@ current:
       (the reference uses parent 90 / delegation 50); worth one check before restating the
       verdict, but it does not change "MISSING" being wrong.
 
+  D05_6_IS_THE_FIRST_MAP_ITEM_TONIGHT_THAT_IS_BOTH_TRUE_AND_ACTIONABLE_2026_08_26:
+    map_verdict: >-
+      MISSING, and it is CORRECT. The reference rule is that a tool's schema description must
+      never name a tool from another toolset, because that tool may be absent and the mention
+      invites a hallucinated call. The map records this platform as having no such rule, with
+      descriptions written as static strings. Both halves check out.
+    MEASURED_the_rule_is_broken_80_times: >-
+      Across the 77 registered tools, 80 descriptions name ANOTHER tool. That alone is only a
+      style problem. The harm is the intersection with the tool_count_cap: 46 tools are dropped
+      from the presented array on machine lanes, and NINETEEN PRESENTED tools have descriptions
+      that point the model at a tool it cannot see —
+        apply_patch  -> edit
+        read_logs    -> transcripts, session_search, process
+        clarify      -> session_search, wait
+        reflect_now  -> synthesize_skills, wait
+        memory       -> session_search
+        evolve_now   -> wait
+      The model reads "use `edit` for this" inside apply_patch's own description, calls edit,
+      and is refused because the cap dropped it.
+    ALREADY_CORROBORATED_IN_THIS_REPO: >-
+      Commit 7a6ed508's message names the exact signature while fixing a different instance:
+      "the model picked another tool it also lacked and was refused again". That is this defect
+      observed from the other end, before anyone had measured how many dangling pointers exist.
+    THE_CONNECTION_THAT_MATTERS_two_escalations_are_one_problem: >-
+      This is LARGELY A SYMPTOM of tool_count_cap being 40 while context_budget.py's own comment
+      says the cap "should sit comfortably above any real toolset, not below it" and sets the
+      code default to 150. Raise the cap and most of the 46 drops disappear, taking most of the
+      19 dangling pointers with them. So the cheap fix is a config decision Bakir already has in
+      front of him, not a build.
+      The ROBUST fix is still the reference's design — inject cross-references DYNAMICALLY so a
+      description can only ever name a tool that is actually present — but it is secondary, and
+      building it while the cap stays at 40 would be treating the symptom's symptom.
+    RECOMMENDATION: >-
+      Fold this into the TOOL CAP escalation rather than opening it separately. If Bakir raises
+      the cap, re-measure; whatever dangling pointers survive are the real D05.6 scope and will
+      be a much smaller list.
+    D05_4_IS_THE_EIGHTH_STALE_VERDICT: >-
+      Filed MISSING with "tool_search.py / tool_describe.py exist but are not the same
+      mechanism". They ARE a disclosure mechanism: tool_search.py:197 records hits into
+      hydrated_tools, presented_tools keys its memo on `hydrated`, and FX-07 "promotes a
+      tool_search hit into the NEXT turn's presented schema" — search on demand, receive next
+      turn. It fires 862 times in production. The genuine difference is only the TRIGGER: the
+      reference defers non-core tools automatically past a window threshold_pct, while this
+      platform decides with the budgeter and promotes on an explicit search. That is a narrower
+      gap than "not the same mechanism", and it is the same knot as D01.3 and the tool cap.
+
   THE_MAP_ITSELF_IS_THE_FINDING_SEVEN_OF_EIGHT_VERDICTS_WERE_STALE_2026_08_26:
     why_this_matters_more_than_any_single_item: >-
       Bakir is prioritising work off REFERENCE_MAP.md's counts. Of the items measured tonight,
