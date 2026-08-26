@@ -1041,10 +1041,58 @@ current:
       proposer.propose's exit log was DEBUG. It now logs at INFO with the selected tool names,
       directives_supplied and directive_chars, because production runs at INFO and a DEBUG
       line could never close this item's acceptance check no matter how much traffic ran.
-    VALIDATE_OPEN_the_query_that_would_close_it: >-
-      Send a job-search goal through dev-ingress, then:
+    VALIDATE_STILL_OPEN_and_WHY_three_live_attempts_could_not_close_it: >-
+      The code is live (core exec-replaced 05:02:45, 3s after the last src write) and the
+      evidence line is INFO. Three real messages through dev-ingress did NOT reach it:
+        1. "start a background task to search for fully remote Staff/Principal SWE roles" —
+           handled as a chat turn. No planner line.
+        2. "create a background objective: find fully remote SWE openings" — routed to
+           jobmarket, and the monitor caught the reason: "[pipeline] execute: tool refused by
+           bounds tool=objective owl=jobmarket". THE OWL THAT DOES JOB SEARCHES CANNOT CREATE
+           AN OBJECTIVE. The loop then correctly logged "the turn was blocked on a capability —
+           returning it to the loop instead of closing it as done", which is the persistence
+           behaviour working.
+        3. "create a background objective to collect the Cigna directory URLs" — the secretary
+           chose `cronjob` instead of `objective`, so it scheduled a job rather than opening a
+           durable task. Still no planner line.
+      THE STRUCTURAL REASON: PreflightPlanner's ONLY caller is task_runner, reached from
+      objectives/driver.py:733 — and `objectives` and `objective_subgoals` both hold ZERO ROWS
+      right now. The planner did run 47 times historically (last 2026-08-25T22:00, session_key
+      None, i.e. a machine lane), so the path is real; it is simply not reachable from a chat
+      message today.
+      SO ESC-54 IS THE META-PATTERN AGAIN, one layer up: a correct fix on a path that nothing
+      currently drives. That is worth saying plainly rather than filing the item as done —
+      six passing tests prove the wiring, and prove nothing about production.
+      THE QUERY THAT WOULD CLOSE IT, unchanged:
       grep "proposer.propose: exit" ~/.stackowl/logs/stackowl.jsonl
       PASS = directives_supplied true AND browser_navigate in tools AND web_fetch absent.
+      Whoever closes it needs an owl holding `objective`, or an objective row inserted by the
+      normal path — NOT a hand-written row, which would prove the driver runs, not that a user
+      can reach it.
+
+  CURATED_MEMORY_CAP_IS_NOW_REFUSING_1_IN_7_MEMORY_CALLS_2026_08_26:
+    measured: >-
+      Tonight's live traffic: 29 memory tool calls, 25 succeeded, 4 tool_error — 14%. The
+      refusals are the curated cap ("Memory is at 2,195/2,200 chars. Adding this (282 chars)
+      would exceed the limit"). This is no longer a latent design concern; it is the store
+      declining more than one write in ten, on the operator's own lane.
+    why_it_matters_more_than_the_number: >-
+      A refused APPEND is tolerable. What was measured earlier tonight is that the cap also
+      refuses a CORRECTION: the write that would have updated jobmarket.md's stale
+      "[permanent] Scope ... Plano/Frisco TX" line was rejected, so the superseded directive
+      survives while the current one lives somewhere else entirely (the owl's boundaries).
+      A full store does not fail safe — it freezes whatever was already wrong.
+    the_shape: >-
+      Failure mode 4 (no decay) producing failure mode 3 (two copies of one rule). The files
+      are dominated by [until_changed] entries — job-listing dumps from 08-22/08-24/08-25, a
+      dental task note — and [until_changed] is a MARKER WITH NO ACTOR. Nothing in src/ ever
+      expires one. The durability field is written, read back for rendering, and never used to
+      decide what to drop.
+    NOT_ACTED_ON: >-
+      Reconciling the CONTENT is Bakir's call — it is his memory file. The CODE item is an
+      actor for [until_changed] plus a cap that cannot refuse a correction, and it needs
+      map_check and his go-ahead on the eviction policy, which is a product decision about what
+      the platform is allowed to forget.
 
   FIRST_REAL_TRAFFIC_THROUGH_DEV_INGRESS_2026_08_26:
     the_facility_WORKS: >-
