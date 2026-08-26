@@ -14,7 +14,7 @@
 # ============================================================================
 
 schema_version: 1
-updated: 2026-08-23
+updated: 2026-08-26
 updated_by: "claude-opus-5 — UNATTENDED SESSION 2026-08-22/23. D05.4 CLOSED 7/7. D05.8 and D08.4 at 6/7 (validate partial, unexercised — not failed). D08.5 and D09.1 brainstormed to a verdict then BLOCKED on escalations. SIX fixes shipped and live: three memory-containment guards, the tool-cap reaching every path, the delivery seam that discarded 40 self-reports, and the reflection JSON repair — plus three instrument repairs that made the last two findable. EIGHT escalations queued (ESC-35..42) and none decided; four of them gate current items, so the queue is the bottleneck, not the work. THREE corrections to my own record are in here too: ESC-40 was filed on a one-character grep miss, the D05.8 36-tool attribution named the wrong producer, and a night of 'watches dry' readings were the rotated-log bug. Read WHERE_TO_RESUME below first."
 superseded_updated_by_2026_08_19: "claude-opus-5 — RECONCILED: 41 commits between 2026-08-17 and 2026-08-19 were live and unrecorded here (the ONE LOOP arc, the authority-vs-action authz fix, curated-memory decay). Recorded as ARC-2026-08-17-to-19-one-loop-authz-memory in known_debt. D16.1 corrected from implement:not_started to implement:partial — two of its commits already shipped (fed6968d, e3434952) and plugin loading at boot is PROVEN LIVE. Now working the rest of D16.1 implement: the LifecycleHook extension point."
 superseded_updated_by: "claude-opus-5 — D08.1 CLOSED: all four acceptance checks proven live (blocks=2 chars=205), doc closed with its Verification section run. Also fixed a live incident: conversational turns died on any tool-requiring question; the leak now escalates. Next: D08.2."
@@ -12077,7 +12077,7 @@ dedup_targets:
 # SUMMARY — recompute on every update
 # ---------------------------------------------------------------------------
 summary:
-  total_items: 111   # 110 mapped + D01.7 discovered during D01.1 brainstorm
+  total_items: 112   # 110 mapped + D01.7 discovered during D01.1 brainstorm
   domains: 18
   by_verdict:
     CONFLICT: 2
@@ -12107,8 +12107,8 @@ summary:
     done: 18            # D01.1-.5 D01.7 D02.1-.6 D05.1-.3 D05.5-.7
     in_progress: 1      # D01.6 (6/7 — brainstorm never run, operator asked for it retroactively)
     not_started: 91
-  stages_completed: 133   # recomputed from items 2026-08-05 (was 11 — stale); done + no_change_needed
-  stages_total: 777   # 111 items x 7 stages
+  stages_completed: 213   # recomputed from items 2026-08-05 (was 11 — stale); done + no_change_needed
+  stages_total: 784   # 111 items x 7 stages
 
 # ---------------------------------------------------------------------------
 # ITEMS
