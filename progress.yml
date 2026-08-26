@@ -1024,7 +1024,36 @@ current:
       failure — collapsed to summary". Bounded, detected, and stopped by its own machinery. My
       earlier worry about "a loop that cannot finish" was wrong twice over — first the grant
       unblocked the owl axis, then the circuit breaker bounded the rest.
-    THE_ACTIONABLE_LEAD: >-
+    ROUND_0_DONE_2026_08_26T06_26Z_the_leak_hypothesis_is_REFUTED: >-
+      IT IS NOT POOL EXHAUSTION. All TWELVE production BrowserSessionLimitError occurrences
+      carry the message "browser runtime recycled during session open; retry". ZERO carry "max
+      concurrent browser sessions reached". The TTL eviction sweep IS started
+      (orchestrator.py:1106 -> start_sweep_loop), close() has real callers, and camoufox is
+      alive as I write this. Sessions are not leaking.
+      THE CAUSE IS THE PROCESS DYING, repeatedly:
+        43  [browser] runtime.disconnect: browser process gone — marking unavailable
+        17  [browser] runtime.recycle: restarting     (17 matching "restart ok")
+        15  [browser] runtime.open_context: dead handle — recycling and retrying once
+        15  [browser] sessions.purge: dropped all sessions after runtime recycle
+      So the SELF-HEALING WORKS — it notices the death, restarts the browser, purges the dead
+      sessions and retries. Camoufox (Firefox-based) on this aarch64 Jetson simply will not
+      stay up. That is hypothesis (b), and it is largely a box/engine problem, not a logic bug:
+      the honest outcome is a health probe plus honest degradation, NOT a pretend fix.
+    THE_ONE_CLEAN_CODE_DEFECT_THIS_FOUND: >-
+      BrowserSessionLimitError IS THE WRONG EXCEPTION FOR A RECYCLE. sessions.py raises it at
+      THREE sites for three unrelated conditions — max concurrent sessions (267), max pages per
+      session (358), and "runtime recycled during session open" (313). Only the first two are
+      limits. The third is a crash, and in production it is the ONLY one that has ever fired.
+      A caller catching BrowserSessionLimitError, or an operator reading it, concludes the pool
+      is full and goes looking for a leak. I DID EXACTLY THAT — I wrote "sessions are opened and
+      never released" into this file as the actionable lead, and spent a Round 0 on it. The name
+      is the whole misdirection. Same family as tonight's other three: the timeout log that said
+      "freed for retry/re-arm", the grant log that says "with the user's approval", and the
+      stub docstrings that vouched for the wrong parameter name. A name that asserts something
+      other than what happened costs a diagnosis every time someone believes it.
+      FIX: a distinct exception for the recycle case. Small, and it makes the next person's
+      Round 0 start in the right place.
+    SUPERSEDED_LEAD_kept_because_being_wrong_here_is_the_lesson: >-
       BrowserSessionLimitError on 4 of 10 calls is the specific one. A session limit is only
       reached if sessions are opened and not released, so the first question is whether
       BrowserSessionRegistry leaks sessions — which would also explain the TimeoutErrors, since
