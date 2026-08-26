@@ -231,6 +231,68 @@ def compute_next_run(
         return (datetime.now(UTC) + timedelta(days=1)).isoformat()
 
 
+#: How long past its DUE time a 'running' row must sit before it is treated as
+#: abandoned. Twice the handler timeout, and the margin is the whole safety
+#: argument: reaping the instant the timeout fires would free a row whose work is
+#: definitely still going, guaranteeing two concurrent runs of the same handler —
+#: for incident RCA, duplicate incidents. At 2x, the work has almost certainly
+#: finished or is genuinely stuck.
+#:
+#: MEASURED 2026-08-25: incident_escalation was due 22:56:18, logged "handler
+#: timed out" at 23:16:19, and was still status='running' at 23:27:21 while
+#: actively logging progress. asyncio.wait_for cancels the awaited coroutine, not
+#: the tasks it spawned, so the work outlives its own cancellation and the row
+#: outlives the work.
+_STALE_RUNNING_AFTER_SEC = 2400.0
+
+
+async def reap_timed_out_running(db: DbPool) -> int:
+    """Return rows abandoned past the handler timeout to 'pending'. Count reaped.
+
+    NOT the same as :func:`reap_stale_running`, and the difference is safety.
+    That one runs at STARTUP, where its docstring's premise holds — "the process
+    that set a job running is, by definition, gone, so ANY running row is stale".
+    Mid-life that premise is false: most running rows are jobs running right now.
+    So this one needs a staleness TEST, and uses the only timestamp available
+    without a migration — a row DUE at T still running well past T + timeout has
+    outlived the scheduler's own patience.
+
+    It does NOT stop the old work; nothing here can, since the handler's spawned
+    tasks survive cancellation. It only makes the ROW claimable again, so the job
+    is not dead until the next process restart.
+    """
+    log.scheduler.debug("[scheduler] reap_timed_out_running: entry")
+    cutoff = (datetime.now(UTC) - timedelta(seconds=_STALE_RUNNING_AFTER_SEC)).isoformat()
+    rows = await db.fetch_all(
+        "SELECT job_id, handler_name, next_run_at FROM jobs "
+        "WHERE status = 'running' AND next_run_at < ?",
+        (cutoff,),
+    )
+    for row in rows:
+        await db.execute(
+            "UPDATE jobs SET status = 'pending' WHERE job_id = ? AND status = 'running'",
+            (str(row["job_id"]),),
+        )
+        # INFO: this is the only evidence a job was ever stranded, and a stranded
+        # self-healing loop is exactly the thing nobody notices at DEBUG.
+        log.scheduler.info(
+            "[scheduler] reap_timed_out_running: row abandoned past the handler "
+            "timeout — returned to pending (the old work, if any, was NOT stopped)",
+            extra={"_fields": {
+                "job_id": str(row["job_id"]),
+                "handler": str(row["handler_name"]),
+                "due_at": str(row["next_run_at"]),
+                "stale_after_sec": _STALE_RUNNING_AFTER_SEC,
+            }},
+        )
+    if rows:
+        log.scheduler.info(
+            "[scheduler] reap_timed_out_running: exit",
+            extra={"_fields": {"reaped": len(rows)}},
+        )
+    return len(rows)
+
+
 async def reap_stale_running(db: DbPool, *, tz: str = "UTC") -> int:
     """Reset jobs stuck in ``status='running'`` back to a runnable state.
 

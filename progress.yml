@@ -990,6 +990,52 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  HANDLER_TIMEOUT_HONEST_LOG_AND_PERIODIC_REAPER_2026_08_25:
+    decision: Bakir, "Honest log + periodic reaper" — over hard-cancel and over free-the-row-now.
+    stages:
+      brainstorm: no_change_needed — the measurement and his decision settled it
+      architect: done — one helper, one constant, one call at the top of the poll cycle
+      implement: done
+      cleanup: done
+      test: done — 311 passed across 50 importing suites; 6 new
+      validate: OPEN — needs a real abandoned row; the incident_escalation one may serve
+      document: no_change_needed (the helper docstring and test carry it)
+    THE_HONEST_LOG: >-
+      Was "handler timed out — freed for retry/re-arm". NEITHER half was true. asyncio.wait_for
+      cancels the awaited coroutine, NOT the tasks it spawned with create_task, so a handler
+      that spawns sub-agent turns keeps running — measured, incident_escalation logged "RCA
+      complete" NINE minutes after its own timeout — and the row stays 'running'. It now says
+      the dispatch slot is released, the handler was NOT stopped, and the row stays 'running'
+      until reaped, with handler_stopped=False in the fields. That old wording is what a
+      reader uses to conclude the job recovered; I concluded exactly that an hour after taking
+      the measurement, which is the whole argument for fixing it.
+    WHY_NOT_reap_stale_running_ON_A_TIMER: >-
+      Its safety rests on its own docstring — "the process that set a job running is, by
+      definition, gone, so ANY running row is stale". TRUE at startup, FALSE mid-life, where
+      most running rows are jobs running right now. Running it periodically would reap live
+      claims and produce exactly the double-run Bakir rejected. So the new one TESTS staleness
+      using the only timestamp available without a migration: a row DUE at T still running past
+      T + 2x the handler timeout has outlived the scheduler's own patience.
+    the_margin_IS_the_safety: >-
+      _STALE_RUNNING_AFTER_SEC = 2400s against a 1200s handler timeout. Reaping the instant the
+      timeout fires would free a row whose work is definitely still going — two concurrent runs
+      of the same handler, and for incident RCA duplicate incidents. At 2x the work has almost
+      certainly finished or is genuinely abandoned. A test asserts the margin exceeds the
+      timeout, so the safety cannot be tuned away by accident.
+    what_it_deliberately_does_NOT_do: >-
+      It does not stop the old work. Nothing here can. The fix makes the ROW claimable so the
+      job is not dead until the next restart; the log now states the limitation instead of
+      papering over it.
+    placement: >-
+      Top of _poll_cycle, before the due-jobs fetch, so a freed row is eligible in the SAME
+      cycle — and inside the existing try, so a reap failure can never cost the poll.
+    VALIDATE_OPEN_the_query_that_would_close_it: >-
+      SELECT job_id, status, next_run_at FROM jobs WHERE status='running';
+      plus the INFO line "[scheduler] reap_timed_out_running: row abandoned past the handler
+      timeout". PASS = a row that has sat 'running' more than 2400s past its due time returns
+      to 'pending' and is claimed again. The live incident_escalation row is the natural
+      candidate — it was stranded before this shipped.
+
   NEVER_CALLED_SWEEP_BUILT_and_it_found_an_EIGHTH_2026_08_25:
     decision: Bakir, "Build the sweep as a script." Checked in at scripts/never_called.py.
     IT_FOUND_ONE_I_HAD_NOT: >-

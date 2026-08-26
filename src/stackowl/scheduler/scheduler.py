@@ -21,9 +21,11 @@ from stackowl.pipeline.durable.failure_class import classify_failure, is_permane
 from stackowl.scheduler.base import HandlerRegistry
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler_helpers import (
+    _STALE_RUNNING_AFTER_SEC,
     compute_next_run,
     insert_job,
     reap_stale_running,
+    reap_timed_out_running,
     row_to_job,
     write_audit,
 )
@@ -150,6 +152,13 @@ class JobScheduler(SupervisedTask):
         per-job isolation."""
         t0 = self._clock.monotonic()
         try:
+            # A row abandoned past the handler timeout can never be claimed again
+            # — the CAS claim only selects status='pending' — and the startup
+            # reaper is the ONLY thing that used to free one, so the job stayed
+            # dead until a restart. Reaped here, before the due-jobs fetch, so a
+            # freed row is eligible in the SAME cycle. Isolated inside the same
+            # try: a reap failure must never cost the poll.
+            await reap_timed_out_running(self._db)
             await self._poll()
         except Exception as exc:
             log.heartbeat.error(
@@ -339,13 +348,26 @@ class JobScheduler(SupervisedTask):
             result = await asyncio.wait_for(handler.execute(job), timeout=_HANDLER_TIMEOUT_SEC)
         except TimeoutError:
             duration_ms = (time.monotonic() - t0) * 1000
+            # SAY WHAT ACTUALLY HAPPENED. This read "freed for retry/re-arm",
+            # and neither half was true: asyncio.wait_for cancels the awaited
+            # coroutine, NOT the tasks it spawned with create_task, so a handler
+            # that spawns sub-agent turns keeps running — measured 2026-08-25,
+            # incident_escalation logged "RCA complete" NINE MINUTES after its own
+            # timeout — and the row stays 'running' until something reclaims it.
+            # The old wording is what a reader uses to conclude the job recovered;
+            # I concluded exactly that an hour after taking the measurement. Same
+            # class as the stale last_error fixed the same day: state that
+            # misnames what happened costs its reader the same detour every time.
             log.heartbeat.error(
-                "[scheduler] %s: handler timed out — freed for retry/re-arm "
-                "(a hung handler must never freeze every other job's dispatch)",
+                "[scheduler] %s: handler exceeded its timeout — the dispatch slot "
+                "is released so other jobs run, but the handler was NOT stopped "
+                "and its row stays 'running' until reaped",
                 job.job_id,
                 extra={"_fields": {
                     "job_id": job.job_id, "handler": job.handler_name,
                     "timeout_sec": _HANDLER_TIMEOUT_SEC, "duration_ms": duration_ms,
+                    "handler_stopped": False,
+                    "row_reclaimed_after_sec": _STALE_RUNNING_AFTER_SEC,
                 }},
             )
             result = JobResult(
