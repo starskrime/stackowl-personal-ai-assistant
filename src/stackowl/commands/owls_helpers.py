@@ -392,7 +392,10 @@ async def persist_owl(manifest: OwlAgentManifest) -> bool:
     is never saved permanently". That is this defect. `owl_build._grant` widened
     the IN-MEMORY registry, logged "authority WIDENED with the user's approval",
     and returned success — while the durable write had failed into a variable
-    nobody read. The grant then lived exactly as long as the process.
+    nobody read. The grant then lived exactly as long as the process. (That quoted
+    wording is the 2026-08-22 line; it was corrected on 2026-08-26 because no user
+    had approved anything — official-channel ORIGIN is the real basis — so the
+    sentence no longer appears in the code.)
 
     RAISING DOES NOT CRASH THE TURN, which is why the original intent survives.
     Five of the six call sites were ALREADY wrapped in ``try`` + ``restore_owl``

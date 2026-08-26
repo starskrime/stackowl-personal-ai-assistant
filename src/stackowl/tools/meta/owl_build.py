@@ -948,8 +948,24 @@ class OwlBuildTool(Tool):
 
         await self._audit("grant", updated.name, spec.name)
         # INFO, because this is the evidence line for "who widened what, and when".
+        #
+        # IT USED TO SAY "with the user's approval" AND THAT WAS NOT TRUE. Measured
+        # 2026-08-26: a grant fired with no human present, and the consent record
+        # for the SAME event in the SAME second read reason="official_channel"
+        # beside "[consent] authority judged by ORIGIN, not by attendance". The
+        # user had approved nothing — the request had merely ARRIVED on an official
+        # channel, which this platform deliberately treats as carrying their
+        # authority whether or not they are watching.
+        #
+        # The rule is right and is NOT changed here. The sentence was wrong. This
+        # is the line someone reads when asking "why does this owl hold that
+        # tool?", and "the user approved it" ends the enquiry at the wrong place —
+        # the real answer lives in the consent decision for this trace. So it now
+        # says what this code actually knows and points at what it does not.
         log.tool.info(
-            "owl_build.grant: authority WIDENED with the user's approval",
+            "owl_build.grant: authority WIDENED — see the [consent] decision for "
+            "this trace for the basis (an explicit approval, or official-channel "
+            "origin); this line does not establish that a human approved it",
             extra={"_fields": {
                 "owl": updated.name, "granted": adding, "now_holds": widened_tools,
             }},

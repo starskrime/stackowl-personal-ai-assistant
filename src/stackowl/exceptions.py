@@ -320,7 +320,10 @@ class OwlPersistError(InfrastructureError):
     forget granted accesses, looks like it is never saved permanently". A grant
     updated the IN-MEMORY registry, told the user "authority WIDENED with the
     user's approval", and vanished at the next restart, because the durable write
-    had returned False into a variable nobody read.
+    had returned False into a variable nobody read. (That quoted wording is the
+    2026-08-22 line, kept because it is what the log said then. It was itself
+    corrected on 2026-08-26 — the grant is authorised by official-channel ORIGIN,
+    not by an approval — so do not expect to find that sentence in the code.)
     """
 
     def __init__(self, owl_name: str, reason: str) -> None:

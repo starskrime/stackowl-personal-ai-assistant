@@ -990,6 +990,51 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  ESCALATION_CONSENT_FAILS_OPEN_WHEN_IT_CANNOT_ASK_2026_08_26:
+    status: STOP-AND-ESCALATE. Authorisation semantics with a red test asserting the opposite.
+      NOT touched, NOT decided, and the test was NOT edited to make anything pass.
+    THE_RED_TEST_and_it_is_PRE_EXISTING: >-
+      tests/test_e0_s1_consent.py::test_unknown_channel_in_routing_fails_closed. Confirmed
+      pre-existing by stashing my own uncommitted work and re-running: still red without it.
+        routing = RoutingPrompter()   # nothing registered — no way to ask anyone
+        policy  = ConsentPolicy(prompter=routing)
+        assert await policy.request(tool_name="t", channel="telegram", ...) is False
+      It returns TRUE.
+    WHAT_THE_CODE_SAYS_IT_IS_DOING_in_its_own_words: >-
+      Reproduced directly, and the log states the intent outright:
+        "[consent] RoutingPrompter: no channel UX — routing to the autonomous grant instead of
+         denying unasked"
+        "[consent] autonomous grant — no human attached to this turn"
+      So this is DELIBERATE, not an accident: a turn with nobody to ask gets an autonomous
+      grant rather than a refusal. The reasoning is visible and defensible — denying every
+      unattended turn would stop the platform working while Bakir sleeps, which is the whole
+      point of an autonomous assistant.
+    WHY_I_WILL_NOT_DECIDE_IT: >-
+      The 2026-08-19 record describes the defect it replaced as "authz was INVERTED (denied
+      attended, granted UNATTENDED)". Granting unattended is named there as the WRONG half of
+      the inversion — and it is what this path now does. Either the record's wording is loose
+      and this grant is the intended new model, or a fix over-corrected and reintroduced the
+      half it was meant to remove. I cannot tell from the evidence, and guessing on an
+      authorisation path is precisely what the standing rule forbids.
+      NOTE the contrast with the OTHER consent path measured tonight, which is unambiguous and
+      well-argued: authority_widening is judged by official-channel ORIGIN, and consent.py's
+      comment explains why that is strictly SAFER than what preceded it (a request with no
+      official origin is now refused outright). That one I am confident about. This one has a
+      test asserting the reverse, which is a real disagreement inside the codebase.
+    THE_QUESTION_FOR_BAKIR: >-
+      When there is NO channel UX to ask through, should consent grant or deny? If GRANT is
+      intended, the test is pinning a superseded decision and should be rewritten to assert the
+      autonomous grant WITH its reasoning — not deleted, since a security test that vanishes
+      leaves no record of what was chosen. If DENY is intended, the autonomous-grant route is a
+      live fail-open on every unattended turn and is the most serious open item in this file.
+    NOT_FIXED_BY_ME: >-
+      A test that has been red for some time is a decision waiting to be made, not a chore. The
+      one thing I was certain of is that "make the red go away" is the wrong move on a consent
+      path, so it is recorded and left exactly as found.
+    SECOND_PRE_EXISTING_RED_not_yet_diagnosed: >-
+      tests/commands/test_owls_builder.py::test_edit_changes_field_and_repersists — also
+      pre-existing, also unexamined. Queued behind this one.
+
   D03_2_CONVERSATION_COMPRESSION_ROUND_0_SAYS_DO_NOT_BUILD_IT_2026_08_26:
     map_verdict_was: >-
       MISSING. "StackOwl: Nothing. History is assembled fresh in classify each turn." "Gap: the
