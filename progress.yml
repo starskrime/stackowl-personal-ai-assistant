@@ -1016,6 +1016,64 @@ current:
       (the reference uses parent 90 / delegation 50); worth one check before restating the
       verdict, but it does not change "MISSING" being wrong.
 
+  MAP_RE_VERIFICATION_COMPLETE_AND_THREE_FINDINGS_COLLAPSE_INTO_ONE_ROOT_2026_08_26:
+    THE_SYNTHESIS_this_is_the_headline: >-
+      X2, D05.6 and the TOOL CAP escalation are ONE problem, and the map already names the fix.
+      MEASURED: both tool-selection mechanisms run simultaneously in production — the per-turn
+      budgeter produced 1,723 "eligible tools NOT presented" events, while progressive
+      disclosure (hydrated_tools / FX-07) fired 761 times. Two mechanisms, same job.
+      THE CHAIN: tool_count_cap is configured at 40 while context_budget.py's own comment says
+      it "should sit comfortably above any real toolset, not below it" and defaults to 150 ->
+      the budgeter drops 46 tools on machine lanes -> NINETEEN presented tools then have
+      descriptions naming a tool that is not there (D05.6) -> "the model picked another tool it
+      also lacked and was refused again", which commit 7a6ed508 recorded while fixing a
+      different instance of the same thing.
+      The map's own resolution for X2 is "the budgeter should go", and D05.4's Ask is "adopt
+      disclosure, delete the budgeter?" Disclosure ALREADY EXISTS and already runs 761 times.
+      So the expensive half of the pair is the one causing the damage, and the cheap half is
+      already carrying load. That is a coherent recommendation reachable from evidence rather
+      than from the map's severity ordering.
+    the_cheap_first_step_is_still_Bakir_s: >-
+      Raising the cap to the code's own default removes most of the 46 drops and most of the 19
+      dangling pointers WITHOUT deleting anything. Do that first, re-measure, and only then
+      decide whether the budgeter goes. Deleting a live mechanism is not a step to take on the
+      same night its replacement was first measured.
+    X3_CONFIRMED_both_learning_paths_run: >-
+      [learning] index.publish 1,514, lessons_store.publish 1,494, [reflection] execute 467,
+      compute_reflection 92. Both the scheduled miners and the reflection path are live and
+      busy. The map's question — "do they compose, or does one replace the other?" — is a real
+      open design question, not a defect, and it is Bakir's to answer.
+    X6_PARTIALLY_VERIFIED_do_not_quote_the_map_s_framing: >-
+      "Four near-duplicate channel adapters" is not what the code looks like. telegram is 19
+      files / 5,256 lines; slack 8 / 2,208; discord 7 / 1,418; whatsapp 7 / 1,525. Telegram is
+      HALF the total and carries voice, callbacks, documents and dialogs the others do not, so
+      they are not four copies of one thing. Real duplication probably sits among the smaller
+      three. Sizing it needs a per-module diff I have not done — recorded as PARTIALLY VERIFIED
+      rather than confirmed, because "collapse to one relay" is a large mechanical change to
+      justify on a line count.
+    D09_6_CORRECT: no learning_graph or equivalent exists; learning is not user-visible.
+      Whether it should be is the map's own product question.
+    D02_3_HALF_STALE: >-
+      Filed PARTIAL with "steerable handling exists via serialize_prior + inflight_router".
+      serialize_prior is GONE — clarify_pump.py:77 says "the gate that this map once backed
+      (serialize_prior) is GONE" — replaced by inflight_router. No steer/redirect distinction
+      exists. So PARTIAL is roughly the right verdict attached to an outdated description, and
+      the file even contains a module that knows the map is out of date about it.
+    FINAL_TALLY_fifteen_items_measured: >-
+      WRONG 7 (D01.1's reason, D01.2, D01's premise, D05.2, D03.2, D02.2, D05.4).
+      RIGHT 6 (D01.5 with severity backwards, D05.6, D01.4, D08.3, D03.4, D09.6).
+      CONFIRMED-BUT-OPEN 2 (X2 measured and actionable, X3 measured and a design question).
+      PARTIALLY VERIFIED 1 (X6). HALF-STALE 1 (D02.3's description).
+    RECOMMENDATION_TO_BAKIR: >-
+      REWRITE THE MAP, do not work from it. Nearly half its measured verdicts changed, and the
+      commonest error is a search-location miss rather than a judgement error — which means a
+      re-verification is cheap and mechanical: for each "StackOwl: nothing/none/no such", grep
+      the WHOLE of src/ and check the production log for whether it fires. Tonight that took
+      roughly one measurement per item and prevented the register's largest build.
+      The queue that comes OUT of the evidence is short: the tool cap (carrying D05.6 and X2),
+      the consent fail-open, curated-memory decay, and browser viability. None of those are the
+      map's top-ranked items.
+
   MAP_RE_VERIFICATION_CONSOLIDATED_TWELVE_ITEMS_2026_08_26:
     A_CORRECTION_TO_MY_OWN_EARLIER_FRAMING: >-
       I told Bakir "SEVEN OF EIGHT verdicts are stale". With twelve items now measured it is
