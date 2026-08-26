@@ -990,6 +990,90 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  NEVER_CALLED_SWEEP_BUILT_and_it_found_an_EIGHTH_2026_08_25:
+    decision: Bakir, "Build the sweep as a script." Checked in at scripts/never_called.py.
+    IT_FOUND_ONE_I_HAD_NOT: >-
+      `ConvergenceDetector.embedding_registry` is omitted at parliament/orchestrator.py:57
+      (`convergence_detector or ConvergenceDetector()`), while the parameter exists and is
+      used. The class's OWN docstring states the consequence: "If no EmbeddingRegistry is
+      provided, gracefully degrades to 'never converge'". So parliament's convergence
+      optimisation cannot fire — every session runs all its rounds. EIGHTH instance of the
+      pattern, and the first found by a tool rather than by me tripping over it.
+      HONEST LIMIT ON THAT CLAIM: the degradation warning has fired ZERO times across all
+      retained logs, while the parliament module has logged 1,526 lines. The warning sits
+      behind an earlier `return False` for "<2 genuine responses", logged at DEBUG — and
+      production runs at INFO. So I CANNOT distinguish "check() never sees 2+ responses"
+      from "check() is never reached". What is certain is that the collaborator is not wired
+      at the only production site; whether that costs anything today is unmeasured. Another
+      instance of "if a log line is the evidence it must be INFO".
+    WHAT_THE_SWEEP_REPORTS_and_what_it_refuses_to: >-
+      DEFAULT RUN: default-wins, narrowed to WIRING modules (assembly/startup/orchestrator).
+      45 rows. Unfiltered it is 228, nearly all a result dataclass built without an optional
+      field — normal, not a defect. The narrowing is STRUCTURAL, not lexical: I did not guess
+      from parameter names, which would be a hardcoded word list and is a standing rule
+      against. Both real defects shared a structure — a collaborator dropped at the site that
+      assembles the LIVE system while another site passed it — so the question is WHERE it
+      was dropped, not what it is called.
+      It correctly re-finds `SqliteMemoryBridge.embedding_registry` omitted at
+      notifications/assembly.py:167, which I found by hand this session.
+    THE_NO_CALLER_HALF_IS_OPT_IN_BECAUSE_IT_IS_NOT_TRUSTWORTHY: >-
+      957 hits, and spot checks are false positives: this codebase registers tools and
+      handlers DYNAMICALLY, so a live symbol can have no static reference. I shipped it
+      behind a flag with the caveat printed in the output rather than deleting it or
+      pretending it works. A report that cries wolf 957 times teaches its reader to ignore
+      it, which is worse than no report — and a sweep nobody trusts is precisely the kind of
+      unread instrument this programme keeps finding.
+    a_bug_in_my_own_first_version: >-
+      It reported 1,045 dead symbols because `from __future__ import annotations` makes every
+      type reference a STRING literal, so an AST walk over Name nodes misses all of them.
+      Fixed by collecting identifiers out of string constants too — over-collecting there is
+      safe, since it can only suppress a false "dead" report, never invent one. The fix moved
+      it 1,045 -> 957, which is what proved the real cause was dynamic registration rather
+      than annotations.
+    ruff/mypy: script clean; src baselines held at 37 / 65.
+
+  ESCALATIONS_ANSWERED_2026_08_25_NIGHT:
+    note: Four decisions, recorded BEFORE any was worked. All four took my recommendation.
+    ESC_54_planner: >-
+      "Feed it your directives." Pass durable user preferences / curated USER memory into
+      ToolProposer.propose alongside the goal, so a permanent instruction shapes every plan.
+      Fixes the CLASS not the instance — a future directive works with no code change.
+      ACCEPTED COST, stated when he chose: a bigger proposer prompt, and a bad directive
+      could widen plans. The envelope is ENFORCED, so this is an authorisation-adjacent
+      change; keep the owl-bounds check (assert_task_narrowing_enforceable) intact — the
+      plan may never exceed what the owl holds.
+    DEV_INGRESS: >-
+      "Build a guarded dev-ingress." A command that constructs an IngressMessage EXACTLY as
+      channels/telegram/adapter.py:1412 does — session_key = raw user id, channel "telegram",
+      chat_id stamped, is_direct True — and hands it to the same dispatch a real update takes.
+      This is the only way to honour his rule ("send message like it received from telegram")
+      without faking a different path. It touches the message-intake seam, which I damaged
+      today by impersonating the core on core.sock, so it must go through the GATEWAY's own
+      adapter path and never near the IPC socket.
+    HANDLER_TIMEOUT: >-
+      "Honest log + periodic reaper." Two parts. (1) Say what actually happened — the
+      dispatch slot was released, the handler is STILL RUNNING — instead of "freed for
+      retry/re-arm", which is false and which I myself misread an hour after writing the
+      measurement. (2) Run reap_stale_running on a SCHEDULE, not only at startup, so a
+      stranded row recovers without a restart. Deliberately NOT hard-cancel and NOT
+      free-the-row-immediately: the first needs every spawning handler to cooperate, the
+      second risks two concurrent runs of the same handler, which for incident RCA means
+      duplicate incidents.
+    NEVER_CALLED_SWEEP: >-
+      "Build the sweep as a script." Checked in. Must find BOTH shapes: (a) symbols never
+      referenced outside their own file and tests; (b) keyword parameters with defaults that
+      the PRODUCTION construction site does not pass. Shape (b) is the harder and more
+      valuable one — the symbol IS referenced, so grep finds callers and the code reads as
+      wired; the defect is that the live path takes the default. It would have caught the
+      bridge's embedding_registry and the lessons store's embedding_model before either cost
+      a measurement.
+    order_of_work: >-
+      Sweep first — it is self-contained, it needs no live-system risk, and it may surface
+      more instances that change what else is worth doing. Then the timeout (small, and it
+      makes the platform honest about a thing I misread). Then dev-ingress (needed to
+      validate anything else with real traffic). ESC-54 last: it is the largest and it is
+      authorisation-adjacent, and dev-ingress is what will let me prove it works.
+
   ESC_54_THE_PLANNER_CANNOT_SEE_THE_USERS_STANDING_DIRECTIVES_2026_08_25:
     status: ROOT CAUSE FOUND, NOT FIXED — needs Bakir, because the envelope is ENFORCED.
     THE_CHAIN_end_to_end: >-
