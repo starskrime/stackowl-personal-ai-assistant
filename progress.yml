@@ -1016,6 +1016,56 @@ current:
       (the reference uses parent 90 / delegation 50); worth one check before restating the
       verdict, but it does not change "MISSING" being wrong.
 
+  MAP_RE_VERIFICATION_CONSOLIDATED_TWELVE_ITEMS_2026_08_26:
+    A_CORRECTION_TO_MY_OWN_EARLIER_FRAMING: >-
+      I told Bakir "SEVEN OF EIGHT verdicts are stale". With twelve items now measured it is
+      SEVEN OF TWELVE. The earlier number was drawn from a sample I had chosen badly: I started
+      with the D01 domain because the map calls it highest-leverage, and D01 happens to be the
+      most out-of-date section. Measuring further afield found five verdicts the map got RIGHT.
+      Still a substantial staleness rate, and the recommendation is unchanged — but "7 of 8"
+      overstated it and the difference matters to someone deciding how much of the file to
+      trust.
+    VERDICT_WRONG_seven: >-
+      D01.1 — its stated REASON is false; the rebuilt prompt reproduces the same bytes
+        (76-98% reuse, 272 distinct prompts across 1,782 turns).
+      D01.2 — shipped, but onto anthropic_provider.py while the only live provider is NeraAiRaw
+        on openai_provider.py; cache hit rate 0.00% across 9,168,201 input tokens.
+      D01 (domain premise) — "every turn pays full input price"; every cost line is $0.000000,
+        self-hosted. The cost is LATENCY.
+      D05.2 — filed MISSING; PresentedToolStore exists in infra/ and names itself D05.2.
+      D03.2 — filed MISSING and "the single largest functional hole"; rollover_summary ran 166
+        times and no call has exceeded 24% of the window.
+      D02.2 — filed MISSING; IterationBudget is wired into BOTH providers, fired 20 times, and
+        the "missing" grace call exists and is stronger than described.
+      D05.4 — filed MISSING; FX-07 promotes a tool_search hit into the next turn's schema and
+        fires 862 times. Only the TRIGGER differs.
+    VERDICT_RIGHT_five: >-
+      D01.5 — correctly MISSING, but the SEVERITY was backwards: filed "latent", measured LIVE
+        on every turn of the operator's own lane. The one real build of the night.
+      D05.6 — correct AND actionable: 19 presented tools point the model at tools the cap has
+        dropped. Folds into the tool-cap escalation.
+      D01.4 — correct. There is no deferred-change vocabulary; the config marks fields
+        `hot_reload: True`, which is the OPPOSITE concept, and presented_tools.py records the
+        operator being told "✓ tool_count_cap = 40" with no "restart required" suffix.
+        BUT THE MAP'S OWN ASK ANSWERS ITSELF for this product: deferring changes to "next
+        session" assumes a session boundary, and an assistant that runs while its owner sleeps
+        may not have one. Recommend DIVERGENT-BY-DESIGN rather than a gap to close.
+      D08.3 — correct. No `turns_since_memory` or in-turn nudge anywhere; memory extraction is
+        a scheduled handler. Whether that is worse is the map's open question, not a defect.
+      D03.4 — correct at PARTIAL. Some tools self-truncate (search_files, fuzzy_match, ddg), but
+        there is no per-tool registry cap and no persistence of oversized results for re-read.
+        Levels 2 and 3 of the reference's three are genuinely absent.
+    THE_MAP_S_COMMONEST_ERROR_is_a_SEARCH_LOCATION_MISS: >-
+      D02.2 says "no iteration cap found in the pipeline or the ReAct runner" — it is in the
+      PROVIDER. D05.2 and D05.4 are in infra/. D03.2's summariser is in memory/. Four of the
+      seven wrong verdicts are the component existing somewhere the author did not look, which
+      is this programme's own standing rule turned back on the map: a negative from a narrow
+      probe is not an absence.
+    STILL_UNMEASURED: D09.6 (learning made visible), D02.3 (interrupt/steer, PARTIAL), and the
+      X2/X3/X6 duplication register.
+    LOOSE_END_CONFIRMED: no separate SUBAGENT iteration cap exists (the reference uses parent 90
+      / delegation 50). A real but minor sub-gap; does not change D02.2's verdict being wrong.
+
   D05_6_IS_THE_FIRST_MAP_ITEM_TONIGHT_THAT_IS_BOTH_TRUE_AND_ACTIONABLE_2026_08_26:
     map_verdict: >-
       MISSING, and it is CORRECT. The reference rule is that a tool's schema description must
