@@ -990,6 +990,62 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  D01_PROMPT_CACHE_MEASURED_BEFORE_TOUCHING_EITHER_CONFLICT_2026_08_26:
+    why_this_first: >-
+      D01.6 asks in the map's own words "Do we build the measurement BEFORE the fix so we have
+      a baseline?" — and D01 is the domain the map calls highest-leverage, holding both
+      CONFLICT items. Round 0 of the panel is measurement, so the numbers came before any
+      opinion about D01.1 or D01.3. Three of the four findings below contradict the map.
+    THE_HEADLINE: >-
+      CACHE HIT RATE IS 0.00%. Across 1,782 provider calls carrying 9,168,201 input tokens,
+      total cached tokens = 0. Not low — zero, and never once nonzero. The
+      cache_breakpoint_probes table is EMPTY, which is consistent: cache_probe_store only
+      writes a row when creation or read tokens exceed 0, so an empty table means the cache
+      has never been confirmed to work even once.
+    FINDING_1_the_map_s_REASON_for_D01_1_IS_WRONG: >-
+      D01.1 is filed CONFLICT on the grounds of "zero prefix reuse — the prompt is rebuilt
+      every turn". The rebuild is real; the CONCLUSION is not. Measured by prompt_hash, the
+      rebuilt prompt reproduces the SAME BYTES most of the time: 775 turns in one session
+      produced 12 distinct prompts (98% reuse), and every multi-turn session measured lands
+      between 76% and 98%. Across all 1,782 turns there are only 272 distinct prompts. So the
+      per-turn rebuild costs CPU, not cache hits. Fixing D01.1 as written would buy nothing,
+      because the thing it says is missing is already there by accident.
+    FINDING_2_the_NINTH_instance_of_design_that_is_never_reached: >-
+      D01.2 (prompt-cache breakpoints) shipped 2026-07-28 and is real code. `cache_control`
+      appears in exactly three files: providers/base.py, providers/_cache_control.py and
+      providers/anthropic_provider.py. THE ONLY LIVE PROVIDER IS NeraAiRaw, configured in
+      ~/.stackowl/stackowl.yaml and served by openai_provider.py. The breakpoints were shipped
+      onto a provider class this deployment does not use. Same shape as FactReinforcer,
+      add_relation, is_machine_lane, reinforcement_count, CuratedMemory's target, the bridge's
+      embedding_registry, the lessons store's embedding_model and ConvergenceDetector's
+      embedding_registry — design that exists, works, and is not reached on the path that
+      matters. Ninth instance, and the most expensive so far in tokens.
+    FINDING_3_the_metric_ITSELF_is_wired_on_only_some_paths: >-
+      openai_provider._cached_input_tokens() is a careful reader — it tries
+      prompt_tokens_details.cached_tokens (OpenAI), cache_read_input_tokens (Anthropic-style)
+      and a flattened cached_tokens. Two call sites use it (lines 556 and 1228). The THIRD,
+      the CompletionResult built at line 1550 inside `complete()`, omits the argument entirely
+      and so records the 0 default. `complete()` is a live path — _record_cost fires directly
+      beneath it. So part of the 0.00% above is an ARTEFACT of the code never reading the
+      field, not a provider that returned nothing. THE FIX IS ONE ARGUMENT, and it must land
+      before anyone believes a cache number here. Failure mode 1 in this codebase's own list:
+      an actuator wired on only some paths.
+    FINDING_4_the_domain_s_PREMISE_does_not_hold_for_this_deployment: >-
+      D01's framing is "every turn pays full input price". Every cost line in the log reads
+      $0.000000 — the provider is self-hosted, so 9.17M uncached input tokens cost NOTHING in
+      money. The real cost is LATENCY and context-window pressure. That does not make D01
+      worthless, but it does mean the map's leverage ranking was computed against a hosted
+      per-token bill this platform does not pay, and the two CONFLICT items should be
+      re-ranked against latency rather than spend before either is opened.
+    ORDER_THIS_IMPLIES: >-
+      Fix Finding 3 first (one argument, makes every later cache claim honest). Then decide
+      whether NeraAiRaw's gateway reports cached_tokens at all — if it does not, D01.1 and
+      D01.3 are unfixable-by-us on this deployment and should be reclassified from CONFLICT to
+      BLOCKED-ON-PROVIDER rather than left at the top of the queue implying urgent work.
+    NOT_YET_MEASURED: >-
+      Whether NeraAiRaw's endpoint returns prompt_tokens_details at all. Finding 3 must ship
+      first, because until it does a zero is indistinguishable from an unread field.
+
   THE_DUPLICATE_MEMORY_PROBLEM_WAS_NEVER_DUPLICATE_MEMORIES_2026_08_26:
     verdict: >-
       Bakir's complaint — "owls and platform remember duplicate and semantically same facts,
@@ -1088,6 +1144,30 @@ current:
     placement: >-
       Top of _poll_cycle, before the due-jobs fetch, so a freed row is eligible in the SAME
       cycle — and inside the existing try, so a reap failure can never cost the poll.
+    HOLE_FOUND_BY_MEASUREMENT_AFTER_COMMIT_2026_08_26: >-
+      THE STALENESS ANCHOR IS WRONG FOR THE EXACT ROW THIS WAS BUILT FOR. Checking the live
+      table an hour after shipping: incident_escalation-9fb1c485 sat status='running' with
+      next_run_at 03:28:47 — 546 SECONDS IN THE FUTURE. The reaper selects
+      "WHERE status='running' AND next_run_at < cutoff", and a future next_run_at is never
+      below a cutoff of now-2400s, so that row can hang forever and the reaper never sees it.
+      My commit message claims the row becomes claimable again. For a retrying job it does not.
+      WHY IT HAPPENS: next_run_at is advanced on COMPLETION (_mark_completed sets status
+      'pending' and next_run_at together), which is what made the anchor look sound. But the
+      due-query has a SECOND ARM — a job with a pending retry is selected on retry_at, not
+      next_run_at (scheduler.py:198). So a job that failed, got a retry armed, and was claimed
+      through that arm is 'running' while next_run_at already points at the next cadence slot.
+      If THAT attempt hangs, the row is stranded and invisible to the reaper.
+      THE HONEST DIAGNOSIS: no column records WHEN a row was claimed. I chose next_run_at
+      because it was the only timestamp available without a migration, and the test I wrote to
+      prove the margin ("a row DUE at T still running past T + 2x timeout") encoded that
+      assumption rather than questioning it. Six passing tests, and every one builds its
+      fixture with a PAST next_run_at — the doubles agreed with the code because I wrote both.
+      THE FIX IS A claimed_at COLUMN — set in the CAS claim, cleared on completion, reaped on
+      "claimed_at < now - margin". Additive and nullable, so the migration is idempotent and
+      non-destructive. It makes the staleness test EXACT rather than inferred and removes the
+      retry arm as a special case instead of patching around it. QUEUED NEXT.
+      The programme's own rule arriving at my own work: measure the EFFECT, never trust the
+      call. The tests were green and the fix was half a fix.
     VALIDATE_OPEN_the_query_that_would_close_it: >-
       SELECT job_id, status, next_run_at FROM jobs WHERE status='running';
       plus the INFO line "[scheduler] reap_timed_out_running: row abandoned past the handler
