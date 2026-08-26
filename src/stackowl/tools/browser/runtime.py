@@ -90,9 +90,22 @@ class CamoufoxRuntime:
         """Sync handler for Playwright's disconnect event. Just flips state + fires callbacks."""
         if not self.available and self._browser is None:
             return  # already known dead
-        log.engine.warning(
-            "[browser] runtime.disconnect: browser process gone — marking unavailable",
-        )
+        if self._attached:
+            # NOT "process gone". We are driving this browser over a websocket, and
+            # losing the socket says nothing about the browser — measured
+            # 2026-08-26, the connection dropped while the Chromium process stayed
+            # up and healthy. Calling that a dead process sent the runtime into a
+            # recycle storm that failed every navigate. Same class as the four
+            # naming defects found the same day: the system knew one thing and
+            # said another.
+            log.engine.warning(
+                "[browser] runtime.disconnect: CDP connection lost — the browser "
+                "itself may be fine; will reconnect on next use",
+            )
+        else:
+            log.engine.warning(
+                "[browser] runtime.disconnect: browser process gone — marking unavailable",
+            )
         self.available = False
         self._browser = None
         self._unavailable_reason = "browser process disconnected"
@@ -241,6 +254,24 @@ class CamoufoxRuntime:
         """
         from stackowl.tools.browser.cdp_launcher import launch_cdp_browser
 
+        # REUSE THE ONE WE ALREADY STARTED if its process is still alive. Without
+        # this, every reconnect spawns another Chromium — and reconnects are the
+        # common case, because losing a websocket is not the same as losing a
+        # browser. Measured 2026-08-26: the CDP connection dropped while the
+        # process stayed up, so a naive relaunch would leak a browser per drop.
+        existing = self._launched
+        if existing is not None and existing.process.poll() is None:
+            from playwright.async_api import async_playwright
+
+            log.engine.info(
+                "[browser] runtime.managed: reconnecting to the browser we already own",
+                extra={"_fields": {"cdp_url": existing.cdp_url, "pid": existing.process.pid}},
+            )
+            self._pw = await async_playwright().start()
+            browser = await self._pw.chromium.connect_over_cdp(existing.cdp_url)
+            self._attached = True
+            return browser
+
         launched = await launch_cdp_browser()
         if launched is None:
             log.engine.warning(
@@ -375,8 +406,21 @@ class CamoufoxRuntime:
         if self._manager is None:
             self._browser = None
             return
-        with contextlib.suppress(Exception):
+        try:
             await self._manager.__aexit__(None, None, None)
+        except Exception as exc:
+            # NOT SUPPRESSED SILENTLY ANY MORE. Measured 2026-08-26: after the
+            # platform escalated to a CDP browser, the local engine was STILL
+            # RUNNING at 351 MB — one camoufox and eight chromium processes,
+            # 1,124 MB of browser on a box with 178 MB free. A failed __aexit__
+            # here leaves the OS process alive, and swallowing the exception meant
+            # nothing ever said so. The engine we abandoned then starves the
+            # replacement we just launched.
+            log.engine.warning(
+                "[browser] runtime.teardown: the engine did not shut down cleanly "
+                "— its OS process may still be running and holding memory",
+                exc_info=exc,
+            )
         self._browser = None
         self._manager = None
         self.available = False

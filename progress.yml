@@ -1016,6 +1016,41 @@ current:
       (the reference uses parent 90 / delegation 50); worth one check before restating the
       verdict, but it does not change "MISSING" being wrong.
 
+  THE_BROWSER_DIES_BECAUSE_THE_BOX_IS_OUT_OF_MEMORY_NOT_BECAUSE_OF_THE_ENGINE_2026_08_26:
+    A_CORRECTION_I_OWE_BAKIR: >-
+      I told him a local Chromium navigated first try while Camoufox was 0-for-10, and leaned
+      toward "the engine, not the hardware". THAT LEAN WAS WRONG. Under real platform traffic
+      Chromium dies too — TargetClosedError, connection lost twice, and a process that had to
+      be relaunched. One successful navigation from a hand-run script was not a stability
+      measurement, and I said so at the time and then leaned on it anyway.
+    THE_MEASUREMENT_THAT_SETTLES_IT: >-
+      total 7,607 MB, used 4,816, FREE 178 MB, zram swap 918 MB of 1,268 used (72%).
+      Browser processes at that moment: 1,124 MB across NINE — one camoufox at 351 MB and
+      EIGHT chromium processes totalling 773 MB. StackOwl itself holds ~2 GB across its two
+      python processes. There is no room for a browser, let alone two.
+      Chromium's multi-process architecture is the worse fit here: eight processes for one
+      page against camoufox's one. On this device the lighter engine is the better engine, and
+      neither survives when both run at once.
+    THE_BUG_THAT_MAKES_IT_WORSE_and_it_is_ours: >-
+      The platform escalated away from the local engine and NEVER STOPPED IT. camoufox was
+      still resident at 351 MB while the chromium we had just launched fought for the last
+      178 MB. _teardown_inside_lock wrapped the engine shutdown in contextlib.suppress, so a
+      failed __aexit__ left the OS process alive and NOTHING EVER SAID SO. The engine we
+      abandoned starves the replacement we provisioned. Fixed: the failure is now logged at
+      WARNING naming the consequence.
+    WHAT_THIS_MEANS_FOR_THE_FIX: >-
+      Running the browser OFF THIS BOX stops being a robustness preference and becomes the
+      actual answer. The CDP work already supports it — `backend: attach` with a URL on another
+      host needs no further code. The self-provisioning path is still right for devices with
+      headroom; it is simply not enough here.
+      NOT YET MEASURED: whether killing the orphaned engine alone buys enough headroom for a
+      single chromium, or whether 2 GB of StackOwl plus any browser is over budget regardless.
+      That is one measurement and it decides whether this device can browse at all.
+    ANTI_PATTERN_I_ALMOST_COMMITTED: >-
+      Switching the default engine to Chromium on the strength of one successful navigation.
+      It uses more than twice the memory in eight times the processes, on the constraint that
+      is actually binding. The engine comparison was the wrong question.
+
   I_WAS_WRONG_ABOUT_CURATED_DECAY_AND_IT_WENT_TO_BAKIR_AS_AN_ESCALATION_2026_08_26:
     RETRACTION: >-
       I escalated "CURATED EVICTION POLICY" to Bakir with the claim that "[until_changed] is a

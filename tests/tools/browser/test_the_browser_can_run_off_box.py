@@ -303,3 +303,56 @@ def test_the_recycle_count_is_incremented_BEFORE_the_reopen() -> None:
         "the recycle must be counted before the reopen, or the escalation check "
         "reads a stale number"
     )
+
+
+def test_a_dropped_connection_is_not_reported_as_a_dead_browser() -> None:
+    """Measured 2026-08-26: "runtime.disconnect: browser process gone" fired while
+    the Chromium process was demonstrably still alive. We drive a CDP browser over
+    a websocket, and losing the socket says nothing about the browser. Calling it a
+    dead process sent the runtime into a recycle storm that failed every navigate.
+    """
+    import inspect
+
+    from stackowl.tools.browser import runtime as runtime_mod
+
+    src = inspect.getsource(runtime_mod.CamoufoxRuntime._mark_disconnected)
+    assert "if self._attached" in src, (
+        "the disconnect handler must distinguish a lost CDP socket from a dead "
+        "local engine — they need opposite responses"
+    )
+    assert "CDP connection lost" in src
+
+
+def test_a_reconnect_reuses_the_browser_we_already_own() -> None:
+    """Reconnects are the COMMON case for a CDP backend. Relaunching on each one
+    leaks a Chromium per dropped socket on a long-lived device."""
+    import inspect
+
+    from stackowl.tools.browser import runtime as runtime_mod
+
+    src = inspect.getsource(runtime_mod.CamoufoxRuntime._open_managed_cdp)
+    assert "process.poll() is None" in src, (
+        "managed reopen must reuse a live owned process instead of spawning another"
+    )
+
+
+def test_a_failed_engine_shutdown_is_logged_not_swallowed() -> None:
+    """Measured 2026-08-26, and it is why the replacement browser kept dying.
+
+    After escalating to a CDP browser the platform was running BOTH engines: one
+    camoufox at 351 MB and eight chromium processes at 773 MB — 1,124 MB of
+    browser on a box with 178 MB free. A failed __aexit__ leaves the OS process
+    alive, and `contextlib.suppress` meant nothing ever reported it. The engine we
+    abandoned starves the one we just launched.
+    """
+    import inspect
+
+    from stackowl.tools.browser import runtime as runtime_mod
+
+    src = inspect.getsource(runtime_mod.CamoufoxRuntime._teardown_inside_lock)
+    local_half = src.split("if self._manager is None")[-1]
+    assert "contextlib.suppress" not in local_half, (
+        "a failed engine shutdown must be reported — it leaves a process holding "
+        "memory on a device that has none to spare"
+    )
+    assert "may still be running" in local_half
