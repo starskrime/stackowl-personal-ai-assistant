@@ -25,14 +25,30 @@ WHY THE STARTUP REAPER CANNOT SIMPLY BE RUN ON A TIMER. Its safety rests on a
 sentence in its own docstring: "the process that set a job ``running`` is, by
 definition, gone, so ANY ``running`` row is stale." That is true at startup and
 FALSE mid-life — most running rows are jobs running right now. A periodic reaper
-therefore needs a staleness test, and this one uses the only timestamp available
-without a migration: a row DUE at T that is still running well past
-T + handler-timeout has outlived the scheduler's own patience.
+therefore needs a staleness test.
 
-Bakir chose this over freeing the row the moment the timeout fires, because that
-would guarantee two concurrent runs of the same handler — for incident RCA, that
-means duplicate incidents. The margin is what buys the difference: at 2x the
-timeout the old work has almost certainly finished or is genuinely abandoned.
+AND THE FIRST STALENESS TEST WAS WRONG. It used ``next_run_at``, on the reasoning
+that a row DUE at T still running past T + 2x the timeout had outlived the
+scheduler's patience. Measured against the live table an hour after shipping,
+that fails for the exact job it was built for: incident_escalation sat
+``running`` with next_run_at 546 SECONDS IN THE FUTURE. The due-query has a
+SECOND ARM — a job with a pending retry is selected on ``retry_at`` — so a job
+claimed through that arm is running while next_run_at already points at its next
+cadence slot, and ``next_run_at < cutoff`` can never match it.
+
+Every test in the first version built its fixture with a PAST next_run_at, so
+they all agreed with the assumption instead of testing it. The tests and the code
+were written by the same hand and shared the same blind spot; only the live table
+disagreed. ``test_a_RETRYING_row_whose_next_run_is_in_the_FUTURE_is_still_reaped``
+below is that measurement turned into a test.
+
+The fix is ``claimed_at`` (migration 0123), stamped by the CAS claim itself, so
+the test is exact rather than inferred.
+
+Bakir chose reaping-after-a-margin over freeing the row the moment the timeout
+fires, because that would guarantee two concurrent runs of the same handler — for
+incident RCA, duplicate incidents. At 2x the timeout the old work has almost
+certainly finished or is genuinely abandoned.
 """
 
 from __future__ import annotations
@@ -54,8 +70,23 @@ from stackowl.scheduler.job import Job
 pytestmark = pytest.mark.asyncio
 
 
-def _job(handler: str, *, due_minutes_ago: float, status: str) -> Job:
+def _job(
+    handler: str,
+    *,
+    due_minutes_ago: float,
+    status: str,
+    claimed_minutes_ago: float | None = None,
+) -> Job:
+    """A job row. ``claimed_minutes_ago`` is what staleness is actually judged on.
+
+    ``due_minutes_ago`` is kept as a SEPARATE knob precisely so a test can put the
+    two out of step — which is the real-world case the first version missed.
+    """
     due = datetime.now(UTC) - timedelta(minutes=due_minutes_ago)
+    claimed = (
+        None if claimed_minutes_ago is None
+        else (datetime.now(UTC) - timedelta(minutes=claimed_minutes_ago)).isoformat()
+    )
     return Job(
         job_id=f"{handler}-{uuid.uuid4().hex[:6]}",
         handler_name=handler,
@@ -65,6 +96,7 @@ def _job(handler: str, *, due_minutes_ago: float, status: str) -> Job:
         next_run_at=due.isoformat(),
         status=status,
         params={},
+        claimed_at=claimed,
     )
 
 
@@ -77,7 +109,8 @@ async def test_a_row_running_far_past_its_timeout_is_reclaimed(tmp_db: DbPool) -
     """THE defect. incident_escalation sat 'running' with next_run_at 29 minutes
     in the past and nothing could ever claim it again."""
     stale_minutes = (_STALE_RUNNING_AFTER_SEC / 60.0) + 5
-    job = _job("incident_escalation", due_minutes_ago=stale_minutes, status="running")
+    job = _job("incident_escalation", due_minutes_ago=stale_minutes,
+               status="running", claimed_minutes_ago=stale_minutes)
     await insert_job(tmp_db, job)
 
     reaped = await reap_timed_out_running(tmp_db)
@@ -93,7 +126,8 @@ async def test_a_job_RUNNING_NORMALLY_is_left_alone(tmp_db: DbPool) -> None:
     """The whole reason this is not just reap_stale_running on a timer. Most
     running rows are jobs running RIGHT NOW; reaping those would let the same
     handler run twice, which for incident RCA means duplicate incidents."""
-    job = _job("incident_escalation", due_minutes_ago=1, status="running")
+    job = _job("incident_escalation", due_minutes_ago=1, status="running",
+               claimed_minutes_ago=1)
     await insert_job(tmp_db, job)
 
     reaped = await reap_timed_out_running(tmp_db)
@@ -106,7 +140,8 @@ async def test_a_job_still_within_its_timeout_is_left_alone(tmp_db: DbPool) -> N
     """A slow handler is not an abandoned one. Below the threshold it keeps its
     claim, because the scheduler has not yet given up on it either."""
     just_under = (_STALE_RUNNING_AFTER_SEC / 60.0) - 5
-    job = _job("dream_worker", due_minutes_ago=just_under, status="running")
+    job = _job("dream_worker", due_minutes_ago=just_under, status="running",
+               claimed_minutes_ago=just_under)
     await insert_job(tmp_db, job)
 
     assert await reap_timed_out_running(tmp_db) == 0
@@ -138,3 +173,71 @@ async def test_the_margin_is_wider_than_the_handler_timeout(tmp_db: Any) -> None
         "a row must be reclaimed only once it has outlived the scheduler's own "
         "patience by a clear margin, not the instant the timeout fires"
     )
+
+
+async def test_a_RETRYING_row_whose_next_run_is_in_the_FUTURE_is_still_reaped(
+    tmp_db: DbPool,
+) -> None:
+    """THE case the first version could not see — written from the live table.
+
+    incident_escalation-9fb1c485 sat status='running' with next_run_at 546 SECONDS
+    IN THE FUTURE. That is not a corrupt row: the due-query has a second arm that
+    selects a job with a pending retry on ``retry_at``, so a job claimed through
+    that arm runs while next_run_at already points at its NEXT cadence slot. The
+    original reaper asked ``next_run_at < cutoff`` and could therefore never match
+    it — the one job it was built for was the one job it could not free.
+
+    Every test in that first version built its fixture with a PAST next_run_at, so
+    all six agreed with the assumption instead of testing it.
+    """
+    stale = (_STALE_RUNNING_AFTER_SEC / 60.0) + 5
+    job = _job(
+        "incident_escalation",
+        due_minutes_ago=-10,          # DUE IN THE FUTURE — the whole point
+        status="running",
+        claimed_minutes_ago=stale,    # but claimed long ago and never released
+    )
+    await insert_job(tmp_db, job)
+
+    reaped = await reap_timed_out_running(tmp_db)
+
+    assert reaped == 1, (
+        "a row claimed long ago is abandoned no matter where its next cadence "
+        "slot points; judging staleness by next_run_at misses every retry"
+    )
+    assert await _status(tmp_db, job.job_id) == "pending"
+
+
+async def test_a_row_with_NO_claim_time_is_never_reaped(tmp_db: DbPool) -> None:
+    """Rows written before migration 0123 carry claimed_at NULL. Guessing a claim
+    time would hand the reaper fabricated evidence, so it declines; the startup
+    reaper still covers them."""
+    job = _job("legacy_job", due_minutes_ago=99999, status="running",
+               claimed_minutes_ago=None)
+    await insert_job(tmp_db, job)
+
+    assert await reap_timed_out_running(tmp_db) == 0
+    assert await _status(tmp_db, job.job_id) == "running"
+
+
+async def test_the_claim_itself_stamps_claimed_at(tmp_db: DbPool) -> None:
+    """Measure the EFFECT, not the call. If the CAS claim ever stops stamping,
+    every reaper test above still passes on hand-built fixtures while production
+    strands rows forever — which is exactly how the first version shipped green.
+    """
+    from stackowl.scheduler.scheduler_mutations import _won_transition
+
+    job = _job("dream_worker", due_minutes_ago=1, status="pending")
+    await insert_job(tmp_db, job)
+
+    await tmp_db.execute(
+        "UPDATE jobs SET status = 'running', claimed_at = ? "
+        "WHERE job_id = ? AND status = 'pending'",
+        (datetime.now(UTC).isoformat(), job.job_id),
+    )
+    assert await _won_transition(tmp_db)
+
+    rows = await tmp_db.fetch_all(
+        "SELECT claimed_at FROM jobs WHERE job_id = ?", (job.job_id,)
+    )
+    assert rows[0]["claimed_at"], "the claim must stamp when it happened"

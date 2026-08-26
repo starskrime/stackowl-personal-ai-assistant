@@ -1,0 +1,30 @@
+-- Migration 0123 — record WHEN a job row was claimed, so an abandoned run can be told
+-- from a live one.
+--
+-- THE DEFECT THIS EXISTS FOR. The CAS claim is
+-- `UPDATE jobs SET status='running' WHERE status='pending'`, so a row left at
+-- 'running' can never be picked up again. `reap_stale_running` frees such rows but
+-- runs at STARTUP only, and its safety rests on a premise stated in its own
+-- docstring: "the process that set a job running is, by definition, gone, so ANY
+-- running row is stale." That is true at startup and FALSE mid-life, where most
+-- running rows are jobs running right now. So a periodic reaper needs a staleness
+-- TEST, and there was no timestamp to test.
+--
+-- WHY next_run_at WAS NOT IT. `reap_timed_out_running` (2026-08-25) used it, on the
+-- reasoning that a row DUE at T still running past T + 2x the handler timeout has
+-- outlived the scheduler's patience. Measured against the live table an hour later,
+-- that is wrong for the exact job it was built for: incident_escalation-9fb1c485 sat
+-- 'running' with next_run_at 546 SECONDS IN THE FUTURE. The due-query has a second
+-- arm — a job with a pending retry is selected on `retry_at`, not next_run_at — so a
+-- job claimed through the retry arm is 'running' while next_run_at already points at
+-- its next cadence slot, and `next_run_at < cutoff` can never match it.
+--
+-- claimed_at is set at the CAS claim and cleared on completion, which makes the
+-- staleness test EXACT rather than inferred and removes the retry arm as a special
+-- case instead of patching around it.
+--
+-- Existing rows stay NULL and are NOT backfilled. Nobody recorded when they were
+-- claimed, and inventing a time would hand the reaper fabricated evidence — the same
+-- reasoning migration 0122 applied to task_outcomes.model. A NULL claimed_at is
+-- therefore never reaped by the periodic path; the startup reaper still covers those.
+ALTER TABLE jobs ADD COLUMN claimed_at TEXT;

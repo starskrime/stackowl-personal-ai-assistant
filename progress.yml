@@ -1238,6 +1238,25 @@ current:
       retry arm as a special case instead of patching around it. QUEUED NEXT.
       The programme's own rule arriving at my own work: measure the EFFECT, never trust the
       call. The tests were green and the fix was half a fix.
+    FIXED_BY_MIGRATION_0123_claimed_at_2026_08_26: >-
+      The hole above is closed. claimed_at is stamped BY the CAS claim in the same statement
+      as the status flip (both sites: scheduler.py:295 poll dispatcher, scheduler_mutations
+      .py:140 run_now), so it can never disagree with the status it describes, and the reaper
+      now selects `claimed_at IS NOT NULL AND claimed_at < cutoff`. The retry arm stops being
+      a special case instead of being patched around.
+      NEVER CLEARED, deliberately: every claim overwrites it and every reader gates on
+      status='running', so a leftover value on a pending row is unreadable by construction.
+      Clearing would mean editing all TWELVE sites that move a job out of 'running', and
+      missing one is this codebase's most common defect.
+      A NULL claimed_at is never reaped — pre-0123 rows have no claim time and inventing one
+      would hand the reaper fabricated evidence (0122's reasoning for task_outcomes.model).
+      The startup reaper still covers those.
+      TESTS: 9, including the live measurement turned into a test (a retrying row DUE IN THE
+      FUTURE but claimed long ago is reaped — impossible under the old query) and one
+      asserting the CAS claim really stamps, because without it every reaper test passes on
+      hand-built fixtures while production strands rows forever. That is exactly how the first
+      version shipped green.
+      683 passed across the 105 importing suites. ruff 37 / mypy 65.
     VALIDATE_OPEN_the_query_that_would_close_it: >-
       SELECT job_id, status, next_run_at FROM jobs WHERE status='running';
       plus the INFO line "[scheduler] reap_timed_out_running: row abandoned past the handler

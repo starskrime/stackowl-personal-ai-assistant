@@ -32,6 +32,16 @@ class Job(BaseModel):
     # canonical recurring cadence); cleared on success. Read-only on the model —
     # the scheduler writes it via direct UPDATEs, not through insert_job.
     retry_at: str | None = None
+    # Migration 0123 — WHEN this row was claimed, stamped by the CAS claim itself
+    # so it can never disagree with the status it describes. NULL means "never
+    # claimed, or claimed before 0123". Read-only on the model, like retry_at: the
+    # claim writes it via the guarded UPDATE, not through insert_job.
+    #
+    # It is what `reap_timed_out_running` judges staleness on. next_run_at cannot
+    # serve: a job selected through the due-query's retry arm is running while its
+    # next_run_at already points at the NEXT cadence slot, so a stranded retry has
+    # a FUTURE due time — measured on the live table, 546s ahead.
+    claimed_at: str | None = None
     failure_count: int = 0
     last_error: str | None = None
     enabled: bool = True

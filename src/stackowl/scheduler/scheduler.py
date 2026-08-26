@@ -291,9 +291,17 @@ class JobScheduler(SupervisedTask):
         # serialized connection (``SELECT changes()`` reflects the immediately
         # preceding UPDATE on THAT connection). A future multi-connection pool
         # would silently corrupt this CAS — keep the pool single-connection.
+        # `claimed_at` is stamped BY THE CLAIM, in the same statement, so it can
+        # never disagree with the status it describes. It is deliberately never
+        # CLEARED: every claim overwrites it, and every reader gates on
+        # status='running', so a leftover value on a pending row is unreadable by
+        # construction. Clearing would mean editing all twelve sites that move a
+        # job out of 'running' — and missing one is this codebase's most common
+        # defect, an actuator wired on only some paths.
         await self._db.execute(
-            "UPDATE jobs SET status = 'running' WHERE job_id = ? AND status = 'pending'",
-            (job.job_id,),
+            "UPDATE jobs SET status = 'running', claimed_at = ? "
+            "WHERE job_id = ? AND status = 'pending'",
+            (datetime.now(UTC).isoformat(), job.job_id),
         )
         if not await _won_transition(self._db):
             log.heartbeat.info(

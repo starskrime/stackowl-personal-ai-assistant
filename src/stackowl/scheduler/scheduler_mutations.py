@@ -137,8 +137,10 @@ async def run_now(
     # ``SELECT changes()`` straight after the guarded UPDATE reports exactly how
     # many rows that UPDATE touched (1 = we won, 0 = lost / not pending).
     await db.execute(
-        "UPDATE jobs SET status = 'running' WHERE job_id = ? AND status = 'pending'",
-        (job_id,),
+        # Stamped by the claim itself — see the note at the poll dispatcher's CAS.
+        "UPDATE jobs SET status = 'running', claimed_at = ? "
+        "WHERE job_id = ? AND status = 'pending'",
+        (datetime.now(UTC).isoformat(), job_id),
     )
     if not await _won_transition(db):
         log.scheduler.warning(

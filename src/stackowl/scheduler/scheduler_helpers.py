@@ -253,9 +253,22 @@ async def reap_timed_out_running(db: DbPool) -> int:
     That one runs at STARTUP, where its docstring's premise holds — "the process
     that set a job running is, by definition, gone, so ANY running row is stale".
     Mid-life that premise is false: most running rows are jobs running right now.
-    So this one needs a staleness TEST, and uses the only timestamp available
-    without a migration — a row DUE at T still running well past T + timeout has
-    outlived the scheduler's own patience.
+    So this one needs a staleness TEST.
+
+    IT TESTS ``claimed_at``, NOT ``next_run_at``. The first version used
+    next_run_at, reasoning that a row DUE at T still running past T + 2x the
+    timeout had outlived the scheduler's patience. Measured against the live table
+    an hour after shipping, that is wrong for the exact job it was built for:
+    incident_escalation sat 'running' with next_run_at 546 SECONDS IN THE FUTURE.
+    The due-query has a second arm — a pending retry is selected on ``retry_at``
+    — so a job claimed through the retry arm runs while next_run_at already points
+    at its next cadence slot, and ``next_run_at < cutoff`` can never match it.
+    claimed_at is stamped by the CAS claim itself, so the test is exact and the
+    retry arm stops being a special case.
+
+    A NULL claimed_at is NEVER reaped here. Rows that predate migration 0123 have
+    no claim time, and guessing one would hand this function fabricated evidence;
+    the startup reaper still covers them.
 
     It does NOT stop the old work; nothing here can, since the handler's spawned
     tasks survive cancellation. It only makes the ROW claimable again, so the job
@@ -264,8 +277,8 @@ async def reap_timed_out_running(db: DbPool) -> int:
     log.scheduler.debug("[scheduler] reap_timed_out_running: entry")
     cutoff = (datetime.now(UTC) - timedelta(seconds=_STALE_RUNNING_AFTER_SEC)).isoformat()
     rows = await db.fetch_all(
-        "SELECT job_id, handler_name, next_run_at FROM jobs "
-        "WHERE status = 'running' AND next_run_at < ?",
+        "SELECT job_id, handler_name, claimed_at FROM jobs "
+        "WHERE status = 'running' AND claimed_at IS NOT NULL AND claimed_at < ?",
         (cutoff,),
     )
     for row in rows:
@@ -281,7 +294,7 @@ async def reap_timed_out_running(db: DbPool) -> int:
             extra={"_fields": {
                 "job_id": str(row["job_id"]),
                 "handler": str(row["handler_name"]),
-                "due_at": str(row["next_run_at"]),
+                "claimed_at": str(row["claimed_at"]),
                 "stale_after_sec": _STALE_RUNNING_AFTER_SEC,
             }},
         )
@@ -368,6 +381,9 @@ def row_to_job(row: dict[str, Any]) -> Job:
         status=row["status"],
         retry_count=int(row.get("retry_count", 0) or 0),
         retry_at=row.get("retry_at"),
+        # .get, not [], for the same reason as every other optional above: a row
+        # read from a DB that predates migration 0123 simply has no such key.
+        claimed_at=row.get("claimed_at"),
         failure_count=int(row.get("failure_count", 0) or 0),
         last_error=row.get("last_error"),
         enabled=bool(row.get("enabled", 1)),
@@ -386,6 +402,10 @@ async def insert_job(db: DbPool, job: Job) -> None:
         extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name}},
     )
     now_iso = datetime.now(UTC).isoformat()
+    # claimed_at is written by the CAS claim in normal operation, never by an
+    # insert. It is applied here as a follow-up UPDATE only when the caller
+    # supplied one, so a test can build a row that is ALREADY claimed without
+    # widening _INSERT_JOB_SQL (whose column list several callers share).
     await db.execute(
         _INSERT_JOB_SQL,
         (
@@ -418,6 +438,11 @@ async def insert_job(db: DbPool, job: Job) -> None:
             ),
         ),
     )
+    if job.claimed_at is not None:
+        await db.execute(
+            "UPDATE jobs SET claimed_at = ? WHERE job_id = ?",
+            (job.claimed_at, job.job_id),
+        )
     log.scheduler.info(
         "[scheduler] insert_job: exit",
         extra={"_fields": {"job_id": job.job_id, "handler": job.handler_name}},
