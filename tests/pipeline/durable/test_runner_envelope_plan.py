@@ -76,7 +76,18 @@ class _StubPlanner:
         goal: str,
         owl_bounds: BoundsSpec | None,
         catalog: list[tuple[str, str]],
+        *,
+        directives: str = "",
     ) -> BoundsSpec | None:
+        """Mirrors PreflightPlanner.plan, including ESC-54's ``directives``.
+
+        Omitting it does NOT fail loudly: task_runner wraps planning in a
+        catch-all that degrades to "no envelope" so planning can never block task
+        creation, so a stale stub surfaces as ``task_envelope is None`` — which is
+        also what a legitimately declined plan looks like.
+        ``test_this_double_still_matches_the_real_planner`` asks the real class.
+        """
+        self.directives = directives
         return self._r
 
 
@@ -306,3 +317,21 @@ async def test_run_no_provider_registry_skips_planner(pool: DbPool, monkeypatch:
     assert not called, "planner should not be invoked when provider_registry is None"
     persisted = await store.get(task_id)
     assert persisted.task_envelope is None
+
+
+def test_this_double_still_matches_the_real_planner() -> None:
+    """Third instance in one day of a double drifting from the real signature.
+
+    Comparing keyword NAMES via inspect is enough to catch a rename or a new
+    parameter, and it fails HERE instead of as a mysterious `task_envelope is
+    None` three layers away.
+    """
+    import inspect
+
+    from stackowl.pipeline.planner import PreflightPlanner
+
+    real = set(inspect.signature(PreflightPlanner.plan).parameters) - {"self"}
+    stub = set(inspect.signature(_StubPlanner.plan).parameters) - {"self"}
+    assert stub == real, (
+        f"the planner double has drifted: stub {sorted(stub)}, real {sorted(real)}"
+    )

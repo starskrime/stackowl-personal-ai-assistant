@@ -990,6 +990,62 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  ESC_54_THE_PLANNER_CAN_NOW_SEE_STANDING_DIRECTIVES_2026_08_26:
+    decision: Bakir, "Feed it your directives."
+    stages:
+      brainstorm: no_change_needed — his decision and the measured chain settled it
+      architect: done — one optional kwarg through two layers, one reader at the wiring site
+      implement: done
+      cleanup: done — ruff 37 / mypy 65 held in the foreground
+      test: 6 passing locally; the 16 importing suites were running at the time of writing
+      validate: OPEN — needs a real job-search goal through dev-ingress
+      document: no_change_needed (module + test docstrings carry it)
+    THE_CHAIN_AND_WHY_IT_WAS_NEVER_A_PERMISSIONS_BUG: >-
+      task_runner -> PreflightPlanner.plan(goal, ceiling, catalog) ->
+      ToolProposer.propose(goal, catalog) — an LLM picking tools from names and descriptions
+      ALONE. For jobmarket's job search it chose web_search + web_fetch and omitted
+      browser_navigate: the exact two tools USER.md's permanent 2026-08-22 directive forbids,
+      and the one it requires. Five refusals on 08-25, a second owl (Brain) on 08-22.
+      The owl ALREADY HELD browser_navigate, and I confirmed today that browser_navigate is
+      NOT among the 42 tools the tool_count_cap trims — so it was presented too. Nothing was
+      missing from the envelope except the knowledge of how the user wants work done. Granting
+      would have fixed nothing.
+    WHAT_CHANGED: >-
+      `propose` takes an optional `directives` kwarg and, when non-empty, adds a system clause
+      ("when two tools could both accomplish the goal you MUST choose the one the directives
+      call for, and MUST NOT choose one they forbid") plus a STANDING DIRECTIVES block above
+      the goal. `plan` threads it. task_runner reads it from curated memory.
+    SELECTION_CHANGED_AUTHORISATION_DID_NOT: >-
+      This is the whole safety argument for touching a security-adjacent path.
+      assert_task_narrowing_enforceable runs unchanged on every path, and proposals are still
+      validated by EXACT membership against the catalog. A directive can only change WHICH
+      already-permitted tool is chosen; it can never add one the owl lacks. Asserted by
+      test_a_directive_can_NEVER_add_a_tool_outside_the_catalog rather than promised in prose
+      — this codebase has already been bitten twice today by a comment that vouched for
+      something untrue.
+    PERMANENT_FIRST_and_this_one_was_earned_by_measuring: >-
+      The helper emits entries in `[durability] text` form and sorts permanent ahead of
+      working notes, so the 1,500-char cap can only ever truncate notes. In FILE order the
+      live profile puts an [until_changed] dental task note first, and it is longer than all
+      three permanent entries combined — 3,283 chars against the cap. Left in file order this
+      fix would have been a silent no-op for exactly the profiles carrying the most.
+      A first version of that test read the LIVE store and SKIPPED under the tmp STACKOWL_HOME
+      the suites set. A skipped test is not evidence, so it was rebuilt on a constructed
+      profile arranged in the defeating order.
+    BEST_EFFORT_BY_CONSTRUCTION: >-
+      Curated memory is a file store that can be absent, unreadable, or name a target that
+      does not resolve; each yields "" and the planner behaves exactly as before. Planning must
+      never be what stops a task from being created — the same fail-open the surrounding code
+      already chose.
+    the_evidence_line_is_INFO: >-
+      proposer.propose's exit log was DEBUG. It now logs at INFO with the selected tool names,
+      directives_supplied and directive_chars, because production runs at INFO and a DEBUG
+      line could never close this item's acceptance check no matter how much traffic ran.
+    VALIDATE_OPEN_the_query_that_would_close_it: >-
+      Send a job-search goal through dev-ingress, then:
+      grep "proposer.propose: exit" ~/.stackowl/logs/stackowl.jsonl
+      PASS = directives_supplied true AND browser_navigate in tools AND web_fetch absent.
+
   FIRST_REAL_TRAFFIC_THROUGH_DEV_INGRESS_2026_08_26:
     the_facility_WORKS: >-
       Gateway restarted 04:29:19Z, "[dev_ingress] start: listening" at mode 0600, socket

@@ -28,11 +28,27 @@ class PreflightPlanner:
         self._proposer = proposer
 
     async def plan(
-        self, goal: str, owl_bounds: BoundsSpec | None, catalog: list[tuple[str, str]]
+        self,
+        goal: str,
+        owl_bounds: BoundsSpec | None,
+        catalog: list[tuple[str, str]],
+        *,
+        directives: str = "",
     ) -> BoundsSpec | None:
-        log.engine.debug("[planner] plan: entry", extra={"_fields": {"tools": len(catalog)}})
+        """Propose a least-privilege envelope for *goal*, never wider than the owl's.
+
+        ``directives`` (ESC-54) are the user's durable standing instructions. They
+        are passed to the PROPOSER only, so they steer which of the already-
+        permitted tools is chosen. The honesty guard below is unchanged and still
+        runs on every path: a plan can never exceed owl ∩ ceiling, directives or
+        not. Selection and authorisation stay separate.
+        """
+        log.engine.debug(
+            "[planner] plan: entry",
+            extra={"_fields": {"tools": len(catalog), "directive_chars": len(directives)}},
+        )
         try:
-            selected = await self._proposer.propose(goal, catalog)
+            selected = await self._proposer.propose(goal, catalog, directives=directives)
         except Exception as exc:  # noqa: BLE001 — fail-open
             log.engine.warning("[planner] plan: proposer raised — no envelope", exc_info=exc)
             return None

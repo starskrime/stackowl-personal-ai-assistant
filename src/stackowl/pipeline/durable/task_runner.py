@@ -47,6 +47,63 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 _RUNNING: TaskStatus = "running"
 
 
+
+def _durable_directives(owl_name: str | None) -> str:
+    """The user's standing instructions, for the PLANNER to choose between tools.
+
+    ESC-54. `ToolProposer` picked tools from names and descriptions alone, so for a
+    job-search goal it proposed web_search + web_fetch — the two tools USER.md's
+    permanent 2026-08-22 directive tells it not to use ("use the browser tools
+    ... instead of web_fetch/shell curl to avoid bot-blocking") — and omitted
+    browser_navigate, which the owl ALREADY HELD. The refusal that followed was
+    the plan's, not the owl's: nothing was missing from the envelope except the
+    knowledge of how the user wants work done.
+
+    BOTH BLOCKS, and the order is deliberate. The user's own file first because a
+    user directive outranks an owl's working notes, then the acting owl's file
+    because that is where per-owl scope lives.
+
+    Best-effort by construction. Curated memory is a file store that can be
+    absent, unreadable, or name a target that does not resolve; any of those
+    yields an empty string and the planner behaves exactly as it did before this
+    existed. Planning must never be what stops a task from being created.
+    """
+    try:
+        from stackowl.memory.curated import shared_memory
+
+        store = shared_memory()
+        blocks: list[tuple[str, str]] = []
+        for target in ("user", owl_name or ""):
+            if not target:
+                continue
+            try:
+                entries = store.entries(target)
+            except Exception:  # noqa: BLE001 — an unresolvable target is not an error here
+                continue
+            for entry in entries:
+                text = str(getattr(entry, "text", "") or "").strip()
+                if not text:
+                    continue
+                durability = str(getattr(entry, "durability", "") or "permanent")
+                # `rendered()` shape — the [permanent] / [until_changed] marker is
+                # carried deliberately. It is the store's own statement of which
+                # entries are standing rules and which are working notes, and the
+                # model needs that to weigh a directive against a scratch note.
+                blocks.append((durability, f"[{durability}] {text}"))
+        # PERMANENT FIRST, so the cap can only ever truncate working notes. Without
+        # this the ordering is file order, and USER.md's longest entry is an
+        # [until_changed] task note — it would consume the budget and push the
+        # permanent directives out, silently making this whole fix a no-op for
+        # exactly the profiles that have the most in them.
+        blocks.sort(key=lambda b: 0 if b[0] == "permanent" else 1)
+        return "\n".join(text for _, text in blocks)
+    except Exception as exc:  # noqa: BLE001 — B5: log, then degrade to no directives
+        log.tasks.warning(
+            "[tasks] runner: could not read durable directives — planning without them",
+            exc_info=exc,
+        )
+        return ""
+
 class DurableTaskRunner:
     """Owns the create/drive/finalize lifecycle of one durable task.
 
@@ -94,7 +151,12 @@ class DurableTaskRunner:
             if tool_registry is not None and services.provider_registry is not None:
                 catalog = [(t.name, t.description) for t in tool_registry.all()]
                 planner = PreflightPlanner(ToolProposer(services.provider_registry))
-                task_envelope = await planner.plan(goal, creation_ceiling, catalog)
+                task_envelope = await planner.plan(
+                    goal,
+                    creation_ceiling,
+                    catalog,
+                    directives=_durable_directives(state.owl_name),
+                )
         except Exception as exc:  # noqa: BLE001 — never block task creation on planning
             log.tasks.warning("[tasks] runner.run: planner failed — no envelope", exc_info=exc)
             task_envelope = None
