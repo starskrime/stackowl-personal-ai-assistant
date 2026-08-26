@@ -995,7 +995,7 @@ current:
       MISSING. "StackOwl: Nothing. History is assembled fresh in classify each turn." "Gap: the
       single largest functional hole for long-running sessions." "Ask: This is a big build.
       Port their compressor design directly, or write ours?"
-    BOTH_HALVES_ARE_WRONG_FOR_THIS_DEPLOYMENT.
+    BOTH_HALVES_ARE_WRONG_FOR_THIS_DEPLOYMENT: yes — see the two below.
     half_one_it_is_not_NOTHING: >-
       memory/rollover_summary_handler.py exists, is registered
       ("[memory] assembly: rollover_summary handler registered", 204 times) and RUNS —
