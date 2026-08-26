@@ -990,6 +990,50 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  TOOL_COUNT_CAP_TRIMS_42_TOOLS_FROM_EVERY_MACHINE_LANE_TURN_2026_08_26:
+    status: ESCALATION — evidence complete, NOT changed. The cap is an operator setting.
+    what_the_log_says: >-
+      "[registry] to_provider_schema: eligible tools NOT presented — the tool_count_cap of 40
+      was reached", 289 times across 08-25/08-26, dropping 42 DISTINCT tools. Most are dropped
+      on every single event: browser_dialog, browser_press, browser_tab_open/close/list,
+      browser_upload, browser_vision, browser_cookies_*, browser_download, browser_eval_js,
+      plus edit, git, todo, update_plan, undo_write, run_tests, process, objective,
+      sessions_spawn, sessions_send, task_status, transcripts, pdf, synthesize_skills.
+    THE_CONTRADICTION: >-
+      ~/.stackowl/stackowl.yaml:43 sets tool_count_cap: 40. context_budget.py's own comment
+      says the cap was raised on 2026-07-22 by owner decision BECAUSE "the registered toolset
+      (~60-78 tools) was already exceeding the old cap of 40, silently trimming real tools
+      every turn — this is a backstop against a pathological catalog, not a shaping lever, so
+      it should sit comfortably above any real toolset, not below it." The code default is now
+      150. The configured value is 40, which is below the real toolset, which is the exact
+      condition the comment says it must not be in.
+    WHO_IS_AFFECTED_and_this_is_the_part_that_changes_the_verdict: >-
+      ALL 289 drop events are on MACHINE lanes (incident-/goal-/owl:). ZERO on Bakir's human
+      lane. So his own turns lose nothing and this is not a user-facing defect — which is why
+      it is an escalation and not a fix. I nearly filed it as "the platform cannot edit files";
+      splitting by lane refuted that in one query.
+    WHAT_IT_STILL_COSTS: >-
+      The incident-RCA lane cannot see edit, git, run_tests or process. It can diagnose and it
+      cannot remediate. For a platform whose guide star is agentic self-healing, a self-heal
+      loop that is structurally unable to touch code is worth Bakir seeing, even though the
+      narrow toolset may well be deliberate for a fixed-stage RCA.
+    a_HYPOTHESIS_the_measurement_REFUTED: >-
+      This looked like ESC-54's real cause — if browser_navigate were being trimmed, the
+      planner's failure to choose it would be a presentation bug, not a directive-blindness
+      bug. IT IS NOT DROPPED. browser_navigate does not appear once in the 42. ESC-54's
+      diagnosis stands unchanged, and the attractive wrong answer died on the evidence.
+    THE_QUESTION_FOR_BAKIR: >-
+      Is 40 deliberate? presented_tools.py's ESC-35 note records him setting it and being told
+      "✓ tool_count_cap = 40" with no restart warning, so it was chosen, not inherited. If it
+      was chosen for latency, the trim is working as intended and only the RCA lane's missing
+      remediation tools are worth revisiting. If it predates the 07-22 raise, the config is
+      now fighting its own documented design intent.
+    RELATED_MAP_ITEMS: >-
+      D01.3 (CONFLICT, per-turn tool-schema selection), D05.2 (Toolsets — filed MISSING but
+      PresentedToolStore already exists in infra/ and is labelled D05.2, so that verdict is
+      STALE), D05.4 (progressive disclosure), and duplication item X2 (two tool-selection
+      mechanisms). The map proposes deleting the per-turn budgeter if D05.2 + D05.4 land.
+
   D01_PROMPT_CACHE_MEASURED_BEFORE_TOUCHING_EITHER_CONFLICT_2026_08_26:
     why_this_first: >-
       D01.6 asks in the map's own words "Do we build the measurement BEFORE the fix so we have
