@@ -85,6 +85,12 @@ async def test_edit_changes_field_and_repersists(tmp_yaml: Path, tmp_path: Path)
     reg = OwlRegistry()
     cmd = OwlsCommand(owl_registry=reg)
     _seed_bounded(reg)
+    # Capture what the preset ACTUALLY granted, from the same builder the seed
+    # used. See the note below: naming a member here is what made this test rot.
+    bounds_before = reg.get("rsr").bounds
+    assert bounds_before is not None, "the seed must produce a bounded owl"
+    tools_before = frozenset(bounds_before.tools or ())
+
     token = set_services(StepServices(owl_registry=reg, db_pool=db))
     try:
         out = await cmd.handle("edit rsr --tier powerful", _state())
@@ -93,7 +99,27 @@ async def test_edit_changes_field_and_repersists(tmp_yaml: Path, tmp_path: Path)
 
     assert "✓" in out
     assert reg.get("rsr").model_tier == "powerful"
-    assert reg.get("rsr").bounds is not None and "delegate_task" in reg.get("rsr").bounds.tools
+    # THE INVARIANT: editing ONE field must not disturb the owl's authority.
+    #
+    # This line used to read `"delegate_task" in ... bounds.tools`, and it went
+    # red when commit 7a6ed508 DELIBERATELY removed delegate_task from the
+    # researcher preset — "the bounds gate granted delegate_task so a blocked owl
+    # could route around a limit; the envelope then refused it as off-plan. Two
+    # gates behaving exactly as designed, with contradictory designs."
+    #
+    # So the code was right and the test was stale. The deeper fault is that it
+    # named a MEMBER of a preset it does not own: any future preset change breaks
+    # it again, and the obvious way to make it pass is to put delegate_task back —
+    # re-opening a contradiction someone closed on purpose. Comparing before and
+    # after tests the property this test is actually named for, and cannot rot
+    # when the preset changes.
+    bounds_after = reg.get("rsr").bounds
+    assert bounds_after is not None, "the edit must not strip the owl's bounds"
+    assert frozenset(bounds_after.tools or ()) == tools_before, (
+        "a --tier edit changed the owl's tool authority: "
+        f"gained {sorted(frozenset(bounds_after.tools or ()) - tools_before)}, "
+        f"lost {sorted(tools_before - frozenset(bounds_after.tools or ()))}"
+    )
     persisted = {m.name: m for m in await OwlStore(db).list_all()}
     assert "rsr" in persisted, f"the edit was not persisted: {sorted(persisted)}"
     assert persisted["rsr"].model_tier == "powerful"
