@@ -172,6 +172,31 @@ class TestParliamentCommandNotConfigured:
 # ---------------------------------------------------------------------------
 
 
+def test_this_stub_still_matches_the_real_orchestrator() -> None:
+    """A double that stops resembling the real thing is failure mode 2 here.
+
+    This one drifted for real: parliament was EXCLUDED from the
+    session_id -> conversation_id rename, its double was renamed anyway, and five
+    tests went red with "unexpected keyword argument 'session_id'". The stub even
+    carried a docstring asserting the new name was correct — prose cannot be
+    checked, so it was believed.
+
+    So ask the class instead. Comparing the keyword-argument NAMES (not types, not
+    order-sensitive positions) is enough to catch a rename, and it is exactly what
+    a reader of the stub wants to know.
+    """
+    import inspect
+
+    from stackowl.parliament.orchestrator import ParliamentOrchestrator
+
+    real = set(inspect.signature(ParliamentOrchestrator.run).parameters) - {"self"}
+    stub = set(inspect.signature(_StubOrchestrator.run).parameters) - {"self"}
+    assert stub == real, (
+        f"the parliament double has drifted from the real signature: "
+        f"stub has {sorted(stub)}, ParliamentOrchestrator.run has {sorted(real)}"
+    )
+
+
 class _StubOrchestrator:
     def __init__(self, session: ParliamentSession) -> None:
         self._session = session
@@ -183,17 +208,24 @@ class _StubOrchestrator:
         self,
         topic: str,
         owl_names: list[str],
-        conversation_id: str | None = None,
+        session_id: str | None = None,
     ) -> ParliamentSession:
-        """Mirrors ParliamentOrchestrator.run, whose kwarg is conversation_id.
+        """Mirrors ParliamentOrchestrator.run, whose kwarg is ``session_id``.
 
-        This stub still said session_key, so the command failed with
-        "unexpected keyword argument 'conversation_id'" and the tests asserted on an
-        error string instead of on a synthesis. Note that IngressMessage and
-        PipelineState really DO take session_key — the two names coexist, which
-        is why this drifted quietly and why a blanket rename here is wrong.
+        THE DOCSTRING HERE USED TO SAY ``conversation_id``, AND IT WAS WRONG.
+        Parliament was explicitly EXCLUDED from the session_id -> conversation_id
+        rename — its own migration says so — but this double was renamed anyway,
+        so it stopped resembling the thing it stands for and every test using it
+        failed with "unexpected keyword argument 'session_id'". The stub asserted
+        its own correctness in prose while contradicting the real signature.
+
+        The two names genuinely coexist (IngressMessage and PipelineState really
+        do take session_key), which is why a blanket rename is wrong and why this
+        drifted quietly. ``test_this_stub_still_matches_the_real_orchestrator``
+        below is the guard: it asks the real class instead of trusting this
+        comment, so the next rename cannot pass silently.
         """
-        self.run_calls.append((topic, owl_names, conversation_id))
+        self.run_calls.append((topic, owl_names, session_id))
         return self._session
 
     async def inject_interjection(self, message: str) -> bool:
