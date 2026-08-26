@@ -1016,6 +1016,49 @@ current:
       (the reference uses parent 90 / delegation 50); worth one check before restating the
       verdict, but it does not change "MISSING" being wrong.
 
+  I_WAS_WRONG_ABOUT_CURATED_DECAY_AND_IT_WENT_TO_BAKIR_AS_AN_ESCALATION_2026_08_26:
+    RETRACTION: >-
+      I escalated "CURATED EVICTION POLICY" to Bakir with the claim that "[until_changed] is a
+      MARKER WITH NO ACTOR — nothing in src/ ever expires one; the durability field is written,
+      read back for rendering, and never used to decide what to drop." THAT IS FALSE. The actor
+      is curated.py:512 and its log line is "[curated] decay: evicted the oldest until_changed
+      entry to make room". It has fired SIXTY-ONE times.
+    THE_CONTRADICTION_I_ESCALATED_HAS_ALSO_RESOLVED_ITSELF: >-
+      I reported that jobmarket.md's "[permanent] Scope (2026-08-22) ... Plano/Frisco TX"
+      contradicted the owl's boundaries, and that a full store had frozen the stale directive in
+      place. Measured now: the file is 2,052 bytes (was 2,208, over its 2,200 cap), holds FIVE
+      [permanent] entries and ZERO [until_changed], and the Plano/Frisco scope line is GONE. The
+      owl's boundaries still carry the correct fully-remote directive. Decay evicted the
+      transient job-listing dumps, room appeared, and the correction landed — 06:18:46,
+      06:26:05 and 06:26:21 each show an eviction followed immediately by a memory write
+      succeeding at 88% and then 77% of budget.
+      So the platform did EXACTLY what the escalation asked Bakir to design. It was already
+      built, and it worked while I was asking him what to do about it.
+    HOW_I_GOT_IT_WRONG_and_it_is_the_error_I_keep_naming_in_others: >-
+      I grepped for decay/expire/evict in the BROWSER's sessions.py while investigating a
+      different item, formed the impression that no eviction existed anywhere, and wrote an
+      absence claim about a DIFFERENT module without probing it. A negative from a narrow probe
+      is not an absence — the rule I have applied to seven map verdicts tonight, failing at my
+      own hands and reaching Bakir as a request for a decision he did not need to make.
+      THIS IS THE MORE EXPENSIVE DIRECTION OF THE ERROR. A false "it exists" wastes my time; a
+      false "it is missing" wastes HIS, and asks him to design something he already has.
+    WHAT_REMAINS_TRUE_from_that_escalation: >-
+      Only the narrow part: at the moment of the failed write the cap DID refuse a correction,
+      and the recovery went to the owl's boundaries instead. But decay then made room within
+      eight minutes and the file self-corrected. The honest verdict is that the store handled
+      write-pressure correctly under real load, with a delay, not that it freezes bad state.
+      NOTHING IS OWED BY BAKIR HERE. Removing it from his queue.
+    UNRELATED_AND_STILL_OPEN_the_status_name: >-
+      objectives/model.py:26 defines `abandoned` as "cancelled by the owner". FOUR of the five
+      job-hunt objectives my message spawned are marked abandoned, three at the identical
+      timestamp 06:45:38, and Bakir cancelled nothing. Either the platform self-cancels
+      duplicates under a status that says the owner did it, or something else abandons silently
+      — blocker and blocker_kind are NULL on all of them. Same naming class as the four already
+      found tonight. NOT investigated further; recorded for a later tick.
+    AND_THE_GOOD_NEWS_ONE_OBJECTIVE_COMPLETED: >-
+      obj-276f4d8c ran 06:02:42 -> 09:38:56 and reached `done` — three and a half hours of real
+      autonomous work on the job hunt, finishing despite a browser at a 0% success rate.
+
   MAP_RE_VERIFICATION_COMPLETE_AND_THREE_FINDINGS_COLLAPSE_INTO_ONE_ROOT_2026_08_26:
     THE_SYNTHESIS_this_is_the_headline: >-
       X2, D05.6 and the TOOL CAP escalation are ONE problem, and the map already names the fix.
