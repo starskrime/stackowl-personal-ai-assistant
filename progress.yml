@@ -1005,10 +1005,14 @@ current:
       tools ... instead of web_fetch/shell curl". ESC-54 shipped today and makes the planner
       OBEY that — validated at 06:01:21, plan = [browser_extract, browser_navigate]. The
       envelope then correctly refuses web_fetch and web_search as off-plan.
-      So the directive-compliant path is now the ONLY path, and it has a 0% success rate. A
-      real job-search objective ran for 17 minutes at 06:01-06:18 and completed nothing: both
-      permitted fetch tools failed, every reach for web_fetch/web_search was refused by the
-      envelope, and the run ended in the circuit breaker.
+      So the directive-compliant path is now the ONLY path, and it has a 0% success rate.
+      CORRECTED 06:20 — an earlier draft of this entry said "a real objective ran for 17
+      minutes and completed nothing". That conflated traces. The objective DECOMPOSES into
+      sub-goals, each with its own plan and envelope: objgoal-2af6ee5b ran 06:01:21-06:06:57,
+      objgoal-8a4b7bfd 06:17-06:19, plus retry-c881536c. The driver is progressing through
+      them, which is the system working, not one task spinning for 17 minutes. The 0% browser
+      rate and the closed fallback are unchanged and are the real finding; the duration was
+      mine to get right and I did not.
       THIS IS NOT A REASON TO REVERT ESC-54. The directive is right and the plan is right; the
       BROWSER is what is broken. But the two facts belong together, because before today a
       failing browser was survivable — the model quietly fell back to web_fetch. That fallback
