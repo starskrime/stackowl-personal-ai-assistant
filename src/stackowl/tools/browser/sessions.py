@@ -108,6 +108,29 @@ class BrowserSessionLimitError(Exception):
     """Raised when global session cap is exceeded."""
 
 
+class BrowserRuntimeRecycledError(BrowserSessionLimitError):
+    """The browser died and was recycled while a session was being opened.
+
+    NOT A LIMIT, despite the base class. It is raised when the runtime's recycle
+    generation changes mid-open, meaning the browser process went away underneath
+    the caller. The work is retryable and nothing is full.
+
+    A SUBCLASS so every existing ``except BrowserSessionLimitError`` keeps
+    catching it and no caller changes behaviour. What changes is what the reader
+    is told.
+
+    WHY IT EXISTS. All TWELVE BrowserSessionLimitError occurrences in production
+    were this case; "max concurrent browser sessions reached" has never fired
+    once. So the error a person actually sees says the pool is full when the truth
+    is that the browser crashed — and the obvious next move, hunting for a session
+    leak, is the wrong one. I made exactly that mistake on 2026-08-26: recorded
+    "sessions are opened and never released" as the actionable lead and spent a
+    measurement round on a leak that does not exist. The TTL sweep is started
+    (orchestrator.py:1106) and close() has real callers. The name was the entire
+    misdirection.
+    """
+
+
 class BrowserSessionNotFoundError(KeyError):
     """Raised when a session_id is unknown or has been evicted."""
 
@@ -310,8 +333,9 @@ class BrowserSessionRegistry:
                     )
                     with contextlib.suppress(Exception):
                         await ctx.close()
-                    raise BrowserSessionLimitError(
-                        "browser runtime recycled during session open; retry"
+                    raise BrowserRuntimeRecycledError(
+                        "browser runtime recycled during session open; retry "
+                        "(the browser process died — this is NOT a session limit)"
                     )
                 self._sessions[session_id] = sess
                 self._reserved -= 1
