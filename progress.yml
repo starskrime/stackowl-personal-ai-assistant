@@ -990,6 +990,45 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  THE_BROWSER_IS_100_PERCENT_BROKEN_AND_ESC_54_NOW_ROUTES_EVERYTHING_TO_IT_2026_08_26:
+    severity: HIGHEST open item. Not a design gap — a live capability that does not work at all.
+    MEASURED: >-
+      Every browser tool call today failed. TEN attempts, ZERO successes:
+        5  browser_navigate  TimeoutError
+        4  browser_navigate  BrowserSessionLimitError
+        1  browser_extract   tool_error
+      Independently corroborated earlier tonight by the e2 browser smoke test, which logged
+      "[browser] runtime.disconnect: browser process gone — marking unavailable". Two unrelated
+      observations, same conclusion.
+    WHY_IT_MATTERS_MORE_TODAY_THAN_YESTERDAY_and_this_is_the_coupling: >-
+      USER.md's PERMANENT 2026-08-22 directive is "when fetching web content, use the browser
+      tools ... instead of web_fetch/shell curl". ESC-54 shipped today and makes the planner
+      OBEY that — validated at 06:01:21, plan = [browser_extract, browser_navigate]. The
+      envelope then correctly refuses web_fetch and web_search as off-plan.
+      So the directive-compliant path is now the ONLY path, and it has a 0% success rate. A
+      real job-search objective ran for 17 minutes at 06:01-06:18 and completed nothing: both
+      permitted fetch tools failed, every reach for web_fetch/web_search was refused by the
+      envelope, and the run ended in the circuit breaker.
+      THIS IS NOT A REASON TO REVERT ESC-54. The directive is right and the plan is right; the
+      BROWSER is what is broken. But the two facts belong together, because before today a
+      failing browser was survivable — the model quietly fell back to web_fetch. That fallback
+      is now closed by design, so browser breakage has been promoted from a degradation to a
+      hard stop for every web task.
+    THE_GUARDRAILS_HELD_and_that_is_worth_recording: >-
+      It did not spin forever. At 06:18:02 the platform logged "same-tool failure threshold
+      reached — circuit open", "[guardrails] tool-loop warning" and "repeat deterministic
+      failure — collapsed to summary". Bounded, detected, and stopped by its own machinery. My
+      earlier worry about "a loop that cannot finish" was wrong twice over — first the grant
+      unblocked the owl axis, then the circuit breaker bounded the rest.
+    THE_ACTIONABLE_LEAD: >-
+      BrowserSessionLimitError on 4 of 10 calls is the specific one. A session limit is only
+      reached if sessions are opened and not released, so the first question is whether
+      BrowserSessionRegistry leaks sessions — which would also explain the TimeoutErrors, since
+      a saturated pool cannot serve a new navigate. Camoufox on this aarch64 box is the other
+      suspect (the smoke test saw the process die outright). Round 0 before any fix: separate
+      "the pool is exhausted" from "the process keeps dying", because they need opposite fixes.
+    NOT_STARTED: this is the next item, ahead of the grant audit line and the task failure rate.
+
   MY_TEST_TRAFFIC_CAUSED_A_REAL_AUTHORITY_WIDENING_2026_08_26:
     WHAT_I_DID_report_this_to_Bakir_first: >-
       My dev-ingress message asked jobmarket to create an objective. It was refused (the owl
