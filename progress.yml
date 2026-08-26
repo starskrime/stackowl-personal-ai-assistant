@@ -1129,7 +1129,42 @@ current:
       proposer.propose's exit log was DEBUG. It now logs at INFO with the selected tool names,
       directives_supplied and directive_chars, because production runs at INFO and a DEBUG
       line could never close this item's acceptance check no matter how much traffic ran.
-    VALIDATE_STILL_OPEN_and_WHY_three_live_attempts_could_not_close_it: >-
+    VALIDATE_PASS_2026_08_26T06_01_21Z: >-
+      CLOSED, on live production traffic, with the exact acceptance criterion recorded before
+      the attempt:
+        [planner] proposer.propose: exit
+        {"selected": 2, "tools": ["browser_extract", "browser_navigate"],
+         "directives_supplied": true, "directive_chars": 3225}
+      directives_supplied TRUE, browser_navigate PRESENT, web_fetch ABSENT. All three.
+      AND THE EFFECT DOWNSTREAM, which is stronger than the plan itself: the resulting envelope
+      then REFUSED the forbidden tools by name —
+        06:03:36 [authz] task plan: off-plan tool REFUSED tool=web_fetch  denied_by=task_envelope
+                 plan_permits=[browser_extract, browser_navigate, tool_describe, tool_search]
+        06:03:59 [authz] task plan: off-plan tool REFUSED tool=web_search
+      BEFORE (measured 08-25): the plan chose web_search + web_fetch and OMITTED
+      browser_navigate — the two tools USER.md forbids and the one it requires — and the owl
+      refused five times. AFTER: the plan contains the browser tools, excludes both forbidden
+      ones, and the envelope actively refuses them. The directive reached the model and changed
+      the choice.
+    HOW_IT_GOT_THERE_the_whole_loop_ran_by_itself: >-
+      My dev-ingress message -> jobmarket refused `objective` (did not hold it) -> the loop
+      returned the turn instead of closing it done -> RECOVERY granted the missing capability
+      (owl_build.grant, authority judged by official-channel ORIGIN) -> an objective was created
+      (trace objgoal-2af6ee5b) -> the durable path ran -> PreflightPlanner ran WITH directives
+      -> the plan came out browser-first. Every link is a separate piece of this platform and
+      none of it needed me after the first message.
+      This also RESOLVES the "loop that cannot finish" worry I recorded an hour earlier: the
+      task was not permanently stuck. The grant unblocked the owl axis, and the task then
+      proceeded to plan and run. The envelope refusals that followed are the plan working, not
+      a deadlock.
+    what_I_got_wrong_about_finding_it: >-
+      I looked for the evidence on the proposer line and gave up after three messages failed to
+      reach the planner, recording the item as unreachable-from-chat. It arrived 20 minutes
+      later by a route I had not considered — the platform granting itself the capability my
+      own message had shown it lacked. The lesson is narrower than "be patient": an acceptance
+      check on an ASYNCHRONOUS loop is not closed by watching for a few minutes, and "I could
+      not reach it" is a statement about my probe, not about the system.
+    VALIDATE_superseded_note_the_three_attempts_that_missed: >-
       The code is live (core exec-replaced 05:02:45, 3s after the last src write) and the
       evidence line is INFO. Three real messages through dev-ingress did NOT reach it:
         1. "start a background task to search for fully remote Staff/Principal SWE roles" —
