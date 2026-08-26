@@ -990,6 +990,61 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  FIRST_REAL_TRAFFIC_THROUGH_DEV_INGRESS_2026_08_26:
+    the_facility_WORKS: >-
+      Gateway restarted 04:29:19Z, "[dev_ingress] start: listening" at mode 0600, socket
+      present as srw-------, migration 0123 applied (jobs.claimed_at exists). Sent
+      "remember that jobmarket should only look at fully remote roles" with NO explicit
+      target. The turn took the real path end to end — adapter.feed -> receive -> triage ->
+      router selected jobmarket -> assemble -> tools -> deliver, 81.8s, delivered to
+      owl:secretary:telegram:dm:72055773. Every injection carries `injected: True` at INFO.
+    ESC_48_INFERENCE_HALF_CLOSED: >-
+      No target was passed. The router resolved the owl from the message text alone
+      ("[router] selected jobmarket ... LLM decision") and the curated snapshot froze with
+      target=jobmarket. A memory write with no explicit destination reached the right one.
+    THE_ALARM_I_RAISED_AND_THEN_REFUTED_MYSELF: >-
+      Both curated-memory writes FAILED — replace on user ("No entry matching..."), replace on
+      jobmarket ("Memory is at 2,195/2,200 chars. Adding this (282 chars) would exceed the
+      limit"). jobmarket.md's mtime is still Aug 25 09:26. The reply said "Saved ... written
+      into the jobmarket agent's standing instructions", so I concluded a false success had
+      been delivered to the user — the worst class of defect this platform has.
+      IT WAS NOT. Searching EVERY owl store rather than the one file found the directive
+      persisted in the owl's `boundaries`: "Scope (user directive 2026-08-25, supersedes
+      2026-08-22): watch ONLY fully remote Staff / Senior Lead / Principal SWE + FDE roles.
+      The Plano/Frisco TX location filter is retired". owl_build.execute exited success=true
+      at 04:31:09. The agent hit the memory cap and RECOVERED via a different durable store —
+      the recovery ladder doing exactly its job — and dna_injector reads boundaries into the
+      prompt, so "standing instructions" was accurate.
+      I checked ONE destination, found nothing, and nearly reported a trust-spine failure. A
+      negative from a narrow probe is not an absence until the probe is widened. Eighth of
+      mine today, and the most expensive had I sent it.
+    THE_REAL_DEFECT_THE_WIDER_PROBE_FOUND: >-
+      TWO COPIES OF ONE RULE, NOW CONTRADICTING, AND BOTH ARE INJECTED INTO EVERY SCHEDULED
+      RUN. jobmarket.md line 3 still says "[permanent] Scope (user directive 2026-08-22):
+      daily watch covers Staff, Senior Lead, Principal SWE + FDE roles, Plano/Frisco TX." The
+      owl boundaries say the opposite and claim to supersede it. The curated file is injected
+      ("[pipeline] assemble: curated memory in prompt", owl=jobmarket) and dna_injector.py:139
+      injects boundaries. The next scheduled run receives both and must guess — and the STALE
+      one is the one marked [permanent].
+    WHY_THE_STALE_COPY_COULD_NOT_BE_CORRECTED: >-
+      Failure mode 4, no decay, causing failure mode 3. jobmarket.md is 2,208 bytes against a
+      2,200 cap — already over. It is dominated by [until_changed] job-listing dumps (three
+      paragraphs of "do NOT re-report" entries from 08-22, 08-24 and 08-25) that were never
+      decayed, so there was no room to rewrite the one [permanent] line that needed changing.
+      The agent tried twice and was refused by its own budget. An append-only store did not
+      just stop accepting writes; it blocked the CORRECTION of a directive while keeping the
+      superseded version marked permanent.
+    NOT_FIXED_deliberately: >-
+      jobmarket.md is Bakir's data and the contradiction is in content, not code. Reconciling
+      it means deleting or rewriting entries in his memory file, which is his call. The CODE
+      question underneath is fair game and is the real item: a curated store with a hard cap
+      and no decay will always eventually refuse the write that matters most, and the
+      [until_changed] marker exists precisely to say which entries were supposed to expire.
+    ESC_54_UNTOUCHED_BY_THIS: >-
+      Separately confirmed today that browser_navigate is NOT among the 42 tools the
+      tool_count_cap trims, so the planner does see it and ESC-54 remains directive-blindness,
+      not a presentation bug.
+
   TOOL_COUNT_CAP_TRIMS_42_TOOLS_FROM_EVERY_MACHINE_LANE_TURN_2026_08_26:
     status: ESCALATION — evidence complete, NOT changed. The cap is an operator setting.
     what_the_log_says: >-
