@@ -990,6 +990,64 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  D02_2_ITERATION_BUDGET_IS_FULLY_IMPLEMENTED_NOT_MISSING_2026_08_26:
+    map_verdict_was: >-
+      MISSING. "StackOwl: No iteration cap found in the pipeline or the ReAct runner."
+      "Gap: No bound on a runaway loop other than the tool-call breaker."
+    MEASURED_every_element_the_map_lists_EXISTS: >-
+      providers/iteration_budget.py defines IterationBudget with consume / refund / used /
+      refunded / remaining — the "thread-safe consume/refund counter" described as absent. It is
+      constructed in BOTH providers (openai_provider.py:753, anthropic_provider.py:654), so it is
+      not an orphan class. And it FIRES in production: "[openai] complete_with_tools:
+      max_iterations reached" appears 20 times, twice within the last ten minutes.
+      THE GRACE CALL EXISTS TOO, which is the part the map singles out. openai_provider.py:1117
+      — "Phase F — graceful max-out: never return empty. Make ONE final model call WITHOUT tools
+      after a global, language-agnostic wrap-up directive so the user always gets a coherent
+      answer (best result + remaining blocker + next step). Fail-open: any provider error falls
+      back to the last assistant text already gathered, so a hard failure never produces silence
+      here." That is a strictly better contract than "a one-turn grace call", because it also
+      guarantees non-silence when the grace call itself fails.
+    WHY_THE_MAP_MISSED_IT: >-
+      It says it looked "in the pipeline or the ReAct runner". The budget lives in the PROVIDER
+      layer. A search-location miss, not an absence — the same failure this programme's own rule
+      warns about: a negative from a narrow probe is not an absence.
+    verdict: >-
+      Should be PARITY at minimum. The only element not yet confirmed is a SEPARATE subagent cap
+      (the reference uses parent 90 / delegation 50); worth one check before restating the
+      verdict, but it does not change "MISSING" being wrong.
+
+  THE_MAP_ITSELF_IS_THE_FINDING_SEVEN_OF_EIGHT_VERDICTS_WERE_STALE_2026_08_26:
+    why_this_matters_more_than_any_single_item: >-
+      Bakir is prioritising work off REFERENCE_MAP.md's counts. Of the items measured tonight,
+      SEVEN of eight did not survive contact with the numbers:
+        D01.1  its stated REASON is false — the rebuilt prompt reproduces the same bytes
+               (76-98% reuse, 272 distinct prompts across 1,782 turns)
+        D01.2  shipped, but onto anthropic_provider.py while the only live provider is NeraAiRaw
+               on openai_provider.py — cache hit rate 0.00% across 9,168,201 input tokens
+        D01    the whole domain's premise "every turn pays full input price" — every cost line
+               reads $0.000000, self-hosted; the cost is LATENCY
+        D01.5  filed as a LATENT risk; it is LIVE on every turn of the operator's own lane
+               (the one real code win of the night came from this)
+        D05.2  filed MISSING; PresentedToolStore exists and calls itself D05.2 in its docstring
+        D03.2  filed MISSING / "the single largest functional hole"; rollover_summary ran 166
+               times and no call has ever exceeded 24% of the context window
+        D02.2  filed MISSING; fully implemented, wired into both providers, enforcing 20 times
+      Only D01.5 was both accurate about the gap AND worth building — and even there the map had
+      the SEVERITY backwards.
+    THE_PATTERN_IS_NOT_CARELESSNESS: >-
+      Most of these were probably TRUE when written. D03.2 was almost certainly urgent before the
+      dynamic context-window probe fix taught the platform its real window was 262,144 rather
+      than 8,192. D01.2's markers were correct for the provider they were written against. The
+      map is a snapshot of a moving target, and the platform moved.
+    WHAT_TO_DO_WITH_IT: >-
+      Do NOT treat the counts (2 CONFLICT / 46 MISSING / 30 PARTIAL) as a work queue — they are
+      a list of QUESTIONS, and roughly seven in eight currently answer differently than filed.
+      Round 0 before opening ANY item is not process ceremony here; it is the single highest-
+      value step, and tonight it prevented the largest build in the register (D03.2's compressor)
+      on a problem with zero measured instances.
+      RECOMMEND to Bakir: a re-verification pass over the map's MISSING items, cheaper than
+      building any one of them, before more gap work is scheduled.
+
   ESCALATION_CONSENT_FAILS_OPEN_WHEN_IT_CANNOT_ASK_2026_08_26:
     status: STOP-AND-ESCALATE. Authorisation semantics with a red test asserting the opposite.
       NOT touched, NOT decided, and the test was NOT edited to make anything pass.
