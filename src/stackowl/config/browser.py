@@ -36,6 +36,24 @@ class BrowserSettings(BaseModel):
     firefox_user_prefs: dict[str, Any] = Field(default_factory=dict)
     fingerprint_rotation: Literal["per_session", "per_profile", "fixed"] = "per_profile"
 
+    # --- Backend selection (CDP) ---
+    #: Which browser the tools drive. ``local`` launches the bundled
+    #: anti-detection engine, exactly as before this field existed. ``attach``
+    #: connects to a Chromium-family browser already listening on a CDP port —
+    #: on this host or, more usefully, on another one.
+    #:
+    #: WHY IT EXISTS. Measured 2026-08-26: ten browser calls on this box, ZERO
+    #: successes. Not a session leak — the engine kept dying (43 "process gone",
+    #: 17 clean restarts). The reference platform runs the SAME engine and its own
+    #: capability table marks it as the only backend without a CDP surface. The
+    #: engine is not the differentiator; the CONTRACT is. Once the contract is a
+    #: CDP URL the browser does not have to run where the agent runs, and engine
+    #: stability on this box stops being the ceiling.
+    backend: Literal["local", "attach"] = "local"
+    #: CDP endpoint for ``backend="attach"``, e.g. "http://192.168.1.81:9222".
+    #: Chromium-family browsers expose this with --remote-debugging-port.
+    attach_url: str = ""
+
     # --- Recycling / lifecycle ---
     nav_recycle_threshold: int = 200
     idle_recycle_minutes: int = 30

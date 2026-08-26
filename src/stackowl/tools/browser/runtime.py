@@ -40,6 +40,10 @@ class CamoufoxRuntime:
         self._settings = settings
         self._browser: Any = None
         self._manager: Any = None  # AsyncCamoufox context manager handle
+        #: Playwright driver handle, only for backend="attach".
+        self._pw: Any = None
+        #: True when the browser belongs to someone else and must OUTLIVE us.
+        self._attached: bool = False
         self._lock = asyncio.Lock()
         self._nav_count = 0
         self._last_nav: float = time.monotonic()
@@ -152,6 +156,41 @@ class CamoufoxRuntime:
             kwargs["proxy"] = _proxy_to_dict(s.default_proxy)
         return kwargs
 
+    async def _connect_over_cdp(self) -> Any:
+        """Attach to a Chromium-family browser already listening on a CDP port.
+
+        THE POINT IS NOT CHROMIUM, IT IS OFF-BOX. `connect_over_cdp` returns the
+        same Playwright ``Browser`` the local engine yields, so every existing
+        tool, session and snapshot path works against it unchanged — the seam is
+        this one method. What changes is WHERE the browser runs: a host that is
+        not this one, which is the only thing that actually lifts the constraint
+        measured on 2026-08-26 (ten calls, zero successes, an engine that will not
+        stay up).
+
+        WE DO NOT OWN THIS BROWSER. It was running before us and must survive us,
+        so teardown DISCONNECTS and never closes it — see ``_teardown_inside_lock``.
+        """
+        url = str(getattr(self._settings, "attach_url", "") or "").strip()
+        if not url:
+            raise ValueError(
+                "browser.backend='attach' requires browser.attach_url "
+                "(e.g. http://127.0.0.1:9222)"
+            )
+        from playwright.async_api import async_playwright
+
+        self._pw = await async_playwright().start()
+        log.engine.info(
+            "[browser] runtime.attach: connecting",
+            extra={"_fields": {"cdp_url": url}},
+        )
+        browser = await self._pw.chromium.connect_over_cdp(url)
+        self._attached = True
+        log.engine.info(
+            "[browser] runtime.attach: connected",
+            extra={"_fields": {"cdp_url": url, "contexts": len(browser.contexts)}},
+        )
+        return browser
+
     async def start(self) -> None:
         log.engine.info(
             "[browser] runtime.start: entry",
@@ -164,11 +203,14 @@ class CamoufoxRuntime:
                 return
             t0 = time.monotonic()
             try:
-                # Deferred import — camoufox is optional at install time.
-                from camoufox.async_api import AsyncCamoufox
+                if str(getattr(self._settings, "backend", "local")) == "attach":
+                    self._browser = await self._connect_over_cdp()
+                else:
+                    # Deferred import — camoufox is optional at install time.
+                    from camoufox.async_api import AsyncCamoufox
 
-                self._manager = AsyncCamoufox(**self._kwargs_from_settings())  # type: ignore[no-untyped-call]
-                self._browser = await self._manager.__aenter__()
+                    self._manager = AsyncCamoufox(**self._kwargs_from_settings())  # type: ignore[no-untyped-call]
+                    self._browser = await self._manager.__aenter__()
             except Exception as exc:
                 self._unavailable_reason = f"{type(exc).__name__}: {exc}"
                 self.available = False
@@ -196,6 +238,22 @@ class CamoufoxRuntime:
         log.engine.info("[browser] runtime.stop: exit")
 
     async def _teardown_inside_lock(self) -> None:
+        if self._attached:
+            # WE DO NOT OWN THIS BROWSER. `close()` on a CDP-connected handle
+            # disconnects and drops the contexts WE created; it does not stop the
+            # remote browser, which was running before us and must survive us.
+            # Killing an operator's real browser because an agent session ended
+            # would be a far worse defect than a leaked connection.
+            with contextlib.suppress(Exception):
+                await self._browser.close()
+            with contextlib.suppress(Exception):
+                await self._pw.stop()
+            self._browser = None
+            self._pw = None
+            self._attached = False
+            self.available = False
+            log.engine.info("[browser] runtime.attach: disconnected (remote browser left running)")
+            return
         if self._manager is None:
             self._browser = None
             return
