@@ -337,6 +337,34 @@ class TelegramChannelAdapter(ChannelAdapter):
         await stop_bot(self._bot_app)
         log.telegram.debug("[telegram] adapter.stop: exit")
 
+    def feed(self, msg: IngressMessage) -> None:
+        """Enqueue a message as if it had arrived from Telegram.
+
+        The public form of what ``_handle_update`` does at the end of its own
+        work and what ``VoiceConfirmHandler._inject`` already reaches in through
+        ``_queue`` to do. Given a name here so a caller does not have to touch a
+        private attribute to hand this adapter a turn.
+
+        NO AUTHORISATION IS APPLIED HERE, deliberately. ``_handle_update`` checks
+        ``is_authorized`` against the update's real user id before it ever builds
+        an IngressMessage, and a second copy of that rule inside the queue write
+        is exactly the "two copies of one rule" shape that drifts. Callers of
+        ``feed`` carry the check — see ``DevIngressListener``, which applies the
+        same ``is_authorized`` against the same allow-list.
+        """
+        self._queue.put_nowait(msg)
+        # Mirror _handle_update, which records the chat so the reply router has a
+        # target. Only an int is taken: Telegram chat ids ARE ints, and
+        # IngressMessage widens the field to `int | str` for channels whose ids
+        # are strings. Coercing one of those here would point this adapter's
+        # reply at a chat that does not exist.
+        if isinstance(msg.chat_id, int) and not isinstance(msg.chat_id, bool):
+            self._last_chat_id = msg.chat_id
+        log.telegram.info(
+            "[telegram] adapter.feed: enqueued",
+            extra={"_fields": {"trace_id": msg.trace_id, "text_len": len(msg.text)}},
+        )
+
     async def receive(self) -> IngressMessage:
         """Yield the next IngressMessage enqueued by ``_handle_update``."""
         log.telegram.info("[telegram] adapter.receive: entry")

@@ -3303,6 +3303,46 @@ class StartupOrchestrator:
                     telegram_adapter.channel_name, tg_pump, telegram_adapter
                 )
 
+                # A guarded way to inject a turn down this exact path, for
+                # validating a fix against real traffic. It feeds the adapter's
+                # own queue, so an injected message is indistinguishable from one
+                # that arrived over the network — which is the only kind of test
+                # traffic worth having. It authorises with the SAME allow-list
+                # `_handle_update` uses, and it binds its OWN socket: never
+                # core.sock, which the gateway binds and where a second connector
+                # is mistaken for the core reattaching.
+                try:
+                    from stackowl.channels.dev_ingress import (
+                        DevIngressListener,
+                        DevIngressTarget,
+                    )
+                    from stackowl.channels.telegram.helpers import is_authorized
+
+                    _tg_allowed = resolved_tg_settings.allowed_user_ids
+
+                    def _tg_is_allowed(session_key: str) -> bool:
+                        """The channel's own rule, asked — never reimplemented."""
+                        try:
+                            return is_authorized(int(session_key), _tg_allowed)
+                        except (TypeError, ValueError):
+                            return False
+
+                    dev_ingress = DevIngressListener(
+                        StackowlHome.dev_ingress_socket(),
+                        {
+                            telegram_adapter.channel_name: DevIngressTarget(
+                                adapter=telegram_adapter, is_allowed=_tg_is_allowed
+                            )
+                        },
+                    )
+                    await dev_ingress.start()
+                    self._dev_ingress = dev_ingress
+                except Exception as exc:  # B5 — a dev facility never costs boot
+                    log.warning(
+                        "[dev_ingress] could not start — Telegram is unaffected: %s",
+                        exc, exc_info=exc,
+                    )
+
                 try:
                     from stackowl.channels.telegram.callbacks import CallbackRouter
 

@@ -191,6 +191,18 @@ class StackowlHome:
         return cls.home() / "runtime" / "core.sock"
 
     @classmethod
+    def dev_ingress_socket(cls) -> Path:
+        """The guarded developer-ingress socket. Deliberately NOT ``core.sock``.
+
+        A SEPARATE path is the whole point. The gateway BINDS ``core.sock`` and
+        the core dials in as a client, so ``_accept_core`` treats any second
+        connector as the core reattaching and displaces the live link — measured
+        on 2026-08-25, three and a half minutes of lost delivery. Injecting a
+        test turn must never go near it.
+        """
+        return cls.home() / "runtime" / "dev-ingress.sock"
+
+    @classmethod
     def screenshots_dir(cls) -> Path:
         return cls.home() / "screenshots"
 
