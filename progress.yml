@@ -990,6 +990,30 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  TASK_FAILURE_RATE_MEASURED_AND_CLOSED_WITHOUT_WORK_2026_08_26:
+    verdict: NOT AN ITEM. Historical, already resolved. Measured before opening anything.
+    the_alarming_number: >-
+      `tasks` holds 849 failed and 73 dead_letter against 245 completed — 73% failure. I
+      surfaced it incidentally and deliberately did NOT claim it, because a lifetime total says
+      nothing about now.
+    THE_MEASUREMENT_THAT_CLOSED_IT: >-
+      Failed tasks BY DAY: the most recent is 2026-08-15, ELEVEN DAYS AGO. 501 of the 849 sit
+      in just three days — 08-08 (180), 08-12 (177), 08-13 (144). Zero since 08-15. The window
+      matches the loop-autonomy and self-healing work shipped around then, so the failure
+      problem was real and was fixed.
+    AND_THE_CONTROL_because_zero_failures_can_also_mean_zero_work: >-
+      Tasks CREATED per day: 08-26 ten, 08-25 fourteen, 08-20 seventy-two. COMPLETED per day:
+      08-26 six, 08-25 FOURTEEN OF FOURTEEN, 08-19 twenty-one of twenty-one. The platform is
+      both busy and succeeding; the absence of failures is health, not silence. Without this
+      control the first measurement would have been indistinguishable from a dormant queue —
+      the same trap as the "no alternation rejections" probe earlier tonight.
+    one_inconclusive_observation_NOT_a_finding: >-
+      last_failure_class is None for ALL 849 failed rows. That looks like a column nothing
+      populates, which is this codebase's commonest defect — but every one of those rows
+      predates the failure-class work, and there have been no failures since to test it with.
+      INCONCLUSIVE by construction: it cannot be judged until something fails again. Recorded
+      so the next real failure is checked for it rather than this being re-derived from scratch.
+
   THE_BROWSER_IS_100_PERCENT_BROKEN_AND_ESC_54_NOW_ROUTES_EVERYTHING_TO_IT_2026_08_26:
     severity: HIGHEST open item. Not a design gap — a live capability that does not work at all.
     MEASURED: >-
