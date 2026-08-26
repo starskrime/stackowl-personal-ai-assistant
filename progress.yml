@@ -990,6 +990,46 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  D03_2_CONVERSATION_COMPRESSION_ROUND_0_SAYS_DO_NOT_BUILD_IT_2026_08_26:
+    map_verdict_was: >-
+      MISSING. "StackOwl: Nothing. History is assembled fresh in classify each turn." "Gap: the
+      single largest functional hole for long-running sessions." "Ask: This is a big build.
+      Port their compressor design directly, or write ours?"
+    BOTH_HALVES_ARE_WRONG_FOR_THIS_DEPLOYMENT.
+    half_one_it_is_not_NOTHING: >-
+      memory/rollover_summary_handler.py exists, is registered
+      ("[memory] assembly: rollover_summary handler registered", 204 times) and RUNS —
+      "[memory] rollover_summary.execute: entry" fired 166 times in production, writing
+      source_type='conversation_summary' rows. That is conversation-BOUNDARY summarisation.
+      It is genuinely NOT mid-conversation compression, so a gap remains — but it is a much
+      narrower gap than "Nothing", and the existing machinery is where any compression work
+      would attach rather than starting from a blank file. SIXTH stale map verdict.
+    half_two_the_SEVERITY_is_unsupported_and_this_is_the_decisive_part: >-
+      Measured across 2,916 production provider calls:
+        min 13   median 1,487   p90 14,970   max 62,724 input tokens
+        context window 262,144
+        calls over 50% of the window: ZERO
+        calls over 80% of the window: ZERO
+        largest call ever: 23.9% of the window
+      Nothing has ever come close to the window. "The single largest functional hole for
+      long-running sessions" describes a pressure this deployment does not experience. Building
+      a compressor now would be the largest build in the map, aimed at a problem with no
+      measured instance.
+    WHY_IT_LOOKED_URGENT_and_this_is_the_interesting_part: >-
+      It very likely WAS urgent until recently. The dynamic context-window probe fix found
+      NeraAiRaw running at an assumed 8,192 tokens against a real 262,144. Under the wrong
+      figure a 62,724-token call is a catastrophic overflow and compression is existential;
+      under the true one it is a quarter of the window. The map item was probably written while
+      the platform believed the smaller number. A verdict can be correct when written and false
+      by the time it is worked — which is the whole argument for Round 0 before every item.
+    RECOMMENDATION: >-
+      Reclassify D03.2 from MISSING to PARTIAL-NOT-NEEDED-YET, and give it a TRIGGER rather
+      than a build: revisit when any provider call exceeds ~50% of the window. That threshold is
+      cheap to watch — input_tokens is already logged on every call — so the item can wait for
+      evidence instead of speculation. D03.3 (session lineage) inherits the same answer, since
+      it exists to support compression.
+    WHAT_IT_SAVED: the biggest build in the register, on a problem with zero measured instances.
+
   TASK_FAILURE_RATE_MEASURED_AND_CLOSED_WITHOUT_WORK_2026_08_26:
     verdict: NOT AN ITEM. Historical, already resolved. Measured before opening anything.
     the_alarming_number: >-
