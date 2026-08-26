@@ -49,7 +49,11 @@ class BrowserSettings(BaseModel):
     #: engine is not the differentiator; the CONTRACT is. Once the contract is a
     #: CDP URL the browser does not have to run where the agent runs, and engine
     #: stability on this box stops being the ceiling.
-    backend: Literal["local", "attach"] = "local"
+    #: ``managed`` is the SELF-PROVISIONING mode and the one that matters on a
+    #: device we cannot reach: the platform finds a Chromium-family binary, starts
+    #: it headless on a free port, attaches over CDP, and owns the process. No
+    #: operator, no URL to configure, no browser to start by hand.
+    backend: Literal["local", "attach", "managed"] = "local"
     #: CDP endpoint for ``backend="attach"``, e.g. "http://192.168.1.81:9222".
     #: Chromium-family browsers expose this with --remote-debugging-port.
     attach_url: str = ""

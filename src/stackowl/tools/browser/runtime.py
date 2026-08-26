@@ -42,8 +42,15 @@ class CamoufoxRuntime:
         self._manager: Any = None  # AsyncCamoufox context manager handle
         #: Playwright driver handle, only for backend="attach".
         self._pw: Any = None
-        #: True when the browser belongs to someone else and must OUTLIVE us.
+        #: True when we are driving a browser over CDP rather than in-process.
         self._attached: bool = False
+        #: Set only when the PLATFORM started the browser — then it is ours to
+        #: stop. None means the browser was someone else's and must outlive us.
+        self._launched: Any = None
+        #: Consecutive local-engine open failures. Reset on any success.
+        self._local_failures: int = 0
+        #: True once we have escalated, so the decision is logged exactly once.
+        self._escalated: bool = False
         self._lock = asyncio.Lock()
         self._nav_count = 0
         self._last_nav: float = time.monotonic()
@@ -156,6 +163,108 @@ class CamoufoxRuntime:
             kwargs["proxy"] = _proxy_to_dict(s.default_proxy)
         return kwargs
 
+    async def _open_backend(self) -> Any:
+        """Open whichever backend is configured. The ONLY place that decides.
+
+        Every path that needs a browser — cold start, recycle, self-heal — comes
+        through here, so a backend can never be honoured on one path and ignored
+        on another. It was two places for about an hour on 2026-08-26 and the
+        attach backend broke on its first recycle.
+        """
+        backend = self._effective_backend()
+        if backend == "managed":
+            return await self._open_managed_cdp()
+        if backend == "attach":
+            return await self._connect_over_cdp()
+        # Deferred import — the local engine is optional at install time.
+        from camoufox.async_api import AsyncCamoufox
+
+        self._manager = AsyncCamoufox(**self._kwargs_from_settings())  # type: ignore[no-untyped-call]
+        return await self._manager.__aenter__()
+
+    #: Consecutive local-engine failures before the platform stops trying it and
+    #: provisions a CDP browser instead. Two, not one: a single crash is noise, a
+    #: second in a row is a pattern. Measured on this box the real number was 43.
+    _LOCAL_FAILURES_BEFORE_ESCALATION = 2
+
+    def _effective_backend(self) -> str:
+        """The backend to actually open, which is not always the configured one.
+
+        SELF-HEALING, AND IT IS THE POINT OF THE WHOLE FEATURE. Bakir, 2026-08-26:
+        "when we ship it to customer device i will not have access to help." A
+        config flag does not help there — someone has to set it. So when the local
+        engine fails repeatedly the platform stops asking it again and provisions
+        a CDP browser itself.
+
+        It escalates on MEASURED failure, never on a guess, and only in one
+        direction. An explicitly configured backend is honoured as written: if the
+        operator asked for `attach` or `managed`, that is what they get.
+        """
+        configured = str(getattr(self._settings, "backend", "local"))
+        if configured != "local":
+            return configured
+        # MEASURE THE EFFECT, NOT THE CALL. The first version of this counted
+        # failed OPENS and never fired, because the engine opens perfectly well —
+        # measured 2026-08-26 under real traffic: "runtime.recycle: restart ok",
+        # then browser_navigate fails anyway. The engine is not failing to start,
+        # it is failing to BE USABLE, and the observable for that is how often it
+        # had to be recycled. That is the number that hit 43 on this box while
+        # every single restart reported success.
+        if max(self._local_failures, self._recycle_count) >= self._LOCAL_FAILURES_BEFORE_ESCALATION:
+            if not self._escalated:
+                self._escalated = True
+                # INFO and loud: this is the platform changing its own behaviour,
+                # and an operator reading the log later must be able to see that it
+                # happened and why, without being here when it did.
+                log.engine.info(
+                    "[browser] runtime: the local engine failed repeatedly — "
+                    "escalating to a platform-provisioned CDP browser",
+                    extra={"_fields": {
+                        "local_failures": self._local_failures,
+                        "threshold": self._LOCAL_FAILURES_BEFORE_ESCALATION,
+                    }},
+                )
+            return "managed"
+        return "local"
+
+    async def _open_managed_cdp(self) -> Any:
+        """Start our OWN CDP browser and attach to it. No operator required.
+
+        The difference from ``attach`` is ownership, and it is the whole reason
+        this exists separately: nobody has to start a browser or put a URL in
+        config. The platform provisions one, uses it, and stops it — which is the
+        only version of this that works on a device the maintainer cannot reach.
+
+        If no Chromium-family binary exists we fall back to the local engine
+        rather than failing outright, so ``managed`` is always at least as good as
+        ``local`` and never worse.
+        """
+        from stackowl.tools.browser.cdp_launcher import launch_cdp_browser
+
+        launched = await launch_cdp_browser()
+        if launched is None:
+            log.engine.warning(
+                "[browser] runtime: managed backend could not provision a CDP "
+                "browser — falling back to the local engine"
+            )
+            from camoufox.async_api import AsyncCamoufox
+
+            self._manager = AsyncCamoufox(**self._kwargs_from_settings())  # type: ignore[no-untyped-call]
+            return await self._manager.__aenter__()
+
+        from playwright.async_api import async_playwright
+
+        self._pw = await async_playwright().start()
+        browser = await self._pw.chromium.connect_over_cdp(launched.cdp_url)
+        # OURS. Teardown stops the process; an `attach` browser never would.
+        self._launched = launched
+        self._attached = True
+        log.engine.info(
+            "[browser] runtime.managed: attached to a platform-owned browser",
+            extra={"_fields": {"cdp_url": launched.cdp_url, "binary": launched.binary}},
+        )
+        return browser
+
     async def _connect_over_cdp(self) -> Any:
         """Attach to a Chromium-family browser already listening on a CDP port.
 
@@ -203,15 +312,11 @@ class CamoufoxRuntime:
                 return
             t0 = time.monotonic()
             try:
-                if str(getattr(self._settings, "backend", "local")) == "attach":
-                    self._browser = await self._connect_over_cdp()
-                else:
-                    # Deferred import — camoufox is optional at install time.
-                    from camoufox.async_api import AsyncCamoufox
-
-                    self._manager = AsyncCamoufox(**self._kwargs_from_settings())  # type: ignore[no-untyped-call]
-                    self._browser = await self._manager.__aenter__()
+                self._browser = await self._open_backend()
+                self._local_failures = 0
             except Exception as exc:
+                if self._effective_backend() == "local":
+                    self._local_failures += 1
                 self._unavailable_reason = f"{type(exc).__name__}: {exc}"
                 self.available = False
                 log.engine.error(
@@ -248,6 +353,19 @@ class CamoufoxRuntime:
                 await self._browser.close()
             with contextlib.suppress(Exception):
                 await self._pw.stop()
+            if self._launched is not None:
+                # WE started this one, so we stop it. Leaving it running would
+                # leak a browser process on every restart of a long-lived device.
+                from stackowl.tools.browser.cdp_launcher import (
+                    cleanup_profile,
+                    stop_cdp_browser,
+                )
+
+                with contextlib.suppress(Exception):
+                    stop_cdp_browser(self._launched)
+                with contextlib.suppress(Exception):
+                    cleanup_profile(self._launched)
+                self._launched = None
             self._browser = None
             self._pw = None
             self._attached = False
@@ -268,13 +386,32 @@ class CamoufoxRuntime:
             "[browser] runtime.recycle: restarting",
             extra={"_fields": {"reason": reason, "nav_count": self._nav_count}},
         )
+        # COUNT THE ATTEMPT, NOT THE SUCCESS, and count it BEFORE opening.
+        # _recycle_count used to increment only after a successful reopen, while
+        # _effective_backend() is consulted DURING that reopen — so the escalation
+        # check always read a number one behind and needed three deaths to react
+        # to a threshold of two. "How many times did this engine have to be
+        # restarted" is the question, and an attempt answers it.
+        self._recycle_count += 1
         await self._teardown_inside_lock()
         try:
-            from camoufox.async_api import AsyncCamoufox
-
-            self._manager = AsyncCamoufox(**self._kwargs_from_settings())  # type: ignore[no-untyped-call]
-            self._browser = await self._manager.__aenter__()
+            # THE SAME OPENER start() USES. This branch used to hardcode the local
+            # engine, so an ATTACHED runtime recycled by tearing down its CDP
+            # connection and then launching the very engine it was configured to
+            # avoid — measured 2026-08-26, first real turn after attach shipped:
+            # "sessions.open: runtime recycled mid-open" and every browser_navigate
+            # failing with BrowserRuntimeRecycledError. Two copies of one rule, and
+            # only one of them learned about backends.
+            self._browser = await self._open_backend()
+            self._local_failures = 0
         except Exception as exc:
+            # COUNT IT HERE TOO. Almost every real failure on this box arrives
+            # through RECYCLE, not cold start — 43 "process gone" events against
+            # one clean boot. Counting only in start() would leave the escalation
+            # permanently at zero while the engine died all day, which is the
+            # actuator-on-some-paths defect this codebase keeps finding.
+            if self._effective_backend() == "local":
+                self._local_failures += 1
             self._unavailable_reason = f"recycle failed: {type(exc).__name__}: {exc}"
             self.available = False
             log.engine.error(
@@ -286,7 +423,6 @@ class CamoufoxRuntime:
         self.available = True
         self._nav_count = 0
         self._last_nav = time.monotonic()
-        self._recycle_count += 1
         self._last_recycle_at = self._last_nav
         self._last_recycle_reason = reason
         self._attach_disconnect_listener()
