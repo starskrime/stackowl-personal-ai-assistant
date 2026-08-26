@@ -990,6 +990,94 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  MY_TEST_TRAFFIC_CAUSED_A_REAL_AUTHORITY_WIDENING_2026_08_26:
+    WHAT_I_DID_report_this_to_Bakir_first: >-
+      My dev-ingress message asked jobmarket to create an objective. It was refused (the owl
+      did not hold `objective`), the loop returned the turn, and the RECOVERY trace
+      recover-806007b69ecf called owl_build.grant. jobmarket now DURABLY HOLDS `objective` —
+      17 tools where it previously held 16. That is a real, persistent change to Bakir's
+      platform caused by traffic I generated for a test. NOT REVERTED: a grant is
+      authorisation state, and undoing one unilaterally is exactly what the standing rules
+      forbid. His call.
+    THE_SELF_HEALING_WORKED_and_that_is_worth_saying: >-
+      Blocked on a capability -> returned to the loop instead of being closed as done ->
+      recovery acquired the missing capability -> the task can now proceed. That is the ADR-19
+      closed loop doing precisely what it exists to do, observed end to end in production for
+      the first time. The "never give up" path found a real escalation route rather than
+      spinning.
+    THE_BEHAVIOUR_IS_CORRECT_BY_DESIGN: >-
+      consent.py:445 — _PROVENANCE_CATEGORIES (authority widening) are judged by ORIGIN, not
+      attendance: a request arriving on an official gateway channel carries the owner's
+      authority whether or not they are watching. The comment argues it is strictly SAFER than
+      before, because a request with NO official origin is now refused outright where owl_build
+      used to be auto-grantable to an unattended sweep. My injected message had channel
+      "telegram", so it was official by construction. This is the 2026-08-19 authority-vs-action
+      fix working as designed.
+    THE_DEFECT_IS_THE_AUDIT_LINE: >-
+      owl_build.py:952 logs "owl_build.grant: authority WIDENED with the user's approval". The
+      user approved NOTHING in this instance. The consent record for the same event, in the
+      same second, says reason="official_channel" and "authority judged by ORIGIN, not by
+      attendance". Two lines about one event, contradicting each other on the basis for
+      widening authority — and the one that overstates is the AUDIT line, which is what someone
+      reads when asking "why does jobmarket hold `objective`?" They read "the user approved it",
+      stop looking, and never learn the real answer: a message arrived on the official channel
+      and the platform granted it to itself.
+      SAME CLASS AS TODAY'S TIMEOUT LOG ("freed for retry/re-arm" when nothing was freed) — a
+      line asserting something stronger than what happened, sitting exactly where a reader
+      audits. It should state the actual basis. QUEUED as a small honesty fix; the wording also
+      appears in exceptions.py:321 and owls_helpers.py:393, so all three move together or the
+      fix becomes two copies of one rule.
+
+  D01_5_MESSAGE_ROLE_ALTERNATION_the_map_called_it_LATENT_and_it_is_LIVE_2026_08_26:
+    map_verdict_was: MISSING, "Latent provider-compat bug class"
+    what_the_measurement_says: >-
+      NOT LATENT. Running the PRODUCTION parser over the PRODUCTION rows: 2 of 4 live
+      conversations violate alternation, and one is Bakir's own lane, whose history opens
+      A A A A U A U A U A U A U A — four consecutive assistant turns on every turn of his main
+      conversation. What is latent is the REJECTION, not the violation: the only live provider
+      is OpenAI-protocol and tolerates it, while a strict provider rejects such an array
+      outright. This has been shipping every turn and would break on the first strict backend.
+      That is the FIFTH map claim to change on contact with the numbers.
+    the_map_s_own_ASK_answered: >-
+      "Have you seen provider rejections that could be this?" — NO. Zero alternation-related
+      rejections in any log. The probe was verified with a control first: provider errors ARE
+      logged (9,057 hits, including real unreachable/probe-failed/cascade-failed lines), so an
+      alternation rejection would have shown. My first grep returned 217 hits and every one
+      was a false positive — classifier verdicts and shadow-gate messages containing the word
+      "consecutive". Nineteenth false signal.
+    ROOT_CAUSE_and_neither_half_is_a_mistake_alone: >-
+      A stored row is "User: X\n\nAssistant: Y". A SCHEDULED JOB writes one with an EMPTY user
+      half — a daily digest nobody asked for in words. _parse_turns_to_messages skips empty
+      halves, which is CORRECT (a blank-content turn is itself rejected by providers), so such
+      a row contributes a bare assistant message; several in a row produce the observed run.
+      _dedup_assistant_history produces the mirror image: removing a repeated assistant turn
+      from between two user turns leaves U U, measured on goal-owl_lifecycle-jobmarket.
+    MERGE_NEVER_SYNTHESISE: >-
+      merge_consecutive_roles joins a run's contents. Every word actually produced is kept and
+      nothing is invented. The alternative — slipping a placeholder user turn between two
+      assistant turns — puts words in the user's mouth, and a fabricated turn in the history is
+      a worse defect than the one it repairs. The reference platform does synthesise in ONE
+      narrow case (an interrupted tool tail), which is not this case.
+    placement_TWO_sites_and_why: >-
+      classify, AFTER the dedup — because the dedup itself can create the violation it would
+      otherwise be checked for. And execute's final array, because history alternating is not
+      enough: appending the new user turn re-opens the hole whenever history ENDS with a user
+      message, which happens for a turn whose reply was never stored.
+    VALIDATED_ON_LIVE_DATA: >-
+      Conversations violating alternation BEFORE 2, AFTER 0. Bakir's lane
+      AAAAUAUAUAUAUA -> AUAUAUAUAUA. 13 tests, including one built from the real stored row
+      shape through the SAME parser production uses, so the fixture cannot drift from the
+      format it stands for.
+    ESCALATION_PLACEMENT_OF_THE_INVARIANT_do_not_decide: >-
+      The two sites above cover the measured violations, but they are not a GUARANTEE. There is
+      no chokepoint: LLMGateway is not one — 32 call sites in src/ call a provider's
+      complete/complete_with_tools directly, bypassing it. Enforcing the invariant for every
+      path means choosing a home (a provider-base wrapper, a decorator on each provider entry,
+      or accepting per-call-site repair), and placement is not mine to pick unilaterally under
+      the standing rule. Recommendation: a single provider-neutral sanitiser applied at each
+      provider's entry, since that is the last point every path passes and it stays
+      vendor-agnostic.
+
   ESC_54_THE_PLANNER_CAN_NOW_SEE_STANDING_DIRECTIVES_2026_08_26:
     decision: Bakir, "Feed it your directives."
     stages:
