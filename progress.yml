@@ -1020,7 +1020,26 @@ current:
       embedding_registry, the lessons store's embedding_model and ConvergenceDetector's
       embedding_registry — design that exists, works, and is not reached on the path that
       matters. Ninth instance, and the most expensive so far in tokens.
-    FINDING_3_the_metric_ITSELF_is_wired_on_only_some_paths: >-
+    FINDING_3_RETRACTED_the_metric_IS_correctly_wired_everywhere: >-
+      I WAS WRONG, and I caught it only by opening the file to make the "fix". The claim below
+      is retracted and kept because the retraction is the useful part. `complete()` DOES
+      report cached tokens — it passes cached_input_tokens=_cached_input_tokens(usage) to
+      `_record_cost`, which is the actual recording site, three lines under the
+      CompletionResult I was looking at. CompletionResult has no cached_input_tokens FIELD at
+      all (content, input_tokens, output_tokens, model, provider_name, duration_ms), so the
+      argument I was about to add would have raised. All THREE paths record it correctly.
+      WHAT I DID WRONG: I grepped for the argument, saw two call sites carrying it and a third
+      construction call without it, and concluded "actuator on only some paths" because that
+      shape has been right eight times today. Pattern-matching is not measurement. The grep
+      window simply ended above the line that disproved it.
+      WHAT IT MEANS: the 0.00% is REAL, not an artefact. Across 1,782 calls and 9,168,201
+      input tokens the backend reported no cached tokens even once, through a reader that
+      walks four vendor shapes. So the live provider does not report prompt-cache statistics —
+      and D01.1 / D01.3 cannot be validated on this deployment no matter what we change in the
+      prompt, because there is no signal to measure the change against. That is a stronger
+      argument for reclassifying both from CONFLICT to BLOCKED-ON-PROVIDER than the one I
+      originally wrote, and it arrives with the opposite evidence.
+    FINDING_3_ORIGINAL_CLAIM_WRONG_kept_for_the_record: >-
       openai_provider._cached_input_tokens() is a careful reader — it tries
       prompt_tokens_details.cached_tokens (OpenAI), cache_read_input_tokens (Anthropic-style)
       and a flattened cached_tokens. Two call sites use it (lines 556 and 1228). The THIRD,
@@ -1038,13 +1057,20 @@ current:
       per-token bill this platform does not pay, and the two CONFLICT items should be
       re-ranked against latency rather than spend before either is opened.
     ORDER_THIS_IMPLIES: >-
-      Fix Finding 3 first (one argument, makes every later cache claim honest). Then decide
-      whether NeraAiRaw's gateway reports cached_tokens at all — if it does not, D01.1 and
-      D01.3 are unfixable-by-us on this deployment and should be reclassified from CONFLICT to
-      BLOCKED-ON-PROVIDER rather than left at the top of the queue implying urgent work.
+      Finding 3 is RETRACTED, so nothing gates the reading any more: the metric is sound and
+      the zero is real. NeraAiRaw reports no cached_tokens through a reader that already walks
+      four vendor shapes, so D01.1 and D01.3 are unfixable-by-us on this deployment — there is
+      no signal to validate a prompt change against — and both should be reclassified from
+      CONFLICT to BLOCKED-ON-PROVIDER rather than sitting at the top of the queue implying
+      urgent work.
     NOT_YET_MEASURED: >-
-      Whether NeraAiRaw's endpoint returns prompt_tokens_details at all. Finding 3 must ship
-      first, because until it does a zero is indistinguishable from an unread field.
+      Whether NeraAiRaw's endpoint returns prompt_tokens_details at all. The reader handles it
+      if it appears, so this is a question for the gateway operator, not a code change.
+    THE_LESSON_ABOUT_MY_OWN_METHOD: >-
+      Eight confirmed instances of "wired on only some paths" today made the ninth feel
+      certain on sight. It was a grep window ending three lines short. A recurring shape earns
+      a HYPOTHESIS, never a finding — the same discipline the four refuted probes earned, now
+      pointed at pattern-matching instead of at narrow queries.
 
   THE_DUPLICATE_MEMORY_PROBLEM_WAS_NEVER_DUPLICATE_MEMORIES_2026_08_26:
     verdict: >-
