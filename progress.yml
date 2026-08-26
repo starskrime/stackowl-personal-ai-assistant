@@ -990,6 +990,65 @@ current:
       Until then the honest alternative is that he sends the message from his phone — one
       message, and it is genuinely from Telegram.
 
+  THE_DUPLICATE_MEMORY_PROBLEM_WAS_NEVER_DUPLICATE_MEMORIES_2026_08_26:
+    verdict: >-
+      Bakir's complaint — "owls and platform remember duplicate and semantically same facts,
+      memories and preferences, it just adds, adds, adds" — was REAL, and its cause was not
+      what any of us assumed. It was not a missing similarity check. It was the incident-RCA
+      engine writing its OWN internal sub-agent prompts into conversation history from machine
+      lanes. The dedup gate he asked for is a good second line of defence, but the thing that
+      actually stopped the flood was the machine-lane fact guard.
+    THE_MEASUREMENT: |
+      Pre-purge staged_facts backup, 5,212 rows, normalised-exact duplicate census:
+        source_type   conversation          5,102 rows   3,440 duplicate copies   67%
+        source_type   agent_self               50 rows      21 duplicate copies   42%
+        source_type   conversation_summary     50 rows       0                     0%
+        source_type   webpage                  10 rows       1                    10%
+      Split those conversation rows by LANE and the whole picture changes:
+        MACHINE lanes (incident-/goal-/owl:)  4,982 rows   3,429 duplicate copies  69%
+        HUMAN lanes                             120 rows      11 duplicate copies   9%
+      97.6% of the conversation rows were machine-lane. The single largest group is 1,505
+      identical copies of one text, first written 2026-08-11, last 2026-08-23:
+        "User: You are the VERIFIER owl in a fixed-stage incident root-cause analysis..."
+      With, behind it, 346 + 342 + 307 + 263 copies of the EVIDENCE-GATHERER and HYPOTHESIS
+      prompts. These are the platform's own fixed-stage RCA sub-agent prompts, persisted as if
+      they were turns Bakir had typed.
+    WHY_THAT_IS_A_DIFFERENT_BUG_ENTIRELY: >-
+      A similarity gate would have deduplicated 1,505 copies down to 1 and reported a triumph,
+      while the RCA engine went on writing a prompt into the user's conversation history on
+      every single incident. Deduplicating them treats the symptom. The lane guard stops the
+      write. This is the "fix the core, not the symptom" rule arriving from the other
+      direction: the feature he asked for was the right feature and still not the root cause.
+    ALREADY_FIXED_AT_SOURCE: >-
+      The machine-lane fact guard (turn_persist.py, is_machine_lane) shipped earlier today and
+      is confirmed live BY MEASUREMENT, not by reading the diff: staged_facts source_refs
+      written after 2026-08-25T16:00 are ONLY '72055773' (the raw handle) and
+      'outcome:<tool>:<reason>'. Every lane-shaped ref — incident-b5545c2ec371,
+      goal-owl_lifecycle-jobmarket, owl:jobmarket:recovery:task-86b2571 — stops at the fix.
+      Same query closes ESC-17.
+    OPEN_QUESTION_FOR_BAKIR_the_gate_also_runs_on_the_TRANSCRIPT: >-
+      bridge.store() writes source_type='conversation', which is the conversation HISTORY that
+      recent_conversation_turns reads back into the prompt. The gate in stage() runs on those
+      rows too, so a repeated turn is suppressed and the history silently loses it. I did NOT
+      change this, for three reasons: (1) it has never once fired — all 9 gate suppressions in
+      production are the LESSONS gate, zero from the facts gate; (2) in the entire pre-purge
+      backup not one genuine Bakir-typed turn was ever an exact duplicate — the only 4
+      repeated human-lane texts are a machine-issued instruction ("list the existing owls
+      names ... before minting a name"); and (3) narrowing it would trim the CROSS-STORE scope
+      he chose, on a path that loses user data if I am wrong. Unrealised risk, unmeasured
+      benefit, his decision to make.
+      THE OPTION IF HE WANTS IT: exempt source_type 'conversation' and 'conversation_summary'
+      from BOTH the gate and the gate CORPUS. The corpus half is the stronger half — the
+      corpus reads staged_facts ORDER BY rowid DESC LIMIT 200 with no source_type filter, so
+      transcripts crowd real facts out of the window AND a transcript can suppress a real fact.
+    a_hypothesis_measurement_REFUTED: >-
+      I first read those 1,722-char transcript rows as memory pollution and drafted the
+      exemption as a defect fix. The backup census refuted it: 98% of the pre-purge facts WERE
+      source_type='conversation', so exempting conversation would have undone the very fix
+      that addressed his complaint. The tests I wrote today that exercise the gate through
+      store() pin something REAL, not the defect. Twelfth time this programme that a probe
+      looked conclusive and the measurement disagreed.
+
   HANDLER_TIMEOUT_HONEST_LOG_AND_PERIODIC_REAPER_2026_08_25:
     decision: Bakir, "Honest log + periodic reaper" — over hard-cancel and over free-the-row-now.
     stages:
