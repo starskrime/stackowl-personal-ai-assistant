@@ -61,6 +61,7 @@ from stackowl.pipeline.provider_select import (
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState, StepError, ToolCall
 from stackowl.pipeline.step_error import format_step_error
+from stackowl.pipeline.steps.classify import merge_consecutive_roles
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers._react import looks_like_tool_call
@@ -3351,7 +3352,13 @@ async def run(state: PipelineState) -> PipelineState:
         # so only snapshot when one was not already taken.
         return _snapshot_consequential(out) if not out.consequential_snapshot_taken else out
 
-    messages: list[Message] = [*state.history, Message(role="user", content=state.input_text)]
+    # D01.5 — history is already alternating (classify repairs it), but appending
+    # the new user turn re-opens the hole whenever history ENDS with a user
+    # message, which happens for a turn whose reply was never stored. Repair the
+    # FINAL array, because that is the thing the provider actually sees.
+    messages: list[Message] = merge_consecutive_roles(
+        [*state.history, Message(role="user", content=state.input_text)]
+    )
     if state.system_prompt:
         messages = [Message(role="system", content=state.system_prompt), *messages]
 

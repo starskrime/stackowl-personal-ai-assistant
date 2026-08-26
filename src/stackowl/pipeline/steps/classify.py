@@ -574,12 +574,49 @@ async def _gather_lessons(query: str, limit: int = 3, *, owl_name: str = "") -> 
     return result
 
 
+def merge_consecutive_roles(messages: list[Message]) -> list[Message]:
+    """Collapse runs of same-role messages so the array strictly alternates.
+
+    D01.5. Strict providers reject a messages array with two consecutive turns of
+    the same role outright. The live provider tolerates it, which is the only
+    reason this has never surfaced as an error — so the RISK is latent while the
+    VIOLATION is not.
+
+    MEASURED 2026-08-26 by running the real parser over the real stored rows: 2 of
+    4 live conversations violate alternation, and one of them is the operator's own
+    lane, whose history opens ``A A A A`` — four consecutive assistant turns.
+
+    WHY IT HAPPENS: a stored row is ``"User: X\n\nAssistant: Y"``, and a scheduled
+    job writes one with an EMPTY user half (a daily digest nobody asked for in
+    words). ``_parse_turns_to_messages`` skips empty halves — correctly, because a
+    blank-content turn is itself rejected — so such a row contributes a bare
+    assistant message with no user turn before it. Several in a row produce the
+    run above. ``_dedup_assistant_history`` can leave the mirror image (``U U``)
+    by removing an assistant turn from between two user turns.
+
+    MERGE, NOT SYNTHESISE. Joining the run's contents keeps every word the model
+    and the user actually produced and invents nothing. The alternative — slipping
+    a placeholder user turn between two assistant turns — puts words in the user's
+    mouth, and a fabricated turn in the history is a worse defect than the one it
+    repairs.
+    """
+    out: list[Message] = []
+    for msg in messages:
+        if out and out[-1].role == msg.role:
+            out[-1] = Message(role=msg.role, content=f"{out[-1].content}\n\n{msg.content}")
+            continue
+        out.append(msg)
+    return out
+
+
 def _parse_turns_to_messages(contents: list[str]) -> list[Message]:
     """Parse stored "User: X\n\nAssistant: Y" rows into real Message turns.
 
     The store format is fixed by consolidate.py: f"User: {input}\n\nAssistant: {reply}".
     Returns oldest-first user/assistant pairs; skips empty halves so we never
-    emit a blank-content turn (providers reject empty content).
+    emit a blank-content turn (providers reject empty content). Skipping a half is
+    what can break alternation, so the caller repairs it — see
+    :func:`merge_consecutive_roles`.
     """
     msgs: list[Message] = []
     for content in contents:
@@ -639,7 +676,12 @@ async def _gather_history(
             exc_info=exc, extra={"_fields": {"session_key": session_key}},
         )
         return []
-    return _dedup_assistant_history(_parse_turns_to_messages([t.content for t in turns]))
+    # Alternation is repaired AFTER the dedup, because the dedup itself can
+    # remove an assistant turn from between two user turns and create the
+    # violation it would otherwise be checked for.
+    return merge_consecutive_roles(
+        _dedup_assistant_history(_parse_turns_to_messages([t.content for t in turns]))
+    )
 
 
 async def run(state: PipelineState) -> PipelineState:
