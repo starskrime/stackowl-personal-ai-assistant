@@ -94,6 +94,11 @@ class TaskLoop:
         #: Set by enqueue-side code to wake the loop NOW rather than wait out the
         #: tick. The tick is the safety net; this is the fast path.
         self._wake = asyncio.Event()
+        #: Consecutive failed ticks. Reset by the first healthy one.
+        self._consecutive_tick_failures: int = 0
+        #: True once this streak has been escalated, so a repeating failure alerts
+        #: ONCE rather than flooding the channel it is alerting through.
+        self._tick_escalated: bool = False
 
     @property
     def worker_id(self) -> str:
@@ -195,6 +200,62 @@ class TaskLoop:
             with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._wake.wait(), timeout=self._tick_seconds)
 
+    #: Consecutive failed ticks before the loop stops merely logging and ESCALATES.
+    #: Small, because the failure this exists for repeats every few seconds: a
+    #: corrupt DB handle produced 10,238 identical failures in one outage.
+    _TICK_FAILURES_BEFORE_ESCALATION = 20
+
+    def _note_tick_ok(self) -> None:
+        """A healthy tick clears the streak and re-arms the alarm."""
+        if self._consecutive_tick_failures:
+            if self._tick_escalated:
+                log.tasks.info(
+                    "[loop] RECOVERED — ticks are succeeding again",
+                    extra={"_fields": {
+                        "worker": self._worker,
+                        "failures_before_recovery": self._consecutive_tick_failures,
+                    }},
+                )
+            self._consecutive_tick_failures = 0
+            self._tick_escalated = False
+
+    def _note_tick_failed(self, exc: BaseException) -> None:
+        """Turn a repeating failure into ONE loud, actionable signal.
+
+        THE GAP THIS CLOSES was already named three lines above, in the comment on
+        the handler itself: "a tick that dies means work piles up in a table nobody
+        drains, WITH NOTHING REPORTING IT." It then logged at ERROR and continued.
+
+        MEASURED 2026-08-26: a corrupt WAL handle made every tick fail with
+        "DatabaseError: file is not a database". The loop faithfully logged
+        "the loop continues" TEN THOUSAND TWO HUNDRED AND THIRTY-EIGHT times over
+        roughly five and a half hours, during which nothing durable was written and
+        nobody was told. It was found by a human looking at something else.
+
+        Repetition is not reporting. An identical line ten thousand times is
+        indistinguishable from noise, and the reader who most needs it is the one
+        who is not watching. So the streak escalates ONCE, at CRITICAL — the level
+        an operator alerts on — and re-arms only after a healthy tick, so a flapping
+        subsystem cannot re-flood the channel it just alerted through.
+        """
+        self._consecutive_tick_failures += 1
+        if self._tick_escalated:
+            return
+        if self._consecutive_tick_failures < self._TICK_FAILURES_BEFORE_ESCALATION:
+            return
+        self._tick_escalated = True
+        log.tasks.critical(
+            "[loop] CRITICAL — the durable task loop has failed every tick and is "
+            "not draining work; durable tasks are NOT running",
+            exc_info=exc,
+            extra={"_fields": {
+                "worker": self._worker,
+                "consecutive_failures": self._consecutive_tick_failures,
+                "last_error": f"{type(exc).__name__}: {exc}"[:300],
+                "impact": "queued durable tasks are not being executed",
+            }},
+        )
+
     async def tick(self) -> None:
         """One pass: recover, claim, run in parallel, tidy. NEVER raises.
 
@@ -222,6 +283,7 @@ class TaskLoop:
                     *(self._dispatch(r) for r in claimed), return_exceptions=True,
                 )
             await self._store.prune_completed(older_than_days=self._prune_after_days)
+            self._note_tick_ok()
         except Exception as exc:
             # The loop must outlive anything inside it. A tick that dies means work
             # piles up in a table nobody drains, with nothing reporting it.
@@ -229,6 +291,7 @@ class TaskLoop:
                 "[loop] tick failed — the loop continues",
                 exc_info=exc, extra={"_fields": {"worker": self._worker}},
             )
+            self._note_tick_failed(exc)
         if claimed:
             log.tasks.info(
                 "[loop] tick: exit",
