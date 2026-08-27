@@ -1016,7 +1016,40 @@ current:
       (the reference uses parent 90 / delegation 50); worth one check before restating the
       verdict, but it does not change "MISSING" being wrong.
 
-  THE_BROWSER_DIES_BECAUSE_THE_BOX_IS_OUT_OF_MEMORY_NOT_BECAUSE_OF_THE_ENGINE_2026_08_26:
+  RETRACTED_THE_BOX_IS_NOT_OUT_OF_MEMORY_I_MISREAD_free_FOR_available_2026_08_27:
+    THE_RETRACTION: >-
+      I told Bakir the browser dies because the box is out of memory, quoting "178 MB free".
+      THAT WAS A MISREADING. The same line said AVAILABLE 2,528 MB — `free` excludes 2,612 MB
+      of reclaimable page cache, which the kernel hands back on demand. A Linux box with a
+      warm cache always shows low `free`; it is not a shortage, it is the cache doing its job.
+      `available` is the number that answers "can another process get memory", and it never
+      dropped below 2.5 GB all night.
+    THE_MEASUREMENT_THAT_SETTLED_IT: >-
+      Sampled every 2s across a browse request: available went 2,911 -> 2,898 -> 2,936 MB. A
+      THIRTEEN MEGABYTE dip. There was never any pressure.
+      Budget on a customer device, where this Claude session's 1,061 MB does not exist:
+        total 7,607 | StackOwl 2,045 | system/other 344 | LEFT FOR A BROWSER 5,218 MB
+      camoufox measures 224-351 MB and chromium 773 MB across eight processes. Both fit with
+      room to spare, on this box and on a customer's.
+    SO_WHY_DOES_THE_BROWSER_DIE_is_OPEN_AGAIN: >-
+      Not memory. Not the engine either — both engines die. The cause is unidentified and the
+      next investigation should start from that, rather than from either theory I have already
+      offered and withdrawn.
+    WHAT_SURVIVES_and_it_is_worth_keeping: >-
+      The two bugs found while chasing the wrong theory are real and are fixed: the platform
+      was running BOTH engines because a failed __aexit__ was suppressed and left the old one
+      resident, and a dropped CDP socket was being reported as "browser process gone" which
+      triggered a recycle storm. Neither depended on the memory story being true.
+      The self-provisioning work also stands on its own — it is what a customer device needs
+      regardless of why the browser dies here.
+    THE_LESSON_I_KEEP_RELEARNING: >-
+      This is the second time in one session I built a story on a narrow reading and reported
+      it before verifying — the first was claiming curated decay had no actor. Both reached
+      Bakir. A number that looks alarming needs its DEFINITION checked before its size: `free`
+      and `available` differ by two and a half gigabytes here, and I quoted the one that made
+      the story work.
+
+  SUPERSEDED_THE_BROWSER_DIES_BECAUSE_THE_BOX_IS_OUT_OF_MEMORY_2026_08_26:
     A_CORRECTION_I_OWE_BAKIR: >-
       I told him a local Chromium navigated first try while Camoufox was 0-for-10, and leaned
       toward "the engine, not the hardware". THAT LEAN WAS WRONG. Under real platform traffic
