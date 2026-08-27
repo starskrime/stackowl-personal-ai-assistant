@@ -965,7 +965,11 @@ class BrowserTabOpenTool(_BrowserTool):
         if err:
             return _err(err, t0)
         try:
-            sess, page, page_handle = await sessions.get_page(session_id, None)
+            # THE one caller that genuinely wants a new tab — now stated, not
+            # inherited from "no handle happens to create one".
+            sess, page, page_handle = await sessions.get_page(
+                session_id, None, new_page=True
+            )
         except _BROWSER_ERRORS as exc:
             return _browser_failure(
                 f"tab_open failed (session unavailable / page limit reached): {type(exc).__name__}: {exc}",

@@ -1016,6 +1016,41 @@ current:
       (the reference uses parent 90 / delegation 50); worth one check before restating the
       verdict, but it does not change "MISSING" being wrong.
 
+  A_FOURTH_BROWSER_ROOT_CAUSE_BAKIR_FOUND_IT_NOT_ME_2026_08_27:
+    HIS_REPORT: "No idea it alwasy return example domain page."
+    THE_BUG: >-
+      get_page(session_id) with NO page_handle CREATED A NEW PAGE every time. So browser_navigate
+      loaded the target URL on page 1, and the browser_snapshot that followed minted a BLANK page
+      2 and described that. The agent reported whatever the fresh tab showed instead of the site
+      it had just visited. Four tool calls meant four tabs, then
+      "max pages per session reached (4)" killed the session mid-turn.
+      "No handle" now means "the page I am working on", which is what every caller except
+      browser_tab_open actually wants; opening a tab says new_page=True explicitly instead of
+      relying on the accidental default.
+    AND_IT_EXPOSES_AN_OVER_CLAIM_I_MADE: >-
+      I told Bakir "the Cigna dentist task now works" on the strength of
+      "browser_navigate -> succeeded, browser_snapshot -> succeeded". Reading that turn PROPERLY:
+      navigate did return 200, then browser_extract failed with "max pages per session reached
+      (4)", a follow-up navigate timed out, and browser_click failed the same way. The snapshot
+      had succeeded at describing a BLANK TAB. Two green tool outcomes are not a completed task,
+      and I reported the outcomes instead of the result.
+      This is the same error as the SSRF test that stayed green through the outage: I measured
+      the CALL, not the EFFECT. The effect was the page content, and I never looked at it.
+    THE_PROOF_THAT_ACTUALLY_COUNTS: >-
+      Through the real Telegram path, on a page that cannot be confused with example.com:
+      https://httpbin.org/html returned its actual Moby-Dick text word for word — "Availing
+      himself of the mild, summer-cool weather that now reigned in these latitudes ... Perth, the
+      begrimed, blistered old blacksmith" — with navigate/extract/close all succeeding and ONE
+      page open instead of four.
+      NOTE FOR THE NEXT PERSON: example.com and example.org BOTH render "Example Domain" (both are
+      IANA-reserved). Testing navigation with either makes a stale-page bug invisible. Use a page
+      whose content is unmistakable.
+    FOUR_ROOT_CAUSES_STACKED_and_that_is_the_lesson: >-
+      An uncallable SSRF guard, a teardown mistaken for a crash, a leaking session pool, and a
+      leaking page pool. Each masked the next, so every fix produced a NEW symptom rather than a
+      working browser — which is exactly why my early theories (the engine, then memory) kept
+      looking plausible. A system with stacked faults punishes theorising and rewards tracebacks.
+
   RETRACTED_THE_BOX_IS_NOT_OUT_OF_MEMORY_I_MISREAD_free_FOR_available_2026_08_27:
     THE_RETRACTION: >-
       I told Bakir the browser dies because the box is out of memory, quoting "178 MB free".

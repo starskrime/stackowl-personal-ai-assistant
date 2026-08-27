@@ -523,3 +523,93 @@ async def test_reuse_never_hands_back_a_proxied_session() -> None:
 
     fresh = await reg.acquire("local")
     assert fresh != sid, "a proxy-less caller was handed a proxied session"
+
+
+# ---------------------------------------------------------------------------
+# "It always returns the example domain page" — Bakir, 2026-08-27.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_tool_with_no_page_handle_acts_on_the_page_that_was_navigated() -> None:
+    """THE bug behind "it always returns the example domain page".
+
+    ``get_page`` with no handle CREATED A NEW PAGE every time. So
+    browser_navigate loaded the target URL on page 1, and the browser_snapshot
+    that followed minted a blank page 2 and described THAT — the agent reported
+    whatever the fresh tab showed instead of the site it had just visited.
+
+    Measured on a real Cigna directory turn: navigate returned 200, then extract
+    and click both failed with "max pages per session reached (4)", because four
+    tool calls meant four tabs.
+
+    "No handle" means "the page I am working on". Only browser_tab_open wants a
+    new one, and it now says so.
+    """
+    from tests.tools.browser.test_sessions import _FakeRuntime  # type: ignore
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
+
+    reg = BrowserSessionRegistry(_FakeRuntime(), _settings())  # type: ignore[arg-type]
+    sid = await reg.acquire("local")
+
+    _, _, navigated = await reg.get_page(sid)          # browser_navigate
+    _, _, snapshotted = await reg.get_page(sid)        # browser_snapshot
+
+    assert navigated == snapshotted, (
+        "the snapshot ran on a different page than the navigation — that is "
+        "exactly how a stale/blank page gets reported as the result"
+    )
+
+
+@pytest.mark.asyncio
+async def test_repeated_tool_calls_do_not_exhaust_the_page_limit() -> None:
+    """max_concurrent_pages_per_session is 4, so the fifth tool call in one turn
+    used to kill the session. A turn routinely makes more than four."""
+    from tests.tools.browser.test_sessions import _FakeRuntime  # type: ignore
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
+
+    reg = BrowserSessionRegistry(_FakeRuntime(), _settings())  # type: ignore[arg-type]
+    sid = await reg.acquire("local")
+
+    for _ in range(10):
+        await reg.get_page(sid)
+
+    assert len(reg._sessions[sid].pages) == 1, (
+        f"ten tool calls opened {len(reg._sessions[sid].pages)} pages"
+    )
+
+
+@pytest.mark.asyncio
+async def test_opening_a_tab_is_still_possible_and_now_explicit() -> None:
+    """Reuse must not remove the ability to open a second tab — browser_tab_open
+    is a real feature. It just has to ASK for it."""
+    from tests.tools.browser.test_sessions import _FakeRuntime  # type: ignore
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
+
+    reg = BrowserSessionRegistry(_FakeRuntime(), _settings())  # type: ignore[arg-type]
+    sid = await reg.acquire("local")
+
+    _, _, first = await reg.get_page(sid)
+    _, _, tab = await reg.get_page(sid, None, new_page=True)
+
+    assert tab != first
+    assert len(reg._sessions[sid].pages) == 2
+
+
+@pytest.mark.asyncio
+async def test_naming_a_handle_still_selects_that_exact_page() -> None:
+    """Multi-tab work depends on it: after opening a tab, tools must be able to
+    address either one."""
+    from tests.tools.browser.test_sessions import _FakeRuntime  # type: ignore
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
+
+    reg = BrowserSessionRegistry(_FakeRuntime(), _settings())  # type: ignore[arg-type]
+    sid = await reg.acquire("local")
+    _, _, first = await reg.get_page(sid)
+    _, _, tab = await reg.get_page(sid, None, new_page=True)
+
+    _, _, back = await reg.get_page(sid, first)
+    assert back == first
+
+    _, _, now_current = await reg.get_page(sid)
+    assert now_current == first, "naming a page should make it the current one"

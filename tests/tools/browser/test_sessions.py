@@ -295,13 +295,36 @@ class TestPageHandles:
         assert page1 is page2
 
     async def test_max_pages_per_session_enforced(self, settings: BrowserSettings) -> None:
+        """The cap is real and still enforced — but only TABS count against it.
+
+        This used to call ``get_page(sid, None)`` three times and expect the third
+        to raise, which pinned the defect Bakir reported as "it always returns the
+        example domain page": no handle CREATED A NEW PAGE, so browser_navigate
+        loaded a URL on page 1 and the browser_snapshot after it described a blank
+        page 2. Four ordinary tool calls exhausted the session.
+
+        Opening a tab is now explicit, so the cap applies to what it was always
+        for — actual tabs — and ordinary tool calls reuse the current page.
+        """
         runtime = _FakeRuntime()
         reg = BrowserSessionRegistry(runtime, settings)  # type: ignore[arg-type]
         sid = await reg.open("alice")
-        await reg.get_page(sid, None)
-        await reg.get_page(sid, None)
+        await reg.get_page(sid, None, new_page=True)
+        await reg.get_page(sid, None, new_page=True)
         with pytest.raises(BrowserSessionLimitError):
+            await reg.get_page(sid, None, new_page=True)
+
+    async def test_ordinary_tool_calls_do_not_count_against_the_page_cap(
+        self, settings: BrowserSettings
+    ) -> None:
+        """The other half, and the one that was broken: a turn makes many tool
+        calls and must not run out of pages doing so."""
+        runtime = _FakeRuntime()
+        reg = BrowserSessionRegistry(runtime, settings)  # type: ignore[arg-type]
+        sid = await reg.open("alice")
+        for _ in range(10):
             await reg.get_page(sid, None)
+        assert len(reg._sessions[sid].pages) == 1
 
 
 class TestEviction:

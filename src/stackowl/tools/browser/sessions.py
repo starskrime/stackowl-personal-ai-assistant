@@ -147,6 +147,11 @@ class BrowserSession:
     created_at: float = field(default_factory=time.monotonic)
     last_activity: float = field(default_factory=time.monotonic)
     nav_count: int = 0
+    #: The page the tools should act on when the caller names none. Without it,
+    #: "no page_handle" meant "make a new page", so browser_navigate loaded a URL
+    #: on page 1 and browser_snapshot then minted a BLANK page 2 and described
+    #: that — which is why the browser appeared to return the wrong page.
+    current_handle: str | None = None
     #: Whether this context was opened through a proxy. Recorded because
     #: ``acquire`` must never hand a proxy-less caller a session with a different
     #: egress IP — that is a privacy defect, and without this field the answer
@@ -429,15 +434,47 @@ class BrowserSessionRegistry:
         sess.touch()
         return sess
 
-    async def get_page(self, session_id: str, page_handle: str | None = None) -> tuple[BrowserSession, Any, str]:
-        """Return (session, page, page_handle). Creates a new Page if no handle given.
+    async def get_page(
+        self,
+        session_id: str,
+        page_handle: str | None = None,
+        *,
+        new_page: bool = False,
+    ) -> tuple[BrowserSession, Any, str]:
+        """Return (session, page, page_handle) — the session's CURRENT page by default.
+
+        WHAT THIS USED TO DO, and it is the bug Bakir reported as "it always
+        returns the example domain page": with no handle it created a NEW page,
+        every time. So ``browser_navigate`` loaded the target URL on page 1, and
+        the ``browser_snapshot`` that followed minted a blank page 2 and described
+        THAT. The agent then reported whatever the fresh tab showed rather than the
+        site it had just visited. After four such calls the session died with
+        "max pages per session reached (4)" — measured on a real Cigna directory
+        turn: navigate 200 OK, then extract and click both refused.
+
+        "No handle" means "the page I am working on", which is what every caller
+        except ``browser_tab_open`` actually wants. Opening a tab is now stated
+        explicitly with ``new_page=True`` instead of being the accidental default.
 
         Enforces max_concurrent_pages_per_session.
         """
         sess = await self.get(session_id)
         async with sess.lock:
             if page_handle is not None and page_handle in sess.pages:
+                sess.current_handle = page_handle
                 return sess, sess.pages[page_handle], page_handle
+            if not new_page and page_handle is None:
+                current = sess.current_handle
+                if current is not None and current in sess.pages:
+                    page = sess.pages[current]
+                    if not getattr(page, "is_closed", lambda: False)():
+                        sess.touch()
+                        log.engine.debug(
+                            "[browser] sessions.get_page: reusing the current page",
+                            extra={"_fields": {"session_id": session_id,
+                                               "page_handle": current}},
+                        )
+                        return sess, page, current
             if len(sess.pages) >= self._settings.max_concurrent_pages_per_session:
                 raise BrowserSessionLimitError(
                     f"max pages per session reached ({self._settings.max_concurrent_pages_per_session})"
@@ -445,6 +482,7 @@ class BrowserSessionRegistry:
             page = await sess.context.new_page()
             handle = page_handle or uuid.uuid4().hex[:8]
             sess.pages[handle] = page
+            sess.current_handle = handle
             self._wire_page_observers(sess, page, handle)
             sess.touch()
             log.engine.debug(
