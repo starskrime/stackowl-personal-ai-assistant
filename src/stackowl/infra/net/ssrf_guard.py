@@ -26,7 +26,12 @@ from urllib.parse import urlsplit
 from stackowl.exceptions import StackOwlError
 from stackowl.infra.observability import log
 
-__all__ = ["SsrfBlockedError", "SsrfGuard", "guard_playwright_navigation"]
+__all__ = [
+    "SsrfBlockedError",
+    "SsrfGuard",
+    "guard_playwright_navigation",
+    "make_route_guard",
+]
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 # RFC 6598 carrier-grade NAT — NOT flagged by ipaddress.is_private on every
@@ -199,6 +204,39 @@ def _path_only(url: str) -> str:
     if not p.scheme or not p.netloc:
         return url.split("?", 1)[0].split("#", 1)[0]
     return f"{p.scheme}://{p.netloc}{p.path}"
+
+
+def make_route_guard(guard: SsrfGuard | None = None) -> Any:
+    """A route handler Playwright can actually CALL. Use this, never the raw guard.
+
+    THE BUG THIS EXISTS TO PREVENT, measured 2026-08-27. Playwright inspects a
+    route handler's arity to decide between ``handler(route)`` and
+    ``handler(route, request)``. ``guard_playwright_navigation`` declares TWO
+    parameters — ``route`` and the keyword-only ``guard`` — so Playwright counted
+    two and called it with ``(route, request)``. ``guard`` is keyword-only, so
+    every call raised::
+
+        TypeError: guard_playwright_navigation() takes 1 positional argument
+                   but 2 were given
+
+    It was registered with ``ctx.route("**/*", ...)``, i.e. on EVERY REQUEST of
+    every interactive browser session. So every navigation failed, browser_navigate
+    timed out, the runtime was declared dead, and the recycle storm followed. The
+    browser was not broken and neither was the engine — this was.
+
+    `web_fetch` never hit it because it happened to wrap the guard in a one-argument
+    function. That accident is why web_fetch worked all night while the browser did
+    not, which is the single clearest evidence for what was wrong.
+
+    Returning a closure with exactly one positional parameter makes the arity
+    unambiguous, and gives all three call sites one shape to share instead of each
+    inventing its own wrapper.
+    """
+
+    async def _handler(route: Any) -> None:
+        await guard_playwright_navigation(route, guard=guard)
+
+    return _handler
 
 
 async def guard_playwright_navigation(route: Any, *, guard: SsrfGuard | None = None) -> None:

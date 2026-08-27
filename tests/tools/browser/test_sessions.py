@@ -94,8 +94,20 @@ class TestOpenAndClose:
 
     async def test_open_attaches_ssrf_route_guard(self, settings: BrowserSettings) -> None:
         """FX-05 — every new session gets the shared SSRF navigation guard, not
-        just the hostname allowlist checked separately by browse.py."""
-        from stackowl.infra.net.ssrf_guard import guard_playwright_navigation
+        just the hostname allowlist checked separately by browse.py.
+
+        THIS TEST USED TO ASSERT THE WRONG THING, and it is why the browser was
+        unusable for a whole session while every test stayed green. It checked
+        ``handler is guard_playwright_navigation`` — that the guard was ATTACHED.
+        It was. It was also uncallable: Playwright counts a handler's parameters
+        to choose between ``handler(route)`` and ``handler(route, request)``, the
+        raw guard declares two (``route`` plus a KEYWORD-ONLY ``guard``), so every
+        request raised TypeError and every navigation failed.
+
+        Identity was never the property worth pinning. CALLABILITY is. Measure the
+        effect, not the call.
+        """
+        import inspect
 
         runtime = _FakeRuntime()
         reg = BrowserSessionRegistry(runtime, settings)  # type: ignore[arg-type]
@@ -104,7 +116,14 @@ class TestOpenAndClose:
         assert ctx.routes, "no route handler attached to the new browser context"
         pattern, handler = ctx.routes[0]
         assert pattern == "**/*"
-        assert handler is guard_playwright_navigation
+
+        params = list(inspect.signature(handler).parameters.values())
+        assert len(params) == 1, (
+            "the attached handler declares "
+            f"{[p.name for p in params]} — Playwright counts parameters to decide "
+            "how to invoke it, so anything but one means it is called wrongly and "
+            "every request in this session fails"
+        )
 
     async def test_close_removes_session(self, settings: BrowserSettings) -> None:
         runtime = _FakeRuntime()

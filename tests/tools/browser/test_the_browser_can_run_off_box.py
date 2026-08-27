@@ -42,6 +42,27 @@ import pytest
 from stackowl.config.browser import BrowserSettings
 
 
+
+def _teardown_source(runtime_mod: Any) -> str:
+    """Teardown source across however many methods it is split into.
+
+    These assertions pin BEHAVIOUR — ownership, and not swallowing a failed
+    shutdown — not a method name. Reading one method broke them the moment the
+    body moved to a helper, which is the "a test that names a member of something
+    it does not own will rot" lesson arriving in my own tests the same day I wrote
+    it down.
+    """
+    import inspect
+
+    rt = runtime_mod.CamoufoxRuntime
+    parts = []
+    for name in ("_teardown_inside_lock", "_teardown_body"):
+        fn = getattr(rt, name, None)
+        if fn is not None:
+            parts.append(inspect.getsource(fn))
+    return "\n".join(parts)
+
+
 def _settings(**kw: Any) -> BrowserSettings:
     base: dict[str, Any] = {"headless_mode": "true"}
     base.update(kw)
@@ -236,7 +257,7 @@ def test_ownership_decides_teardown() -> None:
 
     from stackowl.tools.browser import runtime as runtime_mod
 
-    src = inspect.getsource(runtime_mod.CamoufoxRuntime._teardown_inside_lock)
+    src = _teardown_source(runtime_mod)
     assert "_launched is not None" in src, (
         "teardown must branch on OWNERSHIP, not on whether a CDP connection exists"
     )
@@ -349,10 +370,82 @@ def test_a_failed_engine_shutdown_is_logged_not_swallowed() -> None:
 
     from stackowl.tools.browser import runtime as runtime_mod
 
-    src = inspect.getsource(runtime_mod.CamoufoxRuntime._teardown_inside_lock)
+    src = _teardown_source(runtime_mod)
     local_half = src.split("if self._manager is None")[-1]
     assert "contextlib.suppress" not in local_half, (
         "a failed engine shutdown must be reported — it leaves a process holding "
         "memory on a device that has none to spare"
     )
     assert "may still be running" in local_half
+
+
+# ---------------------------------------------------------------------------
+# The recycle storm — root cause, traced 2026-08-27.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_our_own_teardown_is_not_mistaken_for_a_browser_death() -> None:
+    """THE root cause of the browser being unusable on this box.
+
+    Playwright emits `disconnected` whenever the browser closes — INCLUDING when
+    we close it ourselves. The handler treated both alike, so every deliberate
+    teardown announced "browser process gone", set available=False and fired the
+    on-recycled callbacks, which purge every session and bump the generation. An
+    in-flight sessions.open then failed with BrowserRuntimeRecycledError,
+    ensure_available saw a dead runtime and recycled again, and THAT recycle's
+    teardown fired the same cascade.
+
+    It is why both engines appeared to die: they did not. Traced from the emission
+    stack — Browser._on_close -> our lambda -> _mark_disconnected — during a
+    teardown we initiated, on a browser that navigated successfully right after.
+    """
+    from stackowl.tools.browser.runtime import CamoufoxRuntime
+
+    rt = CamoufoxRuntime(_settings())
+    fired: list[str] = []
+    rt.register_on_recycled(lambda: fired.append("purge"))
+    rt.available = True
+
+    rt._closing = True
+    rt._mark_disconnected()
+
+    assert fired == [], (
+        "a deliberate close fired the recycled callbacks — that purges every "
+        "session and bumps the generation, which is the recycle storm"
+    )
+    assert rt.available is True, "our own teardown must not mark the runtime dead"
+
+
+@pytest.mark.asyncio
+async def test_an_UNEXPECTED_disconnect_is_still_treated_as_a_death() -> None:
+    """The other half. Suppressing our own closes must not blind the runtime to a
+    browser that genuinely crashed — that is what the self-healing exists for."""
+    from stackowl.tools.browser.runtime import CamoufoxRuntime
+
+    rt = CamoufoxRuntime(_settings())
+    fired: list[str] = []
+    rt.register_on_recycled(lambda: fired.append("purge"))
+    rt.available = True
+    rt._browser = object()  # type: ignore[assignment]
+
+    rt._closing = False
+    rt._mark_disconnected()
+
+    assert fired == ["purge"], "a real crash must still purge sessions"
+    assert rt.available is False
+
+
+def test_the_closing_flag_is_always_lowered() -> None:
+    """A flag left raised would blind the runtime to every later crash, which is a
+    worse failure than the storm it prevents. The teardown wraps the body in
+    try/finally for exactly that."""
+    import inspect
+
+    from stackowl.tools.browser import runtime as runtime_mod
+
+    src = inspect.getsource(runtime_mod.CamoufoxRuntime._teardown_inside_lock)
+    assert "finally" in src and "_closing = False" in src, (
+        "the wrapper itself must lower the flag; this one deliberately reads the "
+        "OUTER method, because that is where the guarantee lives"
+    )

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.infra.net.ssrf_guard import guard_playwright_navigation
+from stackowl.infra.net.ssrf_guard import make_route_guard
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import HandlerRegistry, JobHandler, TriggerKind
 from stackowl.scheduler.job import Job, JobResult
@@ -100,7 +100,7 @@ class CredentialRotationHandler(JobHandler):
             )
             # FX-05 follow-up — bypasses BrowserSessionRegistry.open(), so the
             # per-redirect-hop SSRF guard must be attached here directly.
-            await ctx.route("**/*", guard_playwright_navigation)
+            await ctx.route("**/*", make_route_guard())
             page = await ctx.new_page()
             await page.goto(check_url, wait_until="domcontentloaded", timeout=30_000)
             await self._runtime.record_navigation()

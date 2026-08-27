@@ -51,6 +51,9 @@ class CamoufoxRuntime:
         self._local_failures: int = 0
         #: True once we have escalated, so the decision is logged exactly once.
         self._escalated: bool = False
+        #: True only while WE are deliberately closing the browser, so the
+        #: disconnect event it emits is not mistaken for an unexpected death.
+        self._closing: bool = False
         self._lock = asyncio.Lock()
         self._nav_count = 0
         self._last_nav: float = time.monotonic()
@@ -87,7 +90,28 @@ class CamoufoxRuntime:
                 )
 
     def _mark_disconnected(self) -> None:
-        """Sync handler for Playwright's disconnect event. Just flips state + fires callbacks."""
+        """Sync handler for Playwright's disconnect event.
+
+        ONLY AN *UNEXPECTED* DISCONNECT IS A DEATH. Playwright emits
+        ``disconnected`` whenever the browser closes — including when WE close it
+        on purpose. This handler used to treat both the same, so every deliberate
+        teardown announced "browser process gone", set available=False and fired
+        the on-recycled callbacks, which purge every session and bump the
+        generation. An in-flight ``sessions.open`` then failed with
+        BrowserRuntimeRecycledError, ``ensure_available`` saw a dead runtime and
+        recycled again, and that recycle's own teardown fired the same cascade.
+
+        THAT IS THE RECYCLE STORM, and it is why BOTH engines appeared to die on
+        this box: they did not. Traced 2026-08-27 from the emission stack —
+        Browser._on_close -> our lambda -> here — during a teardown we initiated,
+        on a browser that navigated successfully immediately afterwards.
+        """
+        if self._closing:
+            # We asked for this. Not a death, not an incident, no callbacks.
+            log.engine.debug(
+                "[browser] runtime.disconnect: expected — we closed it ourselves"
+            )
+            return
         if not self.available and self._browser is None:
             return  # already known dead
         if self._attached:
@@ -374,6 +398,13 @@ class CamoufoxRuntime:
         log.engine.info("[browser] runtime.stop: exit")
 
     async def _teardown_inside_lock(self) -> None:
+        self._closing = True
+        try:
+            await self._teardown_body()
+        finally:
+            self._closing = False
+
+    async def _teardown_body(self) -> None:
         if self._attached:
             # WE DO NOT OWN THIS BROWSER. `close()` on a CDP-connected handle
             # disconnects and drops the contexts WE created; it does not stop the

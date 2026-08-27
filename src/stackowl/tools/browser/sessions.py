@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from stackowl.config.browser import BrowserSettings, ProxyConfig
-from stackowl.infra.net.ssrf_guard import guard_playwright_navigation
+from stackowl.infra.net.ssrf_guard import make_route_guard
 from stackowl.infra.observability import log
 from stackowl.tools.browser.runtime import CamoufoxRuntime
 
@@ -312,7 +312,7 @@ class BrowserSessionRegistry:
             # fail the session open, not silently hand back an unguarded context
             # (same "fail closed, not fail silent" posture as open_context's own
             # errors above, which already propagate through this try).
-            await ctx.route("**/*", guard_playwright_navigation)
+            await ctx.route("**/*", make_route_guard())
             session_id = uuid.uuid4().hex
             sess = BrowserSession(
                 session_id=session_id,
