@@ -238,12 +238,78 @@ async def test_prompter_exception_fails_closed() -> None:
     assert await policy.request(tool_name="t", channel="cli", session_key="s1") is False
 
 
-async def test_unknown_channel_in_routing_fails_closed() -> None:
+async def test_a_channel_with_no_UX_routes_to_the_AUTONOMOUS_GRANT() -> None:
+    """A turn nobody can be asked about is GRANTED, not refused. Bakir's call,
+    2026-08-27, when this disagreement was put to him.
+
+    THIS TEST USED TO ASSERT THE OPPOSITE and had been red for some time. The
+    name said "fails_closed" and the code said otherwise:
+
+        [consent] RoutingPrompter: no channel UX — routing to the autonomous
+                  grant instead of denying unasked
+        [consent] autonomous grant — no human attached to this turn
+
+    THE DISAGREEMENT WAS REAL, which is why it was escalated rather than fixed.
+    The 2026-08-19 record describes the defect this replaced as "authz was
+    INVERTED (denied attended, granted UNATTENDED)" — and granting unattended is
+    what this path does. Either that wording was loose or a fix had
+    over-corrected, and guessing on a consent path is not a call to automate.
+
+    HIS ANSWER: grant is intended. An assistant whose whole purpose is to work
+    while its owner sleeps cannot refuse every turn its owner is not watching —
+    that would make unattended operation impossible, which is the failure the
+    2026-08-19 work existed to remove.
+
+    THE TEST IS REWRITTEN, NOT DELETED. A security test that vanishes leaves no
+    record of what was chosen, and the next person to read this path deserves the
+    reasoning rather than silence. Note the CONTRAST that makes this safe: the
+    OTHER consent path, authority_widening, is judged by official-channel ORIGIN
+    and refuses outright when there is no official origin — so "no human present"
+    is not a skeleton key, it is one branch with a stated rationale.
+    """
     from stackowl.tools.consent import RoutingPrompter
 
-    routing = RoutingPrompter()  # nothing registered
+    routing = RoutingPrompter()  # nothing registered — nobody to ask
     policy = ConsentPolicy(prompter=routing)
-    assert await policy.request(tool_name="t", channel="telegram", session_key="s1") is False
+
+    granted = await policy.request(tool_name="t", channel="telegram", session_key="s1")
+
+    assert granted is True, (
+        "an unattended turn must not be refused merely because no channel UX is "
+        "registered — that stops the platform working whenever its owner is away"
+    )
+
+
+async def test_authority_widening_with_NO_official_origin_is_still_refused() -> None:
+    """The contrast that makes the autonomous grant safe — asserted, not assumed.
+
+    The test above explains that "no human present" is not a skeleton key,
+    because authority_widening is judged by official-channel ORIGIN and refuses
+    when there is none. That claim was sitting in a DOCSTRING, and prose that
+    vouches for behaviour is the exact failure this codebase kept finding today:
+    a comment said browser_dialog wanted `conversation_id`, a stub docstring said
+    ParliamentOrchestrator took `conversation_id`, and a test asserted an SSRF
+    guard was attached while it was uncallable. Each was believed.
+
+    So the contrast is executable now. If a later change lets authority widen
+    from an unofficial origin, this fails here rather than in production.
+    """
+    from stackowl.tools.consent import RoutingPrompter
+
+    policy = ConsentPolicy(prompter=RoutingPrompter())
+
+    granted = await policy.request(
+        tool_name="owl_build",
+        channel="",                      # no channel => no official origin
+        session_key="s1",
+        category="authority_widening",
+    )
+
+    assert granted is False, (
+        "authority was widened from a request with no official origin — the "
+        "autonomous grant is meant to cover unattended WORK, not unattended "
+        "privilege escalation"
+    )
 
 
 # ---------------------------------------------------------------------------
