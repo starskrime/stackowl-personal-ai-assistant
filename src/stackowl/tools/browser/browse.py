@@ -341,7 +341,13 @@ class BrowserBrowseTool(Tool):
                         )
                         try:
                             await runtime.ensure_available()
-                            session_id = await sessions.open(owner_key)
+                            # acquire, not open: this is RECOVERY after a purge,
+                            # so any live session for this owner is exactly what we
+                            # want. Opening unconditionally here burns a slot on
+                            # every recycle, and a recycle storm then exhausts the
+                            # cap — which is how "browser runtime unavailable"
+                            # was reached with a perfectly healthy runtime.
+                            session_id = await sessions.acquire(owner_key)
                             _, page, page_handle = await sessions.get_page(session_id, None)
                             if last_navigated_url:
                                 await page.goto(

@@ -227,7 +227,7 @@ class BrowserNavigateTool(_BrowserTool):
         async def _do() -> tuple[Any, Any, str, int, str, str | None]:
             sid_local = session_id
             if sid_local is None:
-                sid_local = await sessions.open(
+                sid_local = await sessions.acquire(
                     _owner_key_from_state(),
                     profile_name=str(profile_name) if profile_name else None,
                 )
@@ -235,7 +235,7 @@ class BrowserNavigateTool(_BrowserTool):
                 sess_local, page_local, handle_local = await sessions.get_page(str(sid_local))
             except Exception:
                 # Session may have been purged by a runtime recycle — reopen.
-                sid_local = await sessions.open(
+                sid_local = await sessions.acquire(
                     _owner_key_from_state(),
                     profile_name=str(profile_name) if profile_name else None,
                 )

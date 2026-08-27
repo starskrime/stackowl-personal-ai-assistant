@@ -147,6 +147,11 @@ class BrowserSession:
     created_at: float = field(default_factory=time.monotonic)
     last_activity: float = field(default_factory=time.monotonic)
     nav_count: int = 0
+    #: Whether this context was opened through a proxy. Recorded because
+    #: ``acquire`` must never hand a proxy-less caller a session with a different
+    #: egress IP — that is a privacy defect, and without this field the answer
+    #: would have to be guessed.
+    used_proxy: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def touch(self) -> None:
@@ -263,6 +268,60 @@ class BrowserSessionRegistry:
             await self.close(sid)
         return len(to_evict)
 
+    async def acquire(
+        self,
+        owner_key: str,
+        *,
+        profile_name: str | None = None,
+        proxy: ProxyConfig | None = None,
+    ) -> str:
+        """A session for this owner — REUSING a live one when there is one.
+
+        USE THIS, NOT ``open``, whenever the caller has no particular session in
+        hand. ``open`` allocates unconditionally, which is right when a caller
+        genuinely wants a fresh isolated context and wrong for the common case.
+
+        WHY IT EXISTS. Measured 2026-08-27, immediately after browser navigation
+        started working at all: TEN opens, FOUR closes, and every one of them for
+        owner_key "local" with a different session id. The atomic tools call
+        ``open`` whenever the model omits ``session_id`` — which is most turns,
+        since it is optional — so each navigation burned a slot that nothing frees
+        for the 30-minute idle TTL. The eighth turn hit
+        ``max concurrent browser sessions reached (8)`` and every browser call
+        after it failed. The tools reported "browser runtime unavailable" and the
+        runtime was perfectly healthy.
+
+        THE MODEL SHOULD NOT HAVE TO REMEMBER. Threading a session id across turns
+        is exactly the kind of bookkeeping an agent forgets, and the failure it
+        produces looks like a broken browser rather than a leaked handle. Making
+        reuse the default removes the requirement instead of documenting it.
+
+        Reuse is CONDITIONAL, because a session carries identity: only a session
+        with the same profile is reused, and never one that asked for a proxy —
+        silently handing back a context with different fingerprinting or a
+        different egress IP would be a privacy defect, not a convenience.
+        """
+        log.engine.debug(
+            "[browser] sessions.acquire: entry",
+            extra={"_fields": {"owner_key": owner_key, "profile_name": profile_name}},
+        )
+        if proxy is None:
+            async with self._registry_lock:
+                for sid, sess in self._sessions.items():
+                    if sess.owner_key != owner_key:
+                        continue
+                    if sess.profile_name != profile_name:
+                        continue
+                    if sess.used_proxy:
+                        continue
+                    sess.touch()
+                    log.engine.info(
+                        "[browser] sessions.acquire: reusing this owner's live session",
+                        extra={"_fields": {"owner_key": owner_key, "session_id": sid}},
+                    )
+                    return sid
+        return await self.open(owner_key, profile_name=profile_name, proxy=proxy)
+
     async def open(
         self,
         owner_key: str,
@@ -318,6 +377,7 @@ class BrowserSessionRegistry:
                 session_id=session_id,
                 owner_key=owner_key,
                 profile_name=profile_name,
+                used_proxy=proxy is not None,
                 context=ctx,
             )
             # COMMIT under the lock, re-validating the recycle generation.

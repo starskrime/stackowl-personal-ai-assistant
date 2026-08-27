@@ -449,3 +449,77 @@ def test_the_closing_flag_is_always_lowered() -> None:
         "the wrapper itself must lower the flag; this one deliberately reads the "
         "OUTER method, because that is where the guarantee lives"
     )
+
+
+# ---------------------------------------------------------------------------
+# Session reuse — the cause of "browser runtime unavailable" on a healthy runtime.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_second_call_for_the_same_owner_reuses_its_session() -> None:
+    """THE leak. Measured 2026-08-27, right after navigation started working:
+    TEN opens, FOUR closes, every one for owner "local" with a different session
+    id. The atomic tools called open() whenever the model omitted session_id —
+    most turns, since it is optional — so each navigation burned a slot nothing
+    frees for the 30-minute idle TTL. The eighth turn hit "max concurrent browser
+    sessions reached (8)" and every browser call after it failed, reporting
+    "browser runtime unavailable" while the runtime was healthy.
+
+    Threading a session id across turns is exactly what an agent forgets, and the
+    failure looks like a broken browser rather than a leaked handle. Reuse removes
+    the requirement instead of documenting it.
+    """
+    from tests.tools.browser.test_sessions import _FakeRuntime  # type: ignore
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
+
+    reg = BrowserSessionRegistry(_FakeRuntime(), _settings())  # type: ignore[arg-type]
+    first = await reg.acquire("local")
+    second = await reg.acquire("local")
+
+    assert first == second, "a second acquire for the same owner opened a new session"
+    assert len(reg._sessions) == 1
+
+
+@pytest.mark.asyncio
+async def test_different_owners_are_never_shared() -> None:
+    """owner_key is the isolation boundary between Telegram users. Reuse must
+    never cross it — that would hand one person another's browser."""
+    from tests.tools.browser.test_sessions import _FakeRuntime  # type: ignore
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
+
+    reg = BrowserSessionRegistry(_FakeRuntime(), _settings())  # type: ignore[arg-type]
+    a = await reg.acquire("telegram:111")
+    b = await reg.acquire("telegram:222")
+
+    assert a != b
+    assert len(reg._sessions) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_different_profile_is_not_reused() -> None:
+    """A profile carries identity and fingerprint. Silently handing back the wrong
+    one is a privacy defect, not a convenience."""
+    from tests.tools.browser.test_sessions import _FakeRuntime  # type: ignore
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
+
+    reg = BrowserSessionRegistry(_FakeRuntime(), _settings())  # type: ignore[arg-type]
+    plain = await reg.acquire("local")
+    named = await reg.acquire("local", profile_name="work")
+
+    assert plain != named
+
+
+@pytest.mark.asyncio
+async def test_reuse_never_hands_back_a_proxied_session() -> None:
+    """Different egress IP than the caller asked for. Recorded on the session so
+    the answer is judged, not guessed."""
+    from tests.tools.browser.test_sessions import _FakeRuntime  # type: ignore
+    from stackowl.tools.browser.sessions import BrowserSessionRegistry
+
+    reg = BrowserSessionRegistry(_FakeRuntime(), _settings())  # type: ignore[arg-type]
+    sid = await reg.acquire("local")
+    reg._sessions[sid].used_proxy = True          # as if opened through a proxy
+
+    fresh = await reg.acquire("local")
+    assert fresh != sid, "a proxy-less caller was handed a proxied session"
