@@ -8515,6 +8515,64 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: INCIDENT-2026-08-28-part2-orphaned-subgoals-outlived-their-objectives
+    found: 2026-08-28
+    found_by: "Bakir: 'I'm getting so many job position related messages, but I did remove agent which used to send it'"
+    what: >
+      REMOVING THE AGENT CHANGED NOTHING BECAUSE THE WORK DOES NOT BELONG TO THE
+      AGENT. Seven jobmarket objectives were terminal — four abandoned, two done,
+      one blocked — and 44 of their sub-goals were still live: 33 pending, 11
+      running. TEN of those eleven running ones belonged to objectives that were
+      already done or abandoned.
+      ObjectiveStore.update_status wrote the objective row and nothing else, so
+      "abandon this objective" marked a row and left every sub-goal claimable,
+      with no owner and nobody expecting the output. The user's own instruction to
+      stop was a write with no reader.
+      Orphaned work is not inert here: each live sub-goal carries a task, each task
+      retries when it cannot deliver, and retry_queue held 5,766 jobmarket rows
+      addressed to telegram.
+    THE_PROCESS_FAILURE_THAT_COST_A_ROUND_TRIP: >
+      I FIXED ONE OF FOUR ENGINES AND REPORTED IT STOPPED. CLAUDE.md names the four
+      overlapping engines explicitly (tasks, retry_queue, objectives/subgoals,
+      job_queue) and I parked `tasks` at 03:03, verified THAT table was quiet, and
+      told Bakir the flood was over. It was not: retry_queue kept firing until
+      ~04:33 and objective_subgoals was still armed when he came back at 11:56.
+      THE RULE THIS EARNS: when stopping runaway work, sweep EVERY engine in one
+      query before claiming silence. A single-table "0 rows" is not quiet; it is
+      one quarter of the answer. The second sweep took one query and found it.
+    two_stacked_causes: >
+      81f6b7ec — a task's destination named the CHANNEL and not the ADDRESS, so
+      nothing could ever be delivered and everything retried for ever.
+      9e6b5b1d — ending an objective did not end its sub-goals, so terminated work
+      kept feeding that retry loop. Fixing the first alone left the orphans in
+      place, which is exactly why the messages continued after the first fix.
+    fixed_in: >
+      9e6b5b1d — done/abandoned now stop their live sub-goals. `blocked` is
+      deliberately EXCLUDED: an objective blocked on a question is resumed later
+      and cancelling its work would silently discard progress the user is waiting
+      on, so a test pins that too. Finished sub-goals keep their own verdict. The
+      stopped-count is taken BEFORE the write because _update_owned returns None —
+      logging its result would have reported subgoals_stopped=null for ever.
+      5 tests, red first; 199 passed across the objectives suites. ruff 37 / mypy
+      65 held.
+    verified_quiet: >
+      Core exec-replaced 12:00:14Z with the fix. All four engines measured
+      together afterwards: tasks 0 pending / 0 running (9 parked), retry_queue 0
+      live, objective_subgoals 0 pending / 0 running (44 blocked),
+      notification_queue 0. Exactly ONE telegram delivery in the following 13
+      minutes and it was category=operator_health, not job content.
+    AWAITING_BAKIR: >
+      Two piles of halted work still carry their pre-fix state, because neither
+      code fix reaches rows already orphaned. Nine parked tasks
+      (scratchpad/parked_tasks.json) and 44 blocked sub-goals
+      (scratchpad/halted_subgoals.json). Either leave them stopped, or repair and
+      resume so the job-hunt work finishes and delivers once. That is a question
+      about whether he still wants those results.
+    also_seen_not_investigated: >
+      The jobs table holds ~90 `rollover_summary` rows all scheduled within a few
+      minutes of each other. Not the cause of this incident and not chased, but it
+      looks like the same never-cleaned-up shape and is worth a look.
+    status: fixed_pending_bakir_on_the_halted_work
   - id: INCIDENT-2026-08-28-continuous-telegram-messages-from-a-retry-loop
     found: 2026-08-28
     found_by: "Bakir: 'There is some job which send me messages continuesly ehich isnyour bug or your creation'"
