@@ -8554,7 +8554,29 @@ known_debt:
       claim_for_recovery, and a clean restart of a healthy long task should not be
       charged an attempt, so the increment likely belongs to the sweep's call site
       or to an explicit flag rather than unconditionally inside the CAS.
-    status: open
+    fixed_2026_08_28: >
+      Fixed as designed above. claim_for_recovery takes `count_attempt`, and when
+      set also stamps last_failure_class='reclaimed_stale' and last_error, so a
+      reclaim is now READABLE on the row — the two live jobmarket rows reclaimed
+      at 00:33:36 carried no trace at all, which is why the cycling was invisible.
+      The LIVE sweep passes it at BOTH call sites (execute AND ensure_available);
+      wiring only the first would have left the on-demand path silently uncounted.
+      Boot recovery deliberately abstains and a test pins that too: this box
+      exec-replaces the core on every src/ change, so charging an operational
+      restart would march healthy long-running work toward dead_letter.
+      A WIRING TEST WAS THE POINT. A `count_attempt` nobody passes would leave
+      every other test green while production cycled exactly as before — the same
+      shape as the SSRF guard that was attached but uncallable, and as the
+      increment on reclaim_expired that has never once executed. The test asserts
+      every sweep call site passes it and that recovery.py does not.
+      6 new tests; 242 passed across the 38 suites importing the reclaim path.
+      ruff 37 / mypy 65 held.
+      NOT YET OBSERVED IN PRODUCTION, stated rather than glossed: no stale reclaim
+      has happened since the fix went live, so `reclaimed_stale` is 0 rows over a
+      ZERO denominator. Closing query, to run after the next sweep reclaim (the
+      sweep logs stale_found/reclaimed at INFO): SELECT COUNT(*) FROM tasks WHERE
+      last_failure_class='reclaimed_stale'.
+    status: fixed
   - id: ARC-2026-08-22-loop-self-healing-was-already-built-and-severed
     found: 2026-08-22
     found_by: "Bakir: 'Agents should be integrated on loop corr where they will heal himself'"

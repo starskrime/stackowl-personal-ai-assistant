@@ -276,7 +276,9 @@ class DurableTaskRecoverer:
                     extra={"_fields": {"task_id": z.task_id}},
                 )
 
-    async def reclaim_one(self, task: DurableTask) -> bool:
+    async def reclaim_one(
+        self, task: DurableTask, *, count_attempt: bool = False
+    ) -> bool:
         """Claim, reconstruct, and launch ONE task row — the shared per-task
         reclaim unit (Task 9).
 
@@ -299,7 +301,7 @@ class DurableTaskRecoverer:
         background drive.
         """
         try:
-            claimed = await self._claim_and_reconstruct(task)
+            claimed = await self._claim_and_reconstruct(task, count_attempt=count_attempt)
         except Exception as exc:  # noqa: BLE001 — fail-open per task (logged)
             # A bad task (undecodable checkpoint, backend error during claim)
             # must NOT block recovery of the others or crash startup/the sweep.
@@ -317,7 +319,7 @@ class DurableTaskRecoverer:
         return True
 
     async def _claim_and_reconstruct(
-        self, task: DurableTask
+        self, task: DurableTask, *, count_attempt: bool = False
     ) -> tuple[str, PipelineState] | None:
         """Claim one orphan and reconstruct its state — the awaited DB-only pass.
 
@@ -327,7 +329,9 @@ class DurableTaskRecoverer:
         """
         task_id = task.task_id
         # 2. DECISION — atomic CAS claim: only the winner proceeds.
-        claimed = await self._store.claim_for_recovery(task_id)
+        claimed = await self._store.claim_for_recovery(
+            task_id, count_attempt=count_attempt
+        )
         if not claimed:
             log.tasks.info(
                 "[tasks] recovery: task already claimed by another worker — skipping",

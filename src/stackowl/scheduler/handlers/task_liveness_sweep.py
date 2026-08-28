@@ -168,7 +168,11 @@ class TaskLivenessSweepHandler(JobHandler):
             # the default path is unchanged; a task owned by anyone else is now
             # reclaimed under its own owner rather than not at all.
             _, recoverer = self._for_owner(task.owner_id)
-            if await recoverer.reclaim_one(task):
+            # count_attempt=True: a reclaim by the LIVE sweep means the worker
+            # went silent past the stale threshold, which IS a failed attempt.
+            # Boot recovery deliberately does not pass this — see
+            # claim_for_recovery.
+            if await recoverer.reclaim_one(task, count_attempt=True):
                 reclaimed += 1
         duration_ms = (time.monotonic() - t0) * 1000
         still_stale = len(stale) - reclaimed
@@ -348,7 +352,11 @@ class TaskLivenessSweepHandler(JobHandler):
             # the default path is unchanged; a task owned by anyone else is now
             # reclaimed under its own owner rather than not at all.
             _, recoverer = self._for_owner(task.owner_id)
-            if await recoverer.reclaim_one(task):
+            # count_attempt=True: a reclaim by the LIVE sweep means the worker
+            # went silent past the stale threshold, which IS a failed attempt.
+            # Boot recovery deliberately does not pass this — see
+            # claim_for_recovery.
+            if await recoverer.reclaim_one(task, count_attempt=True):
                 reclaimed += 1
         still_stale = await self._find_stale()
         self._set_cache(

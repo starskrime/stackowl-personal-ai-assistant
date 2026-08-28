@@ -444,7 +444,9 @@ class DurableTaskStore(OwnedRepository):
         )
         return status
 
-    async def claim_for_recovery(self, task_id: str) -> bool:
+    async def claim_for_recovery(
+        self, task_id: str, *, count_attempt: bool = False
+    ) -> bool:
         """Atomically CLAIM an orphaned task for crash-recovery.
 
         A compare-and-swap: ``UPDATE tasks SET status='recovering' WHERE
@@ -481,8 +483,31 @@ class DurableTaskStore(OwnedRepository):
             "[tasks] store.claim_for_recovery: entry",
             extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
         )
+        # ``count_attempt`` — this reclaim is EVIDENCE OF A HANG, so charge it.
+        #
+        # Added 2026-08-28. reclaim_expired has always incremented ("a task that
+        # reliably kills its worker must still reach the ceiling rather than cycle
+        # for ever") and it has fired ZERO times all time — measured,
+        # last_failure_class='lease_expired' is 0 rows. Meanwhile the live sweep
+        # drives THIS method and reclaimed 6 tasks on 08-27 and 4 more on 08-28,
+        # counting none of them. The ceiling was enforced only on the path that
+        # never runs, so a reliably-hanging task cycled for ever with
+        # attempt_count stuck at 0 and left no trace on its row.
+        #
+        # It is a FLAG rather than an unconditional bump because BOOT RECOVERY
+        # drives the same CAS. A clean restart of a healthy long task is not a
+        # failed attempt, and this box exec-replaces the core on every src/
+        # change — charging it would march good work toward dead_letter on a
+        # purely operational restart. The caller states what the reclaim MEANS;
+        # the SQL stays in one place.
+        extra = (
+            ", attempt_count = COALESCE(attempt_count,0)+1"
+            ", last_failure_class = 'reclaimed_stale'"
+            ", last_error = 'reclaimed while running — the worker never came back'"
+            if count_attempt else ""
+        )
         sql = (
-            f"UPDATE {self._table} SET status = ?, updated_at = ? "  # noqa: S608 — table from class
+            f"UPDATE {self._table} SET status = ?, updated_at = ?{extra} "  # noqa: S608 — table from class
             "WHERE owner_id = ? AND task_id = ? AND status IN ('running', 'recovering')"
         )
         params = [
