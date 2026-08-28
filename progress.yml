@@ -19324,6 +19324,28 @@ items:
     order: 41
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d123"
     gap: "~24 near-duplicate modules that must each be fixed separately. This is the *dedup* target"
+    gap_line_REMEASURED_2026_08_28: >
+      VERDICT MISSING STANDS — there is no generic relay adapter. Both halves of
+      the gap line's premise are wrong, and the second one matters.
+      THE COUNT IS UNDERSTATED BY MORE THAN 2x. src/stackowl/channels holds 52
+      modules, not ~24, and 10,407 LOC sits in the four per-channel packages
+      (telegram, slack, discord, whatsapp). Each repeats the same six-file shape:
+      adapter, callbacks, clarify, consent, helpers, settings.
+      "NEAR-DUPLICATE" DOES NOT SURVIVE A DIFF. The shape invites the assumption
+      — clarify.py is 121/122/110 lines across three channels and settings.py is
+      39/34/34/32 — but telegram/clarify.py vs slack/clarify.py differ on 113 of
+      ~121 lines and share only 49 sorted lines, most of them imports and blanks;
+      telegram vs discord settings.py differ on 41. They are structurally
+      PARALLEL, not textually duplicated, because each wraps a different platform
+      SDK.
+      WHY THAT CHANGES THE WORK. A dedup framed as "extract the common module"
+      would find almost nothing to extract and would report a near-zero saving.
+      The duplication is at the level of CONTROL FLOW over four different SDKs,
+      so collapsing it requires the abstraction this item is actually named for.
+      A ChannelAdapter ABC already exists in channels/base.py and all six
+      adapters inherit it, so the contract is present and the relay over it is
+      not. The dedup_target should be re-based on measured semantic overlap
+      rather than on the falsified "24 near-duplicates" figure.
     depends_on: [D12.1]
     blocks: [D12.2]
     dedup_target: X6
