@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 from stackowl.pipeline.authz_compose import resolve_owl_bounds
 from stackowl.pipeline.durable.task import DurableTask, TaskStatus
+from stackowl.pipeline.durable.turn_task import _destination
 from stackowl.pipeline.planner import PreflightPlanner, ToolProposer
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
@@ -186,7 +187,24 @@ class DurableTaskRunner:
                 # condition, so they reached status='completed' with delivered_at
                 # NULL — success claimed with no proof anyone received it.
                 trigger_kind="schedule",
-                destination=state.channel or None,
+                # THE ADDRESS, not just the channel. This was
+                # `state.channel or None`, which wrote "telegram" — and
+                # reply_target_for_task requires "telegram:<chat_id>", returning
+                # None without the ":". Measured 2026-08-28: ten jobmarket tasks
+                # cycled for hours because of it. Each drive finished, deliver
+                # logged `stream-miss ... has_target: false` with a 136-byte
+                # answer in hand, the task never counted as delivered, the
+                # liveness sweep reclaimed it as stale, and the retry re-ran the
+                # whole step — messaging Bakir roughly every four minutes.
+                #
+                # The comment above describes the defect this replaced: rows with
+                # no destination reached completed with delivered_at NULL. That
+                # cured the false COMPLETION and left a never-completion, because
+                # a channel NAME IS NOT AN ADDRESS.
+                #
+                # Built through turn_task's helper rather than by hand, so the two
+                # writers cannot disagree about the shape again — a test pins it.
+                destination=_destination(state.channel, state.reply_target),
                 achievement="the answer is delivered to the job's targets",
                 created_at=now,
                 updated_at=now,
