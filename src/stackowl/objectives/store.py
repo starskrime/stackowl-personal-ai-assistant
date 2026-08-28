@@ -178,13 +178,59 @@ class ObjectiveStore(OwnedRepository):
         ``blocker`` / ``blocker_kind`` are written unconditionally so every non-block
         transition (``active`` / ``done`` / ``abandoned``) clears them — a recovered
         or finished objective must not carry a stale blocker classification."""
+        now = _now().isoformat()
         await self._update_owned(
             _OBJECTIVES,
             set_sql="status = ?, blocker = ?, blocker_kind = ?, updated_at = ?",
-            set_params=(status, blocker, blocker_kind, _now().isoformat()),
+            set_params=(status, blocker, blocker_kind, now),
             where_sql="objective_id = ?",
             where_params=(objective_id,),
         )
+        # ENDING THE OBJECTIVE ENDS THE WORK IT SPAWNED.
+        #
+        # Measured 2026-08-28, after Bakir reported job-posting messages
+        # continuing after he REMOVED the agent that sent them. Seven jobmarket
+        # objectives were terminal — four abandoned, two done, one blocked — and
+        # 44 of their sub-goals were still live (33 pending, 11 running); ten of
+        # those eleven running ones belonged to objectives already done or
+        # abandoned. This method wrote the objective row and nothing else, so
+        # "abandon it" marked a row and left every sub-goal claimable.
+        #
+        # Orphaned work is not inert here: each live sub-goal carries a task, each
+        # task retries when it cannot deliver, and the retry queue held 5,766
+        # jobmarket rows addressed to telegram. The user's own instruction to stop
+        # was a write with no reader.
+        #
+        # ONLY done/abandoned cascade. `active` and `blocked` are LIVE states — an
+        # objective blocked on a question is resumed later, and cancelling its
+        # work would silently discard progress the user is waiting on. Sub-goals
+        # that already finished keep their own verdict; only pending/running are
+        # stopped.
+        if status in _TERMINAL_OBJECTIVE_STATUSES:
+            # Counted BEFORE the write: _update_owned returns None, so logging its
+            # result would have reported subgoals_stopped=null for ever — an
+            # evidence line that can never show anything is the same defect as no
+            # line at all.
+            live = [
+                sg for sg in await self.list_subgoals(objective_id)
+                if sg.status in ("pending", "running")
+            ]
+            await self._update_owned(
+                _SUBGOALS,
+                set_sql="status = 'blocked', updated_at = ?",
+                set_params=(now,),
+                where_sql="objective_id = ? AND status IN ('pending', 'running')",
+                where_params=(objective_id,),
+            )
+            # INFO, not debug: this is the evidence that ending an objective
+            # actually stopped its work, and a DEBUG line could never close it.
+            log.engine.info(
+                "[objectives] store.update_status: objective ended — its live "
+                "sub-goals were stopped with it",
+                extra={"_fields": {"objective_id": objective_id,
+                                   "status": status,
+                                   "subgoals_stopped": len(live)}},
+            )
 
     # ------------------------------------------------------------- sub-goals
 
@@ -513,6 +559,11 @@ class ObjectiveStore(OwnedRepository):
 #: ``blocked`` counts: an objective stalled on a blocker is still in flight and
 #: still expects its conversation to exist when the blocker clears.
 _ACTIVE_OBJECTIVE_STATUSES: tuple[str, ...] = ("active", "blocked")
+
+#: Statuses that END an objective. Reaching one of these stops its live sub-goals
+#: (see update_status). "blocked" is deliberately NOT here — a blocked objective
+#: is waiting for an answer and resumes with its work intact.
+_TERMINAL_OBJECTIVE_STATUSES: tuple[str, ...] = ("done", "abandoned")
 
 
 async def any_active_objective_for_lane(db: DbPool, session_key: str) -> bool:
