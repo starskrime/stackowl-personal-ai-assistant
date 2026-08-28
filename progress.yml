@@ -8515,6 +8515,46 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-2026-08-28-sweep-reclaim-does-not-count-the-attempt
+    found: 2026-08-28
+    found_by: "the re-verification sprint on D07.6, while confirming the crash-safety net fires"
+    what: >
+      TWO RECLAIM PATHS ENFORCE ONE RULE AND ONLY ONE OF THEM COUNTS THE ATTEMPT.
+      `DurableTaskStore.reclaim_expired` returns a stale LEASED row to pending and
+      deliberately does `attempt_count = COALESCE(attempt_count,0)+1`, with the
+      reason stated in its own docstring: "a task that reliably kills its worker
+      must still reach the ceiling rather than cycle for ever". The OTHER path —
+      task_liveness_sweep -> DurableTaskRecoverer.reclaim_one ->
+      DurableTaskStore.claim_for_recovery — writes only `status` and `updated_at`.
+      It does not touch attempt_count, last_failure_class or last_error.
+      SO THE CEILING IS ENFORCED ONLY ON THE PATH THAT NEVER RUNS. Measured
+      2026-08-28: `last_failure_class='lease_expired'` is 0 rows ALL TIME, i.e.
+      reclaim_expired has never once fired, while task_liveness_sweep reclaimed 6
+      tasks on 08-27 and 4 more at 00:33:36 on 08-28. Every reclaim this platform
+      has actually performed went through the path that does not count.
+      CONSEQUENCE: a task that reliably hangs its worker is swept, restarted, and
+      swept again forever. attempt_count stays 0, max_attempts (30) is never
+      approached, and the row never reaches dead_letter — the exact unbounded
+      cycle the other path's comment exists to prevent.
+    evidence: >
+      Observed on live rows, not inferred. task-c85d5350cd01 and
+      task-925aa68aa5f9 (jobmarket, ROOT, trigger_kind='schedule') were reclaimed
+      in the 00:33:36 sweep — the log line reads stale_found=4, reclaimed=4, and
+      task-c85d5350cd01's current_step went BACKWARDS from 2 to 1, which is a
+      restart. Both rows afterwards still read attempt_count=0 and
+      last_failure_class=NULL. A sweep reclaim therefore leaves NO trace on the
+      row it reclaimed, so the cycling is also invisible to anyone reading the
+      table.
+    decision: >
+      NOT FIXED YET, recorded rather than folded into the change in flight. The
+      fix belongs in claim_for_recovery (the single shared unit both boot recovery
+      and the sweep drive) so the two paths cannot diverge again — this is the
+      "one source, have the other ask it" shape, not a second copy of the
+      increment. Needs care on one point: boot recovery ALSO calls
+      claim_for_recovery, and a clean restart of a healthy long task should not be
+      charged an attempt, so the increment likely belongs to the sweep's call site
+      or to an explicit flag rather than unconditionally inside the CAS.
+    status: open
   - id: ARC-2026-08-22-loop-self-healing-was-already-built-and-severed
     found: 2026-08-22
     found_by: "Bakir: 'Agents should be integrated on loop corr where they will heal himself'"
@@ -17894,6 +17934,22 @@ items:
       absence. The records are `"msg": "` WITH A SPACE after the colon; the
       regex had none. A control query on a known-present string is what exposed
       the instrument rather than the system.
+    clause_2_CLOSED_BY_LIVE_OBSERVATION_2026_08_28: >
+      The claim/reclaim half no longer rests on yesterday's log. A falsifiable
+      prediction was written at 00:16 and then checked: two ROOT tasks
+      (task-c85d5350cd01, task-925aa68aa5f9) sat `running` and idle from ~00:07:40
+      against task_liveness_sweep's 10-minute DEFAULT_STALE_AFTER_S, so each had
+      to either resume or be reclaimed — and a third outcome, still running and
+      unreclaimed past the threshold, would have been a REAL defect in the reaper.
+      OUTCOME 2, OBSERVED: `[scheduler] task_liveness_sweep.execute: reclaimed
+      stale running task(s)` at 00:33:36 with stale_found=4, reclaimed=4, and
+      task-c85d5350cd01's current_step went backwards from 2 to 1 — a restart.
+      The crash-safety net demonstrably fires in production TODAY.
+      AND THE SAME CHECK EXPOSED A DEFECT BESIDE IT. Both reclaimed rows still
+      read attempt_count=0 and last_failure_class=NULL, because the sweep's path
+      (claim_for_recovery) does not count the attempt while reclaim_expired does.
+      Recorded as DEBT-2026-08-28-sweep-reclaim-does-not-count-the-attempt: the
+      retry ceiling is enforced only on the path that has never once run.
     track: adopt
     priority: P1
     wave: 7
