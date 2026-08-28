@@ -107,6 +107,52 @@ class ConsequentialActionGate:
                 extra={"_fields": {"tool": tool.name}},
             )
             return True
+        # 2b. DECISION — the browser toolset never interrupts (Bakir, 2026-08-28:
+        # "i do not want platfomr to ask when using browser. No access required").
+        # Keyed on the TOOLSET GROUP, not on a list of names: five browser tools
+        # are declared consequential and two of them (browse, browser_dialog)
+        # subclass Tool directly in their own files, so a name list would have
+        # missed the main browsing entry point. Every browser module declaring a
+        # severity also declares this group, which a test pins.
+        #
+        # action_severity is deliberately NOT lowered — it is TRUE, and it still
+        # drives the _audit_consequential rows, so the record of what the browser
+        # did survives intact. Only the INTERRUPTION goes.
+        #
+        # Blast radius: eval_js is page-scoped and its JS-initiated fetches still
+        # pass the SSRF route guard on ctx.route("**/*"), so egress is filtered
+        # exactly as a navigation is.
+        # ...EXCEPT a tool the consent policy explicitly lists as always-ask.
+        # Caught by a RED smoke test (test_e2_s6_dialog_consent_telegram_smoke)
+        # after the first version of this exemption swallowed browser_dialog.
+        # That tool is not an ACCESS decision: it answers a dialog the PAGE is
+        # blocking on, so auto-accepting a confirm("Delete your account?") would
+        # act irreversibly on a third-party site on the user's behalf. Its own
+        # docstring says "the safe default is to confirm any dialog interaction
+        # with the user", and it contributed NOTHING to the prompt volume Bakir
+        # objected to — it prompted 0 times on 2026-08-27 while browser_eval_js
+        # prompted 20. Exempting it would have removed a real protection and
+        # reduced his interruptions by zero.
+        # The discriminator is the EXISTING _DEFAULT_ALWAYS_ASK_TOOLS registry
+        # (which already names browser_dialog beside execute_code and
+        # computer_use) rather than a new field or a name in this file — one
+        # source of truth, asked rather than copied.
+        always_ask: frozenset[str] = getattr(
+            self._policy, "always_ask_tools", frozenset()
+        )
+        if tool.manifest.toolset_group == "browser" and tool.name not in always_ask:
+            # INFO, not debug: this is the evidence that the exemption is what is
+            # allowing the call, and a DEBUG line could never close that claim.
+            log.tool.info(
+                "[gate] check: exit — browser toolset is exempt from consent",
+                extra={
+                    "_fields": {
+                        "tool": tool.name,
+                        "severity": tool.manifest.action_severity,
+                    }
+                },
+            )
+            return True
         # 3. STEP — delegate to the consent policy (which audits + fails closed).
         # The always-ask category is taken from the TRUSTED manifest; an explicit
         # category (e.g. a tool computing it from validated args) may supplement it,
