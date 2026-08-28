@@ -8515,6 +8515,57 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: INCIDENT-2026-08-28-continuous-telegram-messages-from-a-retry-loop
+    found: 2026-08-28
+    found_by: "Bakir: 'There is some job which send me messages continuesly ehich isnyour bug or your creation'"
+    what: >
+      IT WAS MINE, from 497a1707 on 2026-08-17 (git log -S on the line). Ten
+      jobmarket tasks cycled roughly every four minutes for hours, messaging Bakir
+      each time. Each drive FINISHED, delivery DECLINED, so the task never counted
+      as complete, so the liveness sweep reclaimed it as stale, so the retry re-ran
+      the whole step.
+      THE DELIVER STEP NAMED THE CAUSE IN ITS OWN FIELDS, which is why this took
+      minutes rather than theories: "[deliver] stream-miss: no durable fallback
+      available" carrying has_deliverer=true, has_target=FALSE, body_len=136. A
+      136-byte answer ready and a deliverer present, with nowhere to send it.
+      reply_target_for_task reads `destination` and its docstring states the
+      contract — "telegram:72055773" — returning None when there is no ":". All
+      ten rows carried destination='telegram': the CHANNEL WITH NO ADDRESS.
+      TWO WRITERS, ONE RULE, ONLY ONE RIGHT. turn_task.py builds it through
+      _destination(channel, chat_id); task_runner.py wrote `state.channel or None`.
+      AND THE COMMENT DIRECTLY ABOVE THE BUG DESCRIBES THE DEFECT IT REPLACED —
+      rows with no destination "reached status='completed' with delivered_at NULL
+      — success claimed with no proof anyone received it". That fix cured the
+      false COMPLETION and left a NEVER-completion, because a channel name is not
+      an address. Same shape as the 2026-08-19 consent defect, where a
+      ConsentRequest carried an identity and no address.
+    fixed_in: >
+      81f6b7ec — task_runner now builds the destination through turn_task's shared
+      helper, so the two writers cannot disagree again, and a test fails if the
+      bare-channel form returns. Test red first on the wiring assertion; 195
+      passed across the suites importing task_runner / turn_task /
+      reply_target_for_task. ruff 37 / mypy 65 held.
+    what_stopped_the_flood: >
+      The ten live rows were PARKED, not deleted and not resumed. The loop claims
+      `pending` and the liveness sweep targets `running`, so a parked row is
+      invisible to both and cannot retry. Verified: last undelivered-retry event
+      03:06:30, last delivery 03:04:40, nothing in the following five minutes
+      against a ~four-minute cycle. Fully reversible — the ten ids, statuses and
+      attempt counts are saved in scratchpad/parked_tasks.json.
+    AWAITING_BAKIR: >
+      The ten parked rows still carry the OLD addressless destination, so the code
+      fix does not reach them retroactively. Either leave them parked (the job-hunt
+      work stops where it is, no further messages) or repair their destination and
+      resume (each delivers its answer once and completes properly, i.e. about ten
+      final messages). That is a question about whether he still wants those
+      results, so it was not decided here.
+    a_note_on_visibility: >
+      6b32d456 (attempt accounting) did NOT cause this and is what made it legible:
+      these rows now show attempt_count climbing to 7-8/30 with
+      last_failure_class='reclaimed_stale', where before the fix they cycled
+      silently at 0 for ever. The incident is also the first production evidence
+      that fix works.
+    status: fixed_pending_bakir_on_the_parked_rows
   - id: ACCEPTANCE-2026-08-28-browser-consent-and-contention-CLOSED-LIVE
     found: 2026-08-28
     what: >
