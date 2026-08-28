@@ -135,6 +135,85 @@ class BrowserSessionNotFoundError(KeyError):
     """Raised when a session_id is unknown or has been evicted."""
 
 
+def _current_turn_key() -> str:
+    """Identify the TURN asking for a page, for per-turn page scoping.
+
+    The ambient trace id is exactly "the turn in flight", so nothing has to be
+    threaded through the 25 browser tools to reach it. Callers that carry no
+    trace — boot recovery, the liveness sweep, a direct CLI run — all share the
+    "" key, which reproduces the old single-handle behaviour for them rather than
+    handing each call a fresh blank page.
+
+    Never raises: if trace context is unavailable for any reason the caller still
+    gets the shared key, which is degraded (concurrent turns could collide again)
+    but never broken.
+    """
+    try:
+        from stackowl.infra.trace import TraceContext
+
+        return str(TraceContext.get().get("trace_id") or "")
+    except Exception as exc:  # B5 — every except logs
+        log.engine.warning(
+            "[browser] could not read the trace context for page scoping — "
+            "falling back to the shared page key",
+            exc_info=exc,
+        )
+        return ""
+
+
+def _touch_turn(sess: BrowserSession, turn: str) -> None:
+    """Mark this turn as most-recently-used, for LRU page eviction.
+
+    Python dicts keep insertion order, so re-inserting at the end IS the LRU
+    ordering — no second structure and no timestamps to keep in sync.
+    """
+    handle = sess.current_handles.pop(turn, None)
+    if handle is not None:
+        sess.current_handles[turn] = handle
+
+
+async def _evict_lru_turn(sess: BrowserSession) -> None:
+    """Free one page by retiring the turn that has gone quiet longest.
+
+    Prefers a turn whose page is ALREADY gone (closed underneath us) — that costs
+    nothing and is the common case once a turn finishes. Only if every tracked
+    turn still holds a live page does it close the least-recently-used one.
+
+    Never raises: failing to evict leaves the caller to hit the honest
+    BrowserSessionLimitError, which is the pre-existing behaviour.
+    """
+    stale = [t for t, h in sess.current_handles.items() if h not in sess.pages]
+    for turn in stale:
+        sess.current_handles.pop(turn, None)
+    if stale:
+        return
+
+    for turn, handle in list(sess.current_handles.items()):  # oldest first
+        page = sess.pages.get(handle)
+        sess.current_handles.pop(turn, None)
+        if page is None:
+            return
+        try:
+            await page.close()
+        except Exception as exc:  # B5 — every except logs
+            log.engine.warning(
+                "[browser] sessions: could not close the LRU turn's page — "
+                "dropping the reference anyway",
+                exc_info=exc,
+                extra={"_fields": {"page_handle": handle}},
+            )
+        sess.pages.pop(handle, None)
+        sess.observers.pop(handle, None)
+        # INFO: this is the evidence that page pressure is being relieved rather
+        # than a turn being silently refused, and DEBUG could never show it.
+        log.engine.info(
+            "[browser] sessions: evicted the least-recently-used turn's page",
+            extra={"_fields": {"page_handle": handle, "evicted_turn": turn,
+                               "pages_open": len(sess.pages)}},
+        )
+        return
+
+
 @dataclass
 class BrowserSession:
     session_id: str
@@ -147,11 +226,22 @@ class BrowserSession:
     created_at: float = field(default_factory=time.monotonic)
     last_activity: float = field(default_factory=time.monotonic)
     nav_count: int = 0
-    #: The page the tools should act on when the caller names none. Without it,
-    #: "no page_handle" meant "make a new page", so browser_navigate loaded a URL
-    #: on page 1 and browser_snapshot then minted a BLANK page 2 and described
-    #: that — which is why the browser appeared to return the wrong page.
-    current_handle: str | None = None
+    #: The page the tools should act on when the caller names none, PER TURN.
+    #: Without it, "no page_handle" meant "make a new page", so browser_navigate
+    #: loaded a URL on page 1 and browser_snapshot then minted a BLANK page 2 and
+    #: described that — which is why the browser appeared to return the wrong page.
+    #:
+    #: KEYED ON THE TURN, and it was a single handle until 2026-08-28. "The page I
+    #: am working on" is a property of a TURN, not of a session: with one handle
+    #: per session, two concurrent turns for the same owl pointed at the same page
+    #: and each navigation cancelled the other's. Measured in production — a
+    #: jobmarket task navigating LinkedIn aborted a concurrent turn's goto with
+    #: ``NS_BINDING_ABORTED``, which then timed out after 30s.
+    #:
+    #: The key is the ambient trace id, or "" for callers that carry no trace
+    #: (boot recovery, sweeps, direct CLI) — those still share one stable page,
+    #: which is the old behaviour and keeps the blank-tab fix for them.
+    current_handles: dict[str, str] = field(default_factory=dict)
     #: Whether this context was opened through a proxy. Recorded because
     #: ``acquire`` must never hand a proxy-less caller a session with a different
     #: egress IP — that is a privacy defect, and without this field the answer
@@ -460,29 +550,59 @@ class BrowserSessionRegistry:
         """
         sess = await self.get(session_id)
         async with sess.lock:
+            turn = _current_turn_key()
             if page_handle is not None and page_handle in sess.pages:
-                sess.current_handle = page_handle
+                sess.current_handles[turn] = page_handle
+                _touch_turn(sess, turn)
                 return sess, sess.pages[page_handle], page_handle
             if not new_page and page_handle is None:
-                current = sess.current_handle
+                current = sess.current_handles.get(turn)
                 if current is not None and current in sess.pages:
                     page = sess.pages[current]
                     if not getattr(page, "is_closed", lambda: False)():
                         sess.touch()
+                        _touch_turn(sess, turn)
                         log.engine.debug(
                             "[browser] sessions.get_page: reusing the current page",
                             extra={"_fields": {"session_id": session_id,
                                                "page_handle": current}},
                         )
                         return sess, page, current
-            if len(sess.pages) >= self._settings.max_concurrent_pages_per_session:
+            cap = self._settings.max_concurrent_pages_per_session
+            # ONLY the IMPLICIT path evicts. An explicit tab open (new_page=True,
+            # i.e. browser_tab_open) must still be REFUSED at the cap — closing a
+            # tab somebody deliberately opened to make room for another is data
+            # loss, and test_max_pages_per_session_enforced pins exactly that.
+            # Its docstring says the cap "applies to what it was always for —
+            # actual tabs". An implicit per-turn page is not a tab the caller
+            # asked for; it is infrastructure for their turn, and reclaiming the
+            # quietest one is fair.
+            implicit = not new_page and page_handle is None
+            if implicit and len(sess.pages) >= cap:
+                # Per-turn pages are a FINITE resource and this deployment already
+                # exceeds the cap: 5 concurrent jobmarket tasks were measured on
+                # one owl against a cap of 4. Refusing here would trade the page-
+                # CONTENTION bug for a page-EXHAUSTION one, which reads to the user
+                # as "the browser is broken again".
+                #
+                # So the least-recently-used TURN releases its page. Ordering comes
+                # from current_handles' insertion order, refreshed by _touch_turn on
+                # every access, so the victim is the turn that has gone quiet
+                # longest — and if it comes back it simply gets a fresh page.
+                #
+                # This is also what bounds current_handles. Without it the map gains
+                # an entry per trace id for the session's whole life and never
+                # sheds one: append-only, the fourth recurring defect shape here.
+                await _evict_lru_turn(sess)
+            if len(sess.pages) >= cap:
                 raise BrowserSessionLimitError(
-                    f"max pages per session reached ({self._settings.max_concurrent_pages_per_session})"
+                    f"max pages per session reached ({cap})"
                 )
             page = await sess.context.new_page()
             handle = page_handle or uuid.uuid4().hex[:8]
             sess.pages[handle] = page
-            sess.current_handle = handle
+            sess.current_handles[turn] = handle
+            _touch_turn(sess, turn)
             self._wire_page_observers(sess, page, handle)
             sess.touch()
             log.engine.debug(
