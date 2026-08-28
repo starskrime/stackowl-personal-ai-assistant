@@ -15939,7 +15939,33 @@ items:
   - id: D04.4
     title: "Auxiliary-model router"
     domain: D04
-    verdict: MISSING
+    verdict: PARTIAL
+    verdict_corrected_2026_08_28: >
+      WAS "MISSING". The seam EXISTS and is well developed; what is missing is
+      callers and, decisively, a second model to route to.
+      THE MECHANISM IS THERE. providers/registry.py declares
+      _TIER_ORDER = ("fast", "standard", "powerful", "local");
+      pipeline/provider_select.py carries floor_tier, a _TOOL_CAPABLE_TIER_WALK and
+      the pinned-tier branch; providers/llm_gateway.py defaults to "fast" and
+      escalates fast -> standard -> powerful; escalation_signal.py carries the
+      ladder request. Calling that "no single seam for cheap model work" is wrong.
+      WHAT IS ACTUALLY ABSENT IS CALLERS. `purpose=` has EXACTLY ONE occurrence in
+      the whole of src/ — purpose="execute.tool_loop". The seam exists and the side
+      tasks (judge, router, summarizer) never declare themselves through it, so
+      they inherit the main loop's tier by default. That is a much smaller and more
+      actionable finding than "build a router".
+      AND IT WOULD CHANGE NOTHING TODAY, which is what settles the priority. There
+      is ONE model on this deployment: 2,943 cost records across 2026-08-27/28 and
+      every single one is NeraAiRaw/neraai-v1-raw. The platform already says so
+      itself at INFO — "[llm_gateway] tools: every stronger tier resolves to the
+      SAME provider and model — running as if at the ceiling", carrying
+      tier=standard, tiers_above=["powerful"]. Routing cheap work to a cheap model
+      has nowhere to route it.
+      THIS IS THE SAME SHAPE AS D05.4 and should be read together with it: a
+      reference mechanism whose trigger cannot fire on this hardware. The item
+      becomes real once a SECOND model exists, i.e. after D04.1 (providers as
+      plugins). Priority is the operator's call so P1 is left untouched, but the
+      dependency is now recorded rather than implied.
     track: adopt
     priority: P1
     wave: 10
