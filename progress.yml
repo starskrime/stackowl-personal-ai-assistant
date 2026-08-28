@@ -6216,6 +6216,28 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-55-d128-priority-rests-on-a-falsified-risk
+    raised: 2026-08-28
+    question: >
+      D12.8 (Untrusted-input toolset) is P1 solely because its gap line says "a
+      public webhook can currently reach shell". Measured 2026-08-28, that is
+      false twice: WebhookHandlerJob.execute is a stub that never enters the
+      pipeline, and the HTTP receiver defaults to enabled=False. Should D12.8
+      stay P1 as anticipatory hardening before Story 11 dispatches webhook
+      events to real business logic, or drop to P2/P3 until that dispatch
+      exists?
+    why_evidence_cannot_settle_it: >
+      Both readings fit the same measurements. It is a question of appetite for
+      risk and of whether Story 11 is close enough that building the toolset
+      first is cheaper than retrofitting it — product judgement, not a fact
+      about the tree.
+    panel_recommendation: >
+      Drop to P2 and BIND it to Story 11, so the toolset is a precondition of
+      the dispatch landing rather than a standalone sprint. This keeps the
+      protection but stops a falsified emergency displacing measured work.
+    what_is_blocked: >
+      Nothing is blocked. D12.8 was never started and remains not_started; only
+      its position in the queue depends on the answer.
   - id: ESC-51-re-feeding-the-graph-needs-a-SOURCE-and-the-obvious-one-is-the-pipeline-you-deleted
     raised: 2026-08-24
     continues: ESC-39
@@ -17845,7 +17867,33 @@ items:
   - id: D07.6
     title: "Multi-agent work queue (Kanban)"
     domain: D07
-    verdict: MISSING
+    verdict: PARTIAL
+    verdict_corrected_2026_08_28: >
+      WAS "MISSING". Re-verified by measurement against the live tree and DB, and
+      the gap line is wrong on two of its three clauses. (1) "No shared work
+      queue" — the `tasks` table holds 1,224 rows across 6 owls with an atomic
+      CAS claim (store.claim(), UPDATE ... WHERE status='pending'), which is the
+      same shape scheduler.py already runs. (2) "No claim/reclaim" — claim(),
+      claimable(), reclaim_expired(), claim_for_recovery(), claim_child_lease(),
+      reclaim_one(), claim_delivery() and claim_dispatch() all exist, and the
+      reclaim path FIRES — task_liveness_sweep ran 381 times on 2026-08-27 and
+      reclaimed 6 stale tasks. (3) "No cross-profile collaboration" — this half
+      IS real, and is what keeps the item open. The mechanism exists as columns
+      (parent_owl, delegate_key, depends_on) but has never been exercised across
+      owls. All 6 parent/child pairs are same-owl (headhunter, secretary,
+      sysdesign), and `depends_on` is 0 rows all time, so the work-GRAPH
+      capability has shipped and never run.
+      TWO NEAR-MISSES WORTH KEEPING. First, 5 of 6 `running` rows carry a NULL
+      lease and reclaim_expired explicitly excludes `lease_expires_at IS NULL`,
+      which reads exactly like a stranded-task bug. It is not one — every such
+      row had updated_at inside 2 minutes (they were live jobmarket work), and
+      the leaseless case is covered by a SECOND reaper, task_liveness_sweep,
+      keyed on updated_at staleness. Checking recency and grepping for the other
+      actuator is what stopped a fix being written for a defect that does not
+      exist. Second, four log probes returned empty and were nearly read as
+      absence. The records are `"msg": "` WITH A SPACE after the colon; the
+      regex had none. A control query on a known-present string is what exposed
+      the instrument rather than the system.
     track: adopt
     priority: P1
     wave: 7
@@ -19411,6 +19459,27 @@ items:
     order: 46
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d128"
     gap: "A public webhook can currently reach shell."
+    gap_line_FALSIFIED_2026_08_28: >
+      THE VERDICT STANDS AND ITS STATED RISK DOES NOT. There is no untrusted-input
+      toolset, so MISSING is right. But "a public webhook can currently reach
+      shell" is false twice over, and it is the only thing making this P1.
+      FIRST, the handler cannot reach any tool at all. WebhookHandlerJob.execute
+      is a stub — its step 3 is literally "placeholder; Story 11 dispatches to
+      per-source business logic" and it logs "event processed (stub)". It never
+      enters the pipeline, so it reaches neither shell nor any other tool.
+      SECOND, there is no public webhook to speak of. WebhookSettings.enabled
+      defaults to False for the HTTP receiver, so the surface is off unless an
+      operator turns it on and configures a secret.
+      WHY THIS MATTERS MORE THAN A WORDING FIX. A gap line asserting a live path
+      from the public internet to `shell` is an emergency; it would justify
+      dropping other work. Nothing in the tree supports it. The item is real but
+      it is ANTICIPATORY — the toolset is a prerequisite for whenever Story 11
+      lands, not a hole open today. Priority is the operator's call, so P1 is
+      left untouched and the question is escalated rather than decided here.
+      NOTE, not a finding: the receiver defaulting to disabled sits against
+      "everything ships ENABLED". A public listener for untrusted input is a
+      defensible exception and it is recorded here only so the contrast is not
+      mistaken later for an oversight.
     depends_on: []
     blocks: []
     dedup_target: null
