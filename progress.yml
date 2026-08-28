@@ -8515,6 +8515,50 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: ACCEPTANCE-2026-08-28-browser-consent-and-contention-CLOSED-LIVE
+    found: 2026-08-28
+    what: >
+      BOTH live acceptance checks for 8dd2553c (browser consent exemption) and
+      14eaf202 (per-turn browser pages) are now CLOSED by production evidence,
+      after being honestly held open across three iterations on zero denominators.
+    evidence: >
+      CONSENT EXEMPTION — trace 4b41f269, current core (boot 01:12:19Z):
+      "[gate] check: exit — browser toolset is exempt from consent" carrying
+      tool=browser_eval_js, severity=consequential, immediately followed by
+      browser_eval_js.execute entry and outcome=succeeded. That is the exact tool
+      that prompted 20 times on 08-27, now running with no prompt. Since boot:
+      browser_eval_js succeeded 4 times, 0 consent prompts.
+      CROSS-TURN CONTENTION — 5 distinct traces navigated since boot
+      (4b41f269, fccd9dbf, recover-, retry-c8, retry-e2), which is the concurrency
+      the earlier single-trace measurement could not exercise. 58 of 59
+      browser_navigate calls succeeded. The decisive pair: at 01:16:07-01:16:17
+      retry-e2 and recover- navigated CONCURRENTLY and BOTH succeeded, and at
+      01:14:01-01:14:09 recover- navigated alongside fccd9dbf without either
+      cancelling the other.
+      THE LRU EVICTION FIRED FIVE TIMES on real traffic, which independently
+      confirms the page pressure predicted from 5 concurrent jobmarket turns
+      against a cap of 4 was real and not hypothetical.
+    residual_finding: >
+      ONE ABORT REMAINS AND IT IS A DIFFERENT DEFECT. Trace fccd9dbf issued TWO
+      OVERLAPPING browser_navigate calls WITHIN ONE TURN — entry 01:14:01, a
+      second entry 01:14:02 before the first returned, NS_BINDING_ABORTED at
+      01:14:04, and a successful retry at 01:14:07. They share a trace id, so the
+      per-turn fix gives them the same page BY DESIGN and the second goto cancels
+      the first.
+      This is within-turn parallel tool calls, not cross-turn contention, and it
+      is arguably correct: within one turn "the page I am working on" IS one page,
+      and two simultaneous navigations to different URLs on one page is a
+      contradiction the caller created. Impact measured as low — 1 abort in 59
+      navigations, self-recovered on the next attempt. NOT fixed, and deliberately
+      not fixed by widening the per-turn key, which would reintroduce the blank-tab
+      bug. If it ever matters the answer is to serialise navigations within a turn,
+      not to give each call its own page.
+    method_note: >
+      The abort count was initially read as 3 and is really 1. Two of the three
+      matches were an error STRING echoed inside a retry record rather than a
+      fresh failure. Correlating each abort against its own trace and window is
+      what separated a live defect from a replayed one.
+    status: closed
   - id: DEBT-2026-08-28-sweep-reclaim-does-not-count-the-attempt
     found: 2026-08-28
     found_by: "the re-verification sprint on D07.6, while confirming the crash-safety net fires"
