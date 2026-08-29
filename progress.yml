@@ -13940,6 +13940,29 @@ items:
     notes: null
 
   - id: D01.6
+    findings_REMEASURED_2026_08_29: >
+      The two findings this item's instrument produced on 2026-08-15 are both
+      still TRUE and both measure out as NOT ACTIONABLE on this deployment.
+      METRIC 1 — zero cache hits, now across 120,782 records and 617,559,094
+      input tokens (was 132.7M). The READER is complete and correct:
+      openai_provider._cached_input_tokens checks prompt_tokens_details.cached_tokens,
+      cache_read_input_tokens and flattened cached_tokens, and never raises. There
+      is simply nothing to read — every serving model is self-hosted (NeraAiRaw
+      87,196 calls, ollama variants 32,126, qwen36 1,460) and such
+      OpenAI-compatible servers do not report cached_tokens even when they
+      prefix-cache internally. TOTAL SPEND ALL TIME: $0.0152. Same shape as D04.4
+      and D05.4 — a signal that cannot fire on this hardware.
+      METRIC 4 — 8 of 453 conversations (1.8%) change their system prompt
+      mid-conversation, up to 5 distinct prompts in 33 calls, most recently
+      2026-08-28. The D01.1 invariant IS violated. But the impact was SIZED
+      rather than assumed: TTFT for unstable-prompt calls averages 1174ms against
+      1249ms for stable ones — unstable is marginally FASTER, so there is no
+      measurable latency penalty (stable n=18, too small to claim a difference in
+      either direction). With money at $0 and latency flat, the invariant has no
+      demonstrable value to defend here.
+      RECOMMENDATION: do not engineer either. Re-open metric 1 only if a
+      cache-reporting backend is ever configured; re-open metric 4 only if a
+      backend arrives whose prefix cache we can actually observe.
     title: "Cost measurement per conversation"
     domain: D01
     verdict: PARTIAL
