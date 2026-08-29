@@ -70,6 +70,36 @@ evidence line was DEBUG, and no volume of live traffic could ever have closed it
 log line is the evidence for a claim, it must be INFO — and run the query that would
 close the claim *before* you need it, to confirm it returns something.
 
+## Measuring is the job, and the instrument lies too
+
+**Check what a denominator is MADE OF, not just that it is non-zero.** "0 exemptions
+over 7 browser calls" looked like a failure and was 0-over-0: all seven were
+read-severity tools that never reach the branch. A zero numerator over a zero
+denominator is not a pass either.
+
+**A test that passes immediately may be vacuous.** Three round-trip tests passed
+because `get()` uses `SELECT *` and picks up new columns for free; the LOOP's
+`claimable()` builds an explicit column list and returned `None`. Test the path
+production takes.
+
+**A fixture that cannot show the bug proves nothing.** A fake page with no
+`close()` made eviction "pass" through its own except branch.
+
+**Log greps: the field is `"msg": "` WITH A SPACE after the colon**, and the inner
+key is `fields`. A regex without the space returns empty against a 14MB file — four
+false negatives in one session before a control on a known-present string exposed
+the instrument rather than the system.
+
+**Count incidents, not log lines.** "19 database-is-locked events" was 19 LINES; one
+contention moment emits four.
+
+**Sweep EVERY engine before claiming silence.** Parking `tasks` looked like it
+stopped a runaway; `retry_queue` and `objective_subgoals` were still armed and the
+user was still being messaged hours later.
+
+**A gateway-side fix is not live until `./start.sh`.** CodeWatcher exec-replaces the
+CORE only. A heartbeat fix sat dead for an hour while being reported as shipped.
+
 ## The shapes that account for nearly every real defect here
 
 1. **A write with no reader**, or an actuator wired on only some paths. Measure the
@@ -79,3 +109,13 @@ close the claim *before* you need it, to confirm it returns something.
 3. **Two copies of one rule.** One source; have the other ask it.
 4. **No decay.** Anything that only appends will poison its reader. And when you remove
    a writer, ask what was *bounding* — or *triggering* — the thing it fed.
+5. **Built but not wired.** The capability exists, works, and nothing calls it.
+   `stackowl.supervisor` did backoff-restart and escalation while every channel
+   receive loop ran as a bare task. `idempotency_key` was stored, read back, and
+   had no unique index. `committed_facts_fts` still indexes 1,112 rows of content
+   that no longer exists because its writer was removed. **A feature ships ON: if
+   nothing sets the flag, you shipped decoration** — D03.4's result cap went out
+   with no tool declaring one and could never fire.
+6. **Deleting a row while its writer lives.** Migration 0125 deleted the
+   `retry_sweep` job at 00:31:02; scheduler assembly re-seeded it at 00:31:33.
+   Every boot, for thirty-one seconds. Remove the writer, not the row.

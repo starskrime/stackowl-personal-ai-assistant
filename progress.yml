@@ -14,7 +14,7 @@
 # ============================================================================
 
 schema_version: 1
-updated: 2026-08-26
+updated: 2026-08-29
 updated_by: "claude-opus-5 — UNATTENDED SESSION 2026-08-22/23. D05.4 CLOSED 7/7. D05.8 and D08.4 at 6/7 (validate partial, unexercised — not failed). D08.5 and D09.1 brainstormed to a verdict then BLOCKED on escalations. SIX fixes shipped and live: three memory-containment guards, the tool-cap reaching every path, the delivery seam that discarded 40 self-reports, and the reflection JSON repair — plus three instrument repairs that made the last two findable. EIGHT escalations queued (ESC-35..42) and none decided; four of them gate current items, so the queue is the bottleneck, not the work. THREE corrections to my own record are in here too: ESC-40 was filed on a one-character grep miss, the D05.8 36-tool attribution named the wrong producer, and a night of 'watches dry' readings were the rotated-log bug. Read WHERE_TO_RESUME below first."
 superseded_updated_by_2026_08_19: "claude-opus-5 — RECONCILED: 41 commits between 2026-08-17 and 2026-08-19 were live and unrecorded here (the ONE LOOP arc, the authority-vs-action authz fix, curated-memory decay). Recorded as ARC-2026-08-17-to-19-one-loop-authz-memory in known_debt. D16.1 corrected from implement:not_started to implement:partial — two of its commits already shipped (fed6968d, e3434952) and plugin loading at boot is PROVEN LIVE. Now working the rest of D16.1 implement: the LifecycleHook extension point."
 superseded_updated_by: "claude-opus-5 — D08.1 CLOSED: all four acceptance checks proven live (blocks=2 chars=205), doc closed with its Verification section run. Also fixed a live incident: conversational turns died on any tool-requiring question; the leak now escalates. Next: D08.2."
@@ -6215,6 +6215,32 @@ current:
     to look for is the same tool with category "prompt_surface" and a prompt rather than
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
+  STATE_2026_08_29: >
+    PROGRAMME: 30 COMPLETE / 4 in_progress / 78 not_started of 112. NINE P0/P1
+    remain. Derive state from `stages`, NEVER the `started` field — D05.4 has no
+    `started` and all seven stages done.
+    THE LAST P0 IS CLOSED (D01.6). Remaining P0/P1: D09.2, D03.2, D12.3, D12.8,
+    D07.6, D10.5, D04.4, D06.4, and N01 (native, no wave). FOUR of those already
+    carry corrected verdicts from the 2026-08-29 re-verification sweep and should
+    be re-read before being worked: D12.3 (52 modules not 24, and NOT
+    near-duplicates — they differ on 113 of ~121 lines), D12.8 (the "public
+    webhook can reach shell" risk is FALSE twice over — the handler is a stub and
+    the receiver defaults off), D07.6 (MISSING -> PARTIAL; only the cross-owl half
+    is real, depends_on is 0 rows all time), D04.4 (the tier seam exists; there is
+    ONE model on this deployment, 2,943 cost records all NeraAiRaw).
+    SHIPPED 2026-08-29: D01.6 (grill run retroactively — it corrected two of my
+    own claims), D03.4 (all three overflow levels, validated live on a 1.2MB
+    Moby-Dick spill), D11.2 (FTS5 over messages, trigger-synced; 'jobmarket
+    dedupe' went 0 -> 176 results on the live corpus).
+    STABILITY IS CLOSED AND VERIFIED LIVE: 0 UNHEALTHY reports across 22
+    health_sweep runs, where it had fired every sweep for 24 hours. Four channel
+    receive loops now run under the existing Supervisor; the Telegram liveness
+    heartbeat survives a failed tick.
+    ONE ENGINE REMOVED: retry_queue is collapsed into `tasks` (49601f50, d0d25f01,
+    382a1f77). THREE REMAIN overlapping — objective_subgoals (step one done:
+    migration 0126 moved its six unique columns onto tasks), jobs, and the
+    235k-row job_runs table with no retention.
+
   ESCALATIONS:
   - id: ESC-57-d034-where-do-spilled-tool-results-live
     raised: 2026-08-29
@@ -8490,13 +8516,17 @@ current:
     removal. Guessing it builds the wrong two thirds, so it was not guessed.
 
   NEXT: >-
-    D08.2 (raised P2 -> P1) now carries the MemoryBridge split — a live conversation
-    half vs a dead fact half, 32 files outside memory/ — plus the three channel
-    approve/reject callbacks and, with them, fact_promoter, contradiction_detector,
-    pruner and the DreamWorker's five phases. They travel together because the
-    promoter's last consumers ARE those callbacks, and the callbacks sit in the same
-    orchestrator try-blocks as consent and clarify. Open that block ONCE, carefully,
-    with a consent smoke test after.
+    D10.5 "Skills as slash commands" (P1, wave 8) — its gap line calls it a DIRECT
+    LAW 1 VIOLATION and notes the model cannot be pointed at a skill on demand.
+    Run brainstorm + architect, then DECIDE AND REPORT; do not ask unless the call
+    is irreversible, user-facing, or contradicts a recorded decision.
+    MEASURE FIRST as always: how many skills exist, how many are reachable today,
+    and whether anything already routes a slash command to a skill (grep for the
+    second actuator before declaring a gap — twice this programme a "missing"
+    capability already existed, task_liveness_sweep and the Supervisor).
+    AFTER THAT, in order: D03.2 conversation compression (largest stated
+    functional hole, but re-check its earlier closed-by-measurement verdict
+    first), D09.2 the review prompt, then the four corrected items above.
 
   ALSO_WAITING: >-
     N01 Dreaming (new native `N` namespace, no wave) — Bakir's own idea, not in the
