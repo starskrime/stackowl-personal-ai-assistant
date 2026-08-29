@@ -12,9 +12,9 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from stackowl.config.settings import Settings
 from stackowl.db.migrations.runner import MigrationRunner
@@ -86,11 +86,12 @@ async def _run_until_signal(adapter: object, stop_event: asyncio.Event) -> None:
 # discards itself on completion via add_done_callback below.
 _drain_tasks: set[asyncio.Task[object]] = set()
 
-if TYPE_CHECKING:  # pragma: no cover — typing only
+if TYPE_CHECKING:
     from stackowl.channels.telegram.voice_confirm import PendingTranscriptStore
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.mcp.client import McpClient
     from stackowl.pipeline.streaming import ResponseChunk
+    from stackowl.supervisor.supervisor import Supervisor  # pragma: no cover — typing only
 
 
 class _IntakeAdapter(Protocol):
@@ -3211,7 +3212,36 @@ class StartupOrchestrator:
         from stackowl.config.secret_resolver import SecretResolver
 
         telegram_adapter = None
-        telegram_loop_task = None
+        # EVERY CHANNEL RECEIVE LOOP IS SUPERVISED (2026-08-28).
+        # Audited: 49 create_task sites, 23 neither supervised nor self-healing,
+        # 12 of them long-lived daemons — including all four channel loops. A
+        # single escape from a loop's inner per-message guard killed it for good
+        # and the platform went silently unreachable on that channel until a
+        # human restarted it. Measured instance: the Telegram liveness heartbeat
+        # died at 01:13:55 on a transient OperationalError('database is locked')
+        # and health reported telegram_receive degraded for 24 HOURS while
+        # Telegram itself kept working.
+        #
+        # stackowl.supervisor already does backoff restart, a consecutive-failure
+        # ceiling with escalation, a stuck-task watchdog and a tight-loop guard,
+        # and is already proven here by the job scheduler and webhook receiver.
+        # It simply was never applied to the loops whose death makes the platform
+        # unreachable. Wired, not rebuilt.
+        channel_supervisors: list[Supervisor] = []
+
+        def _supervise_channel(
+            name: str, coro_fn: Callable[[], Coroutine[Any, Any, None]]
+        ) -> None:
+            """Run a channel receive loop under the shared supervisor."""
+            from stackowl.supervisor.supervisor import (
+                Supervisor,
+                make_supervised_task,
+            )
+
+            sup = Supervisor()
+            sup.register(make_supervised_task(name, coro_fn))
+            channel_supervisors.append(sup)
+
         tg_cfg = self._settings.telegram_channel
         log.info(
             "[startup] gateway: telegram config decision",
@@ -3456,7 +3486,7 @@ class StartupOrchestrator:
                         log.info("[startup] gateway: telegram loop cancelled")
                         raise
 
-                telegram_loop_task = asyncio.create_task(_telegram_loop())
+                _supervise_channel("telegram_receive", _telegram_loop)
                 log.info("[startup] gateway: Telegram adapter started")
         elif self._role == "core":
             # Expected on every split-mode boot: the core has no direct channel
@@ -3478,7 +3508,6 @@ class StartupOrchestrator:
         # through the SHARED gateway machinery via `_slack_loop` (byte-for-byte
         # the Telegram loop with a Slack pump/adapter).
         slack_adapter = None
-        slack_loop_task = None
         slack_socket_task = None
         slack_socket_handler = None
         slack_cfg = self._settings.slack_channel
@@ -3757,7 +3786,7 @@ class StartupOrchestrator:
                         log.info("[startup] gateway: slack loop cancelled")
                         raise
 
-                slack_loop_task = asyncio.create_task(_slack_loop())
+                _supervise_channel("slack_receive", _slack_loop)
                 log.info("[startup] gateway: Slack adapter started")
         else:
             log.info("[startup] gateway: no Slack bot_token/app_token — skipping")
@@ -3770,7 +3799,6 @@ class StartupOrchestrator:
         # (else it fails closed with a spurious denial). The inbound loop is
         # byte-for-byte the Telegram loop with a Discord pump/adapter.
         discord_adapter = None
-        discord_loop_task = None
         discord_cfg = self._settings.discord_channel
         if self._role != "core" and discord_cfg.enabled and discord_cfg.bot_token:
             log.info("[startup] gateway: starting Discord adapter")
@@ -3863,7 +3891,7 @@ class StartupOrchestrator:
                         log.info("[startup] gateway: discord loop cancelled")
                         raise
 
-                discord_loop_task = asyncio.create_task(_discord_loop())
+                _supervise_channel("discord_receive", _discord_loop)
                 log.info("[startup] gateway: Discord adapter started")
         else:
             log.info(
@@ -3879,7 +3907,6 @@ class StartupOrchestrator:
         # clarify pump, then intake — so a "reply N" consent answer is consumed
         # before it is mistaken for a new turn.
         whatsapp_adapter = None
-        whatsapp_loop_task = None
         whatsapp_cfg = self._settings.whatsapp_channel
         if self._role != "core" and whatsapp_cfg.enabled:
             log.info("[startup] gateway: starting WhatsApp adapter")
@@ -3950,7 +3977,7 @@ class StartupOrchestrator:
                         log.info("[startup] gateway: whatsapp loop cancelled")
                         raise
 
-                whatsapp_loop_task = asyncio.create_task(_whatsapp_loop())
+                _supervise_channel("whatsapp_receive", _whatsapp_loop)
                 log.info("[startup] gateway: WhatsApp adapter started")
             except Exception as exc:
                 log.error(
@@ -3959,6 +3986,16 @@ class StartupOrchestrator:
                 )
         else:
             log.info("[startup] gateway: WhatsApp not enabled — skipping")
+
+        # Start every supervised channel loop. After registration so a channel
+        # configured later in this function is included.
+        for _sup in channel_supervisors:
+            await _sup.start()
+        if channel_supervisors:
+            log.info(
+                "[startup] gateway: channel receive loops are supervised",
+                extra={"_fields": {"supervised_loops": len(channel_supervisors)}},
+            )
 
         # 4. STEP — start the CLI loop and block on the adapter
         log.info("[startup] gateway: starting CLI adapter")
@@ -4410,10 +4447,12 @@ class StartupOrchestrator:
             # background process outlives the gateway.
             with contextlib.suppress(Exception):
                 await process_registry.clear_all()
-            if telegram_loop_task is not None:
-                telegram_loop_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await telegram_loop_task
+            # Stop every supervised channel loop. Replaces the four per-channel
+            # cancel blocks — each adapter's OWN shutdown (sockets, handlers)
+            # stays exactly where it was.
+            for _sup in channel_supervisors:
+                with contextlib.suppress(Exception):
+                    await _sup.stop()
             if telegram_adapter is not None:
                 with contextlib.suppress(Exception):
                     await telegram_adapter.stop()
@@ -4421,10 +4460,7 @@ class StartupOrchestrator:
             # Socket Mode connection (cancel the background socket task + close the
             # handler), then stop the adapter. All guarded so a shutdown never
             # raises out of the finally block.
-            if slack_loop_task is not None:
-                slack_loop_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await slack_loop_task
+            # slack_loop_task: now stopped via channel_supervisors above.
             if slack_socket_task is not None:
                 slack_socket_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -4437,19 +4473,13 @@ class StartupOrchestrator:
                     await slack_adapter.stop()
             # Discord shutdown (mirrors Telegram): cancel the message loop, then
             # stop the adapter. Guarded so a shutdown never raises out of finally.
-            if discord_loop_task is not None:
-                discord_loop_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await discord_loop_task
+            # discord_loop_task: now stopped via channel_supervisors above.
             if discord_adapter is not None and hasattr(discord_adapter, "stop"):
                 with contextlib.suppress(Exception):
                     await discord_adapter.stop()
             # WhatsApp shutdown (mirrors Telegram): cancel the message loop, then
             # stop the adapter (cancels its poll loop + closes the browser).
-            if whatsapp_loop_task is not None:
-                whatsapp_loop_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await whatsapp_loop_task
+            # whatsapp_loop_task: now stopped via channel_supervisors above.
             if whatsapp_adapter is not None and hasattr(whatsapp_adapter, "stop"):
                 with contextlib.suppress(Exception):
                     await whatsapp_adapter.stop()
