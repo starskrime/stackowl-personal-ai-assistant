@@ -183,7 +183,7 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
         combined = "".join(c.content for c in state.responses if c.content)
         transformed = resolved_style.enforce(combined)
         if resolved_style.length == "terse":
-            transformed = await _summarize_if_terse(transformed, services, state)
+            transformed = await _summarize_unless_floor(transformed, services, state)
             transformed = resolved_style.verify(transformed)
         if transformed == combined:
             return state  # no preference rewrote anything → byte-identical
@@ -211,6 +211,40 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
 # Below this, a reply already reads as short — skip the summariser call
 # entirely rather than risk an LLM "compressing" text that's already terse.
 _TERSE_SKIP_BELOW_CHARS = 400
+
+
+async def _summarize_unless_floor(
+    text: str, services: StepServices, state: PipelineState,
+) -> str:
+    """Compress under ``length=terse`` — but NEVER an honesty floor.
+
+    THE GUARD, and it was earned in production on 2026-08-29T17:25Z.
+
+    ``_floor_chunk``'s docstring promises the floor is "Pure, deterministic, no
+    model call" (``delivery_gate.py``). ``synthesize_floor`` renders a template that
+    QUOTES THE GOAL back into the message. On that turn the goal was a ``/skill use``
+    prompt containing the conditional 'If no skill named "channel-fallback" exists,
+    say so plainly' — and this function then handed all 635 characters to a fast-tier
+    LLM, which compressed 635 -> 515 by reading that CONDITIONAL as a FACT. The user
+    was told the skill did not exist, in the same trace as
+    ``skill_view.execute: exit {success: True, skill: channel-fallback}``.
+
+    Worse, the caller re-stamps ``is_floor=True`` on the rewritten chunk, so
+    model-authored prose was preserved AS a deterministic floor and every downstream
+    reader that trusts that flag was trusting a paraphrase.
+
+    A floor is the platform's promise not to overclaim. It ships byte-for-byte or
+    the promise is worthless. Ordinary answers are still compressed — the guard is
+    deliberately narrow, because disabling terse mode outright would be a bug in the
+    opposite direction.
+    """
+    if any(c.is_floor for c in state.responses):
+        log.gateway.info(
+            "[pipeline] deliver: floor NOT summarized — an honesty floor ships verbatim",
+            extra={"_fields": {"trace_id": state.trace_id, "chars": len(text)}},
+        )
+        return text
+    return await _summarize_if_terse(text, services, state)
 
 
 async def _summarize_if_terse(
