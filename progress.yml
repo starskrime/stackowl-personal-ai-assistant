@@ -6216,6 +6216,32 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-56-d016-instrument-coverage-is-18-percent
+    raised: 2026-08-29
+    question: >
+      D01.6's grill measured its own instrument: of 29,574 cost_records carrying a
+      session_key, only 18% carry conversation_id and 2% carry ttft_ms. Metric 4
+      (prompt stability per conversation) therefore sees under a fifth of real
+      turns, so "8 of 453 conversations break the invariant" is a FLOOR. Do you
+      want conversation_id stamped on every session-bearing call so metric 4
+      becomes a real rate, or is a floor good enough?
+    why_evidence_cannot_settle_it: >
+      Both are defensible and the measurements say the same thing either way.
+      Stamping it everywhere is cheap but touches the hot cost path on every call;
+      accepting a floor keeps the path untouched and leaves the true rate unknown.
+      Which matters depends on whether prompt stability is worth defending at all
+      on this hardware — and with money at $0.0152 all time and no measurable
+      latency signal, that is a judgement about future backends, not a fact about
+      this one.
+    panel_recommendation: >
+      ACCEPT THE FLOOR and mark metric 4 conditional. Money is $0, no latency
+      penalty is observable, and the whole point of D01.2/D01.1 (cache reuse)
+      cannot be verified on a backend that reports no cache. Revisit if a
+      cache-reporting backend is ever configured — then coverage becomes worth
+      paying for because there is finally something to prove.
+    what_is_blocked: >
+      Nothing. D01.6 closes either way; only whether metric 4 is recorded as a
+      rate or as a floor depends on the answer.
   - id: ESC-55-d128-priority-rests-on-a-falsified-risk
     raised: 2026-08-28
     question: >
@@ -13940,6 +13966,39 @@ items:
     notes: null
 
   - id: D01.6
+    BRAINSTORM_RUN_RETROACTIVELY_2026_08_29: >
+      Bakir chose to run the grill rather than accept the pre-process exception,
+      and it earned its keep: ROUND 0 INVALIDATED TWO CONCLUSIONS DRAWN AN HOUR
+      EARLIER, in this same session, from this item's own instrument.
+      MEASUREMENT (round 0, everything else stands on this). The instrument's
+      coverage was never characterised. Of 120,787 cost_records: session_key 24%,
+      prompt_hash 24%, conversation_id 4%, ttft_ms 1%. And that is NOT explained
+      by sweeps and jobs having no conversation — among the 29,574 rows that DO
+      carry a session_key, only 18% have conversation_id and only 2% have
+      ttft_ms. So three of the four Q20 metrics are computed on unrepresentative
+      samples, and the item's own gap line — "cannot measure whether D01.1-D01.3
+      actually worked" — is STILL TRUE, for a reason the record never gave.
+      WHAT THAT CORRECTS. "8 of 453 conversations break the byte-identical
+      invariant" is a FLOOR, not a count: it sees under a fifth of real turns, so
+      the true rate could be several times higher. And "TTFT 1174ms unstable vs
+      1249ms stable, therefore no penalty" was wrong to state — 609 rows with
+      only 18 stable ones is not a measurement, it is noise. The honest sentence
+      is that the instrument CANNOT measure the penalty.
+      STABILITY. The instrument fails open and has never failed: zero cost-path
+      errors or warnings across two days of logs, and 120,787 rows written.
+      Append-only instrumentation with no kill-switch was the right call (the
+      config gate was deliberately dropped in 2026-07-25's slice).
+      IMPROVEMENT. Yes against nothing — before this there was no per-conversation
+      cost at all. But it does not yet answer the question it was built for.
+      KILLER FUNCTIONALITY. Foundational rather than user-facing: every "did that
+      change work?" claim in this programme leans on it. Today it is the reason
+      D01.2's benefit is known to be unproven rather than assumed good.
+      EASE OF USE. `/cost` is registered and reachable (CostCommand, name "cost",
+      with `turns` sub-command).
+      FUTURE-PROOF. Metric 1 can never close on this hardware — every serving
+      model is self-hosted and none report cached_tokens. A metric that cannot
+      fire must be marked conditional, not left open for ever; that is the same
+      lesson D05.4 and D04.4 each paid for separately.
     findings_REMEASURED_2026_08_29: >
       The two findings this item's instrument produced on 2026-08-15 are both
       still TRUE and both measure out as NOT ACTIONABLE on this deployment.
@@ -13976,7 +14035,7 @@ items:
     blocks: [D01.1]
     dedup_target: null
     stages:
-      brainstorm: pre_process_exception   # Bakir's call 2026-08-15 — see process_deviation.resolution
+      brainstorm: done   # Bakir's call 2026-08-15 — see process_deviation.resolution
       architect:  done
       implement:  done
       cleanup:    no_change_needed
