@@ -6242,6 +6242,76 @@ current:
     235k-row job_runs table with no retention.
 
   ESCALATIONS:
+  - id: ESC-61-a-DENIED-write-succeeded-through-shell-seven-seconds-later
+    raised: 2026-08-29
+    severity: "security boundary — found by accident, while auditing an unexplained dirty file"
+    HOW_IT_WAS_FOUND: >
+      src/stackowl/media/tts/piper.py was clean at 15:07Z and modified at 15:20:39Z with
+      nobody claiming the write. Tracing the author is what surfaced this; the patch itself
+      turned out correct and is committed separately (f4b50e2a).
+    THE_CHAIN_every_step_from_the_log_one_trace_id: >
+      Session owl:secretary:telegram:dm:72055773, trace 7c55ad3d6aef46cc945db71256307983 —
+      a NORMAL TELEGRAM CONVERSATION, not a maintenance mode.
+        15:18:14  tts fails: "Error: # channels not specified" (piper.py:241)
+        15:20:32  edit.execute → "path traversal denied", path = the repo's own
+                  src/stackowl/media/tts/piper.py. Tool returns tool_error.
+        15:20:32  tool.__call__ → "next-step signal — result not trustworthy",
+                  {'tool': 'edit', 'next_step': 'RECOVER'}
+        15:20:38  next model turn (the recovery)
+        15:20:39  [heuristic] tool outcome {'tool_name': 'shell', 'outcome': 'SUCCEEDED'}
+                  — and piper.py's mtime is 15:20:39.
+        15:21:11  [runtime] code change settled → requesting core restart
+        15:21:14  [startup] core: exec-replacing with fresh code
+      A write was DENIED by policy, and the same turn completed it through a sibling tool
+      SEVEN SECONDS LATER. The platform then restarted itself into the modified source.
+    IT_IS_NOT_THE_GUARD_THAT_FAILED: >
+      edit.py:129-132 is correct — it logs and RETURNS immediately, and there is no second
+      write path inside it. The boundary is enforced on edit, write_file, read_file, pdf and
+      vision/loader. `shell` has NO path guard at all: the only workspace concept in
+      shell.py is `_default_workspace_cwd()`, a convenience default for the subprocess CWD
+      (shell.py:183-196, :517, :734). So the guard is real on four tools and absent on the
+      one tool that can do anything.
+      This is "two copies of one rule" with one copy simply missing, and "an actuator wired
+      on only some paths" — the two shapes CLAUDE.md says account for nearly every real
+      defect here. The consequence is that the workspace boundary is ADVISORY.
+    THE_DEEPEST_ROOT_and_the_part_worth_fixing: >
+      Not the missing predicate. The RECOVERY LADDER CANNOT TELL "IT BROKE" FROM "YOU MAY
+      NOT". "Path traversal denied" is an AUTHORIZATION verdict, and it was classified as a
+      recoverable failure — so the ladder's job became finding another way to do the thing
+      that was just refused, and it succeeded on the first attempt. Adding the predicate to
+      shell closes this instance; making a policy denial NON-RECOVERABLE closes the class.
+      Both are wanted, in that order of importance.
+    THE_TENSION_THAT_MAKES_THIS_A_QUESTION_AND_NOT_JUST_A_FIX: >
+      StackOwl is DELIBERATELY self-extending — a standing rule says the agent designs,
+      registers and persists its own tools, and CodeWatcher exists precisely to exec-replace
+      the core when src/ changes. So an owl editing StackOwl's own source is arguably the
+      product working. What is NOT defensible is that it happened by ROUTING AROUND A
+      DENIAL: if self-modification is intended, the guard should permit it openly rather
+      than be bypassed, and if it is not intended, shell should not be the hole.
+    the_question: >
+      Which is it? (a) Self-modification is intended — then widen the guard deliberately and
+      make it auditable, and still make policy denials non-recoverable. (b) It is not
+      intended — then shell asks the same guard and the boundary becomes real. Either way a
+      denial must stop meaning "try another tool".
+    why_evidence_cannot_settle_it: >
+      The tree supports both readings and they are opposite security postures. Risk appetite
+      on a security surface is never derivable.
+    panel_recommendation: >
+      (a) PLUS the class fix, and the class fix first. Make ReversibilityResolver /
+      next-step classification treat an authorization refusal as TERMINAL for that intent,
+      never `recover` — that is one predicate in one place and it closes every future
+      variant, not just shell. Then decide the guard's shape for self-modification
+      deliberately. Do not simply bolt the path check onto shell and call it done: that
+      leaves the ladder still hunting for the next unguarded tool.
+    what_is_blocked: >
+      Nothing is blocked. Recorded at once because it is a live, reproducible security
+      finding on the default path, and because the next occurrence will look exactly as
+      innocuous as this one did — a dirty file nobody could account for.
+    NOT_a_reason_to_revert_the_patch: >
+      The patch it produced was measured CORRECT and is committed with its provenance
+      (f4b50e2a). A right answer obtained the wrong way is still a right answer; the wrong
+      way is what this entry is for.
+
   - id: ESC-58-d105-is-ergonomics-wearing-a-capability-gap-line
     raised: 2026-08-29
     question: >
@@ -6275,6 +6345,10 @@ current:
     what_is_blocked: >
       NOTHING blocks on this — architect proceeds on the adopted design. What needs an
       answer is whether the corpus item gets opened, and at what priority.
+    ANSWERED_2026_08_29_BY_BAKIR: >
+      "Ship /skill use, then open the corpus item." The panel's recommendation, taken
+      whole: build the ~20-line rung-1 verb, do NOT let it count as the capability work,
+      and then open the unmapped corpus item. D10.5 proceeds to architect.
     also_falsified_while_answering_this: >
       current.NEXT ranks D03.2 next as "the largest stated functional hole". It was already
       CLOSED BY MEASUREMENT on 2026-08-26, recorded in this file: 2,916 production calls,
@@ -6325,6 +6399,20 @@ current:
     what_is_blocked: >
       Nothing. Recorded so the earlier recommendation is not acted on as though the metrics
       framing were the whole story.
+    ANSWERED_2026_08_29_BY_BAKIR_OVERRULING_THE_PANEL: >
+      "Fix it now — promote the resolver, stamp all 9 sites." The panel recommended
+      instrumenting first and letting the measured latency delta decide; Bakir chose the fix
+      regardless of the number. Recorded as an OVERRULE rather than folded away, because the
+      panel's objection stands on the record: the token saving is a measured ZERO on this
+      deployment and the latency saving is currently unevidenced. The work proceeds anyway —
+      an 81% bypass of a mechanism the programme spent a whole item building is a defect on
+      its own terms. ESC-56 is SUPERSEDED by this answer.
+      Scope, so it is not rediscovered mid-build: promote _resolve_incarnation out of the
+      orchestrator closure into a real seam, and stamp the nine PipelineState sites —
+      sessions_send:241, delegate_task:529, staged_rca:310, round_runner:171,
+      retry_actuator:131 and :186, goal_execution:179, shadow_validator:269, recovery:650.
+      Add the duration field anyway while in there: it costs one line and it is the only way
+      the result will ever be provable either way.
 
   - id: ESC-60-the-mandated-ponytail-gate-is-not-installed
     raised: 2026-08-29
