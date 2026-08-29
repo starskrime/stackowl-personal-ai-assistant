@@ -8867,6 +8867,24 @@ current:
     removal. Guessing it builds the wrong two thirds, so it was not guessed.
 
   NEXT: >-
+    ESC-58's CORPUS ITEM — the capability D10.5 was explicitly NOT. Measured: 180 skills,
+    16 presented per turn, 163 dropped (2,604 truncation WARNINGs); 174 never loaded once in
+    seven days; `skills_list` — the escape hatch the truncation notice itself advertises
+    ("+162 more — skills_list to enumerate them") — called ZERO times despite sitting in the
+    non-evictable tool floor with a reachability probe; ~166 of 180 machine-`learned`;
+    ESC-44's catalogue_order_key measurably INERT because the tail's execution counts are all
+    zero, so it collapses to its alphabetical final term. `/skill dedupe` and `/skill migrate`
+    are both preview-by-default and evidently never applied.
+    MEASURE FIRST as always, and note the map's D10.6 line is already corrected in place.
+    ALSO OPEN, from the 2026-08-29 delivery arc: 22 tasks with an unaddressed destination
+    (bare channel, provably undeliverable), and 74 dead_letter rows with delivered_at NULL —
+    of which 72 are ONE historical batch from 2026-08-20 with NULL trigger/failure class and
+    no address, so nobody was ever waiting on them. Recommend leaving those 72 alone rather
+    than escalating 72 notifications; the decision is Bakir's.
+    SUPERSEDED: D10.5 is CLOSED (all seven stages), and D03.2 was already closed by
+    measurement on 2026-08-26 — the old NEXT line ranked it as "the largest stated functional
+    hole", which its own Round 0 disproves.
+  SUPERSEDED_NEXT_2026_08_29: >-
     D10.5 "Skills as slash commands" (P1, wave 8) — its gap line calls it a DIRECT
     LAW 1 VIOLATION and notes the model cannot be pointed at a skill on demand.
     Run brainstorm + architect, then DECIDE AND REPORT; do not ask unless the call
@@ -19911,11 +19929,39 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   partial
-      document:   partial
+      validate:   done
+      document:   done
     doc: "docs/reference-mapping/designs/D10.5.md"
     doc_last_verified: null
     decisions:
+      - date: 2026-08-29
+        stage: validate
+        round: "CLOSED — all five checks pass, and the last one found a defect in my own design"
+        by: loop
+        FINAL_VERDICT: >-
+          Checks 1, 2, 3 and 5 PASS live (steer fires, steer LANDS on the first model call,
+          runs as an ordinary turn, and both the hyphenated and source:name forms reach
+          skill_view unmangled — 2 invocations, both forms, the denominator stated). Check 4
+          FAILED and was fixed: the bare invocation had no stopping condition and burned
+          ~683k tokens; it now loads and STOPS.
+          THE DOCUMENTED JOIN NOW RUNS. trace_id was missing from the steer line, so the check
+          I wrote could not be executed; msg.trace_id was in scope and is now in the fields.
+          Both live pairs share a trace_id.
+        AND_VALIDATE_CAUGHT_MY_OWN_OVERCLAIM: >-
+          I2 said a skill body is never staged as a durable user fact, and the design claimed
+          steering DISSOLVED that hazard so PipelineState.input_is_synthetic was unnecessary.
+          MEASURED: four staged_facts rows read 'User: [/skill use] The user has invoked the
+          skill "..."'. The BODY does stay a tool result — that half held — but the turn PROMPT
+          is input_text, and turn_persist stages "User: {input_text}". is_machine_lane could
+          not see it (prefix check on goal-/incident-, these arrive on a Telegram lane),
+          exactly as the stability lens warned during brainstorm and I overruled.
+          The query carried a control: 258 rows match a common substring, so 4 is a finding
+          and not an instrument artifact.
+          FIXED in 0725dc82: input_is_synthetic set from `_prompt_depth > 0` (structural, not a
+          tag match), and BOTH refusals now live in one predicate — the second case existed
+          only because the first could not see it.
+          Recorded at length because the lesson is general: a design that argues a defect is
+          "dissolved" should be made to prove it in validate, not trusted.
       - date: 2026-08-29
         stage: validate
         round: "FIRST LIVE INVOCATION — the steer landed, and the turn then ran away"
