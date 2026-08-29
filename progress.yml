@@ -16031,6 +16031,29 @@ items:
 
   - id: D03.4
     title: "Tool-result overflow defense"
+    VALIDATED_LIVE_2026_08_29: >
+      All three levels working in production, measured not asserted.
+      "[tool] result exceeded the tool's cap — truncated" at INFO, carrying
+      tool=browser_extract, original_len=1,215,049, cap=200,000, cut=1,015,049.
+      The spill file is 1,230,611 bytes and holds the WHOLE text: it begins
+      "*** START OF THE PROJECT GUTENBERG EBOOK 2701 *** MOBY-DICK;" and ends
+      "ther orphan. *** END OF THE PROJECT GUTENBERG EBOOK 2701 ***". The model
+      received a 200k slice plus the path to the rest; before this the 1.2M
+      characters were simply destroyed.
+      A SECOND SANITY CHECK IN THE SAME SESSION: a Wikipedia page returned
+      169,355 chars and was NOT truncated — under the cap, untouched, which is
+      the behaviour the p90/p95 choice was made for.
+      THE FEATURE SHIPPED DORMANT FIRST AND I CAUGHT IT. max_result_size_chars
+      defaults to None and no tool declared one, so levels 2 and 3 could never
+      fire — built, tested, pushed, inert. Fixed in 3566c778 by setting the cap
+      on browser_extract, the tool that produced ALL 26 measured results above
+      100k chars. A test now pins that the cap exists and sits between the
+      measured p90 (92,090) and p95 (287,161).
+    stages_note_2026_08_29: >
+      document is recorded as no_change_needed rather than skipped: Bakir chose
+      "progress yaml, code, tests" as the record and explicitly asked for no
+      design docs, so the evidence lives here and in the tests instead of in
+      docs/reference-mapping/designs/D03.4.md.
     BRAINSTORM_2026_08_29: >
       ROUND 0 — MEASURED FIRST. `output_len` is already logged on tool exits, so
       the problem is sizeable without building anything. n=1,786 tool results:
@@ -16081,11 +16104,11 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  partial
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   no_change_needed
     doc: null
     doc_last_verified: null
     decisions: []
