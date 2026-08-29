@@ -52,6 +52,16 @@ class ToolResult(BaseModel):
     # loud error it replaced. The platform already times every call; asking the
     # author too is a second writer to a fact it owns.
     duration_ms: float = 0.0
+    #: D03.4 — WAS THIS RESULT CUT, AND BY HOW MUCH.
+    #: Measured 2026-08-29: 22% of tool results exceed 10k chars and the largest
+    #: seen was 4,201,658 — four times the whole context window. Truncation was
+    #: happening already, but SILENTLY: nothing on ToolResult said so and no log
+    #: line recorded it, so neither the agent nor the operator could tell
+    #: information had been destroyed. A cap without this flag makes that worse.
+    truncated: bool = False
+    #: The size the output had BEFORE the cap. "Some was cut" is not actionable;
+    #: "49,000 of 50,000 characters were cut" is.
+    original_output_len: int | None = None
     # VERIFICATION (the reality check, distinct from `success` the self-report).
     # None  ⇒ not checked — falls back to `success` (byte-identical to pre-
     #         verification behavior; the default for the ~92 un-migrated tools).
@@ -78,6 +88,59 @@ class ToolResult(BaseModel):
     side_effect_committed: bool = True
 
 
+#: How much room the truncation NOTICE itself needs. The notice is appended after
+#: the cut, so the cap is applied to the body and the notice sits outside it —
+#: otherwise a small cap would leave no room to say anything at all.
+_TRUNCATION_NOTICE_BUDGET = 512
+
+
+def _apply_result_cap(tool: Tool, result: ToolResult) -> ToolResult:
+    """Cut an oversized result to the tool's declared cap and SAY SO.
+
+    D03.4 level 3. Returns ``result`` unchanged when the tool declares no cap or
+    the output fits, so every existing tool is byte-identical.
+
+    THE SIGNAL IS THE POINT, not the cutting. Twelve tools already truncate
+    (level 1) and did it silently — nothing on ToolResult said so and no log line
+    recorded it, so a page cut to a tenth read to the model exactly like a whole
+    page. The flag is for code; the notice appended to ``output`` is for the model,
+    which reads the text and not the fields.
+
+    Never raises: a cap must never turn a working tool call into a failure.
+    """
+    try:
+        cap = tool.manifest.max_result_size_chars
+    except Exception as exc:  # B5 — an unreadable manifest must not break the call
+        log.tool.warning(
+            "tool.__call__: could not read max_result_size_chars — leaving result "
+            "uncapped",
+            exc_info=exc,
+            extra={"_fields": {"tool": tool.name}},
+        )
+        return result
+    if not cap or cap <= 0:
+        return result
+    original = len(result.output)
+    if original <= cap:
+        return result
+    notice = (
+        f"\n\n[truncated: {original:,} characters produced, {cap:,} kept — "
+        f"{original - cap:,} characters were cut]"
+    )
+    # INFO, not debug: this is the evidence that information was destroyed, and a
+    # DEBUG line could never close a claim about how often it happens.
+    log.tool.info(
+        "tool.__call__: result exceeded the tool's cap — truncated",
+        extra={"_fields": {"tool": tool.name, "original_len": original,
+                           "cap": cap, "cut": original - cap}},
+    )
+    return result.model_copy(update={
+        "output": result.output[:cap] + notice,
+        "truncated": True,
+        "original_output_len": original,
+    })
+
+
 class ToolManifest(BaseModel):
     """Declarative metadata for a tool — used by ConsequentialActionGate and MCP adapters."""
 
@@ -91,6 +154,12 @@ class ToolManifest(BaseModel):
     # The consent gate keys always-ask exclusions off THIS, never off LLM-supplied
     # call args — the model must not be able to relax its own gating (E0-S1 / B2).
     consent_category: str | None = None
+    #: D03.4 level 3 — the largest result this tool may return, in characters.
+    #: None (the default) means uncapped, so every existing tool is byte-identical.
+    #: Enforced ONCE in Tool.__call__, which the module documents as the tool
+    #: chokepoint — twelve tools already self-truncate (level 1) and this must not
+    #: become a thirteenth copy of that rule.
+    max_result_size_chars: int | None = None
     # Toolset-group name for DNA-gated presentation (e.g. "code", "media", "home").
     # An owl's capability_profile lists group names; a tool joins the presented set
     # when its toolset_group is in that profile (ADR-11 / E1-S4). Distinct from
@@ -357,6 +426,10 @@ class Tool(ABC):
             result = result.model_copy(
                 update={"duration_ms": (time.monotonic() - t0) * 1000}
             )
+        # D03.4 level 3 — enforce the tool's declared result cap HERE, at the one
+        # chokepoint, so it cannot be wired on some paths only. Applied before
+        # verification so verify() sees what the caller will actually receive.
+        result = _apply_result_cap(self, result)
         # VERIFICATION seam — only after a success the tool ASSERTED. A tool-supplied
         # verified=True is a CLAIM, never proof: the seam still runs and its verdict
         # takes precedence (B1/F-25 — a self-asserted verification must never be trusted
