@@ -417,6 +417,48 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
 # tool. ponytail: extend this set if a new first-class retrieval tool lands.
 _RETRIEVAL_TOOLS = frozenset({"web_search", "web_fetch"})
 
+# LOCAL AUTHORITY — the platform's own state, and the answer to "it does not have
+# capability to work with himself" (Bakir, 2026-08-29).
+#
+# A SECOND set, deliberately, because there are two different questions here and
+# `_RETRIEVAL_TOOLS` answers the other one. That set means "did a WEB tool run?",
+# which is right for URL provenance above and would be WRONG if `owls_list` were in
+# it — a locally-sourced answer carrying a URL would then read as web-sourced.
+#
+# WHAT THIS FIXES, measured on trace 916bb4b7. He asked "What agents i have".
+# `owls_list` ran and returned 11 owls — the turn HAD the answer — and because
+# neither web tool ran, `_should_classify_retrieval` sent it to the live-lookup
+# classifier, which vetoed it: "it answered from memory when the request required a
+# LIVE web lookup". Corrective re-run, vetoed again, floored three times,
+# dead-lettered. The platform could not answer a question about ITSELF, because its
+# own registry was not counted as a source.
+#
+# These tools read authoritative LOCAL state. A turn sourced from one of them is
+# grounded — not by the web, and it should never be asked whether it needed the web.
+# Membership means "this tool is EVIDENCE about the platform or the conversation",
+# which is why `send_message` (an effect) and the write tools are absent.
+_LOCAL_AUTHORITY_TOOLS = frozenset({
+    "owls_list",        # which agents exist
+    "skills_list",      # which skills exist
+    "skill_view",       # what a skill says
+    "tool_describe",    # what a tool does
+    "tool_search",      # which tools exist
+    "session_search",   # what was said before
+    "transcripts",      # the conversation record
+    "read_logs",        # what the platform actually did
+    "memory",           # what is durably known about the user
+})
+
+
+def _grounded_locally(state: PipelineState) -> bool:
+    """True iff this turn read authoritative LOCAL state.
+
+    Separate from ``_retrieval_ran`` on purpose: that asks "did a web tool run",
+    this asks "did the turn have a source at all". Only the live-lookup
+    precondition consults this; URL provenance still asks the web question.
+    """
+    return any(c.tool_name in _LOCAL_AUTHORITY_TOOLS for c in state.tool_calls)
+
 # Unicode-safe http(s) URL scanner. Matches the scheme + everything up to the first
 # whitespace or a delimiter that cannot be part of a URL; trailing punctuation is
 # trimmed separately so "(see https://x.com/a.)" yields "https://x.com/a".
@@ -940,6 +982,11 @@ def _should_classify_retrieval(state: PipelineState) -> bool:
     if state.intent_class == "conversational":
         return False
     if _retrieval_ran(state):
+        return False
+    # A turn sourced from the platform's own state HAS retrieved — asking it
+    # whether it needed a live web lookup is how "What agents i have" floored
+    # three times while owls_list sat in the same trace returning 11 owls.
+    if _grounded_locally(state):
         return False
     return not state.delivered_successes
 
