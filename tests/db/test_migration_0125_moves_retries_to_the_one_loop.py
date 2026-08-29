@@ -149,3 +149,27 @@ def test_the_moved_rows_are_closed_and_the_sweep_is_retired() -> None:
         "SELECT COUNT(*) FROM jobs WHERE handler_name='retry_sweep'"
     ).fetchone()[0]
     assert sweeps == 0, "the every-minute sweep for a dead engine is still scheduled"
+
+
+def test_the_boot_path_does_not_RE_SEED_the_sweep() -> None:
+    """Deleting the job row is useless while something re-creates it.
+
+    MEASURED 2026-08-29: migration 0125 ran at 00:31:02 and the retry_sweep job
+    reappeared at 00:31:33 — 31 seconds later — because scheduler assembly seeded
+    it again at boot. The migration had been reported as "retiring the sweep"; it
+    retired one row, every boot, for thirty-one seconds.
+
+    Removing a row without removing its WRITER just means the row comes back. This
+    fails if the seed returns.
+    """
+    import pathlib
+
+    src = (
+        pathlib.Path(__file__).resolve().parents[2]
+        / "src" / "stackowl" / "scheduler" / "assembly.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'handler_name="retry_sweep"' not in src, (
+        "scheduler assembly seeds retry_sweep again, so migration 0125's DELETE "
+        "is undone on the next boot"
+    )

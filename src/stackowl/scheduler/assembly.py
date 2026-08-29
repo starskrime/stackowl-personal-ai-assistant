@@ -742,12 +742,17 @@ class SchedulerAssembly:
             db, handler_name="objective_driver", schedule="every 1m",
             interval_minutes=1,
         )
-        # Retry sweep — retries floored turns every minute, capped at 3
-        # attempts per retry_queue row (RetrySweepHandler / RetryActuator).
-        await _seed_minutes_schedule(
-            db, handler_name="retry_sweep", schedule="every 1m",
-            interval_minutes=1,
-        )
+        # RETRY SWEEP IS NOT SEEDED ANY MORE (2026-08-29). A floored turn now
+        # enqueues a TASK on the one loop (49601f50) and migration 0125 moved the
+        # remaining retry_queue rows across and deleted this job.
+        #
+        # DELETING THE ROW WAS NOT ENOUGH, which is the lesson. Measured: the
+        # migration ran at 00:31:02 and this seed re-created the job at 00:31:33 —
+        # 31 seconds later, every boot. Removing a row without removing its WRITER
+        # just means the row comes back.
+        #
+        # The sweep had nothing left to do either way: retry_queue holds 0 live
+        # rows, get_due() selects only pending ones, and nothing writes new ones.
         # D01.7 — conversation sweep. Makes the 4 AM boundary a CLOCK event
         # instead of "whenever the user next says something", so the overnight
         # summary can run unattended. Every 5m: the boundary is hourly-scale, and
