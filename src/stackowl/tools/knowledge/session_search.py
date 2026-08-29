@@ -43,7 +43,7 @@ codebase. See ``_bmad-output/research/tool-port-analysis.md``.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
@@ -72,6 +72,23 @@ JOIN conversations c ON c.id = m.conversation_id
 WHERE c.session_key = ?
 ORDER BY m.created_at ASC, m.id ASC
 LIMIT ? OFFSET ?
+"""
+
+# D11.2 — FTS5 over messages (migration 0127), ranked. Replaces the LIKE scan as
+# the PRIMARY path; the LIKE below stays as the fallback for a query FTS5 cannot
+# parse, so an odd quote in user text degrades to the old behaviour instead of
+# raising. Same joins, same columns, same order of guarantees — the tool's
+# contract is unchanged, which is what its own docstring predicted: "if an FTS5
+# mirror over messages is added later it slots in behind _discover with no
+# contract change."
+_DISCOVER_FTS_SQL = """
+SELECT m.id, m.role, m.content, m.created_at
+FROM messages_fts f
+JOIN messages m ON m.rowid = f.rowid
+JOIN conversations c ON c.id = m.conversation_id
+WHERE c.session_key = ? AND messages_fts MATCH ?
+ORDER BY rank
+LIMIT ?
 """
 
 _DISCOVER_SQL = """
@@ -236,14 +253,50 @@ class SessionSearchTool(Tool):
         if not vis.allowed:
             return self._err(vis.reason, t0)
         limit = self._coerce(kwargs.get("limit"), _DEFAULT_LIMIT, _MAX_LIMIT)
-        like = f"%{self._escape_like(query)}%"
-        rows = await db.fetch_all(_DISCOVER_SQL, (vis.session_key, like, limit))
+        rows = await self._discover_rows(db, vis.session_key, query, limit)
         log.tool.debug(
             "session_search.execute: discover matched",
             extra={"_fields": {"matches": len(rows)}},
         )
         header = f"{len(rows)} match(es) for {query!r} in session {vis.session_key}"
         return self._ok(self._render(rows, header=header), t0, len(rows))
+
+    async def _discover_rows(
+        self, db: DbPool, session_key: str | None, query: str, limit: int
+    ) -> list[Any]:
+        """Ranked FTS5 match, falling back to the old substring scan.
+
+        WHY FTS IS THE PRIMARY PATH. `discover` used to build ONE pattern from the
+        whole query — LIKE '%<entire query>%' — so a multi-word query matched only
+        when those exact characters were adjacent. Measured 2026-08-29: of six
+        real calls, THREE returned zero rows. "browser timeout" cannot find "the
+        browser kept hitting a timeout" however many times it is asked.
+
+        WHY THE FALLBACK STAYS. FTS5 MATCH parses its argument, so arbitrary user
+        text — an unbalanced quote, a bare NEAR — raises rather than returning
+        nothing. Degrading to the previous behaviour is strictly better than
+        turning a weak answer into a failed tool call.
+        """
+        try:
+            rows = await db.fetch_all(
+                _DISCOVER_FTS_SQL, (session_key, query, limit)
+            )
+        except Exception as exc:  # B5 — every except logs
+            log.tool.warning(
+                "session_search._discover: FTS match failed — falling back to "
+                "substring search",
+                exc_info=exc,
+                extra={"_fields": {"query_len": len(query)}},
+            )
+            like = f"%{self._escape_like(query)}%"
+            return await db.fetch_all(_DISCOVER_SQL, (session_key, like, limit))
+        # INFO, because "did FTS actually replace the substring scan" is a claim
+        # this line has to be able to close.
+        log.tool.info(
+            "session_search._discover: FTS match",
+            extra={"_fields": {"matches": len(rows), "query_len": len(query)}},
+        )
+        return rows
 
     async def _scroll(self, db: DbPool, kwargs: dict[str, object], t0: float) -> ToolResult:
         anchor_id = str(kwargs.get("anchor_id", "")).strip()
