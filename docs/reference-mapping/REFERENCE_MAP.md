@@ -617,14 +617,60 @@ and `skills_ast_audit.py` static analysis of skill scripts before install.
 injecting the skill as a **user message** — never into the system prompt — precisely to preserve
 caching. Deliberate and documented.
 **StackOwl.** `/skill` command exists; skills are injected into the **system prompt** by `assemble`.
-**Gap.** Direct Law 1 violation, and it also means the model cannot be pointed at a skill on demand.
-**Ask.** Move skill injection to the message stream?
+**Gap.** ~~Direct Law 1 violation, and it also means the model cannot be pointed at a skill on demand.~~
+**Ask.** ~~Move skill injection to the message stream?~~
+
+> **CORRECTED 2026-08-29 (measured twice, independently).** Both halves of the struck gap
+> line are stale, and the description of the reference platform is wrong too.
+> 1. **Not a Law 1 violation.** `skills_len` on the INFO line `[pipeline] assemble: exit`
+>    varies in **0 of 403 lanes** over four days — only two values exist, 4159 and 0 — while
+>    **304 of those same lanes** do vary their `prompt_hash`. The instrument detects
+>    variation; skills never cause it. Independently: **0 `prompt_hash` changes across 54
+>    genuinely multi-turn conversations.** It *was* true — `assemble.py:263` records
+>    "skills_len went 4169 -> 0 across two turns of ONE conversation" on 2026-07-27 — and was
+>    fixed by D01.1 slices 4b + 5 and ESC-10.
+> 2. **The model CAN be pointed at a skill on demand.** `tools/knowledge/skill_view.py`
+>    returns any skill's body by name, is in the guaranteed tool base
+>    (`tools/_infra/presentation.py:93-102`) with a reachability probe
+>    (`health/reachability/probes.py:20`), and ran **391 times in 7 days**. D01.1's approved
+>    approach named it explicitly.
+> 3. **"Never into the system prompt" mis-states the reference.** It carries a name +
+>    57-char-description *index* in its system prompt (`prompt_builder.py:1461`,
+>    `curator.py:426`). Only skill **bodies** stay out — exactly our posture, since
+>    `SkillTier.FULL` has no producer anywhere in `src/`.
+>
+> **The real gap, and what this item is now for:** the *operator* has no way to point at a
+> skill. `/skill` is CRUD only. That matters because the 4,000-char catalogue cap means **163
+> of 179 skills are dropped from the prompt on every turn**, and the model can only ever
+> reach what it can see. A human naming a skill needs no catalogue. The seam already exists —
+> `SlashCommand.build_turn_prompt` (`commands/base.py:44`), honoured at
+> `orchestrator.py:2263-2320`, used today by `/learn`, and mechanically identical to the
+> reference's `event.text = msg` + fall-through.
 
 ### D10.6 · Skill relevance scoring — `AHEAD`
 **Hermes.** All enabled skills' *names + descriptions* go in the prompt; the model picks.
-**StackOwl.** `skills/skill_relevance.py` scores and tiers per turn.
-**Gap.** Ours is smarter but is a per-turn prompt mutation (feeds D01.1).
-**Ask.** Keep scoring but move it to session start?
+**StackOwl.** ~~`skills/skill_relevance.py` scores and tiers per turn.~~
+**Gap.** ~~Ours is smarter but is a per-turn prompt mutation (feeds D01.1).~~
+**Ask.** ~~Keep scoring but move it to session start?~~
+
+> **CORRECTED 2026-08-29 (measured, during D10.5's Round 0).** The struck lines are stale.
+> `skills/skill_relevance.py` **no longer exists** — it and `assign_tiers` were deleted on
+> 2026-08-15 by ESC-10, recorded at `skills/instruction_injector.py:66-77`. There is no
+> per-turn scoring left to move: `assemble.py:325` hardcodes every entry to
+> `SkillTier.SUMMARY`, and the catalogue is `store.list_enabled()` in a deterministic total
+> order (`store.catalogue_order_key`). The "Ask" is therefore already answered — scoring did
+> not move to session start, it was removed, and the prompt is frozen per conversation by
+> D01.1 slice 5.
+> **What is actually open here** is a different and larger problem, measured the same day:
+> the catalogue is capped at 4,000 chars (`instruction_injector.py:12`), so of **179 enabled
+> skills only 16 are presented and 163 are dropped on every turn** (2,604
+> `catalog truncated by budget` WARNINGs in the retained logs). Over 7 days the model loaded
+> 5 distinct skills, all from the visible head; 174 were never loaded once. Selecting *which*
+> 16 the operator's question actually needs is the real D10.6, and `DEBT-25`'s constraint
+> still binds it: any reader must score **without** putting per-query work back into the turn
+> path, or it undoes D01.1's byte-identical prompt.
+> `DEBT-25` itself should be closed as **overtaken** — it says "KEEP, do not delete"
+> the two artefacts ESC-10 deleted two weeks later.
 
 ### D10.7 · Skill ownership per persona — `AHEAD`
 **Hermes.** No equivalent.

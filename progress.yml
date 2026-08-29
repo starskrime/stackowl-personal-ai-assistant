@@ -6242,6 +6242,116 @@ current:
     235k-row job_runs table with no retention.
 
   ESCALATIONS:
+  - id: ESC-58-d105-is-ergonomics-wearing-a-capability-gap-line
+    raised: 2026-08-29
+    question: >
+      D10.5's stated gap is stale on both halves (proven — see the item's brainstorm).
+      What survives is a real but NARROW ergonomic hole: /skill has twelve verbs that
+      MANAGE skills and not one that USES one, and `/skill show X` prints the body to
+      the OPERATOR'S SCREEN where the model never sees it. The fix is ~20 lines.
+      But the panel's two value lenses SPLIT, and the split is the finding: addressing
+      is not what is binding. Do we ship the twenty-line verb, or reclassify D10.5 and
+      spend the effort on the corpus item underneath it?
+    why_evidence_cannot_settle_it: >
+      Both readings are supported by the same numbers. Whether a surface that will be
+      rediscovered as a bug repeatedly is worth twenty lines TODAY, versus whether the
+      loop should instead open an unmapped item, is priority and product intent. Neither
+      is derivable.
+    what_the_measurements_say: >
+      180 skills; 16 presented per turn, 163 dropped (2,604 truncation WARNINGs). Over
+      seven days the model loaded FIVE distinct skills, all from the visible head; 174 were
+      never loaded once. `skills_list` — the escape hatch the truncation notice itself
+      advertises ("+162 more — skills_list to enumerate them") — was called ZERO times,
+      despite sitting in the non-evictable tool floor with a reachability probe enforcing
+      it. ~166 of 180 skills are machine-`learned`. ESC-44's catalogue_order_key is
+      measurably INERT on this corpus because the tail's execution counts are all zero, so
+      it collapses to its alphabetical final term exactly as its own docstring predicts.
+    panel_recommendation: >
+      SHIP THE TWENTY LINES, and do NOT let them count as the capability work. The verb is
+      worth its price precisely because its price is twenty lines; the same fix at a larger
+      price would need the capability argument the measurements refuse to support. Then
+      open the corpus item — it is not on any list and on the killer-functionality lens it
+      dominates this one.
+    what_is_blocked: >
+      NOTHING blocks on this — architect proceeds on the adopted design. What needs an
+      answer is whether the corpus item gets opened, and at what priority.
+    also_falsified_while_answering_this: >
+      current.NEXT ranks D03.2 next as "the largest stated functional hole". It was already
+      CLOSED BY MEASUREMENT on 2026-08-26, recorded in this file: 2,916 production calls,
+      median 1,487 / max 62,724 input tokens against a 262,144 window, ZERO calls over 50%.
+      The NEXT list should be corrected.
+
+  - id: ESC-59-esc56-was-triaged-as-metrics-and-has-a-second-larger-consumer
+    raised: 2026-08-29
+    question: >
+      ESC-56 asks whether to stamp `conversation_id` on every session-bearing call "so
+      D01.6's metric 4 is a rate, not a floor", and its recorded panel recommendation is
+      "accept the floor". That triaged it as a METRICS question. It is not only a metrics
+      question, and the earlier recommendation should be revisited on this evidence.
+    the_evidence_that_changes_it: >
+      assemble.py:133 reads `if _prompt_store is not None and state.conversation_id:` —
+      when the stamp is empty the D01.1 prompt cache IS NEVER CONSULTED and the turn
+      cold-builds unconditionally. Measured: 1,310 of 1,808 assembles (72.5%) over four
+      days carry an empty state.conversation_id, and 2,427 of 2,981 (81.4%) over the full
+      retained window; every one of them is a cold_build, by construction. Where the stamp
+      IS present the cache works — 236 of 498 cached (47.4%). The two fields never
+      disagree: (state_cid, ctx_cid) is (False,False) 1,310x and (True,True) 498x.
+      ROOT CAUSE IS ARCHITECTURAL, not a missing keyword: the resolver `_resolve_incarnation`
+      is a CLOSURE at orchestrator.py:2220, so the other constructors have nothing to call.
+      NINE of twelve PipelineState construction sites therefore omit it — sessions_send,
+      delegate_task, staged_rca, round_runner, both retry_actuator sites, goal_execution,
+      shadow_validator, recovery:650. staged_rca is the incident path and is the single
+      biggest contributor.
+    WHAT_IT_COSTS_measured_and_honestly_partial: >
+      TOKEN COST: ZERO on this deployment, and that is measured, not assumed — cost_records
+      holds 122,013 rows and SUM(input_tokens) 627,378,933 against SUM(cached_input_tokens)
+      = 0, with cache_breakpoint_probes at 0 rows. Every provider here is a self-hosted
+      OpenAI-protocol endpoint and none has ever reported cached tokens; providers/base.py:417
+      says outright that on such a gateway "the same frozen prompt buys nothing at all".
+      LATENCY COST: NOT MEASURABLE TODAY. assemble.py:130 claims a cache hit takes the
+      model-window probe, the skill read and the profile read off the critical path, but NO
+      DURATION IS RECORDED ON ANY ASSEMBLE LOG LINE, so the size of that saving cannot be
+      evidenced.
+    why_evidence_cannot_settle_it: >
+      It can — but not yet, and the honest next step is the INSTRUMENT rather than the fix.
+      Whether to spend on a latency win whose size is currently unmeasurable is a judgement
+      call about this deployment.
+    panel_recommendation: >
+      Do NOT stamp nine call sites blind. Add a duration to the existing INFO line
+      "[pipeline] assemble: prompt source" first — one field, rung 1 — re-measure cold vs
+      cached, and let the number decide. If the delta is trivial, ESC-56's "accept the
+      floor" stands and this becomes a documented non-problem; if it is not, the fix is a
+      resolver promoted out of the closure and nine callers pointed at it.
+    what_is_blocked: >
+      Nothing. Recorded so the earlier recommendation is not acted on as though the metrics
+      framing were the whole story.
+
+  - id: ESC-60-the-mandated-ponytail-gate-is-not-installed
+    raised: 2026-08-29
+    question: >
+      The session prompt makes `ponytail` mandatory and explicitly a GATE — "run
+      /ponytail-review on your own diff before every commit", plus /ponytail-debt and
+      /ponytail-audit. None of the three exists in this environment.
+    what_was_measured: >
+      `ls .claude/skills/` and `~/.claude/skills/` — no ponytail skill, and no ponytail
+      entry under .claude/commands/. The CONVENTION is live and real, however: 25
+      `ponytail:` markers across src/, e.g. failure_outcome_miner.py:184 and :520,
+      socket_adapter.py:215, telegram/adapter.py:243, skill_manage.py:232. So the codebase
+      obeys a standard whose tooling is absent, and /ponytail-debt cannot harvest markers
+      that are demonstrably accumulating.
+    why_evidence_cannot_settle_it: >
+      Whether to install the skill, drop the requirement, or keep applying the principle by
+      hand is the operator's call. It is his standing instruction that cannot currently be
+      followed as written.
+    panel_recommendation: >
+      Install it, or strike the gate from the session prompt. In the meantime the loop
+      applies the principle manually and says so — which is what happened here, and it is
+      what killed the six-line design in favour of the twenty-line one.
+    what_is_blocked: >
+      Nothing blocks, but every "ponytail-reviewed" claim this session is a HUMAN-STYLE
+      review by the loop, not the named gate. Recorded so no later reader mistakes one for
+      the other.
+
   - id: ESC-57-d034-where-do-spilled-tool-results-live
     raised: 2026-08-29
     question: >
@@ -19555,7 +19665,7 @@ items:
     blocks: []
     dedup_target: X7
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -19564,9 +19674,204 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-29
+        stage: brainstorm
+        round: "Round 0 — MEASURE FIRST (panel: Measurement lens, run twice independently)"
+        by: panel
+        THE_GAP_LINE_IS_STALE_ON_BOTH_HALVES: >-
+          Measured, with the control that makes each zero meaningful.
+          HALF 1, "direct Law 1 violation" — FALSE TODAY. `skills_len` on the INFO line
+          "[pipeline] assemble: exit" varies in ZERO of 403 lanes over four days; only two
+          values exist in the whole corpus, 4159 and 0. THE CONTROL: 304 of those SAME 403
+          lanes DO vary their prompt_hash, so the instrument detects variation perfectly
+          well — skills simply never cause it. Cut a second, independent way: across
+          conversations with two or more assembles (n=54 genuinely multi-turn, so the
+          denominator is not zero either), prompt_hash changed ZERO times.
+          The violation was REAL and is already fixed — by D01.1 slices 4b + 5 and by
+          ESC-10. assemble.py:263 still carries the epitaph: "Measured live 2026-07-27:
+          skills_len went 4169 -> 0 across two turns of ONE conversation."
+          HALF 2, "the model cannot be pointed at a skill on demand" — FALSE. skill_view
+          returns any skill's full body by name, severity `read`, and sits in the
+          GUARANTEED tool base (tools/_infra/presentation.py:93-102) with a reachability
+          probe enforcing its presence (health/reachability/probes.py:20). It ran 391 times
+          in seven days. D01.1's own approved approach named it: "skill_view for a skill
+          body, which ALREADY EXISTS".
+        AND_THE_MAP_MIS_DESCRIBES_THE_REFERENCE_PLATFORM: >-
+          The gap line says the reference injects skills "never into the system prompt".
+          That is false as stated: it carries a name + 57-char-description INDEX in its
+          system prompt (prompt_builder.py:1461, curator.py:426, coding_context.py:685).
+          What never enters is the skill BODY — which is exactly StackOwl's posture today
+          (SkillTier.FULL has no producer anywhere in src/; assemble.py:325 hardcodes
+          SUMMARY). We are already at parity on the very thing we were said to violate.
+        THE_REAL_GAP_IS_BIGGER_THAN_THE_ONE_ON_THE_MAP: >-
+          The catalogue is capped at 4,000 chars (instruction_injector.py:12). Measured on
+          the live index: 179 skills enabled, SIXTEEN presented (9 SUMMARY + 7 bare names),
+          ONE HUNDRED AND SIXTY-THREE dropped on every single turn — 2,604 WARNING events
+          "skill injection: catalog truncated by budget" in the retained logs, verified
+          first-hand. Over seven days the model loaded FIVE distinct skills (2.8%), and all
+          five sit in the visible head of the catalogue; 174 of 179 were never loaded once.
+          THE MODEL ONLY EVER REACHES SKILLS IT CAN ALREADY SEE, AND IT CAN SEE SIXTEEN.
+          A human naming a skill needs no catalogue, so an operator-facing /<skill-name> is
+          the one route that reaches the other 163. That — not Law 1 — is what this item
+          is for, and it is the same shape D09.5 found: the capability exists and is used;
+          what is missing is a FRONT DOOR.
+        THE_SEAM_ALREADY_EXISTS_DO_NOT_BUILD_A_SECOND: >-
+          SlashCommand.build_turn_prompt (commands/base.py:44-71) — returning a string makes
+          the gateway "discard the reply path and re-route the message as though the user had
+          typed this text instead of the command. Nothing else changes — same pipeline, same
+          routing, same consent, same tools." Honoured at orchestrator.py:2263-2320 behind a
+          `_prompt_depth < 1` recursion guard and logged at INFO. One user today: /learn.
+          This is mechanically identical to the reference's `event.text = msg` + fall-through.
+          The harder half is already ported.
+        NAMESPACE_MEASURED: >-
+          ZERO collisions between the 179 skill slugs and the 33 shipped commands. Two
+          intra-skill slug duplicates (incident-evidence-brief, check-stock-price-today).
+          THIRTY-SEVEN slugs exceed 32 chars, Telegram's bot-command limit.
+          DECISIVE against per-skill registration: tests/journeys/commands/
+          test_reachability_guard.py:34 asserts the registry contains EXACTLY
+          SHIPPED_COMMANDS. Registering one command per skill turns that guard red. A
+          resolution FALLBACK registers nothing and leaves the guard untouched.
+        A_LATENT_DEFECT_FOUND_ON_THE_WAY: >-
+          SkillIndexStore.get is "WHERE owner_id = ? AND source = ? AND name = ?" — it does
+          NOT filter `enabled` or `lifecycle_state`. So skill_view can return a DISABLED
+          skill, which would make "disable" decoration. Stated honestly: this is 0-over-0
+          today (179 enabled, 0 disabled, 1 archived), so the bug is real in code and has no
+          live instance. The shared resolver this item extracts is where to fix it once,
+          rather than adding the predicate to a second caller.
+      - date: 2026-08-29
+        stage: brainstorm
+        round: "Rounds 1-6 — the panel, and it KILLED the loop's own proposal"
+        by: panel
+        THE_PROPOSAL_THE_PANEL_DESTROYED: >-
+          I proposed the laziest thing that appeared to work: the gateway scanner routes any
+          /word to route="command"; when CommandRegistry.get() returns None at
+          orchestrator.py:2290, fall back to resolving that word as a SKILL and hand its body
+          to the existing build_turn_prompt seam. Six lines, one seam, real commands win by
+          construction. It is wrong, and the reason is one line of code I did not read.
+        THE_FACT_THAT_KILLS_IT_verified_first_hand: >-
+          scanner.py:31 — `_SLASH_CMD_RE = re.compile(r"^\\s*/(\\w+)", re.UNICODE)`. `\\w+`
+          STOPS AT THE FIRST HYPHEN. Measured against the live index: 108 of 180 skills (60%)
+          have a hyphen in the name, so `/channel-fallback` reaches the seam as
+          target="channel". The design would have shipped BROKEN FOR 60% OF ITS OWN CORPUS
+          on day one, and the failure message would have read "Unknown slash command:
+          '/channel'" — naming a command the operator never typed. Qualified names die the
+          same way: `/builtin:brainstorming` becomes target="builtin".
+          This is the reason the panel exists. Both lenses found it independently; the
+          Measurement round had not, because it measured the skills and not the ROUTE.
+        AND_THE_LOUDNESS_IT_WOULD_HAVE_DESTROYED: >-
+          "Unknown slash command" is not merely an error, it is a DETECTOR.
+          tests/journeys/commands/test_reachability_guard.py:7-8 exists because "a command
+          that fails to register here would silently become 'Unknown slash command' in
+          production", and docs/bmad/defect-audit/group2-memory-owls-skill.md:39-40 records
+          /agents and /agent being caught exactly that way. A skill fallback converts that
+          loud, closed failure into an open one: after the change the message would mean "no
+          such command AND no such skill AND the store was reachable AND the name survived
+          \\w+ truncation" — four failures collapsed into one string. It would have turned
+          the detector for CLAUDE.md shape #5 into a masking layer over it.
+        THE_DESIGN_BOTH_LENSES_CONVERGED_ON_INSTEAD: >-
+          An EXPLICIT, REGISTERED command — `/skill use <name> [instruction]` — as a
+          thirteenth verb on the existing skill_command.py, overriding build_turn_prompt.
+          Ladder RUNG 1 (extend existing code). The name becomes a PARAMETER rather than a
+          route token, so hyphens and `source:name` both survive untouched; no new namespace;
+          the registry stays the single source of truth for what /word means; unknown
+          commands stay loud; the reachability guard is untouched; and there is one named
+          object to hang the enabled check, the synthetic-input flag and the INFO evidence on
+          — instead of an anonymous else-branch inside a closure no test can reach.
+          Arrived at separately by the Stability and Architecture lenses, which is why it is
+          adopted rather than averaged.
+        WHAT_THE_STABILITY_LENS_FOUND_THAT_MUST_SHIP_WITH_IT: >-
+          (1) THE MACHINE-PROMPT FACT BUG HAS A NEW DOOR. turn_persist.py:236 stages
+          "User: {state.input_text}..." and under a turn-prompt rewrite state.input_text IS
+          the skill body (median 3,193 chars, max 5,350 measured over 181 SKILL.md). The
+          2026-08-25 guard is `is_machine_lane(state.session_key)`, a PREFIX CHECK on
+          ("goal-","incident-") at sessions/models.py:220-233 — a Telegram lane is not one,
+          and a test asserts that. So /skill use on Telegram would file 3KB of skill prose as
+          a durable USER FACT on every invocation. This is the 4,480-of-5,212 defect
+          reopened on a lane the guard cannot see. FIX: a PipelineState flag
+          (`input_is_synthetic`) that turn_persist honours ALONGSIDE is_machine_lane — one
+          predicate, one home, not a second prefix hack. _record_transcript runs BEFORE the
+          guard, so the transcript is kept either way; that is correct and stays.
+          (2) DISABLE IS DECORATION ON THIS PATH. store.get is
+          "WHERE owner_id=? AND source=? AND name=?" (store.py:412-419) — no `enabled`, no
+          `lifecycle_state <> 'archived'`, and get_many_by_name:983 omits them too. skill_view
+          therefore RETURNS disabled skills and merely appends "(disabled)" to a header
+          (skill_view.py:233). The catalogue path enforces both (list_enabled, store.py:376).
+          Two different answers to "is this skill available", and the operator-facing one is
+          the permissive one. A header is not a defence: the turn prompt has no reader who
+          can refuse — it just runs.
+          (3) THE RESCAN CAN MISROUTE. scanner.scan runs on the whole rewritten body, and two
+          of its rules are UNANCHORED and fire BEFORE the slash check: _PANIC_RE
+          `(?:/panic|!panic)` at scanner.py:27/347, and _MULTI_AT_OWL_RE `@(\\w+)` at
+          scanner.py:32/357 — TWO @tokens anywhere in a body dispatch a multi-owl parliament.
+          `_prompt_depth` does not help: a misroute at depth 1 is a correct dispatch of a
+          wrong decision. LATENT, NOT LIVE, and measured with a control: 0 of 181 bodies
+          contain any @ or /panic, while the same scan found 4,898 backticks, so the
+          instrument does read the files. But `installed` and `user` sources exist in the
+          schema and a third-party skill is arbitrary markdown — `@dataclass` and `@property`
+          in one snippet is enough. prompt_safety.neutralize is the existing actuator
+          (already used by instruction_injector for untrusted sources) and is where this
+          lands rather than a new sanitiser.
+          (4) THE SEAM HAS ZERO PRODUCTION-PATH COVERAGE. _dispatch_turn is a closure inside
+          _phase_gateway called from six sites, and FIVE test files hand-copy its body
+          ("byte-for-byte re-creates the closure body" — test_deliver_command_stub.py:1-14),
+          with orchestrator.py:2139-2141 warning to keep them in sync. Edits to the real seam
+          leave the whole suite green. That is shape #3, already load-bearing in the TEST
+          tree.
+          (5) services.skill_store is `SkillIndexStore | None` (services.py:126) — a None
+          store makes the feature silently never fire, indistinguishable from a typo. The
+          negative branch needs an INFO line carrying store_present.
+        THE_LENSES_DISAGREED_AND_THE_DISAGREEMENT_IS_THE_FINDING: >-
+          IMPROVEMENT says yes; KILLER-FUNCTIONALITY says no. They are scoring different
+          objects, and averaging them would destroy the finding.
+          IMPROVEMENT scores the /skill SURFACE: it has twelve verbs that MANAGE skills and
+          not one that USES one. `/skill show X` renders the body to the OPERATOR'S SCREEN;
+          the model never sees it. A thirteenth verb obviously belongs there, and its absence
+          will be rediscovered as a bug repeatedly.
+          KILLER-FUNCTIONALITY scores the PLATFORM: 180 skills, 163 dropped from the prompt
+          every turn, 174-178 never loaded once in the retained window, and `skills_list` —
+          the enumeration escape hatch the truncation notice itself points at ("+162 more —
+          skills_list to enumerate them") — CALLED ZERO TIMES despite being in the
+          non-evictable tool floor with a reachability probe. Addressing is not the binding
+          constraint. This is a doorbell on a building nobody visits.
+          THE SYNTHESIS, stated rather than averaged: D10.5 IS AN ERGONOMICS ITEM WEARING A
+          CAPABILITY ITEM'S GAP LINE. Three consequences follow. (a) Do the ~20-line version
+          or nothing — the only argument that would justify a bigger build is the capability
+          argument the measurements refuse to support. (b) Do not let it stand in for the
+          capability work. (c) THE REAL ITEM IS THE CORPUS and it is not on any list: 180
+          skills, ~166 machine-written, ESC-44's catalogue_order_key measurably INERT because
+          the tail's execution counts are all zero (live boundary last_presented
+          "ai-brainstorm-daily" / first_dropped "ai-news-briefing" — still alphabetical), and
+          `/skill dedupe` and `/skill migrate` both preview-by-default and evidently never
+          applied.
+        A_THIRD_MAP_LINE_FALSIFIED_ON_THE_WAY: >-
+          current.NEXT ranks D03.2 (conversation compression) after this item as "the largest
+          stated functional hole". It was ALREADY CLOSED BY MEASUREMENT on 2026-08-26 and the
+          verdict is recorded in this very file: across 2,916 production provider calls,
+          median 1,487 and max 62,724 input tokens against a 262,144 window — ZERO calls over
+          50%, ZERO over 80%, largest ever 23.9%. D03.2 is not a competitor for this effort.
+          The NEXT line even warns to re-check it first; doing so is what found this.
     changes: []
-    notes: null
+    notes: >-
+      BRAINSTORM DONE — Round 0 plus a six-lens panel, and the panel overturned the loop's own
+      proposal on a fact the loop had not measured (the scanner's `\\w+` eats the hyphen in 60%
+      of skill names). The adopted design is `/skill use <name>`, rung 1, arrived at
+      independently by two lenses. ARCHITECT IS NEXT and is NOT started.
+      TWO CAVEATS ON THE ADOPTED DESIGN, recorded now so they are not discovered late:
+      (a) it would be the FIRST CONDITIONAL build_turn_prompt — a prompt for `use`, None for
+      the other twelve verbs. That is inside the contract at base.py:44 but widens its
+      precedent, so it is a deliberate choice rather than a slip.
+      (b) the turn-prompt seam runs BEFORE dispatch, so the `??` dry-run at registry.py:66-73
+      is BYPASSED — `/skill use X ??` would EXECUTE rather than preview. That is a hole in the
+      honesty spine and must be handled in architect, not noticed in validate.
+      RECORD CORRECTIONS OWED, all measured rather than inferred:
+      (1) REFERENCE_MAP.md:625 (D10.6) cites skills/skill_relevance.py as live; the file was
+      DELETED on 2026-08-15 by ESC-10 and instruction_injector.py:66-77 records it.
+      (2) DEBT-25's premise is therefore void — it says "KEEP, do not delete"
+      skill_relevance.py + assign_tiers and hands them to D10.6; both were deleted two weeks
+      after it was written. It should be closed as OVERTAKEN, not carried.
+      (3) PROCESS.md states the baselines as ruff 39 / mypy 78. Measured today in the
+      foreground: ruff 37 / mypy 65. The session prompt's numbers are the correct ones.
 
   - id: D10.6
     title: "Skill relevance scoring"
