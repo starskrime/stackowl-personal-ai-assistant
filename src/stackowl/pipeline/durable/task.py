@@ -115,6 +115,17 @@ class DurableTask(BaseModel):
     #: attempts one and two burned. A list stays bounded where pasted error prose
     #: does not.
     banned_capabilities: tuple[str, ...] = ()
+    #: Objective-work fields, absorbed from objective_subgoals (migration 0126).
+    #: A subgoal duplicated 11 of its 18 columns onto this table — including
+    #: STATUS, which is how 44 subgoals read pending/running on 2026-08-28 while
+    #: no task was running. One row per unit of work, one status.
+    #: All None for a chat turn, a cron task or a retry.
+    position: int | None = None
+    verified: bool | None = None
+    estimated_complexity: str | None = None
+    decomposition_depth: int | None = None
+    worktree_path: str | None = None
+    story_branch: str | None = None
     #: Backoff. Without it a failed row is re-claimed on the next tick, turning one
     #: broken task into a hot loop.
     next_attempt_at: datetime | None = None

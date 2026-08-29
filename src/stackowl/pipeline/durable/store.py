@@ -210,6 +210,14 @@ class DurableTaskStore(OwnedRepository):
             "idempotency_key": task.idempotency_key,
             "created_at": task.created_at.isoformat(),
             "updated_at": task.updated_at.isoformat(),
+            # Migration 0126 — objective work carries these; everything else
+            # writes None and pays nothing for them.
+            "position": task.position,
+            "verified": None if task.verified is None else int(task.verified),
+            "estimated_complexity": task.estimated_complexity,
+            "decomposition_depth": task.decomposition_depth,
+            "worktree_path": task.worktree_path,
+            "story_branch": task.story_branch,
         })
         # 4. EXIT
         log.tasks.info(
@@ -897,7 +905,13 @@ class DurableTaskStore(OwnedRepository):
             f"SELECT {_SELECT_FIELDS}, destination, achievement, delivered_at, "  # noqa: S608
             "attempt_count, max_attempts, last_error, last_failure_class, "
             "banned_capabilities, next_attempt_at, lease_expires_at, depends_on, "
-            "trigger_kind, idempotency_key "
+            "trigger_kind, idempotency_key, "
+            # Migration 0126 — the loop decides what to run from THIS list, so a
+            # field missing here is a field the objective work does not have,
+            # however faithfully it was stored. `get()` goes through SELECT * and
+            # would hide the omission.
+            "position, verified, estimated_complexity, decomposition_depth, "
+            "worktree_path, story_branch "
             f"FROM {self._table} WHERE owner_id = ? AND status = 'pending' "  # noqa: S608
             "AND COALESCE(superseded, 0) = 0 "
             "AND (next_attempt_at IS NULL OR next_attempt_at <= ?) "
@@ -1559,6 +1573,16 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         last_failure_class=(None if row.get("last_failure_class") is None
                             else str(row["last_failure_class"])),
         banned_capabilities=_split(row.get("banned_capabilities")),
+        position=(None if row.get("position") is None else int(row["position"])),
+        verified=(None if row.get("verified") is None else bool(row["verified"])),
+        estimated_complexity=(None if row.get("estimated_complexity") is None
+                              else str(row["estimated_complexity"])),
+        decomposition_depth=(None if row.get("decomposition_depth") is None
+                             else int(row["decomposition_depth"])),
+        worktree_path=(None if row.get("worktree_path") is None
+                       else str(row["worktree_path"])),
+        story_branch=(None if row.get("story_branch") is None
+                      else str(row["story_branch"])),
         next_attempt_at=_dt("next_attempt_at"),
         lease_expires_at=_dt("lease_expires_at"),
         depends_on=_split(row.get("depends_on")),
