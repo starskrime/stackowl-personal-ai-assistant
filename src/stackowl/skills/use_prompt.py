@@ -119,11 +119,18 @@ def build_use_prompt(args: str) -> str | None:
             "what following it here would involve, and ask what they want it applied "
             "to.",
         ]
-    lines += [
-        "",
-        f'If no skill named "{name}" exists, say so plainly and use skills_list to '
-        "offer the closest matches — do not silently do something else instead.",
-    ]
+    # NO NOT-FOUND CLAUSE, and its absence is EARNED. This used to end with: 'If no
+    # skill named "{name}" exists, say so plainly and use skills_list to offer the
+    # closest matches — do not silently do something else instead.' On 2026-08-29 at
+    # 17:25 a live `/skill use channel-fallback` produced
+    # "skill_view.execute: exit {success: True, skill: channel-fallback}" and the
+    # model STILL answered "no skill by that name exists. As instructed, I will not
+    # silently proceed" — quoting the clause back. A speculative failure branch in a
+    # prompt is not a safety net; a weak model reads it as a likely outcome and
+    # performs it over the evidence of its own tool result.
+    # skill_view already returns a clear structured error when a name does not
+    # resolve, and the model handles tool errors routinely. Pre-scripting the failure
+    # added nothing and cost a correct answer.
     prompt = "\n".join(lines)
     log.skills.debug(
         "[skills] use_prompt.build: built",

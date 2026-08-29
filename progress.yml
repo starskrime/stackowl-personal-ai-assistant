@@ -19889,6 +19889,35 @@ items:
           not run it.
           FIXED: msg.trace_id is in scope at that call site and is now in the line's fields,
           so the documented join actually works from the next invocation onward.
+        SECOND_LIVE_ROUND_2026_08_29T17_25Z_CHECK_5_PASSES: >-
+          Bakir ran both name forms. THE DENOMINATOR CHECK IS SATISFIED — 2 invocations,
+          both forms included, both resolved:
+            17:23:59 STEER cmd=skill  -> 17:24:25 skill_view name='builtin:verify-before-claim'
+                     success, source=builtin        (QUALIFIED name survives)
+            17:25:12 STEER cmd=skill  -> 17:25:18 skill_view name='channel-fallback'
+                     success, source=builtin        (HYPHENATED name survives)
+          And THE DOCUMENTED JOIN NOW RUNS: both pairs share a trace_id, because the
+          trace_id fix went live. The check I wrote and could not execute is executable.
+          This is what the name-as-a-parameter design was for: the scanner's ^\s*/(\w+)
+          would have truncated both of these.
+        AND_IT_EXPOSED_A_DEFECT_IN_MY_OWN_PROMPT_THE_SHARPEST_LESSON_OF_THIS_ITEM: >-
+          The channel-fallback turn logged "skill_view.execute: exit {success: True, skill:
+          channel-fallback, source: builtin}" — AND THE MODEL ANSWERED "no skill by that name
+          exists. As instructed, I will not silently proceed with a different action."
+          It was quoting MY OWN PROMPT back. The last paragraph read: 'If no skill named "X"
+          exists, say so plainly and use skills_list to offer the closest matches — do not
+          silently do something else instead.' The skill DOES exist (builtin, enabled=1,
+          lifecycle active, present on disk and in the 180-row index) and had just been loaded
+          successfully. The model performed the failure branch over the evidence of its own
+          tool result.
+          A SPECULATIVE FAILURE CLAUSE IN A PROMPT IS NOT A SAFETY NET. A weak model reads it
+          as a likely outcome. skill_view already returns a clear structured error on a real
+          miss, and the model handles tool errors routinely — so the clause added nothing and
+          cost a correct answer. DELETED, with a test asserting no not-found script is ever
+          built into the prompt.
+          This generalises beyond this item and is the reason it is recorded at length: every
+          prompt in this tree that pre-scripts a failure it cannot observe is teaching the
+          model to reach for it.
         TWO_TEST_TRAPS_HIT_WHILE_FIXING_THIS: >-
           (1) The first bounded test asserted the literal phrase "multi-step" and went red
           when the prompt was reworded — it pinned PROSE, not behaviour. Moved to the

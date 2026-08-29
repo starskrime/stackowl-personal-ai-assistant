@@ -160,3 +160,24 @@ def test_a_bare_invocation_is_BOUNDED_and_asks() -> None:
         "a directed invocation must still RUN the skill"
     )
     assert "then stop" not in dlow
+
+
+def test_the_prompt_carries_NO_speculative_not_found_script() -> None:
+    """Earned live, 2026-08-29T17:25Z — the sharpest lesson of this item.
+
+    The prompt used to end with 'If no skill named "X" exists, say so plainly...'.
+    A real invocation logged `skill_view.execute: exit {success: True, skill:
+    channel-fallback}` and the model answered "no skill by that name exists. As
+    instructed, I will not silently proceed" — quoting the clause back over the
+    evidence of its own successful tool call.
+
+    A speculative failure branch is not a safety net. skill_view reports a real
+    not-found itself; scripting one in advance only teaches the model to expect it.
+    """
+    for args in ("channel-fallback what would this cover", "verify-before-claim", "x"):
+        p = build_use_prompt(args)
+        assert p is not None
+        low = p.lower()
+        assert "does not exist" not in low, p
+        assert "no skill named" not in low, p
+        assert "if no skill" not in low, p
