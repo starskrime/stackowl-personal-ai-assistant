@@ -6242,6 +6242,81 @@ current:
     235k-row job_runs table with no retention.
 
   ESCALATIONS:
+  - id: ARC-2026-08-29-the-operator-was-answered-twice
+    raised: 2026-08-29
+    status: "IN PROGRESS — seam 3 shipped, seam 1 built and green, suppression next"
+    OPERATOR_REPORT: >-
+      Bakir: "It always sends failed request first then after some time I am getting final
+      answer." Then, decisively: "I do not want to get failed response if loop not finalized
+      yet." The second sentence is the requirement; it is narrower and safer than the fix I
+      had first proposed and then rejected.
+    THREE_INDEPENDENT_DEFECTS_ONE_SYMPTOM: >-
+      (1) THE FIRST MESSAGE WAS A LIE. _floor_chunk promises "Pure, deterministic, no model
+      call", and synthesize_floor QUOTES THE GOAL into the message. deliver.py then fed the
+      whole 635-char floor to a fast-tier LLM to compress it (635 -> 515), which read a
+      CONDITIONAL quoted inside it ('If no skill named X exists, say so plainly') as a FACT
+      and told Bakir the skill did not exist — in the same trace as
+      "skill_view.execute: exit {success: True, skill: channel-fallback}". deliver then
+      re-stamped is_floor=True, so model prose was preserved AS a deterministic honesty
+      floor. SHIPPED f78dc95b: a floor is never summarised.
+      (2) TWO PRODUCERS ANSWERED ONE TURN. enqueue_turn_task's own docstring states the
+      invariant — "Exactly one producer must exist: a turn both run by the fast path and
+      claimed by the loop is answered TWICE, and on Telegram the user sees two replies to
+      one question" — and enforces it by minting turn rows `running` under a lease.
+      persist_turn BYPASSED it, enqueuing a second row (retry-<trace_id>, `pending`, no
+      lease) claimable on the next 5s tick. MEASURED: enqueued 17:25:37, loop claimed
+      17:25:38 while the fast path was still inside deliver, which sent at 17:25:40; the
+      loop's answer arrived 17:26:01. Meanwhile complete_turn_task closed the ORIGINAL row
+      as delivered, because its two unachieved predicates read effects_measured_absent and
+      capabilities_denied — an overclaim floor sets neither. BUILT, green: 72 lines deleted,
+      a third unachieved case (floored_turn_of) added beside the two that existed, and the
+      floor now requeues THE ROW THAT ALREADY EXISTS.
+      (3) THE CORRECTION COULD NEVER EDIT THE ORIGINAL. _deliver_success edits in place only
+      when it has channel_message_id; task_loop_runner synthesises the row it passes and
+      never sets it. Left alone deliberately — seam 1 removes the second row, so there is no
+      second message to edit. Recorded so it is not "fixed" later out of context.
+    WHY_I_REJECTED_SUPPRESSION_AND_THEN_BAKIR_ASKED_FOR_IT_ANYWAY: >-
+      The safety lens measured that unconditional suppression is lethal: 75% of floored turns
+      are provider-cascade outages, where the retry runs on the same dead backend and floors
+      too, and historically only ~27% of floored turns had ANY retry behind them (136 of 505).
+      Suppressing turns "I can't reach my provider" into silence.
+      BAKIR'S PHRASING AVOIDS ALL OF THAT: "if loop NOT FINALIZED yet". That is CONDITIONAL
+      suppression, gated on the loop actually owning the follow-up — which is exactly the
+      guard the safety lens demanded ("suppress on a returned boolean, never on floored").
+      It was not implementable before seam 1, because nothing could answer "will the loop
+      retry this?" — there were two rows with contradictory verdicts. It is answerable now.
+    THE_DESIGN_AND_THE_PROPERTY_THAT_MAKES_IT_SELF_GUARANTEEING: >-
+      deliver asks the loop to take ownership BEFORE writing, and suppresses only while the
+      loop still has attempts:
+        attempt 1 (fast path): floors -> fail_and_requeue -> status `pending` -> SUPPRESS
+        attempt 2 (loop):      floors -> requeue          -> status `pending` -> SUPPRESS
+        attempt 3 (loop):      floors -> requeue hits the CEILING -> `dead_letter`
+                                                                 -> NOT suppressed -> DELIVER
+      So the held floor is delivered by the ceiling itself. Bakir gets exactly ONE message:
+      the corrected answer if any attempt succeeds, or the honest floor when the loop stops
+      trying. No separate held-message store, no deadline timer, no escalation to rely on.
+      THE ONE THING THAT MUST SHIP WITH IT: `floored_turn` MUST join
+      ("unachieved_effect","blocked_capability") on the 3-attempt ceiling
+      (_UNACHIEVED_EFFECT_MAX_ATTEMPTS). On the default 30-attempt budget with backoff
+      (5,15,60,300,900) suppression would mean HOURS of silence. At 3 attempts the worst case
+      is ~80 seconds before Bakir hears something. This is the difference between the fix and
+      a disaster, and it is one tuple entry.
+      SECOND GUARD: never suppress when the destination carries no address — 22 live rows have
+      a bare channel ("telegram", "rca") and are proven undeliverable, so their floor must go
+      out immediately.
+    STILL_OPEN_SEPARATE_DEFECTS_FOUND_WHILE_MEASURING: >-
+      Not folded into this arc, recorded so they are not lost:
+      (a) recovery.py enforces NO ceiling — task retry-8b7c4029 ran 74 claims over 14h33m at
+      attempt_count=72 against max_attempts=30. A second driver on the loop's own table.
+      (b) 74 dead_letter rows with delivered_at NULL — work nobody was ever told about.
+      (c) 22 tasks with an unaddressed destination.
+      (d) banned-capability learning is written NOWHERE on the retry path: _handle_failure
+      writes to retry_queue (no row), and loop._safe_fail never passes banned= to
+      fail_and_requeue. Every attempt re-treads the capability that already burned — which is
+      why 8b7c4029 failed identically 74 times.
+      (e) retry_queue is an orphan table: insert_pending has ZERO callers, three live readers
+      remain, and the retry_sweep job was re-seeded 31 seconds after migration 0125 deleted
+      it — CLAUDE.md defect shape #6, live again.
   - id: ESC-61-a-DENIED-write-succeeded-through-shell-seven-seconds-later
     raised: 2026-08-29
     severity: "security boundary — found by accident, while auditing an unexplained dirty file"

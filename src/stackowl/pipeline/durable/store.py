@@ -21,6 +21,7 @@ from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
 from stackowl.pipeline.durable.failure_class import (
+    SMALL_CEILING_CLASSES,
     classify_failure,
     permanent_classes,
     wants_reshaping,
@@ -1355,7 +1356,7 @@ class DurableTaskStore(OwnedRepository):
         # escalation, never a silent grind.
         ceiling = (
             min(row.max_attempts, _UNACHIEVED_EFFECT_MAX_ATTEMPTS)
-            if failure_class in ("unachieved_effect", "blocked_capability")
+            if failure_class in SMALL_CEILING_CLASSES
             else row.max_attempts
         )
         exhausted = attempts >= ceiling

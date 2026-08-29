@@ -47,6 +47,25 @@ async def run(state: PipelineState) -> PipelineState:
         return state
 
     services = get_services()
+
+    # THE FLOOR HOLD (Bakir, 2026-08-29: "I do not want to get failed response if
+    # loop not finalized yet").
+    #
+    # Completion is asked FIRST for a floored turn, because its answer decides
+    # whether the user should see this message at all — and the ordinary call site
+    # is after the write, which is far too late. `_completed` then stops the tail
+    # from completing the same turn twice.
+    #
+    # Only a floored turn takes this path; every ordinary reply is byte-identical.
+    _completed = False
+    if any(c.is_floor for c in state.responses):
+        outcome = await _complete_turn(state, services)
+        _completed = True
+        if await _suppress_floor_while_the_loop_retries(state, outcome=outcome):
+            # HELD, not discarded. The same predicate delivers it when the loop
+            # reaches its ceiling and reports dead_letter instead of requeued.
+            return state
+
     # Enforce the owner's stored OutputStyle (markdown/links/tables/emoji/length)
     # at this single channel-agnostic seam, BEFORE both the live-stream write and
     # the proactive fallback — so a recalled preference is an enforced constraint,
@@ -84,7 +103,7 @@ async def run(state: PipelineState) -> PipelineState:
         # only status='failed'. The push's own verdict decides, so a fallback that
         # could not send still records nothing and the row stays open for the loop.
         delivered = await _proactive_fallback(state, services)
-        if delivered:
+        if delivered and not _completed:
             await _complete_turn(state, services)
         return state
 
@@ -133,7 +152,8 @@ async def run(state: PipelineState) -> PipelineState:
         await writer.write(chunk)
     await writer.close()
 
-    await _complete_turn(state, services)
+    if not _completed:
+        await _complete_turn(state, services)
 
     log.gateway.info(
         "[pipeline] deliver: exit",
@@ -211,6 +231,60 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
 # Below this, a reply already reads as short — skip the summariser call
 # entirely rather than risk an LLM "compressing" text that's already terse.
 _TERSE_SKIP_BELOW_CHARS = 400
+
+
+async def _suppress_floor_while_the_loop_retries(
+    state: PipelineState, *, outcome: str,
+) -> bool:
+    """Hold an honest floor back ONLY while the loop still has attempts left.
+
+    BAKIR, 2026-08-29: "I do not want to get failed response if loop not finalized
+    yet."
+
+    The qualifier is the entire design. UNCONDITIONAL suppression was measured
+    lethal: 75% of floored turns are provider-cascade outages where the retry runs
+    on the same dead backend and floors too, and historically only ~27% of floored
+    turns had any retry behind them (136 of 505). Suppressing every floor turns "I
+    can't reach my provider" into silence, which is strictly worse than the wrong
+    answer it replaces.
+
+    So this holds the floor on exactly two conditions, and reports both:
+
+    * ``outcome == "requeued"`` — the loop ACCEPTED ownership and has attempts
+      left. Not "the turn floored", which is what would silence the other 73%.
+    * the destination carries an ADDRESS. 22 live rows have a bare channel
+      ("telegram", "rca"); the loop can never deliver to those, so holding their
+      floor is permanent silence. They ship immediately.
+
+    WHY THIS NEEDS NO DEADLINE TIMER AND NO HELD-MESSAGE STORE. ``floored_turn``
+    sits on the 3-attempt ceiling (``failure_class.small_ceiling_classes``), so the
+    third failure returns ``dead_letter`` rather than ``requeued`` and the floor is
+    delivered by this same predicate. The ceiling IS the deadline; worst case the
+    user waits about eighty seconds and then gets the honest floor.
+
+    Logs at INFO, because "the user was told nothing" must be greppable — a DEBUG
+    line here could never close the claim.
+    """
+    if outcome != "requeued":
+        return False
+    # An address, not just a channel. `_destination` yields a bare "telegram" when
+    # no reply target is known, and a row like that is proven undeliverable.
+    if not str(state.reply_target or "").strip():
+        log.gateway.info(
+            "[pipeline] deliver: floor SENT despite a retry — no address to deliver "
+            "a later answer to",
+            extra={"_fields": {"trace_id": state.trace_id,
+                               "session_key": state.session_key}},
+        )
+        return False
+    log.gateway.info(
+        "[pipeline] deliver: floor HELD — the loop owns this turn and still has "
+        "attempts; the user is told nothing until it finishes or gives up",
+        extra={"_fields": {"trace_id": state.trace_id,
+                           "session_key": state.session_key,
+                           "chars": sum(len(c.content or "") for c in state.responses)}},
+    )
+    return True
 
 
 async def _summarize_unless_floor(
@@ -311,7 +385,7 @@ async def _summarize_if_terse(
     return compressed
 
 
-async def _complete_turn(state: PipelineState, services: StepServices) -> None:
+async def _complete_turn(state: PipelineState, services: StepServices) -> str:
     """THE ONE LOOP's completion seam — the reply has reached the user.
 
     Bakir, 2026-08-17: *"if it's delivered to me, it means loop is completed."*
@@ -334,7 +408,7 @@ async def _complete_turn(state: PipelineState, services: StepServices) -> None:
     """
     from stackowl.pipeline.durable.turn_task import complete_turn_task
 
-    await complete_turn_task(
+    return await complete_turn_task(
         getattr(services, "durable_task_store", None),
         trace_id=state.task_id or state.trace_id,
         result="".join(c.content for c in state.responses if c.content),

@@ -226,9 +226,42 @@ def blocked_capability_of(state: Any) -> str | None:
     return str(denied[0]) if denied else None
 
 
+#: A floored turn delivered an HONEST APOLOGY instead of the work. Same small
+#: ceiling as the other two unachieved classes, and for the same reason: the floor
+#: reason is fed back, so it is either routable in a couple of tries or it needs
+#: Bakir.
+FLOORED_TURN_CLASS = "floored_turn"
+
+
+def floored_turn_of(state: Any) -> str | None:
+    """The floor this turn delivered instead of the work, or None.
+
+    THE THIRD UNACHIEVED CASE, and the one whose absence cost the operator a
+    duplicate reply. ``unachieved_effect_of`` reads ``effects_measured_absent`` and
+    ``blocked_capability_of`` reads ``capabilities_denied``; an OVERCLAIM floor sets
+    neither, so a floored turn used to read as ACHIEVED here and was closed as
+    delivered — while ``persist_turn`` had separately minted a second, claimable row
+    to retry the very same question. One turn, two producers, two contradictory
+    verdicts, both obeyed (measured on trace e6c1d3e1, 2026-08-29).
+
+    Asked of the RESPONSES, which is where the floor marker lives and where
+    ``turn_persist._turn_floored`` reads its first signal — one source, not a second
+    copy of the rule.
+
+    Never raises — bookkeeping must not cost a delivered turn.
+    """
+    try:
+        for chunk in getattr(state, "responses", None) or ():
+            if getattr(chunk, "is_floor", False):
+                return "floored"
+    except Exception:  # pragma: no cover — a hostile state must not break delivery
+        return None
+    return None
+
+
 async def complete_turn_task(
     store: Any, *, trace_id: str, result: str, state: Any = None,
-) -> None:
+) -> str:
     """Mark the turn delivered — the ONLY way a chat task completes. Never raises.
 
     An empty result deliberately does NOT complete it. Nothing reached the user, so
@@ -250,9 +283,50 @@ async def complete_turn_task(
     applied to the case it was skipping.
     """
     if store is None:
-        return
+        return "no_store"
     unachieved = unachieved_effect_of(state)
+    # PRIORITY ORDER, stated because three conditions can fire on one event: a
+    # measured-absent effect is the most specific and wins; a blocked capability
+    # next; a bare floor last, because it is the least informative of the three.
+    floored = None if unachieved else floored_turn_of(state)
     blocked = None if unachieved else blocked_capability_of(state)
+    if floored and not blocked:
+        # A FLOOR IS AN UNACHIEVED GOAL. It reaches the user immediately — we do
+        # NOT suppress it, because 75% of floors are provider outages a retry
+        # cannot beat, and silence is worse than an honest apology. What changes is
+        # that the follow-up belongs to THIS row: the existing requeue, the existing
+        # ceiling, the existing dead-letter escalation. Nothing new runs the work,
+        # and no second row can be claimed while this one is still leased.
+        try:
+            status = await store.fail_and_requeue(
+                trace_id,
+                error=(
+                    "the turn delivered an honest floor instead of the work — the "
+                    "user was told it could not be completed. Try again with what "
+                    "the floor named as failing, or say precisely what is blocking "
+                    "it."
+                ),
+                failure_class=FLOORED_TURN_CLASS,
+            )
+            log.tasks.info(
+                "[loop] the turn FLOORED — returning its own row to the loop "
+                "instead of closing it as done",
+                extra={"_fields": {"trace_id": trace_id, "outcome": str(status)}},
+            )
+            # THE ANSWER DELIVER NEEDS. "requeued" means the loop still has
+            # attempts, so the floor may be HELD; anything else means the loop has
+            # stopped trying and the floor must reach the user NOW. Reporting the
+            # status rather than a bare bool keeps the caller honest about which
+            # of the two happened.
+            return "requeued" if str(status) == "pending" else str(status or "failed")
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not return a floored turn to the loop",
+                exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+            )
+            # A requeue we could not perform is NOT ownership. Falling back to a
+            # non-holding outcome means the user gets the floor — the safe side.
+            return "requeue_failed"
     if blocked:
         # BEING BLOCKED IS A FAILURE THE LOOP MUST SEE. The user asked for something
         # and it did not happen — the same unachieved goal as a measured-absent
@@ -282,7 +356,7 @@ async def complete_turn_task(
                 "[loop] could not return a blocked turn to the loop",
                 exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
             )
-        return
+        return "blocked_or_unachieved"
     if unachieved:
         try:
             await store.fail_and_requeue(
@@ -310,14 +384,14 @@ async def complete_turn_task(
                 "[loop] could not return an unachieved turn to the loop",
                 exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
             )
-        return
+        return "blocked_or_unachieved"
     if not (result or "").strip():
         log.tasks.info(
             "[loop] turn produced no deliverable reply — leaving the task open so "
             "the loop can recover it",
             extra={"_fields": {"trace_id": trace_id}},
         )
-        return
+        return "no_reply"
     try:
         await store.mark_delivered(trace_id, result=result[:8000])
     except Exception as exc:
@@ -329,3 +403,5 @@ async def complete_turn_task(
             "expire and the loop may re-drive it",
             exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
         )
+        return "mark_failed"
+    return "completed"

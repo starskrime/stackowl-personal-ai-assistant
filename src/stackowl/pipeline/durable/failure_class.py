@@ -157,3 +157,28 @@ def wants_reshaping(failure_class: str) -> bool:
     time and failing at the same step.
     """
     return failure_class in _RESHAPING_CLASSES
+
+
+#: Failure classes that get a SMALL retry ceiling instead of the ordinary 30.
+#:
+#: What they share: the turn already SPOKE to the user — an apology for an effect
+#: measured absent, a refusal on a blocked capability, or an honest floor. Each
+#: further attempt can produce another message, so a 30-attempt budget is spent on
+#: the operator's notifications rather than on solving anything. A few tries and one
+#: dead-letter escalation is the honest trade.
+#:
+#: `floored_turn` joined on 2026-08-29 and it is LOAD-BEARING, not cosmetic: with
+#: suppression (deliver holds a floor while the loop still has attempts) the ceiling
+#: IS the delivery deadline. On the default 30-attempt budget with backoff
+#: (5, 15, 60, 300, 900) the operator would wait hours in silence; at three attempts
+#: the worst case is ~80 seconds, after which the dead-letter path delivers the held
+#: floor. Changing this number changes how long a user waits with nothing.
+#:
+#: ONE SOURCE. store.fail_and_requeue used to carry these as a literal tuple; the
+#: third entry is what made a second copy worth removing. Exported as the frozenset
+#: rather than behind an accessor: unlike `permanent_classes()` beside it, there is
+#: no config to read at call time, and a function wrapping a constant for one caller
+#: is a layer that earns nothing today.
+SMALL_CEILING_CLASSES = frozenset({
+    "unachieved_effect", "blocked_capability", "floored_turn",
+})
