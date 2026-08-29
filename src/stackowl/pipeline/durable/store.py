@@ -1010,6 +1010,44 @@ class DurableTaskStore(OwnedRepository):
             )
         return int(affected)
 
+    async def repoint_retry(
+        self, *, idempotency_key: str, goal: str, trace_id: str
+    ) -> bool:
+        """Point an in-flight retry at a NEWER ask, keeping one row per session.
+
+        Incident 2026-07-21: a second floor arriving while a retry was already
+        pending was silently DROPPED, and nothing ever retried the user's newer
+        question. One row per session is right; losing the newer ask is not.
+
+        This is the collision path of migration 0124's unique index — reached when
+        an enqueue loses the race with a retry that is already queued, which is the
+        EXPECTED outcome rather than an error.
+
+        Only a row that has not started is repointed. A `running` retry is already
+        executing the older goal and rewriting its target mid-drive would make the
+        answer describe work that was never done — the newer ask is better served
+        by the next floor than by corrupting this one. Returns whether a row moved.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.repoint_retry: entry",
+            extra={"_fields": {"idempotency_key": idempotency_key}},
+        )
+        affected = await self._db.execute_returning_rowcount(
+            f"UPDATE {self._table} SET goal = ?, updated_at = ? "  # noqa: S608 — table from class
+            "WHERE owner_id = ? AND idempotency_key = ? AND status = 'pending'",
+            (goal, datetime.now(tz=UTC).isoformat(), self._owner_id, idempotency_key),
+        )
+        moved = affected > 0
+        # 4. EXIT — INFO, because "the newer ask was kept" is the claim this method
+        # exists to make, and a DEBUG line could never close it.
+        log.tasks.info(
+            "[tasks] store.repoint_retry: exit",
+            extra={"_fields": {"idempotency_key": idempotency_key,
+                               "trace_id": trace_id, "repointed": moved}},
+        )
+        return moved
+
     async def set_dependencies(
         self, task_id: str, depends_on: tuple[str, ...],
     ) -> None:

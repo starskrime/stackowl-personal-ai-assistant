@@ -7,21 +7,27 @@ from stackowl.pipeline.turn_persist import persist_turn
 
 
 @pytest.mark.asyncio
-async def test_floored_turn_creates_retry_queue_row(monkeypatch):
-    inserted = {}
+async def test_floored_turn_creates_a_retry_TASK(monkeypatch):
+    """A floored turn retries ON THE ONE LOOP, not in a queue of its own.
 
-    class FakeRetryQueueStore:
-        async def get_latest_pending_for_session(self, session_key):
-            return None
+    REWRITTEN 2026-08-28, not deleted. This used to assert an insert into
+    `retry_queue` — a SECOND engine that held nothing `tasks` does not already
+    hold, and whose own docstring said it re-armed "forever — no attempt cap, no
+    terminal give-up". That unbounded policy is what messaged Bakir for hours from
+    5,766 rows, and collapsing it into `tasks` is his standing rule of 2026-08-17:
+    everything is a TASK on ONE loop, and no implementation may duplicate logic
+    that already runs work.
 
-        async def insert_pending(self, **kwargs):
-            inserted.update(kwargs)
-            return "retry-id-1"
+    The old assertions live on unchanged in meaning — trace, session and goal must
+    still reach the retry — because the ENGINE changed and the contract did not.
+    """
+    enqueued = []
 
-    services = StepServices(
-        retry_queue_store=FakeRetryQueueStore(),
-    )
+    class _FakeTaskStore:
+        async def enqueue(self, task):
+            enqueued.append(task)
 
+    services = StepServices(durable_task_store=_FakeTaskStore())
     monkeypatch.setattr(
         "stackowl.pipeline.turn_persist.get_services", lambda: services
     )
@@ -39,49 +45,56 @@ async def test_floored_turn_creates_retry_queue_row(monkeypatch):
 
     await persist_turn(state)
 
-    assert inserted["trace_id"] == "trace-x"
-    assert inserted["session_key"] == "sess-x"
-    assert inserted["goal"] == "prepare me for the interview"
+    retries = [t for t in enqueued if t.trigger_kind == "retry"]
+    assert len(retries) == 1
+    assert retries[0].session_key == "sess-x"
+    assert retries[0].goal == "prepare me for the interview"
+    assert retries[0].max_attempts > 0, (
+        "the retry must be BOUNDED — the queue this replaced re-armed for ever"
+    )
 
 
 @pytest.mark.asyncio
-async def test_floored_turn_supersedes_existing_pending_row(monkeypatch):
+async def test_a_second_floor_repoints_the_in_flight_retry(monkeypatch):
     """Live incident 2026-07-16: insert_pending() had no dedup, so a session
     with MANY floored turns (e.g. repeated 'AI news' asks during an unstable
-    stretch) accumulated one independent retry_queue row per floor. Each later
+    stretch) accumulated one independent retry row per floor. Each later
     fired on its own via the 1-minute sweep — unprompted, disconnected from
     whatever the user was discussing by then, reading as the agent
-    contradicting/forgetting itself. A pending row already in flight for the
+    contradicting/forgetting itself. A retry already in flight for the
     session must suppress a SECOND independent row.
 
     Live incident 2026-07-21: the original fix suppressed the second row by
     just skipping it — silently dropping the user's newer ask with nothing
     ever retrying it. The fix must instead repoint the existing row at THIS
-    turn's trace_id/goal (still one row per session, now tracking the
-    freshest ask), not skip it outright."""
-    inserted = {}
-    superseded = {}
+    turn's goal (still one row per session, now tracking the freshest ask),
+    not skip it outright.
 
-    class _ExistingRow:
-        id = "retry-existing-1"
+    BOTH INCIDENTS SURVIVE THE MOVE TO THE ONE LOOP, which is the whole reason
+    this test was rewritten rather than deleted. What changed is the MECHANISM:
+    dedup is now `idempotency_key`, which migration 0124 finally ENFORCES with a
+    partial unique index (it was previously stored and unindexed — a column
+    nothing read). The collision is the expected path, and it repoints.
+    """
+    enqueued = []
+    repointed = {}
 
-    class FakeRetryQueueStore:
-        async def get_latest_pending_for_session(self, session_key):
-            return _ExistingRow()
+    class _FakeTaskStore:
+        async def enqueue(self, task):
+            # What the enforced unique index does on a live duplicate key.
+            raise RuntimeError(
+                "UNIQUE constraint failed: tasks.owner_id, tasks.idempotency_key"
+            )
 
-        async def insert_pending(self, **kwargs):
-            inserted.update(kwargs)
-            return "retry-id-should-not-happen"
-
-        async def supersede(self, retry_id, **kwargs):
-            superseded["retry_id"] = retry_id
-            superseded.update(kwargs)
+        async def repoint_retry(self, *, idempotency_key, goal, trace_id):
+            repointed.update(
+                idempotency_key=idempotency_key, goal=goal, trace_id=trace_id
+            )
+            return True
 
     services = StepServices(
-        retry_queue_store=FakeRetryQueueStore(),
-        sticky_route_cache=None,
+        durable_task_store=_FakeTaskStore(), sticky_route_cache=None,
     )
-
     monkeypatch.setattr(
         "stackowl.pipeline.turn_persist.get_services", lambda: services
     )
@@ -99,10 +112,12 @@ async def test_floored_turn_supersedes_existing_pending_row(monkeypatch):
 
     await persist_turn(state)
 
-    assert inserted == {}
-    assert superseded["retry_id"] == "retry-existing-1"
-    assert superseded["trace_id"] == "trace-y"
-    assert superseded["goal"] == "what's the latest AI news"
+    assert not enqueued, "a second independent retry row was created (incident 2026-07-16)"
+    assert repointed.get("goal") == "what's the latest AI news", (
+        "the newer ask was DROPPED rather than repointed (incident 2026-07-21)"
+    )
+    assert repointed.get("idempotency_key") == "retry:sess-x"
+
 
 
 @pytest.mark.asyncio

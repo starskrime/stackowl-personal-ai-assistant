@@ -22,6 +22,8 @@ block delivery). Must run SYNCHRONOUSLY inside the turn ledger ContextVar bindin
 
 from __future__ import annotations
 
+from typing import Any
+
 from stackowl.infra.observability import log
 from stackowl.memory.trust import Trust
 from stackowl.pipeline.delivery_gate import (
@@ -102,56 +104,76 @@ async def persist_turn(state: PipelineState) -> None:
         if sticky_cache is not None:
             sticky_cache.evict(state.session_key)
 
-        retry_store = getattr(services, "retry_queue_store", None)
-        # retry_replay=True means THIS turn is already RetryActuator's own replay
-        # of an existing retry_queue row — its floor is tracked by that row's own
-        # attempt_count (retry_actuator.py's mark_attempt_failed), not a fresh
-        # row. Without this guard, insert_pending() (no dedup, always a
-        # brand-new attempt_count=0 row due immediately) fires on every
-        # replay's floor too, multiplying rows instead of tracking one.
-        if retry_store is not None and not state.retry_replay:
+        # A FLOORED TURN RETRIES AS A TASK ON THE ONE LOOP.
+        #
+        # Bakir, 2026-08-28: "You are fixing which we do not need actually instead
+        # of fixing core of issue not issue itself." The core is his rule of
+        # 2026-08-17 — everything is a TASK on ONE loop, and no implementation may
+        # duplicate logic that already runs work. This used to insert into
+        # `retry_queue`, a SECOND engine holding nothing `tasks` does not already
+        # hold (goal, session_key, banned_capabilities, attempt_count,
+        # next_attempt_at, last_error, channel, owner all have equivalents).
+        #
+        # THE TWO ENGINES DISAGREED ABOUT THE THING THAT MATTERED. retry_queue's
+        # docstring says it re-arms "forever — no attempt cap, no terminal
+        # give-up". That is what messaged Bakir for hours from 5,766 rows. A task
+        # carries max_attempts and reaches dead_letter, so the retry is BOUNDED.
+        # If never-give-up is wanted for a particular row it is now a value on
+        # that row, not a second table with its own policy.
+        #
+        # TWO LIVE INCIDENTS ARE PRESERVED, because deleting a queue is easy and
+        # deleting its hard-won semantics is how a rewrite loses them:
+        #   2026-07-16 — every floored turn minted its own row, each firing
+        #     independently, reading as the agent contradicting itself. ONE
+        #     in-flight retry per session, now via idempotency_key, which
+        #     migration 0124 finally ENFORCES (it was stored and unindexed).
+        #   2026-07-21 — a second floor while one was pending was silently
+        #     DROPPED and nothing retried it. The newest ask repoints the row.
+        task_store = getattr(services, "durable_task_store", None)
+        # retry_replay=True means THIS turn is already a replay of an existing
+        # retry row; its floor belongs to that row's attempt_count, not a fresh
+        # enqueue, or rows multiply.
+        if task_store is not None and not state.retry_replay:
             try:
+                from stackowl.pipeline.durable.task import DurableTask
+                from stackowl.pipeline.durable.turn_task import _destination
+
                 banned = _attempts_for_state(state)
-                # Dedup against an already-pending row for this session (live
-                # incident 2026-07-16): insert_pending() has no dedup, so every
-                # floored turn tonight minted its OWN independent row — each one
-                # later fires on its own via the 1-minute sweep, unprompted and
-                # disconnected from whatever the user is discussing by then,
-                # reading as the agent contradicting/forgetting itself. One
-                # in-flight retry per session is enough — but a second floor
-                # while one is already pending must not silently DROP the
-                # user's newer ask either (live incident 2026-07-21: it was,
-                # and nothing ever retried it). Repoint the existing row at
-                # THIS turn's trace_id/goal instead — still one row per
-                # session, now tracking the freshest ask.
-                existing = await retry_store.get_latest_pending_for_session(state.session_key)
-                if existing is not None:
-                    log.scheduler.info(
-                        "[pipeline] persist_turn: retry already pending for session — "
-                        "superseding with this turn's goal",
-                        extra={"_fields": {
-                            "trace_id": state.trace_id, "existing_retry_id": existing.id,
-                        }},
-                    )
-                    await retry_store.supersede(
-                        existing.id,
-                        trace_id=state.trace_id,
-                        goal=state.input_text,
-                        banned_capabilities=list(banned) if banned else [],
-                    )
-                else:
-                    await retry_store.insert_pending(
-                        trace_id=state.trace_id,
-                        session_key=state.session_key,
-                        goal=state.input_text,
-                        banned_capabilities=list(banned) if banned else [],
-                    )
-            except Exception as exc:  # B5 — retry-queue bookkeeping must never block delivery
-                log.scheduler.error(
-                    "[pipeline] persist_turn: retry_queue insert failed",
-                    exc_info=exc,
-                    extra={"_fields": {"trace_id": state.trace_id}},
+                key = f"retry:{state.session_key}"
+                await task_store.enqueue(DurableTask(
+                    task_id=f"retry-{state.trace_id}",
+                    goal=(state.input_text or "(empty turn)")[:4000],
+                    status="pending",
+                    trigger_kind="retry",
+                    idempotency_key=key,
+                    # The ADDRESS, not just the channel — a destination of
+                    # "telegram" makes delivery impossible, so the task never
+                    # completes and retries for ever (81f6b7ec).
+                    destination=_destination(state.channel, state.reply_target),
+                    achievement="the retry's answer is delivered to the user who asked",
+                    channel=state.channel,
+                    session_key=state.session_key,
+                    owl_name=state.owl_name,
+                    banned_capabilities=tuple(banned) if banned else (),
+                ))
+                log.scheduler.info(
+                    "[pipeline] persist_turn: floored turn queued as a retry TASK",
+                    extra={"_fields": {"trace_id": state.trace_id,
+                                       "idempotency_key": key}},
                 )
+            except Exception as exc:  # B5 — bookkeeping must never block delivery
+                # A unique-index collision is the EXPECTED path when a retry is
+                # already in flight for this session, not an error: repoint that
+                # row at this turn's newer ask rather than dropping it
+                # (incident 2026-07-21).
+                if _is_duplicate_retry(exc):
+                    await _repoint_existing_retry(task_store, state)
+                else:
+                    log.scheduler.error(
+                        "[pipeline] persist_turn: retry task enqueue failed",
+                        exc_info=exc,
+                        extra={"_fields": {"trace_id": state.trace_id}},
+                    )
 
     # Message-ledger terminal flip — reuses the SAME `floored` signal computed
     # above, no new failure-detection logic. Independent of the memory-bridge
@@ -353,4 +375,43 @@ async def _count_completed_turn(state: PipelineState, floored: bool) -> None:
             exc_info=exc,
             extra={"_fields": {"trace_id": state.trace_id,
                                "session_key": state.session_key}},
+        )
+
+
+def _is_duplicate_retry(exc: BaseException) -> bool:
+    """Is this the unique-index collision that means 'a retry is already queued'?
+
+    Matched on the message rather than a driver exception class because the pool
+    wraps sqlite errors; a false negative here only costs an ERROR log and the
+    newer ask, so it is deliberately permissive about the wording.
+    """
+    text = str(exc).lower()
+    return "unique" in text and "idempotency" in text
+
+
+async def _repoint_existing_retry(task_store: Any, state: PipelineState) -> None:
+    """Point the session's in-flight retry at THIS turn's newer ask.
+
+    Incident 2026-07-21: a second floor while one was already pending was silently
+    dropped and nothing ever retried it. One row per session is right; losing the
+    user's newer question is not.
+    """
+    try:
+        await task_store.repoint_retry(
+            idempotency_key=f"retry:{state.session_key}",
+            goal=(state.input_text or "(empty turn)")[:4000],
+            trace_id=state.trace_id,
+        )
+        log.scheduler.info(
+            "[pipeline] persist_turn: retry already queued for this session — "
+            "repointed at the newer ask",
+            extra={"_fields": {"trace_id": state.trace_id,
+                               "session_key": state.session_key}},
+        )
+    except Exception as exc:  # B5
+        log.scheduler.error(
+            "[pipeline] persist_turn: could not repoint the in-flight retry — "
+            "this turn's ask will not be retried",
+            exc_info=exc,
+            extra={"_fields": {"trace_id": state.trace_id}},
         )

@@ -165,3 +165,49 @@ def test_boot_recovery_still_does_NOT_pass_it() -> None:
     assert "reclaim_one(task, count_attempt=True)" not in src, (
         "boot recovery is charging an attempt for an operational restart"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_queued_retry_is_repointed_at_the_newer_ask(tmp_db: DbPool) -> None:
+    """Incident 2026-07-21, preserved through the collapse of retry_queue.
+
+    A second floor while a retry is already queued must not be dropped. This
+    exercises the REAL store method — the seam's own tests use a fake store and
+    would pass even if repoint_retry did not exist, which is exactly how it was
+    nearly shipped missing.
+    """
+    from stackowl.pipeline.durable.task import DurableTask
+
+    store = DurableTaskStore(tmp_db, DEFAULT_PRINCIPAL_ID)
+    await store.enqueue(DurableTask(
+        task_id="retry-one", owner_id=DEFAULT_PRINCIPAL_ID, goal="the older ask",
+        status="pending", idempotency_key="retry:sess-1",
+    ))
+
+    moved = await store.repoint_retry(
+        idempotency_key="retry:sess-1", goal="the NEWER ask", trace_id="t2",
+    )
+
+    assert moved is True
+    assert (await store.get("retry-one")).goal == "the NEWER ask"
+
+
+@pytest.mark.asyncio
+async def test_a_RUNNING_retry_is_left_alone(tmp_db: DbPool) -> None:
+    """The control. Rewriting a drive's goal mid-flight makes its answer describe
+    work that was never done."""
+    from stackowl.pipeline.durable.task import DurableTask
+
+    store = DurableTaskStore(tmp_db, DEFAULT_PRINCIPAL_ID)
+    await store.enqueue(DurableTask(
+        task_id="retry-two", owner_id=DEFAULT_PRINCIPAL_ID, goal="mid-flight",
+        status="pending", idempotency_key="retry:sess-2",
+    ))
+    await store.update_status("retry-two", "running")
+
+    moved = await store.repoint_retry(
+        idempotency_key="retry:sess-2", goal="too late", trace_id="t3",
+    )
+
+    assert moved is False
+    assert (await store.get("retry-two")).goal == "mid-flight"
