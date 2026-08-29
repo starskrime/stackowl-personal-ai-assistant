@@ -6241,9 +6241,24 @@ current:
       the "anything that only appends will poison its reader" shape this tree has
       paid for repeatedly.
     what_is_blocked: >
-      The implement stage. Brainstorm is done and the architect can be drafted
-      against any of the three, but the spill location decides the reaper, the
-      sandbox reachability question and what the ToolResult hands back.
+      LEVEL 2 ONLY. Levels 1 and 3 plus the truncation signal shipped in 35a1d456.
+    ANSWERED_2026_08_29_AND_THE_ANSWER_DOES_NOT_WORK: >
+      Bakir chose (c), the sandbox temp dir, to match the reference. MEASURED
+      AFTERWARDS AND IT CANNOT HOLD THESE RESULTS: browser_extract — which produced
+      ALL 26 results above 100k chars — has no sandbox reference at all; only
+      execute_code, run_tests, claude_code and _ptc touch the sandbox. And
+      ~/.stackowl/sandbox currently holds only `seccomp`, because BwrapScratch
+      creates a scratch per run and its own docstring says it "is removed after
+      the run".
+      THE MISMATCH IS ARCHITECTURAL, not a detail: the reference apparently runs
+      its tools INSIDE its sandbox, so a tool result is already there. StackOwl
+      runs tools in the CORE process and sandboxes only code execution. There is
+      no sandbox in scope when the overflowing tools run, so there is nowhere to
+      spill.
+      NEAREST OPTION KEEPING HIS INTENT (reference-faithful, ephemeral, dies with
+      the turn): a per-trace directory under ~/.stackowl/sandbox/tool_results/
+      reaped at turn end — same lifetime as the reference's, but reachable by the
+      tools that actually overflow. NOT built; awaiting his call.
   - id: ESC-56-d016-instrument-coverage-is-18-percent
     raised: 2026-08-29
     question: >
@@ -16065,8 +16080,8 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
-      implement:  not_started
+      architect:  done
+      implement:  partial
       cleanup:    not_started
       test:       not_started
       validate:   not_started
