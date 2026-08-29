@@ -311,6 +311,16 @@ class StagedRcaSession:
             trace_id=str(uuid.uuid4()),
             # The incident is this analysis run's lane — RCA is not a user chat.
             session_key=evidence.incident_id,
+            # ESC-59 — and the incident is also its own INCARNATION. assemble only
+            # consults the D01.1 frozen prompt when this is set (assemble.py:133),
+            # so leaving it blank cold-built every stage: migration 0102 names this
+            # exact case ("the staged RCA drives three owls against ONE incident
+            # session_key") as the reason the key is (session_key, owl_name), and it
+            # was the one caller that could never reach the cache it motivated.
+            # The incident id rather than a fresh uuid per run, deliberately: the
+            # prompt depends on the owl, not on which attempt is running, so a
+            # re-analysis should reuse the frozen prompt rather than rebuild it.
+            conversation_id=evidence.incident_id,
             input_text=prompt,
             channel="rca",
             owl_name=owl_name,

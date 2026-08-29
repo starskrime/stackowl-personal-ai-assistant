@@ -179,6 +179,10 @@ class GoalExecutionHandler(JobHandler):
         state = PipelineState(
             trace_id=trace_id,
             session_key=session_key,
+            # ESC-59 — this RUN of the job is the incarnation. A scheduled goal may
+            # take several turns; they share one frozen prompt, while tomorrow's run
+            # correctly builds its own.
+            conversation_id=trace_id,
             input_text=dated_goal,
             # Deliver to the channel the goal was scheduled from (persisted on
             # the job row), not a hardcoded "cli" that drops the answer.

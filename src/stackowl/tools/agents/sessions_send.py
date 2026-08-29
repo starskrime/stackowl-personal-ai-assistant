@@ -241,6 +241,9 @@ class SessionsSendTool(Tool):
         sub_state = PipelineState(
             trace_id=trace_id or "sessions-send",
             session_key=f"session:{label}",
+            # ESC-59 — a sub-agent session IS one conversation, so the lane doubles
+            # as the incarnation and repeated sends reuse one frozen prompt.
+            conversation_id=f"session:{label}",
             input_text=message,
             channel=channel,
             owl_name=owl_name,

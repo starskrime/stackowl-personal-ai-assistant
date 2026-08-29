@@ -528,6 +528,13 @@ class DelegateTaskTool(Tool):
         chain = tuple(TraceContext.get().get("delegation_chain") or ())
         parent_state = PipelineState(
             trace_id=trace_id or "delegate-task", session_key=session_key,
+            # ESC-59 — INHERITED, not minted. This state stands in for the caller's
+            # own turn on the caller's lane, so the caller's incarnation is the
+            # correct one; TraceContext already carries it (infra/trace.py:46) and
+            # the delegation chain two lines below is read the same way. Falls back
+            # to "" when there is genuinely no ambient conversation, which is the
+            # pre-existing behaviour rather than a fabricated id.
+            conversation_id=TraceContext.get().get("conversation_id") or "",
             # The sub-task is text the MODEL wrote, and a model that saw the
             # volatile turn context prepended to the user's message can copy it
             # in verbatim (live 2026-08-15, qwen 3.8). Strip it here so the child

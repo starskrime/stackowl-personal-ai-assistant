@@ -8,6 +8,7 @@ recalled memory blocks classify produced.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from stackowl.exceptions import OwlNotFoundError
@@ -115,6 +116,12 @@ async def run(state: PipelineState) -> PipelineState:
     log.engine.debug(
         "[pipeline] assemble: entry", extra={"_fields": {"trace_id": state.trace_id}}
     )
+    # ESC-59 — the instrument. D01.1 claims a cache hit takes the model-window
+    # probe, the skill read and the profile read off the critical path, but no
+    # duration was ever recorded here, so the size of that saving could not be
+    # evidenced either way. One field, on the line that already says which branch
+    # ran, makes cold-vs-cached a measurable number instead of an argument.
+    _t0 = time.monotonic()
     services = get_services()
 
     # D01.1 slice 5 — THE FREEZE. Built once per (session_key, owl_name) and
@@ -151,6 +158,7 @@ async def run(state: PipelineState) -> PipelineState:
                     "conversation_id": state.conversation_id, "owl": state.owl_name,
                     "source": "cached", "system_len": prompt_chars,
                     "prompt_hash": prompt_hash,
+                    "assemble_ms": round((time.monotonic() - _t0) * 1000, 3),
                 }},
             )
             return state.evolve(
@@ -564,6 +572,7 @@ async def run(state: PipelineState) -> PipelineState:
             "conversation_id": state.conversation_id, "owl": state.owl_name,
             "source": "cold_build", "system_len": prompt_chars,
             "prompt_hash": prompt_hash,
+            "assemble_ms": round((time.monotonic() - _t0) * 1000, 3),
         }},
     )
     return state.evolve(

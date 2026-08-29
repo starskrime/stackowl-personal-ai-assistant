@@ -650,6 +650,10 @@ class MessageLedgerRecoverer:
         state = PipelineState(
             trace_id=row.trace_id,
             session_key=row.session_key,
+            # ESC-59 — the ledger row carries no conversation_id, so the recovered
+            # turn's own trace is the incarnation. Better than blank: blank means
+            # assemble never consults the frozen prompt at all (assemble.py:133).
+            conversation_id=row.trace_id,
             input_text=row.input_text,
             channel=row.channel,
             owl_name=_DEFAULT_OWL,

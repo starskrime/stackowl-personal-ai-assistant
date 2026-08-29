@@ -131,6 +131,12 @@ class RetryActuator:
         state = PipelineState(
             trace_id=f"{original.trace_id}-fix",
             session_key=original.session_key,
+            # ESC-59 — a correction is the SAME conversation as the turn it
+            # corrects, so it inherits the incarnation rather than minting one.
+            # assemble only reads the frozen prompt when this is set
+            # (assemble.py:133); a fresh id here would cold-build on the very lane
+            # most likely to still hold a warm one.
+            conversation_id=original.conversation_id,
             input_text=(
                 f"{original.input_text}\n\n"
                 f"[Your previous draft was rejected before delivery: {correction} "
@@ -186,6 +192,12 @@ class RetryActuator:
         state = PipelineState(
             trace_id=trace_id,
             session_key=row.session_key,
+            # ESC-59 — this retry attempt IS the incarnation. Each attempt is a
+            # distinct run of the lane (the trace_id is already minted fresh per
+            # attempt, and a test pins that), so reusing it as the stamp keeps a
+            # multi-step attempt on one frozen prompt without letting two attempts
+            # share one.
+            conversation_id=trace_id,
             input_text=augmented_goal,
             channel=row.channel,
             owl_name="secretary",

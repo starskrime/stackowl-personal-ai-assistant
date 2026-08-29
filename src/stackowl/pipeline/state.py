@@ -53,10 +53,26 @@ class PipelineState(BaseModel, frozen=True):
     trace_id: str
     session_key: str
     #: D01.7 — which INCARNATION of ``session_key`` this turn belongs to, resolved
-    #: at ingress by the SessionStore. Empty for turns that never passed through
-    #: ingress (scheduler handlers, parliament rounds, RCA): they have a lane but
-    #: no conversation run, and saying so honestly beats inventing one. Defaulted
-    #: so every existing construction site is byte-for-byte unaffected.
+    #: at ingress by the SessionStore.
+    #:
+    #: This used to read "empty for turns that never passed through ingress
+    #: (scheduler handlers, parliament rounds, RCA): they have a lane but no
+    #: conversation run, and saying so honestly beats inventing one." ESC-59
+    #: measured what that cost: ``assemble`` only consults the D01.1 frozen prompt
+    #: when this is truthy (steps/assemble.py), so the honest blank silently
+    #: disabled the freeze on 2,427 of 2,981 assembles (81.4%), every one of them
+    #: cold-building — including the staged-RCA case migration 0102 names as its
+    #: own reason for keying on (session_key, owl_name).
+    #:
+    #: THE RULE IT PROTECTED STILL HOLDS; it was too broadly applied. The line is
+    #: between INVENTING a conversation and JOINING one that already has a name —
+    #: the same distinction drawn for the transcript store under ESC-49. Machine
+    #: lanes now stamp an identifier the run ALREADY OWNS (the incident id, the
+    #: debate's session id, the retry's own trace, or the parent's incarnation off
+    #: TraceContext). Where there is genuinely no ambient conversation this is
+    #: still "" rather than a fabricated id.
+    #:
+    #: Defaulted so any construction site not yet reached stays unaffected.
     conversation_id: str = ""
     input_text: str
     channel: str

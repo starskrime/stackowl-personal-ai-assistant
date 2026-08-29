@@ -6413,6 +6413,62 @@ current:
       retry_actuator:131 and :186, goal_execution:179, shadow_validator:269, recovery:650.
       Add the duration field anyway while in there: it costs one line and it is the only way
       the result will ever be provable either way.
+    IMPLEMENTED_2026_08_29: >-
+      DONE, and the diff is 13 non-comment lines: nine `conversation_id=` keyword args plus a
+      four-line timer. Every value is an identifier the run ALREADY OWNS —
+      staged_rca=evidence.incident_id, round_runner=session.session_id,
+      sessions_send=the sub-session label, retry_actuator(corrective)=original.conversation_id
+      (inherited), retry_actuator(attempt)/goal_execution=that run's trace_id,
+      shadow_validator=the replay id, recovery=row.trace_id, delegate_task=the parent's
+      incarnation read off TraceContext with "" when there genuinely is no ambient
+      conversation. Nothing was fabricated.
+      THE INSTRUMENT SHIPPED TOO: "[pipeline] assemble: prompt source" now carries
+      `assemble_ms` on BOTH branches, at INFO. Cold-vs-cached was previously unmeasurable —
+      no duration existed on any assemble line — so the panel's objection (that the latency
+      win was unevidenced) is now answerable rather than merely overruled.
+    IT_CONTRADICTED_A_RECORDED_DECISION_AND_HERE_IS_THE_RECONCILIATION: >-
+      RAISED, not silently reconciled. PipelineState.conversation_id's own field comment and
+      designs/D05.4.md:41 both recorded the blank as DELIBERATE: "they have a lane but no
+      conversation run, and saying so honestly beats inventing one." I changed nine sites
+      before reading it — exactly the trap CLAUDE.md names ("read the comment before changing
+      the line").
+      Three things settle it. (1) D05.4 ALREADY CONTRADICTED ITSELF: the table three rows
+      above that paragraph calls conversation_id "the unit a provider-side prompt cache is
+      held across", which is precisely why the blank is expensive. Two halves of one document,
+      never reconciled. (2) THE PRECEDENT EXISTS AND BAKIR APPROVED IT — progress.yml's
+      transcript-store entry crossed the identical guard: "we are no longer inventing one, we
+      are joining an existing one, which is precisely the distinction that rule was
+      protecting", approved under ESC-49. (3) Nothing here is invented; each run is named by
+      the name it already has. The narrow reading of the rule SURVIVES and is still enforced
+      in delegate_task, which stays "" when TraceContext carries no conversation.
+      BOTH stale copies were corrected rather than left to mislead: the field comment in
+      pipeline/state.py and the paragraph in designs/D05.4.md.
+    TEST_EVIDENCE_675_GREEN: >-
+      tests/pipeline/durable 355 passed (857s) · tests/tools/agents 125 · tests/parliament 73 ·
+      -k assemble 39 · retry_actuator + staged_rca + the 3 new tests 39 · tests/scheduler -k
+      goal 20 · tests/owls -k shadow 5 · the five durable recovery files individually 18.
+      ruff 37 / mypy 65 — both baselines held (I caught my own import-order slip pushing ruff
+      to 38 and fixed it before it reached a commit).
+      NEW TESTS: tests/pipeline/test_machine_lanes_stamp_an_incarnation.py, 3 tests, all seen
+      RED first for the right reason ('' == '20260829_120000_abcd').
+      A VACUOUS PASS CAUGHT IN THE ACT, recorded because the programme keeps paying for this
+      shape: the stability test asserted `len({incarnations}) == 1` and PASSED on the broken
+      code, because every stage carried "" and {""} is one value. A not-vacuous guard
+      (`!= {""}`) was added and it went red properly. A stability assertion that a total
+      absence satisfies is not an assertion.
+    A_METHOD_FINDING_ABOUT_THIS_BOX: >-
+      An early combined run of tests/pipeline + tests/parliament returned exit 143 at 600s and
+      looked like a hang. It was not: tests/pipeline is 1,508 tests and tests/pipeline/durable
+      alone is 355 that take 857s, nearly all of it FIXTURE SETUP (~8s per test — the slowest
+      eight durations are all `setup`). tests/owls (307) also blew a 280s budget, partly from
+      competing for CPU with the background durable run. Directory-level runs are not viable
+      here; targeted files are. Recorded so the next session does not read 143 as a defect —
+      or, worse, raise the timeout and call the result green.
+    VALIDATE_STILL_OPEN: >-
+      Not yet proven live. The closing query, to run after a restart whose boot time postdates
+      this commit: group "[pipeline] assemble: prompt source" by source and compare
+      `assemble_ms` cold vs cached, and confirm the empty-stamp share has fallen from 81.4%.
+      Until that runs this is IMPLEMENTED, not VALIDATED, and is recorded as such.
 
   - id: ESC-60-the-mandated-ponytail-gate-is-not-installed
     raised: 2026-08-29
@@ -19754,15 +19810,36 @@ items:
     dedup_target: X7
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  done
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
+    doc: "docs/reference-mapping/designs/D10.5.md"
     doc_last_verified: null
     decisions:
+      - date: 2026-08-29
+        stage: architect
+        round: "design opened"
+        by: loop
+        summary: >-
+          docs/reference-mapping/designs/D10.5.md opened at commit 61b3f40f. Ladder RUNG 1
+          (extend existing code): one SubCommand on the existing _SKILL_META tuple plus one
+          build_turn_prompt override on SkillCommand. No new namespace, no new registration,
+          no collision surface, and the reachability guard is untouched.
+          LAW 1 holds BY CONSTRUCTION — assemble is not on this path at all; the body is the
+          turn's INPUT, so the frozen system prompt is never rebuilt. LAW 2 holds — no tool
+          schema is added, so nothing new ships on every API call.
+          X7 ("two skill-injection paths") is RESOLVED BY CONSTRUCTION rather than by cleanup:
+          the system prompt keeps only the catalogue and the body rides the ONE existing
+          turn-prompt seam, so no second injector is created.
+          FILES IT WILL TOUCH: commands/skill_command.py (the verb + the conditional
+          build_turn_prompt), skills/ (one shared resolver both this and skill_view ask),
+          pipeline/state.py + pipeline/turn_persist.py (the input_is_synthetic predicate),
+          and tests. THREE DEFECTS SHIP WITH IT, all named in the doc's own section: the
+          durable-user-fact reopening, `enabled` being decoration on the resolve path, and
+          the `??` dry-run being bypassed by the seam.
       - date: 2026-08-29
         stage: brainstorm
         round: "Round 0 — MEASURE FIRST (panel: Measurement lens, run twice independently)"

@@ -173,6 +173,10 @@ class RoundRunner:
             # The debate's own id doubles as this sub-pipeline's lane: every owl in
             # the round shares one lane, which is what keeps their turns grouped.
             session_key=session.session_id,
+            # ESC-59 — the debate is also its own INCARNATION. Same reasoning as
+            # the lane above: every owl in the round shares it, so each owl's
+            # frozen prompt is reused across the rounds instead of cold-built.
+            conversation_id=session.session_id,
             input_text=prompt,
             channel="parliament",
             owl_name=owl_name,

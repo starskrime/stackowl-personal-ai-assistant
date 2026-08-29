@@ -269,6 +269,8 @@ class ShadowValidator:
         state = PipelineState(
             trace_id=f"shadow-validate-{replay_id}",
             session_key=f"shadow-validate-{replay_id}",
+            # ESC-59 — one replay, one incarnation.
+            conversation_id=f"shadow-validate-{replay_id}",
             input_text=outcome.input_text,
             channel=outcome.channel,
             owl_name=owl_name,
