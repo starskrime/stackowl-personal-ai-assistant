@@ -1231,6 +1231,95 @@ class DurableTaskStore(OwnedRepository):
         )
         return int((rows[0]["n"] if rows else 0) or 0)
 
+    async def resolve_unannounced_dead_letters(self, *, limit: int = 50) -> int:
+        """Resolve terminal work whose outcome nobody was ever told about.
+
+        THE COMPANION TO ``revive_undelivered_failures``, and the case it names but
+        cannot handle. That sweep skips ``dead_letter`` because the status is "a
+        decision the loop already made AND ANNOUNCED" — correct reasoning, and for
+        74 live rows the announcement never happened. 72 of them carry a
+        destination with no ADDRESS ("telegram", "rca"), so nothing could ever be
+        announced to them, and no sweep looks at dead letters. Permanent debt the
+        platform could neither see nor drain.
+
+        Bakir, 2026-08-29: "we are always fixing root of the issue not an issue
+        itself. Issue itself should be fixed by platform due to self healing
+        capability." Hand-clearing those rows would fix the issue; this drains them
+        by the mechanism that should have existed.
+
+        TWO OUTCOMES, and the difference is who is waiting:
+
+        * an ADDRESSED row has someone waiting, so it is ESCALATED once through the
+          existing ProactiveDeliverer (``_escalate``) — no second notifier.
+        * an UNADDRESSABLE row has nobody waiting, so there is no debt to pay. It is
+          RETIRED: recorded as reviewed, and never examined again.
+
+        NEITHER RE-RUNS THE WORK. ``dead_letter`` stands, because the ceiling
+        decision was right; what changes is only whether its outcome was surfaced.
+
+        Never raises: a self-heal that can crash the loop it runs in is worse than
+        the debt it drains.
+        """
+        log.tasks.debug(
+            "[loop] store.resolve_unannounced_dead_letters: entry",
+            extra={"_fields": {"owner_id": self._owner_id, "limit": limit}},
+        )
+        try:
+            rows = await self._db.fetch_all(
+                f"SELECT task_id, goal, destination, last_error, max_attempts, "  # noqa: S608
+                f"attempt_count FROM {self._table} "
+                "WHERE owner_id=? AND status='dead_letter' AND delivered_at IS NULL "
+                "AND acknowledged_at IS NULL ORDER BY updated_at DESC LIMIT ?",
+                (self._owner_id, limit),
+            )
+        except Exception as exc:
+            log.tasks.error(
+                "[loop] could not look for unannounced dead letters",
+                exc_info=exc, extra={"_fields": {"owner_id": self._owner_id}},
+            )
+            return 0
+
+        resolved = 0
+        now = datetime.now(tz=UTC).isoformat()
+        for r in rows or []:
+            task_id = str(r["task_id"])
+            destination = r["destination"]
+            addressed = bool(_address_of(destination))
+            try:
+                if addressed:
+                    # Someone IS waiting. Tell them, once, through the path that
+                    # already owns transport, the undelivered outbox and styling.
+                    full = await self.get(task_id)
+                    if full is not None:
+                        await self._escalate(
+                            full,
+                            attempts=int(r["attempt_count"] or 0),
+                            error=str(r["last_error"] or "it stopped for good"),
+                            permanent=True,
+                        )
+                await self._db.execute(
+                    f"UPDATE {self._table} SET acknowledged_at=? "  # noqa: S608
+                    "WHERE task_id=? AND owner_id=?",
+                    (now, task_id, self._owner_id),
+                )
+                resolved += 1
+                log.tasks.info(
+                    "[loop] unannounced dead letter resolved"
+                    if addressed else
+                    "[loop] unannounced dead letter RETIRED — it had no addressee, "
+                    "so nobody was waiting",
+                    extra={"_fields": {
+                        "task_id": task_id, "destination": destination,
+                        "outcome": "escalated" if addressed else "retired",
+                    }},
+                )
+            except Exception as exc:
+                log.tasks.error(
+                    "[loop] could not resolve an unannounced dead letter",
+                    exc_info=exc, extra={"_fields": {"task_id": task_id}},
+                )
+        return resolved
+
     async def revive_undelivered_failures(self, *, limit: int = 50) -> int:
         """Return to the loop any task that OWED someone an answer and never sent it.
 
@@ -1567,6 +1656,10 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
         achievement=(None if row.get("achievement") is None
                      else str(row["achievement"])),
         delivered_at=_dt("delivered_at"),
+        # Mapped here as well as declared on the model: a field the row mapper
+        # does not read is a field that round-trips as None however faithfully it
+        # was written — the same shape as claimable()'s explicit column list.
+        acknowledged_at=_dt("acknowledged_at"),
         attempt_count=int(row.get("attempt_count") or 0),
         max_attempts=int(row.get("max_attempts") or DEFAULT_MAX_ATTEMPTS),
         last_error=(None if row.get("last_error") is None

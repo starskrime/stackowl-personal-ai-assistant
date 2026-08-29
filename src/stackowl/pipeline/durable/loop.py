@@ -62,6 +62,7 @@ class _Store(Protocol):
         self, task_id: str, depends_on: tuple[str, ...],
     ) -> None: ...
     async def revive_undelivered_failures(self, *, limit: int = 50) -> int: ...
+    async def resolve_unannounced_dead_letters(self, *, limit: int = 50) -> int: ...
     async def count_pending_for_other_owners(self) -> int: ...
     async def heal_unreachable_owners(self, *, limit: int = 500) -> int: ...
     async def reclaim_expired(self, *, now: Any = None) -> int: ...
@@ -283,6 +284,13 @@ class TaskLoop:
                     *(self._dispatch(r) for r in claimed), return_exceptions=True,
                 )
             await self._store.prune_completed(older_than_days=self._prune_after_days)
+            # SELF-HEAL ON THE TICK, not only at boot. `revive_undelivered_failures`
+            # runs once in start(), which is why 74 dead letters accumulated
+            # unseen — a sweep that only fires at boot cannot drain debt created
+            # after it. This one resolves terminal work whose outcome nobody was
+            # ever told about: escalate once if someone is waiting, retire if the
+            # row has no addressee. It never re-runs the work and never raises.
+            await self._store.resolve_unannounced_dead_letters()
             self._note_tick_ok()
         except Exception as exc:
             # The loop must outlive anything inside it. A tick that dies means work

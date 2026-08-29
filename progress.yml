@@ -6242,6 +6242,59 @@ current:
     235k-row job_runs table with no retention.
 
   ESCALATIONS:
+  - id: SELFHEAL-2026-08-29-the-platform-drains-its-own-dead-letters
+    raised: 2026-08-29
+    status: "BUILT, green — awaiting the live drain as its own proof"
+    BAKIR_CORRECTED_ME_AND_THE_CORRECTION_IS_THE_RULE: >-
+      I offered two options for 74 stranded dead letters: leave them, or escalate them.
+      BOTH WERE WRONG. His answer: "we are always fixing root of the issue not an issue
+      itself. Issue itself should be fixed by platform due to self healing capability."
+      Hand-clearing rows fixes the ISSUE. The ROOT is that nothing ever revisits a dead
+      letter that was never announced, so it becomes debt the platform can neither see nor
+      drain. This is rules.selfhealing_proves_the_root_cause applied to me, by him, on
+      exactly the shape that rule exists to catch — my own words were "the existing rows are
+      left as-is", which the rule names as the signature of a half-fix.
+    THE_ROOT_IN_ONE_WORD: >-
+      ANNOUNCED. `revive_undelivered_failures` deliberately skips dead_letter, and its
+      docstring's reasoning is sound as written: "that status is a decision the loop already
+      made AND ANNOUNCED; undoing it here would re-run work the operator was told had
+      stopped." For these rows the announcement never happened. 72 of the 74 carry a
+      destination with NO ADDRESS ("telegram", "rca" — a channel name, not an addressee), so
+      nothing could ever be announced to them. The sweep's premise was false for precisely
+      the rows that needed it, and no other sweep looks at dead letters at all.
+    WHAT_SHIPPED: >-
+      Migration 0128 adds `tasks.acknowledged_at` — deliberately NOT reusing `delivered_at`,
+      which is PROOF the outcome reached its destination. "We told someone it stopped" and
+      "the answer arrived" are different facts; stamping delivered_at here would claim a
+      delivery that never happened, which is the overclaim shape the loop exists to prevent.
+      `DurableTaskStore.resolve_unannounced_dead_letters()` resolves each row by whether
+      anyone is WAITING: an ADDRESSED row is escalated once through the existing
+      ProactiveDeliverer (no second notifier), an UNADDRESSABLE row is RETIRED because there
+      is no debt to pay. Neither re-runs the work — dead_letter stands, since the ceiling
+      decision was correct; what changes is only whether the outcome was surfaced.
+      IT RUNS ON THE TICK, not at boot. `revive_undelivered_failures` fires once in start(),
+      which is exactly why 74 rows accumulated unseen: a sweep that only runs at boot cannot
+      drain debt created after it.
+    A_TRAP_HIT_WHILE_BUILDING_IT: >-
+      The sweep worked and the read-back showed acknowledged_at=None. The column was on the
+      model and in the migration, and `_row_to_task` did not map it — a field the row mapper
+      does not read round-trips as None however faithfully it was written. Same shape as
+      claimable()'s explicit column list, one layer down. Caught because a test asserted the
+      value AFTER a re-read rather than trusting the write.
+    THE_PROOF_IS_THE_DRAIN_ITSELF: >-
+      Under Bakir's own rule this fix is falsifiable: after restart the platform must drain
+      the 74 rows WITHOUT being asked. If it does not, either the root is not fixed or
+      self-healing has another gap — and either way the answer is more work, never "shipped".
+      The closing query: count rows at status='dead_letter' AND delivered_at IS NULL AND
+      acknowledged_at IS NULL. It must fall from 74 to 0, with matching INFO lines
+      "[loop] unannounced dead letter RETIRED — it had no addressee".
+    STILL_A_SEPARATE_ROOT_NOT_FIXED_HERE: >-
+      WHY those destinations are unaddressable. `_destination(channel, chat_id)` returns a
+      bare channel when chat_id is None, and turn_persist.py's own comment already documents
+      the consequence ("a destination of 'telegram' makes delivery impossible, so the task
+      never completes and retries for ever — 81f6b7ec"). 22 live rows still carry it. This
+      sweep drains the debt; it does not stop it being created. Recorded so the second root
+      is not mistaken for fixed.
   - id: ARC-2026-08-29-the-operator-was-answered-twice
     raised: 2026-08-29
     status: "IN PROGRESS — seam 3 shipped, seam 1 built and green, suppression next"

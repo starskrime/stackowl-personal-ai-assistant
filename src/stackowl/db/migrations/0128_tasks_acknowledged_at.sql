@@ -1,0 +1,29 @@
+-- Migration 0128 — a terminal task records whether anyone was ever TOLD.
+--
+-- WHY THIS EXISTS. `revive_undelivered_failures` deliberately skips `dead_letter`,
+-- and its reasoning is sound as written: "that status is a decision the loop
+-- already made AND ANNOUNCED; undoing it here would re-run work the operator was
+-- told had stopped."
+--
+-- The load-bearing word is ANNOUNCED, and for 74 live rows it was not true.
+-- Measured 2026-08-29: 74 rows at status='dead_letter' with delivered_at NULL, of
+-- which 72 are one batch from 2026-08-20 carrying NULL trigger_kind, NULL
+-- failure_class and a destination with NO ADDRESS ("telegram", "rca" — a channel
+-- name, not an addressee). Nothing could ever be announced to them, and no sweep
+-- looks at dead letters, so they sat as permanent unacknowledged debt that the
+-- platform could neither see nor drain.
+--
+-- Bakir, 2026-08-29: "we are always fixing root of the issue not an issue itself.
+-- Issue itself should be fixed by platform due to self healing capability." Hand-
+-- clearing these rows would fix the issue. This column is what lets the PLATFORM
+-- fix it: a terminal row now records whether its outcome was ever surfaced, so a
+-- sweep can find the ones that were not and resolve them exactly once.
+--
+-- WHY NOT REUSE delivered_at. That column is PROOF the outcome reached its
+-- destination. Stamping it here would claim a delivery that never happened — the
+-- overclaim shape this whole loop exists to prevent. "We told someone it stopped"
+-- and "the answer arrived" are different facts and need different columns.
+--
+-- Idempotent: guarded so re-running the migration set is safe.
+
+ALTER TABLE tasks ADD COLUMN acknowledged_at TEXT;

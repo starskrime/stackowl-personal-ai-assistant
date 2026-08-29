@@ -102,6 +102,16 @@ class DurableTask(BaseModel):
     #: Proof the outcome reached ``destination``. Set ONLY by mark_delivered.
     #: A ``completed`` row without this is a self-report, not a delivery.
     delivered_at: datetime | None = None
+    #: When this row's TERMINAL outcome was surfaced — announced to whoever was
+    #: waiting, or reviewed and found to have nobody waiting. Distinct from
+    #: ``delivered_at``, which is proof the ANSWER arrived: "we told someone it
+    #: stopped" and "the answer landed" are different facts, and conflating them
+    #: would claim a delivery that never happened.
+    #:
+    #: Exists because `revive_undelivered_failures` skips dead letters on the
+    #: grounds that the status was "already made AND ANNOUNCED" — which was untrue
+    #: for 74 live rows, 72 of them unaddressable, leaving debt no sweep could see.
+    acknowledged_at: datetime | None = None
     #: How many times this has been tried, and the per-task ceiling.
     attempt_count: int = 0
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
