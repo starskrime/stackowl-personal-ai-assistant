@@ -63,6 +63,46 @@ def _destination(channel: object, chat_id: object = None) -> str:
     return f"{ch}:{addr}" if addr else ch
 
 
+def destination_for_turn(
+    *, channel: object, reply_target: object, defer_delivery: bool
+) -> str | None:
+    """Where this turn's answer must land — or None when it owes no delivery.
+
+    THE THIRD ANSWER. task_runner.py's own comment records why the first two are
+    both wrong: *"That cured the false COMPLETION and left a never-completion,
+    because A CHANNEL NAME IS NOT AN ADDRESS."*
+
+      * a BARE CHANNEL ("rca", "telegram") can never be delivered to, so
+        ``update_status`` rightly refuses to close the row and it climbs to its
+        ceiling. MEASURED 2026-08-29: two RCA verifier tasks at attempts 11/30 and
+        10/30, retrying every ~15 minutes, burning a model run each time for an
+        answer nobody was waiting for.
+      * NULL FOR EVERYONE lets rows complete without delivering — the false
+        completion that fix already paid for once.
+
+    THE DISCRIMINATOR WAS ALREADY ON THE STATE. ``defer_delivery=True`` means the
+    PRODUCER owns delivery: deliver.py is a hard no-op for such a turn, and
+    DurableTask's own field comment says NULL means "no destination of its own (a
+    pure sub-goal whose parent delivers)". An RCA stage is exactly that —
+    staged_rca sets defer_delivery with the comment "This stage has no user stream
+    and no reply_target".
+
+    So: deferred AND unaddressed ⇒ owes nothing ⇒ None. Everything else keeps
+    today's behaviour byte-for-byte, including the deliberately loud case of an
+    interactive turn that lost its address — that is a real defect and must not be
+    silently nulled into a clean completion.
+    """
+    addressed = _destination(channel, reply_target)
+    if defer_delivery and ":" not in addressed:
+        log.tasks.info(
+            "[loop] turn defers delivery and has no addressee — claiming NO "
+            "destination rather than a channel name it could never deliver to",
+            extra={"_fields": {"channel": str(channel)}},
+        )
+        return None
+    return addressed
+
+
 def loop_produces_replies(services: Any) -> bool:
     """Is the LOOP the primary producer for chat turns, or the fast path?
 

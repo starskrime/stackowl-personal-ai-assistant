@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 from stackowl.pipeline.authz_compose import resolve_owl_bounds
 from stackowl.pipeline.durable.task import DurableTask, TaskStatus
-from stackowl.pipeline.durable.turn_task import _destination
+from stackowl.pipeline.durable.turn_task import destination_for_turn
 from stackowl.pipeline.planner import PreflightPlanner, ToolProposer
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
@@ -204,7 +204,11 @@ class DurableTaskRunner:
                 #
                 # Built through turn_task's helper rather than by hand, so the two
                 # writers cannot disagree about the shape again — a test pins it.
-                destination=_destination(state.channel, state.reply_target),
+                destination=destination_for_turn(
+                    channel=state.channel,
+                    reply_target=state.reply_target,
+                    defer_delivery=state.defer_delivery,
+                ),
                 achievement="the answer is delivered to the job's targets",
                 created_at=now,
                 updated_at=now,
