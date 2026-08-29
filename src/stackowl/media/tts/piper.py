@@ -271,7 +271,11 @@ class PiperBackend(TtsBackend):
             extra={"_fields": {"text_len": len(text)}},
         )
         with wave.open(str(out_path), "wb") as wav:
-            self._loaded.synthesize(text, wav)
+            # piper-tts >= 1.7: synthesize() returns AudioChunks and the
+            # file-writing entry point is synthesize_wav(text, wav_file).
+            # Older piper: synthesize(text, wav) wrote directly.
+            synth = getattr(self._loaded, "synthesize_wav", None) or self._loaded.synthesize
+            synth(text, wav)
         with wave.open(str(out_path), "rb") as wav:
             frames = wav.getnframes()
             rate = wav.getframerate() or 1
