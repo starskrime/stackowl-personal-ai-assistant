@@ -6464,11 +6464,33 @@ current:
       competing for CPU with the background durable run. Directory-level runs are not viable
       here; targeted files are. Recorded so the next session does not read 143 as a defect —
       or, worse, raise the timeout and call the result green.
-    VALIDATE_STILL_OPEN: >-
-      Not yet proven live. The closing query, to run after a restart whose boot time postdates
-      this commit: group "[pipeline] assemble: prompt source" by source and compare
-      `assemble_ms` cold vs cached, and confirm the empty-stamp share has fallen from 81.4%.
-      Until that runs this is IMPLEMENTED, not VALIDATED, and is recorded as such.
+    VALIDATE_PARTIAL_2026_08_29T16_33Z_AND_I_AM_CORRECTING_MY_OWN_NUMBER: >-
+      LIVE AND CONFIRMED: the core exec-replaced at 16:32:47Z (postdating the 16:32:11Z edit),
+      `assemble_ms` is emitting at INFO, and of the 25 post-restart assembles
+      TWENTY-FIVE OF TWENTY-FIVE now carry a conversation_id — the stamped share went from
+      18.6% to 100%. Cold-build cost is now measurable for the first time: median 65.1ms,
+      max 1,102ms.
+      STILL ZERO CACHED, and the denominator explains why rather than excusing it: all 25
+      were the FIRST assemble for their (lane, owl, conversation_id) key, where a cold build
+      is correct and unavoidable. Not a pass and not a failure — an insufficient window.
+      THE CORRECTION I OWE, and it is mine: I reported "81% of assembles bypass the freeze"
+      as though 81% were recoverable. The bypass figure is right; the IMPLICATION was not.
+      Measured across all 3,027 retained assembles: they span 2,070 distinct (lane, owl)
+      keys, only 153 keys ever assemble more than once, and the repeat population is 957.
+      SO THE THEORETICAL MAXIMUM CACHE-HIT RATE IS 31.6%, NOT 81%. About 68% of all assembles
+      are the only one their key will ever see, and no freeze can help them. Against a prior
+      236 cached (7.8%), the real headroom is roughly 24 POINTS, not 73. The fix is worth
+      having — the single lane owl:rca_gatherer:recovery:retry-8b7c40 assembled 80 times with
+      one owl, and that is exactly the shape now stamped — but the honest ceiling is a third
+      of the traffic, not four fifths.
+      This is the "check what the DENOMINATOR IS MADE OF" rule turned on my own claim, and it
+      is recorded because the overstated version was already written into a commit message.
+    THE_CLOSING_QUERY_STILL_TO_RUN: >-
+      One cached hit on a key that recurs post-fix. Group "[pipeline] assemble: prompt source"
+      by source over a window containing a repeated (session_key, owl, conversation_id), and
+      compare `assemble_ms` for cached vs cold on that key. Until a cached row exists with the
+      new field, the LATENCY saving remains unevidenced — which was the panel's original
+      objection and is not yet answered, only made answerable.
 
   - id: ESC-60-the-mandated-ponytail-gate-is-not-installed
     raised: 2026-08-29
