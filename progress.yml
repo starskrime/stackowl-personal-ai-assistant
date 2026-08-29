@@ -19835,12 +19835,55 @@ items:
       architect:  done
       implement:  done
       cleanup:    done
-      test:       partial
-      validate:   not_started
+      test:       done
+      validate:   blocked
       document:   partial
     doc: "docs/reference-mapping/designs/D10.5.md"
     doc_last_verified: null
     decisions:
+      - date: 2026-08-29
+        stage: test
+        round: "green"
+        by: loop
+        result: >-
+          tests/commands 376 passed, ZERO failures — up from 374 passed / 1 failed, and that
+          one failure was the meta guard correctly refusing an undeclared verb. Reachability
+          guard green (no new top-level command was registered, by design). New file
+          tests/commands/test_skill_use.py, 10 tests, all seen RED first (ModuleNotFoundError,
+          then the wiring assertions). ruff 37 / mypy 65 held.
+        PONYTAIL_FOUND_SOMETHING_IN_MY_OWN_DIFF_AND_IT_WAS_CUT: >-
+          build_use_prompt was written as (args, instruction="") and NOTHING IN PRODUCTION EVER
+          PASSED THE SECOND ARGUMENT — the caller hands over the raw remainder and the function
+          is the thing that knows how to split it. Only my own tests used it, which meant three
+          tests were exercising a path production never takes. Parameter deleted, tests rewritten
+          to the single-argument shape. net -3 lines and strictly better tests.
+      - date: 2026-08-29
+        stage: validate
+        round: "BLOCKED — needs one real turn, and I will not send it unprompted"
+        by: loop
+        status: >-
+          Everything short of a live invocation is done. The core exec-replaced at
+          2026-08-29T16:57:58Z, postdating the commit, and the verb renders correctly against
+          the live code. What is missing is a REAL TURN, and driving one means either messaging
+          Bakir on Telegram (outward-facing, not mine to send) or starting a CLI session that
+          could conflict with the running gateway. Recorded OPEN rather than fudged.
+        THE_ONE_CHECK_THAT_MATTERS: >-
+          THAT THE STEER LANDS. Injection would have made "the model saw the body" true BY
+          CONSTRUCTION; steering has to earn it, and that is the whole risk of the divergence.
+          Bakir types, on any channel:   /skill use verify-before-claim
+          Then the closing query, which needs BOTH lines on ONE trace_id:
+            grep -E '"msg": "(\[startup\] gateway: command contributed a TURN PROMPT|skill_view.execute: entry)' \
+              ~/.stackowl/logs/stackowl.jsonl
+          PASS = the TURN PROMPT line (cmd=skill) and a skill_view.execute entry naming the
+          skill share a trace_id. FAIL = the steer fires and no skill_view follows, in which
+          case the trade was wrong and the design goes back to injection behind an async seam.
+          Both log lines ALREADY EXIST at INFO — nothing new had to be added to make this
+          closable, which is deliberate.
+        SECONDARY_CHECKS: >-
+          /skill use with a HYPHENATED name and a source:name form (denominator check — state
+          how many invocations and that both forms were included; 0-over-0 is not a pass);
+          `/skill use X ??` previews rather than runs; staged_facts contains no row carrying the
+          skill body; /help skill now shows both `use` and `menu`.
       - date: 2026-08-29
         stage: implement
         round: "built — and the implementation DIVERGED from the design"
