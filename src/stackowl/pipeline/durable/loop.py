@@ -323,13 +323,21 @@ class TaskLoop:
             result = await self._runner(task)
         except Exception as exc:
             failure_class = classify_failure(exc)
+            # The runner attaches what the attempt burned to the exception it
+            # raises, because a raise is the only channel it has — see
+            # task_loop_runner. Reading it here is what turns a blind retry into a
+            # constrained one.
+            banned = tuple(getattr(exc, "banned_capabilities", ()) or ())
             log.tasks.warning(
                 "[loop] task attempt failed",
                 exc_info=exc,
                 extra={"_fields": {"task_id": task.task_id,
-                                   "failure_class": failure_class}},
+                                   "failure_class": failure_class,
+                                   "banned": list(banned)}},
             )
-            await self._safe_fail(task, error=str(exc), failure_class=failure_class)
+            await self._safe_fail(
+                task, error=str(exc), failure_class=failure_class, banned=banned,
+            )
             return
         if not (result or "").strip():
             await self._safe_fail(
@@ -429,12 +437,21 @@ class TaskLoop:
             return None
 
     async def _safe_fail(
-        self, task: Any, *, error: str, failure_class: str
+        self, task: Any, *, error: str, failure_class: str,
+        banned: tuple[str, ...] = (),
     ) -> None:
-        """Requeue, and never let the requeue itself become the unhandled error."""
+        """Requeue, and never let the requeue itself become the unhandled error.
+
+        ``banned`` is the capability this attempt PROVED dead. It is forwarded so
+        the next attempt is constrained rather than blind — `fail_and_requeue`
+        already accepts and MERGES it, and this call site simply never passed it.
+        Measured cost of that omission: task 8b7c4029 failed identically 74 times
+        over 14h33m, re-treading the same capability every time.
+        """
         try:
             await self._store.fail_and_requeue(
                 task.task_id, error=error, failure_class=failure_class,
+                banned=banned,
             )
         except Exception as exc:
             log.tasks.error(

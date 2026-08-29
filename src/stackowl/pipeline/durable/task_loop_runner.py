@@ -90,9 +90,20 @@ def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
             # NOT a quiet return. The loop marks a task delivered on a non-empty
             # result, so reporting success here when nothing reached the user would
             # import the overclaim shape straight into the loop.
-            raise RuntimeError(
+            #
+            # THE LEARNING RIDES THE EXCEPTION. A raise is the only channel this
+            # runner has back to the loop, so what the attempt burned is attached
+            # to it rather than discarded with the outcome object. Without this the
+            # loop reads an empty tuple every time and `banned_capabilities` never
+            # accumulates — which is precisely how 8b7c4029 failed identically 74
+            # times against a ceiling of 30.
+            err = RuntimeError(
                 f"retry did not deliver (actuator reported {status!r})"
             )
+            err.banned_capabilities = tuple(  # type: ignore[attr-defined]
+                getattr(outcome, "banned", ()) or ()
+            )
+            raise err
         return f"re-driven and delivered after {task.attempt_count} prior attempt(s)"
 
     return _run

@@ -69,6 +69,13 @@ def _delivery_retry_delay_seconds(exc: BaseException) -> float:
 @dataclass(frozen=True, slots=True)
 class RetryOutcome:
     status: str  # "completed" | "pending" | "failed"
+    #: Capabilities this attempt proved dead, for the NEXT attempt to avoid.
+    #: Bakir's contract — "next loop when it picks it, it also looks: is any
+    #: previous one? Yes — learn from that experience." It used to be computed by
+    #: `_pick_newly_failed`, handed to a table the ONE-loop migration stopped
+    #: writing, and lost. Task 8b7c4029 then failed IDENTICALLY 74 times over
+    #: 14h33m because every attempt re-tread what the last one had already burned.
+    banned: tuple[str, ...] = ()
 
 
 def _native_chat_id(raw: str) -> str | int:
@@ -443,7 +450,16 @@ class RetryActuator:
             # Unknown terminal state (another caller may already own this row) —
             # "pending" is the conservative, non-data-losing report: worst case
             # is a harmless extra retry, never a silently dropped failure.
-            return RetryOutcome(status="pending")
+            #
+            # THE LEARNING STILL TRAVELS. This branch is the LIVE one: the store
+            # above is `retry_queue`, which the ONE-loop migration stopped writing,
+            # so mark_attempt_failed raises on every call (19 occurrences in the
+            # retained logs). Returning the capability here is what stops the
+            # dead table from also costing us the lesson.
+            return RetryOutcome(
+                status="pending",
+                banned=(newly_failed_capability,) if newly_failed_capability else (),
+            )
         # Workstream B — the real attempt_number mark_attempt_failed just
         # persisted (not the pre-attempt count captured at attempt_retry's
         # entry), so a later reader (task_outcomes, Phase 5) can tell "attempt
@@ -462,4 +478,7 @@ class RetryActuator:
         # No terminal "failed" status anymore (owner decision 2026-07-22) —
         # mark_attempt_failed always re-arms, so there is no give-up
         # notification to send here; updated.status is always "pending".
-        return RetryOutcome(status=updated.status)
+        return RetryOutcome(
+            status=updated.status,
+            banned=(newly_failed_capability,) if newly_failed_capability else (),
+        )

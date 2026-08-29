@@ -116,6 +116,30 @@ def reply_target_for_task(task: object) -> str | None:
         return None
 
 
+def attempts_exhausted(task: object) -> bool:
+    """True when this row has already spent its attempt budget.
+
+    THE CEILING RECOVERY NEVER HAD. The budget lives in
+    ``store.fail_and_requeue``, and a row that never travels that path is bounded
+    by nothing at all. Measured live: task retry-8b7c4029 was claimed here 74
+    times over 14h33m at attempt_count 72 against max_attempts 30, because
+    ``update_status`` correctly refused to close a row that still owed a delivery
+    and recovery simply claimed it again on the next pass. A second driver on the
+    loop's own table, carrying none of the loop's limits — CLAUDE.md's "never a
+    second engine", happening inside the loop package itself.
+
+    FAILS OPEN. A row missing either field counts as having attempts left: the
+    loop's own ceiling still bounds it downstream, and refusing on absent data
+    would turn a safety check into a silent work-stopper.
+    """
+    try:
+        attempts = int(getattr(task, "attempt_count", 0) or 0)
+        ceiling = int(getattr(task, "max_attempts", 0) or 0)
+    except Exception:  # pragma: no cover — a hostile row must not stop recovery
+        return False
+    return bool(ceiling) and attempts >= ceiling
+
+
 class DurableTaskRecoverer:
     """Resumes orphaned durable tasks for one owner — background drive.
 
@@ -328,7 +352,21 @@ class DurableTaskRecoverer:
         the row is no longer claimable — skip, no error).
         """
         task_id = task.task_id
-        # 2. DECISION — atomic CAS claim: only the winner proceeds.
+        # 2a. DECISION — THE CEILING. Checked BEFORE the claim, because claiming a
+        # spent row is what produced 74 identical drives over 14h33m. Recovery
+        # rescues ORPHANED work; it is not a second retry budget.
+        if attempts_exhausted(task):
+            log.tasks.warning(
+                "[tasks] recovery: task has spent its attempts — NOT re-driving",
+                extra={"_fields": {
+                    "task_id": task_id,
+                    "attempt_count": getattr(task, "attempt_count", None),
+                    "max_attempts": getattr(task, "max_attempts", None),
+                    "owner_id": self._owner_id,
+                }},
+            )
+            return None
+        # 2b. DECISION — atomic CAS claim: only the winner proceeds.
         claimed = await self._store.claim_for_recovery(
             task_id, count_attempt=count_attempt
         )
