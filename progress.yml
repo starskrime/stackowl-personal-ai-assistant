@@ -20429,13 +20429,13 @@ items:
   - id: D10.6
     title: "Skill relevance scoring"
     domain: D10
-    verdict: AHEAD
-    track: keep
-    priority: P3
+    verdict: PARTIAL
+    track: close_gap
+    priority: P1
     wave: 8
     order: 65
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d106"
-    gap: "Ours is smarter but is a per-turn prompt mutation (feeds D01.1)."
+    gap: "One capability occupies 5 of 9 visible slots (56.6% of the budget) as seven near-duplicate skills the consolidator cannot see, while the corpus grows ~1.5/day agent-authored and decay is floored off for 24 more days."
     depends_on: [D01.1]
     blocks: []
     dedup_target: null
@@ -20449,9 +20449,104 @@ items:
       document:   not_started
     doc: null
     doc_last_verified: null
-    decisions: []
+    decisions:
+      - date: 2026-08-29
+        stage: brainstorm
+        round: "Round 0 — MEASURE FIRST, and it OVERTURNED the premise I opened on"
+        by: panel
+        I_WAS_WRONG_ABOUT_THE_ORDERING_AND_IT_IS_THE_HEADLINE: >-
+          I opened this item stating "ESC-44's catalogue_order_key is measurably INERT because
+          the tail's execution counts are all zero". THAT IS FALSE. ESC-44 changed the key on
+          2026-08-23 from name-only to (-n_executions, lifecycle_rank, name) and IT WORKS: the
+          presented 16 carry 620 of 650 total executions — 95.4% — and the 163 dropped carry
+          4.6%. The 9 SUMMARY slots alone carry 90.6%. That is the exact INVERSION of the
+          pre-ESC-44 state its own docstring records ("the visible dozen carried ~18 while the
+          invisible tail carried ~199").
+          My claim came from D10.5's measurement pass, which read the boundary as alphabetical
+          — true of 2026-08-22/23 log records, i.e. BEFORE ESC-44 went live. I carried a
+          stale reading into a new item's gap line and would have built against it. Corrected
+          in the gap field.
+          What IS true: the key is nearly EXHAUSTED. It discriminates on 34 rows and is a pure
+          alphabetical tie-break on the 146 that all score (0, 0, name) — every one of which
+          sits below the cut. And `lifecycle_rank`, its second term, is INERT for a different
+          reason: 179 of 179 candidates are `active` (see the curator finding).
+        THE_ACTUAL_GAP_IS_DUPLICATION_EATING_THE_VISIBLE_BUDGET: >-
+          The evidence-brief family occupies FIVE OF THE NINE SUMMARY SLOTS — 2,163 of 3,822
+          used chars, 56.6% of the entire presented budget — for what token analysis says is
+          ONE capability: evidence-brief, evidence-brief-structuring, incident-evidence-brief,
+          incident_evidence_brief, structure-evidence-brief, structure-incident-evidence,
+          structure-incident-evidence-brief. Two of them carry a BYTE-IDENTICAL description.
+          Corpus-wide: token-Jaccard >= 0.6 gives 18 clusters covering 65 rows (36%), 47 of
+          them redundant. Name-token frequency: `unachieved` 28, `effect` 27, `check` 23,
+          `recovery` 18, `incident` 18.
+          AND THE CONSOLIDATOR CANNOT SEE THEM. SkillConsolidator only collapses `-N` NUMBERED
+          families, and zero skills now carry a `-N` suffix — it already did its job. These are
+          semantically duplicate with distinct names, which is outside its definition entirely.
+        THE_READER_DEBT_25_ASKED_FOR_ALREADY_EXISTS_AND_RUNS: >-
+          GREP FOR THE SECOND ACTUATOR — and it is live. classify.py:771 calls
+          _gather_relevant_skills(state.input_text, limit=3) -> skill_store.semantic_recall,
+          rendering a "## Relevant Skills" block on 2,918 of 3,153 turns (92.5%), median 857
+          chars. It lands in `memory_context`, the query-scoped half D01.1 deliberately left
+          UN-frozen, so it costs nothing against the frozen prefix.
+          DEBT-25's constraint — "a reader that scores WITHOUT putting per-query work back into
+          the turn path" — is therefore ALREADY SATISFIED by shipped code. This item must not
+          build a second one.
+          NOT MEASURABLE: which three skills it names. Only the block's LENGTH is logged, never
+          the names, so whether it surfaces the frozen 16 or reaches into the 163 dropped
+          cannot be answered from the logs. That is the single highest-value instrument this
+          item could add, and it is one field.
+        THE_DECAY_LEG_IS_MATHEMATICALLY_OFF_FOR_24_MORE_DAYS: >-
+          SkillCurator is scheduled (knowledge_prune-cc6d65a2, daily@04:00, enabled, last run
+          2026-08-29T09:00Z) and has run 8 times. Net effect over 8 days: 0 archived, 3 staled
+          then 99 REVIVED. Root cause measured: VISIBILITY_FLOOR_EPOCH (lifecycle.py:91,
+          ESC-45) floors every idle clock at 2026-08-23T18:17Z, and only 6.22 days have
+          elapsed against a 30-day stale window and 60-day archive window. The curator is
+          incapable of staling anything before 2026-09-22 or archiving before 2026-10-22.
+          Deliberate and documented in the constant — but it means the decay leg is a no-op
+          for 24 days, which is why lifecycle_rank has nothing to rank.
+        AND_THE_CORPUS_GROWS_WHILE_IT_IS_OFF: >-
+          131 creates in skill_audit, 100% AGENT-authored, ZERO human. ~1.5 new skills/day
+          from skill_synthesizer-48e2f4d1 (daily@03:30). 12 created in the retained 8 days.
+          A corpus that only appends, whose decay is floored off, whose consolidator cannot
+          see its actual duplicates — CLAUDE.md failure shape #4, with the numbers.
+        TWO_MORE_MEASURED_FACTS_WORTH_THE_RECORD: >-
+          (1) skills_list has NEVER been called. Zero, verified with a control: the string
+          appears 24 times in the logs and ALL 24 are the payload of "eligible tools NOT
+          presented — the planned envelope is wider than the tool-count cap". The escape hatch
+          the truncation notice itself advertises ("+163 more — skills_list to enumerate
+          them") is a tool that gets dropped from the presented set.
+          (2) ~25% OF THE 4,000-CHAR BUDGET IS FENCE MARKUP. Only 14 of 179 skills are
+          `builtin`/_TRUSTED; the other 165 render through _render_untrusted, wrapping each in
+          <skill_reference name=... source=... trust="untrusted"> — 85-100 chars of overhead
+          per entry against 215-482 total.
+          (3) hybrid_recall has ZERO callers in src/, so _STALE_RANK_PENALTY — the penalty its
+          own docstring cites as the REASON lifecycle_rank entered the catalogue key — has
+          never once been applied.
+        AND_A_CORRECTION_TO_MY_OWN_EARLIER_NUMBER: >-
+          I reported skills_len as "constant at 4159". It takes SIX values (4159, 4154, 4148,
+          4156, 4165, 0) across 3,043 assemblies — a 17-char spread, 0.4%. The variation is
+          PER-OWL (owned-skill membership shifts the catalogue), not per-query, so the Law 1
+          conclusion stands; the word "constant" did not.
     changes: []
-    notes: null
+    notes: >-
+      OPENED 2026-08-29 as ESC-58's corpus item. VERDICT AND PRIORITY CORRECTED at open:
+      AHEAD/P3/keep -> PARTIAL/P1/close_gap. The old verdict rested on
+      skills/skill_relevance.py being smarter than the reference platform's "put every name
+      in the prompt and let the model pick" — and that file was DELETED on 2026-08-15 by
+      ESC-10. We are not ahead; we removed the scoring and kept the cap, so the platform now
+      does something STRICTLY WORSE than the reference: it presents an alphabetical prefix.
+      MAP_CHECK MISSED THIS ITEM and that is worth recording. `map_check.py` is keyword-based
+      and returned "the ground is clear" for "skill corpus decay unreachable skills catalogue
+      truncation" AND for "skill relevance scoring which skills the model sees" — while D10.6,
+      titled "Skill relevance scoring", is exactly the mapped home for it. The gate PROCESS.md
+      relies on to stop us rebuilding a mapped item did not fire; it was caught only because
+      the same session had corrected D10.6's map line by hand hours earlier. A gate that can
+      miss its own title is worth knowing about before the next evidence-led item trusts it.
+      DEBT-25 IS RESOLVED BY DELETION, NOT BY THIS ITEM. It said "KEEP, do not delete"
+      skill_relevance.py + assign_tiers and handed them here. ESC-10 deleted both two weeks
+      after it was written. What SURVIVES from it is the CONSTRAINT, and it still binds:
+      any reader must score WITHOUT putting per-query work back into the turn path, because
+      that is precisely what D01.1 removed to win the byte-identical frozen prompt.
 
   - id: D10.7
     title: "Skill ownership per persona"

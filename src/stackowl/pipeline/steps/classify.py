@@ -447,11 +447,29 @@ async def _gather_relevant_skills(
     # injector uses (instruction_injector.py) so the only reachable load path is named.
     lines.append("(Use `skill_view <name>` to load the full playbook.)")
     result = "\n".join(lines)
-    log.engine.debug(
-        "[pipeline] classify._gather_relevant_skills: exit",
+    # INFO, and it NAMES them — because the block length alone answers nothing.
+    #
+    # D10.6's Round 0 could measure the whole corpus and not the question the item
+    # turns on: does this per-query reader already reach the 163 skills the frozen
+    # 4,000-char catalogue drops? If it does, those skills are reachable on demand
+    # and the corpus problem is much smaller than it looks; if it only ever
+    # re-surfaces the visible 16, they are genuinely unreachable.
+    #
+    # It was unanswerable because this line was at DEBUG (production runs at INFO,
+    # so it did not exist in the retained logs at all) and recorded only n_hits,
+    # block_len and top_sim — never WHICH skills. CLAUDE.md's D08.1 lesson, exactly:
+    # "If a log line is the evidence for a claim, it must be INFO — and run the
+    # query that would close the claim BEFORE you need it."
+    #
+    # Only emitted when something WAS chosen: an empty record on the 7.5% of turns
+    # with no hits would put a zero into every future denominator for no reason.
+    log.engine.info(
+        "[pipeline] classify: relevant skills surfaced",
         extra={"_fields": {
             "n_hits": len(hits), "block_len": len(result),
             "top_sim": hits[0][1],
+            "skills": [sk.name for sk, _ in hits],
+            "sims": [round(float(sim), 3) for _, sim in hits],
         }},
     )
     return result
