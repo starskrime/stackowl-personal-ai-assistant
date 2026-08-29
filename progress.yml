@@ -6216,6 +6216,34 @@ current:
     reversible_auto. Measured: 0 rows carry prompt_surface today.
 
   ESCALATIONS:
+  - id: ESC-57-d034-where-do-spilled-tool-results-live
+    raised: 2026-08-29
+    question: >
+      D03.4's reference design persists an oversized tool result to a path the
+      agent can re-read. The reference's own Ask is "where do persisted results
+      live given the sandbox boundary?" — and it is a real fork here. Options:
+      (a) ~/.stackowl/workspace/ — the agent already reads and writes there, so
+      re-reading needs no new capability, but it mixes machine spill with the
+      user's own files; (b) a dedicated ~/.stackowl/tool_results/ with a TTL
+      reaper — clean separation and a decay leg, but the sandboxed shell may not
+      be able to reach it; (c) the sandbox temp dir as the reference does —
+      matches the design, but the result dies with the sandbox and cannot be
+      re-read on a later turn.
+    why_evidence_cannot_settle_it: >
+      All three work technically. The choice is about whether machine spill
+      belongs in the user's workspace and whether a spilled result should outlive
+      the turn that produced it — product judgement, not a fact about the tree.
+    panel_recommendation: >
+      (b) a dedicated ~/.stackowl/tool_results/ with a TTL reaper, and the spill
+      path returned INSIDE the ToolResult so the agent is told where it went.
+      Reason: (c) cannot be re-read on a later turn, which is most of the value,
+      and (a) puts machine droppings in the user's own workspace with no decay —
+      the "anything that only appends will poison its reader" shape this tree has
+      paid for repeatedly.
+    what_is_blocked: >
+      The implement stage. Brainstorm is done and the architect can be drafted
+      against any of the three, but the spill location decides the reaper, the
+      sandbox reachability question and what the ToolResult hands back.
   - id: ESC-56-d016-instrument-coverage-is-18-percent
     raised: 2026-08-29
     question: >
@@ -15988,6 +16016,42 @@ items:
 
   - id: D03.4
     title: "Tool-result overflow defense"
+    BRAINSTORM_2026_08_29: >
+      ROUND 0 — MEASURED FIRST. `output_len` is already logged on tool exits, so
+      the problem is sizeable without building anything. n=1,786 tool results:
+      median 5,379 chars, p90 24,443, p99 238,058, MAX 4,201,658. Over 10k: 394
+      (22.1%). Over 50k: 35 (2.0%). Over 200k: 19 (1.1%). Over 1M: 3 (0.2%).
+      THE TAIL IS ONE TOOL. All 26 results above 100k chars came from
+      browser_extract. The context window is 262,144 tokens (~1M chars), so the
+      4.2M-char result is FOUR TIMES THE ENTIRE WINDOW — no truncation strategy
+      makes that usable; it can only be stored and re-read, which is exactly what
+      the reference's level 2 is for.
+      THE GAP IS SHARPER THAN THE MAP SAYS. The map says level 2 and 3 are missing
+      and truncation destroys information. Measured, it destroys it SILENTLY AND
+      UNCOUNTABLY: ToolResult carries no truncation flag, and tool-result
+      truncation never appears in the log (the 2,444 "truncated" log lines are
+      the skill CATALOG and tool SCHEMAS — prompt-side, not results). Neither the
+      agent nor the operator can tell it happened.
+      AND THE THING TO MEASURE IS THE THING THAT IS MISSING. Tool results are
+      never persisted, so their sizes cannot be read back from the database at
+      all — only `output_len` in the log made this measurable. That circularity
+      is itself the argument for level 2.
+      STABILITY. Adding a cap where none exists can only shrink what reaches the
+      model, so the risk is losing MORE, not less — which is why a truncation
+      SIGNAL has to land before or with any cap. Level 3 without level 2 would
+      make the silent loss worse.
+      IMPROVEMENT. Real: 22% of results already exceed 10k chars. But 98% are
+      under 50k, so a registry-wide mechanism aimed at the median would be
+      over-built; the value is concentrated in the tail.
+      KILLER FUNCTIONALITY. "Re-read the big result by path" is a genuine new
+      capability — today a 4.2M-char page is simply lost.
+      EASE OF USE. The agent must be TOLD the result was spilled and where, in the
+      result itself, or the path is a write with no reader.
+      FUTURE-PROOF. Unlike D05.4 and D04.4 — whose reference mechanisms cannot
+      fire on this hardware — this one demonstrably fires today, 19 times above
+      200k chars.
+      ROUTED TO THE OPERATOR: ESC-57 (the reference's own Ask — where persisted
+      results live, given the sandbox boundary).
     domain: D03
     verdict: PARTIAL
     track: close_gap
@@ -16000,7 +16064,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
