@@ -743,6 +743,7 @@ class StartupOrchestrator:
         from stackowl.commands.registry import CommandRegistry
         from stackowl.commands.response import CommandResponse
         from stackowl.exceptions import CommandNotFoundError
+        from stackowl.gateway.duplicate_dispatch import already_dispatching
         from stackowl.gateway.scanner import GatewayScanner
         from stackowl.ipc.client import IpcClient
         from stackowl.ipc.connection import FrameConnection
@@ -2330,6 +2331,15 @@ class StartupOrchestrator:
                         _prompt_depth=_prompt_depth + 1,
                     )
                     return
+            # ONE MESSAGE, ONE PIPELINE. Placed HERE deliberately: after the
+            # turn-prompt rewrite above (which re-dispatches this same trace and
+            # must still be allowed, because nothing is registered yet) and before
+            # the stream is created, so a refused duplicate never creates a second
+            # writer for one trace. See gateway/duplicate_dispatch.py for the
+            # measurement — four of 111 turns ran twice, always lane+raw about a
+            # second apart, three of them within two minutes of a boot.
+            if already_dispatching(turn_registry, msg.trace_id):
+                return
             # §4.1 stream re-key: register the response stream by trace_id (the key
             # deliver looks the writer up by), so the turn's output is never
             # stream-missed.
