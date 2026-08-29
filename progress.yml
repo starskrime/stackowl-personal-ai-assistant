@@ -19621,6 +19621,32 @@ items:
 
   - id: D11.2
     title: "Full-text search over messages"
+    BRAINSTORM_AND_VALIDATE_2026_08_29: >
+      ROUND 0. `discover` built ONE pattern from the whole query —
+      LIKE '%<entire query>%' — so a multi-word query matched only when those
+      characters were adjacent. Of six real discover calls, THREE returned zero
+      rows. Corpus is 1,397 messages, so this was never a SPEED problem; it was
+      relevance, exactly as the map says.
+      DESIGN DECISION, taken not asked: the mirror is TRIGGER-synced. Two triggers
+      exist in the live database and both guard audit_log; every existing FTS
+      mirror is synced by application code, and committed_facts_fts is ALREADY
+      DEAD — 0 rows while its shadow tables still carry 1,112, a stale index of
+      content that no longer exists, because D08.1 removed the writer and nothing
+      told the mirror. Copying that pattern would have built the same corpse.
+      external content (content='messages') keeps the text stored once, so this is
+      an INDEX over the one store, not the second store session_search's docstring
+      refused — and that docstring's own prediction held: it slots in behind
+      _discover with no contract change.
+      VALIDATED LIVE. Migration 0127 applied 13:57:35Z; 1,409 of 1,409 messages
+      indexed (complete backfill); all three sync triggers present. On the real
+      corpus, LIKE vs FTS: "jobmarket dedupe" 0 -> 176, "remote staff engineer"
+      0 -> 166, "consent browser" 0 -> 9, "browser timeout" 1 -> 1. And
+      "telegram heartbeat" stays 0 -> 0 — those words genuinely do not co-occur,
+      so FTS is not inventing matches.
+      WIRED, NOT DORMANT. _discover uses FTS as the primary path; the LIKE scan
+      remains the fallback because FTS5 MATCH parses its argument and an
+      unbalanced quote in user text must degrade, not fail. D03.4 shipped inert
+      two items earlier for exactly the missing-wiring reason.
     domain: D11
     verdict: PARTIAL
     track: close_gap
@@ -19633,13 +19659,13 @@ items:
     blocks: [D11.3]
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm:  done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:  done
+      validate:  done
+      document:   no_change_needed
     doc: null
     doc_last_verified: null
     decisions: []
