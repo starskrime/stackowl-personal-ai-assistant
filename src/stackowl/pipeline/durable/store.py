@@ -1443,11 +1443,35 @@ class DurableTaskStore(OwnedRepository):
         # and each attempt can produce another message to them. Dead-lettering
         # quickly escalates ONCE, which is the honest trade: a few retries and one
         # escalation, never a silent grind.
+        # A row that CANNOT PROVE DELIVERY is not failing — it is unable to
+        # succeed, and more attempts cannot conjure an addressee. Completion
+        # requires proof the outcome reached `destination`; a destination carrying
+        # no address can never produce it, so update_status declines for ever and
+        # the row climbs burning a model run per attempt.
+        #
+        # MEASURED 2026-08-29: two RCA tasks at destination 'rca' went 12 -> 20
+        # attempts within minutes against a ceiling of 30, last_failure_class NULL
+        # ("retry did not deliver"), which is why SMALL_CEILING_CLASSES — keyed on
+        # failure_class — never caught them.
+        #
+        # STRUCTURAL, not a channel-name list: "no addressee" is the actual reason,
+        # and it needs no vendor names and cannot drift. Narrow by construction —
+        # a NULL destination owes no delivery (1,288 live rows, untouched) and an
+        # addressed one keeps its full budget (31 rows, untouched).
+        undeliverable = bool(row.destination) and not _address_of(row.destination)
         ceiling = (
             min(row.max_attempts, _UNACHIEVED_EFFECT_MAX_ATTEMPTS)
-            if failure_class in SMALL_CEILING_CLASSES
+            if (failure_class in SMALL_CEILING_CLASSES or undeliverable)
             else row.max_attempts
         )
+        if undeliverable:
+            log.tasks.warning(
+                "[loop] task has a destination with NO ADDRESSEE — capping its "
+                "attempts, because retrying cannot conjure one",
+                extra={"_fields": {"task_id": task_id,
+                                   "destination": row.destination,
+                                   "attempts": attempts, "ceiling": ceiling}},
+            )
         exhausted = attempts >= ceiling
         now = datetime.now(UTC)
 

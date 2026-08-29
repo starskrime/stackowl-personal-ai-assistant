@@ -61,11 +61,50 @@ def test_a_channel_name_alone_is_not_a_deliverable_destination() -> None:
 
 
 def test_both_writers_use_the_same_helper() -> None:
-    """One rule, one source — the property that stops them diverging again.
+    """One rule, one source — asserted by BEHAVIOUR, not by grepping source text.
 
     task_runner.py built the destination by hand and got it wrong while
-    turn_task.py's helper got it right. Any future writer must ask the helper
+    turn_task.py's helper got it right. Any future writer must ask a shared helper
     rather than keep a second opinion about what a destination looks like.
+
+    THIS TEST USED TO GREP THE FILE for the literal `_destination(`, and it went red
+    on 2026-08-29 when task_runner moved to `destination_for_turn(` — which IS the
+    shared helper and calls `_destination` internally. The invariant held; the
+    expression of it did not. A guard that fires on a rename it should not care
+    about, and would sail past a hand-rolled f-string it SHOULD care about, is
+    testing the wrong thing.
+
+    So assert the property itself: both writers, given the same inputs, agree on
+    the shape they produce. That survives renames and catches divergence.
+    """
+    from stackowl.pipeline.durable.turn_task import (
+        _destination,
+        destination_for_turn,
+    )
+
+    # The two writers serve different cases — enqueue_turn_task handles CHAT turns
+    # which always deliver; task_runner handles turns that may DEFER — so they are
+    # allowed to differ on the deferred case, and must agree on every other.
+    for channel, chat_id in (
+        ("telegram", 72055773), ("telegram", "72055773"),
+        ("slack", "C123ABC"), ("whatsapp", "+15551234"), ("cli", None),
+    ):
+        assert destination_for_turn(
+            channel=channel, reply_target=chat_id, defer_delivery=False,
+        ) == _destination(channel, chat_id), (
+            f"the two writers disagree about {channel}/{chat_id!r} — that "
+            "divergence is the bug this guard exists to prevent"
+        )
+
+
+def test_task_runner_does_not_hand_build_a_destination() -> None:
+    """The thing the old grep was actually reaching for.
+
+    A future edit that assembles `destination=f"{channel}:{target}"` inline would
+    re-create the exact defect (a channel NAME written where an ADDRESS belongs),
+    and no behavioural test can see a string that never reaches a helper. This is
+    the one case where reading the source is the right instrument — so it checks
+    for hand-assembly rather than for a particular function name.
     """
     import pathlib
 
@@ -77,30 +116,11 @@ def test_both_writers_use_the_same_helper() -> None:
         "task_runner is writing a bare channel name as the destination again — "
         "reply_target_for_task will return None and the task will never complete"
     )
-    # STRENGTHENED 2026-08-29, not weakened. This asserted the literal
-    # `_destination(` and went red when task_runner moved to
-    # `destination_for_turn(` — which IS the shared helper and calls _destination
-    # internally, so the invariant held while its expression did not.
-    #
-    # The two writers now legitimately differ: enqueue_turn_task serves CHAT turns,
-    # which always deliver, so it asks _destination directly; task_runner serves
-    # turns that may DEFER delivery, where a bare channel name is an obligation
-    # nothing can discharge (two RCA tasks were measured climbing 11/30 and 10/30
-    # against destination 'rca'). The rule was never "call this exact function" —
-    # it is "do not keep a second opinion about what a destination looks like".
-    #
-    # So assert the ACTUAL invariant: the builder is IMPORTED from turn_task, and
-    # nothing is assembled by hand here. That catches a future hand-rolled f-string
-    # the old literal check would have sailed past.
-    assert "from stackowl.pipeline.durable.turn_task import" in runner, (
-        "task_runner must get its destination builder from turn_task — one rule, "
-        "one source"
-    )
-    assert ("destination_for_turn(" in runner) or ("_destination(" in runner), (
-        "task_runner must build the destination through a shared helper"
-    )
     assert 'destination=f"' not in runner, (
         "task_runner is assembling a destination string by hand again"
+    )
+    assert "from stackowl.pipeline.durable.turn_task import" in runner, (
+        "task_runner must get its destination builder from turn_task"
     )
 
 
