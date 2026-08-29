@@ -8515,6 +8515,32 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: PHASE1-2026-08-29-sqlite-contention-MEASURED-not-engineered
+    found: 2026-08-29
+    what: >
+      SQLite write contention was the last open item in the stability phase and the
+      measurement says do NOT build for it. After ./start.sh: ZERO genuine
+      "database is locked" events and ZERO "[loop] tick failed" in 30 minutes.
+      Before the restart there were 4 lines and all four share one timestamp
+      (00:33:04) — one contention moment emitting mark_dead + retry_once + two
+      reconnect lines.
+      I ALSO HAVE TO CORRECT MY OWN NUMBER. I reported "19 database is locked
+      events"; that counted LOG LINES, not incidents. The real incident count is
+      roughly a quarter of it.
+      The documented prior cause is absent: pool.py's comment records a 922 MB
+      file with 70% free pages on a filesystem at 99%, which surfaced as locks
+      plus a tick failing every time. Measured now — 7.2 GB free, DB 295 MB,
+      freelist 63 pages (0%), auto_vacuum=2 incremental working, WAL 4 MB.
+      The recovery path also works as designed: SQLITE_BUSY is deliberately in
+      _DEAD_PRIMARY_CODES, retry_once recycles the handle and the reconnect
+      succeeded. The only thing that ever DIED from a lock was the Telegram
+      liveness heartbeat, and 81b5398e guards that tick.
+    decision: >
+      NOT ENGINEERED. No write queue, no moved table, no busy_timeout change
+      (15000ms and WAL are already correct — a probe reading 5000 is the probe's
+      OWN connection default, an instrument artifact). Re-open only if locks
+      recur AND something dies from one.
+    status: closed_by_measurement
   - id: INCIDENT-2026-08-28-part2-orphaned-subgoals-outlived-their-objectives
     found: 2026-08-28
     found_by: "Bakir: 'I'm getting so many job position related messages, but I did remove agent which used to send it'"
