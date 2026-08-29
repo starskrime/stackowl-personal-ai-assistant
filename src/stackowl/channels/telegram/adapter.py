@@ -309,10 +309,37 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.debug("[telegram] adapter._restart_polling: exit")
 
     async def _liveness_heartbeat(self) -> None:
-        """Periodic stamp loop; cancelled cleanly in stop()."""
+        """Periodic stamp loop; cancelled cleanly in stop().
+
+        A FAILED TICK DOES NOT END THE LOOP. Measured 2026-08-28T01:13:55: one
+        ``OperationalError('database is locked')`` propagated out of _beat_once
+        and killed this task for good. channel_liveness.telegram froze and the
+        health sweep reported degraded=['telegram_receive'] twelve times over the
+        next 24 hours — while Telegram kept working and 8 messages arrived. A
+        false alarm nothing could clear, from a transient lock (19 that day, two
+        processes sharing one SQLite file).
+
+        The done-callback below logs such a crash and its docstring says "never a
+        silent fire-and-forget" — but logging a death is not preventing one.
+        Knowing about a failure mode is not an actuator for it.
+
+        A tick failing is NORMAL: a lock contended, a write briefly blocked. The
+        loop keeps beating and the next tick stamps, so the alarm clears itself
+        with nobody intervening. CancelledError is deliberately NOT caught —
+        stop() cancels this task, and swallowing it would hang shutdown for ever.
+        """
         log.telegram.debug("[telegram] adapter.liveness_heartbeat: entry")
         while True:
-            await self._beat_once()
+            try:
+                await self._beat_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # B5 — every except logs
+                log.telegram.warning(
+                    "[telegram] adapter.liveness_heartbeat: tick failed — "
+                    "the heartbeat continues",
+                    exc_info=exc,
+                )
             await asyncio.sleep(HEARTBEAT_INTERVAL_S)
 
     def _on_liveness_task_done(self, task: asyncio.Task[None]) -> None:
