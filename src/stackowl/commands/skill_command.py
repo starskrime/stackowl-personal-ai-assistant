@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from stackowl.commands.base import SlashCommand
+from stackowl.commands.dry_run import strip_sigil
 from stackowl.commands.metadata import Arg, CommandMeta, Example, SubCommand, render_usage
 from stackowl.commands.registry import CommandRegistry
 from stackowl.commands.response import Action, CommandResponse
@@ -42,6 +43,7 @@ from stackowl.skills import standard_migration as migration
 from stackowl.skills.loader import SkillLoader
 from stackowl.skills.manifest import SkillSource
 from stackowl.skills.store import Skill, SkillIndexStore
+from stackowl.skills.use_prompt import build_use_prompt
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
@@ -56,6 +58,30 @@ _SKILL_META = CommandMeta(
     grammar="verb",
     group="Memory & Knowledge",
     subcommands=(
+        SubCommand(
+            name="use",
+            summary="Apply a skill to what you are doing",
+            description=(
+                "The agent loads the named skill and follows it for this turn. This is "
+                "the one verb that USES a skill; every other verb here manages them. "
+                "`show` prints a skill to YOUR screen — `use` puts it in front of the "
+                "agent. Names may be bare or qualified as source:name, and hyphens are "
+                "fine."
+            ),
+            args=(
+                Arg(name="name", summary="skill name, bare or source:name"),
+                Arg(
+                    name="instruction",
+                    required=False,
+                    summary="what to apply it to",
+                ),
+            ),
+            examples=(
+                Example(invocation="/skill use deep-research"),
+                Example(invocation="/skill use deep-research compare the two vendors"),
+                Example(invocation="/skill use builtin:verify-before-claim"),
+            ),
+        ),
         SubCommand(
             name="list",
             summary="List installed skills",
@@ -206,6 +232,18 @@ _SKILL_META = CommandMeta(
             ),
         ),
         SubCommand(
+            name="menu",
+            summary="Show a skill with one-tap action buttons",
+            description=(
+                "You get a compact card for one skill — source, version, enable state "
+                "and description — with buttons for show, diff, enable/disable and "
+                "delete. Undeclared until 2026-08-29, so it worked but was invisible "
+                "to /help and /find."
+            ),
+            args=(Arg(name="name", summary="skill name"),),
+            examples=(Example(invocation="/skill menu research"),),
+        ),
+        SubCommand(
             name="restore",
             summary="Roll a skill back to an audited version",
             description=(
@@ -226,6 +264,46 @@ _SKILL_META = CommandMeta(
 
 class SkillCommand(SlashCommand):
     """``/skill`` slash command — see module docstring."""
+
+    def build_turn_prompt(self, args: str) -> str | None:
+        """D10.5 — ``use`` contributes a PROMPT; the other twelve verbs reply.
+
+        THE FIRST CONDITIONAL ``build_turn_prompt`` in the tree, and deliberate
+        rather than incidental. The seam's contract is "this text is the turn's
+        input", and that is true of exactly one verb here: ``use`` steers the agent,
+        while ``list``/``show``/``rm``/... answer the operator. Returning ``None``
+        for the rest is what keeps them byte-for-byte unchanged.
+
+        Never raises: the gateway already treats a raising builder as "stays an
+        ordinary command", and this must not be the thing that costs someone their
+        ``/skill list``.
+        """
+        try:
+            # THE DRY-RUN HOLE, closed here because it cannot be closed downstream.
+            # `??` is intercepted in CommandRegistry.dispatch, and this seam runs
+            # BEFORE dispatch — so without this check `/skill use X ??` would STEER
+            # the model instead of previewing, which is precisely the opposite of
+            # what the operator asked for. Returning None hands the turn back to
+            # ordinary dispatch, which then renders the preview. `strip_sigil` is
+            # asked rather than re-implemented: one source for what `??` means.
+            is_dry_run, cleaned = strip_sigil(args)
+            if is_dry_run:
+                log.skills.debug(
+                    "[commands] skill.build_turn_prompt: dry-run — deferring to dispatch",
+                    extra={"_fields": {"args": cleaned[:60]}},
+                )
+                return None
+            head, _, rest = cleaned.strip().partition(" ")
+            if head.lower() != "use":
+                return None
+            return build_use_prompt(rest)
+        except Exception as exc:  # never let the seam cost a command
+            log.skills.warning(
+                "[commands] skill.build_turn_prompt: failed — staying an ordinary command",
+                exc_info=exc,
+                extra={"_fields": {"args": args[:60]}},
+            )
+            return None
 
     def __init__(
         self,
@@ -314,6 +392,12 @@ class SkillCommand(SlashCommand):
                 result = await self._restore(rest.strip())
             elif sub == "menu":
                 result = await self._menu(rest.strip())
+            elif sub == "use":
+                # Reached only where the turn-prompt seam is NOT wired (the gateway
+                # intercepts `use` before dispatch). Mirrors /learn: show what WOULD
+                # have run rather than silently doing nothing.
+                built = build_use_prompt(rest.strip())
+                result = built or render_usage("skill", _SKILL_META)
             else:
                 log.skills.debug(
                     "[commands] skill.handle: decision — unknown subcommand",

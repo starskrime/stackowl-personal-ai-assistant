@@ -12,6 +12,12 @@ from stackowl.commands.metadata import render_usage
 from stackowl.commands.skill_command import SkillCommand
 
 _EXPECTED = {
+    # D10.5 — the one verb that USES a skill rather than managing it.
+    "use",
+    # Found UNDECLARED on 2026-08-29: it dispatched at skill_command.py's
+    # `elif sub == "menu"` and worked, but was absent from the meta, so /help,
+    # /find and the CommandResolver corpus could not see it. Declared then.
+    "menu",
     # D09.3 slice 4 / D10.2 slice 7 — the two catalog-maintenance passes.
     "dedupe",
     "migrate",
@@ -80,3 +86,30 @@ async def test_empty_args_returns_usage() -> None:
     )
     out = await cmd.handle("", _state())
     assert out == render_usage("skill", cmd.meta)
+
+
+def test_every_dispatched_subcommand_is_DECLARED() -> None:
+    """The lock-step guard this file's docstring always claimed to be.
+
+    `_EXPECTED` is a hand-written set, so it pins the DECLARATION against itself and
+    cannot notice a verb that dispatches without being declared. That is not
+    hypothetical: `menu` did exactly that until 2026-08-29 — it worked, and /help,
+    /find and the resolver corpus could not see it.
+
+    So derive the truth from the dispatch ladder instead of asserting it. Two copies
+    of one rule become one source and one reader, which is the shape this codebase's
+    third failure mode is about.
+    """
+    import inspect
+    import re
+
+    src = inspect.getsource(SkillCommand.handle)
+    dispatched = set(re.findall(r'sub == "([a-z]+)"', src))
+    assert dispatched, "the ladder could not be read — this guard would pass vacuously"
+
+    declared = {s.name for s in SkillCommand().meta.subcommands}
+    undeclared = dispatched - declared
+    assert not undeclared, (
+        f"these verbs dispatch but are not declared, so /help and /find cannot see "
+        f"them: {sorted(undeclared)}"
+    )

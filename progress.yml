@@ -19833,14 +19833,78 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
+      implement:  done
+      cleanup:    done
+      test:       partial
       validate:   not_started
-      document:   not_started
+      document:   partial
     doc: "docs/reference-mapping/designs/D10.5.md"
     doc_last_verified: null
     decisions:
+      - date: 2026-08-29
+        stage: implement
+        round: "built — and the implementation DIVERGED from the design"
+        by: loop
+        WHAT_SHIPPED: >-
+          `/skill use <name> [instruction]` — a fourteenth verb on the existing /skill command,
+          ladder RUNG 1. New file skills/use_prompt.py (117 lines, ONE pure function), a
+          conditional build_turn_prompt on SkillCommand, the SubCommand declaration, and a
+          degrading handle() branch for surfaces where the seam is not wired. No new top-level
+          command, so tests/journeys/commands/test_reachability_guard.py stays green (verified).
+        THE_DIVERGENCE_AND_WHY: >-
+          THE DESIGN SAID INJECT THE BODY. THE IMPLEMENTATION STEERS — it returns a short
+          directive naming the skill and telling the turn to load it with skill_view. Three
+          things only became visible while building:
+          (1) build_turn_prompt is SYNCHRONOUS by contract (orchestrator calls it without
+          await) and resolving a name is an await. Injecting meant widening a seam every
+          command implements, to serve one verb.
+          (2) learn_prompt's module doc states the house rule and it is load-bearing: "It
+          gathers nothing, calls no model, touches no database and writes no skill... That
+          restraint is the entire design." A command reading the skill store would be a second
+          read path beside skill_view — the 2026-08-17 rule's exact shape.
+          (3) It DELETES a defect rather than mitigating it. See below.
+          The trade is stated in the doc rather than hidden: injection GUARANTEES the model
+          sees the body; steering means it is told to load it and could fail to. Taken because
+          the reference platform pays for that guarantee twice — it needs
+          extract_user_instruction_from_skill_message plus byte-identical marker constants
+          purely to UNDO its own expansion so its memory layer does not embed skill bodies. We
+          decline to make the mess rather than build the machine that cleans it. And the risk is
+          MEASURABLE: the steer and the skill_view call share a trace_id, so a steer that never
+          lands is visible.
+        THE_THREE_DEFECTS_THE_PANEL_NAMED_ALL_CLOSED_TWO_WITHOUT_CODE: >-
+          (1) SKILL BODY FILED AS A DURABLE USER FACT — DISSOLVED. turn_persist stages
+          "User: {input_text}" and is_machine_lane is a PREFIX CHECK on ("goal-","incident-"),
+          which a Telegram lane is not. Injection would have filed ~3KB of skill prose as
+          something the user said on every invocation — the 4,480-of-5,212 defect reopened
+          through a door the guard cannot see. Steering keeps the body a TOOL RESULT, so
+          input_text is a two-line directive. THE PLANNED PipelineState.input_is_synthetic FLAG
+          WAS NOT BUILT — there was nothing left for it to guard.
+          (2) "ENABLED IS DECORATION" — MY VERDICT WAS WRONG, and the record says so. enabled=0
+          removes a skill from the CATALOGUE (list_enabled enforces it); it is not an ACL. A
+          skill the operator NAMES explicitly is a different act from one the platform offers
+          unprompted — the same "explicit always wins" rule the memory-routing decision settled.
+          NO CHANGE MADE, deliberately. And the obvious fix was the wrong one: filtering inside
+          store.get would have broken /skill enable, which must fetch a disabled skill to
+          enable it.
+          (3) `/skill use X ??` WOULD EXECUTE RATHER THAN PREVIEW — CLOSED. `??` is intercepted
+          in CommandRegistry.dispatch and this seam runs BEFORE dispatch. build_turn_prompt now
+          checks strip_sigil FIRST and returns None. The existing helper is ASKED, not
+          re-implemented.
+        A_FOURTH_DEFECT_FOUND_WHILE_BUILDING: >-
+          `/skill menu <name>` dispatched at `elif sub == "menu"` and WORKED, but was absent
+          from _SKILL_META — invisible to /help, /find and the CommandResolver corpus. It
+          slipped because tests/commands/test_skill_meta.py's docstring claims it "asserts the
+          declared metadata matches the real if/elif dispatch ladder" while _EXPECTED is a
+          hand-written set that can only pin the declaration against itself. Both fixed: menu is
+          declared, and a new test DERIVES the dispatch verbs from
+          inspect.getsource(SkillCommand.handle) and asserts every one is declared. Two copies
+          of one rule became one source and one reader.
+          THE GUARD WAS SEEN TO FAIL rather than assumed: 'menu' is provably in the dispatch set
+          (14 verbs read off the ladder), so it would have gone red on the pre-fix state.
+        X7_RESOLVED_BY_CONSTRUCTION: >-
+          The dedup target is closed without a cleanup pass: the system prompt still carries only
+          the catalogue, and the body arrives through skill_view — the ONE read path that already
+          existed. No second injector was created, so there were never two paths to collapse.
       - date: 2026-08-29
         stage: architect
         round: "design opened"
