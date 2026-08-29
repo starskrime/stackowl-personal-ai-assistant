@@ -56,6 +56,29 @@ def _turn_floored(state: PipelineState) -> bool:
     return bool(_critical_failure_classes(state))
 
 
+def _is_not_a_user_utterance(state: PipelineState) -> bool:
+    """True when this turn's input cannot be a durable USER fact.
+
+    TWO CASES, ONE HOME. Keeping them in one predicate is the point: the second
+    was found because the first could not see it, and a third would otherwise be
+    a third scattered check.
+
+    * MACHINE LANE — `is_machine_lane`, keyed on session_key, whose own docstring
+      says "lanes that cannot contain a user fact by construction". Shipped
+      2026-08-25 after 4,480 of 5,212 staged rows turned out to be the platform's
+      own prompts.
+    * SYNTHETIC INPUT — text a COMMAND authored via the turn-prompt seam. It
+      arrives on a NORMAL lane, so the prefix check above is blind to it. Measured
+      four live rows reading 'User: [/skill use] The user has invoked the
+      skill "..."'.
+
+    Keyed on state, never on the scope key passed downstream: `owner_scope_key` is
+    `identity_key or session_key`, so the store cannot tell a machine lane from a
+    person once an identity resolves.
+    """
+    return bool(state.input_is_synthetic) or is_machine_lane(state.session_key)
+
+
 def _floor_reason(state: PipelineState) -> str:
     """Best-effort human-readable reason a floored turn's message_ledger row failed.
 
@@ -229,13 +252,16 @@ async def persist_turn(state: PipelineState) -> None:
     #
     # The TRANSCRIPT above is deliberately still written — the turn happened and
     # remains inspectable; what is refused is filing it as durable knowledge.
-    if is_machine_lane(state.session_key):
+    if _is_not_a_user_utterance(state):
         log.memory.info(
-            "[pipeline] persist_turn: machine lane — transcript kept, fact NOT staged",
+            "[pipeline] persist_turn: not a user utterance — transcript kept, fact NOT staged",
             extra={"_fields": {
                 "trace_id": state.trace_id,
                 "session_key": state.session_key,
                 "content_len": len(content),
+                "reason": (
+                    "synthetic_input" if state.input_is_synthetic else "machine_lane"
+                ),
             }},
         )
         return

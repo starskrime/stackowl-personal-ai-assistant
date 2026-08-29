@@ -2417,6 +2417,12 @@ class StartupOrchestrator:
                     session_key=lane,
                     conversation_id=incarnation,
                     input_text=input_text,
+                    # A re-dispatch at depth>0 carries text a COMMAND wrote, not
+                    # text the user typed. STRUCTURAL, not a tag match: no keyword
+                    # list can drift out of step with the builders. turn_persist
+                    # refuses to file it as a durable user utterance — four rows
+                    # reading 'User: [/skill use] ...' were staged before this.
+                    input_is_synthetic=_prompt_depth > 0,
                     channel=msg.channel,
                     owl_name=decision.target,
                     pipeline_step="start",

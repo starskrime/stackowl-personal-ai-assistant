@@ -83,6 +83,21 @@ class PipelineState(BaseModel, frozen=True):
     #: IdentityResolver. Empty ⇒ consumers fall back to session_key (per-channel),
     #: i.e. unconfigured behavior is byte-identical.
     identity_key: str = ""
+    #: True when this turn's ``input_text`` was written by a COMMAND, not typed by
+    #: the user — the gateway's turn-prompt seam re-dispatches a message with text
+    #: a builder produced (``/learn``, ``/skill use``). Such text must never be
+    #: filed as a durable user utterance.
+    #:
+    #: MEASURED, and it corrects a claim in designs/D10.5.md: steering rather than
+    #: injecting kept the skill BODY out of input_text, and the design concluded
+    #: this flag was unnecessary. The PROMPT is still input_text, so four rows
+    #: reading 'User: [/skill use] The user has invoked the skill "..."' were
+    #: staged as things Bakir said. is_machine_lane cannot catch them — it is a
+    #: prefix check on ("goal-","incident-") and these arrive on a Telegram lane.
+    #:
+    #: Set from ``_prompt_depth > 0``: a STRUCTURAL condition, not a tag match, so
+    #: no keyword list can drift out of step with the builders.
+    input_is_synthetic: bool = False
     # A human-readable routing-correction notice from the scanner (e.g. a fuzzy
     # "@Maxx → @max" owl correction, or "owl not registered → @secretary"). The
     # gateway sets this from RouteDecision.suggestion so the pre-delivery command
