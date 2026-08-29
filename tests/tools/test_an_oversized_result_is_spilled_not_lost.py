@@ -111,3 +111,28 @@ async def test_a_failed_spill_still_returns_the_capped_result() -> None:
     assert result.truncated is True
     assert len(result.output) <= 1_000 + 512
     assert result.spill_path is None
+
+
+def test_the_mechanism_is_NOT_dormant() -> None:
+    """A cap nobody sets never fires, and the whole item ships as decoration.
+
+    max_result_size_chars defaults to None, so levels 2 and 3 do nothing until a
+    tool declares one. This is the "finished feature ships ON, not dormant" rule,
+    and it is the same built-but-not-wired shape as the Supervisor the channel
+    loops did not use.
+
+    browser_extract produced ALL 26 measured results above 100k chars — if any
+    tool carries a cap it must be that one.
+    """
+    from stackowl.tools.browser.tools import BrowserExtractTool
+
+    cap = BrowserExtractTool().manifest.max_result_size_chars
+    assert cap, "browser_extract has no result cap — D03.4 ships dormant"
+    assert cap >= 92_000, (
+        f"a cap of {cap} sits below the measured p90 of 92,090, so ordinary "
+        "pages would be truncated"
+    )
+    assert cap <= 300_000, (
+        f"a cap of {cap} is above the measured p95 of 287,161, so the tail this "
+        "item exists for would pass straight through"
+    )

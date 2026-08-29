@@ -157,6 +157,9 @@ class _BrowserTool(Tool):
     _priority: int = 0
     _consent_category: str | None = None
     _commit_coupling: Literal["transactional", "idempotent_keyed", "unconfirmed"] | None = None
+    #: D03.4 level 3 — the largest result this tool may return. None = uncapped.
+    #: Set per subclass; only the tools measured to overflow declare one.
+    _max_result_chars: int | None = None
 
     @property
     def manifest(self) -> ToolManifest:
@@ -175,6 +178,7 @@ class _BrowserTool(Tool):
             # get_images, console, dialog) each declare it themselves. Editing
             # only this base would have left those seven silently ungated.
             requires_capability="browser",
+            max_result_size_chars=self._max_result_chars,
         )
 
 
@@ -272,6 +276,18 @@ class BrowserNavigateTool(_BrowserTool):
 
 
 class BrowserExtractTool(_BrowserTool):
+    #: D03.4 — MEASURED, not guessed. 267 real browser_extract results:
+    #: p50 1,466 chars, p75 7,929, p90 92,090, p95 287,161, p99 1,076,938,
+    #: MAX 4,201,658 — four times the whole context window.
+    #: 200,000 sits above p90 and below p95, so ordinary pages are untouched and
+    #: only genuinely huge ones are cut (7%, 19 of 267). It is also ~20% of the
+    #: ~1M-char window, so one tool result cannot crowd out the history and the
+    #: prompt. Nothing is lost: the full text spills to disk and the path is
+    #: returned in the output.
+    #: This tool produced ALL 26 results above 100k chars; it is the reason the
+    #: item exists, and a cap nobody sets would make the whole mechanism dormant.
+    _max_result_chars = 200_000
+
     _priority = 70
     @property
     def name(self) -> str: return "browser_extract"
