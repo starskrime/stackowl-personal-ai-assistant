@@ -86,24 +86,38 @@ def build_use_prompt(args: str) -> str | None:
     name, _, want = raw.partition(" ")
     want = want.strip()
 
+    # The load line is CONDITIONAL, because a prompt that contradicts itself is worse
+    # than either half of it. The first draft always said "carry out its procedure"
+    # and then, in the bare case, "do NOT begin a multi-step investigation" two lines
+    # later. Rendering it exposed the clash immediately.
     lines = [
         f'{_TAG} The user has invoked the skill "{name}" and wants you to follow it.',
-        "",
-        f'Load it now with skill_view(name="{name}") and then carry out its '
-        "procedure. The skill body is the authority on HOW to proceed — prefer its "
-        "steps over your own defaults where they differ.",
     ]
     if want:
         lines += [
             "",
-            f"Alongside the skill the user asked for: {want}",
+            f'Load it now with skill_view(name="{name}") and then carry out its '
+            "procedure. The skill body is the authority on HOW to proceed — prefer "
+            "its steps over your own defaults where they differ.",
+            "",
+            f"What the user asked for alongside the skill: {want}",
         ]
     else:
+        # BOUNDED, and this wording is EARNED. The first live invocation was a bare
+        # `/skill use verify-before-claim` (30 characters). The earlier text told the
+        # model to "apply the skill to what this conversation is already about", and
+        # it did: read_logs twice, fifteen shell calls, input tokens climbing
+        # 23,631 -> 24,255 -> 37,137 -> ~683,000, the step ceiling reached, and NO
+        # answer delivered. The skill loaded correctly; the instruction around it had
+        # no stopping condition. A bare invocation now loads the skill and CHECKS IN
+        # — one cheap turn instead of an open-ended investigation nobody asked for.
         lines += [
             "",
-            "The user gave no further instruction, so apply the skill to what this "
-            "conversation is already about. If that is genuinely unclear, say so and "
-            "ask rather than guessing.",
+            f'Load it with skill_view(name="{name}") and then STOP. The user named '
+            "the skill but did not say what to apply it to, so do not carry out its "
+            "procedure yet, and call no other tools. Reply with a short summary of "
+            "what following it here would involve, and ask what they want it applied "
+            "to.",
         ]
     lines += [
         "",

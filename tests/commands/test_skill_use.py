@@ -121,3 +121,42 @@ class TestTheCommandWiring:
         assert cmd.build_turn_prompt("use deep-research ??") is None
         # ...and the non-dry-run form still steers, so this is not a blanket off switch.
         assert cmd.build_turn_prompt("use deep-research") is not None
+
+
+def test_a_bare_invocation_is_BOUNDED_and_asks() -> None:
+    """Earned on the first live invocation, not designed in advance.
+
+    `/skill use verify-before-claim` with no instruction previously told the model
+    to apply the skill to "what this conversation is already about". It did:
+    read_logs twice, fifteen shell calls, input tokens climbing to ~683,000, the
+    step ceiling reached, and no answer delivered. The skill loaded fine — the
+    instruction around it had no stopping condition.
+
+    A bare invocation must therefore CHECK IN rather than investigate.
+    """
+    bare = build_use_prompt("verify-before-claim")
+    assert bare is not None
+
+    # THE INVARIANT, not the wording. An earlier version of this test asserted the
+    # literal phrase "multi-step" and went red when the prompt was reworded to remove
+    # a self-contradiction — it was pinning prose, not behaviour. What must hold is
+    # that a bare invocation does NOT instruct execution and DOES ask.
+    # NOTE the trap this walked into: a naive `"carry out its procedure" not in bare`
+    # FAILS, because the bare branch says "do NOT carry out its procedure yet" — the
+    # substring is present inside its own negation. Assert the stop signal instead.
+    low = bare.lower()
+    assert "then stop" in low, bare
+    assert "do not carry out its procedure" in low, bare
+    assert "call no other tools" in low, bare
+    assert "ask what they want it applied to" in low, bare
+
+    # ...and an EXPLICIT instruction must still execute, or the verb would have been
+    # made useless in the course of making it safe.
+    directed = build_use_prompt("verify-before-claim check the cost numbers")
+    assert directed is not None
+    assert "check the cost numbers" in directed
+    dlow = directed.lower()
+    assert "carry out its procedure" in dlow and "do not carry out" not in dlow, (
+        "a directed invocation must still RUN the skill"
+    )
+    assert "then stop" not in dlow

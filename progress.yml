@@ -19836,11 +19836,67 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   blocked
+      validate:   partial
       document:   partial
     doc: "docs/reference-mapping/designs/D10.5.md"
     doc_last_verified: null
     decisions:
+      - date: 2026-08-29
+        stage: validate
+        round: "FIRST LIVE INVOCATION — the steer landed, and the turn then ran away"
+        by: Bakir typed /skill use verify-before-claim on Telegram, 17:03:24Z
+        THE_CHECK_THAT_MATTERED_PASSES: >-
+          THE STEER LANDED, and steering had to EARN this where injection would have had
+          it by construction. One trace, f33c9fa0370c4f11a62e0ed68ee69ffc:
+            17:03:24  [telegram] adapter.receive: exit  text_len=30  (the command, exactly)
+            17:03:24  gateway: command contributed a TURN PROMPT  cmd=skill  chars=622
+            17:03:25  triage -> dispatch -> classify -> assemble -> execute, owl=secretary,
+                      intent_class=standard — an ORDINARY turn, exactly as the seam promises
+            17:03:33  skill_view.execute: entry {'name': 'verify-before-claim'}
+                      -> exit success=True, source=builtin
+          The FIRST model call (23,631in/80out) chose skill_view with exactly the named
+          skill. The divergence from the design is therefore vindicated on its own terms.
+          BONUS, unplanned: the same trace shows "prompt frozen for this session" with
+          conversation_id=20260829_120324_e0c1c131 — ESC-59's stamp on a live human lane.
+        AND_THE_PART_THAT_FAILED_WHICH_IS_MINE: >-
+          The turn then RAN AWAY and delivered nothing. After skill_view: read_logs x2,
+          fifteen shell calls, input tokens climbing 23,631 -> 24,255 -> 37,137 -> ~683,000
+          (Bakir's own transcript reads "683,389 in / 25,324 out"), the step ceiling reached,
+          and the reply was "[stopped: I ran out of steps for this turn before I could
+          finish.]"
+          THE SKILL LOADED FINE. THE INSTRUCTION AROUND IT HAD NO STOPPING CONDITION. My
+          no-instruction branch said "apply the skill to what this conversation is already
+          about", which on a lane whose prior four turns were about logs is an invitation to
+          investigate indefinitely. The platform's step ceiling fired and did its job — but
+          the user got nothing, and a 30-character command should not cost 683k tokens.
+          FIXED: a bare invocation now loads the skill and STOPS — "do not carry out its
+          procedure yet, and call no other tools... reply with a short summary and ask what
+          they want it applied to." An explicit instruction still executes, so the verb was
+          not made useless in the course of making it safe.
+        AND_THE_PROMPT_CONTRADICTED_ITSELF: >-
+          Caught by RENDERING it rather than reading the code. The first bounded draft still
+          opened with "carry out its procedure" and then said "do NOT begin a multi-step
+          investigation" two lines later. Two conflicting instructions is worse than either.
+          The load line is now CONDITIONAL: directed invocations get "carry out its
+          procedure", bare ones get "load it and then STOP".
+        MY_OWN_VERIFICATION_SECTION_WAS_NOT_RUNNABLE: >-
+          Recorded because it is the same class of error this programme keeps paying for. I
+          specified the closing query as "the TURN PROMPT line and skill_view.execute must
+          share a trace_id" — and THE TURN PROMPT LINE CARRIES NO TRACE_ID. It is emitted at
+          the gateway BEFORE the turn's TraceContext exists, so its top-level trace_id is
+          null. The evidence above is conclusive by NAME AND 9-SECOND ADJACENCY, not by the
+          join I wrote down. "Run the closing query before you need it" — I wrote it and did
+          not run it.
+          FIXED: msg.trace_id is in scope at that call site and is now in the line's fields,
+          so the documented join actually works from the next invocation onward.
+        TWO_TEST_TRAPS_HIT_WHILE_FIXING_THIS: >-
+          (1) The first bounded test asserted the literal phrase "multi-step" and went red
+          when the prompt was reworded — it pinned PROSE, not behaviour. Moved to the
+          invariant.
+          (2) The replacement asserted `"carry out its procedure" not in bare` and STILL
+          failed, because the bare branch says "do NOT carry out its procedure yet" — the
+          substring sits inside its own negation. A negation-blind substring assertion is
+          not an assertion. Now checks the stop signal explicitly.
       - date: 2026-08-29
         stage: test
         round: "green"

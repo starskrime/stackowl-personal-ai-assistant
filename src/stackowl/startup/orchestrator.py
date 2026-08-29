@@ -2310,6 +2310,17 @@ class StartupOrchestrator:
                             "cmd": decision.target,
                             "session_key": msg.session_key,
                             "chars": len(_turn_prompt),
+                            # D10.5 — the JOIN KEY, and it was missing. This line is
+                            # emitted BEFORE the turn's TraceContext exists, so the
+                            # record's top-level trace_id is null and the only way to
+                            # tie a steer to what it caused (a skill_view call, a
+                            # tool loop) was name-and-timestamp adjacency. Measured
+                            # on the first live /skill use: the steer and its
+                            # skill_view landed 9s apart on trace
+                            # f33c9fa0…, and the documented "same trace_id" check
+                            # could not actually be run. msg.trace_id is in scope and
+                            # is the id the turn will carry.
+                            "trace_id": msg.trace_id,
                         }},
                     )
                     _rewritten = dataclasses.replace(msg, text=_turn_prompt)
