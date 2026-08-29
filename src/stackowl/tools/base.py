@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -11,6 +13,7 @@ from stackowl.config.test_mode import TestModeGuard
 from stackowl.infra.observability import log
 from stackowl.infra.resilience import looks_like_dead_handle
 from stackowl.infra.trace import TraceContext
+from stackowl.paths import StackowlHome
 from stackowl.plugins import hooks
 from stackowl.tools.verification import is_trustworthy_success
 
@@ -62,6 +65,12 @@ class ToolResult(BaseModel):
     #: The size the output had BEFORE the cap. "Some was cut" is not actionable;
     #: "49,000 of 50,000 characters were cut" is.
     original_output_len: int | None = None
+    #: D03.4 level 2 — where the FULL output was written when it was cut. None
+    #: when nothing was cut, or when the spill itself failed (losing the spill
+    #: must never lose the answer). The path is also placed in ``output`` so the
+    #: model is told about it — a file nobody is told about is a write with no
+    #: reader.
+    spill_path: str | None = None
     # VERIFICATION (the reality check, distinct from `success` the self-report).
     # None  ⇒ not checked — falls back to `success` (byte-identical to pre-
     #         verification behavior; the default for the ~92 un-migrated tools).
@@ -86,6 +95,51 @@ class ToolResult(BaseModel):
     # longer masquerades as a failed consequential action. See
     # tool_outcome_ledger.is_effectful_failure and pipeline/giveup_floor.py.
     side_effect_committed: bool = True
+
+
+def _spill_dir() -> Path:
+    """Where a cut result's full text is kept.
+
+    NOT the sandbox scratch, though D03.4's reference design puts it there and
+    that is what was chosen. Measured 2026-08-29: browser_extract — which produced
+    ALL 26 results above 100k characters — has no sandbox reference, and
+    ~/.stackowl/sandbox holds only `seccomp` because BwrapScratch creates a
+    scratch per run and removes it after. The reference runs its tools inside its
+    sandbox; this platform runs them in the core process and sandboxes only code
+    execution, so there is no sandbox in scope when the overflowing tools run.
+
+    This keeps the reference's LIFETIME — ephemeral, under the sandbox root,
+    reaped rather than accumulated — while being reachable by the tools that
+    actually overflow.
+    """
+    return StackowlHome.home() / "sandbox" / "tool_results"
+
+
+def _spill(tool_name: str, text: str) -> str | None:
+    """Write the full result and return its path, or None if that failed.
+
+    Never raises. A full disk or an unwritable path must degrade to "capped but
+    not kept", never to a failed tool call — losing the spill must not lose the
+    answer as well.
+    """
+    try:
+        trace = str((TraceContext.get() or {}).get("trace_id") or "no-trace")
+    except Exception:  # pragma: no cover — trace context is best-effort here
+        trace = "no-trace"
+    try:
+        target = _spill_dir() / trace
+        target.mkdir(parents=True, exist_ok=True)
+        path = target / f"{tool_name}-{uuid.uuid4().hex[:8]}.txt"
+        path.write_text(text, encoding="utf-8")
+        return str(path)
+    except Exception as exc:  # B5 — every except logs
+        log.tool.warning(
+            "tool.__call__: could not spill the oversized result — it is capped "
+            "but NOT kept",
+            exc_info=exc,
+            extra={"_fields": {"tool": tool_name, "chars": len(text)}},
+        )
+        return None
 
 
 #: How much room the truncation NOTICE itself needs. The notice is appended after
@@ -123,9 +177,15 @@ def _apply_result_cap(tool: Tool, result: ToolResult) -> ToolResult:
     original = len(result.output)
     if original <= cap:
         return result
+    spill_path = _spill(tool.name, result.output)
+    where = (
+        f" Full result saved to {spill_path} — read it if you need the rest."
+        if spill_path else
+        " The cut text could NOT be saved and is gone."
+    )
     notice = (
         f"\n\n[truncated: {original:,} characters produced, {cap:,} kept — "
-        f"{original - cap:,} characters were cut]"
+        f"{original - cap:,} characters were cut.{where}]"
     )
     # INFO, not debug: this is the evidence that information was destroyed, and a
     # DEBUG line could never close a claim about how often it happens.
@@ -138,6 +198,7 @@ def _apply_result_cap(tool: Tool, result: ToolResult) -> ToolResult:
         "output": result.output[:cap] + notice,
         "truncated": True,
         "original_output_len": original,
+        "spill_path": spill_path,
     })
 
 

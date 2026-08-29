@@ -63,8 +63,21 @@ class DownloadsJanitorHandler(JobHandler):
     Optional job ``params``: ``{"max_age_days": 2}`` (default ``2``).
     """
 
-    def __init__(self, downloads_dir: Path) -> None:
+    def __init__(
+        self, downloads_dir: Path, extra_dirs: tuple[Path, ...] = ()
+    ) -> None:
         self._downloads_dir = downloads_dir
+        # D03.4 level 2 — the tool-result spill directory decays here rather than
+        # in a janitor of its own. _evict_older_than is already generic over a
+        # directory, this job already runs every 12h and already self-heals, so a
+        # second sweeper would be a second engine for one rule.
+        #
+        # It matters: 22% of tool results exceed 10k chars and the largest spilled
+        # would be 4,201,658, on a box whose root filesystem is already 87% full.
+        # An append-only spill directory is the "no decay" shape pool.py records
+        # the cost of — a 922 MB database, 70% free pages, surfacing as
+        # `database is locked` and a task loop failing every tick.
+        self._extra_dirs = tuple(extra_dirs)
 
     @property
     def handler_name(self) -> str:
@@ -82,6 +95,10 @@ class DownloadsJanitorHandler(JobHandler):
             }},
         )
         removed, freed = _evict_older_than(self._downloads_dir, max_age_days)
+        for extra in self._extra_dirs:
+            r, f = _evict_older_than(extra, max_age_days)
+            removed += r
+            freed += f
         duration_ms = (time.monotonic() - t0) * 1000
         log.scheduler.info(
             "[scheduler] downloads_janitor.execute: exit",
@@ -116,9 +133,16 @@ def register_downloads_janitor_handler(downloads_dir: Path | None = None) -> Non
     from stackowl.paths import StackowlHome
 
     target = downloads_dir or StackowlHome.downloads_dir()
-    handler = DownloadsJanitorHandler(downloads_dir=target)
+    # D03.4 level 2 — sweep the tool-result spill directory too. Passing it HERE
+    # is what makes the reaper real: an extra_dirs parameter nobody supplies is a
+    # decay leg that never runs, which is the same "built but not wired" shape
+    # that left the Supervisor unused by the channel loops.
+    spill = StackowlHome.home() / "sandbox" / "tool_results"
+    handler = DownloadsJanitorHandler(downloads_dir=target, extra_dirs=(spill,))
     HandlerRegistry.instance().register(handler)
     log.scheduler.info(
         "[scheduler] downloads_janitor handler registered",
-        extra={"_fields": {"handler": handler.handler_name, "downloads_dir": str(target)}},
+        extra={"_fields": {"handler": handler.handler_name,
+                           "downloads_dir": str(target),
+                           "extra_dirs": [str(spill)]}},
     )
