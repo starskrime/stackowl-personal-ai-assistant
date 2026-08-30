@@ -15,6 +15,7 @@ from stackowl.infra import lesson_experiment
 from stackowl.infra.observability import log
 from stackowl.learning.heuristic_ranking import rank_lessons
 from stackowl.pipeline import lesson_context as lc
+from stackowl.pipeline.message_shaping import merge_consecutive_roles
 from stackowl.pipeline.services import (
     conversation_scope_keys,
     get_services,
@@ -592,39 +593,6 @@ async def _gather_lessons(query: str, limit: int = 3, *, owl_name: str = "") -> 
     return result
 
 
-def merge_consecutive_roles(messages: list[Message]) -> list[Message]:
-    """Collapse runs of same-role messages so the array strictly alternates.
-
-    D01.5. Strict providers reject a messages array with two consecutive turns of
-    the same role outright. The live provider tolerates it, which is the only
-    reason this has never surfaced as an error — so the RISK is latent while the
-    VIOLATION is not.
-
-    MEASURED 2026-08-26 by running the real parser over the real stored rows: 2 of
-    4 live conversations violate alternation, and one of them is the operator's own
-    lane, whose history opens ``A A A A`` — four consecutive assistant turns.
-
-    WHY IT HAPPENS: a stored row is ``"User: X\n\nAssistant: Y"``, and a scheduled
-    job writes one with an EMPTY user half (a daily digest nobody asked for in
-    words). ``_parse_turns_to_messages`` skips empty halves — correctly, because a
-    blank-content turn is itself rejected — so such a row contributes a bare
-    assistant message with no user turn before it. Several in a row produce the
-    run above. ``_dedup_assistant_history`` can leave the mirror image (``U U``)
-    by removing an assistant turn from between two user turns.
-
-    MERGE, NOT SYNTHESISE. Joining the run's contents keeps every word the model
-    and the user actually produced and invents nothing. The alternative — slipping
-    a placeholder user turn between two assistant turns — puts words in the user's
-    mouth, and a fabricated turn in the history is a worse defect than the one it
-    repairs.
-    """
-    out: list[Message] = []
-    for msg in messages:
-        if out and out[-1].role == msg.role:
-            out[-1] = Message(role=msg.role, content=f"{out[-1].content}\n\n{msg.content}")
-            continue
-        out.append(msg)
-    return out
 
 
 def _parse_turns_to_messages(contents: list[str]) -> list[Message]:

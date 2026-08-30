@@ -54,6 +54,7 @@ from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
 from stackowl.pipeline.budget.salvage import summarize_findings
 from stackowl.pipeline.cache_audit import audit_tools_stability
 from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP
+from stackowl.pipeline.message_shaping import merge_consecutive_roles
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
 from stackowl.pipeline.progress.emitter import get_turn_callback, make_progress_callback
 from stackowl.pipeline.provider_select import (
@@ -63,7 +64,6 @@ from stackowl.pipeline.provider_select import (
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState, StepError, ToolCall
 from stackowl.pipeline.step_error import format_step_error
-from stackowl.pipeline.steps.classify import merge_consecutive_roles
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers._react import looks_like_tool_call

@@ -34,10 +34,10 @@ from __future__ import annotations
 
 import pytest
 
+from stackowl.pipeline.message_shaping import merge_consecutive_roles
 from stackowl.pipeline.steps.classify import (
     _dedup_assistant_history,
     _parse_turns_to_messages,
-    merge_consecutive_roles,
 )
 from stackowl.providers.base import Message
 
