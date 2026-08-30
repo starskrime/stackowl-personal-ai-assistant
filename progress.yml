@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  THE_ATTEMPT_CEILING_LEAKED_2026_08_29:
+    status: >-
+      SHIPPED — commit a0a2fc0a. Found by measuring where the round count actually goes,
+      after that measurement CORRECTED my own plan (below).
+    the_defect: >-
+      Of 1,261 rows carrying a max_attempts, exactly ONE exceeded it — and it is the most
+      expensive row the platform has produced: retry-8b7c4029 reached attempt_count 72
+      against max_attempts 30, and its trace billed 2,617,846 input tokens over 294 model
+      calls. attempt_count has THREE writers and only `fail_and_requeue` checked the
+      ceiling; `claim_for_recovery(count_attempt=True)` and `reclaim_expired` both INCREMENT
+      and RE-ARM the work with no check, so a reliably-hanging task was charged an attempt
+      and handed straight back to the loop.
+      The docstring asserted the opposite — "Counts the attempt — a task that reliably kills
+      its worker must still reach the ceiling rather than cycle for ever" — which is why it
+      survived review. Counting toward a ceiling nobody checks is not reaching it.
+      HOT PATH, not theoretical: 131 stale reclaims + 9 lease-expiry reclaims.
+    the_fix: >-
+      One source for the rule (_CEILING_REACHED_SQL / _status_or_dead_letter), formatted
+      into both statements rather than retyped — three copies is exactly how two came to
+      disagree. Inline SQL, not read-then-write, so the decision stays ATOMIC with the
+      increment on paths that update many rows at once. Narrow by construction and pinned:
+      a row with budget left is still re-armed, and count_attempt=False stays a plain claim
+      because this box exec-replaces the core on every src/ change and an operational
+      restart must never kill a live task.
+    ROUND_0_CORRECTED_MY_OWN_PLAN_and_this_is_the_finding: >-
+      The approved plan's Stage 1b (tool-result compaction) was justified as "43%
+      accumulating transcript". Measuring the per-round deltas shows that is misleading.
+      On f33c9fa0: round 0->1 is +22,533 (the fixed prefix entering, ONCE), and every
+      subsequent delta has median 2,467. On 4e6044f0 the median is 545. So the 683k is
+      roughly 50% the fixed prefix RE-SENT 15 times and 49% accumulated conversation whose
+      peak is only ~41k. Compaction is worth ~22% at best, is architecturally invasive
+      (rewriting message history across two providers, and the fold contract only APPENDS),
+      and risks discarding evidence. ROUND COUNT remains the lever, as Stage 1c argued.
+      Stage 1b is therefore DOWNGRADED, not done.
+    AND_THE_294_ROUND_TRACE_WAS_NOT_AN_IN_TURN_LOOP: >-
+      recover-retry-8b7c40 shows 294 model calls but only 19 tool calls and 84 separate
+      `tool_loop entry` events. It was the same task RE-RUN 84 times, not one turn looping.
+      Exactly ONE guardrail warning fired across all of it, because guardrail state is
+      per-attempt — 84 clean slates, each under the detector threshold. Recorded because it
+      means in-turn detectors (Stage 2c/2d) would NOT have caught this runaway; the
+      attempt ceiling and the cumulative token meter are what bound it.
+    LIVE_EVIDENCE_and_the_open_check: >-
+      Core restarted 22:57:51 local (pid 401268), clean boot, 462 lines, ZERO errors.
+      Proven by 5 tests against a REAL migrated DB (not mocks), covering both reclaim paths
+      and all three narrow guards.
+      OPEN: no stale/expired reclaim has occurred since deploy, so the ceiling behaviour is
+      not yet observed in production. The two "reclaim" lines since restart were handler
+      REGISTRATIONS at boot, not reclaims — checked, because a count that looks like
+      evidence and is not is how this programme has been fooled before.
+      CLOSING QUERY: after the next `task_liveness_sweep ... reclaimed stale running
+      task(s)`, no row may satisfy `attempt_count > max_attempts`.
+      The one historical offender is already terminal (72/30, dead_letter); this fix
+      prevents new ones and does not rewrite history.
   CUMULATIVE_TOKEN_CEILING_2026_08_29:
     status: >-
       SHIPPED AND VALIDATED — commit 460c1bb9. Closes the largest measured runaway left.
