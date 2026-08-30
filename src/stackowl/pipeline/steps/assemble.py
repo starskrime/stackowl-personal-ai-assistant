@@ -20,6 +20,7 @@ from stackowl.pipeline.cache_audit import audit_prompt_parts
 from stackowl.pipeline.capability_manifest import CapabilityManifest
 from stackowl.pipeline.services import get_services
 from stackowl.pipeline.state import PipelineState
+from stackowl.skills.catalogue_snapshot import shared_catalogue_snapshot
 from stackowl.skills.instruction_injector import (
     SkillInstructionInjector,
     SkillTier,
@@ -332,7 +333,31 @@ async def run(state: PipelineState) -> PipelineState:
             # those, and nothing here asks for FULL.
             tiered: list[Any] = [(sk, SkillTier.SUMMARY, False) for sk in catalogue]
             if tiered:
-                skills_block = _skill_injector.render(state.owl_name, tiered)
+                # FROZEN FOR THIS INCARNATION, like the `profile` block below.
+                # catalogue_order_key sorts by (-n_executions, ...) and
+                # n_executions increments whenever a skill RUNS, so re-rendering
+                # per turn moves this block whenever the agent uses a skill —
+                # measured as 22 of 259 cache invalidations, 15 of them inside one
+                # 50-minute window when skills were executing heavily. The
+                # existing "deterministic and TOTAL" argument proves independence
+                # from SQLite row order, not stability over time: a pure function
+                # of mutable state still moves when the state does.
+                # ESC-44 is untouched — ordering is still by measured value, just
+                # sampled once per incarnation. A newly authored skill reaches the
+                # prompt on the next /new, the same tradeoff `profile` already makes.
+                # KEYED ON (incarnation, OWL). The catalogue is rendered per owl
+                # (owned skills differ), and D01.6 records that "a lane can run
+                # several owls — the staged RCA drives three against one incident
+                # lane — and each MUST have its own prompt". Keying on the lane
+                # alone would hand the second owl the first owl's catalogue.
+                # Caught by test pollution the first time this was written.
+                _incarnation = (
+                    f"{state.conversation_id or state.session_key}::{state.owl_name}"
+                )
+                skills_block = shared_catalogue_snapshot().get(
+                    _incarnation,
+                    lambda: _skill_injector.render(state.owl_name, tiered),
+                )
             log.engine.debug(
                 "[pipeline] assemble: skill catalogue rendered",
                 extra={"_fields": {

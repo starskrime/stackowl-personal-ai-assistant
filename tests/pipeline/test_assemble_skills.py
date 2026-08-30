@@ -1,3 +1,4 @@
+import itertools
 from types import SimpleNamespace
 
 import pytest
@@ -61,8 +62,16 @@ class _Sk:
         self.embedding = None
 
 
+#: Each call is a NEW incarnation. The skill catalogue is now frozen per
+#: (incarnation, owl) — as the `profile` block already is — so a constant
+#: session_key across tests made one test inherit another's frozen catalogue.
+#: Production conversation_ids are unique per incarnation; this makes the fixture
+#: match that rather than papering over it with a global reset.
+_INCARNATION = itertools.count()
+
+
 def _state(**kw):
-    base = dict(trace_id="t", session_key="s", input_text="hi",
+    base = dict(trace_id="t", session_key=f"s-{next(_INCARNATION)}", input_text="hi",
                 channel="cli", owl_name="rsr", pipeline_step="start")
     base.update(kw)
     return PipelineState(**base)
