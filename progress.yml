@@ -315,6 +315,42 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  THE_STANDARD_REFUSED_SKILLS_FOR_BACKTICKED_PROSE_2026_08_29:
+    status: >-
+      SHIPPED — commit 957cdc08. The last unblocked item from the miner-refusal family.
+    the_defect: >-
+      The `tool_names` rule refused 52 writes and blocked 13 distinct skills, and EVERY LIVE
+      FIRING WAS A FALSE POSITIVE. Each flagged token checked against the live registry:
+      real tools among them were only note_applied_lesson, web_search and owls_list — and
+      all three were flagged inside ONE five-minute window on 2026-08-23 (08:31-08:36),
+      before `_known_tool_names` was fixed (a bug that file already documents).
+      The other 18 of 21 are not tools and never were: failure classes (stop,
+      unachieved_effect, budget_exhausted), lifecycle values (on_demand, scheduled,
+      lifecycle), the OWL name english_tutor, and plain English (user, name, replace,
+      search, delegate, mailbox, schedule, extract, snapshot, vision, wait_for).
+      Still live at the time of the fix — most recent firing 2026-08-29T23:53:21, on `stop`.
+    why_a_narrower_regex_cannot_fix_it: >-
+      The rule matches on SHAPE (`[a-z][a-z0-9_]{2,}` in backticks) and tool names have no
+      shape that domain vocabulary lacks — `stop` and `search` are indistinguishable from
+      real tool names by any pattern. An excluded-word list is also out: this codebase
+      forbids hardcoded keyword lists. So the rule became ADVISORY rather than narrower.
+    THE_SECOND_HALF_the_advisory_tier_was_itself_decoration: >-
+      Found while implementing, and it changes what "downgrade" means.
+      `_standard_violations` returns `standard.blocking(found)`, which DISCARDS every
+      non-blocking violation — and nothing logged them. So `blocking=False` has meant
+      SILENTLY DROPPED, and the soft line cap has been decoration since it was written.
+      Downgrading tool_names into that tier without fixing it would have deleted the rule
+      while appearing to keep it. Advisories now log at INFO.
+    LIVE_EVIDENCE_and_the_open_check: >-
+      Core restarted 23:55:40 local (pid 407686), clean boot, 605 lines, ZERO errors.
+      OPEN: no skill-authoring attempt has occurred since deploy, so neither the
+      no-longer-refusing nor the advisory log line is observed in production.
+      CLOSING QUERIES: (1) `grep '"msg": "[skills] authoring: advisory violation'` must
+      appear on a write that previously would have been refused; (2) `not registered tools`
+      must stop appearing as a REFUSAL reason.
+    what_is_left_in_this_family: >-
+      Nothing unblocked. The two remaining refusal causes are both fixed (description length
+      in 28422907, backticked prose here) and the corpus repopulation path is clear.
   ESC_66_RCA_RE_DIAGNOSES_THE_SAME_13_PROBLEMS_FOREVER_2026_08_29:
     the_question: >-
       Incident RCA is the single largest consumer of tokens on this platform, and it spends
