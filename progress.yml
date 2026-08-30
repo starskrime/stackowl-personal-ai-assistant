@@ -359,8 +359,40 @@ current:
       clearly right and the waste is measured, but "how long may the platform decline to
       re-diagnose a recurring failure" is an appetite question, and getting it wrong
       suppresses real incidents silently — the failure mode this programme cares most about.
+    PART_ONE_SHIPPED_2026_08_29_commit_f0a31efb: >-
+      The half that needs NO operator decision is done: the verdict-less RCA retry now has a
+      ceiling. 94 of the 601 RCAs produced no verdict, and the no-verdict path deliberately
+      does not register the signature so the next tick retries — with nothing bounding it, at
+      ~70k tokens a lap. Bounded at 3 attempts (deliberately >1, because the original
+      reasoning holds: a provider outage is exactly when the RCA call is most likely to fail
+      too), cleared on success, counted per signature, and GIVING UP REGISTERS the signature
+      — counting without closing the dedup would have left the loop exactly as it was.
+      This cannot suppress a diagnosis that would have worked: a signature whose RCA produces
+      a verdict registers on its FIRST attempt and never reaches this path.
+    WHAT_IS_STILL_ESCALATED: >-
+      The other mechanism — dedup cleared the moment a cluster leaves `active`, so a
+      recurring signature re-diagnoses every time it re-forms. That IS a suppression policy
+      and stays Bakir's call. Panel recommendation unchanged: a per-signature cooldown that
+      backs off with each diagnosis, so a signature diagnosed 46 times backs off hard without
+      a magic constant.
+    A_SECOND_CORRECTION_the_short_circuit_is_NOT_safe_either: >-
+      I also proposed skipping the RCA when a learned skill already exists. Checked the
+      consumers before declining to produce: a verdict feeds `consume_fix_verdict`, which has
+      fired `tool_build attempted` 20 times. So the verdict has a LIVE consumer beyond
+      authoring and skipping the RCA would starve it. Not implemented — recorded so it is not
+      re-proposed as an easy win.
+    THE_FUNNEL_measured: >-
+      601 staged RCA runs -> 77 verdicts routed (13%) -> 20 tool_build attempts (3%) -> 2
+      skills written (0.3%). 87% of RCAs produce no routed verdict at all.
+    LIVE_EVIDENCE_and_the_open_check: >-
+      Core restarted 23:35:16 local (pid 405777), clean boot, 612 lines, ZERO errors. The
+      handler ran at 04:35:34 UTC and opened outcome:owl_build:stop normally.
+      OPEN: the ceiling needs ONE signature to produce no verdict on THREE ticks, which has
+      not happened since deploy. Unit-proven against the real handler.
+      CLOSING QUERY: grep '"msg": "[scheduler] incident_escalation: RCA produced no verdict %d
+      times' — and after it fires, that signature must stop appearing in `incident opened`.
     blocked_until_answered: >-
-      Nothing else. Recorded first so the finding is safe regardless of what is built next.
+      Nothing else. Part one is shipped; the suppression-policy half awaits Bakir.
   THE_ATTEMPT_CEILING_LEAKED_2026_08_29:
     status: >-
       SHIPPED — commit a0a2fc0a. Found by measuring where the round count actually goes,
