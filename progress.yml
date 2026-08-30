@@ -315,6 +315,31 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D01_7_AUDITED_a_claim_can_rot_BOTH_ways_2026_08_30:
+    status: >-
+      Fifth audited item of the ranking. Two claims rotted in OPPOSITE directions, which is a
+      category the previous eight did not produce. One fix shipped: 2db987c7.
+    ROTTED_GOOD_the_dead_tables_came_alive: >-
+      "conversations and messages have ZERO INSERT sites" — both now have one and are live:
+      725 and 2,367 rows, with messages_fts at exactly 2,367 (D11.2's trigger-sync provably in
+      step). That dead-table evidence partly supported D01.7's MISSING verdict and has now
+      REVERSED. Flagged on the item; the verdict is a map call, not mine.
+    ROTTED_BAD_and_fixed: >-
+      'ZERO "falling back to _last_chat_id" warnings — which was the whole risk' is now 29,
+      every one carrying the operator's OWN chat id as a string. Predates this session by
+      three days (first 2026-08-26T23:26:16), checked because I shipped destination_for_turn
+      today and had to rule myself out.
+      The guard assumed a str target meant a FOREIGN id; measured, it was this adapter's own
+      destination, so a correct target was discarded and re-derived from _last_chat_id. Right
+      by luck with one chat; wrong the moment there are two.
+    THE_TEST_CAUGHT_AN_EDGE_I_WOULD_HAVE_SHIPPED: >-
+      int("+15551234") SUCCEEDS in Python, so a naive coercion turns a WhatsApp phone number
+      into chat 15551234. The parametrized foreign-id case caught it before commit. Negative
+      ids are deliberately kept — Telegram groups have them, and a digits-only rule would have
+      broken every group chat, a far larger blast radius than the bug being fixed.
+    LIVE: >-
+      Restarted 07:23:10 (pid 436745), clean boot, 554 lines, ZERO errors; a driven turn
+      delivered with ZERO fallback warnings.
   D01_4_SOUND_AND_THE_BUS_NOW_REPORTS_DEAD_EVENTS_2026_08_30:
     status: >-
       D01.4 audited SOUND (fourth of the audit). Chasing one of its claims produced a general
@@ -16947,7 +16972,35 @@ items:
       at_hour RESOLVED 2026-07-25: 4 AM, signed off by Bakir, superseding his Q16 midnight
       answer. Configurable so midnight stays reachable. No open questions remain on this item —
       it is ready to implement once D01.6 lands its baseline.
-
+    AUDITED_2026_08_30_TWO_claims_ROTTED_in_OPPOSITE_directions: >-
+      Fourth on claim_check's ranking, and the only item so far whose claims moved BOTH ways.
+      ROTTED GOOD: "The `conversations` and `messages` tables (migration 0002) have ZERO
+      INSERT [sites]" — both now have an INSERT site and are LIVE: conversations 725 rows,
+      messages 2,367. messages_fts holds exactly 2,367 too, so D11.2's trigger-sync is
+      provably in step. The dead-table evidence that partly supported this item's MISSING
+      verdict has REVERSED, and the verdict should be re-read on that basis. A claim can rot
+      by the world improving — that is a category the other eight audits did not produce.
+      ROTTED BAD: 'ZERO "falling back to _last_chat_id" warnings — which was the whole risk'
+      is now 29, every one carrying target='72055773' (the operator's own chat id, correct,
+      merely stringified). First 2026-08-26T23:26:16, so it predates this session by three
+      days. Fixed in 2db987c7.
+    the_fix_and_why_the_premise_was_wrong: >-
+      The guard read: "Telegram only ever delivers int chat_id targets; a str (Slack
+      channel/thread_ts) cannot reach the Telegram adapter by construction." The data
+      falsifies that premise — the str was this adapter's OWN destination, so the guard
+      discarded a correct target and re-derived one from _last_chat_id. Nothing broke because
+      with ONE chat the fallback lands on the same place; with two it delivers one
+      conversation's answer to the other.
+      `coerce_chat_id` accepts -?\d+ (negative kept — Telegram groups have negative ids, and
+      a digits-only check would break every group chat), refuses bool (an int subclass; JSON
+      true would become chat 1), and refuses "+15551234" because int() ACCEPTS a leading plus
+      and would turn a phone number into a chat id. That edge was caught by the parametrized
+      test, which reuses destination_for_turn's cases — the same int/str trap, other side.
+      LIVE: core restarted 07:23:10 (pid 436745), clean boot, 554 lines, ZERO errors; a driven
+      turn delivered with ZERO fallback warnings.
+      CLOSING QUERY: grep '"msg": "[telegram] adapter.send: unexpected str target'
+      ~/.stackowl/logs/stackowl.jsonl — it must stay at 0 for numeric targets. A hit now means
+      a genuinely foreign id reached this adapter, which is what the warning was written for.
   - id: D02.1
     title: "One agent class, all surfaces"
     domain: D02
