@@ -146,25 +146,27 @@ def test_a_success_with_DIFFERENT_args_does_NOT_clear_another_signature():
 # --------------------------------------------------------------------------- #
 
 
-def test_hard_stops_are_OFF_by_default():
-    """Operator decision, and the reference platform's shipped default too. A
-    genuine loop is bounded by the turn iteration cap instead."""
+def test_there_is_NO_hard_stop_mode_at_all() -> None:
+    """REPLACES two tests that exercised hard stops. Removed 2026-08-30 by
+    operator decision: hard_stop_enabled had no setter anywhere, so the three
+    block/halt branches were unreachable — and two of them lived in before_call,
+    which production never called. The old test asserted the flag defaulted False,
+    which passes just as well when the feature is decoration.
+
+    This asserts the stronger thing: the capability is GONE, so it cannot rot back
+    into unreachable code that reads as protection.
+    """
     c = _c()
-    assert c.config.hard_stop_enabled is False
-    for _ in range(20):
-        d = c.after_call("t", {"a": 1}, "boom", failed=True, idempotent=False)
-        assert d.allows_execution, "warn-only must never block execution"
-    assert c.before_call("t", {"a": 1}).action == "allow"
-    assert c.halt_decision is None
-
-
-def test_hard_stop_blocks_when_explicitly_enabled():
-    c = _c(hard_stop_enabled=True, exact_repeat_block_after=2)
-    for _ in range(3):
-        c.after_call("t", {"a": 1}, "boom", failed=True, idempotent=False)
-    d = c.before_call("t", {"a": 1})
-    assert d.should_halt and not d.allows_execution
-    assert c.halt_decision is not None
+    assert not hasattr(c, "before_call")
+    assert not hasattr(c, "halt_decision")
+    for field in ("hard_stop_enabled", "exact_repeat_block_after",
+                  "same_tool_failure_halt_after", "no_progress_block_after"):
+        assert field not in type(c.config).__dataclass_fields__, field
+    assert all(
+        d.allows_execution
+        for d in (c.after_call("t", {"a": 1}, "x", failed=True, idempotent=False)
+                  for _ in range(20))
+    ), "no sequence of failures may ever prevent execution"
 
 
 def test_reset_for_turn_clears_everything():

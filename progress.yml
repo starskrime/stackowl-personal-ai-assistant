@@ -315,41 +315,34 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  D08_3_AUDITED_2026_08_30_the_claim_HELD_the_RECORD_had_rotted:
-    outcome: >-
-      no_change_needed in code. The item's load-bearing claim is CLOSED and
-      vindicated; three facts in its own record were stale, and the fix was to
-      correct the record rather than the code.
-    the_claim_vindicated: >-
-      "Without the nudge, zero writes a day rather than a handful." Measured over
-      8 days across the ROTATED logs: 210 nudges -> 59 add + 23 replace = 82
-      curated writes, about ten a day. A 39% nudge-to-write conversion — the
-      opposite of the nagging its own code comment worried about. And the writes
-      survive: 18 .md files on disk, and at capacity `add` REFUSES and asks for
-      consolidation rather than dropping anything silently.
-    the_record_had_rotted_in_three_places: >-
-      It says the threshold is 10 — it is 4, which is most of why firings went
-      from 4 to 210. It says "4 firings on live traffic". And its next_small_win
-      asks for the counter to be persisted to sqlite.
-    THE_ONE_THAT_MATTERED: >-
-      I did NOT implement that persistence. curated.py:806 carries a dated
-      counter-argument that post-dates the record: it acknowledges the 2026-08-17
-      measurement in full — "at 34 boots in a day the reset is not an occasional
-      rounding error, it is the dominant term" — and took the threshold change
-      instead, stating "this stays in-process deliberately". Following the record
-      would have undone a newer, measured, deliberate decision. When the record
-      and the code disagree, the one with a date and a measurement wins.
-    what_I_checked_before_believing_the_55x_jump: >-
-      A nudge line carrying turns=4 against a recorded threshold of 10 looked like
-      a counter bleeding across lanes — the process-global single-slot shape found
-      three times this session. It is not: _TURNS_SINCE_WRITE is keyed by
-      session_key. The threshold really is 4.
-    audit_series_complete: >-
-      This closes the measured-absence audit. claim_check went from 6 items closed
-      on an un-re-runnable claim to 1. Of the fourteen claims re-measured across
-      the series, the split was roughly: eight had decayed, four held, and two —
-      D01.5's Rule 5 and D05.2's tools array — closed as FAILURES that were
-      shipping quietly and are now fixed.
+  OPERATOR_DECISIONS_2026_08_30_backlog_cleared_for_work:
+    by: Bakir
+    ESC_68_guardrail_hard_stops: >-
+      DELETE THE DEAD BRANCHES. Warn-only everywhere; remove the three unreachable
+      block/halt paths so the code says what it does. My recommendation was to
+      enable them for non-interactive lanes and Bakir went the other way — the
+      warn-only decision is the one he wants kept, and unreachable code that reads
+      as active protection is worse than no code. Reversible via git.
+    ESC_67_stable_context: >-
+      SNAPSHOT PER CONVERSATION. Freeze the learned content per incarnation rather
+      than moving it out of the prefix. Same shape as profile, skills catalogue
+      and tool ordering.
+      CONSEQUENCE I AM ACTING ON WITHOUT ASKING AGAIN: this makes FOUR copies of
+      one mechanism, and DEBT-39 was already filed at three. Hand-writing a fourth
+      would be indefensible against the standing "never two copies of one rule".
+      So DEBT-39 is done FIRST — extract the primitive — and ESC-67 becomes its
+      fourth CALLER rather than its fourth copy.
+    DEBT_37_checkpoint_blob: >-
+      GIVE ROLLOVER ITS OWN COLUMN. Idempotent migration, nothing deleted;
+      checkpoint_blob goes back to meaning exactly one thing.
+    next_focus: "CLEAR THE ESCALATION BACKLOG — ESC-63/64/66/67/68 and DEBT-37/38/39 as a batch, rather than resuming unbuilt map items."
+    order_I_am_taking_them_in: >-
+      1. ESC-68 (deletion, smallest and self-contained).
+      2. DEBT-39 then ESC-67 (the primitive, then its fourth caller).
+      3. DEBT-37 (migration).
+      4. DEBT-38 (test-suite wall) — it pays back on every later item, so it goes
+         before the remaining judgement calls.
+      5. ESC-63/64/66 remain open; they are product calls I have not been given.
 
 waves:
   1:
@@ -10319,6 +10312,30 @@ items:
       is expected to persist; watch whether 15+ falls back toward 0.10.
       For the detector: grep '"code": "repeated_exact_call_warning"' — 13 events,
       all skills_list, as of 2026-08-30.
+    ESC_68_RESOLVED_2026_08_30_hard_stops_DELETED:
+      decision: "Bakir chose DELETE over my recommendation to enable them for non-interactive lanes. The warn-only decision is the one he wants kept."
+      what_the_audit_found_beyond_the_escalation: >-
+        Worse than ESC-68 stated. hard_stop_enabled had no setter — but ALSO
+        `before_call` itself had no caller: execute.py:1710 constructs the
+        controller and only ever calls after_call (:2254). So two of the three
+        branches (repeated_exact_failure_block, idempotent_no_progress_block)
+        were DOUBLY dead — behind a flag nothing set, inside a method nothing
+        called. Checked for consumers before removing the producer, per the
+        migration-0125 lesson: should_halt, halt_decision and allows_execution
+        had ZERO references outside the module.
+      removed: "before_call in full; _halt; halt_decision; should_halt; _halt_decision; and the four hard-stop config fields. 56 lines net."
+      a_bug_the_deletion_created_and_the_check_caught: >-
+        Removing halt_decision left its bare `@property` decorating the NEXT
+        method, which would have silently turned after_call into a property and
+        broken every dispatch. Caught by importing the class and asserting
+        after_call is still callable, before running any test.
+      the_test_got_STRONGER_not_weaker: >-
+        test_hard_stops_are_OFF_by_default asserted the flag defaulted False —
+        which passes just as well when the feature is decoration, so it could
+        never have caught this. Replaced with
+        test_there_is_NO_hard_stop_mode_at_all, which asserts the capability is
+        GONE and that no sequence of 20 failures can ever prevent execution.
+      verified: "19 guardrail tests + 51 across the neighbouring suites green. ruff 37, mypy 65 — both at baseline."
   - id: D05.8
     title: "Tool count"
     domain: D05

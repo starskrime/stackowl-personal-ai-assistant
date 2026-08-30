@@ -20,11 +20,21 @@ THREE DETECTORS, where StackOwl previously had one:
   ``is_trustworthy_success`` → ``record_progress`` reset the streak, so a
   *successful* repeat looked like progress.
 
-WARN-ONLY, BY OPERATOR DECISION. ``hard_stop_enabled`` defaults False — which is
-also the reference platform's shipped default. Repetition is a smell, not proof:
-the headhunter case shows a high count can be correct, and a wrong halt truncates
+WARN-ONLY, BY OPERATOR DECISION, AND THERE IS NO OTHER MODE. Repetition is a
+smell, not proof: the headhunter case (46 web_searches returning a real
+synthesized result) shows a high count can be correct, and a wrong halt truncates
 real work. A genuine loop is instead bounded by the existing turn iteration cap
 (``DEFAULT_TURN_MAX_STEPS = 20``), so "warn only" is bounded, not unbounded.
+
+THE HARD-STOP MACHINERY WAS REMOVED 2026-08-30, by operator decision, after an
+audit found it could never run. ``hard_stop_enabled`` had no setter anywhere in
+``src/`` or ``tests/``, so three block/halt branches were unreachable — and two of
+them lived in ``before_call``, which production never called at all (execute.py
+constructs this controller and uses only ``after_call``). Code that reads as
+active protection and cannot fire is worse than no code. It is in git if the
+decision is ever revisited; the reference platform documents these as opt-in
+circuit breakers for autonomous sessions, which is the case for bringing them
+back.
 
 TWO DELIBERATE DIVERGENCES from the reference implementation:
 
@@ -114,27 +124,21 @@ class ToolGuardrailDecision:
     def allows_execution(self) -> bool:
         return self.action in {"allow", "warn"}
 
-    @property
-    def should_halt(self) -> bool:
-        return self.action in {"block", "halt"}
 
 
 @dataclass(frozen=True)
 class ToolCallGuardrailConfig:
     """Thresholds for per-turn loop detection.
 
-    Warnings are on by default and NEVER prevent execution. Hard stops are
-    opt-in and off — operator decision, and the reference platform's default too.
+    Warnings are on by default and NEVER prevent execution. There is no hard-stop
+    threshold: repetition is a smell, not proof, and a genuine loop runs to the
+    iteration cap rather than risking a truncated valid fan-out (D05.7).
     """
 
     warnings_enabled: bool = True
-    hard_stop_enabled: bool = False
     exact_repeat_warn_after: int = 2
-    exact_repeat_block_after: int = 5
     same_tool_failure_warn_after: int = 3
-    same_tool_failure_halt_after: int = 8
     no_progress_warn_after: int = 2
-    no_progress_block_after: int = 5
 
 
 class ToolCallGuardrailController:
@@ -149,39 +153,6 @@ class ToolCallGuardrailController:
         self._same_tool_failure_counts: dict[str, int] = {}
         self._no_progress: dict[ToolCallSignature, tuple[str, int]] = {}
         self._exact_repeats: dict[ToolCallSignature, int] = {}
-        self._halt_decision: ToolGuardrailDecision | None = None
-
-    @property
-    def halt_decision(self) -> ToolGuardrailDecision | None:
-        return self._halt_decision
-
-    # ------------------------------------------------------------------ before
-    def before_call(
-        self, tool_name: str, args: Mapping[str, Any] | None
-    ) -> ToolGuardrailDecision:
-        """Consulted BEFORE dispatch. Returns ``allow`` unless hard stops are on."""
-        signature = ToolCallSignature.from_call(tool_name, args)
-        if not self.config.hard_stop_enabled:
-            # Warn-only: the controller still OBSERVES (after_call keeps counting)
-            # but never blocks. This is the shipped default.
-            return ToolGuardrailDecision(tool_name=tool_name, signature=signature)
-
-        exact = self._exact_failure_counts.get(signature, 0)
-        if exact >= self.config.exact_repeat_block_after:
-            return self._halt(
-                "block", "repeated_exact_failure_block", tool_name, exact, signature,
-                f"Blocked {tool_name}: the same call failed {exact} times with "
-                "identical arguments. Change strategy or explain the blocker.",
-            )
-
-        record = self._no_progress.get(signature)
-        if record is not None and record[1] >= self.config.no_progress_block_after:
-            return self._halt(
-                "block", "idempotent_no_progress_block", tool_name, record[1], signature,
-                f"Blocked {tool_name}: this read-only call returned the same result "
-                f"{record[1]} times. Use the result already provided.",
-            )
-        return ToolGuardrailDecision(tool_name=tool_name, signature=signature)
 
     # ------------------------------------------------------------------- after
     def after_call(
@@ -255,12 +226,6 @@ class ToolCallGuardrailController:
         same = self._same_tool_failure_counts.get(tool_name, 0) + 1
         self._same_tool_failure_counts[tool_name] = same
 
-        if self.config.hard_stop_enabled and same >= self.config.same_tool_failure_halt_after:
-            return self._halt(
-                "halt", "same_tool_failure_halt", tool_name, same, signature,
-                f"Stopped {tool_name}: it failed {same} times this turn. Choose a "
-                "different approach.",
-            )
         if self.config.warnings_enabled and exact >= self.config.exact_repeat_warn_after:
             return self._warn(
                 "repeated_exact_failure_warning", tool_name, exact, signature,
@@ -289,19 +254,3 @@ class ToolCallGuardrailController:
             tool_name=tool, count=count, signature=sig,
         )
 
-    def _halt(
-        self, action: str, code: str, tool: str, count: int,
-        sig: ToolCallSignature, message: str,
-    ) -> ToolGuardrailDecision:
-        decision = ToolGuardrailDecision(
-            action=action, code=code, message=message,
-            tool_name=tool, count=count, signature=sig,
-        )
-        self._halt_decision = decision
-        log.engine.warning(
-            "[guardrails] tool-loop HALT",
-            extra={"_fields": {
-                "tool": tool, "code": code, "count": count, "args_hash": sig.args_hash,
-            }},
-        )
-        return decision
