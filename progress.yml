@@ -16988,7 +16988,29 @@ items:
         zero_vetoes_in_production_and_why_that_is_not_alarming: "No veto log lines across four days. The module logs only at ERROR on its failure path, so silence is the expected shape of 'nothing warranted a veto' — not evidence of inertness. The seam's reachability is covered by tests instead."
     changes: []
     notes: null
-
+    EVIDENCE_CORRECTED_2026_08_30_commit_d6ab6db7: >-
+      This item's closing argument was "No veto log lines across four days ... silence is the
+      expected shape of 'nothing went wrong'." MEASURED, the silence was NOT that shape.
+      `_verify_turn_acceptance` has four exits and only two spoke — a definite verdict (INFO)
+      and an exception (WARNING). The two ABSTAINING exits returned silently: `criteria is
+      None` and `verdict.accepted is None`. Across the entire retained log the verdict INFO
+      line appears exactly THREE times, and all three are objgoal-* traces — objective
+      sub-goals, not the chat turns the line is named for.
+      So on ordinary turns the authority ABSTAINS, and "no vetoes" conflated "judged and
+      passed" with "never formed an opinion". Worse than the failure this repo already paid
+      for: there the evidence line was at the wrong LEVEL; here it did not exist on the
+      abstaining paths at all, so the DENOMINATOR was invisible.
+      Both abstentions now log at INFO, kept DISTINCT (a single "abstained" count could not
+      tell "nothing to judge" from "judged, no opinion"). Not one line of the acceptance
+      DECISION changed — abstaining without criteria is correct. Only the evidence changed.
+      LIVE 2026-08-30: core restarted 01:22:44 (pid 413425), clean boot, 760 lines, ZERO
+      errors; a driven turn produced `[acceptance] abstained — no acceptance criteria for
+      this turn` {reason: no_criteria} at INFO. The claim is now falsifiable.
+      THE STAGES ARE LEFT AS THEY ARE: the no_change_needed decisions may well still be
+      right. What changed is that they can now be CHECKED. Re-read this item once there is a
+      week of abstention-vs-verdict data.
+      CLOSING QUERY: grep '"msg": "[acceptance] abstained' vs '"msg": "[acceptance]
+      normal-turn verdict' — the ratio is the denominator D02.5 never had.
   - id: D02.6
     title: "Recovery ladder"
     domain: D02
