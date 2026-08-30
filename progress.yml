@@ -315,61 +315,48 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  ESC_67_AND_DEBT_39_2026_08_30_the_escalations_own_premise_was_an_ARTEFACT:
-    what_Bakir_asked_for: "Snapshot stable_context per conversation, rather than moving it out of the prefix."
-    what_I_delivered_and_the_bigger_thing_underneath: >-
-      The snapshot is built and wired. But measuring the number that motivated the
-      escalation — "203 of 259 invalidations name stable_context" — showed the
-      number was mostly its own instrument.
-    the_measurement: |-
-      204 stable_context "prompt part CHANGED" events over eight days:
-
-        114  had NO conversation_id at all
-         88  were the single event of a fresh conversation
-          2  were genuinely within one conversation
-
-      So the fixable population was TWO, not 203.
-    THE_ROOT_CAUSE_two_copies_of_one_rule_in_ONE_FILE: >-
-      audit_prompt_parts keyed on (session_key, owl) — the LANE — while the prompt
-      is frozen per INCARNATION (D01.1 slice 5). A lane starting its second
-      conversation legitimately rebuilds, and the audit reported that permitted
-      rebuild as a lost cache.
-      Its SIBLING audit_tools_array, twenty lines above in the same file, already
-      had this right and its docstring says exactly why: "a prompt cache is held
-      across one conversation; a lane outlives many of them and is also shared
-      with runs that are not conversations at all" — and it skips when there is no
-      conversation, citing "112 of the 122 warnings measured over six days".
-      The same lesson, learned once, applied to one of two copies. That is
-      CLAUDE.md shape 3, inside a single file, and it cost an escalation raised on
-      a number that was 100x its real value.
-    what_shipped:
-      DEBT_39: >-
-        infra/bounded_mru.py — ONE bounded MRU map. curated.py, catalogue_snapshot
-        and usage_snapshot all migrated onto it; no hand-rolled OrderedDict +
-        move_to_end + popitem remains. It deliberately does NOT compute the value
-        (that would have forced a sync and an async variant) and does NOT decide
-        the empty-value policy, because all three callers have DIFFERENT correct
-        answers and a default would have silently changed two shipped behaviours.
-      ESC_67: >-
-        pipeline/stable_context_snapshot.py freezes the learned block per
-        (conversation, owl) — the fourth CALLER of the primitive rather than the
-        fourth copy of it.
-        NO SESSION_KEY FALLBACK, unlike the catalogue snapshot which predates this
-        measurement: a run with no conversation is a one-shot with no cached
-        prefix to protect, and keying those on the lane would freeze learned
-        content across unrelated runs that merely share a namespace.
-      the_audit_fix: "audit_prompt_parts now takes conversation_id, keys on it, and skips when absent — matching its sibling exactly."
-    the_counterweight_test: >-
-      test_a_change_WITHIN_one_conversation_is_still_reported. Narrowing a key to
-      quiet an over-reporting audit is one edit away from an audit that reports
-      nothing, and the two remaining real events are the ones that matter most.
-    verified: "43 tests across the primitive, the snapshot and the re-keyed audit. ruff 37, mypy 65 — both at baseline."
-    HONEST_about_what_this_buys: >-
-      Not a measurable cache saving. This backend reports no cache statistics, so
-      the evidence is the invalidation count becoming truthful, not a hit-rate
-      going up. And the truthful count was already small. The real value delivered
-      is that the instrument now means what it says — the next person reading
-      "stable_context: 203" would have chased the same ghost.
+  BACKLOG_CLEARING_2026_08_30_three_done_one_NOT_BUILT_on_purpose:
+    ESC_68_DONE: "Hard stops deleted. Found worse than escalated: before_call had no caller either, so two of three branches were doubly dead. Commit d8b8ba81."
+    DEBT_39_and_ESC_67_DONE: >-
+      One BoundedMRU primitive; all three prior copies migrated; stable_context
+      frozen per incarnation as the fourth CALLER. And the escalation's premise
+      turned out to be its own instrument: of 204 stable_context events, 114 had
+      no conversation_id and 88 were a fresh conversation's only event — TWO were
+      real. audit_prompt_parts keyed on the LANE while the prompt freezes per
+      INCARNATION, a rule its sibling twenty lines above already had right.
+      Commit 6b6474a8.
+    DEBT_37_NOT_BUILT_and_this_is_the_report_back: >-
+      Bakir chose "give rollover its own column". I did not build it, because
+      measuring first showed the premise is void.
+      THE WRITER IS ALREADY GONE. rollover_summary_handler._checkpoint is defined
+      at line 342 and has ZERO callers; the newest rollover row carrying a blob is
+      dated 2026-08-09, three weeks ago. So there is no second writer to give a
+      column to — building one would be a column for a writer that does not exist,
+      which is the decoration anti-pattern this session has already removed twice.
+      AND THE RESIDUE IS INERT. 222 legacy blobs: 157 completed + 66 failed, and
+      ZERO in running/recovering — the only states the recoverer claims. The two
+      deserialize() call sites are recovery.py:545 (orphaned running/recovering
+      rows) and react_runner.py:196 (an active drive); neither can reach these.
+      I ALSO CORRECT MY OWN EARLIER CLAIM: I filed DEBT-37 saying "90 failed + 72
+      dead_letter are revive-sweep candidates", implying the sweep would emit 222
+      tracebacks. It would not. The sweep is a pure UPDATE that sets
+      checkpoint_blob=NULL without ever reading it (store.py:1423). I had inferred
+      the traceback rather than checking the SQL.
+      WHAT IS ACTUALLY LEFT: 222 rows holding four bytes of dead JSON that nothing
+      reads. That is untidy, not a defect, and clearing it is a data mutation on
+      live rows — Bakir's call, on a correct premise this time.
+    ESC_67_validate:
+      restart: "./start.sh — core pid 465503 at 12:10:54, commit 6b6474a8 at 12:10:11. 446 post-restart log lines, 430 INFO / 16 WARNING, ZERO ERROR or CRITICAL."
+      not_mine: "Two ERRORs in the wider window both PRE-DATE the restart: a scheduler handler timeout, and one transient provider_registry health blip at 16:24 UTC followed by ten clean sweeps — self-recovered."
+      OPEN: >-
+        The '[pipeline] stable_context: learned block frozen' INFO line is at 0 and
+        'prompt part CHANGED' is at 0 since boot — because NO TURN HAS RUN. That is
+        no opportunity, not success, and it is not being counted as proof.
+        CLOSING QUERY: grep '"msg": "[pipeline] stable_context: learned block frozen'
+        ~/.stackowl/logs/stackowl.jsonl — expect one per (conversation, owl), and
+        'prompt part CHANGED' naming stable_context should now be rare rather than
+        the largest bucket.
+    STILL_OPEN_for_Bakir: "ESC-63 (shorten when_to_use), ESC-64 (bound background spend), ESC-66 (RCA re-diagnosis suppression), D10.6 re-verdict, DEBT-38 (tests/skills at 13m53s), and now whether to clear the 222 inert rollover blobs."
 
 waves:
   1:
