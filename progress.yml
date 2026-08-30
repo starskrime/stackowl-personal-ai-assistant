@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  THE_ARC_MEASURED_2026_08_30:
+    status: >-
+      No code change this item — a VALIDATION pass that closed three open checks and left the
+      rest honestly open. `no_change_needed` where nothing was broken.
+    CLOSED_the_miner_family_with_production_evidence: >-
+      Since the backtick fix went live (23:55:40): `author_one: written + indexed` = 2,
+      `gated write refused` = 0. The learned corpus is repopulating — 4 skills now
+      (incident_shell_stop, incident_web_fetch_stop, incident_owl_build_stop,
+      incident_delegate_task_unachieved_effect), all authored by the miner, all with
+      compliant descriptions (38-59 chars). Before today the platform had recorded ZERO
+      incident lessons in its entire history, against 62 refusals.
+    CLOSED_the_plan_detector_is_wired_not_dead: >-
+      The `[plan]` nudge has never fired, and given how many built-but-not-wired defects
+      turned up today I verified reachability rather than assuming. Against the LIVE
+      registry: registry.get("todo") -> TodoTool -> PlanStore -> counts() returns a valid
+      dict. The source is wired.
+    AND_THE_ZERO_IS_GENUINELY_0_OVER_0_after_I_got_the_denominator_wrong_once: >-
+      My first denominator was "traces with >=6 model calls" = 6, which looked like 0 nudges
+      over 6 eligible turns. WRONG: those are background batch handlers (the top one is the
+      `critic` scorer making 34 independent one-shot calls) that never enter _run_with_tools
+      and so never run the iteration callback at all. The REAL denominator is traces that
+      ran a tool loop: 68 since deploy, every one of them 3-4 model calls. None reaches
+      iteration 5, so the nudge is correctly silent. 0 over 0, not 0 over 6.
+    THE_TAIL_LOOKS_MUCH_SHORTER_but_the_populations_are_NOT_comparable: >-
+      BEFORE the round-economy deploy (12,106 traces): calls/trace median 3, p90 8, max 294;
+      input/trace median 11,516, p90 106,752, max 3,893,308.
+      AFTER (88 traces): calls/trace median 3, p90 4, max 34; input/trace median 23,992,
+      p90 48,366, max 77,388.
+      TWO REASONS NOT TO CLAIM THIS AS A CLEAN WIN, both of which I have to state because
+      they are exactly the denominator error this programme keeps paying for:
+      (1) MY OWN attribution fix changed the population. Background calls used to carry a
+      BLANK trace_id and were excluded by `trace_id != ''`; since ESC-64 they are included.
+      That alone explains the median input RISING (11,516 -> 23,992) — small background
+      traces entered the "after" set, and the before/after sets are different things.
+      (2) 88 traces over roughly two hours is a small sample, and a tail needs time to
+      appear. max 3.89M -> 77,388 may be the fix or may be the clock.
+      What is defensible: p90 calls/trace fell 8 -> 4, and no runaway has recurred. What is
+      NOT yet defensible: a specific percentage saving. Re-measure over a full day, with the
+      populations matched, before quoting a number.
+    STILL_OPEN_and_why_none_of_them_can_be_forced: >-
+      [plan] nudge — needs a turn running 5+ rounds with a stalled plan; turns run 3-4.
+      reclaim ceiling — needs a stale/expired reclaim; none since deploy.
+      todo on a capped turn — no "NOT presented" line has fired since deploy.
+      RCA verdict ceiling — needs one signature verdict-less on 3 ticks; 0 verdict-less
+        retries have occurred at all since deploy.
+      advisory log line — needs an authoring attempt that trips a non-blocking rule.
+      salvage / converge / token breach — all need a turn near the caps, and none has been.
+      Every one is wired and unit-proven; each waits on a production condition that has not
+      occurred. Recorded rather than claimed.
   THE_STANDARD_REFUSED_SKILLS_FOR_BACKTICKED_PROSE_2026_08_29:
     status: >-
       SHIPPED — commit 957cdc08. The last unblocked item from the miner-refusal family.
