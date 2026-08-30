@@ -315,6 +315,37 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CLAIM_CHECK_THE_AUDITS_LESSON_BECOMES_A_CHECK_2026_08_30:
+    status: >-
+      SHIPPED — scripts/claim_check.py. The measured-zero audit fixed nine instances of a
+      pattern without preventing the tenth. This is the prevention.
+    the_argument_is_the_repos_own: >-
+      progress_lint's docstring already states the shape for WRITES: "the write happens, the
+      effect does not, and nothing says so. So it becomes a check." This is the same sentence
+      about MEASUREMENTS: the measurement happens, the claim outlives it, and nothing says so.
+    MEASURED_exposure: >-
+      31 map items carry a measured-absence claim (a ZERO, a "never fired", a "must stay at
+      0"). At the time of writing only 7 had a recorded closing query; 16 were FULLY CLOSED
+      (7/7 stages) with no way to re-run the claim at all. D01.2 alone carries 28 such claims,
+      D01.7 22, D16.1 14.
+      THE FIRST NUMBER I GOT WAS 69 AND IT WAS WRONG — it counted escalations, whose prose
+      mentions zeros incidentally. Filtering to map items with stages gave 16. Checking what
+      the denominator is made of, again.
+    IT_CAUGHT_A_GAP_IN_MY_OWN_AUDIT: >-
+      D02.1, D04.1 and D16.3 appeared in the risk set even though I had just audited them: I
+      fixed the code and never recorded a re-runnable query. Closing queries added; the risk
+      set fell 16 -> 13 and all nine audited items are now re-runnable.
+    WHAT_IT_DELIBERATELY_IS_NOT: >-
+      It does not claim the 13 are WRONG — there is no evidence for that, and asserting it
+      would be the same sin in the other direction. It says only that they cannot be
+      re-checked as written. It is also NOT A GATE: it always exits 0. Making it fail the
+      build is a process change with a real cost to the operator's workflow, and that is
+      Bakir's call, not the script's. The natural next step, if he wants it, is a ratchet —
+      fail when the risk set GROWS — which is how the ruff and mypy baselines already work
+      here.
+    USAGE: >-
+      uv run python scripts/claim_check.py        (the risk set)
+      uv run python scripts/claim_check.py --all  (plus the re-runnable ones)
   THE_MEASURED_ZERO_AUDIT_COMPLETE_2026_08_30:
     what_it_was: >-
       progress.yml carries 504 measured-absence claims — the shape that rots. NINE items rest
@@ -16876,7 +16907,12 @@ items:
         recorded_so_it_is_not_permanent: "Drop the langgraph backend, or decompose execute.py (3,045 lines of the 5,597), or add a third caller assembling PipelineState by hand, and the arithmetic shifts. See the doc's 'what would change this conclusion'."
     changes: []
     notes: null
-
+    CLOSING_QUERY_added_2026_08_30: >-
+      The "ZERO cross-step imports" claim was re-measured (it had drifted to 1) and is now
+      pinned by tests/pipeline/test_the_steps_stay_decoupled.py, which walks every step
+      module. That test IS the standing check — it fails the moment any step imports another,
+      which a one-off grep could not do.
+      CLOSING QUERY: uv run pytest tests/pipeline/test_the_steps_stay_decoupled.py
   - id: D02.2
     title: "Iteration budget"
     domain: D02
@@ -17554,6 +17590,11 @@ items:
       source='not_reported', provider=NeraAiRaw. The zero is no longer ambiguous — it means
       the cache is INVISIBLE on this backend, not cold. See D01.6 for the full measurement
       (0 cached against 654,849,862 input tokens across 124,683 rows).
+    CLOSING_QUERY_added_2026_08_30: >-
+      grep '"msg": "[cost_tracker] record: cache stats source' ~/.stackowl/logs/stackowl.jsonl
+      and group by fields.source. `not_reported` means this backend cannot report cache hits
+      — the stated fact this item asked for. `reported` appearing at all would mean a
+      measurable backend has arrived and the item's premise should be revisited.
   - id: D04.2
     title: "Transport adapters"
     domain: D04
@@ -23128,7 +23169,14 @@ items:
       byte-identical across a contributor's registration.
     changes: []
     notes: null
-
+    CLOSING_QUERY_added_2026_08_30: >-
+      note_payload_limit's zero was re-measured and is SOUND — correct 0-over-0: it fires
+      only after a payload is REJECTED for size, and there are zero compression or oversize
+      lines in the entire retained log, so the trigger has never occurred. It is falsifiable
+      because the line is at WARNING and the path has a wiring test.
+      CLOSING QUERY: grep '"msg": "[provider] learned a smaller working context'
+      ~/.stackowl/logs/stackowl.jsonl — a hit means the actuator fired and the zero has
+      expired. Also: plugins table row count (0) and LifecycleHook implementations (0).
   - id: D16.4
     title: "Third-party products stay out of tree"
     domain: D16
