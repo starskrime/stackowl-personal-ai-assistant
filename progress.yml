@@ -315,41 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  SESSION_STATE_2026_08_30_end_of_an_unattended_run:
-    read_this_first: >-
-      Everything actionable without a decision is done. SEVEN escalations are open
-      and they are now the bottleneck, not the work — ESC-63, ESC-64, ESC-66,
-      ESC-69 (revised), UP-01's PORT/HYBRID/BUILD, D10.6's re-verdict, and whether
-      to clear the 222 inert rollover blobs.
-    what_shipped_today:
-      claim_audit: >-
-        The measured-absence audit ran to completion: claim_check went from 6
-        items closed on an un-re-runnable claim to 1. Of ~14 claims re-measured,
-        eight had decayed, four held (D05.7 reproduced its baseline almost
-        exactly), and TWO closed as failures that were shipping quietly — D01.5's
-        Rule 5 refusing the loop's own transcript and killing tasks, and D05.2's
-        tools array still moving mid-conversation. Both fixed and live.
-      backlog: "ESC-68 (hard stops deleted), ESC-67 + DEBT-39 (one BoundedMRU, four callers), DEBT-38 both parts. DEBT-37 deliberately NOT built — its premise was void."
-      test_wall: "tests/skills+paths+discovery+prompt_tiers 833.83s -> 80.79s; tests/pipeline/durable 1044.23s -> 70.08s, confirmed against a clean HEAD control."
-      research: "UP-01 — the three-way memory study, with the finding that mem0 is already one of eight providers behind the reference platform's MemoryProvider ABC."
-    THE_MEMORY_SUBSYSTEM_IS_THE_BIGGEST_OPEN_THING: >-
-      Measured today and not yet acted on: 361 staged memories with populated
-      embeddings that recall() cannot see; committed_facts empty with 1,112 orphan
-      FTS rows; Kuzu initialised every boot against an EMPTY directory and never
-      queried; a SentenceTransformer loaded on every boot (248 times in 8 days)
-      and used only by the skills store. We own an unused retrieval stack. ESC-69
-      carries the four options.
-    three_rules_added_to_CLAUDE_md_today: >-
-      "An empty table is a QUESTION, not an answer" (it nearly cost 361 memories),
-      "a scripted edit across many files needs a SYNTAX gate first" (110 files, two
-      broken silently), and "never build a commit message through printf" (a % ate
-      half a pushed commit message). Each cost real damage or nearly did, which is
-      the bar that file sets.
-    honesty_note_for_the_next_session: >-
-      I corrected my OWN recommendations twice today, both from the same cause:
-      measuring the surface and recommending before checking one level down. If a
-      recommendation here looks confident, check what was measured underneath it
-      before acting.
+  ESC_70_NOT_DONE_the_premise_EXPIRED_DURING_TODAY_2026_08_30:
+    what_was_authorised: "Bakir: RAISE THE CAP AND MEASURE."
+    why_I_did_not_do_it: >-
+      Capturing the before-baseline first, as the experiment requires, showed the
+      cap IS NOT BINDING ANY MORE. In the currently retained window: 1,284 turns
+      with a tools_count, ZERO at exactly 40, 1,014 at 79 (the full catalogue),
+      and ZERO cap-breach events. Raising a cap that is not clipping anything
+      changes nothing and produces no number — which is the one thing the chosen
+      option was for. Making the change anyway would have looked like progress
+      and measured nothing.
+    THE_EVIDENCE_ITSELF_EXPIRED_MID_SESSION: >-
+      This morning I measured 869 cap-breach events and 897 turns pinned at
+      exactly 40, across eight log files (2026-08-23..29 plus the live one). Those
+      files are GONE. The log directory's mtime is 2026-08-30T16:22 and only
+      stackowl-2026-08-28, stackowl-2026-08-29 and the live stackowl.jsonl
+      survive. Earliest retained event: 2026-08-28T00:00:00.
+      So the measurement that justified ESC-70 can no longer be reproduced, and
+      neither can several I recorded today.
+    CONFIGURED_RETENTION_IS_7_DAYS_ACTUAL_IS_2: >-
+      observability.py sets backupCount from STACKOWL_LOG_RETAIN_DAYS with a
+      default of 7, and getFilesToDelete keeps that many dated files. Checked: no
+      STACKOWL_LOG_* variable in the RUNNING core's /proc environ, so the default
+      applies; disk is 64% used with 20G free, so this is not space pressure; and
+      start.sh removes only the pid and socket, NOT logs — I suspected my own four
+      restarts and cleared them by reading the script.
+      CAUSE NOT PROVEN. Five files vanished in one moment while the rule should
+      have deleted one. I can state WHAT (retention is behaving as ~2, configured
+      as 7) and WHEN (16:22Z), not WHY. Recording it as an unexplained divergence
+      rather than inventing a mechanism.
+    WHY_THIS_MATTERS_MORE_THAN_THE_TOOL_CAP: >-
+      This programme's acceptance checks are largely CLOSING QUERIES OVER THE
+      ROTATED LOGS — I wrote several today. Their evidence horizon is not eight
+      days, it is about two. Concretely, these are already unreproducible:
+      D08.3's "210 nudges / 82 writes over 8 days", D05.8's "869 cap breaches",
+      ESC-69's "414 searches, 0 archive hits", D09.2's "17 negative signals on
+      08-28" (that one survives only because 08-28 is still retained, and it goes
+      tomorrow).
+      A check that can only be evidenced from a log older than two days can never
+      be closed. That is the same class of defect as an acceptance check whose
+      evidence line is at DEBUG, and this programme has already paid for that one.
+    ESCALATIONS:
+      - id: ESC-72
+        question: "Raise log retention, or move acceptance evidence off the logs?"
+        why_evidence_cannot_settle_it: >-
+          Both are real options with different costs and it is an operations
+          decision. Retained logs are ~25-36MB PER DAY, so 30 days is roughly 1GB
+          on a box with 20G free — affordable but not free. The alternative is to
+          stop treating logs as the system of record for acceptance and write the
+          few numbers that matter into the database, where they are queryable
+          forever and cost almost nothing.
+        options: >-
+          (a) set STACKOWL_LOG_RETAIN_DAYS to 30 and find out why 7 behaved as 2 —
+          cheapest, keeps every closing query working as written;
+          (b) leave retention and move acceptance counters into the DB, which
+          makes claims permanently reproducible but is a change to every check;
+          (c) both — raise retention now, migrate the load-bearing counters over
+          time.
+        recommendation: "(c). (a) alone leaves the checks dependent on a mechanism that just demonstrated it does not do what it is configured to do."
+        blocked_until_answered: "ESC-70 specifically. The tool-cap experiment cannot produce a number until there is a window long enough to compare across."
 
 waves:
   1:
