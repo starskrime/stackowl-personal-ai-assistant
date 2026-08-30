@@ -591,7 +591,38 @@ upcoming:
       research_only: "Any cloned source goes under do_not_push_to_git_research_only/ and is NEVER pushed."
       vendor_names: "mem0 may be named here and in research docs. NEVER in src/, tests/ or scripts/ — those say 'the reference platform' or describe the technique."
       no_implementation_without_a_decision: "This item ends at a recommendation. Bakir picks PORT / HYBRID / BUILD before anything is written."
-    status: queued
+    status: "RESEARCH DONE 2026-08-30 — doc at docs/research/UP-01-memory-architectures.md. Awaiting Bakir's PORT/HYBRID/BUILD decision."
+    outcome_summary: >-
+      Recommendation is HYBRID and NARROW: port three mechanisms, not the
+      architecture. (1) speculative prefetch on turn start, timeout-bounded,
+      feeding the existing `memory search` — the biggest token win, because our
+      414 searches are all synchronous round-trips and each costs the whole
+      re-sent prefix. (2) a circuit breaker around memory reads so a sick store
+      degrades instead of failing the turn — the same rule we already hold as
+      no-hidden-errors and have not applied here. (3) background writes with a
+      FLUSH BARRIER at the session boundary; the barrier is the part that matters,
+      since a background write that fails silently is the write-with-no-reader
+      shape.
+      DECLINED: the provider ABC (no second backend to justify it at one
+      deployment and 18 files — this repo has shipped abstraction for a scale
+      that never arrived, and D10.6's premise died exactly that way), the vector
+      store, and automatic update/delete — the last because our at-capacity
+      REFUSAL is a deliberate position on never silently discarding what the user
+      said, so replacing it is a values change and Bakir's alone.
+      REVISIT TRIGGER, not a date: if the curated corpus passes ~200 entries,
+      re-open the vector store and the instruction-style prompt block.
+    the_measurement_that_corrected_MY_OWN_framing: >-
+      I expected we were prompt-injection-first and rarely searched. Measured over
+      8 days: search 414 / add 119 / replace 62 / remove 12 / forget 1 / get 1 —
+      `search` is 68% of all memory calls. We already do active recall. The gap is
+      not WHETHER we recall but what it COSTS, which changed the recommendation
+      from "add recall" to "stop paying a round-trip for it".
+    also_measured: "committed_facts is 0 rows and committed_facts_fts is 0 — dead. The embeddings and Kuzu recall paths were NOT audited in this pass and are explicitly unverified."
+    what_is_NOT_claimed: >-
+      mem0's own extraction/consolidation internals were NOT read. Everything
+      recorded describes mem0 AS CONSUMED BY the reference platform's adapter, and
+      the doc says so. The prefetch saving is an argument, not yet a measurement —
+      the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
   - id: DEBT-39
