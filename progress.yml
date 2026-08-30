@@ -315,6 +315,17 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  UNRELATED_FINDING_2026_08_30_an_answer_did_not_reach_the_user: >-
+    Seen while validating D09.2, PRE-DATING that restart and unrelated to it:
+      22:19:35  [notifications] deliverer._transport: send failed after retry
+      22:19:35  [deliver] stream-miss: proactive fallback did NOT deliver —
+                the answer has not reached the user
+    Plus a retry_queue_store.mark_attempt_failed "row not found" at 22:11:41.
+    This is the ONE LOOP contract's core promise failing — "a task is complete when
+    its outcome reached its DESTINATION". Recorded here rather than folded into
+    D09.2, and NOT investigated in this pass because it belongs to the delivery
+    path, not to skill learning. Worth picking up next: it is a user-facing loss,
+    not a metric.
   ESC_70_NOT_DONE_the_premise_EXPIRED_DURING_TODAY_2026_08_30:
     what_was_authorised: "Bakir: RAISE THE CAP AND MEASURE."
     why_I_did_not_do_it: >-
@@ -11832,11 +11843,11 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
     doc: "docs/reference-mapping/designs/D09.2.md"
     doc_last_verified: null
     decisions: []
@@ -11921,6 +11932,69 @@ items:
           rather than the failure ("was too verbose"). That is a real distinction
           and it is Bakir's to confirm, not mine to assume.
         blocked_until_answered: "architect onward. Brainstorm is done and stands on its own measurement."
+    IMPLEMENT_TEST_VALIDATE_2026_08_30:
+      the_cost_decision: >-
+        The correction rides on the EXISTING rollover call as one more JSON field.
+        The transcript is already being sent, so it costs OUTPUT TOKENS ONLY and no
+        extra API call — against roughly 43 additional standard-tier calls a day
+        had it been a separate review. Given the standing concern about burning
+        tokens that was not close.
+      the_summary_cannot_regress: >-
+        The field is optional by construction: _parse_summary reads its own key and
+        never looks at `correction`. Pinned by
+        test_a_MALFORMED_correction_cannot_cost_the_summary. 273 staged summaries
+        sit behind that path and were not put at risk to add a second feature.
+      positive_framing_is_ENFORCED_by_the_prompt: >-
+        "write the CORRECTED BEHAVIOUR as a short instruction to your future self,
+        in the imperative — never a description of what went wrong", with worked
+        good/bad examples. That is Bakir's condition from ESC-71 and it is pinned
+        by a test, not left to the model's discretion.
+      blast_radius_deliberately_SMALL: >-
+        Written to the OWL, never to the global user profile, and `until_changed`
+        rather than `permanent`. A model-generated instruction entering every
+        prompt of every owl forever is more reach than anyone approved; scoped to
+        the owl that was corrected it is as wide as the conversation that produced
+        it. A conversation with no owl writes NOTHING and warns — it does not fall
+        back to the global profile.
+      never_fails_the_rollover: "The whole path is wrapped: a DB or store failure logs and returns False, because it runs AFTER the summary is staged and a learning extra must not turn a successful rollover into a failed job."
+      MUTATIONS_and_the_one_that_caught_ME: >-
+        M11 unwires the call from execute(). It did NOT kill anything at first —
+        all 11 tests called _record_correction directly, so I had reproduced this
+        programme's most repeated defect (correct but unreached) in my own change.
+        Wrote test_execute_ACTUALLY_CALLS_the_correction_path, which drives the
+        real execute() with its neighbours stubbed; M11 now kills exactly that.
+        M12 removes the field from the PROMPT. It killed nothing either — and that
+        matters more, because a template edit would silently disable the feature
+        while every parse returned None, indistinguishable from "no session had a
+        correction". The template is the interface, so it is now pinned like one.
+        NOTE ON M12: my first attempt did not kill the new test either, because the
+        template names the field TWICE and I mutated one. The mutation was too
+        weak, not the test — checked before believing it.
+      tests: "13 in tests/memory/test_correction_becomes_a_standing_instruction.py; tests/memory 498 passed."
+      A_MEASUREMENT_THAT_FELL_OUT: "tests/memory ran in 78s. D08.4 recorded it at 1,130s on 2026-08-22. That is DEBT-38's migration-template fix, measured incidentally on an unrelated suite."
+      gates: "ruff 37, mypy 65 — both at baseline."
+      validate: >-
+        RESTARTED: core pid 508156 at 17:21:35 local, last src write 17:18:14 —
+        three minutes earlier, so the change is live.
+        FOUR ERRORS in the window are all PRE-RESTART (22:11 and 22:19 UTC vs a
+        22:21:35 boot) and none are mine: a retry_queue row-not-found, and a
+        notification delivery failure ending "the answer has not reached the user".
+        That last one is a real user-facing defect and is recorded in
+        current.UNRELATED_FINDING rather than folded into this item.
+        OPEN, with its query: "[memory] rollover_summary.correction" reads 0
+        because no conversation has rolled over since the restart. Rollovers ran
+        ~43/day historically, so this should close on its own within hours. NO
+        OPPORTUNITY, not success.
+      CLOSING_QUERY: >-
+        grep '"msg": "[memory] rollover_summary.correction: standing instruction'
+        ~/.stackowl/logs/stackowl.jsonl — each hit carries owl + the instruction.
+        The REFUSED twin is equally informative: a correction rejected by curated
+        memory's capacity rules means the owl's budget is full, not that the
+        feature failed.
+        And the falsifier: if hits appear whose `instruction` describes what went
+        wrong rather than what to do instead, the positive-framing instruction is
+        not holding and the prompt needs strengthening — that is the failure mode
+        Bakir's condition exists to prevent, and it is visible in the field.
   - id: D09.3
     title: "Skill curator"
     domain: D09
