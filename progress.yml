@@ -11967,10 +11967,10 @@ items:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
-      document: partial
+      validate: done      # closing query run verbatim 2026-08-30; PASS conditions met
+      document: done      # live-invocation check probed; /learn genuinely never invoked
     doc: docs/reference-mapping/designs/D09.5.md
-    doc_last_verified: null
+    doc_last_verified: "2026-08-30 against 04e63271 — both paths fired and observed"
     decisions: []
     changes: []
     BRAINSTORM_CLOSED_2026_08_23: >-
@@ -12138,6 +12138,53 @@ items:
       advisory downgrade 04:55. ZERO refusals of any class since. Five learned skills are now
       in the corpus, one of which (incident_shell_unachieved_effect) produced an ADVISORY
       instead of a refusal — the exact case that used to block a write.
+    CLOSED_2026_08_30_7_of_7:
+      validate_closes_on_the_query_the_item_wrote_for_itself: >-
+        The item's own closing query was run verbatim earlier today: skip warning
+        ("the tool registry named no tools") = 0 across every retained log, which
+        is the condition it said must hold; agent:synthesizer creates in
+        skill_audit = 111, meeting the PASS condition. Refusals are 62 all-time
+        and none since the two fixes went live. The falsifier fired and was
+        under-specified — "same reason STRING" was treated as implying "same root
+        CAUSE" and there were two — which is recorded above rather than smoothed.
+      document_closes_by_probe_the_D08_4_precedent: >-
+        The one open check was "the live invocation". `/learn` has NEVER been
+        invoked: the pre-existing INFO line `[skills] learn: prompt built`
+        (learn_prompt.py:102) reads ZERO across every retained log. So it is a
+        genuine 0-over-0, and both paths were fired directly instead — the real
+        path and the fallback — and their lines observed.
+      A_CORRECTION_TO_MY_OWN_FRAMING_MID_ITEM: >-
+        I first concluded the check was UNCLOSABLE because learn_command.py is 56
+        lines with no logger — the D08.1 trap. That was wrong: an instrument
+        already existed one module over, in build_learn_prompt, and it reads 0
+        because the command has genuinely never been used. Not a missing
+        instrument; an unused feature. Third time today that checking one level
+        deeper reversed my own framing.
+      what_the_change_IS_worth: >-
+        The pre-existing line fires on BOTH paths, so it could not distinguish a
+        healthy invocation from a surface that ignored the turn-prompt seam and
+        showed the user instructions instead. `/learn` now logs INFO on the real
+        path and WARNING on the fallback, naming why the fallback is a degraded
+        outcome. That distinction did not exist before and is the actual defect
+        this pass fixed.
+      a_bug_I_introduced_and_the_EXISTING_test_caught: >-
+        My first version read state.session_key and state.channel directly.
+        test_handle_degrades_HONESTLY passes state=None ON PURPOSE, and it failed
+        immediately. The fallback exists BECAUSE the surface misbehaved, so its own
+        logging raising would turn "degraded but honest" into "broken" — the exact
+        opposite of the path's stated purpose. Now getattr with defaults, and
+        pinned by test_the_fallback_survives_a_state_of_None.
+        Note also that a bare `import` check had passed a version with TWO handle
+        definitions, where Python silently takes the last — the un-logged one. An
+        import success proves nothing; ast.parse plus a method-name assert caught it.
+      verified: "10 tests in tests/commands/test_learn_command.py, 391 across tests/commands + learn_prompt. ruff 37, mypy 65 — both at baseline."
+      CLOSING_QUERY: >-
+        grep '"msg": "[commands] learn: invoked' ~/.stackowl/logs/stackowl*.jsonl
+        — 0 today, which is NO OPPORTUNITY, not failure. And the one that matters
+        more if it ever appears:
+        grep '"msg": "[commands] learn: FALLBACK' — any hit means a surface is
+        ignoring the turn-prompt seam and users are getting instructions instead
+        of learned skills. Must stay 0.
   - id: D09.6
     title: "Learning made visible"
     domain: D09

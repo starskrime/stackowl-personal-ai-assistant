@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.metadata import CommandMeta, Example
+from stackowl.infra.observability import log
 from stackowl.pipeline.state import PipelineState
 from stackowl.skills.learn_prompt import build_learn_prompt
 
@@ -42,8 +43,25 @@ class LearnCommand(SlashCommand):
         )
 
     def build_turn_prompt(self, args: str) -> str | None:
-        """Always a turn prompt — that is the whole point of this command."""
-        return build_learn_prompt(args)
+        """Always a turn prompt — that is the whole point of this command.
+
+        LOGGED AT INFO, and that is the point of the line (D09.5, 2026-08-30).
+        This command previously emitted NOTHING — 56 lines with no logger — while
+        its own acceptance check was "the live invocation". A check whose evidence
+        does not exist could never close, which is the trap D08.1 already paid for
+        once. `/learn` is a PROMPT-ONLY command, so there is no downstream
+        artefact that says it ran either: this line is the only possible evidence.
+        """
+        prompt = build_learn_prompt(args)
+        log.skills.info(
+            "[commands] learn: invoked — turn prompt built",
+            extra={"_fields": {
+                "has_args": bool(args.strip()),
+                "args_chars": len(args),
+                "prompt_chars": len(prompt or ""),
+            }},
+        )
+        return prompt
 
     async def handle(self, args: str, state: PipelineState) -> str:
         """Fallback for a surface that does not honour the turn-prompt seam.
@@ -52,5 +70,24 @@ class LearnCommand(SlashCommand):
         user sees precisely what would have been run and can paste it. Silently
         returning "ok" would claim work that never happened, which is the failure
         this codebase's honesty rules exist to prevent.
+
+        WARNING, not info: reaching here means a SURFACE did not honour the
+        turn-prompt seam, so the user got instructions instead of a learned skill.
+        That is a degraded outcome worth noticing, and without this line the two
+        paths were indistinguishable in production — `/learn` would look invoked
+        either way.
         """
+        log.skills.warning(
+            "[commands] learn: FALLBACK — this surface ignored the turn-prompt "
+            "seam, so the user is being shown the instruction instead of running it",
+            # getattr, not attribute access: this path exists BECAUSE the
+            # surface misbehaved, and test_handle_degrades_HONESTLY passes
+            # state=None on purpose to pin that. Raising here would turn "degraded
+            # but honest" into "broken", which is the opposite of the point.
+            extra={"_fields": {
+                "has_args": bool(args.strip()),
+                "session_key": getattr(state, "session_key", None),
+                "channel": getattr(state, "channel", None),
+            }},
+        )
         return build_learn_prompt(args)
