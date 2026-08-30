@@ -383,12 +383,35 @@ current:
       HONEST LIMIT: two turns in ONE conversation is not a concurrency test — the bug needs
       two conversations interleaving. That case is covered by the unit test, not by this
       observation. What production shows is no regression.
-    STILL_UNEXPLAINED_and_not_chased: >-
-      `skills` changes 22 times. The skill catalogue is supposed to be session-stable.
-      Recorded so it is not lost.
+    THE_skills_HALF_IS_FIXED_2026_08_30_commit_563a1d1a: >-
+      22 of the 259 named `skills`, and 15 of those fell inside ONE 50-minute window on
+      2026-08-26 across many short-lived recovery and objective sessions — exactly when
+      skills were executing heavily. That is the tell.
+      THE CAUSE IS A MUTABLE SORT INPUT: `catalogue_order_key` is
+      (-n_executions, lifecycle_rank, name), and n_executions increments every time a skill
+      RUNS. Running a skill reorders the catalogue, the block changes bytes, and every live
+      session loses its cached prefix.
+      THE EXISTING ARGUMENT HAS A PRECISE GAP. Both the key and its caller argue Law 1 is
+      safe because the key is "equally deterministic and ... TOTAL ... so the rendered block
+      can never depend on the order SQLite happened to return rows in". That proves
+      independence from ROW ORDER; it does not prove stability over TIME, because an INPUT
+      changes. DETERMINISTIC IS NOT STABLE — a pure function of mutable state still moves
+      when the state moves. The code was careful about the wrong axis.
+      Frozen per incarnation, borrowing the shape `profile` already uses in the same file,
+      with the same accepted tradeoff (a new skill reaches the prompt on the next /new).
+      ESC-44 untouched: still ordered by measured value, just sampled once per incarnation.
+      KEYED ON (incarnation, OWL) — the first version keyed on the lane alone and the SUITE
+      caught it where isolation passed: D01.6 records that a lane can run several owls (the
+      staged RCA drives three against one incident lane) and each must have its own prompt.
+      LIVE: core restarted 03:55:25 (pid 424892), clean boot, 721 lines, ZERO errors; three
+      turns in one session produced skills_len 4,150 unchanged and ZERO cache invalidations
+      of any part.
+      HONEST LIMIT: same as the profile fix — turns within ONE conversation do not exercise
+      the concurrent case, which is covered by unit tests rather than by this observation.
     blocked_until_answered: >-
-      Nothing. D05.4's stale claim is corrected regardless, and the `profile` half is already
-      fixed — what awaits Bakir is only the `stable_context` tradeoff (203 of the 259).
+      Nothing. Both BUG halves are now fixed — `profile` (89) in f63f0302 and `skills` (22)
+      in 563a1d1a. What awaits Bakir is only the `stable_context` tradeoff (203 of the 259),
+      which is a design decision rather than a defect.
   THE_ARC_MEASURED_2026_08_30:
     status: >-
       No code change this item — a VALIDATION pass that closed three open checks and left the
