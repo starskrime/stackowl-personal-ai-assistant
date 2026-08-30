@@ -356,6 +356,17 @@ current:
         ~/.stackowl/logs/stackowl.jsonl — expect one per (conversation, owl), and
         'prompt part CHANGED' naming stable_context should now be rare rather than
         the largest bucket.
+    test_record_2026_08_30: >-
+      67 passed across every module the BoundedMRU migration touched, run together:
+      curated profile snapshot, prompt-carries-curated-memory, catalogue freeze,
+      tool-usage ordering, the new primitive, the new stable_context snapshot and
+      the re-keyed cache audit. Plus 63 in the curated slice on its own.
+      STATED HONESTLY: an earlier attempt to run tests/memory/ + tests/skills/ as
+      whole directories was KILLED at 82% by its own timeout and produced no
+      summary line — no failures were visible, but a truncated run is not a green
+      run and is not being counted as one. Same class as DEBT-38: these
+      directories are too slow to gate on directly, so the modules were targeted
+      instead and the full tests/memory/ sweep left running separately.
     STILL_OPEN_for_Bakir: "ESC-63 (shorten when_to_use), ESC-64 (bound background spend), ESC-66 (RCA re-diagnosis suppression), D10.6 re-verdict, DEBT-38 (tests/skills at 13m53s), and now whether to clear the 222 inert rollover blobs."
 
 waves:
