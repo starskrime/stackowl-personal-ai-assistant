@@ -93,6 +93,17 @@ the instrument rather than the system.
 **Count incidents, not log lines.** "19 database-is-locked events" was 19 LINES; one
 contention moment emits four.
 
+**Print the real shape before you filter it.** Seven times in one session a search
+returned a confident wrong answer because it matched something other than the thing:
+`discover` is a MODE of `session_search`, not a tool, so "0 invocations" was reported
+for something with 9; the cost fields are `mode`/`turns`, not `action`/`rows`, so
+"no instrument exists" was reported about a perfectly good INFO line; a scan of
+`subscribe("literal")` nearly recorded "the budget-alert path is dead" when the
+bridge subscribes three events in a LOOP. **A grep returning zero proves the pattern
+did not match. It does not prove the thing is absent** — and this codebase wires
+things dynamically, so static reads of it are wrong by construction. Dump one raw
+record, or the whole field list, before believing any count built from a guess.
+
 **Sweep EVERY engine before claiming silence.** Parking `tasks` looked like it
 stopped a runaway; `retry_queue` and `objective_subgoals` were still armed and the
 user was still being messaged hours later.

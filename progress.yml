@@ -315,6 +315,32 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D01_1_AUDITED_and_its_LESSON_PROMOTED_to_CLAUDE_MD_2026_08_30:
+    status: >-
+      D01.1 audited: dead-code claims HOLD, opening gap UNMEASURABLE. Its recorded lesson is
+      now in CLAUDE.md, which is the more valuable half.
+    the_item: >-
+      Every superseded symbol is gone (_GLOBAL_CATALOG_K, operational_adapter,
+      build_base_prompt, build_base_prompt_now — 0 refs each). The opening gap ("Zero prefix
+      reuse") cannot be re-measured: D01.6 established live that this backend reports no cache
+      statistics, so prefix reuse is unobservable. The prompt IS measurably more stable than
+      this morning (ESC-67's profile and skills halves fixed), but the BENEFIT is invisible.
+    THE_LESSON_and_why_promoting_it_is_the_point: >-
+      D01.1 already recorded: "A grep returning zero hits proves a symbol is unreferenced, NOT
+      that a capability is unwanted." It sat in one item's notes, and I re-derived the same
+      failure SEVEN times today without ever having read it:
+        `discover` searched as a TOOL when it is a MODE of session_search — "0 invocations"
+          reported for something with 9;
+        cost fields guessed as action/rows when they are mode/turns — "no instrument exists"
+          reported about a perfectly good INFO line;
+        `subscribe("literal")` scanned statically — nearly recorded "the budget-alert path is
+          dead" when the bridge subscribes three events in a LOOP;
+        plus a timestamp field guessed as `timestamp` when it is `ts`, a refusal grep that
+          matched an ADVISORY line, and a risk-set count inflated 69 vs 16 by escalation prose.
+      A lesson in an item's notes is not a lesson the next person meets. It is now in
+      CLAUDE.md's measuring section: "Print the real shape before you filter it."
+      This is the same promotion path the file itself describes — "Add a line only when it has
+      been earned". Seven instances in one session is earned.
   D01_7_AUDITED_a_claim_can_rot_BOTH_ways_2026_08_30:
     status: >-
       Fifth audited item of the ranking. Two claims rotted in OPPOSITE directions, which is a
@@ -14085,7 +14111,31 @@ items:
       cannot fail is worse than no assertion: the intent-class equality test
       passed for a whole slice while the regression in DEBT-24 was live,
       because its harness registered no tool_registry.
-
+    AUDITED_2026_08_30_dead_code_claims_HOLD_the_gap_is_UNMEASURABLE: >-
+      Fifth on claim_check's ranking. Its DEAD-CODE claims all hold — every superseded symbol
+      is genuinely gone from src/: `_GLOBAL_CATALOG_K` 0 refs, `operational_adapter` 0,
+      `build_base_prompt` 0, `build_base_prompt_now` 0. The cleanup landed and stayed.
+      ITS OPENING GAP CANNOT BE RE-MEASURED: "Zero prefix reuse. Every turn pays full input
+      price on a prompt that is mostly identical." Whether prefix reuse now happens is exactly
+      what D01.6 established we CANNOT SEE — the backend reports no cache statistics
+      (source='not_reported', live). So the gap that opened this item is neither confirmed nor
+      refuted on the current provider, and the verdict CONFLICT should be read with that in
+      mind rather than as a settled measurement.
+      WHAT IS KNOWN about prefix stability comes from the other side: ESC-67 measured 259
+      cached-prefix invalidations, of which the `profile` (89) and `skills` (22) halves were
+      BUGS and are fixed; `stable_context` (203) is a design tradeoff awaiting Bakir. So the
+      prompt is measurably MORE stable than it was this morning, while the cache BENEFIT
+      remains unobservable here.
+      CLOSING QUERY: (1) the dead symbols must stay at 0 refs in src/; (2) for the gap itself,
+      grep '"msg": "[cost_tracker] record: cache stats source' and look for source='reported'
+      — until that appears, this item's premise is unmeasurable rather than true or false.
+    ITS_OWN_LESSON_IS_NOW_IN_CLAUDE_MD: >-
+      This item recorded: "A grep returning zero hits proves a symbol is unreferenced, NOT
+      that a capability is unwanted." I re-derived that failure mode independently SEVEN times
+      today in seven disguises, which is the strongest possible argument that it belonged in
+      the file everyone reads rather than in one item's notes. Added to CLAUDE.md's measuring
+      section as "Print the real shape before you filter it", with the three sharpest live
+      instances.
   - id: D01.2
     title: "Prompt-cache breakpoints"
     domain: D01
