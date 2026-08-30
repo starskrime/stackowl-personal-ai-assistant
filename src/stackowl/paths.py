@@ -144,8 +144,13 @@ class StackowlHome:
         INSTALLATION depended on the location: every writer resolves through this
         method and writes directly, never through write_file's guard.
 
-        Verified by :func:`skills_dir_is_outside_workspace`, which the startup
-        path asserts — see its docstring for the STACKOWL_DATA_DIR edge case.
+        Verified by :func:`skills_dir_is_outside_workspace`, which
+        :meth:`ensure_exists` logs on every boot (INFO when healthy, ERROR when
+        not) and which ``SkillLoader._load_tools`` consults before executing any
+        skill tool module — so an overlap is both reported AND fenced. That
+        wiring landed 2026-08-30; between 08-03 and then this sentence was
+        aspirational and nothing called the function. See its docstring for the
+        STACKOWL_DATA_DIR edge case.
         """
         return cls.home() / "skills"
 
@@ -287,6 +292,36 @@ class StackowlHome:
         # downloads migration because this is the one place every process calls
         # on the way up.
         migrate_legacy_skills()
+        # D05.1 (wired 2026-08-30) — ASSERT the security property, do not assume
+        # it. skills_dir_is_outside_workspace() shipped on 2026-08-03 as "the
+        # security property expressed as something checkable rather than as a
+        # comment", and its own docstring said "the startup path asserts" it.
+        # Nothing called it: measured 2026-08-30, its only references in src/ were
+        # that docstring and __all__. A checkable invariant nobody checks IS a
+        # comment. It is checked here because ensure_exists() is, in this class's
+        # own words, "the one place every process calls on the way up".
+        #
+        # Logged at INFO on the healthy path deliberately: production runs at INFO,
+        # and an invariant that only speaks when it is broken cannot be confirmed
+        # to have run at all.
+        from stackowl.infra.observability import log
+        if skills_dir_is_outside_workspace():
+            log.startup.info(
+                "[paths] ensure_exists: skills tree is outside the model-writable "
+                "workspace",
+                extra={"_fields": {"skills_dir": str(cls.skills_dir()),
+                                   "workspace": str(cls.workspace())}},
+            )
+        else:
+            log.startup.error(
+                "[paths] ensure_exists: SKILLS TREE IS INSIDE THE MODEL-WRITABLE "
+                "WORKSPACE — code written by a tool would execute at the next "
+                "start; skill tool modules will NOT be executed while this holds",
+                extra={"_fields": {"skills_dir": str(cls.skills_dir()),
+                                   "workspace": str(cls.workspace()),
+                                   "remediation": "unset or move STACKOWL_DATA_DIR "
+                                                  "so it does not contain ~/.stackowl/skills"}},
+            )
 
     @classmethod
     def migrate_legacy_downloads(cls) -> None:

@@ -439,6 +439,21 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-38
+    date: 2026-08-30
+    title: "tests/skills takes ~13 minutes and gates every skills-touching item"
+    measured: >-
+      433 tests in 806s on this box, while tests/skills/test_instruction_injector.py
+      runs 14 of them in 0.17s. So the cost is concentrated, not spread. Every item
+      that touches the injector, the loader or the catalogue pays this wall before
+      it can be called green — it cost two full waits during D05.1 alone.
+    what_is_NOT_yet_measured: >-
+      WHICH files dominate. 8 files under tests/skills reference embeddings /
+      lancedb / kuzu, which is the obvious suspect, but that is a hypothesis and
+      not a measurement — naming the culprits needs `pytest tests/skills/
+      --durations=20` on a quiet box. Recorded as a suspicion explicitly labelled
+      as one, rather than as a diagnosis.
+    why_not_fixed_here: "Out of D05.1's scope, and guessing at it would be exactly the over-narrow-filter mistake this programme keeps paying for."
   - id: PHASE1-2026-08-29-sqlite-contention-MEASURED-not-engineered
     found: 2026-08-29
     what: >
@@ -8758,7 +8773,85 @@ items:
         declined_dynamic_schema_overrides: "The map's headline ask. Declined on the grounds of D05.2's shipped work, not taste: it makes a description a function of live config, which is the instability D05.2 removed. Measured — delegate_task, the tool the reference platform rewrites dynamically, has a generic description here with no limits in it."
     changes: []
     notes: null
-
+    AUDIT_2026_08_30_three_claims_HOLD_and_the_invariant_was_a_COMMENT:
+      claim_the_exec_hole_is_unexercised_HOLDS: >-
+        "420 skills on disk, ZERO ship a tools/*.py" — the denominator has moved
+        (Bakir purged the learned corpus on 2026-08-29; the tree now holds 21
+        SKILL.md) but the numerator has not: still ZERO tools/*.py anywhere under
+        the skills tree. The exec capability still has no users.
+      claim_the_relocation_closed_the_hole_HOLDS: >-
+        Re-ran D05.1's own probe. resolve_in_workspace("skills/evil/tools/pwn.py")
+        now lands at ~/.stackowl/workspace/skills/evil/tools/pwn.py, and
+        skills_dir() is ~/.stackowl/skills — write_file can no longer reach the
+        tree the loader executes. skills_dir_is_outside_workspace() returns True.
+      claim_77_tools_HOLDS: "ToolRegistry.with_defaults() still registers exactly 77. NOT to be confused with the 79 PRESENTED tools measured this session — presentation and registration are different denominators."
+      THE_DEFECT_a_security_invariant_that_nobody_called: >-
+        skills_dir_is_outside_workspace() shipped 2026-08-03 described as "the
+        security property this item exists to establish, expressed as something
+        CHECKABLE rather than as a comment", and skills_dir()'s docstring stated
+        "Verified by skills_dir_is_outside_workspace, which the startup path
+        asserts". MEASURED 2026-08-30: its only references in src/ were that
+        docstring and __all__. NOTHING CALLED IT. The function was correct,
+        tested, and inert — so the property was, exactly, a comment.
+        This matters because the function encodes a case that is otherwise
+        invisible: STACKOWL_DATA_DIR moves workspace() but NOT home(), so
+        STACKOWL_DATA_DIR=~/.stackowl silently makes workspace the PARENT of the
+        skills tree and restores arbitrary-code-execution-at-boot. Nothing would
+        have noticed. Shape 5 in CLAUDE.md, on a security property.
+    FIX_2026_08_30_an_alarm_AND_an_actuator:
+      alarm: >-
+        StackowlHome.ensure_exists() now logs the invariant every boot — INFO on
+        the healthy path, ERROR with remediation when the trees overlap. INFO on
+        SUCCESS is deliberate: production runs at INFO, and an invariant that
+        speaks only when broken can never be confirmed to have run. Placed in
+        ensure_exists() because that method's own comment already calls it "the
+        one place every process calls on the way up".
+      actuator: >-
+        SkillLoader._load_tools() now REFUSES to exec_module() any skill tool
+        module while the invariant is false. Reporting a hole does not close it —
+        CLAUDE.md's guide star is "build the actuator, don't file the debt". Ships
+        ON; it is a no-op in every normal configuration.
+      mutations: >-
+        M8 unwires the loader actuator -> only
+        test_the_loader_REFUSES_to_exec_when_the_trees_overlap dies. M9 unwires
+        the boot check -> only test_boot_reports_the_invariant_on_the_HEALTHY_path
+        dies. One mutation, one test, no overlap.
+      the_counterweight: >-
+        test_the_loader_still_execs_on_the_healthy_path writes a real .py that
+        touches a marker file on import and asserts the marker EXISTS. A fence
+        that always refuses is not a fence, it is an outage — and the 0-of-21
+        denominator means nothing else would have caught it.
+    CLOSING_QUERY: >-
+      grep '"msg": "[paths] ensure_exists: skills tree is outside the model-writable'
+      ~/.stackowl/logs/stackowl.jsonl — present every boot means the invariant is
+      actually being checked. Its absence means the wiring was lost again, which is
+      the exact failure this audit found. The ERROR twin
+      ("SKILLS TREE IS INSIDE") must stay at zero.
+      Re-measure the other three claims with: count of tools/*.py under
+      StackowlHome.skills_dir() (must stay 0), resolve_in_workspace on a
+      skills/ path (must land under workspace, not skills_dir), and
+      len(ToolRegistry.with_defaults()) (77).
+    validate_result_2026_08_30:
+      restart: "./start.sh (pid 450575). 0 ERROR/CRITICAL in the boot window."
+      PROVEN_LIVE:
+        the_alarm_fires: >-
+          '[paths] ensure_exists: skills tree is outside the model-writable workspace'
+          at 2026-08-30T15:33:45 INFO, carrying skills_dir=/home/boss/.stackowl/skills
+          and workspace=/home/boss/.stackowl/workspace. The acceptance check that
+          could not be closed before this change now closes on a log grep.
+        the_error_twin_is_silent: "'SKILLS TREE IS INSIDE' count 0, and 'REFUSING to execute skill tool modules' count 0 — the healthy path, as expected."
+        the_loader_still_loads: "[skills] loader.load_all: exit {loaded_count: 20, by_source: {builtin: 14, learned: 6}} in BOTH processes. The fence did not become an outage."
+      AN_ASYMMETRY_WORTH_RECORDING: >-
+        The invariant line appears ONCE per platform start, while
+        loader.load_all appears TWICE (gateway and core) and
+        registry.with_defaults 11 times. So only one process runs ensure_exists().
+        That is not a gap — the ACTUATOR lives inside SkillLoader._load_tools, which
+        is core-side and consults the invariant directly, so enforcement does not
+        depend on which process logged. Recorded because a future reader counting
+        two loader lines against one invariant line would reasonably suspect the
+        check had been skipped, and it has not.
+      suites_green: "444 passed in 833s across tests/skills/ + tests/paths/ + tests/tools/test_discovery.py + tests/owls/test_prompt_tiers.py — including the two that were RED at HEAD. ruff 37, mypy 65, both at baseline."
+      A_LOOSE_END_NOT_CHASED: "21 SKILL.md on disk, 20 loaded. One skill is not loading. Out of scope here; noted so the discrepancy is not mistaken for the fence dropping something — the refusal counter is 0."
   - id: D05.2
     title: "Toolsets"
     domain: D05
@@ -12425,7 +12518,76 @@ items:
       after it was written. What SURVIVES from it is the CONSTRAINT, and it still binds:
       any reader must score WITHOUT putting per-query work back into the turn path, because
       that is precisely what D01.1 removed to win the byte-identical frozen prompt.
-
+    STAGE_1_SHIPPED_2026_08_30_because_its_tests_were_RED:
+      how_it_surfaced: >-
+        Not planned. Running tests/skills/ during D05.1's audit turned up two
+        failures in test_the_catalogue_wastes_no_budget_on_markup.py. Confirmed
+        PRE-EXISTING by checking out HEAD into a worktree (git stash is banned on
+        this box) — they fail there too. They are D10.6 Stage 1's TDD spec,
+        written and never implemented: red BY DESIGN, not a regression. The
+        standing rule is that a red test is fixed and reported, never filed as
+        debt, so it was fixed.
+      what_changed:
+        the_repeated_verb: >-
+          Every entry carried a trailing "(skill_view <name>)" while the section
+          header directly above already reads "call skill_view <name> to load
+          before using". Each entry was repeating its own heading at 14+len(name)
+          chars. The verb is still stated — once, where it belongs.
+        the_repeated_fence: >-
+          ~70 chars of identical attributes per entry
+          (<skill_reference name=... source=... trust="untrusted">) collapsed to
+          ONE fence around each CONTIGUOUS RUN of untrusted entries. Contiguous
+          rather than "all untrusted grouped together" so relevance ORDER is
+          preserved exactly — grouping by trust would have silently reordered the
+          catalogue by something other than score.
+        no_information_lost: "The untrusted line keeps BOTH name and source inline, so only the repeated attributes go. The trust boundary is still declared."
+      why_the_block_fence_is_SAFE_not_just_smaller: >-
+        prompt_safety.neutralize strips `<`, `>` and `"` outright and collapses ALL
+        whitespace to single spaces. A body therefore cannot close a fence at
+        either granularity, and cannot forge a newline to fake a neighbouring
+        entry. The per-entry wrapper was providing DELIMITATION, not DEFENCE.
+        _PER_SKILL_NEUTRALIZE_CAP deliberately untouched.
+      cleanup: "_render_untrusted, _full_block and _summary_block had zero remaining callers after the change. The first was removed rather than left as a write with no reader; the other two were replaced by _entry()."
+      A_REGRESSION_I_CAUSED_AND_THE_SUITE_CAUGHT: >-
+        Removing the per-entry verb deleted it from the prompt ENTIRELY on any
+        render where everything fits the ACTIVE tier — there is no AVAILABLE
+        header on those, so the only remaining copy of "skill_view" disappeared and
+        the model would have seen skills with no way to load one. Caught by
+        test_total_cap_lists_overflow_by_name, which asserts the verb is present
+        rather than asserting where it lives.
+        FIXED AT THE ROOT: the verb now lives in _STANDING, the one fragment
+        emitted on EVERY render, and was taken OUT of _AVAILABLE_HEADER. Still
+        stated exactly once, now unconditionally. Putting it in a second section
+        header would have been the same bug waiting for a third section.
+      budget_accounting_kept_honest: "The fence is charged ONCE per section rather than once per entry, so `used` still reflects what is actually emitted instead of quietly under-counting."
+      WHAT_THIS_DOES_NOT_TOUCH: >-
+        ESC-63 (shortening when_to_use, median 234 chars and the real cost driver)
+        is untouched and still the operator's call — it trades breadth for depth,
+        and the acceptance metric is LOAD RATE, so cutting the "when" signal could
+        lower loads while raising visibility.
+      MEASURED_ON_THE_LIVE_CORPUS_and_it_beat_my_own_estimate: >-
+        Rendered the REAL 21-skill tree (14 builtin / 7 learned) at the real
+        cap=4000, before and after, by checking HEAD out into a worktree rather
+        than estimating the delta:
+          BEFORE: 4165 chars, 18 entries, "skill injection: catalog truncated by
+                  budget", trust= x4, skill_view x20
+          AFTER : 3577 chars, ALL 21 entries, no truncation, trust= x1, skill_view x1
+        588 chars saved is the small part. The important part is that the OLD
+        renderer was TRUNCATING the catalogue at 21 skills — three skills were
+        invisible to the model purely because the markup around them did not fit.
+        The repetition was not merely wasteful, it was costing capability at the
+        CURRENT corpus size.
+      I_HAD_WRITTEN_THE_OPPOSITE_a_paragraph_earlier: >-
+        Before measuring I recorded that "the SIZE of its win is now small" because
+        the 179-skill premise is void. That was an estimate and it was wrong: the
+        win at 21 skills is three recovered skills, not a rounding error. Left
+        visible rather than edited away — it is a clean example of why this
+        programme measures before it concludes.
+      AND_THE_PREMISE_IS_STILL_VOID: >-
+        D10.6's headline measurement — "of 179 enabled skills, 16 reach the prompt
+        and 163 are dropped on 95.5% of assemblies" — died when Bakir purged the
+        learned corpus on 2026-08-29. Stage 1 stands on its own at any corpus size,
+        but D10.6's overall re-verdict remains an open question for Bakir.
   - id: D10.7
     title: "Skill ownership per persona"
     domain: D10

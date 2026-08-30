@@ -34,6 +34,7 @@ import yaml
 
 from stackowl.exceptions import ToolRegistrationError
 from stackowl.infra.observability import log
+from stackowl.paths import skills_dir_is_outside_workspace
 from stackowl.skills.manifest import SkillManifest, SkillSource
 from stackowl.skills.skill_md import SkillMarkdownError, parse_skill_md
 from stackowl.tools.base import Tool
@@ -282,6 +283,21 @@ class SkillLoader:
             extra={"_fields": {"dir": str(tools_dir), "source": source_name}},
         )
         if self._tool_registry is None:
+            return ()
+        # D05.1 (the actuator, 2026-08-30) — REFUSE to exec model-reachable Python
+        # while the skills tree sits inside the workspace write_file can write to.
+        # The boot check in paths.ensure_exists() only reports; this is what
+        # actually stops the arbitrary-execution chain it warns about, so the
+        # property is enforced rather than merely observed. Normally a no-op: the
+        # two trees are siblings under ~/.stackowl, and the check exists for the
+        # STACKOWL_DATA_DIR case that would silently make workspace the parent.
+        if not skills_dir_is_outside_workspace():
+            log.skills.error(
+                "[skills] loader._load_tools: REFUSING to execute skill tool "
+                "modules — the skills tree is inside the model-writable workspace",
+                extra={"_fields": {"dir": str(tools_dir), "source": source_name,
+                                   "skipped": len(list(tools_dir.glob("*.py")))}},
+            )
             return ()
         names: list[str] = []
         for py_file in sorted(tools_dir.glob("*.py")):

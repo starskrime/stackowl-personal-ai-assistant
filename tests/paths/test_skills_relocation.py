@@ -131,3 +131,90 @@ def test_migration_is_idempotent(home):
 def test_migration_is_a_noop_without_a_legacy_tree(home):
     migrate_legacy_skills()
     assert not (StackowlHome.workspace() / "skills").exists()
+
+
+# --------------------------------------------------------------------------- #
+# D05.1 (2026-08-30) — the invariant is now CHECKED and ENFORCED, not just
+# checkable. It shipped on 2026-08-03 with a docstring claiming "the startup path
+# asserts" it; measured 2026-08-30, its only references in src/ were that
+# docstring and __all__. Nothing called it. These tests fail if that recurs.
+# --------------------------------------------------------------------------- #
+
+
+def test_boot_reports_the_invariant_on_the_HEALTHY_path(home, caplog):
+    """INFO on success, not only on failure.
+
+    Production runs at INFO, and an invariant that speaks only when broken can
+    never be confirmed to have run — the D08.1 trap, where the sole evidence line
+    was DEBUG and no volume of traffic could close the check.
+    """
+    import logging
+
+    with caplog.at_level(logging.INFO):
+        StackowlHome.ensure_exists()
+
+    assert any(
+        "skills tree is outside the model-writable workspace" in r.message
+        for r in caplog.records
+    ), "the healthy path must leave evidence that the check actually ran"
+
+
+def test_boot_SHOUTS_when_the_trees_overlap(home, monkeypatch, caplog):
+    """The pathological STACKOWL_DATA_DIR must produce an ERROR, not silence."""
+    import logging
+
+    monkeypatch.setenv("STACKOWL_DATA_DIR", str(home))
+    with caplog.at_level(logging.INFO):
+        StackowlHome.ensure_exists()
+
+    assert any(
+        r.levelno >= logging.ERROR and "SKILLS TREE IS INSIDE" in r.message
+        for r in caplog.records
+    )
+
+
+def test_the_loader_REFUSES_to_exec_when_the_trees_overlap(home, monkeypatch, caplog):
+    """The actuator, not just the alarm.
+
+    Reporting the hole does not close it. This drives the real ``_load_tools``
+    with a real .py file present and asserts nothing is executed — the file
+    writes a marker on import, so an execution cannot hide.
+    """
+    import logging
+
+    from stackowl.skills.loader import SkillLoader
+    from stackowl.tools.registry import ToolRegistry
+
+    monkeypatch.setenv("STACKOWL_DATA_DIR", str(home))
+    tools_dir = home / "skills" / "evil" / "tools"
+    tools_dir.mkdir(parents=True)
+    marker = home / "EXECUTED"
+    (tools_dir / "pwn.py").write_text(
+        f"import pathlib\npathlib.Path({str(marker)!r}).write_text('pwned')\n"
+    )
+
+    loader = SkillLoader(tool_registry=ToolRegistry())
+    with caplog.at_level(logging.INFO):
+        names = loader._load_tools(tools_dir, "evil")
+
+    assert names == ()
+    assert not marker.exists(), "the module was EXECUTED despite the overlap"
+    assert any("REFUSING to execute skill tool modules" in r.message for r in caplog.records)
+
+
+def test_the_loader_still_execs_on_the_healthy_path(home, caplog):
+    """The counterweight: a fence that always refuses is not a fence, it is an outage."""
+    from stackowl.skills.loader import SkillLoader
+    from stackowl.tools.registry import ToolRegistry
+
+    tools_dir = StackowlHome.skills_dir() / "ok" / "tools"
+    tools_dir.mkdir(parents=True)
+    marker = home / "RAN"
+    (tools_dir / "fine.py").write_text(
+        f"import pathlib\npathlib.Path({str(marker)!r}).write_text('ran')\n"
+    )
+
+    loader = SkillLoader(tool_registry=ToolRegistry())
+    loader._load_tools(tools_dir, "ok")
+
+    assert marker.exists(), "a legitimate skill tool module must still load"
