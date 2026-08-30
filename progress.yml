@@ -315,6 +315,29 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D16_1_AUDITED_SOUND_2026_08_30_and_it_shows_what_good_looks_like:
+    status: >-
+      Third sound item of the audit (after D16.3 and D01.2), and the first that was sound
+      because it was properly INSTRUMENTED rather than merely lucky.
+    every_claim_re_runs_and_holds: >-
+      PluginContext construction sites in src/ = 0; plugins dir empty and `plugins` table 0
+      rows; all six reference hooks 0 implementations; and the loader that once had zero
+      construction sites is wired at orchestrator.py:1865. Measured by EFFECT too:
+      `[plugins] boot: no plugins installed` at INFO, 218 times, latest 08:55:43 today.
+    THE_LESSON_worth_more_than_the_item: >-
+      D16.1's zero is SELF-REFUTING — an INFO line reports the population on every boot, so
+      the claim changes itself the moment a plugin appears. That is why it did not rot while
+      eight of the nine audited yesterday did.
+      The difference is NOT care. D02.5 and D01.6 were carefully written too. The difference
+      is that D16.1 logs the DENOMINATOR at INFO and the others logged only the event: D02.5
+      logged vetoes but not abstentions, D01.6 logged cache hits but not whether the backend
+      reports them. A claim about an absence needs the population logged, not the occurrence.
+      That is the sharpest form of this session's finding and it is now stated where the next
+      person will meet it.
+    WHAT_WAS_NOT_TOUCHED: >-
+      The item deliberately keeps one dead surface (PluginContext, zero construction sites)
+      because "inventing a control surface for a population of zero is" premature. That is an
+      intentional recorded choice; it stays.
   CLAIM_CHECK_HARDENED_BY_USING_IT_2026_08_30:
     status: >-
       The tool shipped an hour earlier ranked D01.2 first on LINT NOISE. Found by using it,
@@ -22938,7 +22961,32 @@ items:
           is now called on every boot. Zero plugins are installed, so the loaded/skipped
           branch is not yet exercised on live data — that is what the validate stage owes.
     notes: null
-
+    AUDITED_2026_08_30_SOUND_and_the_BEST_INSTRUMENTED_item_so_far: >-
+      Second on claim_check's corrected ranking (13 claims, and unusually NO lint-gate noise,
+      which is why the distortion had been hiding it in fifth). Every claim re-runs and
+      HOLDS:
+        PluginContext construction sites in src/ = 0 (only tests build one)
+        ~/.stackowl/plugins = empty; `plugins` table = 0 rows
+        all six reference hooks (pre/post_tool_call, pre/post_llm_call,
+          on_turn_start, on_turn_end) = 0 implementations outside hooks.py
+        the loader that "had ZERO construction sites" IS now wired —
+          orchestrator.py:1865 — and the fix held.
+      AND THE EFFECT IS MEASURED, NOT JUST THE CALL: `[plugins] boot: no plugins installed`
+      at INFO, 218 times, most recently 2026-08-30T08:55:43 with dir=/home/boss/.stackowl/
+      plugins. The loader genuinely runs every boot.
+      THIS IS WHAT "GOOD" LOOKS LIKE, and it is worth saying plainly after eight items that
+      were not. D16.1's zero is SELF-REFUTING: an INFO line reports the population on every
+      single boot, so the moment a plugin is installed the claim changes itself. No
+      re-measurement campaign required. Compare D02.5, whose zero came from two silent exits
+      and could never have been falsified, and D01.6, whose zero was true but unreadable.
+      The difference is not care — all three items were carefully written — it is that D16.1
+      logged the DENOMINATOR at INFO and the others logged only the event.
+      THE DEAD SURFACE IS DELIBERATE AND STAYS: "PluginContext still has zero construction
+      sites ... inventing a control surface for a population of zero is" premature. Recorded
+      as an intentional choice, not a defect, and NOT removed.
+      CLOSING QUERY: grep '"msg": "[plugins] boot:' ~/.stackowl/logs/stackowl.jsonl — any
+      line other than "no plugins installed" means the population is non-zero and every
+      claim in this item needs re-reading. Also: SELECT COUNT(*) FROM plugins.
   - id: D16.2
     title: "'Plugins must not touch core' rule"
     domain: D16
