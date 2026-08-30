@@ -11,10 +11,28 @@ worth keeping — say so rather than inventing significance.
 
 Write in the language the conversation was held in.
 
+Separately: did the person CORRECT how you work? Signals include being told to
+stop doing something, that an answer was too long or too short, that the format
+or tone was wrong, being asked why you were explaining, being told to just give
+the answer, or "you always do X" — and also an explicit "remember this". A
+correction to your approach, your order of steps, or a workflow counts too.
+
+If there was one, write the CORRECTED BEHAVIOUR as a short instruction to your
+future self, in the imperative — never a description of what went wrong.
+
+  good: "Answer directly; no preamble."
+  good: "Run the tests before reporting a fix as done."
+  bad:  "The answer was too verbose."      <- describes the failure
+  bad:  "The user was annoyed about tests." <- describes the person
+
+One instruction, not a list. Most conversations contain no correction; leave it
+empty rather than inventing one — an invented rule is worse than none, because it
+will be followed.
+
 Return ONLY a JSON object, no commentary and no markdown code fences:
-{"notable": true, "summary": "..."}
+{"notable": true, "summary": "...", "correction": "..."}
 or
-{"notable": false, "summary": ""}
+{"notable": false, "summary": "", "correction": ""}
 
 Conversation:
 {{ conversation_text }}

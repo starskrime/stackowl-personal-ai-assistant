@@ -11831,13 +11831,13 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
+      architect:  done
       implement:  not_started
       cleanup:    not_started
       test:       not_started
       validate:   not_started
       document:   not_started
-    doc: null
+    doc: "docs/reference-mapping/designs/D09.2.md"
     doc_last_verified: null
     decisions: []
     changes: []
