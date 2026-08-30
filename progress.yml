@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_67_MUTABLE_CONTENT_SITS_IN_THE_CACHED_PREFIX_2026_08_30:
+    the_question: >-
+      `stable_context` is preferences + learned lessons, and it lives in the FROZEN prompt
+      tier. It changes, so it invalidates the whole session's cached prefix — 203 times.
+      Moving it to the volatile tier is arithmetically obvious and its benefit is
+      UNMEASURABLE on this backend. Ship a fix we cannot verify, or leave a known Law 1
+      violation in place? That is an appetite call, not a derivable one.
+    HOW_IT_WAS_FOUND_a_rotted_claim: >-
+      D05.4 ("Progressive tool disclosure") recorded "I1 PASS WITH A NON-ZERO DENOMINATOR: 0
+      `tools array CHANGED` warnings". Re-measured 2026-08-30 while auditing the nine
+      no_change_needed-on-a-zero items: that zero is now SEVEN, and alongside it sit 259
+      `[cache] breakpoints: prompt part CHANGED — the cached prefix is lost from here`
+      warnings. Law 1 has been violated continuously for a week.
+    NOT_CAUSED_BY_THIS_SESSION_checked_because_I_edited_that_tier: >-
+      Per day: 08-23:1, 08-24:6, 08-26:100, 08-27:20, 08-28:106, 08-29:28, 08-30:5. The peaks
+      are days before this session; today has five. I changed the stable prompt tier and the
+      base tool set today, so this was checked rather than assumed.
+    THE_PART_AND_MY_OWN_WRONG_FIRST_GUESS: >-
+      Which part changes: stable_context 203, profile 91, skills 22, owls 4.
+      I first assumed `stable_context` meant `stable_operational_context()` — the frozen
+      tier I had just edited — and was about to blame my own change. It is NOT: it is
+      `PipelineState.stable_context`, built in classify.py:791 as
+      `"\n\n".join(p for p in (prefs_block, lessons_block) if p)`.
+      So the cached prefix contains USER PREFERENCES AND LEARNED LESSONS. Both mutate. Every
+      new lesson or changed preference costs the session its cache.
+    THE_ARITHMETIC_measured_n_3014: >-
+      stable_context is present on 100% of turns (3,014 of 3,014), median 1,178 chars (~295
+      tokens), p90 1,393, max 1,451 — and lessons dominate it (median 1,097 of 1,178; prefs
+      only 79).
+      KEEP IT CACHED: ~295 tokens ride the cached prefix, but 203 invalidations each cost the
+      ENTIRE ~22,978-token prefix for the rest of that session.
+      MOVE IT TO THE VOLATILE TIER: pay ~295 tokens every turn, and the ~22,978-token prefix
+      survives. 295 against 22,978 is not a close call.
+    THE_CONTRADICTION_recorded_rather_than_averaged: >-
+      IMPROVEMENT lens says move it — the arithmetic is 78:1.
+      MEASUREMENT lens objects: D01.6 established, live 2026-08-30, that this backend reports
+      NO cache statistics at all (source='not_reported'). So the BENEFIT of protecting the
+      cached prefix cannot be observed on the current provider. The invalidation COUNT would
+      fall — that is measurable — but the token saving is an article of faith in Law 1.
+      That disagreement IS the finding.
+    panel_recommendation: >-
+      Move it, but say plainly that the win is unverifiable here. The precedent is in-tree
+      and exact: DEBT-23 moved the wall-clock OUT of the system prompt for the same reason
+      ("rendered to the minute, it made a byte-identical prompt impossible") and accepted the
+      per-turn cost. The difference is size — a clock is a few tokens, this is ~295 — which
+      is why it is worth asking rather than doing.
+    ALSO_UNEXPLAINED_and_not_investigated: >-
+      `profile` changes 91 times and `skills` 22. Owl profile/DNA and the skill catalogue are
+      both supposed to be session-stable. NOT chased here; recorded so it is not lost. One
+      owl (jobmarket) accounts for 161 of the 259.
+    blocked_until_answered: >-
+      Nothing. D05.4's stale claim is corrected below regardless of what is decided.
   THE_ARC_MEASURED_2026_08_30:
     status: >-
       No code change this item — a VALIDATION pass that closed three open checks and left the
@@ -18635,7 +18687,14 @@ items:
         rebuild rather than being silently swallowed. Without that, this item's
         subject matter would have been quietly disabled by the item that
         absorbed it.
-
+    CLAIM_ROTTED_2026_08_30: >-
+      This item recorded "I1 PASS WITH A NON-ZERO DENOMINATOR: 0 `tools array CHANGED`
+      warnings". Re-measured: that zero is now SEVEN, and 259 `prompt part CHANGED — the
+      cached prefix is lost from here` warnings sit beside it. I1 no longer passes.
+      Root cause identified and escalated as ESC-67: `stable_context` (preferences + learned
+      lessons, classify.py:791) is MUTABLE content living in the frozen tier. NOT caused by
+      this session — the per-day peaks (100 on 08-26, 106 on 08-28) predate it.
+      CLOSING QUERY: grep '"msg": "[cache] breakpoints:' and group by fields.parts.
   - id: D05.5
     title: "Programmatic tool calling (PTC)"
     domain: D05
