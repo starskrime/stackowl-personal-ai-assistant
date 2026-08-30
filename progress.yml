@@ -346,10 +346,23 @@ current:
       committed_facts_fts orphan CLAUDE.md records. It is not: `keyword_recall` reads it via
       `FROM skills_fts fts JOIN skills s ... WHERE s.enabled = 1`, so an orphan can never
       surface a dead skill. Recorded so nobody "fixes" it twice.
-    blocked_until_answered: >-
-      D10.6 (the skill-catalogue item) is now built on a premise that no longer holds — its
-      whole case rests on 163 skills being dropped per turn from a 179-skill corpus. With 14
-      skills the cap cannot bind at all. D10.6 must NOT be resumed until this is answered.
+    ANSWERED_BY_BAKIR_2026_08_29: >-
+      "I did delete that skills so continue." The purge was INTENTIONAL. No restore. ESC-65
+      is closed; nothing is blocked on it any more.
+    WHAT_THAT_MEANS_FOR_D10_6_and_it_is_a_verdict_change: >-
+      D10.6's entire case was "163 of 179 skills dropped per turn by a 4,000-char cap". With
+      14 builtin skills the cap CANNOT BIND — the whole corpus renders well inside it. The
+      lossless-render work (Stage 1) is now optimising a budget nobody is spending, and the
+      escalated Stage 1b (cap when_to_use) would trade depth for breadth that is not scarce.
+      D10.6 should be re-verdicted from PARTIAL/P1/close_gap to something much lower before
+      any further work. Its RED tests and design doc stay on disk; they are correct about a
+      condition that no longer holds. NOT re-verdicted unilaterally — that is a map change.
+    WHAT_BECOMES_MORE_IMPORTANT_INSTEAD: >-
+      The corpus is now empty of learned skills BY CHOICE, which makes the thing that
+      REFILLS it the live question — and it is broken. See
+      NEXT_ITEM_THE_INCIDENT_MINER_CANNOT_RECORD_WHAT_IT_LEARNS: 48 of 48 gated writes
+      refused. A deliberately-emptied corpus plus a miner that cannot author is a platform
+      that cannot learn from its own failures at all.
   NEXT_ITEM_THE_INCIDENT_MINER_CANNOT_RECORD_WHAT_IT_LEARNS_2026_08_29:
     status: >-
       FOUND AND FULLY EVIDENCED, NOT YET FIXED. Surfaced while validating ESC-64 — the

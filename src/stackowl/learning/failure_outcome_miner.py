@@ -78,7 +78,11 @@ from stackowl.skills.authoring import (
     resolve_consent_identity,
 )
 from stackowl.skills.manifest import SkillManifest
-from stackowl.skills.standard import REQUIRED_SECTIONS
+from stackowl.skills.standard import (
+    MAX_DESCRIPTION_CHARS,
+    REQUIRED_SECTIONS,
+    validate_frontmatter,
+)
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
@@ -261,6 +265,80 @@ class MiningReport:
     n_skills_written: int
 
 
+def _fit_to_standard(verdict: RcaVerdict) -> tuple[str, str]:
+    """Return ``(description, when_to_use)`` the authoring standard will ACCEPT.
+
+    THE DEFECT THIS EXISTS TO END, measured across every retained log 2026-08-29:
+    ``miner.author_one: gated write refused`` appears 48 times and 48 of 48 cite the
+    same cause — a description longer than ``MAX_DESCRIPTION_CHARS``. The platform
+    opened incidents, ran staged RCAs, reached conclusions, and discarded every one
+    of them at the final step. Not a single incident lesson ever reached disk.
+
+    A PRODUCER THAT DID NOT KNOW ITS CONSUMER'S CONTRACT. ``_author_one`` clamped to
+    300; the standard says 60. The gate was right, and its message even stated the
+    remedy. One function away, ``_render_incident_body`` already generates itself
+    FROM the standard rather than restating it — the body asked, the description did
+    not. So this asks too: the limit is imported, never retyped.
+
+    NOTHING IS LOST — the standard's own comment defines the mechanism: "the
+    retrieval signal that cap removes is recovered by making when_to_use a required
+    rich field ... so the ~137 stripped characters MOVE rather than go." An
+    over-long explanation is therefore moved into ``when_to_use``, which the
+    embedder composes and skills_fts indexes, never truncated away.
+
+    The replacement label is derived from the incident's OWN identity
+    (capability_class, failure_class) — data the cluster already carries, not an
+    invented summary — so it always names what the skill is about and is short by
+    construction.
+    """
+    description = (verdict.description or "").strip()
+    when_to_use = (verdict.when_to_use or "").strip()
+
+    def _acceptable(text: str) -> bool:
+        # Ask the validator itself rather than re-deriving its rules. It enforces
+        # BOTH a length cap and "a single sentence"; a check that knew only about
+        # length is how this defect happened in the first place.
+        return not [
+            v for v in validate_frontmatter(
+                {"name": "x", "description": text, "when_to_use": "x"}
+            )
+            if v.rule == "description" and v.blocking
+        ]
+
+    if description and _acceptable(description):
+        return description, when_to_use
+
+    # The explanation moves ahead of whatever when_to_use already said, so the
+    # richer text leads for retrieval and the original guidance is still there.
+    moved = "\n\n".join(t for t in (description, when_to_use) if t)
+
+    first = description.split(". ")[0].strip().rstrip(".")
+    candidate = f"{first}." if first and _acceptable(f"{first}.") else ""
+    if not candidate:
+        label = (
+            f"Recovering {verdict.capability_class} after a "
+            f"{verdict.failure_class} outcome"
+        )
+        # Clamp from the identity, not from prose: if the class names themselves
+        # overflow, keep the head and re-close the sentence so it stays one.
+        if len(label) + 1 > MAX_DESCRIPTION_CHARS:
+            label = label[: MAX_DESCRIPTION_CHARS - 1].rstrip()
+        candidate = f"{label}."
+
+    log.skills.info(
+        "[incident] miner: description exceeded the authoring standard — moved the "
+        "explanation into when_to_use rather than dropping the lesson",
+        extra={"_fields": {
+            "capability_class": verdict.capability_class,
+            "failure_class": verdict.failure_class,
+            "original_chars": len(description),
+            "limit": MAX_DESCRIPTION_CHARS,
+            "label": candidate,
+        }},
+    )
+    return candidate, moved
+
+
 class FailureOutcomeMiner:
     """Scan task_outcomes -> cluster failures -> author SKILL.md via the
     shared gate, for clusters with a matching verified :class:`RcaVerdict`."""
@@ -404,11 +482,14 @@ class FailureOutcomeMiner:
             )
             return False
         final_name = target_dir.name
+        _fitted_description, _fitted_when_to_use = _fit_to_standard(verdict)
         try:
             manifest = SkillManifest(
                 name=final_name,
-                description=verdict.description[:300],
-                when_to_use=verdict.when_to_use[:300],
+                # ASK THE STANDARD. This used to clamp at 300 while the standard
+                # said 60, and every single write was refused for it — 48 of 48.
+                description=_fitted_description,
+                when_to_use=_fitted_when_to_use,
                 version="0.1.0",
                 source="learned",
                 category="incident",
