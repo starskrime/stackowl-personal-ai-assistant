@@ -315,6 +315,61 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  UP_01_PROVIDER_ABC_2026_08_30_already_built_and_better_than_the_port:
+    outcome: >-
+      no_change_needed on the seam itself. Bakir chose "port the provider ABC
+      too"; measuring first showed we have it ALREADY — twice — and one of the two
+      is stronger than the artifact I would have copied.
+    what_exists: |-
+      1. MemoryBridge (memory/bridge.py) — the STORAGE seam. An ABC with abstract
+         retrieve / store / stage / recall / delete / list_staged, and two
+         implementations, SqliteMemoryBridge and NullMemoryBridge.
+      2. MemoryProvider (memory/providers.py, D08.2 slice C) — the PLUGIN seam,
+         and the real analogue of the reference platform's ABC. It has a
+         MemoryProviderRegistry, a schema CEILING (default 6,
+         memory.provider_schema_ceiling), and BuiltinCuratedProvider expressed
+         THROUGH the interface so the contract is exercised on every boot.
+      WIRED AND RUNNING: assembly.py:297 constructs the registry and calls
+      resolve(); "[memory] provider_registry: active set resolved and frozen"
+      fires 153 times in the retained logs, reporting
+      active=['builtin'] schemas_used=0 ceiling=6 refused=[].
+    IT_IS_BETTER_THAN_THE_ARTIFACT_I_WOULD_HAVE_PORTED: >-
+      Two properties the reference's MemoryProvider ABC does not have. It FREEZES
+      the active set once per incarnation, because re-resolving mid-session would
+      change tool schemas under a live prompt cache — Law 1, enforced rather than
+      hoped for. And it REFUSES a provider that would breach the schema ceiling
+      instead of truncating it, on the stated grounds that "half a provider's
+      tools working is worse than none of them, because the failure is invisible
+      until a user calls the missing half". Porting theirs over ours would have
+      been a downgrade.
+    THE_ACTUAL_GAP_is_one_small_thing_and_it_is_NOT_the_ABC: >-
+      assembly.py calls `resolve()` with NO ARGUMENTS, so only the builtin is ever
+      active, and `register()` has no caller outside tests. The seam is real,
+      exercised and Law-1 safe — but nothing can SUPPLY a second provider. For the
+      migration Bakir described (stand a candidate beside the incumbent, prove it,
+      then delete the old memories) the missing piece is a discovery/selection
+      path, not an interface.
+    WHY_I_AM_NOT_BUILDING_THAT_TODAY: >-
+      There is no candidate provider to discover. Building discovery first is
+      building for a scale that has not arrived — the exact objection I raised
+      against porting the ABC, and it applies with more force here because the ABC
+      at least already exists. The honest trigger: build the selection path when
+      there is a second provider to select, and that is one afternoon's work
+      against a seam that is already correct.
+    A_MISTAKE_I_MADE_AND_WHAT_IT_COST: >-
+      I wrote a NEW memory/providers.py with `cat >` without checking whether the
+      path existed. It did — I overwrote D08.2 slice C's MemoryProvider module.
+      Caught within a minute by an IndentationError whose traceback named the file,
+      and restored with `git checkout --` because it was tracked; nothing was lost
+      and nothing was committed. But it was luck that the failure was loud: a file
+      that happened to still import would have hidden it.
+      THE RULE I BROKE IS ALREADY WRITTEN DOWN — "before deleting or overwriting,
+      look at the target". `cat > path` is an overwrite. Read the target first, or
+      use an editor that refuses to clobber.
+      It also cost the finding twice over: the module I destroyed was the very
+      evidence that this item needed no work, and I only read it because git
+      showed me what I had replaced.
+
   RESOLVED_the_delivery_finding_was_an_already_healed_defect: >-
     Investigated in full and closed as no_change_needed — see DEBT-40. The
     delivery path is healthy: 0 tasks owed a delivery and undelivered, all 60 with

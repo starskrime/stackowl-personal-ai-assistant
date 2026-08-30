@@ -99,7 +99,17 @@ questions. Ours spends its tokens on the memories themselves. At 18 files ours i
 affordable; the instruction form is what scales, and it degrades better because a
 missing memory becomes a search rather than an absence.
 
-**6. The plugin seam — nobody wins at our size.** Theirs swaps eight backends
+**6. The plugin seam — WE ALREADY HAVE IT, and ours is stronger.** *(corrected
+2026-08-30, after the operator chose to port it and I went looking for where to
+put it.)* `memory/providers.py` — D08.2 slice C — is a `MemoryProvider` ABC with a
+`MemoryProviderRegistry`, a schema ceiling, and the builtin expressed through the
+interface. It is wired at `assembly.py:297` and resolves on every boot (153 events).
+It has two properties theirs lacks: it FREEZES the active set per incarnation
+(Law 1, enforced) and REFUSES a provider that breaches the ceiling rather than
+truncating it. The real gap is that `resolve()` is called with no arguments, so
+nothing can supply a second provider — a selection path, not an interface.
+
+**6b. The original argument, kept because it was wrong in an instructive way.** Theirs swaps eight backends
 because it is a product with many users. We have one deployment and 18 memory
 files. This repo has already shipped abstraction for a scale that never arrived,
 and D10.6's premise died when a corpus shrank from 179 skills to 21. Porting the
