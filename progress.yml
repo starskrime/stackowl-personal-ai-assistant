@@ -480,12 +480,45 @@ upcoming:
   - id: UP-01
     date_added: 2026-08-30
     added_by: Bakir
-    title: "Study mem0's memory architecture, then propose PORT / HYBRID / BUILD against ours"
+    title: "Study mem0 AND the reference platform's memory architecture; take the winner design from both"
     ask: >-
-      Bakir, 2026-08-30: "learn architecture from mem0 and discuss about bringing
-      their architecture to our memory system." The deliverable is a DISCUSSION —
-      a comparison and a recommendation he can decide on — not an implementation.
-      Nothing is to be built under this item without him choosing an option first.
+      Bakir, 2026-08-30, in two parts: "learn architecture from mem0 and discuss
+      about bringing their architecture to our memory system", then "also research
+      of hermes memory system and get winner desing from both". So it is a
+      THREE-WAY comparison — mem0, the reference platform, and ours — ending in a
+      per-dimension winner rather than one system declared best overall. The
+      deliverable is a DISCUSSION he decides on, not an implementation.
+    RECONNAISSANCE_DONE_2026_08_30_and_it_reframes_the_question: >-
+      Verified by reading the local clone, not from recollection — and the headline
+      finding is that THE TWO SYSTEMS ARE NOT INDEPENDENT.
+      The reference platform's memory is a PLUGIN ARCHITECTURE: agent/memory_provider.py
+      (315 lines) defines a MemoryProvider ABC, and plugins/memory/ holds EIGHT
+      implementations — byterover, hindsight, holographic, honcho, MEM0, openviking,
+      retaindb, supermemory. mem0 is one of them, at 2,025 lines of adapter.
+      So they already evaluated mem0 and their answer to "which memory
+      architecture?" was "DO NOT PICK ONE — define the seam and make it
+      pluggable." That is itself the architectural position, and it may be the
+      winner design rather than anything inside any single provider.
+      A SECOND CONSEQUENCE: their mem0 adapter can be read LOCALLY, so the mem0
+      half of this study starts from a real integration's API surface instead of
+      from my recollection.
+    the_seam_they_chose_verified_from_the_ABC: >-
+      MemoryProvider's lifecycle is the actual design: name / is_available /
+      initialize / system_prompt_block / prefetch / queue_prefetch / sync_turn /
+      get_tool_schemas / handle_tool_call / on_turn_start / on_session_end /
+      shutdown. Note what that implies and what we should compare against —
+      `system_prompt_block` is a memory contribution to the PROMPT (our
+      `stable_context` / `profile` parts), `prefetch`+`queue_prefetch` is
+      speculative recall we do not have, and `is_available` plus the mem0
+      adapter's circuit breaker (_is_breaker_open / _record_success /
+      _record_failure) mean they treat memory as a SERVICE THAT CAN FAIL and
+      degrade instead of breaking the turn. That last point is the one closest to
+      our standing no-hidden-errors and self-healing rules.
+      They also share a query_rewrite.py across providers — recall queries are
+      rewritten before they are issued. We do not do that.
+      SELF-HOSTED MATTERS: _oss_providers.py + validate_oss_config indicate an
+      OSS/self-hosted path for mem0, which the standing self-hosted-only rule
+      requires; confirm it rather than assume it.
     governed_by: >-
       The standing "port before build" rule: research the OSS first and end with an
       EXPLICIT decision of PORT, HYBRID or BUILD, with the reason. No NIH, and
@@ -524,6 +557,12 @@ upcoming:
           written and never read, so their LIVE state must be re-measured as part
           of this, not assumed.
     the_questions_worth_answering: >-
+      0. Is the PLUGIN SEAM the thing to port, rather than any provider? Ours is
+         hard-wired to markdown files. Theirs can swap eight backends. But we have
+         ONE deployment and 18 files, and this repo has shipped abstraction for a
+         scale that never arrived before — so the honest question is whether the
+         seam buys anything at our size, or is the very over-engineering the
+         "simplified implementation always" rule forbids.
       1. Does their ADD/UPDATE/DELETE/NOOP consolidation beat our refuse-and-ask?
          Ours has a measurable failure mode — 54 refusals in 8 days is 54 turns
          where the agent was handed bookkeeping instead of the user's task.
