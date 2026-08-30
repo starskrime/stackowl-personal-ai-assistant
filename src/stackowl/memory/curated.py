@@ -46,6 +46,7 @@ profile stays global — the user is the same person to every owl.
 from __future__ import annotations
 
 import re
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -133,6 +134,14 @@ def memory_dir() -> Path:
 _SHARED: CuratedMemory | None = None
 
 
+#: How many conversations' frozen snapshots are retained. Bounded for the same
+#: reason TurnCostLedger and PlanStore are: a per-conversation map with no ceiling
+#: leaks for the life of the process. MRU-evicting, so the conversation currently
+#: running is never the one dropped — evicting it would restore the exact bug this
+#: replaced.
+_MAX_TRACKED_CONVERSATIONS = 64
+
+
 def shared_memory() -> CuratedMemory:
     """The process-wide curated memory.
 
@@ -217,8 +226,15 @@ class CuratedMemory:
         self._root = root or memory_dir()
         #: Frozen at :meth:`snapshot_for_prompt`'s first call per session, never
         #: mid-session. See the module docstring's third rule.
-        self._snapshot: dict[str, str] = {}
-        self._snapshot_key: str | None = None
+        # PER-CONVERSATION, bounded, MRU-evicting. This was a SINGLE slot
+        # (``_snapshot`` + ``_snapshot_key``), which froze the profile only while
+        # ONE conversation was running: a turn in conversation B evicted A's
+        # snapshot, and A's next turn re-read the file and moved its own prompt.
+        # MEASURED 2026-08-30: 89 of 259 `prompt part CHANGED` cache-invalidation
+        # warnings name the `profile` part (jobmarket 66, secretary 30). This
+        # platform serves chats concurrently by design, so the single slot could
+        # not deliver the freeze assemble.py depends on.
+        self._snapshots: OrderedDict[str, dict[str, str]] = OrderedDict()
         self._consolidation_failures = 0
 
     # ------------------------------------------------------------------ paths
@@ -394,6 +410,10 @@ class CuratedMemory:
                 )
         return out
 
+    def tracked_conversations(self) -> int:
+        """How many conversations' snapshots are retained — the bound, observable."""
+        return len(self._snapshots)
+
     def snapshot_for_prompt(self, target: str, *, conversation_id: str) -> str:
         """The text the prompt carries — FROZEN for the life of ``conversation_id``.
 
@@ -402,10 +422,18 @@ class CuratedMemory:
         is the whole point: per-turn variation was measured as the single largest
         source of prompt instability, and it forfeits the prefix cache silently.
         """
-        if self._snapshot_key != conversation_id:
-            self._snapshot = {}
-            self._snapshot_key = conversation_id
-        if target not in self._snapshot:
+        snapshot = self._snapshots.get(conversation_id)
+        if snapshot is None:
+            snapshot = {}
+            self._snapshots[conversation_id] = snapshot
+        self._snapshots.move_to_end(conversation_id)
+        while len(self._snapshots) > _MAX_TRACKED_CONVERSATIONS:
+            evicted, _ = self._snapshots.popitem(last=False)
+            log.memory.debug(
+                "[curated] snapshot: evicted the oldest conversation (bounded)",
+                extra={"_fields": {"evicted_conversation_id": evicted}},
+            )
+        if target not in snapshot:
             try:
                 rendered = self._render(self.entries(target))
             except ValueError:
@@ -425,7 +453,7 @@ class CuratedMemory:
                     }},
                 )
                 rendered = ""
-            self._snapshot[target] = rendered
+            snapshot[target] = rendered
             # INFO, not DEBUG: production runs at INFO, so a DEBUG line here is
             # a line that never exists when it is needed. Fires once per target
             # per incarnation, so the volume is a handful of records a day.
@@ -433,10 +461,10 @@ class CuratedMemory:
                 "[curated] snapshot: frozen",
                 extra={"_fields": {
                     "target": target, "conversation_id": conversation_id,
-                    "chars": len(self._snapshot[target]),
+                    "chars": len(snapshot[target]),
                 }},
             )
-        return self._snapshot[target]
+        return snapshot[target]
 
     # ------------------------------------------------------------------ write
 
