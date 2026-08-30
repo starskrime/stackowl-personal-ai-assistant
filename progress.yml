@@ -384,11 +384,15 @@ current:
         BEFORE  391 passed in 1093.31s  (18m 13s)
         AFTER   391 passed in   70.08s  (1m 10s)
                                          15.6x
-      A CORRECTION TO MY OWN READING: I reported that before-run as having "died
-      at 36%" and discarded it. It had not died — it completed, and I had looked
-      at a stale tail. I was about to re-measure something I already had. The
-      independent HEAD-worktree baseline was run anyway as a control, because the
-      first run shared the box with other work and could be inflated.
+      THE CONTROL AGREES: an independent baseline run at HEAD in a clean worktree
+      gave 391 passed in 1044.23s (17m 24s), so the first before-figure was only
+      ~5% inflated by sharing the box. Final honest ratio 1044.23s -> 70.08s,
+      14.9x. Worth the second run: without it the claim rested on a measurement I
+      knew was contended.
+      A CORRECTION TO MY OWN READING: I reported that first before-run as having
+      "died at 36%" and discarded it. It had not died — it completed, and I had
+      looked at a stale tail. I was about to re-measure something I already had,
+      and I told Bakir I had no baseline when I did.
       10,928 tests COLLECT clean across the whole tree, which is the check that
       matters for a scripted edit of 110 files.
     two_things_the_script_broke_and_how_they_were_caught: >-
