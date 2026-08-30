@@ -43,6 +43,10 @@ from stackowl.interaction.reversibility_resolver import (
     ReversibilityResolver,
     reversibility_resolver_enabled,
 )
+from stackowl.memory.provider_surface import (
+    dispatch_provider_tool,
+    provider_schemas,
+)
 from stackowl.owls.guards import OwlResourceGuard
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.tool_presets import APPEAL_TOOLS as _APPEAL_TOOLS
@@ -1508,6 +1512,7 @@ async def _run_with_tools(
                 prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
                 restrict_to=restrict_to, max_tools=_max_tools,
             )
+            schemas = schemas + provider_schemas(get_services().memory_providers)
         else:
             memo_key = presented_tools.make_key(
                 session_key=state.session_key or "",
@@ -1564,6 +1569,13 @@ async def _run_with_tools(
                         "max_tools": _max_tools,
                     },
                 )
+                # Memory-provider tools are appended AFTER the budgeted
+                # selection and BEFORE the memo, so a cached array carries them
+                # too. Appended rather than competing inside `to_provider_schema`
+                # because D08.2 caps provider schemas SEPARATELY at 6 — routing
+                # them through tool_count_cap would let a busy turn silently drop
+                # a provider the operator deliberately installed.
+                schemas = schemas + provider_schemas(get_services().memory_providers)
                 if state.session_key:
                     presented_tools.put(memo_key, schemas)
                 # INFO, not debug (D05.4). This line is the EVIDENCE for the
@@ -1721,6 +1733,16 @@ async def _run_with_tools(
         # bounds) short-circuits HERE before any re-check, so a model that
         # stubbornly re-calls a refused tool gets a stable "already declined"
         # signal instead of a fresh full check every iteration (no loop).
+        # A memory-provider tool is run by its provider, not by the registry.
+        # None means NO PROVIDER OWNS IT, so this falls through to the ordinary
+        # path and an unknown tool still gets its ordinary unknown-tool error
+        # rather than a memory-flavoured one.
+        _provider_result = await dispatch_provider_tool(
+            get_services().memory_providers, name, args,
+        )
+        if _provider_result is not None:
+            return _provider_result
+
         if name in denied_this_run:
             log.engine.info(
                 "[pipeline] execute: tool already declined this run — not re-prompting",

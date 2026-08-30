@@ -1551,6 +1551,7 @@ class StartupOrchestrator:
             stream_registry=stream_registry,
             owl_registry=owl_registry,
             memory_bridge=memory_bridge,
+            memory_providers=memory_components.memory_providers,
             kuzu_adapter=kuzu_adapter,
             tool_registry=tool_registry,
             db_pool=db_pool,

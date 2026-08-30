@@ -734,6 +734,72 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-43
+    date: 2026-08-30
+    title: "CLOSES DEBT-41 — memory-provider tools now reach the model and run"
+    what_shipped: >-
+      memory/provider_surface.py with two functions, and three call sites in
+      pipeline/steps/execute.py: provider_schemas() appended on BOTH presentation
+      branches (enveloped and budgeted), and dispatch_provider_tool() consulted
+      before the ordinary dispatch. StepServices gained `memory_providers`,
+      populated from MemoryComponents at the one StepServices construction site.
+      An Obsidian or mem0 plugin now installs, is discovered, activates, is
+      presented, and RUNS.
+    the_design_decision_and_its_evidence: >-
+      Schemas are APPENDED after the budgeted selection rather than competing
+      inside to_provider_schema. D08.2 settled that provider schemas are capped
+      SEPARATELY at 6 and that the cap "counts what plugins ADD rather than the
+      total"; routing them through tool_count_cap would let a busy turn silently
+      drop a provider the operator deliberately installed — the
+      refuse-don't-truncate rule inverted. Law 2 holds because the waist grows by
+      at most 6 however many providers ship, and by ZERO when none are installed.
+      None means NO PROVIDER OWNS THIS, kept distinct from "a provider ran it and
+      said this", so an unknown tool still gets its ordinary error rather than a
+      memory-flavoured one.
+    THREE_MISTAKES_CAUGHT_BY_CHECKING_RATHER_THAN_BY_LUCK:
+      blind_sed_nearly_broke_boot: >-
+        A replace of "memory_bridge=memory_bridge," hit TWO sites, and the second
+        was ParliamentOrchestrator — which does NOT accept memory_providers
+        (verified with inspect.signature). It would have raised at boot. Caught by
+        reading both sites before trusting the count.
+      services_was_not_in_scope: >-
+        I wired `services.memory_providers` at three sites inside
+        `_run_with_tools`, where `services` is never bound. My check — "the module
+        imports cleanly" — proved NOTHING about runtime scope, and three D05.2
+        tests died with NameError. Switched to get_services(), the accessor the
+        rest of the module already uses.
+      mypy_rose_3_from_a_shortcut: >-
+        I typed the new field `object | None` to dodge an import cycle, which made
+        every call site an arg-type error. Fixed with a TYPE_CHECKING import and a
+        string annotation; mypy back to 65 from 68.
+    M14: >-
+      Unwiring the presentation call from execute() left every surface test GREEN —
+      the same correct-but-unreached gap, reproduced in my own change for the
+      second time today. The pin is STRUCTURAL (it asserts both call sites exist
+      and read through get_services()), and it is labelled as structural because
+      _run_with_tools is too heavy to drive here. Weaker than behavioural, and it
+      is what stands between a working plugin and a silent no-op.
+    validate_2026_08_30: >-
+      RESTARTED: core pid 522664 at 18:54:44 local, last src write 18:53:14 — 90
+      seconds earlier, so the change is live. ZERO post-boot ERROR/CRITICAL.
+      The registry still resolves exactly as before:
+      active=['builtin'] schemas_used=0 ceiling=6 refused=[].
+      "memory-provider tools presented" reads 0 — and that is the CORRECT result,
+      not a failure: no provider is installed, so active_schemas() returns [] and
+      the presented array is byte-identical to before the change. A validation
+      that showed anything else would mean the change had altered behaviour with
+      no provider to justify it.
+      THREE ERRORS in the wider window all PRE-DATE the restart (22:48-22:50 UTC
+      against a 23:54 boot) and none are mine. One is worth a separate look:
+      "[startup] phase 6 (gateway): FAILED" at 22:50:57 on the PREVIOUS boot. The
+      current boot is clean, so it is recorded here rather than chased.
+    suites: "658 passed across tests/memory, tests/plugins, the D05.2 stability suite, cache_audit and the tool-usage ordering suite. ruff 37, mypy 65 — both back at baseline after my own +1/+3 regression."
+    what_is_NOT_proven: >-
+      Nothing exercises this end to end, because NO PROVIDER IS INSTALLED. With
+      zero providers active_schemas() returns [] and the presented array is
+      byte-identical to before — so a live validation showing "no change" is the
+      CORRECT result, not a failure, and it is recorded that way. The first real
+      proof will be the first plugin.
   - id: DEBT-42
     date: 2026-08-30
     title: "recall() now reads staged_facts — ESC-69's interim, and it is an interim"
@@ -762,7 +828,7 @@ known_debt:
       retired extractor used to fix (D08.1 R5Q18). Bakir's endgame is a replacement
       memory system, after which "old one we can delete memories". This makes what
       exists reachable until then; it does not make it good.
-  - id: DEBT-41
+  - id: DEBT-41-CLOSED
     date: 2026-08-30
     title: "Memory-provider schemas are runnable and routable — but still not PRESENTED"
     what_shipped: >-

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from stackowl.memory.kuzu_adapter import KuzuAdapter
     from stackowl.memory.message_ledger_store import MessageLedgerStore
     from stackowl.memory.preferences import PreferenceStore
+    from stackowl.memory.providers import MemoryProviderRegistry
     from stackowl.memory.retry_queue_store import RetryQueueStore
     from stackowl.messaging.a2a import A2AQueue
     from stackowl.notifications.deliverer import ProactiveDeliverer
@@ -65,6 +66,12 @@ class StepServices:
     provider_registry: ProviderRegistry | None = field(default=None)
     stream_registry: StreamRegistry | None = field(default=None)
     memory_bridge: MemoryBridge | None = field(default=None)
+    #: The resolved memory-provider set (D08.2 slice C). Carried here so
+    #: presentation and dispatch can reach it without threading the whole
+    #: MemoryComponents through the pipeline. None on every path that does not
+    #: build memory — which is most tests — and `provider_surface` treats that as
+    #: the ordinary no-providers case rather than an error.
+    memory_providers: MemoryProviderRegistry | None = field(default=None)
     owl_registry: OwlRegistry | None = field(default=None)
     a2a_queue: A2AQueue | None = field(default=None)
     kuzu_adapter: KuzuAdapter | None = field(default=None)
