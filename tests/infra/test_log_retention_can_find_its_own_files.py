@@ -112,3 +112,28 @@ def test_a_zero_or_negative_cap_deletes_nothing(tmp_path: Path) -> None:
     """
     _seed(tmp_path, DAYS)
     assert _handler(tmp_path, keep=0).getFilesToDelete() == []
+
+
+def test_the_DEFAULT_retention_is_30_days() -> None:
+    """Raised from 7 to 30 by Bakir on 2026-08-30, and pinned because retention IS
+    this programme's evidence horizon.
+
+    Acceptance checks here are largely closing queries over the rotated logs. On
+    2026-08-30 five dated files were deleted at 16:22 leaving two, and three claims
+    measured that morning — D08.3's "210 nudges", D05.8's "869 cap breaches",
+    ESC-69's "414 searches" — became unreproducible within hours of being written
+    down. A silent drop back to 7 would do that again, so the number is asserted
+    rather than trusted.
+
+    His earlier choice of 7 (2026-08-22) is not contradicted: it was made when the
+    root disk had 1.3 GB free, and it now has 20 GB.
+    """
+    import inspect
+    import re
+
+    from stackowl.infra import observability
+
+    src = inspect.getsource(observability.setup_logging)
+    match = re.search(r'STACKOWL_LOG_RETAIN_DAYS["\']\s*,\s*["\'](\d+)["\']', src)
+    assert match, "the retention default is no longer read from STACKOWL_LOG_RETAIN_DAYS"
+    assert match.group(1) == "30", f"retention default is {match.group(1)}, expected 30"

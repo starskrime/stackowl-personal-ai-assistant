@@ -315,6 +315,25 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  OPERATOR_DECISIONS_2026_08_30_round_3:
+    by: Bakir
+    plugin_wiring: "WIRE IT NOW — presentation adds registry.active_schemas(); the memory tool routes via registry.provider_for(name).handle_tool_call()."
+    ESC_72_retention: >-
+      RAISE RETENTION TO 30 DAYS. He did NOT take the DB migration half, so the
+      logs stay the system of record for acceptance evidence. I recommended both;
+      he chose the cheap one. Recording the residual risk once and then dropping
+      it: the cause of 7-behaving-as-2 is still unproven, so a 30 that behaves as 2
+      would fail the same way and silently. The mitigation is that the new value is
+      itself checkable — see the closing query on that item.
+    ESC_69_interim: "ONE-QUERY INTERIM FIX — point recall at staged_facts as well, so the 361 become searchable today while the replacement is built."
+    older_escalations: "ALL FOUR to be cleared: ESC-63 (shorten when_to_use), ESC-64 (bound background spend), ESC-66 (RCA re-diagnosis suppression), D10.6 re-verdict."
+    order_I_am_taking_them_in: >-
+      1. Retention (one line, and every later measurement depends on it — doing it
+         first stops the evidence bleeding while the rest is built).
+      2. The recall interim fix (one query, unblocks 361 memories today).
+      3. The plugin presentation + dispatch wiring — the substantial item.
+      4. The four older escalations.
+
   MEMORY_PLUGINS_2026_08_30_the_answer_to_Obsidian_and_mem0:
     the_ask: "Bakir: \"Obsidian and mem0 and potential memory plugins\" — i.e. these are the candidate providers he wants."
     THE_TRIGGER_I_NAMED_HAS_FIRED: >-

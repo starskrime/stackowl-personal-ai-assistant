@@ -147,6 +147,56 @@ async def fts_recall(
     return [row_to_record(row) for row in rows]
 
 
+async def staged_recall(
+    db: DbPool, query: str, limit: int
+) -> list[MemoryRecord]:
+    """Substring recall over ``staged_facts`` — ESC-69's interim.
+
+    WHY A SCAN AND NOT AN INDEX. There is no FTS table on ``staged_facts`` and
+    building one means a migration. The table holds 361 rows (measured
+    2026-08-30), so a LIKE scan is free at this size and reversible in one commit
+    if the store is retired — which is the stated plan. An index would be the
+    right answer at a hundred times the size and the wrong answer at this one.
+
+    WHY IT RETURNS RAW TURNS, stated rather than hidden. Staged content is
+    conversation text, not distilled facts, because the extractor that used to
+    promote staged -> committed was retired (D08.1 R5Q18). Recall reading only
+    ``committed_facts`` — 0 rows — is why 414 searches returned 0 archive hits.
+    This makes what exists reachable; it does not make it tidy.
+
+    ONLY status='staged'. A rejected fact is a decision, not a memory, and
+    surfacing it would resurrect something the platform already declined.
+    """
+    needle = (query or "").strip()
+    if not needle:
+        # An empty needle with LIKE '%%' matches EVERY row. Returning the whole
+        # store on a blank query is the shape that turns a search into a dump.
+        return []
+    # `%` and `_` are LIKE wildcards: unescaped, "a_c" would match "abc" and a
+    # lone "%" would match everything. ESCAPE makes them literal.
+    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    rows = await db.fetch_all(
+        # COALESCE on embedding_model: MemoryRecord requires a string and a staged
+        # row may carry an embedding with no model recorded. "" is the honest
+        # value for "not stated" — inventing a model name would be worse.
+        """SELECT fact_id, content, embedding,
+                  COALESCE(embedding_model, '') AS embedding_model,
+                  staged_at AS committed_at, source_type, source_ref,
+                  '[]' AS tags, COALESCE(trust, 'untrusted') AS trust,
+                  COALESCE(reinforcement_count, 0) AS reinforcement_count, scope_key
+           FROM staged_facts
+           WHERE status = 'staged' AND content LIKE ? ESCAPE '\\'
+           ORDER BY staged_at DESC
+           LIMIT ?""",
+        (f"%{escaped}%", limit),
+    )
+    log.memory.debug(
+        "[memory] sqlite_helpers.staged_recall: exit",
+        extra={"_fields": {"n_results": len(rows), "limit": limit}},
+    )
+    return [row_to_record(row) for row in rows]
+
+
 async def fetch_committed_by_ids(
     db: DbPool, fact_ids: list[str]
 ) -> list[MemoryRecord]:

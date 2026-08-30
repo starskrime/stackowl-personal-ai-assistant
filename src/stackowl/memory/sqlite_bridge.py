@@ -14,6 +14,7 @@ from stackowl.memory.models import MemoryRecord, StagedFact
 from stackowl.memory.recall_ranker import RecallRanker
 from stackowl.memory.remember_gate import Candidate, should_remember
 from stackowl.memory.sqlite_helpers import (
+    staged_recall,
     filter_by_scope,
     fts_recall,
     pack_embedding,
@@ -518,8 +519,24 @@ class SqliteMemoryBridge(MemoryBridge):
         # replacement pattern is already proven in learning/lessons_store.py:
         # embeddings as SQLite BLOBs plus a cached numpy scan — exact rather than
         # approximate, and no new dependency.
-        # 3. STEP — FTS5 BM25 fallback
+        # 3. STEP — FTS5 BM25 over committed_facts, THEN the staged store.
+        #
+        # ESC-69 (Bakir, 2026-08-30). committed_facts holds 0 rows and nothing has
+        # promoted staged -> committed since the extractor was retired, so this
+        # method returned nothing on 414 of 414 measured searches while 361 real
+        # memories sat one table over with their embeddings populated. Committed
+        # results still rank FIRST — they are distilled facts and staged rows are
+        # raw conversation turns — but an empty committed store no longer means an
+        # empty answer.
+        #
+        # INTERIM BY DESIGN. The endgame is a replacement memory system, after
+        # which "old one we can delete memories"; this makes what exists reachable
+        # until then, and comes out in one commit when the store is retired.
         records = await fts_recall(self._db, query, limit)
+        if len(records) < limit:
+            seen = {r.fact_id for r in records}
+            staged = await staged_recall(self._db, query, limit - len(records))
+            records = records + [r for r in staged if r.fact_id not in seen]
         records = filter_by_scope(records, scope_key)
         # 4. EXIT
         log.memory.debug(

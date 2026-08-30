@@ -266,10 +266,26 @@ def setup_logging() -> logging.Handler:
     """
     level_name = os.environ.get("STACKOWL_LOG_LEVEL", "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
-    # 7 days, chosen by Bakir 2026-08-22. At the measured ~25 MB/day average
-    # (one day hit 95.6 MB) 30 days meant 772 MB of logs on a 56 GB root disk
-    # that had 1.3 GB free.
-    retain_days = int(os.environ.get("STACKOWL_LOG_RETAIN_DAYS", "7"))
+    # 30 days, chosen by Bakir 2026-08-30. This REPLACES his own 2026-08-22 choice
+    # of 7, and the two decisions do not conflict — the constraint behind the first
+    # is gone. That comment read: "At the measured ~25 MB/day average (one day hit
+    # 95.6 MB) 30 days meant 772 MB of logs on a 56 GB root disk THAT HAD 1.3 GB
+    # FREE." Measured 2026-08-30: the same disk is 64% used with 20 GB free, so
+    # ~750 MB is now affordable where it was not.
+    #
+    # WHY IT WAS RAISED. This programme's acceptance checks are largely closing
+    # queries over the rotated logs, so retention IS the evidence horizon. On
+    # 2026-08-30 five dated files were deleted at 16:22 leaving two, and three
+    # claims measured that same morning — D08.3's "210 nudges", D05.8's "869 cap
+    # breaches", ESC-69's "414 searches" — became unreproducible within hours of
+    # being recorded.
+    #
+    # THE CAUSE OF THAT DELETION IS UNPROVEN. Checked and excluded: no
+    # STACKOWL_LOG_* in the running core's environ, no disk pressure, and start.sh
+    # removes only the pid and socket. A 30 that behaves as 2 would fail exactly
+    # the same way, so the value is treated as a claim to verify rather than a
+    # setting to trust — see the closing query in progress.yml.
+    retain_days = int(os.environ.get("STACKOWL_LOG_RETAIN_DAYS", "30"))
 
     log_dir = _log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
