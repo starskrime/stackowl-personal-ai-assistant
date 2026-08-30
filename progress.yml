@@ -6242,6 +6242,45 @@ current:
     235k-row job_runs table with no retention.
 
   ESCALATIONS:
+  - id: ESC-62-d106-is-load-rate-the-acceptance-metric-or-is-this-housekeeping
+    raised: 2026-08-29
+    question: >
+      D10.6's killer-functionality lens says that as framed — a catalogue cap, "skill
+      relevance scoring" — the whole item is internal hygiene. You have run ZERO /skill
+      commands in eight days and 171 of 180 skills have never been loaded once; a tidier
+      unread library is invisible to you. The only version that is operator-facing is
+      "the platform stops re-deriving what it already learned", measured as DISTINCT
+      SKILLS LOADED PER WEEK. Do we adopt that as the acceptance metric, or close D10.6
+      as housekeeping and spend the effort elsewhere?
+    why_evidence_cannot_settle_it: >
+      The numbers are not in dispute and they support both readings. Whether "the
+      assistant applies its own past lessons" is worth engineering effort NOW, against
+      everything else open, is product priority — never derivable.
+    what_the_numbers_say: >
+      The platform writes ~1.5 skills/day (131 creates, 100% agent-authored, ZERO human)
+      and loads 8 distinct ones per week; `evidence-brief` and `structure-incident-evidence`
+      account for 400 of 427 loads. Skill #181 is minted tonight by a job whose output has
+      roughly a 4.4% chance of ever being visible. That is either the platform failing to
+      use its own memory, or a nightly job generating noise nobody needs — and which of
+      those it is, is a product judgement.
+    panel_recommendation: >
+      ADOPT load-rate, and ship Stage 1 (the render) because it is cheap and reversible
+      regardless. But if load-rate is NOT adopted, killer-functionality's answer is to
+      close D10.6 as housekeeping — and the architecture lens's entire ranking is explicitly
+      conditional on that metric, so without it Stage 1 is cosmetics on a page nobody reads.
+    what_is_blocked: >
+      NOTHING blocks Stage 1 — the render change is cheap, non-destructive and reversible on
+      any reading. What needs an answer is whether Stages 2-3 (the synthesizer redirect, the
+      decay floor) are worth building at all.
+    A_DATED_DEPENDENCY_THAT_ACTS_WHETHER_OR_NOT_YOU_ANSWER: >
+      VISIBILITY_FLOOR_EPOCH expires on 2026-09-22. Its whole purpose is to stop the curator
+      archiving skills that were never fairly OFFERED — lifecycle.py:83-85 records that 8 of
+      14 shipped builtins are already archived for non-use: "They were not chosen and
+      rejected; they were never offered." If Stage 1's render lands before that date the
+      floor expires into a fair catalogue and all is well. IF IT DOES NOT, the floor must be
+      EXTENDED deliberately, or it expires into exactly the unfairness it was written to
+      prevent. A dated no-op is not a no-op, and "we decided not to decide" is not one of the
+      available outcomes.
   - id: SELFHEAL-2026-08-29-the-platform-drains-its-own-dead-letters
     raised: 2026-08-29
     status: "BUILT, green — awaiting the live drain as its own proof"
@@ -20452,6 +20491,78 @@ items:
     decisions:
       - date: 2026-08-29
         stage: brainstorm
+        round: "The panel — BOTH lenses rejected the obvious move, for DIFFERENT reasons"
+        by: panel
+        THE_CAP_IS_A_CONSTANT_NOBODY_MEASURED_AND_THAT_INVERTS_THE_ITEM: >-
+          `_DEFAULT_CAP = 4000` (instruction_injector.py:13) has exactly two references, both
+          mechanical, and no measurement behind it. MEASURED against the live catalogue:
+            all 179 skills, CURRENT render : 73,191 chars (~18,297 tokens)
+            all 179 skills, LEAN render    : 14,857 chars (~3,714 tokens)
+            today, capped at 4,000          : 16 presented
+            LEAN render inside the SAME cap : 45 presented
+          The whole corpus costs ~3,700 tokens — 1.4% of the 262,144 window, against a
+          largest-call-ever of 62,724. And a leaner render nearly TRIPLES what is visible
+          inside the existing cap while deleting nothing.
+          THE REFERENCE PLATFORM HAS NO CAP AT ALL. It renders all 69 skills at ~85 chars
+          (`SKILL_PROMPT_DESC_LIMIT = 60`), groups by category so the category line amortizes
+          shared context, and demotes rather than removes. Its code states the rule: "NEVER
+          remove entries entirely: agent-created skills are the model's project memory, and
+          models don't reach for skills_list to rediscover what the index stops showing them."
+          So five of the six candidate directions were answers to a constraint that was a
+          CONSTANT, not a finding.
+        BOTH_LENSES_REJECTED_MERGING_FOR_DIFFERENT_REASONS_AND_THAT_AGREEMENT_IS_THE_FINDING: >-
+          STABILITY: the seven evidence-brief bodies are NOT one procedure. Nine distinct
+          section names, THREE incompatible missing-data conventions ("Not provided" vs
+          UNKNOWN/DATA NOT PROVIDED vs a Gaps section), two header levels, and two mandate
+          `memory` calls that a third explicitly forbids. One states the contract outright:
+          "merging sections breaks downstream parser expectations." The duplication is real in
+          the 60-char `description` (two ARE byte-identical) and false in the 3,300-3,900-char
+          body — `_resolve_text` renders `description — when_to_use`. Merging would destroy
+          seven procedures to reclaim ~2,163 chars of duplicated SUMMARY. "Destroying the
+          corpus to fix the catalogue, when the catalogue is not made of the corpus."
+          ARCHITECTURE: the cap that made merging look necessary was never measured.
+          Independent reasons, same verdict — worth more than either alone.
+        AND_A_SIMILARITY_CLUSTERER_WOULD_HAVE_CAUSED_REAL_HARM: >-
+          `rca_evidence_verifier` and `rca-verifier-evidence-brief` share every token with the
+          gatherers and are the INVERSE ROLE — "Do not use it for collecting evidence." Any
+          name-or-description clusterer sweeps them in and destroys the separation of duties
+          the RCA pipeline is built on. Recorded as a mandatory negative test for anything
+          that ever clusters skills.
+        LIVE DAMAGE FROM THE LAST TIME THIS PLAY WAS RUN, verified independently: >-
+          skill_ownership holds 111 rows and TWENTY point at skills that no longer exist —
+          14 on the live `rca_gatherer` owl, 4 secretary, 2 scout — every one a `-N` name from
+          a previous collapse. There is NO foreign key (migration 0107 says so explicitly),
+          consolidation writes no audit row, and `store.delete()` never calls the
+          `purge_skill_ownership` that exists for it (its only caller is synthesizer.py:756).
+          NOTHING NOTICED, because `hydrate_skill_ownership` reports attached=10 against 111
+          rows and the 101-row gap is explained entirely by three `log.startup.debug` calls.
+          Production runs at INFO. THIRD time this programme has shipped a check whose only
+          witness was DEBUG.
+        AND_MERGE_WOULD_CORRUPT_A_DENOMINATOR_THAT_FEEDS_THE_OWL_GENOME: >-
+          `_apply_family` sums `n_executions` onto the survivor and never touches
+          `success_rate`, so the survivor keeps its rate over a denominator it did not earn.
+          That rate feeds lifecycle.py:320's retirement gate AND evolution.py:814 ->
+          dna_attribution, i.e. DNA TRAIT MUTATION. A merge writes a corrupted rate into the
+          owl's genome. CLAUDE.md's "check what a denominator is MADE OF", verbatim.
+          Also: consolidation writes ZERO audit rows, so `/skill restore` can never see a
+          merged skill — and restore is barely functional anyway: exactly ONE of 239 audit
+          rows carries a snapshot.
+        THE_SKILLS_LIST_ZERO_IS_A_CONTROLLED_ZERO_AND_THE_HATCH_IS_FALSIFIED: >-
+          The injector's own truncation line instructs the model "skills_list to enumerate
+          them" on 95.5% of assemblies — roughly 2,460 firings — and skills_list has been
+          called ZERO times. The documented escape hatch from the dropped tail is FALSIFIED
+          and must never be cited as mitigation again.
+        THE_ACCEPTANCE_METRIC_IS_LOAD_RATE_NOT_CORPUS_SIZE: >-
+          Killer-functionality was blunt: as framed, all six candidates are housekeeping. The
+          operator has run zero /skill commands and 171 of 180 skills never loaded. What is
+          operator-facing is that the platform writes ~1.5 skills/day and READS 8 distinct ones
+          per week — it re-derives what it already learned. So D10.6 is measured as DISTINCT
+          SKILLS LOADED PER WEEK, never as "rows deleted" and not even as "skills presented".
+        A_LEVER_THAT_ALREADY_EXISTS_AND_IS_UNWIRED: >-
+          `SkillManifest.category` (skills/manifest.py:45) exists and the injector never reads
+          it. It is the reference platform's main amortization lever, present and unused.
+      - date: 2026-08-29
+        stage: brainstorm
         round: "Round 0 — MEASURE FIRST, and it OVERTURNED the premise I opened on"
         by: panel
         I_WAS_WRONG_ABOUT_THE_ORDERING_AND_IT_IS_THE_HEADLINE: >-
@@ -20527,8 +20638,28 @@ items:
           4156, 4165, 0) across 3,043 assemblies — a 17-char spread, 0.4%. The variation is
           PER-OWL (owned-skill membership shifts the catalogue), not per-query, so the Law 1
           conclusion stands; the word "constant" did not.
-    changes: []
+    changes:
+      - date: 2026-08-29
+        stage: brainstorm
+        summary: "Round 0 instrument shipped — the reader now names what it surfaced (652f47dc)."
+        commits: [652f47dc]
     notes: >-
+      HALF THE ITEM IS BLOCKED ON TRAFFIC, and the split is clean, so the other half proceeds.
+      BLOCKED — "which 16 should be visible". Answering it needs to know whether the live
+      per-query reader (classify -> semantic_recall, 92.5% of turns) already reaches the 163
+      skills the frozen catalogue drops. The instrument that would say so shipped in 652f47dc
+      and has fired ZERO times — because there have been ZERO classify exits since the
+      23:41Z restart. That is 0-over-0, which this programme's own rule says is not a pass
+      and not a failure; it is no information. It cannot be forced: it needs real
+      conversational turns. NOT recorded as a finding either way.
+      NOT BLOCKED — "one capability occupies 56.6% of the visible budget". Fully measured
+      and independent of the reader: the evidence-brief family holds 5 of the 9 SUMMARY slots
+      (2,163 of 3,822 used chars) for one capability, two members sharing a byte-identical
+      description; 18 token-Jaccard clusters cover 65 of 179 rows. Collapsing that family
+      frees ~4 slots WHATEVER the reader turns out to do, so it is worth settling now.
+      And SkillConsolidator cannot see them: it collapses `-N` NUMBERED families and zero
+      skills carry a `-N` suffix any more — it already did its job. These are semantic
+      duplicates with distinct names, outside its definition entirely.
       OPENED 2026-08-29 as ESC-58's corpus item. VERDICT AND PRIORITY CORRECTED at open:
       AHEAD/P3/keep -> PARTIAL/P1/close_gap. The old verdict rested on
       skills/skill_relevance.py being smarter than the reference platform's "put every name
