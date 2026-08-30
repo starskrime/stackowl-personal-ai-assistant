@@ -41,6 +41,7 @@ class BudgetGovernor:
         started_monotonic: float,
         clock: _Clock,
         prior_cost_usd: float = 0.0,
+        prior_input_tokens: int = 0,
         human_wait_source: Callable[[], float] | None = None,
     ) -> None:
         self._max_steps = caps.max_steps
@@ -60,6 +61,15 @@ class BudgetGovernor:
         # cost ceiling CUMULATIVE across park/resume rather than per-attempt.
         # 0.0 for an ephemeral turn or a first attempt → legacy behavior unchanged.
         self._prior_cost_usd = max(0.0, prior_cost_usd)
+        # The same cumulative treatment for TOKENS, and it is the one that can
+        # actually fire. MEASURED: recover-task-925aa68-fix billed 3,893,308 input
+        # tokens across 137 model calls under ONE trace_id against a 20-step
+        # ceiling — steps bound a single attempt's loop, and nothing bounded the
+        # task. Without this seed the token cap is a per-ATTEMPT cap wearing a
+        # per-task name, and cost cannot cover for it ($0.00 on an unpriced model).
+        # Floors at 0 for the same reason _prior_cost_usd does: a bad read must
+        # never hand a task MORE budget than it is entitled to.
+        self._prior_input_tokens = max(0, int(prior_input_tokens))
 
     def check(self, iteration: int, *, tool_calls: int | None = None) -> BudgetBreach | None:
         """Return a BudgetBreach for the FIRST set cap exceeded after this iteration.
@@ -96,9 +106,12 @@ class BudgetGovernor:
                         extra={"_fields": {"trace_id": self._trace_id, "error": str(exc)}},
                     )
                     used = 0
-                if used >= self._max_input_tokens:
+                # Cumulative across durable attempts (prior) + this attempt's
+                # running total, mirroring the cost ceiling above.
+                spent_tokens = self._prior_input_tokens + used
+                if spent_tokens >= self._max_input_tokens:
                     return BudgetBreach(
-                        "tokens", float(self._max_input_tokens), float(used),
+                        "tokens", float(self._max_input_tokens), float(spent_tokens),
                     )
         if self._max_cost_usd is not None and self._cost is not None:
             # Cumulative spend = prior durable attempts + this attempt's running
@@ -107,6 +120,24 @@ class BudgetGovernor:
             if spent >= self._max_cost_usd:
                 return BudgetBreach("cost", self._max_cost_usd, spent)
         return None
+
+    def current_input_tokens(self) -> int:
+        """Cumulative input tokens = prior durable attempts + this attempt's total.
+
+        The token counterpart to :meth:`current_cost_usd`. Returns the prior seed
+        alone when no token-capable tracker is wired.
+        """
+        used = 0
+        reader = getattr(self._cost, "turn_input_tokens", None) if self._cost else None
+        if reader is not None:
+            try:
+                used = int(reader(self._trace_id))
+            except Exception as exc:  # noqa: BLE001 — reporting must never raise
+                log.engine.debug(
+                    "[budget] governor.current_input_tokens: meter unreadable",
+                    extra={"_fields": {"trace_id": self._trace_id, "error": str(exc)}},
+                )
+        return self._prior_input_tokens + used
 
     def steps_remaining(self, iteration: int, *, tool_calls: int | None = None) -> int | None:
         """Steps left before the step cap, or None when no step cap is set.

@@ -195,3 +195,61 @@ def test_setting_only_a_token_cap_does_not_disable_the_STEP_backstop() -> None:
     assert _has_explicit_resource_caps(ResourceCaps(max_input_tokens=1000)) is False
     assert _has_explicit_resource_caps(ResourceCaps(max_steps=5)) is True
     assert _has_explicit_resource_caps(ResourceCaps()) is False
+
+
+# ---------------------------------------------------------------------------
+# The ceiling must survive a durable retry, and a process restart
+# ---------------------------------------------------------------------------
+
+
+def test_prior_attempts_COUNT_toward_the_ceiling() -> None:
+    """A retried task must not get a fresh budget on every attempt.
+
+    MEASURED: `recover-task-925aa68-fix` billed 3,893,308 input tokens across 137
+    model calls under ONE trace_id, against a 20-step ceiling. Steps bound a single
+    attempt's loop; nothing bounded the task.
+
+    Cost already solves this (F093): the governor is seeded with
+    `accumulated_cost_usd` from the task row so the ceiling is CUMULATIVE across
+    park/resume. The token meter needs the same seed, or it is a per-attempt cap
+    wearing a per-task name — and cost cannot cover for it, being $0.00 on an
+    unpriced model.
+    """
+    gov = BudgetGovernor(
+        ResourceCaps(max_steps=1000, max_input_tokens=500_000),
+        cost_tracker=_Tokens(200_000), trace_id="t",
+        started_monotonic=0.0, clock=_Clock(),
+        prior_input_tokens=400_000,
+    )
+    breach = gov.check(iteration=1)
+    assert breach is not None, (
+        "400k already spent by earlier attempts plus 200k this attempt did not "
+        "breach a 500k ceiling — the cap is per-attempt, not per-task"
+    )
+    assert breach.cap == "tokens"
+    assert breach.actual == 600_000
+
+
+def test_a_FIRST_attempt_is_byte_identical() -> None:
+    """Seeding defaults to 0, so an ephemeral turn behaves exactly as before."""
+    gov = BudgetGovernor(
+        ResourceCaps(max_steps=1000, max_input_tokens=500_000),
+        cost_tracker=_Tokens(200_000), trace_id="t",
+        started_monotonic=0.0, clock=_Clock(),
+    )
+    assert gov.check(iteration=1) is None
+
+
+def test_a_NEGATIVE_or_missing_seed_cannot_bank_budget() -> None:
+    """A bad read must not hand a task MORE budget than it is entitled to.
+
+    Floors at 0.0, the same guard `_prior_cost_usd` already applies.
+    """
+    gov = BudgetGovernor(
+        ResourceCaps(max_steps=1000, max_input_tokens=100),
+        cost_tracker=_Tokens(150), trace_id="t",
+        started_monotonic=0.0, clock=_Clock(),
+        prior_input_tokens=-10_000,
+    )
+    breach = gov.check(iteration=1)
+    assert breach is not None and breach.actual == 150

@@ -2458,10 +2458,32 @@ async def _run_with_tools(
                 exc_info=exc,
                 extra={"_fields": {"task_id": state.task_id, "trace_id": state.trace_id}},
             )
+    # The SAME cumulative treatment for tokens, and it is the meter that can
+    # actually fire — cost is $0.00 on an unpriced model, which is 123,527 of
+    # 123,528 recorded calls. MEASURED: recover-task-925aa68-fix billed 3,893,308
+    # input tokens across 137 model calls under ONE trace_id, against a 20-step
+    # ceiling; steps bound a single attempt's loop and nothing bounded the task.
+    #
+    # Read from cost_records rather than a new column: the tokens are already
+    # recorded there per trace, so a column would be a SECOND writer for a fact
+    # the system already stores. Same best-effort contract as the cost seed — any
+    # failure seeds 0 and the turn proceeds.
+    _prior_input_tokens = 0
+    if state.task_id is not None and _services.cost_tracker is not None:
+        try:
+            _totals = await _services.cost_tracker.get_turn_token_totals(state.trace_id)
+            _prior_input_tokens = int(_totals[0]) if _totals else 0
+        except Exception as exc:  # noqa: BLE001 — best-effort seed; never block the turn
+            log.tasks.error(
+                "[tasks] execute: prior token-total read failed — seeding 0",
+                exc_info=exc,
+                extra={"_fields": {"task_id": state.task_id, "trace_id": state.trace_id}},
+            )
     _governor = BudgetGovernor(
         _caps, cost_tracker=_services.cost_tracker, trace_id=state.trace_id,
         started_monotonic=time.monotonic(), clock=_MonotonicClock(),
         prior_cost_usd=_prior_cost_usd,
+        prior_input_tokens=_prior_input_tokens,
         # Exclude time blocked waiting for a human clarify answer from the time cap.
         human_wait_source=current_human_wait_seconds,
     )
