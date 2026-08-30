@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import time
 from collections.abc import AsyncIterator, Callable
 from datetime import timedelta
@@ -80,6 +81,50 @@ def _mint_request_id() -> str:
         log.gateway.error("[mint] telegram request_id empty")
         raise ValueError("empty request_id")
     return rid
+
+
+#: A Telegram chat id: digits, optionally negative for groups/supergroups. NOT a
+#: leading "+", which int() would happily accept from a phone number.
+_CHAT_ID_RE = re.compile(r"-?\d+")
+
+
+def coerce_chat_id(raw: object) -> int | None:
+    """A Telegram chat id from whatever shape it arrived in, or None if foreign.
+
+    MEASURED 2026-08-30: the adapter logged "unexpected str target — falling back
+    to _last_chat_id" 29 times, EVERY one carrying target='72055773' — the
+    operator's own chat id, correct, merely stringified upstream. The guard's
+    stated premise was that a str means a FOREIGN id ("a str (Slack
+    channel/thread_ts) cannot reach the Telegram adapter by construction"), and
+    the data falsifies it: the str was this adapter's own destination, and the
+    guard discarded it to re-derive one from _last_chat_id.
+
+    Nothing broke because with ONE chat the fallback lands on the same place. With
+    two, it delivers one conversation's answer to the other — the "destination was
+    guessed" class this tree has already paid for twice.
+
+    NEGATIVE IDS ARE VALID: Telegram groups and supergroups have negative chat ids,
+    so a digits-only check would silently break every group chat — a far larger
+    blast radius than the bug it fixed.
+
+    `bool` is excluded explicitly because it is an `int` subclass in Python, and a
+    JSON `true` coerced to chat 1 would deliver to whatever chat is numbered 1 —
+    the same trap dev_ingress already documents.
+    """
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str):
+        text = raw.strip()
+        # `-?\d+` ONLY. int("+15551234") SUCCEEDS in Python, so a bare int() would
+        # turn a WhatsApp phone number into chat 15551234 and deliver to whatever
+        # chat holds that id. Caught by the parametrized foreign-id test, which is
+        # why "+15551234" is in it.
+        if not _CHAT_ID_RE.fullmatch(text):
+            return None
+        return int(text)
+    return None
 
 
 class TelegramChannelAdapter(ChannelAdapter):
@@ -445,18 +490,21 @@ class TelegramChannelAdapter(ChannelAdapter):
             async for chunk in chunks:
                 trace_id = getattr(chunk, "trace_id", None) or trace_id
                 raw = chunk.target
-                if isinstance(raw, str):
-                    # Telegram only ever delivers int chat_id targets; a str (Slack
-                    # channel/thread_ts) cannot reach the Telegram adapter by
-                    # construction (each turn is delivered by its OWN channel adapter).
-                    # Log loudly if one ever does, then fall back to _last_chat_id.
+                coerced = coerce_chat_id(raw)
+                if coerced is not None:
+                    # A stringified chat id is still THIS adapter's destination —
+                    # see coerce_chat_id for the 29 measured cases where a correct
+                    # target was discarded because it arrived as a str.
+                    target = coerced
+                elif raw is not None:
+                    # A genuinely foreign id (a Slack channel, a phone number). The
+                    # loud warning this guard was written for is kept for exactly
+                    # this case, which is the one that really cannot address Telegram.
                     log.telegram.warning(
                         "[telegram] adapter.send: unexpected str target — falling back to _last_chat_id",
                         extra={"_fields": {"target": raw}},
                     )
                     target = None
-                elif isinstance(raw, int):
-                    target = raw
 
                 if getattr(chunk, "kind", "answer") == "progress":
                     # Live status — render transiently; NEVER add to the answer buffer.
