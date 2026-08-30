@@ -129,7 +129,16 @@ at-capacity refusal stops being occasional.
 * mem0's **internals** — everything above describes mem0 *as consumed by the
   reference platform's adapter*. Its own extraction/consolidation pipeline was
   not read, so no claim is made about it here.
-* Whether our embeddings / Kuzu graph recall paths are live. `committed_facts` is
+* ~~Whether our embeddings / Kuzu graph recall paths are live.~~ **AUDITED
+  2026-08-30, and it changes the recommendation:** the Kuzu directory is EMPTY and
+  the graph is initialised every boot and never queried (202 "adapter ready", 0
+  queries). A SentenceTransformer is loaded on every boot — 248 times in 8 days —
+  and used ONLY by the skills store. And `staged_facts` holds **361 real memories
+  with populated embeddings** that `recall()` cannot see, because it reads
+  `committed_facts` (0 rows) instead. **We do not need a new retrieval
+  architecture; we own an unused one.** That strengthens the case against porting
+  a vector store and weakens the prefetch ranking further — see ESC-69.
+* (superseded) `committed_facts` is
   measured dead (0 rows, no writer since seam 3, and 0 archive hits across 414
   searches — see ESC-69); the vector and graph stores were NOT audited, so
   "memory recall is dead" would over-claim. What is measured is that the ARCHIVE

@@ -315,75 +315,81 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  MEMORY_SEARCH_IS_A_97_PERCENT_NO_OP_2026_08_30:
-    how_it_surfaced: >-
-      Closing a gap I had left open myself. UP-01's doc says the embeddings and
-      graph recall paths were NOT audited; auditing them is pure measurement and
-      needed no decision, so it was the next unblocked work.
-    THE_MEASUREMENT: |-
-      Over 8 days, 414 `memory` tool calls with action=search:
-
-        ARCHIVE hits    0 on 414 of 414 searches — every single one
-        CURATED hits    0 on 401; only 13 searches returned anything at all
-        RETURNED NOTHING AT ALL  401 of 414  = 97%
-
-      Each of those is a full tool round-trip: the model decides to search, emits
-      the call, waits, receives nothing, and continues — paying the whole re-sent
-      prefix for it.
-    ROOT_CAUSE_a_READER_WITH_NO_WRITER: >-
-      SqliteMemoryBridge is the live bridge (memory/assembly.py:142;
-      NullMemoryBridge appears ZERO times in 8 days of logs, so it is not the
-      explanation). Its recall() reads `committed_facts` — measured at 0 rows,
-      with committed_facts_fts also 0.
-      THE CODEBASE ALREADY KNOWS: memory/sqlite_helpers.py:171 carries the comment
-      "hydration read committed_facts, which has 0 rows and no writer since seam
-      3". The only INSERT into it anywhere in src/ is export/importer.py, an
-      import path that does not run in normal operation.
-      This is CLAUDE.md shape 1 INVERTED — not a write with no reader, but a
-      READER WITH NO WRITER. The search path is correctly wired, correctly
-      logged, and correctly returns nothing, because there is nothing there.
-    IT_CORRECTS_MY_OWN_UP_01_RECOMMENDATION_FROM_AN_HOUR_AGO: >-
-      I recommended speculative prefetch as the single biggest token win, on the
-      grounds that our 414 searches are synchronous round-trips. That reasoning
-      still holds for the ROUND-TRIP cost — but prefetching THIS archive would
-      only deliver nothing faster. The upstream question is prior to the
-      optimisation, and I had ranked them the wrong way round because I measured
-      the CALL COUNT and not the YIELD. Exactly the "measure the effect, never
-      trust the call" rule, applied to my own recommendation.
+  ESC_69_CORRECTED_2026_08_30_the_memories_EXIST_and_recall_reads_the_wrong_table:
+    what_I_said_twenty_minutes_ago: >-
+      "A reader with no writer. committed_facts has 0 rows and no writer since
+      seam 3." I recommended making `search` CURATED-ONLY, on the grounds that the
+      archive could never answer.
+    WHY_THAT_WAS_WRONG: >-
+      I stopped at the empty table. One level deeper there is a writer, and there
+      are real memories:
+        sqlite_bridge.stage         1,413 calls in 8 days
+        staged_facts                361 rows, ALL status='staged'
+        newest row                  2026-08-30T18:19 — minutes before I looked
+        content                     raw conversation turns, trust='self',
+                                    with the `embedding` column POPULATED
+      Nothing promotes staged -> committed, and `recall()` reads committed_facts
+      ONLY. So 361 real memories are sitting in the database, indexed, and
+      invisible to the tool whose whole job is to find them.
+      HAD I SHIPPED MY OWN RECOMMENDATION, curated-only search would have made
+      those 361 permanently unreachable and called it a cleanup.
+    the_corrected_diagnosis: >-
+      Not "a reader with no writer". A WRITER THAT STAGES, A PROMOTION STEP THAT
+      NEVER RUNS, AND A READER POINTED AT THE EMPTY SIDE OF THE GATE. The staging
+      half survived D08.1 R5Q18's retirement of fact extraction; the extractor
+      that would have distilled staged turns into committed facts did not. So raw
+      turns accumulate behind a gate nothing opens.
+    THE_REST_OF_THE_AUDIT_finishing_what_UP_01_left_open:
+      kuzu_graph: >-
+        DEAD. ~/.stackowl/workspace/kuzu/ is an EMPTY directory (created
+        2026-05-24). The only log lines in 8 days are "[memory] assembly: kuzu
+        adapter ready" (202) and "not opened in this role" (46) — setup only,
+        zero writes, zero queries. Initialised on every boot, never used.
+        CLAUDE.md shape 5, at subsystem scale.
+      embeddings: >-
+        A SentenceTransformer (all-MiniLM-L6-v2, 384-dim) is loaded on EVERY BOOT
+        — 248 loads in 8 days. Its only measured USE is the skills store
+        (set_embeddings_batch 17, _embed_missing 17). Memory recall never queries
+        it, even though staged_facts carries a populated `embedding` column.
+        So we already own an embedding stack, pay to load it every boot, and do
+        not use it for memory.
+      committed_facts_fts: "Still exactly 1,112 orphan rows in committed_facts_fts_data indexing content that no longer exists. CLAUDE.md recorded that number and it is unchanged — that claim HOLDS."
+    WHAT_THIS_DOES_TO_UP_01: >-
+      It strengthens the recommendation against porting a vector store and weakens
+      my prefetch ranking further. We do not need a new retrieval architecture; we
+      have an unused one. The gap is a promotion step and a reader pointed at the
+      right table — both far smaller than anything mem0 would bring.
     ESCALATIONS:
       - id: ESC-69
-        question: "The memory archive has no writer. Restore one, or stop searching it?"
+        status: "REVISED — the original framing and recommendation were wrong."
+        question: "361 staged memories are unreachable. Promote them, or widen recall to read them?"
         why_evidence_cannot_settle_it: >-
-          Both repairs collide with something already decided or user-facing, so
-          neither is mine to take.
-          (a) RESTORE A WRITER means re-enabling fact extraction — and D08.1 R5Q18
-          RETIRED fact extraction deliberately. D08.3's own record states the
-          consequence and accepted it: "with fact extraction retired, the
-          turn-counter nudge is the ONLY thing that will ever prompt a memory
-          write". So the empty archive is a KNOWN CONSEQUENCE of a decision, not
-          an accident — what was probably not foreseen is that `search` would keep
-          querying it 414 times.
-          (b) STOP SEARCHING IT means making `search` curated-only, which narrows a
-          user-facing tool.
-        the_measurement: "414 searches, 0 archive hits, 97% returning nothing. 401 wasted round-trips in 8 days."
+          The content is RAW CONVERSATION TURNS, not distilled facts, because the
+          extractor was deliberately retired (D08.1 R5Q18). So the real question is
+          a product one: should recall return raw turn text? That changes what the
+          user gets back from `memory search`, and it is the reason the extractor
+          existed.
         options: >-
-          (a) restore a writer — reverses a deliberate retirement;
-          (b) make search curated-only and say so in the tool description, so the
-          model stops paying for a store that cannot answer — smallest change,
-          honest, and reversible if a writer ever returns;
-          (c) leave it and accept 401 empty round-trips per 8 days.
+          (a) point recall at staged_facts as well as committed_facts — one query
+          change, makes 361 memories searchable today, but returns raw turns;
+          (b) restore a promotion/distillation step — closest to the original
+          design, reverses a deliberate retirement, and costs model calls;
+          (c) leave staging as pure conversation archive and make search
+          curated-only — my ORIGINAL recommendation, now visibly wrong, because it
+          discards 361 real memories;
+          (d) stop staging as well, if the archive is not wanted at all — then the
+          1,413 writes/8 days stop too.
         recommendation: >-
-          (b). The curated files ARE the memory today — 82 writes in 8 days land
-          there and the prompt carries them. A tool that advertises an archive it
-          cannot read teaches the model to keep asking. If fact extraction is ever
-          restored, re-widening search is a one-line change.
-        blocked_until_answered: "Nothing else. This is recorded, measured and escalated; no code changed."
-    what_this_does_NOT_claim: >-
-      The embeddings and Kuzu graph paths are STILL not audited. This pass
-      established what `memory search` reads and what it returns; it did not
-      establish whether the vector or graph stores have their own live readers and
-      writers. Saying "memory recall is dead" would over-claim — what is measured
-      is that the ARCHIVE half of the search tool is.
+          (a) first, because it is one query and it makes existing data reachable
+          today, then judge (b) on whether raw turns are good enough in practice.
+          Do NOT do (c) — I proposed it before measuring one level deeper.
+        blocked_until_answered: "Nothing. No code changed; this is measurement and a corrected escalation."
+    the_lesson_worth_keeping: >-
+      Two corrections to my own recommendations in one session, both from the same
+      cause: I measured the surface (0 rows, 414 calls) and recommended on it
+      before checking one level down (361 staged rows, 0 yield). "Measure the
+      EFFECT, never trust the call" has a sibling — measure the EFFECT, never
+      trust the EMPTY TABLE either. An empty table is a question, not an answer.
 
 waves:
   1:
