@@ -315,6 +315,74 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  PLANNING_AND_PROGRESS_EVALUATION_2026_08_29:
+    status: >-
+      SHIPPED — 3 commits (7726fd37, 1d796696, 3b6acfe2). This is the task Bakir asked for
+      at the top and which I had NOT started: "in today flow i do not see the plan steps
+      which will plan actions and evaulate". He had to say so twice. The earlier work was
+      turn ECONOMICS (salvage, token ceiling, converge nudge); none of it was a plan element.
+    WHAT_THE_MEASUREMENT_FOUND_and_it_reframed_everything: >-
+      Planning was not missing — it was DECORATION. `todo` and `update_plan` exist over a
+      shared PlanStore and are registered. Invocations across every retained log: todo 4,
+      update_plan 1, against web_search 1,785 and web_fetch 1,678.
+      THE REASON, decisive: the "eligible tools NOT presented" line fired 869 times and
+      dropped BOTH plan tools on 869 of 869 — 100%. Four invocations is not a model ignoring
+      planning; it is a model that was never offered it. The drop list is the alphabetical
+      tail (sessions_spawn, set_output_preference, task_status, todo, transcripts, tts,
+      undo_write, update_plan, vision_analyze, wait) and the registry's own comment explains
+      it: "rank order for a tool with neither a usage score nor a declared priority is the
+      ALPHABET". Nothing decided planning was unimportant. The alphabet did.
+      NOTE the shape: this is the SAME capability-rationing defect Bakir caught me proposing
+      earlier ("how will llm not about platfomr, his capabilities, skills?"), already live.
+    ALSO_NOT_a_planner: >-
+      `pipeline/planner/planner.py` is named PreflightPlanner and plans NOTHING about
+      actions — it selects which TOOLS are permitted (least-privilege authz). So the map's
+      only "planner" is unrelated to the plan-of-steps Bakir asked about.
+    THREE_COMMITS_IN_FORCED_ORDER: >-
+      7726fd37 SCOPE — PlanStore was process-global (ToolRegistry.with_defaults runs once,
+        orchestrator.py:920), so one chat's plan would overwrite another's the moment
+        planning was used; format_for_injection feeds the model's context, the worst place
+        to leak. Now per trace_id, bounded + MRU-evicting like TurnCostLedger. Closes the
+        deferral the store's own docstring carried ("no per-session signal yet"); the signal
+        exists now. Public API unchanged, so todo/update_plan needed no edits.
+      1d796696 PRESENT — todo + update_plan added to the guaranteed base set, cap 36 -> 38
+        in lockstep per this file's stated convention. Same fix already applied once here
+        for skills_list/skill_view ("authoring was already base, but discovery was prunable
+        — the bug"); planning had no base member at all.
+      3b6acfe2 EVALUATE — the every-5-steps check and replan.
+    HIS_DESIGN_vs_THE_EVIDENCE_only_the_ANSWERER_changed: >-
+      HIS, and all three shipped: the interval of 5, the question "did it move?", and
+      re-planning when it did not.
+      CHANGED: he proposed the MODEL evaluate its own progress. An LLM judging progress from
+      its own trajectory scores 0.54-0.65 AUROC (near chance) and degrades as the trace
+      grows — least reliable exactly when most needed — while a structural detector scores
+      0.83-0.95, and a judge-inclusive arm cost +129% tokens for identical quality. So the
+      check COUNTS the plan's own item statuses, which the model already maintains.
+      DECLINED: "go to the beginning". The directive says "do not start over ... keep
+      everything you have already established" — Reflexion's gain comes from carrying the
+      buffer forward, and loss-of-history is a catalogued failure mode.
+      Two shapes: a stalled plan -> revise it; NO plan after 5 steps -> "write one", which is
+      what makes planning happen on the turns that need it while a short turn is never
+      nudged and never charged.
+    LIVE_EVIDENCE_2026_08_29: >-
+      Core restarted 22:28:23 local (pid 397413), clean boot, 455 lines, ZERO errors.
+      Injected a genuinely three-part question. Result: 4 model calls, 51,482 input tokens,
+      17.5s, error_count 0, and it BATCHED all three lookups (owls_list, skills_list,
+      cronjob) in one turn. tools_count 79 / tools_tokens 19,423 — unchanged, so capability
+      was not rationed to pay for any of this.
+      NO [plan] line fired, which is CORRECT: the turn finished inside 5 steps, and a short
+      turn must never be nudged. Also notable — skills_list was actually CALLED, the tool
+      that previously had zero invocations because it was being dropped.
+    WHAT_IS_NOT_YET_EVIDENCED_LIVE: >-
+      1. The nudge itself (both shapes). It needs a turn that runs 5+ steps without the plan
+         moving, and none has occurred since deploy. Proven by unit tests against the real
+         callback, not by production.
+         CLOSING QUERY: grep '"msg": "\[plan\] no progress' ~/.stackowl/logs/stackowl.jsonl
+      2. That todo is presented on a CAPPED turn. Proven structurally (base membership, and
+         a test asserting PRESENTED by the real selector under a hostile cap) but no "NOT
+         presented" line has fired since restart.
+         CLOSING QUERY: the next such line must NOT list todo or update_plan in `dropped`.
+    BASELINES: ruff src/ 37, mypy 65. 433 pipeline + 42 planning + 26 presentation green.
   ESC_65_THE_LEARNED_SKILL_CORPUS_WAS_PURGED_2026_08_29:
     the_question: >-
       151 learned skills were purged from the live registry today. Was that intended, and
