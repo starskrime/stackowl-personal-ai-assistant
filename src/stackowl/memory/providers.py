@@ -41,6 +41,16 @@ from stackowl.infra.observability import log
 BUILTIN_PROVIDER_NAME = "builtin"
 
 
+class ProviderNotRunnableError(RuntimeError):
+    """A provider was asked to run a tool it never implemented a handler for.
+
+    Raised by the default :meth:`MemoryProvider.handle_tool_call` so that a
+    provider contributing no schemas — the builtin — needs no handler, while one
+    that somehow reaches dispatch without overriding it fails LOUDLY. Returning
+    "" instead would be indistinguishable from a real empty result.
+    """
+
+
 class ProviderRefused(ValueError):
     """A provider was rejected at activation. Never raised for a cap breach —
     that path is a logged refusal, because one bad plugin must not stop a boot."""
@@ -75,6 +85,30 @@ class MemoryProvider(ABC):
     def tool_schemas(self) -> list[dict[str, object]]:
         """Schemas this provider contributes behind the `memory` tool. Counted
         against the ceiling; see the module docstring for why the total matters."""
+
+    def handle_tool_call(self, tool_name: str, args: dict[str, object]) -> str:
+        """Execute one of THIS provider's advertised schemas.
+
+        THE OTHER HALF OF ``tool_schemas``, and it was missing. A provider could
+        advertise a tool with no way to run it — an unrunnable advertisement,
+        which is worse than none because the model will call it and be told
+        nothing useful. The reference platform's equivalent ABC carries both
+        halves; ours carried only the first.
+
+        NOT abstract, deliberately. A provider that contributes no schemas — the
+        builtin does exactly that — has nothing to run and must not be forced to
+        write a handler it can never reach. Adding an abstract method here would
+        also break every already-installed plugin, which is a poor trade for a
+        method most providers never need.
+
+        The default REFUSES rather than returning a plausible empty string,
+        because a silent "" is indistinguishable from a real empty result and
+        would make an unrunnable tool look merely unhelpful.
+        """
+        raise ProviderNotRunnableError(
+            f"provider {self.name!r} was asked to run {tool_name!r} but implements "
+            "no handle_tool_call; a provider must be able to run what it advertises"
+        )
 
 
 class BuiltinCuratedProvider(MemoryProvider):
@@ -228,6 +262,47 @@ class MemoryProviderRegistry:
         because an accidental first call from a request path would freeze the set
         at whatever happened to be loaded then."""
         return self._active or ()
+
+    def active_schemas(self) -> list[dict[str, object]]:
+        """Every active provider's schemas, flattened. What presentation needs.
+
+        Reads from the FROZEN set, so it cannot resolve as a side effect — an
+        accidental first call from a request path would otherwise freeze the
+        active set at whatever happened to be loaded then (Law 1).
+        """
+        out: list[dict[str, object]] = []
+        for provider in self.active:
+            try:
+                out.extend(provider.tool_schemas())
+            except Exception as exc:  # a provider may not break presentation
+                log.memory.error(
+                    "[memory] provider_registry.active_schemas: provider raised — "
+                    "its schemas are omitted, the rest are presented",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._safe_name(provider)}},
+                )
+        return out
+
+    def provider_for(self, tool_name: str) -> MemoryProvider | None:
+        """The active provider owning ``tool_name``, or None. What dispatch needs.
+
+        Without this, routing a call means asking every provider in turn and
+        hoping exactly one answers — which is a second copy of the ownership rule
+        living in the caller.
+        """
+        for provider in self.active:
+            try:
+                if any(s.get("name") == tool_name for s in provider.tool_schemas()):
+                    return provider
+            except Exception as exc:
+                log.memory.error(
+                    "[memory] provider_registry.provider_for: provider raised — "
+                    "treated as not owning the tool",
+                    exc_info=exc,
+                    extra={"_fields": {"provider": self._safe_name(provider),
+                                       "tool": tool_name}},
+                )
+        return None
 
     @staticmethod
     def _safe_name(provider: MemoryProvider) -> str:

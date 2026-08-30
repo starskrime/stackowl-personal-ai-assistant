@@ -715,6 +715,53 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-41
+    date: 2026-08-30
+    title: "Memory-provider schemas are runnable and routable — but still not PRESENTED"
+    what_shipped: >-
+      MemoryProvider gained handle_tool_call — the executor half the interface was
+      missing. The reference platform's equivalent ABC carries both
+      get_tool_schemas AND handle_tool_call; ours carried only the first, so a
+      provider could advertise a tool with no way to run it. Not abstract, so the
+      builtin (which contributes no schemas) and any already-installed plugin stay
+      valid; the default REFUSES loudly rather than returning "", because a silent
+      empty string is indistinguishable from a real empty result.
+      And the registry can answer the two questions any wiring needs:
+      active_schemas() (what to present) and provider_for(name) (who runs it),
+      both reading the FROZEN set so neither can resolve as a side effect.
+    THE_ACTIVATION_REFUSAL_I_BUILT_AND_REVERTED: >-
+      I first made "advertises schemas but implements no handler" a REFUSAL at
+      activation — catch it before the model is ever offered the tool. It broke
+      NINE tests in the existing D08.2 suite, because their `_StubProvider` does
+      not inherit MemoryProvider at all and has no handler; my check
+      (`type(provider).handle_tool_call is ...`) raised AttributeError inside the
+      surrounding try and every provider was silently SKIPPED — a bug in my own
+      code, and the opposite of the loud refusal I intended.
+      REVERTED rather than fixed-and-kept. Changing nine tests that encode shipped
+      activation behaviour, to accommodate a rule Bakir never asked for, is exactly
+      the shape "never fix a test to make your change pass" exists to stop. The
+      proposal is recorded here instead: refuse at activation, and update the stub
+      to resemble a real provider — but that is a behaviour change to shipped
+      activation and belongs to him, not to me at the end of a long session.
+      What shipped is strictly better than before and breaks nothing: an
+      advertised-but-unrunnable tool now fails LOUDLY at dispatch instead of not
+      existing at all.
+    WHAT_IS_STILL_MISSING_and_this_is_the_honest_part: >-
+      NOTHING PRESENTS THE SCHEMAS YET. active_schemas() has no caller outside its
+      tests, exactly as tool_schemas() had none before. An Obsidian or mem0 plugin
+      today still would not reach the model — it would now be REFUSED loudly if it
+      were unrunnable, which is the difference between failing silently and failing
+      visibly, but a correct provider still contributes nothing.
+      I am naming this rather than implying the seam is finished, because "installs
+      and does nothing" was the exact defect this pass set out to remove and only
+      half of it is gone.
+    the_remaining_seam_named_precisely: >-
+      Presentation must add registry.active_schemas() to the presented tool array
+      (bounded by the ceiling of 6, already enforced), and the memory tool's
+      dispatch must route a call to registry.provider_for(name).handle_tool_call().
+      It touches the Law 2 hot path, which is why it was not done blind at the end
+      of a long session.
+    why_it_is_justified_now: "Bakir named the candidates on 2026-08-30 — Obsidian, mem0, potential memory plugins. Before that there was nothing to present and building it would have been decoration."
   - id: DEBT-40
     date: 2026-08-30
     title: "INVESTIGATED AND CLOSED — the delivery path healed itself; no change needed"
