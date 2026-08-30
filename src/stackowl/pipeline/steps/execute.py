@@ -2468,12 +2468,23 @@ async def _run_with_tools(
     # STEER-7/F094 — the clarify Raise/Stop wait scales PER CHANNEL from settings
     # (120s fallback) so a slow mobile user isn't auto-Stopped before answering.
     _clarify_wait_s = resolve_clarify_wait_timeout(state.channel, _services.settings)
+    # The progress-evaluation source. Read off the LIVE `todo` tool so there is one
+    # plan slot, not a second copy: todo and update_plan already share it, and the
+    # store is now scoped per turn by trace_id. Returns None when the tool is not
+    # registered (a stripped-down registry in a test), which the callback treats as
+    # "no evaluation" rather than an error.
+    def _plan_counts() -> dict[str, int]:
+        tool = tool_registry.get("todo")
+        store = getattr(tool, "_store", None)
+        return store.counts() if store is not None else {}
+
     _budget_cb = make_budget_callback(
         _governor,
         interactive=(state.interactive and not _default_backstop),
         clarify=_services.clarify_gateway,
         session_key=state.session_key, channel=state.channel,
         wait_timeout_s=_clarify_wait_s,
+        plan_counts=_plan_counts,
     )
 
     # Task 10 — steering closure: drain THIS turn's mailbox at each iteration

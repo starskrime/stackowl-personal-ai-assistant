@@ -37,6 +37,56 @@ if TYPE_CHECKING:  # pragma: no cover
 # interval of 5 means something different at max_steps=8 than at max_steps=200.
 _CONVERGE_AT_FRACTION = 0.75
 
+# How many consecutive iterations with NO plan movement before the turn is asked
+# to re-plan. Bakir's number, 2026-08-29: "check of progress for every 5 steps.
+# If agent did not move on task then optimize and replan actions again."
+#
+# WHAT THE EVIDENCE CHANGED, and it is only the ANSWERER. He proposed the model
+# evaluate its own progress; measured, an LLM judging progress from its own
+# trajectory scores 0.54-0.65 AUROC (near chance) and degrades as the trace grows
+# — least reliable exactly when most needed — while a structural detector scores
+# 0.83-0.95, and a judge-inclusive arm cost +129% tokens for identical quality.
+# So the interval, the question and the replan are all his; the answer comes from
+# COUNTING the plan's own item statuses, which the model already maintains. Free,
+# deterministic, and it cannot hallucinate progress.
+_NO_PROGRESS_STEPS = 5
+
+# Never more than this many nudges in one turn. A directive repeated every step
+# would grow context on precisely the turns already closest to the cap.
+_MAX_PLAN_NUDGES = 3
+
+
+def _plan_signature(counts: dict[str, int]) -> tuple[int, ...]:
+    """The comparable shape of "where the plan is now".
+
+    Deliberately the finished/active split rather than the raw dict: an item
+    edited in place (content reworded, a new pending item appended) is not
+    progress, and counting it as such would let a turn spin forever while looking
+    busy. Movement means a status CHANGED.
+    """
+    return (
+        int(counts.get("completed", 0)),
+        int(counts.get("cancelled", 0)),
+        int(counts.get("in_progress", 0)),
+        int(counts.get("pending", 0)),
+    )
+
+
+_NO_PLAN_DIRECTIVE = (
+    "[plan] You have taken {steps} steps and there is no plan for this turn. "
+    "Write one now with the `todo` capability: the concrete steps you intend to "
+    "take, then keep their status current as you go. Then continue — do not "
+    "restate what you have already done."
+)
+
+_REPLAN_DIRECTIVE = (
+    "[plan] No plan item has advanced in {steps} steps. The current approach is "
+    "not working, so revise the plan rather than repeating it: update `todo` with "
+    "what you have RULED OUT and why, and what you will do differently. Keep "
+    "everything you have already established — do not start over. If the goal "
+    "cannot be reached, say so and stop."
+)
+
 _RAISE = "Raise"
 _STOP = "Stop"
 # Raised 120.0 -> 600.0 on 2026-07-22 (owner decision): a human needs real time
@@ -137,6 +187,7 @@ def make_budget_callback(
     session_key: str,
     channel: str,
     wait_timeout_s: float = _WAIT_TIMEOUT_S,
+    plan_counts: Callable[[], dict[str, int]] | None = None,
 ) -> Callable[[ReActIterationState], Awaitable[list[dict[str, Any]] | None]]:
     """Return an async callback that gates each ReAct iteration against budget caps.
 
@@ -163,6 +214,53 @@ def make_budget_callback(
     # threshold would grow the transcript on exactly the turns already closest to the
     # cap — paying the accumulating context cost to repeat what the model has read.
     converge_sent = False
+    # Progress-evaluation state: the last plan shape we saw, the iteration it was
+    # first seen at, and how many nudges this turn has already been given.
+    last_signature: tuple[int, ...] | None = None
+    unchanged_since = 0
+    plan_nudges = 0
+
+    def _progress_directive(iteration: int) -> list[dict[str, Any]] | None:
+        """Bakir's every-5-steps evaluation, answered structurally. Never raises."""
+        nonlocal last_signature, unchanged_since, plan_nudges
+        if plan_counts is None or plan_nudges >= _MAX_PLAN_NUDGES:
+            return None
+        try:
+            counts = plan_counts() or {}
+            signature = _plan_signature(counts)
+            total = int(counts.get("total", 0))
+        except Exception as exc:  # noqa: BLE001 — advisory; never cost a turn
+            log.engine.debug(
+                "[plan] progress check unavailable — skipping",
+                extra={"_fields": {"error": str(exc)}},
+            )
+            return None
+
+        if signature != last_signature:
+            last_signature = signature
+            unchanged_since = iteration
+            return None
+
+        steps_still = iteration - unchanged_since + 1
+        if steps_still < _NO_PROGRESS_STEPS:
+            return None
+
+        # Reset the window so the next nudge is another full interval away, not
+        # the very next step.
+        unchanged_since = iteration
+        plan_nudges += 1
+        no_plan = total == 0
+        log.engine.info(
+            "[plan] no progress — asking the turn to %s",
+            "plan" if no_plan else "re-plan",
+            extra={"_fields": {
+                "steps_without_progress": steps_still,
+                "plan_items": total, "nudge": plan_nudges,
+                "kind": "no_plan" if no_plan else "replan",
+            }},
+        )
+        template = _NO_PLAN_DIRECTIVE if no_plan else _REPLAN_DIRECTIVE
+        return [{"role": "user", "content": template.format(steps=steps_still)}]
 
     async def _gate(iter_state: ReActIterationState) -> list[dict[str, Any]] | None:
         nonlocal converge_sent
@@ -179,6 +277,11 @@ def make_budget_callback(
             if folded is not None:
                 converge_sent = True
                 return folded
+            # The evaluation pipeline: has the plan actually moved? Structural,
+            # free, and it runs on every ordinary iteration.
+            progress = _progress_directive(iter_state.iteration)
+            if progress is not None:
+                return progress
             return None  # no breach — fold nothing (Task 9 splice contract)
 
         log.engine.debug(
