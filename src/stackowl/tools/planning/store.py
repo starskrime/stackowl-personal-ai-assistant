@@ -21,10 +21,15 @@ Both go through the same invariants here:
 ``format_for_injection()`` renders the active list so the checklist survives
 context compaction by being re-injected into the message history.
 
-Lifetime note: this store is **process-level** — there is no per-session signal
-yet, so a single agent loop (the common case) is assumed. This matches the
-limitation of the sibling write-safety / undo substrate; revisit when a
-per-session plan slot lands.
+Lifetime note: the plan is scoped PER TURN, keyed on ``TraceContext``'s
+``trace_id``, bounded and MRU-evicting like ``TurnCostLedger``. This closes the
+deferral this docstring used to carry ("there is no per-session signal yet ...
+revisit when a per-session plan slot lands") — the signal exists now, and
+``ToolRegistry.with_defaults()`` builds exactly ONE store for the whole process,
+so a process-level slot means one chat's plan overwrites another's. The platform
+serves chats concurrently by design, so that is a correctness bug the moment the
+plan tools are actually used. A caller with no trace (CLI, a direct tool call, a
+test) shares one fallback bucket and behaves exactly as before.
 
 Provenance / port-vs-build: PORT of the in-memory todo-list substrate
 (ordered list, replace/merge modes, dedup-by-id, status enum,
@@ -35,10 +40,12 @@ port-source: upstream-agent.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 
 # Valid status values for a plan item. Confirmed 1:1 against the ported
 # in-memory todo substrate (pending / in_progress / completed / cancelled).
@@ -53,6 +60,16 @@ _IN_PROGRESS = "in_progress"
 # opposite of the compaction-survival goal). Programmatic reads stay uncapped.
 _MAX_INJECTED_ITEMS = 50
 
+# How many turns' plans are retained. A per-trace map with no bound is a leak that
+# grows for the life of the process; the same reasoning (and the same MRU-evicting
+# shape) as TurnCostLedger, which solved this exact problem for cost.
+_MAX_TRACKED_TURNS = 256
+
+#: Bucket for callers that have no TraceContext — the CLI, a direct tool call, a
+#: test. A real state, not an error: they get one shared plan and the previous
+#: behaviour, rather than an exception on a path that used to work.
+_UNTRACED = ""
+
 # Compact status markers for the injected render.
 _MARKERS: dict[str, str] = {
     "completed": "[x]",
@@ -63,6 +80,17 @@ _MARKERS: dict[str, str] = {
 # Statuses worth re-injecting after compaction — completed/cancelled items are
 # omitted so the model does not re-do finished work.
 _ACTIVE_STATUSES: frozenset[str] = frozenset({"pending", "in_progress"})
+
+
+@dataclass
+class _TurnPlan:
+    """One turn's plan. Held per trace_id so turns cannot read or clobber each other."""
+
+    items: list[PlanItem] = field(default_factory=list)
+    #: ids demoted by the most recent single-in_progress auto-correction, so the
+    #: calling tool can surface a note to the model. Per-turn for the same reason
+    #: the items are: two concurrent turns must not read each other's demotions.
+    last_demoted: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -89,11 +117,58 @@ class PlanStore:
     auto-corrected, not rejected.
     """
 
-    def __init__(self) -> None:
-        self._items: list[PlanItem] = []
-        # ids demoted by the most recent single-in_progress auto-correction, so
-        # the calling tool can surface a note to the model.
-        self._last_demoted: list[str] = []
+    def __init__(self, max_tracked_turns: int = _MAX_TRACKED_TURNS) -> None:
+        self._max_tracked_turns = max_tracked_turns
+        self._by_turn: OrderedDict[str, _TurnPlan] = OrderedDict()
+
+    # ------------------------------------------------------------- turn scoping
+    @staticmethod
+    def _turn_key() -> str:
+        """The current turn's identity, or the shared untraced bucket.
+
+        Never raises: a store that could fail on a missing/odd TraceContext would
+        take the turn down with it, and the plan is advisory.
+        """
+        try:
+            return str(TraceContext.get().get("trace_id") or _UNTRACED)
+        except Exception:  # noqa: BLE001 — advisory state must never cost a turn
+            return _UNTRACED
+
+    def _plan(self) -> _TurnPlan:
+        """This turn's plan, created on demand, MRU-ordered and bounded."""
+        key = self._turn_key()
+        plan = self._by_turn.get(key)
+        if plan is None:
+            plan = _TurnPlan()
+            self._by_turn[key] = plan
+        self._by_turn.move_to_end(key)
+        while len(self._by_turn) > self._max_tracked_turns:
+            evicted, _ = self._by_turn.popitem(last=False)
+            log.engine.debug(
+                "[planning] store: evicted oldest turn plan (bounded)",
+                extra={"_fields": {"evicted_trace_id": evicted}},
+            )
+        return plan
+
+    def tracked_turns(self) -> int:
+        """How many turns' plans are retained — the bound, observable."""
+        return len(self._by_turn)
+
+    @property
+    def _items(self) -> list[PlanItem]:
+        return self._plan().items
+
+    @_items.setter
+    def _items(self, value: list[PlanItem]) -> None:
+        self._plan().items = value
+
+    @property
+    def _last_demoted(self) -> list[str]:
+        return self._plan().last_demoted
+
+    @_last_demoted.setter
+    def _last_demoted(self, value: list[str]) -> None:
+        self._plan().last_demoted = value
 
     # ----------------------------------------------------------------- mutations
 
