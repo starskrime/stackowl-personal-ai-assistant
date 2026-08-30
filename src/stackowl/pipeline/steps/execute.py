@@ -1318,6 +1318,39 @@ async def _tool_global_usage_scores(state: PipelineState) -> dict[str, float]:
         return {}
 
 
+def _has_explicit_resource_caps(caps: ResourceCaps) -> bool:
+    """True when the OWL set a cap of its own, so the default backstop stands down.
+
+    Deliberately excludes ``max_input_tokens``. If a token cap counted as "explicit",
+    an owl that set only a token cap would lose the STEP backstop that stops a
+    genuine infinite loop — trading one safety net for another instead of keeping
+    both. The two bound different failures: steps bound a loop, tokens bound spend.
+    """
+    return any(
+        c is not None for c in (caps.max_steps, caps.max_time_s, caps.max_cost_usd)
+    )
+
+
+def _resolve_token_ceiling(caps: ResourceCaps) -> ResourceCaps:
+    """Apply the default token ceiling unless the owl chose its own. A FLOOR, not an override.
+
+    WHY THIS IS NOT PART OF THE no-caps BACKSTOP, which is where it was first wired
+    and where it was wrong. The backstop runs only when the owl set NO cap at all, so
+    an owl that set any ONE of steps/time/cost lost the token ceiling entirely.
+
+    The failure mode that makes it worth a named function: the cap an operator
+    worried about spend would naturally reach for is ``max_cost_usd`` — and that is
+    the meter that can NEVER fire here, because the model is unpriced and cost is
+    $0.00 for 123,527 of 123,528 recorded calls. So the single most likely config
+    change would have silently deleted the only meter that works in exchange for one
+    that cannot. Measured 2026-08-29: 0 of 11 live owls set explicit caps, so this
+    was latent — which is why it is pinned by a test rather than left as a shrug.
+    """
+    if caps.max_input_tokens is not None:
+        return caps
+    return caps.model_copy(update={"max_input_tokens": DEFAULT_TURN_MAX_INPUT_TOKENS})
+
+
 async def _run_with_tools(
     state: PipelineState,
     choice: ToolProviderChoice | ModelProvider,
@@ -2373,9 +2406,10 @@ async def _run_with_tools(
         def monotonic(self) -> float:
             return time.monotonic()
 
-    _has_explicit_caps = any(
-        c is not None for c in (_caps.max_steps, _caps.max_time_s, _caps.max_cost_usd)
-    )
+    _has_explicit_caps = _has_explicit_resource_caps(_caps)
+    # The token ceiling applies to EVERY turn, not only to un-capped owls — see
+    # _resolve_token_ceiling for the config that would otherwise have deleted it.
+    _caps = _resolve_token_ceiling(_caps)
     # Default safety backstop: when the owl set NO explicit caps, apply a default
     # time/step bound so the (already-tested) BudgetGovernor always runs and every
     # turn terminates in bounded time even when a weak model spirals. NON-interactive
@@ -2397,16 +2431,11 @@ async def _run_with_tools(
         _default_max_steps = (
             DEFAULT_SCHEDULED_TURN_MAX_STEPS if _is_deferred_turn else DEFAULT_TURN_MAX_STEPS
         )
-        # TOKENS ALONGSIDE STEPS. Steps count rounds, not spend: trace f33c9fa0
-        # billed 683,728 input tokens inside this very 20-step budget, and
-        # `recover-task-925aa68-fix` billed 3.9M across 137 rounds against it. The
-        # USD cap cannot substitute — it is $0.00 on an unpriced model, which is
-        # 123,527 of 123,528 recorded calls. This ships ON, like every other
-        # backstop here, and sits above the measured p99 (434,849) so ordinary work
-        # never reaches it.
+        # STEPS only. The token ceiling is applied ABOVE, to every turn, because
+        # scoping it to this block made it vanish for any owl that set a cap of its
+        # own — including max_cost_usd, the one meter that can never fire here.
         _caps = _caps.model_copy(update={
             "max_steps": _default_max_steps,
-            "max_input_tokens": DEFAULT_TURN_MAX_INPUT_TOKENS,
         })
     # F093 — cumulative cost across durable resume: seed the governor with the
     # spend already accumulated by PRIOR attempts of this durable task (the

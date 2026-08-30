@@ -133,3 +133,65 @@ async def test_the_ledger_accumulates_tokens_alongside_cost() -> None:
     assert led.tokens("t") == 42_401
     assert led.total("t") == 0.0, "an unpriced model must still count tokens"
     assert led.tokens("never-seen") == 0
+
+
+# ---------------------------------------------------------------------------
+# The ceiling must not be an accident of having set no other cap
+# ---------------------------------------------------------------------------
+
+
+def test_an_owl_with_ANY_other_cap_still_gets_a_token_ceiling() -> None:
+    """MY OWN DEFECT, found by measurement one commit after shipping it.
+
+    The token ceiling was first wired INSIDE the `_default_backstop` block, which
+    runs only when `_has_explicit_caps` is False — i.e. only for an owl that set
+    NO max_steps, max_time_s or max_cost_usd. So an owl that set any ONE of them
+    lost the token ceiling entirely.
+
+    The shape is worse than it looks. The cap an operator worried about spend would
+    naturally reach for is `max_cost_usd` — and that is the meter that can NEVER
+    fire here, because the model is unpriced and cost is $0.00 for 123,527 of
+    123,528 recorded calls. So the single most likely configuration change would
+    have silently deleted the only meter that works, in exchange for one that
+    cannot.
+
+    MEASURED: 0 of 11 live owls set explicit caps today, so this was latent rather
+    than live — which is exactly why it needed a test and not a shrug. This repo's
+    own rule: a feature ships ON, and a capability that quietly turns itself off on
+    a plausible config is decoration.
+    """
+    from stackowl.authz.bounds import BoundsSpec
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    # An owl that set ONLY a cost cap — the dangerous case.
+    caps = ResourceCaps(max_cost_usd=5.0)
+    assert _resolve_token_ceiling(caps).max_input_tokens == DEFAULT_TURN_MAX_INPUT_TOKENS
+
+    # And one that set steps.
+    caps = ResourceCaps(max_steps=8)
+    assert _resolve_token_ceiling(caps).max_input_tokens == DEFAULT_TURN_MAX_INPUT_TOKENS
+    assert _resolve_token_ceiling(caps).max_steps == 8, "the owl's own cap was overwritten"
+
+    assert BoundsSpec  # imported to pin the public surface this rides on
+
+
+def test_an_owl_that_sets_its_OWN_token_cap_keeps_it() -> None:
+    """The default is a FLOOR, not an override. An explicit choice wins."""
+    from stackowl.pipeline.steps.execute import _resolve_token_ceiling
+
+    caps = ResourceCaps(max_input_tokens=25_000)
+    assert _resolve_token_ceiling(caps).max_input_tokens == 25_000
+
+
+def test_setting_only_a_token_cap_does_not_disable_the_STEP_backstop() -> None:
+    """The reverse trap. max_input_tokens must not count as "explicit caps".
+
+    If it did, an owl that set only a token cap would lose the step backstop that
+    stops a genuine infinite loop — trading one safety net for another instead of
+    having both.
+    """
+    from stackowl.pipeline.steps.execute import _has_explicit_resource_caps
+
+    assert _has_explicit_resource_caps(ResourceCaps(max_input_tokens=1000)) is False
+    assert _has_explicit_resource_caps(ResourceCaps(max_steps=5)) is True
+    assert _has_explicit_resource_caps(ResourceCaps()) is False
