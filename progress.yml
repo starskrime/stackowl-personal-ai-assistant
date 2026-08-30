@@ -315,6 +315,40 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  THE_MEASURED_ZERO_AUDIT_COMPLETE_2026_08_30:
+    what_it_was: >-
+      progress.yml carries 504 measured-absence claims — the shape that rots. NINE items rest
+      a `no_change_needed` on one. All nine have now been re-measured. This began by accident:
+      D03.2 was found reopened while looking for something else, which raised the obvious
+      question of how many others had gone stale unnoticed.
+    THE_RESULT_and_every_one_failed_differently: >-
+      D03.2  ROTTED   — "ZERO calls over 50% of the window" is now 7; max 23.9% -> 62.1%.
+                        A standing watch now exists (e090b57c) so it cannot rot unseen again.
+      D02.5  UNFALSIFIABLE — "no veto lines" conflated "judged and passed" with "never formed
+                        an opinion"; both abstaining exits logged nothing (d6ab6db7).
+      D02.1  DRIFTED  — "ZERO cross-step imports" was 1; helper moved to a shared home and
+                        the INVARIANT pinned, not the move (203e781e).
+      D01.6  HELD BUT UNREADABLE — 0 cached across 654,849,862 tokens is real, but could not
+                        be told from a silent backend until 99f62b3a.
+      D05.4  ROTTED   — "0 tools array CHANGED" is 7, beside 259 prefix invalidations.
+                        Became ESC-67; both BUG halves fixed (f63f0302, 563a1d1a).
+      D16.3  SOUND    — note_payload_limit's zero is correct 0-over-0; the trigger has never
+                        occurred and the line is at WARNING, so it is falsifiable.
+      D11.2  CLAIM HOLDS, FIX UNVALIDATED — 3 of 8 discover calls returned zero, but every
+                        one PREDATES the fix by 69 minutes. Never run in production.
+      D04.1  SATISFIED — by 99f62b3a, above.
+      D09.5  CLOSED, FALSIFIER UNDER-SPECIFIED — it treated "same reason string" as "same
+                        root cause"; there were two, and both are now fixed.
+    THE_PATTERN_WORTH_KEEPING: >-
+      Only ONE of the nine was simply sound. Two had rotted, one had drifted, two were
+      unreadable, one was unvalidated, one had an under-specified falsifier. A measured zero
+      is not a fact — it is a fact WITH A DATE, and without a standing instrument it decays
+      silently. Every fix in this audit was an instrument, not a behaviour change: the
+      decisions were mostly right, and mostly uncheckable.
+    WHAT_IS_LEFT: >-
+      ESC-67's `stable_context` (203 of 259 invalidations) — a design tradeoff, not a defect,
+      awaiting Bakir. Plus ESC-64 (background spend), ESC-66 (RCA re-diagnosis) and D10.6's
+      re-verdict. Nothing else from this audit is blocked.
   ESC_67_MUTABLE_CONTENT_SITS_IN_THE_CACHED_PREFIX_2026_08_30:
     the_question: >-
       `stable_context` is preferences + learned lessons, and it lives in the FROZEN prompt
@@ -17513,7 +17547,13 @@ items:
     decisions: []
     changes: []
     notes: null
-
+    REQUIREMENT_SATISFIED_2026_08_30_commit_99f62b3a: >-
+      This item asked that "this backend cannot report cache hits" become "a stated fact
+      rather than a zero nobody can interpret". That is now true and verified live: the
+      cost recorder logs `source` at INFO with three honest states, and production reads
+      source='not_reported', provider=NeraAiRaw. The zero is no longer ambiguous — it means
+      the cache is INVISIBLE on this backend, not cold. See D01.6 for the full measurement
+      (0 cached against 654,849,862 input tokens across 124,683 rows).
   - id: D04.2
     title: "Transport adapters"
     domain: D04
@@ -20537,7 +20577,28 @@ items:
       ROUND 0 MEASURED 2026-08-23T17:30Z. Picked up because D09.1 (ESC-41), D08.5
       (ESC-39) and D08.4 (traffic) are all blocked, and D09.5 is the earliest item
       whose depends_on is empty. The measurement moved the item off the map Ask.
-
+    CLOSING_QUERY_RUN_VERBATIM_2026_08_30: >-
+      The item specified its own closing query, so it was run exactly as written rather than
+      approximated.
+      SKIP WARNING = 0 across every retained log ("the tool registry named no tools"), which
+      is the condition the item said must hold. The accessor fix DID reach the running path.
+      agent:synthesizer creates in skill_audit = 111, so the PASS condition is met.
+      THE FALSIFIER FIRED, AND IT WAS UNDER-SPECIFIED. The item said: "if refusals continue
+      at five a night with the same tool_names reason, the accessor fix did not reach the
+      running path and I should suspect a second consulted registry." Refusals DID continue
+      (9/9/8/9 a day) with tool_names among them — while skip stayed at 0. Under the item's
+      own logic those two signals contradict.
+      THE RESOLUTION: the falsifier treated "same reason STRING" as implying "same root
+      CAUSE", and there were TWO. The accessor bug was real and was fixed (real tools stopped
+      being flagged after the 2026-08-23 08:31-08:36 window). What continued was a DIFFERENT
+      cause behind the same message — the rule flagging ordinary prose (`stop`, `user`,
+      `english_tutor`) as unregistered tools, at a 100% live false-positive rate. Fixed
+      tonight in 957cdc08 by making it advisory.
+      REFUSALS NOW, measured: 62 all time, 26 tool_names + 36 description. Today's five were
+      ALL the incident miner and all before 02:42:30; the miner fix went live 02:55 and the
+      advisory downgrade 04:55. ZERO refusals of any class since. Five learned skills are now
+      in the corpus, one of which (incident_shell_unachieved_effect) produced an ADVISORY
+      instead of a refusal — the exact case that used to block a write.
   - id: D09.6
     title: "Learning made visible"
     domain: D09
