@@ -6029,6 +6029,26 @@ items:
       silently (the decode raises and logs), so nothing is corrupted — but a sweep
       over them would emit 222 tracebacks. Recorded, not fixed: picking whether
       rollover gets its own column or stops writing here is a schema decision.
+    validate_result_2026_08_30:
+      restart: "./start.sh — gateway pid 443920 and core pid 443981 both started 09:33:45/09:34:00 local, 14s AFTER commit 480571bc (09:33:31). The fix is live."
+      a_near_miss_on_the_instrument: >-
+        My first read of the boot time said 14:26:29 UTC — SEVEN MINUTES BEFORE the
+        commit — which would have meant I was measuring the old code. It was a
+        stale match: a grep for "boot" over the last 4000 lines caught the PREVIOUS
+        boot still inside that window. `ps -eo lstart` and the [startup] phase lines
+        gave the real answer. Recorded because the wrong reading was the one that
+        looked alarming, and acting on it would have meant re-restarting a platform
+        that was already correct.
+      PROVEN_LIVE:
+        the_12_casualties_resume: "Post-restart whole-table replay: 127 resume / 0 refused / 222 undecodable, against 12 refused before the fix."
+        no_new_refusals: "Zero ResumeTranscriptError since the restart; zero ERROR/CRITICAL in the boot window."
+        recovery_still_works: "[tasks] recovery: claimed orphaned task — reconstructing state -> launched background resume drive -> resumed task to terminal outcome. The path the change sits on ran, and completed."
+      OPEN_and_why: >-
+        close_interrupted_tool_sequence has still never fired live (grep count 0).
+        It only triggers on an ANTHROPIC-shaped durable resume, and this deployment
+        runs an OpenAI-compatible backend, so a quiet log here is NO OPPORTUNITY
+        rather than success — exactly the distinction the original validate_result
+        drew for Rule 5 itself, now inherited by its closer.
   - id: D01.6
     BRAINSTORM_RUN_RETROACTIVELY_2026_08_29: >
       Bakir chose to run the grill rather than accept the pre-process exception,
