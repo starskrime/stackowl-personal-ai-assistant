@@ -278,7 +278,7 @@ class CostTracker(OwnedRepository):
         # trace_id; the parent turn, its delegated children, and MoA proposers all
         # record under the same trace_id, so the total is the WHOLE turn's spend.
         if trace_id:
-            self._turn_ledger.add(trace_id, cost_usd)
+            self._turn_ledger.add(trace_id, cost_usd, input_tokens=input_tokens)
 
         await self._check_budget(today)
 
@@ -440,6 +440,16 @@ class CostTracker(OwnedRepository):
         evicted trace.
         """
         return self._turn_ledger.total(trace_id)
+
+    def turn_input_tokens(self, trace_id: str) -> int:
+        """Accumulated INPUT tokens for ``trace_id`` this server lifetime.
+
+        The synchronous counterpart to the async :meth:`get_turn_token_totals`,
+        which runs a SQLite query and so cannot be used on the governor's
+        per-iteration hot path. Reads the same bounded in-memory ledger
+        :meth:`turn_cost_usd` reads. Returns 0 for an unknown/evicted trace.
+        """
+        return self._turn_ledger.tokens(trace_id)
 
     async def get_turn_token_totals(self, trace_id: str) -> tuple[int, int] | None:
         """Sum input/output tokens across all cost_records for one turn.

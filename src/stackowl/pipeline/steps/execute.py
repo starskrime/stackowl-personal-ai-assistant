@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from stackowl.authz.bounds import (
     DEFAULT_SCHEDULED_TURN_MAX_STEPS,
+    DEFAULT_TURN_MAX_INPUT_TOKENS,
     DEFAULT_TURN_MAX_STEPS,
     ResourceCaps,
 )
@@ -2396,8 +2397,16 @@ async def _run_with_tools(
         _default_max_steps = (
             DEFAULT_SCHEDULED_TURN_MAX_STEPS if _is_deferred_turn else DEFAULT_TURN_MAX_STEPS
         )
+        # TOKENS ALONGSIDE STEPS. Steps count rounds, not spend: trace f33c9fa0
+        # billed 683,728 input tokens inside this very 20-step budget, and
+        # `recover-task-925aa68-fix` billed 3.9M across 137 rounds against it. The
+        # USD cap cannot substitute — it is $0.00 on an unpriced model, which is
+        # 123,527 of 123,528 recorded calls. This ships ON, like every other
+        # backstop here, and sits above the measured p99 (434,849) so ordinary work
+        # never reaches it.
         _caps = _caps.model_copy(update={
             "max_steps": _default_max_steps,
+            "max_input_tokens": DEFAULT_TURN_MAX_INPUT_TOKENS,
         })
     # F093 — cumulative cost across durable resume: seed the governor with the
     # spend already accumulated by PRIOR attempts of this durable task (the

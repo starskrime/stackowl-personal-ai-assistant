@@ -70,6 +70,21 @@ DEFAULT_TURN_MAX_STEPS: int = 20
 # work instead of a live reply.
 DEFAULT_SCHEDULED_TURN_MAX_STEPS: int = 45
 
+# The only cumulative meter a turn had was USD, and USD is $0.00 for 123,527 of
+# 123,528 recorded calls because the model is unpriced — a cost cap that can never
+# fire. Steps do not measure spend either: trace f33c9fa0 billed 683,728 input
+# tokens inside a 20-step budget, and `recover-task-925aa68-fix` billed 3.9M across
+# 137 rounds against the same ceiling. This is the meter that would have caught both.
+#
+# SIZED ABOVE THE MEASURED p99 so ordinary work never sees it. Fleet-wide input
+# tokens per trace: p50 11,574 / p90 106,752 / p99 434,849, with 84 traces over 500k
+# and 24 over 1M. The ceiling catches the pathological tail, not long research turns.
+#
+# Safe to enforce only because a budget breach now SALVAGES: it makes one toolless
+# call over the turn's tool results and delivers what was found. Before that, any
+# cap converted a slow answer into no answer at all.
+DEFAULT_TURN_MAX_INPUT_TOKENS: int = 500_000
+
 
 class ResourceCaps(BaseModel):
     """Per-run resource ceilings on the ``caps`` bounds axis.
@@ -84,6 +99,10 @@ class ResourceCaps(BaseModel):
     max_time_s: float | None = None
     max_steps: int | None = None
     max_concurrency: int | None = None
+    # Cumulative INPUT tokens for the run. The honest meter where max_cost_usd is
+    # structurally 0.00 on an unpriced model, and where max_steps counts rounds
+    # rather than spend. See DEFAULT_TURN_MAX_INPUT_TOKENS.
+    max_input_tokens: int | None = None
 
 
 class BoundsSpec(BaseModel):

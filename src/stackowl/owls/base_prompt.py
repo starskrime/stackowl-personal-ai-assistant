@@ -185,6 +185,37 @@ _CALL_PROTOCOL = (
     "their exact names in place of <name>."
 )
 
+# Round economy. Timeless, tool-agnostic, and it costs the model NO capability —
+# which is the whole point, and why the first draft of it was wrong.
+#
+# MEASURED, trace f33c9fa0: "What agents i have" (18 characters) billed 683,728 input
+# tokens over 16 rounds. 45% of that was 79 tool schemas re-sent every round and 8%
+# was the system prompt re-sent every round; the model's own output across all 16
+# rounds was 3.7%. The obvious-looking fix — present fewer tools — is the skill
+# catalogue bug one layer down: schemas are how the model knows what the platform CAN
+# DO, and we already have a tool-count cap that drops eligible tools and left
+# `skills_list` uncallable. Rationing capability to save tokens is what produced "it
+# does not have capability to work with himself" in the first place.
+#
+# 19,423 tokens is the price of ONE round. 310,768 is the price of SIXTEEN. The
+# schemas are byte-identical every round — they are not growing. So the lever is the
+# ROUND COUNT, and every round not taken saves the entire fixed prefix rather than
+# just its own output.
+#
+# Lives in the STABLE tier (Law 1): identical every turn, so it is paid for once per
+# session rather than once per turn.
+_ROUND_ECONOMY = (
+    "Spend rounds carefully. Every round re-sends everything before it, so a round "
+    "you do not take is the cheapest thing in the system.\n"
+    "- When several calls are INDEPENDENT — none of them needs another's result — "
+    "request them together in the same round instead of one at a time.\n"
+    "- When a call DOES depend on a previous result, wait for it. A batched call "
+    "built on a guess is a wrong call, not a cheaper turn.\n"
+    "- The moment you can answer, stop calling capabilities and answer. Do not "
+    "gather more to confirm what you already know.\n"
+    "- Answer concretely and briefly. Length is not thoroughness."
+)
+
 _NO_CAPABILITIES_THIS_TURN = (
     "No capabilities are available to you this turn. Do not attempt to "
     "call a function, tool, or capability of any kind, in any format — "
@@ -208,6 +239,10 @@ def stable_operational_context(*, describe_tool_protocol: bool = True) -> str:
     parts = ["Operational context (this changes; your character above does not)."]
     if describe_tool_protocol:
         parts.append(_CALL_PROTOCOL)
+        # Only alongside the protocol: telling a turn with no capabilities how to
+        # batch capability calls is noise, and it contradicts the explicit
+        # "do not attempt to call anything" instruction that turn receives.
+        parts.append(_ROUND_ECONOMY)
     parts.append(_DOWNLOADS_RULE)
     return "\n\n".join(parts)
 

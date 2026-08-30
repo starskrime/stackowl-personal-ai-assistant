@@ -46,6 +46,7 @@ class BudgetGovernor:
         self._max_steps = caps.max_steps
         self._max_time_s = caps.max_time_s
         self._max_cost_usd = caps.max_cost_usd
+        self._max_input_tokens = caps.max_input_tokens
         self._cost = cost_tracker
         self._trace_id = trace_id
         self._t0 = started_monotonic
@@ -69,7 +70,9 @@ class BudgetGovernor:
         rounds and tool calls. A provider can emit several tool_use blocks per
         round, so counting only rounds let a tool-spamming turn slip the step cap
         and die on the wall-clock instead — counting dispatches contains it.
-        Order: steps, then time, then cost (cost last — weakest signal).
+        Order: steps, then time, then TOKENS, then cost. Cost is last because it
+        is structurally $0.00 on an unpriced model and can never fire; tokens are
+        the meter that actually measures what the turn spent.
         """
         steps_done = iteration + 1 if tool_calls is None else max(iteration + 1, tool_calls)
         if self._max_steps is not None and steps_done >= self._max_steps:
@@ -78,6 +81,25 @@ class BudgetGovernor:
             elapsed = self._compute_elapsed()
             if elapsed >= self._max_time_s:
                 return BudgetBreach("time", self._max_time_s, elapsed)
+        # TOKENS BEFORE COST, deliberately. Cost is the weakest signal here: it is
+        # $0.00 for 123,527 of 123,528 recorded calls because the model is unpriced,
+        # so a cost cap can never fire and would silently rank above a meter that
+        # can. Tokens are what a turn actually spends.
+        if self._max_input_tokens is not None and self._cost is not None:
+            reader = getattr(self._cost, "turn_input_tokens", None)
+            if reader is not None:
+                try:
+                    used = int(reader(self._trace_id))
+                except Exception as exc:  # noqa: BLE001 — never disable steps/time
+                    log.engine.warning(
+                        "[budget] governor: token meter unreadable — token cap inert",
+                        extra={"_fields": {"trace_id": self._trace_id, "error": str(exc)}},
+                    )
+                    used = 0
+                if used >= self._max_input_tokens:
+                    return BudgetBreach(
+                        "tokens", float(self._max_input_tokens), float(used),
+                    )
         if self._max_cost_usd is not None and self._cost is not None:
             # Cumulative spend = prior durable attempts + this attempt's running
             # total (F093). For a non-durable turn _prior_cost_usd is 0.0.
@@ -149,6 +171,8 @@ class BudgetGovernor:
             self._max_steps = self._max_steps * 2 + 1
         elif cap == "time" and self._max_time_s is not None:
             self._max_time_s *= 2
+        elif cap == "tokens" and self._max_input_tokens is not None:
+            self._max_input_tokens *= 2
         elif cap == "cost" and self._max_cost_usd is not None:
             self._max_cost_usd *= 2
         log.engine.info("[budget] governor.raise_caps: lifted", extra={"_fields": {"cap": cap}})

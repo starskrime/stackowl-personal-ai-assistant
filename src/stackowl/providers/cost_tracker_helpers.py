@@ -41,13 +41,19 @@ _MAX_TRACKED_TURNS = 4096
 
 
 class TurnCostLedger:
-    """Bounded ``trace_id -> accumulated USD`` running total (in-memory only)."""
+    """Bounded ``trace_id -> (accumulated USD, input tokens)`` (in-memory only).
+
+    Tokens ride the SAME entry as cost rather than a parallel map, so there is one
+    eviction policy and one MRU order instead of two copies of the same rule that
+    could disagree about which turns are still live.
+    """
 
     def __init__(self, max_tracked_turns: int = _MAX_TRACKED_TURNS) -> None:
         self._max_tracked_turns = max_tracked_turns
         self._turn_totals: OrderedDict[str, float] = OrderedDict()
+        self._turn_tokens: dict[str, int] = {}
 
-    def add(self, trace_id: str, cost_usd: float) -> None:
+    def add(self, trace_id: str, cost_usd: float, *, input_tokens: int = 0) -> None:
         """Fold ``cost_usd`` into the bounded per-trace running total (hot path).
 
         Moves the trace to the MRU end (so eviction drops genuinely-old turns,
@@ -56,9 +62,12 @@ class TurnCostLedger:
         """
         prior = self._turn_totals.get(trace_id, 0.0)
         self._turn_totals[trace_id] = prior + cost_usd
+        if input_tokens:
+            self._turn_tokens[trace_id] = self._turn_tokens.get(trace_id, 0) + input_tokens
         self._turn_totals.move_to_end(trace_id)
         while len(self._turn_totals) > self._max_tracked_turns:
             evicted_id, _evicted_cost = self._turn_totals.popitem(last=False)
+            self._turn_tokens.pop(evicted_id, None)
             log.engine.debug(
                 "[cost_tracker] turn_ledger.add: evicted oldest turn total (bounded)",
                 extra={"_fields": {"evicted_trace_id": evicted_id}},
@@ -74,3 +83,13 @@ class TurnCostLedger:
         if not trace_id:
             return 0.0
         return self._turn_totals.get(trace_id, 0.0)
+
+    def tokens(self, trace_id: str) -> int:
+        """Accumulated INPUT tokens for ``trace_id`` this server lifetime.
+
+        The meter that works when the model is unpriced and ``total()`` is always
+        0.0. Same eviction semantics, same 0 default for an unknown/evicted trace.
+        """
+        if not trace_id:
+            return 0
+        return self._turn_tokens.get(trace_id, 0)

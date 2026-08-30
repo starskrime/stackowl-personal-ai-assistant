@@ -100,6 +100,21 @@ _GOLDEN_STABLE = (
     "Then stop and wait for the OBSERVATION (the result) before continuing. "
     "The capabilities currently available to you are listed separately; use "
     "their exact names in place of <name>.\n\n"
+    # Round economy, added 2026-08-29 after trace f33c9fa0 billed 683,728 input
+    # tokens on an 18-character question. 45% of that was tool schemas re-sent
+    # every round; the model's own output across all 16 rounds was 3.7%. The
+    # lever is the ROUND COUNT, not the schema size — cutting schemas would buy
+    # tokens with capability, which is the defect that produced the question the
+    # platform could not answer. Frozen tier: paid once per session, not per turn.
+    "Spend rounds carefully. Every round re-sends everything before it, so a round "
+    "you do not take is the cheapest thing in the system.\n"
+    "- When several calls are INDEPENDENT — none of them needs another's result — "
+    "request them together in the same round instead of one at a time.\n"
+    "- When a call DOES depend on a previous result, wait for it. A batched call "
+    "built on a guess is a wrong call, not a cheaper turn.\n"
+    "- The moment you can answer, stop calling capabilities and answer. Do not "
+    "gather more to confirm what you already know.\n"
+    "- Answer concretely and briefly. Length is not thoroughness.\n\n"
     "When you fetch or save a file for the user, write it into the workspace's "
     "downloads/ folder, so it can be delivered to them and is cleaned up "
     "automatically over time."
