@@ -1002,24 +1002,55 @@ class SkillIndexStore(OwnedRepository):
         return result
 
     async def delete(self, skill_id: int) -> None:
-        """Remove the index row (+ its skills_fts row). File system deletion
-        is the caller's job. Base + FTS deletes run in one transaction
-        (mirrors sqlite_bridge.delete) so a crash mid-op cannot leave the
-        two divergent."""
+        """Remove the index row and EVERY dependent of it, in one transaction.
+
+        Three tables, not two: ``skills``, its ``skills_fts`` row, and its
+        ``skill_ownership`` rows. File system deletion is the caller's job. All
+        deletes run in one transaction (mirrors sqlite_bridge.delete) so a crash
+        mid-op cannot leave them divergent.
+
+        OWNERSHIP WAS MISSING UNTIL 2026-08-29, and it is not a cosmetic leak.
+        ``purge_skill_ownership`` states the consequence in its own docstring:
+        *"Without this a deprecated/deleted skill's rows linger and the boot
+        hydrator re-attaches a now-dead skill name to its owl forever (phantom
+        ownership)."* It existed, was correct, and was called from exactly one
+        place — ``synthesizer.py`` — never from this, the normal deletion path.
+        Measured live on the running platform: 111 of 111 ownership rows pointed at
+        a skill that no longer existed, and ``hydrate_skill_ownership`` attached 10
+        of those dead names to live owls at boot.
+
+        The durable rows are deleted here because they are what survives a restart.
+        Detaching the name from an already-loaded registry stays
+        ``purge_skill_ownership``'s job — it needs a registry, and this store has
+        none. The SQL is imported from that module rather than retyped: two copies
+        of one rule is how the two silently disagree.
+        """
         # 1. ENTRY
         log.skills.debug("[skills] store.delete: entry",
                   extra={"_fields": {"skill_id": skill_id}})
+        # 2. DECISION — the ownership rows key on NAME, so resolve it before the
+        # row is gone. A skill_id with no row (already deleted) yields no name and
+        # the ownership delete is simply skipped: idempotent, never an error.
+        name_rows = await self._db.fetch_all(
+            "SELECT name FROM skills WHERE skill_id = ? AND owner_id = ?",
+            (skill_id, self._owner_id),
+        )
+        skill_name = str(name_rows[0]["name"]) if name_rows else ""
         async with self._db.transaction() as tx:
             await tx.execute(
                 "DELETE FROM skills_fts WHERE rowid = ?", (skill_id,),
             )
+            if skill_name:
+                from stackowl.owls.skill_ownership import _DELETE_SKILL
+
+                await tx.execute(_DELETE_SKILL, (self._owner_id, skill_name))
             await tx.execute(
                 "DELETE FROM skills WHERE skill_id = ? AND owner_id = ?",
                 (skill_id, self._owner_id),
             )
         # 4. EXIT
         log.skills.info("[skills] store.delete: deleted",
-                 extra={"_fields": {"skill_id": skill_id}})
+                 extra={"_fields": {"skill_id": skill_id, "skill": skill_name}})
 
     async def _sync_fts(self, skill_id: int) -> None:
         """Re-sync ``skills_fts`` for one ``skill_id`` from the current
