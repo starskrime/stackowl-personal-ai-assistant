@@ -52,6 +52,15 @@ active recall; the gap is not *whether* we recall but *how much it costs*.
 
 ## Where each design wins
 
+> **CORRECTED 2026-08-30, after this document was first written.** I ranked
+> prefetch first on the strength of 414 synchronous searches. Then I measured
+> what those searches *returned*: **0 archive hits on 414 of 414**, and 97%
+> returned nothing at all. The archive (`committed_facts`) has 0 rows and no
+> writer since seam 3. Prefetching it would deliver nothing faster. The
+> round-trip argument below still stands, but the archive's missing writer is
+> PRIOR to it — see ESC-69. I had measured the call count and not the yield,
+> which is the exact rule this programme runs on, applied to my own advice.
+
 **1. Speculative prefetch — reference platform wins, and it is the biggest win.**
 `on_turn_start` fires a background search on the user's message *before* the
 model runs; `prefetch()` then consumes the cached result with only a short
@@ -121,7 +130,10 @@ at-capacity refusal stops being occasional.
   reference platform's adapter*. Its own extraction/consolidation pipeline was
   not read, so no claim is made about it here.
 * Whether our embeddings / Kuzu graph recall paths are live. `committed_facts` is
-  measured dead (0 rows); the others were not audited in this pass.
+  measured dead (0 rows, no writer since seam 3, and 0 archive hits across 414
+  searches — see ESC-69); the vector and graph stores were NOT audited, so
+  "memory recall is dead" would over-claim. What is measured is that the ARCHIVE
+  half of the search tool is.
 * Numbers for what prefetch would save us. The 414 synchronous searches are
   measured; the saving is an argument, not yet a measurement.
 

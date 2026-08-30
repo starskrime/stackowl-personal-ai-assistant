@@ -315,96 +315,75 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  DEBT_38_2026_08_30_the_test_wall_is_ONE_FIXTURE:
-    the_hypothesis_I_refused_to_guess_at_was_WRONG: >-
-      When I filed DEBT-38 I wrote that 8 files under tests/skills reference
-      embeddings/lancedb/kuzu and labelled that "a hypothesis and not a
-      measurement". It was wrong, and labelling it saved me from chasing it.
-    THE_ACTUAL_CAUSE_measured: >-
-      MigrationRunner().run() takes 9.25s on this box (three runs: 9.26 / 9.42 /
-      9.08). There are 128 migrations and each commits in its OWN exclusive
-      transaction — 128 fsyncs at ~72ms. Every test that wants a database pays
-      that in full.
-      BLAST RADIUS: 245 test files use the `tmp_db` fixture and 144 more construct
-      MigrationRunner directly. At 9.25s each, tmp_db alone projects to 41 minutes
-      of pure schema setup.
-      THE TELL WAS IN THE DOCSTRING: tmp_db said "all 8 migrations applied". It was
-      8 once. Nobody re-read it as the number grew to 128 — the comment stayed
-      still while the cost grew 16x, which is how a fixture quietly became the
-      most expensive thing in the suite.
-    WHY_THE_FIX_IS_ON_THE_TEST_SIDE_ONLY: >-
-      Per-migration durability is CORRECT for a real boot: a crash mid-migration
-      must leave a consistent ledger, and the runner says so in its own comments.
-      Relaxing it in production would be routing around stated intent for a
-      benefit only tests want. So the schema is built ONCE per session and each
-      test copies the file; production semantics are untouched.
-    A_COPY_IS_NOT_AN_APPROXIMATION_verified_before_adopting: >-
-      226 schema objects and all 128 ledger rows are IDENTICAL between a copied
-      database and a freshly migrated one. Per-test cost 9.25s -> 2.7ms, ~3,600x.
-      Checked separately that nothing outside tests/db asserts on applied_at or
-      checksums, which are the only values a copy could carry over; tests/db
-      constructs the runner directly and is deliberately untouched, because tests
-      OF the migrations must run the real thing.
-    I_BENCHMARKED_THE_WRONG_DIRECTORY_FIRST: >-
-      My first before/after used tests/pipeline/durable, which is 31 direct
-      constructors and only 2 fixture users — the one directory the fix does not
-      reach. It showed no improvement, correctly. The fix targets what DEBT-38 was
-      actually about: tests/skills is 25 fixture / 2 direct and tests/memory is
-      31 / 4. Recorded because "the change did nothing" was a true statement about
-      a badly chosen measurement, not about the change.
-    MEASURED_like_for_like: |-
-      The SAME command that ran this morning, same box, same 444 tests:
+  MEMORY_SEARCH_IS_A_97_PERCENT_NO_OP_2026_08_30:
+    how_it_surfaced: >-
+      Closing a gap I had left open myself. UP-01's doc says the embeddings and
+      graph recall paths were NOT audited; auditing them is pure measurement and
+      needed no decision, so it was the next unblocked work.
+    THE_MEASUREMENT: |-
+      Over 8 days, 414 `memory` tool calls with action=search:
 
-        BEFORE  444 passed in 833.83s  (13m 54s)
-        AFTER   444 passed in  80.79s  (1m 21s)
-                                        10.3x
+        ARCHIVE hits    0 on 414 of 414 searches — every single one
+        CURATED hits    0 on 401; only 13 searches returned anything at all
+        RETURNED NOTHING AT ALL  401 of 414  = 97%
 
-      And on a single representative file, tests/skills/test_skill_fts_sync.py:
-      30.85s -> 8.87s, where the 8.87s is almost entirely the ONE-TIME template
-      build — so the saving grows with suite size rather than being a fixed
-      discount.
-    what_this_buys_beyond_speed: >-
-      DEBT-38 was filed because this wall gated every skills-touching item and had
-      already cost two long waits inside D05.1 alone. At 81s the whole sweep is
-      now cheaper than the single targeted slice used to be, so items can be
-      gated on the DIRECTORY again rather than on a hand-picked subset — which is
-      what let a truncated 82% run be mistaken for evidence earlier today.
-    PART_2_the_direct_constructors_2026_08_30: >-
-      The 144 direct constructors are now converted too. tests/_schema_template.py
-      builds one migrated template per PROCESS (no fixture needed, which is why
-      the direct callers could not use the conftest one) and seed_schema() copies
-      it. 110 files converted by script; 24 call sites deliberately left alone —
-      every one that captures the runner's results, passes a custom
-      migrations_dir, or introspects it is asserting on the RUNNER, and tests/db/
-      plus every test_migration_* file must run the real thing or they would be
-      asserting on a cached artefact of themselves.
-      MEASURED on tests/pipeline/durable — the directory that was 31 direct
-      constructors to 2 fixture users, and the one my first DEBT-38 benchmark
-      wrongly used:
-        BEFORE  391 passed in 1093.31s  (18m 13s)
-        AFTER   391 passed in   70.08s  (1m 10s)
-                                         15.6x
-      THE CONTROL AGREES: an independent baseline run at HEAD in a clean worktree
-      gave 391 passed in 1044.23s (17m 24s), so the first before-figure was only
-      ~5% inflated by sharing the box. Final honest ratio 1044.23s -> 70.08s,
-      14.9x. Worth the second run: without it the claim rested on a measurement I
-      knew was contended.
-      A CORRECTION TO MY OWN READING: I reported that first before-run as having
-      "died at 36%" and discarded it. It had not died — it completed, and I had
-      looked at a stale tail. I was about to re-measure something I already had,
-      and I told Bakir I had no baseline when I did.
-      10,928 tests COLLECT clean across the whole tree, which is the check that
-      matters for a scripted edit of 110 files.
-    two_things_the_script_broke_and_how_they_were_caught: >-
-      The import-insertion regex matched the last `from ... import (` line and
-      inserted INSIDE a multi-line parenthesis in two files; a --collect-only pass
-      over the whole tree found both immediately as SyntaxErrors. My first repair
-      then re-inserted after a FUNCTION-LOCAL import, because the fix matched
-      `lstrip()`ed lines and so treated an indented import as top-level. Fixed by
-      matching column 0 only, and verified with ast.parse() before re-running
-      anything. A scripted edit across 110 files needs a syntax gate, not a test
-      run, as its first check.
-    lint: "tests/ went from 225 errors at HEAD to 219 — six FEWER, after fixing import order and now-unused MigrationRunner imports in the 110 touched files only. The 66 pre-existing I001s elsewhere were deliberately not swept."
+      Each of those is a full tool round-trip: the model decides to search, emits
+      the call, waits, receives nothing, and continues — paying the whole re-sent
+      prefix for it.
+    ROOT_CAUSE_a_READER_WITH_NO_WRITER: >-
+      SqliteMemoryBridge is the live bridge (memory/assembly.py:142;
+      NullMemoryBridge appears ZERO times in 8 days of logs, so it is not the
+      explanation). Its recall() reads `committed_facts` — measured at 0 rows,
+      with committed_facts_fts also 0.
+      THE CODEBASE ALREADY KNOWS: memory/sqlite_helpers.py:171 carries the comment
+      "hydration read committed_facts, which has 0 rows and no writer since seam
+      3". The only INSERT into it anywhere in src/ is export/importer.py, an
+      import path that does not run in normal operation.
+      This is CLAUDE.md shape 1 INVERTED — not a write with no reader, but a
+      READER WITH NO WRITER. The search path is correctly wired, correctly
+      logged, and correctly returns nothing, because there is nothing there.
+    IT_CORRECTS_MY_OWN_UP_01_RECOMMENDATION_FROM_AN_HOUR_AGO: >-
+      I recommended speculative prefetch as the single biggest token win, on the
+      grounds that our 414 searches are synchronous round-trips. That reasoning
+      still holds for the ROUND-TRIP cost — but prefetching THIS archive would
+      only deliver nothing faster. The upstream question is prior to the
+      optimisation, and I had ranked them the wrong way round because I measured
+      the CALL COUNT and not the YIELD. Exactly the "measure the effect, never
+      trust the call" rule, applied to my own recommendation.
+    ESCALATIONS:
+      - id: ESC-69
+        question: "The memory archive has no writer. Restore one, or stop searching it?"
+        why_evidence_cannot_settle_it: >-
+          Both repairs collide with something already decided or user-facing, so
+          neither is mine to take.
+          (a) RESTORE A WRITER means re-enabling fact extraction — and D08.1 R5Q18
+          RETIRED fact extraction deliberately. D08.3's own record states the
+          consequence and accepted it: "with fact extraction retired, the
+          turn-counter nudge is the ONLY thing that will ever prompt a memory
+          write". So the empty archive is a KNOWN CONSEQUENCE of a decision, not
+          an accident — what was probably not foreseen is that `search` would keep
+          querying it 414 times.
+          (b) STOP SEARCHING IT means making `search` curated-only, which narrows a
+          user-facing tool.
+        the_measurement: "414 searches, 0 archive hits, 97% returning nothing. 401 wasted round-trips in 8 days."
+        options: >-
+          (a) restore a writer — reverses a deliberate retirement;
+          (b) make search curated-only and say so in the tool description, so the
+          model stops paying for a store that cannot answer — smallest change,
+          honest, and reversible if a writer ever returns;
+          (c) leave it and accept 401 empty round-trips per 8 days.
+        recommendation: >-
+          (b). The curated files ARE the memory today — 82 writes in 8 days land
+          there and the prompt carries them. A tool that advertises an archive it
+          cannot read teaches the model to keep asking. If fact extraction is ever
+          restored, re-widening search is a one-line change.
+        blocked_until_answered: "Nothing else. This is recorded, measured and escalated; no code changed."
+    what_this_does_NOT_claim: >-
+      The embeddings and Kuzu graph paths are STILL not audited. This pass
+      established what `memory search` reads and what it returns; it did not
+      establish whether the vector or graph stores have their own live readers and
+      writers. Saying "memory recall is dead" would over-claim — what is measured
+      is that the ARCHIVE half of the search tool is.
 
 waves:
   1:
