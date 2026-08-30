@@ -149,3 +149,97 @@ def test_the_result_PASSES_the_real_gate() -> None:
         {"name": "incident_shell_stop", "description": desc, "when_to_use": when}
     )
     assert not problems, f"the real validator still refuses it: {problems}"
+
+
+# ---------------------------------------------------------------------------
+# Replay of the ACTUAL refusals, reconstructed from the production logs
+# ---------------------------------------------------------------------------
+
+#: Every distinct incident shape that was refused, taken from the `skill_name`
+#: field of the real `gated write refused` log lines. Reconstructed as
+#: (capability_class, failure_class) — the two fields the canonical slug is built
+#: from, and the two `_fit_to_standard` derives its label from.
+_REFUSED_SHAPES = [
+    ("shell", "stop"),
+    ("browser_click", "stop"),
+    ("browser_navigate", "stop"),
+    ("web_fetch", "stop"),
+    ("memory", "stop"),
+    ("owl_build", "unachieved_effect"),
+]
+
+#: Measured across the 53 description-cause refusals: min 77, median 207, max 298.
+#: The max is the case that matters — if the longest real description still
+#: produces an acceptable label, none of them can refuse for this reason again.
+_MEASURED_MAX_DESCRIPTION_CHARS = 298
+
+
+def test_every_shape_that_was_ACTUALLY_refused_now_passes() -> None:
+    """The regression, driven by production data rather than an invented fixture.
+
+    A fixture I write is a fixture that agrees with me. These six shapes are the
+    ones the platform really produced and the gate really refused — 53 times.
+    """
+    from stackowl.learning.failure_outcome_miner import _fit_to_standard
+    from stackowl.skills.standard import validate_frontmatter
+
+    failures = []
+    for capability, failure_class in _REFUSED_SHAPES:
+        verdict = _verdict("x" * _MEASURED_MAX_DESCRIPTION_CHARS)
+        verdict = type(verdict)(
+            capability_class=capability,
+            failure_class=failure_class,
+            skill_name=f"incident_{capability}_{failure_class}",
+            description="A " + ("very long explanation " * 13),
+            when_to_use="Use after the failure recurs.",
+            root_cause="rc",
+            fix_pattern="fp",
+            parent_trace_ids=["t"],
+        )
+        desc, when = _fit_to_standard(verdict)
+        problems = validate_frontmatter({
+            "name": verdict.skill_name, "description": desc, "when_to_use": when,
+        })
+        if problems:
+            failures.append((capability, failure_class, desc, problems))
+    assert not failures, (
+        "shapes the gate would still refuse:\n"
+        + "\n".join(f"  {c}/{f}: {d!r} -> {p}" for c, f, d, p in failures)
+    )
+
+
+def test_the_LONGEST_real_description_is_handled() -> None:
+    """298 characters was the measured maximum. It must not be a special case."""
+    from stackowl.learning.failure_outcome_miner import _fit_to_standard
+    from stackowl.skills.standard import validate_frontmatter
+
+    desc, when = _fit_to_standard(_verdict("z" * _MEASURED_MAX_DESCRIPTION_CHARS))
+    assert not validate_frontmatter(
+        {"name": "incident_shell_stop", "description": desc, "when_to_use": when}
+    )
+    assert "z" * 50 in when, "the 298-char explanation was dropped rather than moved"
+
+
+def test_an_absurd_capability_name_cannot_overflow_the_label() -> None:
+    """The derived label is built from data, so the data must not be able to break it.
+
+    A capability_class is a tool name or capability tag; nothing bounds its length.
+    If a long one pushed the label past the cap, the fix would reintroduce the very
+    refusal it exists to end.
+    """
+    from stackowl.learning.failure_outcome_miner import _fit_to_standard
+    from stackowl.skills.standard import validate_frontmatter
+
+    v = _verdict("A " + ("long explanation " * 20))
+    v = type(v)(
+        capability_class="a_capability_with_an_absurdly_long_registered_name_here",
+        failure_class="an_equally_unreasonable_failure_classification",
+        skill_name="incident_long", description=v.description,
+        when_to_use="Use it.", root_cause="rc", fix_pattern="fp",
+        parent_trace_ids=["t"],
+    )
+    desc, when = _fit_to_standard(v)
+    assert len(desc) <= MAX_DESCRIPTION_CHARS
+    assert not validate_frontmatter(
+        {"name": "incident_long", "description": desc, "when_to_use": when}
+    ), f"a long capability name broke the label: {desc!r}"

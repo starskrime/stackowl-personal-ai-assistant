@@ -374,9 +374,39 @@ current:
       "skill 'incident_shell_stop' does not meet the authoring standard (v1): description:
       169 characters exceeds the 60-character limit — it is a one-line label, not the
       explanation. Put the detail in when_to_use, which is what retrieval reads."
-    measured_across_every_retained_log: >-
-      48 refusals of `miner.author_one`, and 48 of 48 (100%) cite the SAME cause — the
-      60-character description limit. Not one incident lesson has ever been recorded.
+    measured_across_every_retained_log_CORRECTED: >-
+      MY FIRST COUNT WAS WRONG on both numbers and the correction matters, because it
+      changes the completeness claim. The real figures: **62** gated-write refusals, of which
+      **53 (85%)** cite the 60-character description limit — not "48 of 48, 100%". My grep
+      was too narrow. Refused description lengths: min 77, median 207, max 298.
+      Six distinct incident shapes were refused: shell/stop, browser_click/stop,
+      browser_navigate/stop, web_fetch/stop, memory/stop, owl_build/unachieved_effect.
+      Not one incident lesson has ever been recorded.
+    THE_OTHER_9_ARE_A_SECOND_DEFECT_NOT_FIXED_HERE: >-
+      The remaining 9 refusals cite `tool_names: backticks` and come from a DIFFERENT
+      producer — ordinary skill authoring, not incident mining (names like list-owls,
+      owls_roster, plano_software_role_scan, rca-verifier-lesson). Same shape as the one
+      fixed here (a producer that does not satisfy the standard its consumer enforces) on a
+      different path. NOT investigated yet; recorded so it is not lost or double-counted as
+      part of this fix.
+    STATUS_2026_08_29_commit_28422907: >-
+      implement/test DONE. `_fit_to_standard` asks the VALIDATOR (not the constant, because
+      the standard enforces both a length cap and "a single sentence"), moves the overflow
+      into when_to_use per the standard's own stated mechanism, and derives a label from the
+      incident's own capability_class/failure_class. On the real refused text:
+      "Recovering shell after a stop outcome." (38 chars) with the full 169-char explanation
+      preserved. 10 unit tests + 97/97 tests/learning green. ruff src/ 37, mypy 65 held.
+      Coverage includes a REPLAY of all six real refused shapes at the measured maximum
+      length (298), driven from production log data rather than an invented fixture.
+    validate_stage_OPEN_not_done: >-
+      The fix is LIVE (core restarted 21:55:20 local, pid 386342, clean boot, zero errors)
+      but NO incident has fired since, so the production claim is NOT yet evidenced. What IS
+      evidenced: the output passes `validate_frontmatter`, which is the same validator the
+      gate runs. What is NOT: the rest of `gated_skill_write` (security scan, consent, write,
+      index).
+      CLOSING QUERY — this must return a hit before the item is called done:
+      grep '"msg": "\[incident\] miner.author_one: exit — written + indexed' ~/.stackowl/logs/stackowl.jsonl
+      and the refusal count for the description cause must stop rising from 53.
     why_it_matters_more_than_it_looks: >-
       This is the same shape as the budget-salvage defect fixed today in 08376c14: the work
       is done, the conclusion is reached, and it is discarded at the last inch. Here the cost
