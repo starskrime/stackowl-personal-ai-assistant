@@ -361,12 +361,34 @@ current:
       ("rendered to the minute, it made a byte-identical prompt impossible") and accepted the
       per-turn cost. The difference is size — a clock is a few tokens, this is ~295 — which
       is why it is worth asking rather than doing.
-    ALSO_UNEXPLAINED_and_not_investigated: >-
-      `profile` changes 91 times and `skills` 22. Owl profile/DNA and the skill catalogue are
-      both supposed to be session-stable. NOT chased here; recorded so it is not lost. One
-      owl (jobmarket) accounts for 161 of the 259.
+    THE_profile_HALF_IS_FIXED_2026_08_30_commit_f63f0302: >-
+      89 of the 259 invalidations named `profile` (jobmarket 66, secretary 30). That half was
+      not a design tradeoff — it was a bug, and it is fixed.
+      `profile` is the curated-memory block, and assemble.py states its invariant: "read from
+      a snapshot frozen for the life of this incarnation ... does not move the prompt until
+      the next /new". `snapshot_for_prompt` implemented it with a SINGLE SLOT on a
+      process-wide singleton (`_snapshot` + `_snapshot_key`), so the freeze held only while
+      ONE conversation was running. This platform serves chats concurrently by design, so
+      conversation B's turn evicted A's snapshot and A's next turn re-read the file — moving
+      its own prompt. `shared_memory`'s docstring names that exact failure as the thing it
+      exists to prevent.
+      SAME SHAPE AS THE PLAN STORE fixed earlier today: process-global single-slot state
+      where per-conversation state was needed, harmless until something ran concurrently. Now
+      bounded and MRU-evicting, with BOTH properties the single slot did provide pinned by
+      tests — the freeze still holds within a conversation, and a new incarnation still
+      re-reads so a write reaches the prompt on the next /new.
+      LIVE: core restarted 03:29:52 (pid 422416), clean boot, 632 lines, ZERO errors; two
+      turns produced an identical profile (2 blocks, 2,968 chars) and ZERO cache
+      invalidations of any part.
+      HONEST LIMIT: two turns in ONE conversation is not a concurrency test — the bug needs
+      two conversations interleaving. That case is covered by the unit test, not by this
+      observation. What production shows is no regression.
+    STILL_UNEXPLAINED_and_not_chased: >-
+      `skills` changes 22 times. The skill catalogue is supposed to be session-stable.
+      Recorded so it is not lost.
     blocked_until_answered: >-
-      Nothing. D05.4's stale claim is corrected below regardless of what is decided.
+      Nothing. D05.4's stale claim is corrected regardless, and the `profile` half is already
+      fixed — what awaits Bakir is only the `stable_context` tradeoff (203 of the 259).
   THE_ARC_MEASURED_2026_08_30:
     status: >-
       No code change this item — a VALIDATION pass that closed three open checks and left the
