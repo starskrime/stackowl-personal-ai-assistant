@@ -315,6 +315,35 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D01_4_SOUND_AND_THE_BUS_NOW_REPORTS_DEAD_EVENTS_2026_08_30:
+    status: >-
+      D01.4 audited SOUND (fourth of the audit). Chasing one of its claims produced a general
+      fix — commit 5e3742e3.
+    the_general_fix: >-
+      EventBus.emit was SILENT when an event had no subscribers: it iterated
+      `self._handlers.get(event, [])`, so an empty list ran the loop zero times and logged
+      nothing. Emitting into nowhere looked exactly like delivering — CLAUDE.md's defect #1,
+      in the one place every event in the system passes through. It now reports, ONCE per
+      event name (per-occurrence would make an unsubscribed event in a hot loop into the
+      log-spam version of the problem), and a LATE subscriber clears the flag because boot
+      order is not guaranteed and an early event is not a dead one.
+    WHY_RUNTIME_AND_NOT_A_LINT_RULE_measured_on_myself: >-
+      A literal scan of `subscribe("name", ...)` found ONE subscribed event against six
+      emitted, and I was about to record "five dead events, including the entire budget-alert
+      path". That is WRONG. There are ten `.subscribe(` calls and most pass a VARIABLE:
+      EventDeliveryBridge loops over _ALLOWED_EVENTS = {budget_exceeded, budget_80pct_alert,
+      conversation_cost_report}, the TUI coordinator loops over a handler map. Establishing
+      the truth took three files and a live log line.
+      Subscription here is DYNAMIC, so static analysis of it is unreliable BY CONSTRUCTION.
+      Only the bus knows at emit time. This is the sixth over-narrow filter of the session and
+      the clearest case for measuring the effect instead of reading the call.
+    WHAT_WAS_NOT_TOUCHED: >-
+      Nothing was deleted. `owl_edited` remains deliberately-kept debt per D01.4's architect
+      decision; it now announces itself instead of being rediscovered by grep every few weeks.
+    LIVE: >-
+      Core restarted 07:01:01 local (pid 434919), clean boot, 371 lines, ZERO errors. No
+      unheard-event notice yet, which is correct — the notice fires only when such an event is
+      actually emitted, and owl_edited requires an owl edit.
   D16_1_AUDITED_SOUND_2026_08_30_and_it_shows_what_good_looks_like:
     status: >-
       Third sound item of the audit (after D16.3 and D01.2), and the first that was sound
@@ -15103,7 +15132,29 @@ items:
         the same twenty minutes.
       every_claim_re_checked_at_close: "13 source and test paths present; invalidate_owl/invalidate_all both defined; owl_build wired at exactly 3 sites; the skills hook bound to the write; the cause consumed via pop (once, not read); and the newest migration still 0104 (D01.2's), confirming D01.4 added none."
     notes: null
-
+    AUDITED_2026_08_30_SOUND_and_it_produced_a_general_fix: >-
+      Third on claim_check's corrected ranking. Its re-runnable claims HOLD:
+        `owl_edited` emitted with ZERO subscribers — still true (1 emitter, 0 subscribers;
+          the line moved 379 -> 433, the fact did not). Deliberately kept as debt per the
+          recorded architect decision, and NOT deleted here either.
+        zero d014probe rows remain — true; the live owls table is clean (11 owls).
+        "zero migrations" — a design fact about the item, not a decaying measurement.
+      SO D01.4 IS SOUND, the fourth of the audit. Closing query below.
+      BUT ITS DEAD EVENT IS DEFECT #1's SHAPE, and chasing it produced a general fix
+      (5e3742e3): EventBus.emit was SILENT when an event had no subscribers — it iterated an
+      empty handler list, so emitting into nowhere was indistinguishable from delivering. The
+      bus now says so, once per event name.
+      AND THE ROUTE THERE IS THE LESSON. A literal scan of subscribe("name") found 1
+      subscribed event against 6 emitted and I nearly recorded "five dead events, including
+      the entire budget-alert path". WRONG: subscription here is DYNAMIC — EventDeliveryBridge
+      loops over _ALLOWED_EVENTS = {budget_exceeded, budget_80pct_alert,
+      conversation_cost_report}, confirmed live by "event_bridge.register: subscribed
+      proactive events {count: 3}". Static analysis of this tree's event wiring is unreliable
+      by construction; only the bus knows at emit time. That is why the fix is a runtime
+      notice rather than a lint rule.
+      CLOSING QUERY: grep '"msg": "event_bus.emit:' ~/.stackowl/logs/stackowl.jsonl — each
+      distinct event named there is emitted to nobody. `owl_edited` appearing is the recorded
+      debt confirming itself; anything else is new.
   - id: D01.5
     title: "Message-role alternation invariant"
     domain: D01
