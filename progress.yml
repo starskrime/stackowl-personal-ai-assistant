@@ -315,7 +315,14 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  UNRELATED_FINDING_2026_08_30_an_answer_did_not_reach_the_user: >-
+  RESOLVED_the_delivery_finding_was_an_already_healed_defect: >-
+    Investigated in full and closed as no_change_needed — see DEBT-40. The
+    delivery path is healthy: 0 tasks owed a delivery and undelivered, all 60 with
+    a destination have delivered_at, all 76 dead letters acknowledged, and
+    stream-miss went 87 (08-28) -> 91 (08-29) -> ZERO (08-30) as the drain that
+    shipped on 08-29 took effect. The platform healed itself; I was reading the
+    symptom log of a repaired defect.
+  SUPERSEDED_the_original_alarm_kept_for_the_record: >-
     Seen while validating D09.2, PRE-DATING that restart and unrelated to it:
       22:19:35  [notifications] deliverer._transport: send failed after retry
       22:19:35  [deliver] stream-miss: proactive fallback did NOT deliver —
@@ -605,6 +612,64 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-40
+    date: 2026-08-30
+    title: "INVESTIGATED AND CLOSED — the delivery path healed itself; no change needed"
+    why_it_was_opened: >-
+      While validating D09.2 I saw "[deliver] stream-miss: proactive fallback did
+      NOT deliver — the answer has not reached the user" and flagged it as the ONE
+      LOOP contract's core promise failing. map_check found no mapped item, so this
+      is evidence-led work recorded here.
+    what_the_numbers_looked_like_at_first: |-
+      356 delivered, against:
+        178  [deliver] stream-miss: no durable fallback available
+        168  [loop] the drive finished but the answer has not reached its destination
+         51  retry_actuator: success-path delivery/store failure
+         39  [pipeline] deliver: no registry in services — DISCARDING response
+          0  of 849 failed tasks carried a destination
+    EVERY ONE OF THOSE DISSOLVED ON INSPECTION: |-
+      * the 39 "discarding response" are ALL `shadow-validate-*` sessions — not
+        user turns. Discarding them is correct.
+      * the 168 read in full say "...has not reached its destination YET — leaving
+        the task open for the delivery path". That is the contract WORKING, not
+        failing. And they are 168 events across 19 tasks, 73 of them one retrying
+        task — not 168 lost answers.
+      * the 178 stream-misses are all `*:recovery:*` lanes, and the sample field
+        says it exactly: has_deliverer=True, has_target=FALSE.
+      * the 0-of-849 is historical: NO TASK HAS FAILED SINCE 2026-08-15, and all
+        849 predate the 2026-08-18 fix (5f682934) that put destination into the
+        INSERT. Since then destinations ARE written — 38 of 125 today.
+    THE_ROOT_CAUSE_WAS_REAL_AND_IS_ALREADY_FIXED: >-
+      retry-8b7c4029 (created 08-29, POST-fix) carried destination='rca' — a
+      channel name with NO ADDRESS, so _address_of returns None and nothing could
+      ever be delivered. It retried 72 times before dead-lettering. Across the
+      table: 3 addressless tasks consumed 117 attempts while 60 properly addressed
+      ones used 10 between them.
+      That exact defect is documented at store.py:1282 and in migration 0128, and
+      it was FIXED on 2026-08-29 with resolve_unannounced_dead_letters() —
+      escalate the addressed, retire the unaddressable.
+    THE_FIX_IS_WIRED_RUNNING_AND_HAS_DRAINED: |-
+      wired    loop.py:293 calls it
+      running  76 log events
+      drained  76 of 76 dead letters acknowledged; ZERO unacknowledged
+      effect   stream-miss by day: 08-28=87, 08-29=91, 08-30=ZERO
+
+      And the obligation ledger is clean: of 446 completed tasks, 60 had a
+      destination and ALL 60 have delivered_at; 386 had no destination and so took
+      on no delivery obligation. Tasks owed a delivery but not delivered: 0.
+    outcome: >-
+      no_change_needed. The platform healed itself between 08-29 and 08-30, which
+      is the standing guide star made falsifiable — "if the platform does not heal
+      itself after your fix, either self-healing is broken or the core is not
+      fixed." It healed. What I found was the SYMPTOM LOG of an already-repaired
+      defect, still visible because the log retains three days.
+    the_lesson_for_next_time: >-
+      Four separate alarming counts, and all four were composition artefacts: a
+      truncated message that reversed its own meaning when read in full, a
+      denominator of shadow sessions, events concentrated on one retrying task, and
+      pre-fix rows. The instinct to open an incident on "the answer has not reached
+      the user" was right; the discipline of reading the full message and dating
+      the rows is what stopped it becoming a fix for a solved problem.
   - id: DEBT-39
     date: 2026-08-30
     title: "Three copies of the per-conversation prompt-part snapshot"
