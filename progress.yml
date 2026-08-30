@@ -315,6 +315,27 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D02_3_AUDITED_the_decisions_PREMISE_has_moved_2026_08_30:
+    status: >-
+      no_change_needed in code. The item's WIRING claim holds; the measurement its build/no-build
+      decision rested on has rotted, and that is flagged for Bakir rather than decided.
+    what_moved: >-
+      D02.3 declined a one-step `redirect` verb because "steer has fired TWICE, EVER". Now: 15
+      mid-turn classifications, 4 resolving to STEER, 11 to NEW, plus 2 survivor re-routes.
+      "Essentially unexercised" is no longer accurate — though 4 is still small, so whether it
+      crosses the threshold for a third verb is an appetite question, not a measurement.
+    THE_NEAR_MISS_that_matters_more: >-
+      `[pipeline] execute: within-turn approach already failed — steering to change` has fired
+      63 times. Counting it would have made steer look 15x more used and would have "proved"
+      the decision should reverse. It is a DIFFERENT mechanism — an internal self-steer in
+      execute.py, not the user-facing mid-turn steer. Two things sharing a word, caught by
+      reading the source line rather than trusting the substring. This is the CLAUDE.md rule
+      added an hour ago earning itself immediately.
+    AND_ONE_ALARMING_NUMBER_THAT_IS_NOT: >-
+      221 router fallback-to-secretary lines. By day: 17/186/1/7/10 and ZERO today — a provider
+      outage on 2026-08-26, not a standing defect. Second time this session a large count
+      turned out to be a mechanism behaving correctly (the other was D05.3's 248 grace-window
+      forgivenesses), which is why the distribution is checked before the count is reported.
   D05_3_OPEN_CHECK_CLOSED_PROVEN_LIVE_2026_08_30:
     status: >-
       no_change_needed — nothing was broken. An acceptance check the item left honestly OPEN
@@ -17345,7 +17366,45 @@ items:
           new verb.
     changes: []
     notes: null
-
+    AUDITED_2026_08_30_the_why_not_built_PREMISE_has_rotted: >-
+      WIRING HOLDS: `route_inflight_message` is still called from intake (orchestrator.py:2871
+      — the line moved from 2522, the fact did not), so it remains reachable.
+      THE PREMISE HAS NOT. This item declined the one-step `redirect` verb because "steer has
+      fired TWICE, EVER — one log line on 2026-07-19 and one on 2026-08-02". Re-measured:
+        intent_classifier.is_steer: verdict parsed .......... 15
+        [turn] route: STEER (high-confidence, not vetoed) ....  4
+        [router] route_inflight_message: STEER -> try_steer ...  4
+        [turn] route: classifier -> NEW (uncertain/unrelated)  11
+        [router] route_inflight_message: NEW -> queued-new ... 11
+        [turn] survivor steer re-routed as queued-new ........  2
+      So the router now classifies 15 mid-turn messages and resolves 4 to STEER. "Essentially
+      unexercised" is no longer accurate.
+      WHETHER THAT REVERSES THE DECISION IS BAKIR'S CALL, not a measurement. Four steers is
+      more than two and still small; the argument was about appetite for a third verb, and the
+      evidence has moved without obviously crossing a line. Flagged, not decided.
+    A_NEAR_MISS_WORTH_RECORDING: >-
+      `[pipeline] execute: within-turn approach already failed — steering to change` has fired
+      63 times, and counting it would have made "steer" look 15x more used than it is. It is a
+      DIFFERENT mechanism — an internal self-steer inside execute.py, not the user-facing
+      mid-turn steer this item is about. Two things sharing a word is exactly the trap CLAUDE.md
+      now warns about ("print the real shape before you filter it"); the 63 belong to neither
+      claim here.
+    NOT_A_LIVE_PROBLEM_checked_before_reporting_it: >-
+      221 `[router] route: provider call/cascade failed — falling back to secretary` lines look
+      alarming. By day: 17 / 186 / 1 / 7 / 10 across 08-23..08-29 and ZERO on 08-30. That is a
+      provider outage on 2026-08-26, not a standing defect. Recorded so the count is not
+      mistaken for one later.
+    STALE_CROSS_REFERENCE: >-
+      The why-not-built argument cites "D05.1's skills exec path (0 of 420 skills use it)". The
+      corpus is no longer 420 — Bakir purged the learned skills on 2026-08-29 and it now holds
+      18 (14 builtin + 4 miner-authored). The comparison still makes its point but its
+      denominator is three weeks stale.
+    CLOSING_QUERY: >-
+      grep '"msg": "[turn] route: STEER' and '"msg": "intent_classifier.is_steer: verdict'
+      ~/.stackowl/logs/stackowl.jsonl — if STEER decisions keep climbing, the "first two verbs
+      are unexercised" premise is dead and the redirect question should be re-opened. Do NOT
+      count "within-turn approach already failed — steering to change"; that is a different
+      mechanism.
   - id: D02.4
     title: "Turn finalization seam"
     domain: D02
