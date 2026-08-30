@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  MEMORY_PLUGINS_2026_08_30_the_answer_to_Obsidian_and_mem0:
+    the_ask: "Bakir: \"Obsidian and mem0 and potential memory plugins\" — i.e. these are the candidate providers he wants."
+    THE_TRIGGER_I_NAMED_HAS_FIRED: >-
+      An hour ago I declined to build a selection path because there was no
+      candidate provider to select. There are now two named ones, so the objection
+      is spent.
+    ANSWER_PART_1_they_are_PLUGINS_and_the_seam_is_complete: |-
+      No core change is needed for the interface. Verified end to end:
+        MemoryProvider ABC          memory/providers.py (name / is_available / tool_schemas)
+        discovery                   local_loader.py:28 maps it to stackowl.memory.providers
+        registry slot               present — the D08.2 omission was fixed in fed6968d
+        capability gate             capabilities.py MEMORY_PROVIDER
+        both-tables test            tests/plugins/test_every_declared_extension_point_can_register.py
+        ceiling                     6 schemas, REFUSES rather than truncates
+        Law 1                       active set frozen once per incarnation
+      A memory plugin therefore installs by the same path as a Tool, a
+      SlashCommand or a ChannelAdapter.
+      AND THE VENDOR-NAME RULE FITS THIS EXACTLY: "no vendor names in src/" — a
+      provider for a named product lives in a PLUGIN, never in core, which is also
+      how the reference platform lays its own out (plugins/memory/<name>/).
+    ANSWER_PART_2_and_this_is_the_gap_worth_fixing: >-
+      A provider's contributed schemas are NEVER PRESENTED AND NEVER DISPATCHED.
+      Measured both directions: `.memory_providers` has ZERO readers in src/ or
+      tests/; `resolve()` is called once at assembly.py:300 and its return value is
+      DISCARDED; nothing anywhere calls `tool_schemas()`; and the `memory` tool
+      does not mention providers at all.
+      So today an Obsidian or mem0 plugin would install successfully, be
+      discovered by issubclass, register, activate, pass the ceiling, report its
+      schemas — and the model would never see them. It would do nothing, silently.
+      THIS IS THE SAME SHAPE THE LOADER ALREADY FIXED ONE LAYER IN. Its own comment
+      records it: "a memory-provider plugin would have loaded, been discovered by
+      issubclass, and registered nowhere, with the platform reporting a successful
+      install of a plugin that does nothing." That was fixed at the REGISTRY. It
+      recurs at PRESENTATION.
+    I_WAS_WRONG_TWICE_ON_THIS_ITEM_TODAY: >-
+      First I concluded the ABC needed porting; it existed. Then I concluded the
+      gap was a selection path, because `register()` had no caller in src/ — but
+      the caller is the plugin loader, resolving dynamically, which is the exact
+      landmine CLAUDE.md names ("this codebase wires things dynamically, so static
+      reads of it are wrong by construction"). Only reading local_loader.py settled
+      it. Recorded because the same grep would mislead the next reader.
+    what_building_it_entails: >-
+      Collect the active providers' tool_schemas at presentation time and dispatch
+      their calls through the `memory` tool. It touches Law 2 (the narrow waist) —
+      which is precisely why the ceiling of 6 and the refuse-don't-truncate rule
+      already exist, so the budget question is already answered. NOT started in
+      this pass; recorded as the next item with the measurement that justifies it.
+
   UP_01_PROVIDER_ABC_2026_08_30_already_built_and_better_than_the_port:
     outcome: >-
       no_change_needed on the seam itself. Bakir chose "port the provider ABC
