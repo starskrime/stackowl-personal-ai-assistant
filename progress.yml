@@ -10501,7 +10501,7 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   partial
+      validate:   done   # I2 CLOSED 2026-08-30 — 869 cap-breach events; the 0-over-0 is gone
       document:   done
     blocked_on: null   # CLEARED 2026-08-22 — 159 live interactive turns measured; see current.D05_8_ROUND_0_MEASUREMENT_2026_08_22
     doc: "docs/reference-mapping/designs/D05.8.md"
@@ -10699,7 +10699,76 @@ items:
         what: "The configured tool-count cap reaches all three presentation paths; the envelope path logs its cut; both eviction records name every dropped tool."
         commit: af8cf60e
     notes: null
+    I2_CLOSED_2026_08_30_the_zero_over_zero_is_gone: >-
+      The open check was "I2 still has ZERO — it needs an envelope WIDER than the
+      cap. The one that ran fitted. 0 over 0." Re-run: the line
+      "[presentation] select: eligible tools NOT presented — the planned envelope
+      is wider than the tool-count cap" has fired 869 TIMES, at INFO, carrying
+      limited_by=tool_count_cap, presented=40, hard_cap=40, dropped_count=39.
+      The denominator is real and the numerator is large. I2 is closed by
+      evidence, not by argument, and validate moves from partial to done.
+    AND_THE_ITEMS_HEADLINE_MEASUREMENT_HAS_ROTTED: |-
+      Recorded 2026-08-04, from 64 turns: "LIVE production ... 64 turns, avg 4.0
+      tools, max 24", and the conclusion drawn from it was "THE GAP IS INVERTED:
+      we present FEWER tools than they do. Their default is 54; our live average
+      is 4."
 
+      Re-measured over 2,805 turns, tools_count from the same field:
+
+        79 tools  1,171 turns   (42%)  — the FULL catalogue
+        40 tools    897 turns   (32%)  — exactly the configured cap
+        19 tools    152
+        18 tools     53
+        51 tools     41
+        others      491
+
+      The distribution is BIMODAL at the full catalogue and at the cap. "Average
+      4.0, max 24" is dead — the max is now 79 and the mode is 79. The 64-turn
+      sample it rested on was all GOAL lanes, which the item itself flagged as a
+      blind spot before closing on it.
+    THE_CAP_IS_BINDING_AND_THE_ESCAPE_HATCH_IS_BUSY: >-
+      897 turns land on EXACTLY 40 and 869 cap-breach events were logged — the
+      same population. Each drops 39 of 79 eligible tools. D05.2 established the
+      contract that overflow is DEFERRED, not dropped, reachable through
+      tool_search — and that hatch is genuinely used: tool_search 3,502
+      invocations, tool_describe 1,607, hydrated promotions 249.
+      So nothing is unreachable. The question the numbers raise is COST, not
+      capability, and it is the same round-trip economics as ESC-69: presenting
+      79 costs ~19,423 tokens per round (measured this session), presenting 40
+      costs roughly half — but every recovery through tool_search is a round-trip
+      that re-sends the WHOLE prefix. 3,502 of them is not obviously cheaper than
+      just presenting the catalogue.
+    ESCALATIONS:
+      - id: ESC-70
+        question: "Is the 40-tool cap saving tokens or spending them? Raise it, or leave it?"
+        why_evidence_cannot_settle_it: >-
+          Both sides are measurable but the TRADE is a product call. Measured:
+          869 cap breaches dropping 39 tools each; 897 turns pinned at exactly 40;
+          3,502 tool_search invocations recovering the overflow. Not measured, and
+          not cheaply measurable without an experiment: how many of those 3,502
+          searches would have been unnecessary had the tool been presented. That
+          is an A/B, and running one on the operator's live lane is his call.
+          This item ALREADY flagged the direction — "if we present an average of 4
+          tools from a 77-tool catalogue, the risk worth investigating is
+          UNDER-presentation" — and the current numbers say the cap now binds on a
+          third of all turns.
+        options: >-
+          (a) leave the cap at 40 and accept 3,502 recovery searches;
+          (b) raise it toward the full 79 and measure whether tool_search traffic
+          falls by more than the added prompt cost — the honest experiment;
+          (c) keep 40 but bias WHICH 40, so the dropped 39 are the ones least
+          likely to be searched for.
+        recommendation: >-
+          (b), because it is the only option that produces a number. The arithmetic
+          is genuinely uncertain in both directions and this programme's rule is to
+          measure rather than argue — but it changes live behaviour, so it is not
+          mine to start.
+        blocked_until_answered: "Nothing. I2 is closed and D05.8 reaches 7/7 regardless; this is the OPPOSITE question the item opened for itself in August."
+    CLOSING_QUERY: >-
+      grep -c "eligible tools NOT presented" ~/.stackowl/logs/stackowl*.jsonl
+      (869 as of 2026-08-30 — was 0, which is why the check sat open), and the
+      tools_count distribution from the "context budget" INFO line. GLOB THE
+      ROTATED LOGS. If the mode moves off 79/40, the cap or the catalogue changed.
   - id: D06.1
     title: "Pluggable execution backends"
     domain: D06
