@@ -315,6 +315,50 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CUMULATIVE_TOKEN_CEILING_2026_08_29:
+    status: >-
+      SHIPPED AND VALIDATED — commit 460c1bb9. Closes the largest measured runaway left.
+    the_hole: >-
+      `recover-task-925aa68-fix` billed 3,893,308 input tokens across 137 model calls under
+      ONE trace_id, against a 20-step ceiling. Steps bound a single attempt's loop; nothing
+      bounded the TASK. The token ceiling shipped earlier the same day did NOT close it: its
+      meter is the in-memory TurnCostLedger, which counts one process lifetime, so a resumed
+      task restarted from zero each attempt and a restart wiped it — a per-attempt cap
+      wearing a per-task name.
+    the_fix_reuses_the_cost_precedent: >-
+      F093 already seeds the governor with `accumulated_cost_usd` so the COST ceiling is
+      cumulative across park/resume. Tokens now get the same seed, and tokens are the meter
+      that can actually fire ($0.00 for 123,527 of 123,528 calls on an unpriced model).
+      Read from `cost_records` via the existing `get_turn_token_totals`, NOT a new column —
+      the tokens are already stored there per trace, and a column would be a SECOND writer
+      for a fact the system already records.
+    WHAT_I_DECLINED_from_my_own_earlier_plan: >-
+      That plan's item 3c also said "accumulate STEPS across durable retries". On inspection
+      that is wrong and is NOT done: steps bound one attempt's loop, the number of attempts
+      is already bounded by max_attempts, and accumulating them would start later attempts
+      pre-exhausted — starving legitimate retries to fix a spend problem the token meter now
+      bounds directly. The cumulative meter should measure SPEND, not count rounds.
+    LIVE_EVIDENCE_the_reader_on_real_data: >-
+      Core restarted 22:37:03 local (pid 399044), clean boot, 365 lines, ZERO errors. The
+      real seed reader run against real recorded traces:
+        9e6274fa...  totals=(51482, 365)      -> seed 51,482  (matches the log measurement
+                                                  for that turn EXACTLY — two independent
+                                                  sources agree)
+        recover-task-925aa68-fix  totals=(3893308, 99129) -> seed 3,893,308
+        does-not-exist            totals=None  -> seed 0     (first attempt unchanged)
+      So if the 3.9M runaway resumed today the governor would be seeded with 3,893,308
+      against a 500,000 ceiling and breach on its FIRST check. The hole is closed,
+      demonstrated on the offending trace itself.
+    still_open_from_the_planning_arc: >-
+      1. The [plan] nudge has not fired live — needs a turn that runs 5+ steps without the
+         plan moving. CLOSING QUERY: grep '"msg": "\[plan\] no progress' on the jsonl.
+      2. `format_for_injection` has NO caller — the plan is never re-injected. Its stated
+         purpose is surviving CONTEXT COMPACTION, and compaction (plan Stage 1b) is not
+         built, so wiring it now would add a consumer for a problem that does not yet exist.
+         DELIBERATELY NOT BUILT; revisit with compaction.
+      3. todo/update_plan presentation is verified against the REAL 77-tool catalog with the
+         real selector and config (20 presented, both included), but no capped turn has
+         occurred since deploy to observe it in production.
   PLANNING_AND_PROGRESS_EVALUATION_2026_08_29:
     status: >-
       SHIPPED — 3 commits (7726fd37, 1d796696, 3b6acfe2). This is the task Bakir asked for
