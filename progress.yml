@@ -21548,7 +21548,28 @@ items:
     decisions: []
     changes: []
     notes: null
-
+    RE_MEASURED_2026_08_30_the_fix_is_UNVALIDATED_in_production: >-
+      The claim behind this item — "of six real discover calls, THREE returned zero rows" —
+      re-measures as 3 of 8 and HOLDS. Every discover call in the retained log, by turns
+      returned: 4, 0, 1, 0, 0, 1, 1, 20.
+      BUT EVERY ONE OF THEM PREDATES THE FIX. The FTS commit (6f73945e) landed 2026-08-29
+      09:29:56; the most recent discover call is 2026-08-29 08:20:20, sixty-nine minutes
+      EARLIER. So the 3-of-8 zero rate is entirely PRE-fix evidence, and the improvement has
+      never run in production. "D11.2 COMPLETE — FTS validated on the live corpus" was a
+      validation of the INDEX by direct query, not of the discover TOOL PATH.
+      NO INSTRUMENT IS MISSING — I assumed one was and was wrong. `session_search.execute`
+      already logs `mode` on entry and `turns` on exit, both at INFO, which is exactly what
+      this claim needs. The check was runnable all along and simply had not been re-run.
+    WHY_IT_MAY_NEVER_RUN_and_this_is_the_larger_finding: >-
+      `session_search` has NINE invocations in the entire retained window, and it is dropped
+      from the presented set in 187 of 869 "eligible tools NOT presented" records (22%).
+      Same shape as skills_list and todo before them: a capability the model largely cannot
+      reach. Not fixed here — adding it to the guaranteed base set costs a discretionary slot
+      from every owl profile and is the same class of call as D10.6's cap. Recorded.
+    CLOSING_QUERY: >-
+      grep '"msg": "session_search.execute: exit' and count fields.turns == 0 against the
+      total, restricted to records AFTER 2026-08-29T09:29:56. Until that has a non-zero
+      denominator, the FTS improvement is unevidenced in production.
   - id: D11.3
     title: "Session-search shapes"
     domain: D11
