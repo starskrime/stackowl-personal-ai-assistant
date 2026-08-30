@@ -339,9 +339,28 @@ async def _verify_turn_acceptance(
     """
     try:
         criteria = state.expected_outcome
+        declared = criteria is not None
         if criteria is None:
             criteria = await _derive_turn_acceptance(state, services)
         if criteria is None:
+            # ABSTENTION, SAID OUT LOUD. D02.5 closed on "no veto log lines across
+            # four days ... silence is the expected shape of 'nothing went wrong'".
+            # It is not: this exit returned None and logged NOTHING, so four days of
+            # silence could equally mean the authority never formed an opinion —
+            # which, measured, is what it means. The verdict INFO line appears three
+            # times in the whole retained log and all three are objgoal-* traces,
+            # not the chat turns it is named for.
+            # Logging the abstention makes the DENOMINATOR visible, so "no vetoes"
+            # can finally be read against "how many turns were actually judged".
+            # INFO because production runs at INFO; a DEBUG line is no evidence.
+            log.engine.info(
+                "[acceptance] abstained — no acceptance criteria for this turn",
+                extra={"_fields": {
+                    "trace_id": state.trace_id,
+                    "reason": "no_criteria",
+                    "declared": declared,
+                }},
+            )
             return None
         verdict = AcceptanceChecker().check(
             criteria,
@@ -355,6 +374,18 @@ async def _verify_turn_acceptance(
                     "trace_id": state.trace_id,
                     "accepted": verdict.accepted,
                     "reason": verdict.reason[:160],
+                }},
+            )
+        else:
+            # The SECOND abstention, kept distinct from the first on purpose: a
+            # single "abstained" count could not tell "nothing to judge" from
+            # "judged, no opinion", which rebuilds the ambiguity this fixes.
+            log.engine.info(
+                "[acceptance] abstained — criteria present but no determinate verdict",
+                extra={"_fields": {
+                    "trace_id": state.trace_id,
+                    "reason": "indeterminate",
+                    "detail": (verdict.reason or "")[:160],
                 }},
             )
         return verdict
