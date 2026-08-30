@@ -17089,7 +17089,25 @@ items:
     doc_last_verified: null
     decisions: []
     changes: []
-    notes: null
+    notes: >-
+      REOPENED BY RE-MEASUREMENT 2026-08-30. This item was treated as closed: a note in
+      current (ESC "also_falsified_while_answering_this", 2026-08-29) said "D03.2 was already
+      CLOSED BY MEASUREMENT on 2026-08-26 — 2,916 production calls, median 1,487 / max 62,724
+      input tokens against a 262,144 window, ZERO calls over 50%. The NEXT list should be
+      corrected."
+      THAT CLOSURE NO LONGER HOLDS. Re-run over 124,435 calls (42x the data): max single call
+      162,912 = 62.1% of the window, and SEVEN calls over 50% where there were zero. Over 40%:
+      30. Over 30%: 156. Over 25%: 377. The five largest calls are all dated 2026-08-28,
+      AFTER the measurement that closed it.
+      SO THE "NEXT LIST SHOULD BE CORRECTED" NOTE IS ITSELF NOW WRONG, and that is a
+      contradiction with a recorded decision — flagged rather than silently reconciled.
+      STILL NOT URGENT, measured: nothing has exceeded the window and provider-side
+      compression has NEVER fired (zero compression/oversize lines in the entire retained
+      log). The gap is real and growing, not yet biting.
+      A STANDING WATCH NOW EXISTS so this cannot rot unobserved again — commit e090b57c adds
+      a WARNING when any single call crosses 50% of the window, the same line the stale
+      closure asserted.
+      CLOSING QUERY: grep '"msg": "[context] a single call used' ~/.stackowl/logs/stackowl.jsonl
 
   - id: D03.3
     title: "Session splitting on compression"
