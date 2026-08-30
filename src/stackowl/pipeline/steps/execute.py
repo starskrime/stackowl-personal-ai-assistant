@@ -1269,8 +1269,29 @@ async def _tool_usage_scores(state: PipelineState) -> dict[str, float]:
     try:
         from stackowl.memory.outcome_store import TaskOutcomeStore
         from stackowl.tools._infra.tool_usage import score_tools_for_owl
+        from stackowl.tools._infra.usage_snapshot import shared_usage_snapshot
 
-        scores = await score_tools_for_owl(TaskOutcomeStore(db), state.owl_name)
+        async def _read() -> dict[str, float]:
+            return await score_tools_for_owl(TaskOutcomeStore(db), state.owl_name)
+
+        # D05.2 (the session-boundary half, 2026-08-30). The scores below are
+        # MEASURED, which means they MOVE — running a tool changes them, so
+        # re-reading per turn re-orders the discretionary set mid-conversation and
+        # the tools array shifts under D01.2's position-0 cache marker. The
+        # docstring above and rank_candidates both claim this ranking is "stable
+        # for the life of a session"; it is stable against the QUESTION, not
+        # against TIME. Freezing per conversation is what makes that claim true,
+        # and it is what D05.2's own decision asked for: "recomputed at rollover,
+        # never mid-session".
+        #
+        # Without a conversation_id there is nothing to freeze AGAINST — a
+        # one-shot run has no second turn to be consistent with — so read it directly.
+        if state.conversation_id:
+            scores = dict(await shared_usage_snapshot().get(
+                state.conversation_id, state.owl_name, _read,
+            ))
+        else:
+            scores = await _read()
     except Exception as exc:  # no-hidden-errors: ordering must not break the turn
         log.engine.error(
             "[pipeline] execute: _tool_usage_scores FAILED — by-name order this turn",

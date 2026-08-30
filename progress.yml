@@ -439,6 +439,21 @@ documentation:
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
 known_debt:
+  - id: DEBT-39
+    date: 2026-08-30
+    title: "Three copies of the per-conversation prompt-part snapshot"
+    what: >-
+      CuratedMemory.snapshot_for_prompt (profile), CatalogueSnapshot (skills) and
+      now UsageScoreSnapshot (tool ordering) are the same mechanism written three
+      times: freeze a mutable input per conversation, bound the map, evict MRU-last.
+      CLAUDE.md names "two copies of one rule" as one of the shapes that accounts
+      for nearly every real defect here, and this is three.
+    why_not_consolidated_now: >-
+      Extracting the primitive means editing two shipped, tested modules from
+      inside an item about tool presentation. I chose the narrower change and am
+      saying so rather than letting the third copy land silently. The consolidation
+      is mechanical and low-risk; it is scope, not difficulty.
+    the_three_sites: "src/stackowl/memory/curated.py, src/stackowl/skills/catalogue_snapshot.py, src/stackowl/tools/_infra/usage_snapshot.py"
   - id: DEBT-38
     date: 2026-08-30
     title: "tests/skills takes ~13 minutes and gates every skills-touching item"
@@ -9271,7 +9286,78 @@ items:
         gates: "ruff src/ = 46, mypy src/ = 78, ruff on the new test file clean. 33 tests green after restoring both mutations."
     changes: []
     notes: null
-
+    AUDIT_2026_08_30_the_acceptance_check_CLOSED_and_it_FAILED:
+      the_claim: >-
+        validate 2026-08-02 left this OPEN: "THE ACCEPTANCE TEST HAS HAD NO
+        OPPORTUNITY... ZERO turns have run since the restart", with the closing
+        command recorded and an explicit instruction to READ THE DENOMINATOR FIRST.
+      denominator_first_as_instructed: >-
+        320 tool-loop entries across 289 distinct (session_key, owl) pairs, of
+        which 12 pairs have 2+ turns. Only those 12 can trigger the audit at all,
+        so the opportunity is real and modest — not "no traffic", and not
+        thousands.
+      the_numerator: >-
+        TWO '[cache] breakpoints: tools array CHANGED — position 0 invalidated
+        this turn' events, both 2026-08-30, both in the operator's live Telegram
+        lane:
+          03:11:53 conv=retry-bab7a9bc  removed 20+ tools (apply_patch, edit,
+                   git, execute_code, delegate_task, ...), tool_count 21
+          03:25:21 conv=retry-ff1dc0c4  added ['claude_code','process','read_logs'],
+                   tool_count 21
+        The item predicted "expect silence for repeat pairs". It is not silent.
+      CHECKED_BEFORE_REPORTING_IT: >-
+        Both events carry DIFFERENT conversation_ids, which would make them
+        meaningless if the audit compared across conversations while the cache is
+        keyed per conversation. It does not: cache_audit.py:180 keys on
+        (conversation_id, owl), the same unit the prompt cache uses. So these are
+        genuine in-conversation invalidations, in BOTH directions.
+    ROOT_CAUSE_the_session_boundary_half_was_never_built: >-
+      D05.2's decision was explicit: "LEARNED PER-OWL TOOLSETS, SESSION-BOUNDARY
+      ONLY. Each owl's core set is derived from MEASURED usage and recomputed at
+      ROLLOVER, NEVER MID-SESSION — so cache stability holds because it changes
+      only where D01.1 already permits change."
+      The ranker shipped; the session boundary did not. _tool_usage_scores calls
+      score_tools_for_owl(TaskOutcomeStore(db), owl) FRESH ON EVERY TURN. There
+      was no snapshot anywhere.
+      And two docstrings assert the property the code lacks — presentation.py:382
+      ("the ordering signal is now stable for the life of a session BY
+      CONSTRUCTION") and _tool_usage_scores itself. Both are true of the QUESTION
+      and false of TIME. Deterministic is not stable: a pure function of mutable
+      state moves when the state moves, and USAGE SCORES MOVE EVERY TIME A TOOL
+      RUNS. Same shape as D01.5's docstring claiming an invariant was asserted
+      when nothing called it — audited earlier the same day.
+    FIX_2026_08_30_UsageScoreSnapshot:
+      what: "tools/_infra/usage_snapshot.py freezes the scores per (conversation_id, owl) — deliberately the same key cache_audit uses, because that is the unit the prompt cache is keyed by. Bounded MRU at 64."
+      shape_is_borrowed_not_invented: "CatalogueSnapshot (skills part) and CuratedMemory.snapshot_for_prompt (profile part) already freeze prompt parts this way. This is the THIRD; see DEBT-39."
+      empty_read_is_not_frozen: "{} means 'order by name' for ONE turn. Freezing it would pin a whole conversation to cold-start order because of a single transient store error."
+      no_conversation_id_still_reads: "A one-shot run has no second turn to be consistent with, so it reads directly. A missing id must never cost a turn its tool ordering — that is the failure mode of 'skip the read when you cannot cache it', and it has its own test."
+      wiring_proven: "M10 unwires the snapshot from the REAL _tool_usage_scores: all 7 correctness tests still pass and ONLY test_the_REAL_read_path_freezes_within_one_conversation dies."
+    WHAT_THIS_DOES_NOT_FIX_stated_because_they_are_easy_to_conflate: >-
+      The presented set ALSO shrinks as history grows — D05.2's own
+      test_the_real_registry_and_real_budgeter_are_stable_across_turns confirms
+      that is real ("the real budgeter really does shrink the real presented set
+      under a grown history"). Freezing the ORDERING input cannot stabilise a
+      budget that binds harder each turn.
+      WHICH OF THE TWO CAUSED THOSE TWO EVENTS IS NOT ESTABLISHED. I could not
+      separate them, and I am not going to guess: there is NO production-visible
+      record of the presented set at all. The presentation path logs at DEBUG and
+      a 19MB log contains zero lines matching "presentation" — so the added/removed
+      fields on the audit WARNING are the only evidence that exists, and they name
+      WHAT changed, never WHY.
+    THE_INSTRUMENT_GAP_is_now_the_bigger_finding: >-
+      An item whose entire subject is the stability of the presented tool array
+      has no INFO-level record of that array. The new snapshot line is INFO for
+      exactly that reason, but it only reports the ORDERING input. Making the
+      budget's decision visible at INFO is the natural next step and is NOT done
+      here — flagged rather than half-built.
+    CLOSING_QUERY: >-
+      Re-run the item's own query, denominator first:
+        count tool-loop entries per (conversation_id, owl); keep the pairs with 2+
+        turns; then grep '"msg": "[cache] breakpoints: tools array CHANGED'.
+      It was 2 events over 12 eligible pairs on 2026-08-30. Also confirm the new
+      line appears once per conversation:
+        grep '"msg": "[tools] usage snapshot: tool-usage ordering frozen' \
+          ~/.stackowl/logs/stackowl.jsonl
   - id: D05.3
     title: "Service gating (check_fn)"
     domain: D05
