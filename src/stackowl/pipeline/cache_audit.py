@@ -206,18 +206,42 @@ def audit_tools_stability(
 
 
 def audit_prompt_parts(
-    session_key: str, parts: dict[str, str], owl: str = ""
+    session_key: str, parts: dict[str, str], owl: str = "",
+    *, conversation_id: str = "",
 ) -> None:
-    """Report WHICH system-prompt part changed between two builds on one lane.
+    """Report WHICH system-prompt part changed between two builds of ONE conversation.
 
     ``prompt_hash`` says the prompt moved; this says it was the skills catalogue,
     or the persona, or the profile. That difference is the whole gap between
     knowing a cache was lost and knowing what to fix — D01.1 spent a slice
     discovering the culprit was per-turn memory recall, by hand.
 
+    KEYED ON ``conversation_id`` SINCE 2026-08-30, and this is a bug fix, not a
+    refinement. It keyed on ``session_key`` — but the prompt is frozen per
+    INCARNATION (D01.1 slice 5), so a lane that starts a second conversation
+    legitimately rebuilds and this reported the permitted rebuild as an
+    invalidation. Its sibling ``audit_tools_array`` twenty lines above already
+    had this right and says why: "a prompt cache is held across one conversation;
+    a lane outlives many of them and is also shared with runs that are not
+    conversations at all". Two copies of one rule, and only one of them was
+    corrected when the lesson was learned.
+    WHAT IT COST: ESC-67 was raised on "203 of 259 invalidations name
+    stable_context" and that number was mostly this defect. Re-measured over eight
+    days, of 204 stable_context events 114 had NO conversation_id at all and 88
+    were the single event of a fresh conversation. Genuinely within one
+    conversation: TWO. The escalation's premise was an artefact of its instrument.
+
     Never raises.
     """
     if not session_key:
+        return
+    if not conversation_id:
+        # No conversation ⇒ no cached prefix ⇒ nothing to invalidate. Identical
+        # reasoning to the tools audit, which measured the same shape: retry-queue
+        # runs, self-heal turns, goal execution and delegated children each build
+        # their prompt from scratch, so there was never a previous build of theirs
+        # to have shared a prefix with. 114 of 204 stable_context reports were
+        # these.
         return
     try:
         current = {name: digest(text) for name, text in parts.items()}
@@ -227,7 +251,7 @@ def audit_prompt_parts(
             exc_info=exc, extra={"_fields": {"session_key": session_key}},
         )
         return
-    key = (session_key, owl)
+    key = (conversation_id, owl)
     previous = _part_hashes.get(key)
     _remember(_part_hashes, key, current)
     if previous is None:

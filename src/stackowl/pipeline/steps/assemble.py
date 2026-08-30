@@ -19,6 +19,7 @@ from stackowl.owls.dna_injector import DNAPromptInjector
 from stackowl.pipeline.cache_audit import audit_prompt_parts
 from stackowl.pipeline.capability_manifest import CapabilityManifest
 from stackowl.pipeline.services import get_services
+from stackowl.pipeline.stable_context_snapshot import shared_stable_context_snapshot
 from stackowl.pipeline.state import PipelineState
 from stackowl.skills.catalogue_snapshot import shared_catalogue_snapshot
 from stackowl.skills.instruction_injector import (
@@ -548,7 +549,26 @@ async def run(state: PipelineState) -> PipelineState:
         "owls": owls_block,
         "skills": skills_block,
         "profile": profile,
-        "stable_context": state.stable_context or "",
+        # ESC-67 — FREEZE the learned block per incarnation. It is composed into
+        # the frozen half of the prompt while being, by definition, the part that
+        # learning changes: 203 of 259 measured "prompt part CHANGED" warnings
+        # name stable_context, more than every other part combined. Keyed the same
+        # way as the skills catalogue directly above, and for the same D01.6
+        # reason — one lane can run several owls.
+        "stable_context": (
+            shared_stable_context_snapshot().get(
+                f"{state.conversation_id}::{state.owl_name}",
+                state.stable_context or "",
+            )
+            if state.conversation_id
+            # NO SESSION_KEY FALLBACK. A run with no conversation is a one-shot —
+            # a scheduler job, a recovery drive, a delegated child — and it has no
+            # cached prefix to protect. Keying those on the LANE would freeze
+            # learned content across unrelated runs that merely share a namespace,
+            # pinning stale preferences for no benefit. The catalogue snapshot's
+            # `or session_key` fallback above predates this measurement.
+            else (state.stable_context or "")
+        ),
     }, extra=contributed)
     # D01.6 — stamp this turn's prompt identity so the single cost-recording site
     # (providers/base.py::_record_cost) can attach it without threading arguments
@@ -557,7 +577,10 @@ async def run(state: PipelineState) -> PipelineState:
     # D01.2 — prompt_hash says the prompt MOVED; this says which part moved. The
     # cold build is the only place a silent invalidator can be caught at its
     # source, because it is the only place the parts still exist separately.
-    audit_prompt_parts(state.session_key, audit_parts, owl=state.owl_name)
+    audit_prompt_parts(
+        state.session_key, audit_parts, owl=state.owl_name,
+        conversation_id=state.conversation_id or "",
+    )
     # INFO, not DEBUG. These per-part sizes are the diagnostic D01.6 exists to
     # obtain, and at debug level they vanished entirely: 0 of 17403 lines in the
     # live log carried them, which is why prompt composition was unmeasurable.

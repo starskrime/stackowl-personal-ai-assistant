@@ -51,21 +51,23 @@ never shared a cached prefix.
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 
+from stackowl.infra.bounded_mru import DEFAULT_MAX_TRACKED, BoundedMRU
 from stackowl.infra.observability import log
-
-#: How many (conversation, owl) pairs' frozen scores are retained.
-_MAX_TRACKED = 64
 
 
 class UsageScoreSnapshot:
     """Per-conversation freeze of the measured per-owl tool usage scores."""
 
-    def __init__(self, max_tracked: int = _MAX_TRACKED) -> None:
-        self._max_tracked = max_tracked
-        self._by_key: OrderedDict[tuple[str, str], Mapping[str, float]] = OrderedDict()
+    def __init__(self, max_tracked: int = DEFAULT_MAX_TRACKED) -> None:
+        self._by_key: BoundedMRU[tuple[str, str], Mapping[str, float]] = BoundedMRU(
+            max_tracked,
+            on_evict=lambda evicted: log.engine.debug(
+                "[tools] usage snapshot: evicted the oldest conversation",
+                extra={"_fields": {"evicted": f"{evicted[0]}:{evicted[1]}"}},
+            ),
+        )
 
     def tracked(self) -> int:
         """How many pairs are retained — the bound, observable."""
@@ -87,9 +89,8 @@ class UsageScoreSnapshot:
         """
         # 1. ENTRY
         key = (conversation_id, owl)
-        cached = self._by_key.get(key)
+        cached = self._by_key.peek(key)
         if cached:
-            self._by_key.move_to_end(key)
             log.engine.debug(
                 "[tools] usage snapshot: hit",
                 extra={"_fields": {"conversation_id": conversation_id, "owl": owl,
@@ -103,14 +104,7 @@ class UsageScoreSnapshot:
             return {}
 
         # 3. STEP — store, bound, evict oldest.
-        self._by_key[key] = scores
-        self._by_key.move_to_end(key)
-        while len(self._by_key) > self._max_tracked:
-            evicted, _ = self._by_key.popitem(last=False)
-            log.engine.debug(
-                "[tools] usage snapshot: evicted the oldest conversation",
-                extra={"_fields": {"evicted": f"{evicted[0]}:{evicted[1]}"}},
-            )
+        self._by_key.put(key, scores)
         # 4. EXIT — INFO, not debug. This line is the evidence that the ordering
         #    input was sampled ONCE rather than per turn, and production runs at
         #    INFO. The presentation path's own logging is DEBUG, which is why

@@ -116,8 +116,8 @@ def test_two_owls_on_one_lane_do_not_look_like_a_prompt_part_change(caplog: Any)
     """Same defect on the prompt-part side — persona and the owls block differ
     per owl BY DESIGN, so a lane-keyed audit flags every owl switch."""
     with caplog.at_level("WARNING"):
-        audit_prompt_parts("incident-1", {"persona": "A", "owls": "x"}, owl="rca_gatherer")
-        audit_prompt_parts("incident-1", {"persona": "B", "owls": "y"}, owl="hypothesis")
+        audit_prompt_parts("incident-1", {"persona": "A", "owls": "x"}, owl="rca_gatherer", conversation_id="c1")
+        audit_prompt_parts("incident-1", {"persona": "B", "owls": "y"}, owl="hypothesis", conversation_id="c1")
     assert [r for r in caplog.records if "prompt part CHANGED" in r.message] == []
 
 
@@ -265,8 +265,8 @@ def test_two_conversations_on_one_lane_do_not_contaminate_each_other(caplog: Any
 
 def test_prompt_parts_report_the_part_that_changed(caplog: Any) -> None:
     with caplog.at_level("WARNING"):
-        audit_prompt_parts("lane", {"persona": "a", "skills": "b", "profile": "c"})
-        audit_prompt_parts("lane", {"persona": "a", "skills": "CHANGED", "profile": "c"})
+        audit_prompt_parts("lane", {"persona": "a", "skills": "b", "profile": "c"}, conversation_id="c1")
+        audit_prompt_parts("lane", {"persona": "a", "skills": "CHANGED", "profile": "c"}, conversation_id="c1")
     changed = [r for r in caplog.records if "prompt part CHANGED" in r.message]
     assert len(changed) == 1
     assert changed[0]._fields["parts"] == ["skills"]
@@ -274,16 +274,16 @@ def test_prompt_parts_report_the_part_that_changed(caplog: Any) -> None:
 
 def test_prompt_parts_report_every_part_that_changed(caplog: Any) -> None:
     with caplog.at_level("WARNING"):
-        audit_prompt_parts("lane", {"persona": "a", "skills": "b"})
-        audit_prompt_parts("lane", {"persona": "X", "skills": "Y"})
+        audit_prompt_parts("lane", {"persona": "a", "skills": "b"}, conversation_id="c1")
+        audit_prompt_parts("lane", {"persona": "X", "skills": "Y"}, conversation_id="c1")
     changed = [r for r in caplog.records if "prompt part CHANGED" in r.message]
     assert changed[0]._fields["parts"] == ["persona", "skills"]
 
 
 def test_identical_prompt_parts_report_nothing(caplog: Any) -> None:
     with caplog.at_level("WARNING"):
-        audit_prompt_parts("lane", {"persona": "a", "skills": "b"})
-        audit_prompt_parts("lane", {"persona": "a", "skills": "b"})
+        audit_prompt_parts("lane", {"persona": "a", "skills": "b"}, conversation_id="c1")
+        audit_prompt_parts("lane", {"persona": "a", "skills": "b"}, conversation_id="c1")
     assert [r for r in caplog.records if "prompt part CHANGED" in r.message] == []
 
 
@@ -305,10 +305,10 @@ def test_identical_prompt_parts_report_nothing(caplog: Any) -> None:
 def test_an_explained_change_does_not_warn(caplog: Any) -> None:
     from stackowl.infra.prompt_invalidation import note_expected_change
 
-    audit_prompt_parts("lane", {"persona": "a"}, owl="scout")
+    audit_prompt_parts("lane", {"persona": "a"}, owl="scout", conversation_id="c1")
     note_expected_change("scout", cause="owl_edit")
     with caplog.at_level("INFO"):
-        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="scout")
+        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="scout", conversation_id="c1")
 
     assert [r for r in caplog.records if "prompt part CHANGED" in r.message] == [], (
         "a change the user asked for must not be reported as an invalidator"
@@ -318,9 +318,9 @@ def test_an_explained_change_does_not_warn(caplog: Any) -> None:
 
 def test_an_unexplained_change_still_warns(caplog: Any) -> None:
     """The other jaw: the fix must not silence the signal the audit exists for."""
-    audit_prompt_parts("lane", {"persona": "a"}, owl="scout")
+    audit_prompt_parts("lane", {"persona": "a"}, owl="scout", conversation_id="c1")
     with caplog.at_level("WARNING"):
-        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="scout")
+        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="scout", conversation_id="c1")
 
     assert [r for r in caplog.records if "prompt part CHANGED" in r.message] != []
 
@@ -330,22 +330,69 @@ def test_the_explanation_is_consumed_once(caplog: Any) -> None:
     it must warn again, or a single edit would blind the audit indefinitely."""
     from stackowl.infra.prompt_invalidation import note_expected_change
 
-    audit_prompt_parts("lane", {"persona": "a"}, owl="scout")
+    audit_prompt_parts("lane", {"persona": "a"}, owl="scout", conversation_id="c1")
     note_expected_change("scout", cause="owl_edit")
-    audit_prompt_parts("lane", {"persona": "b"}, owl="scout")   # explained, quiet
+    audit_prompt_parts("lane", {"persona": "b"}, owl="scout", conversation_id="c1")   # explained, quiet
 
     with caplog.at_level("WARNING"):
-        audit_prompt_parts("lane", {"persona": "c"}, owl="scout")  # unexplained
+        audit_prompt_parts("lane", {"persona": "c"}, owl="scout", conversation_id="c1")  # unexplained
     assert [r for r in caplog.records if "prompt part CHANGED" in r.message] != []
 
 
 def test_an_explanation_for_one_owl_does_not_cover_another(caplog: Any) -> None:
     from stackowl.infra.prompt_invalidation import note_expected_change
 
-    audit_prompt_parts("lane", {"persona": "a"}, owl="scout")
-    audit_prompt_parts("lane", {"persona": "a"}, owl="researcher")
+    audit_prompt_parts("lane", {"persona": "a"}, owl="scout", conversation_id="c1")
+    audit_prompt_parts("lane", {"persona": "a"}, owl="researcher", conversation_id="c1")
     note_expected_change("scout", cause="owl_edit")
 
     with caplog.at_level("WARNING"):
-        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="researcher")
+        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="researcher", conversation_id="c1")
     assert [r for r in caplog.records if "prompt part CHANGED" in r.message] != []
+
+
+# --------------------------------------------------------------------------- #
+# 2026-08-30 — the parts audit is per CONVERSATION, not per lane.
+#
+# It keyed on session_key while the prompt is frozen per incarnation (D01.1
+# slice 5), so a lane starting a second conversation legitimately rebuilds and
+# the audit reported that permitted rebuild as an invalidation. Its sibling
+# audit_tools_array twenty lines above already had this right. ESC-67 was raised
+# on "203 of 259 invalidations name stable_context"; re-measured, 114 of 204 had
+# NO conversation_id and 88 were a fresh conversation's single event. Two were
+# real.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_run_with_NO_conversation_reports_nothing(caplog: Any) -> None:
+    """No conversation means no cached prefix, so there is nothing to invalidate.
+
+    Retry-queue runs, self-heal turns, goal execution and delegated children all
+    build their prompt from scratch. This was 114 of 204 stable_context reports.
+    """
+    with caplog.at_level("WARNING"):
+        audit_prompt_parts("lane", {"persona": "a"}, owl="o", conversation_id="")
+        audit_prompt_parts("lane", {"persona": "CHANGED"}, owl="o", conversation_id="")
+    assert not [r for r in caplog.records if "prompt part CHANGED" in r.message]
+
+
+def test_a_SECOND_conversation_on_one_lane_is_not_an_invalidation(caplog: Any) -> None:
+    """The permitted rebuild. D01.1 freezes the prompt per incarnation and states
+    the contract: a write "does not move the prompt until the next /new". Counting
+    that as a lost cache is what inflated ESC-67's premise."""
+    with caplog.at_level("WARNING"):
+        audit_prompt_parts("lane", {"persona": "a"}, owl="o", conversation_id="conv-1")
+        audit_prompt_parts("lane", {"persona": "LEARNED MORE"}, owl="o",
+                           conversation_id="conv-2")
+    assert not [r for r in caplog.records if "prompt part CHANGED" in r.message]
+
+
+def test_a_change_WITHIN_one_conversation_is_still_reported(caplog: Any) -> None:
+    """The counterweight: narrowing the key must not silence the real defect,
+    which is the prefix moving between two turns of the SAME conversation."""
+    with caplog.at_level("WARNING"):
+        audit_prompt_parts("lane", {"persona": "a"}, owl="o", conversation_id="conv-1")
+        audit_prompt_parts("lane", {"persona": "MOVED"}, owl="o",
+                           conversation_id="conv-1")
+    hits = [r for r in caplog.records if "prompt part CHANGED" in r.message]
+    assert len(hits) == 1

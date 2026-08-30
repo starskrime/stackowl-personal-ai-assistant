@@ -46,10 +46,10 @@ profile stays global — the user is the same person to every owl.
 from __future__ import annotations
 
 import re
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from stackowl.infra.bounded_mru import BoundedMRU
 from stackowl.infra.observability import log
 from stackowl.paths import StackowlHome
 
@@ -234,7 +234,13 @@ class CuratedMemory:
         # warnings name the `profile` part (jobmarket 66, secretary 30). This
         # platform serves chats concurrently by design, so the single slot could
         # not deliver the freeze assemble.py depends on.
-        self._snapshots: OrderedDict[str, dict[str, str]] = OrderedDict()
+        self._snapshots: BoundedMRU[str, dict[str, str]] = BoundedMRU(
+            _MAX_TRACKED_CONVERSATIONS,
+            on_evict=lambda evicted: log.memory.debug(
+                "[curated] snapshot: evicted the oldest conversation (bounded)",
+                extra={"_fields": {"evicted_conversation_id": evicted}},
+            ),
+        )
         self._consolidation_failures = 0
 
     # ------------------------------------------------------------------ paths
@@ -422,17 +428,10 @@ class CuratedMemory:
         is the whole point: per-turn variation was measured as the single largest
         source of prompt instability, and it forfeits the prefix cache silently.
         """
-        snapshot = self._snapshots.get(conversation_id)
+        snapshot = self._snapshots.peek(conversation_id)
         if snapshot is None:
             snapshot = {}
-            self._snapshots[conversation_id] = snapshot
-        self._snapshots.move_to_end(conversation_id)
-        while len(self._snapshots) > _MAX_TRACKED_CONVERSATIONS:
-            evicted, _ = self._snapshots.popitem(last=False)
-            log.memory.debug(
-                "[curated] snapshot: evicted the oldest conversation (bounded)",
-                extra={"_fields": {"evicted_conversation_id": evicted}},
-            )
+        self._snapshots.put(conversation_id, snapshot)
         if target not in snapshot:
             try:
                 rendered = self._render(self.entries(target))

@@ -315,34 +315,61 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  OPERATOR_DECISIONS_2026_08_30_backlog_cleared_for_work:
-    by: Bakir
-    ESC_68_guardrail_hard_stops: >-
-      DELETE THE DEAD BRANCHES. Warn-only everywhere; remove the three unreachable
-      block/halt paths so the code says what it does. My recommendation was to
-      enable them for non-interactive lanes and Bakir went the other way — the
-      warn-only decision is the one he wants kept, and unreachable code that reads
-      as active protection is worse than no code. Reversible via git.
-    ESC_67_stable_context: >-
-      SNAPSHOT PER CONVERSATION. Freeze the learned content per incarnation rather
-      than moving it out of the prefix. Same shape as profile, skills catalogue
-      and tool ordering.
-      CONSEQUENCE I AM ACTING ON WITHOUT ASKING AGAIN: this makes FOUR copies of
-      one mechanism, and DEBT-39 was already filed at three. Hand-writing a fourth
-      would be indefensible against the standing "never two copies of one rule".
-      So DEBT-39 is done FIRST — extract the primitive — and ESC-67 becomes its
-      fourth CALLER rather than its fourth copy.
-    DEBT_37_checkpoint_blob: >-
-      GIVE ROLLOVER ITS OWN COLUMN. Idempotent migration, nothing deleted;
-      checkpoint_blob goes back to meaning exactly one thing.
-    next_focus: "CLEAR THE ESCALATION BACKLOG — ESC-63/64/66/67/68 and DEBT-37/38/39 as a batch, rather than resuming unbuilt map items."
-    order_I_am_taking_them_in: >-
-      1. ESC-68 (deletion, smallest and self-contained).
-      2. DEBT-39 then ESC-67 (the primitive, then its fourth caller).
-      3. DEBT-37 (migration).
-      4. DEBT-38 (test-suite wall) — it pays back on every later item, so it goes
-         before the remaining judgement calls.
-      5. ESC-63/64/66 remain open; they are product calls I have not been given.
+  ESC_67_AND_DEBT_39_2026_08_30_the_escalations_own_premise_was_an_ARTEFACT:
+    what_Bakir_asked_for: "Snapshot stable_context per conversation, rather than moving it out of the prefix."
+    what_I_delivered_and_the_bigger_thing_underneath: >-
+      The snapshot is built and wired. But measuring the number that motivated the
+      escalation — "203 of 259 invalidations name stable_context" — showed the
+      number was mostly its own instrument.
+    the_measurement: |-
+      204 stable_context "prompt part CHANGED" events over eight days:
+
+        114  had NO conversation_id at all
+         88  were the single event of a fresh conversation
+          2  were genuinely within one conversation
+
+      So the fixable population was TWO, not 203.
+    THE_ROOT_CAUSE_two_copies_of_one_rule_in_ONE_FILE: >-
+      audit_prompt_parts keyed on (session_key, owl) — the LANE — while the prompt
+      is frozen per INCARNATION (D01.1 slice 5). A lane starting its second
+      conversation legitimately rebuilds, and the audit reported that permitted
+      rebuild as a lost cache.
+      Its SIBLING audit_tools_array, twenty lines above in the same file, already
+      had this right and its docstring says exactly why: "a prompt cache is held
+      across one conversation; a lane outlives many of them and is also shared
+      with runs that are not conversations at all" — and it skips when there is no
+      conversation, citing "112 of the 122 warnings measured over six days".
+      The same lesson, learned once, applied to one of two copies. That is
+      CLAUDE.md shape 3, inside a single file, and it cost an escalation raised on
+      a number that was 100x its real value.
+    what_shipped:
+      DEBT_39: >-
+        infra/bounded_mru.py — ONE bounded MRU map. curated.py, catalogue_snapshot
+        and usage_snapshot all migrated onto it; no hand-rolled OrderedDict +
+        move_to_end + popitem remains. It deliberately does NOT compute the value
+        (that would have forced a sync and an async variant) and does NOT decide
+        the empty-value policy, because all three callers have DIFFERENT correct
+        answers and a default would have silently changed two shipped behaviours.
+      ESC_67: >-
+        pipeline/stable_context_snapshot.py freezes the learned block per
+        (conversation, owl) — the fourth CALLER of the primitive rather than the
+        fourth copy of it.
+        NO SESSION_KEY FALLBACK, unlike the catalogue snapshot which predates this
+        measurement: a run with no conversation is a one-shot with no cached
+        prefix to protect, and keying those on the lane would freeze learned
+        content across unrelated runs that merely share a namespace.
+      the_audit_fix: "audit_prompt_parts now takes conversation_id, keys on it, and skips when absent — matching its sibling exactly."
+    the_counterweight_test: >-
+      test_a_change_WITHIN_one_conversation_is_still_reported. Narrowing a key to
+      quiet an over-reporting audit is one edit away from an audit that reports
+      nothing, and the two remaining real events are the ones that matter most.
+    verified: "43 tests across the primitive, the snapshot and the re-keyed audit. ruff 37, mypy 65 — both at baseline."
+    HONEST_about_what_this_buys: >-
+      Not a measurable cache saving. This backend reports no cache statistics, so
+      the evidence is the invalidation count becoming truthful, not a hit-rate
+      going up. And the truthful count was already small. The real value delivered
+      is that the instrument now means what it says — the next person reading
+      "stable_context: 203" would have chased the same ghost.
 
 waves:
   1:

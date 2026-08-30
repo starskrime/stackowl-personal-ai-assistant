@@ -36,21 +36,23 @@ shape this session has fixed three times). One small file, trivially reversible.
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from collections.abc import Callable
 
+from stackowl.infra.bounded_mru import DEFAULT_MAX_TRACKED, BoundedMRU
 from stackowl.infra.observability import log
-
-#: How many conversations' frozen catalogues are retained.
-_MAX_TRACKED = 64
 
 
 class CatalogueSnapshot:
     """Per-conversation cache of the RENDERED catalogue block."""
 
-    def __init__(self, max_tracked: int = _MAX_TRACKED) -> None:
-        self._max_tracked = max_tracked
-        self._by_conversation: OrderedDict[str, str] = OrderedDict()
+    def __init__(self, max_tracked: int = DEFAULT_MAX_TRACKED) -> None:
+        self._by_conversation: BoundedMRU[str, str] = BoundedMRU(
+            max_tracked,
+            on_evict=lambda evicted: log.skills.debug(
+                "[skills] catalogue snapshot: evicted the oldest conversation",
+                extra={"_fields": {"evicted_conversation_id": evicted}},
+            ),
+        )
 
     def tracked(self) -> int:
         """How many conversations are retained — the bound, observable."""
@@ -64,23 +66,15 @@ class CatalogueSnapshot:
         worse than one extra render. A transient store failure must not become a
         session-long capability loss.
         """
-        cached = self._by_conversation.get(conversation_id)
+        cached = self._by_conversation.peek(conversation_id)
         if cached:
-            self._by_conversation.move_to_end(conversation_id)
             return cached
 
         rendered = render()
         if not rendered:
             return rendered
 
-        self._by_conversation[conversation_id] = rendered
-        self._by_conversation.move_to_end(conversation_id)
-        while len(self._by_conversation) > self._max_tracked:
-            evicted, _ = self._by_conversation.popitem(last=False)
-            log.skills.debug(
-                "[skills] catalogue snapshot: evicted the oldest conversation",
-                extra={"_fields": {"evicted_conversation_id": evicted}},
-            )
+        self._by_conversation.put(conversation_id, rendered)
         log.skills.debug(
             "[skills] catalogue snapshot: frozen for this incarnation",
             extra={"_fields": {
