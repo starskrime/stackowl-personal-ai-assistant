@@ -13,6 +13,7 @@ from stackowl.db.pool import DbPool
 from stackowl.infra import retry_ledger
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 
 # A leaf module by design — it imports nothing of the platform but the logger —
 # so the scheduler can ask it at module level without dragging in the durable
@@ -72,6 +73,36 @@ def _unify_scheduler_enabled() -> bool:
         return bool(Settings().unify_scheduler_recovery)
     except Exception:  # noqa: BLE001 — a flag read must never raise into the scheduler
         return True
+
+
+def _bind_job_trace(job: Any) -> Any:
+    """Give this job RUN its own trace, so the model calls it makes are attributable.
+
+    MEASURED 2026-08-29: 67,383 of 123,648 recorded LLM calls (54.5%) carried a
+    BLANK trace_id — and a blank session_key and conversation_id with it — totalling
+    127,088,340 input tokens (19.7% all-time; 4.0% over the last 24h, so this is
+    attribution work rather than a spend emergency). They are the background
+    handlers — critic, reflection_writer, learning, entity_extractor,
+    rollover_summary — which call ``provider.complete`` directly and never build a
+    PipelineState. ``_record_cost`` reads trace_id off TraceContext, so with nothing
+    bound a fifth of all recorded spend was attributable to nothing at all.
+
+    ``TraceContext.start`` was built for exactly this and never called from here —
+    its own docstring says "useful for background jobs/scheduler handlers that start
+    their own root trace".
+
+    A FRESH TRACE PER RUN, not the job_id. ``job_id`` is stable for the life of a
+    recurring job, so using it would fold that job's entire history into one
+    accumulating per-trace total — and the per-turn token ceiling reads exactly that
+    total, so a daily job would eventually breach a cap it never earned. The job's
+    identity rides ``session_key`` instead, where it groups without accumulating.
+
+    ``conversation_id`` IS DELIBERATELY LEFT NONE. From ``trace.py``: "None is a real
+    answer: background work that never passed through ingress has a lane but no
+    incarnation, and inventing one would attribute its cost to a conversation that
+    never happened." A job gets a trace and a lane, never a conversation.
+    """
+    return TraceContext.start(session_key=f"job:{job.job_id}")
 
 
 class JobScheduler(SupervisedTask):
@@ -352,6 +383,12 @@ class JobScheduler(SupervisedTask):
         # handler that also calls backend.run() just isolates as designed —
         # see retry_ledger.py's docstring on nested-bind semantics).
         retry_ledger_token = retry_ledger.bind()
+        # SAME SITE, SAME REASON as the retry_ledger bind above: the handlers that
+        # call providers directly never pass through backend.run(), so nothing ever
+        # bound a TraceContext for them and every one of their cost rows recorded a
+        # blank trace_id. See _bind_job_trace for the measurement and for why the
+        # trace is per-RUN while the job identity rides session_key.
+        trace_token = _bind_job_trace(job)
         try:
             result = await asyncio.wait_for(handler.execute(job), timeout=_HANDLER_TIMEOUT_SEC)
         except TimeoutError:
@@ -408,6 +445,9 @@ class JobScheduler(SupervisedTask):
                     }},
                 )
             retry_ledger.reset(retry_ledger_token)
+            # Reset in the SAME finally: a ContextVar left set would attribute the
+            # next job's spend to this one.
+            TraceContext.reset(trace_token)
 
         duration_ms = (time.monotonic() - t0) * 1000
         # PB6a — a job that self-reports success=True but was checked and found
