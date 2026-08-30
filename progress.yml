@@ -315,6 +315,31 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D05_3_OPEN_CHECK_CLOSED_PROVEN_LIVE_2026_08_30:
+    status: >-
+      no_change_needed — nothing was broken. An acceptance check the item left honestly OPEN
+      for lack of traffic is now closed with production evidence.
+    why_this_item_was_picked: >-
+      It carried the exact shape the loop warns about: "NOT PROVEN LIVE: the gating itself.
+      ZERO turns have run since restart ... silence here is no traffic, not success." The item
+      was right to leave it open, and traffic has since happened — so the honest move was to
+      re-run it rather than let it age into a claim nobody rechecks.
+    IT_FIRES_and_the_three_causes_are_distinguishable: >-
+      52 `capability UNAVAILABLE` firings: 49 structural (gateway role hosts no browser), 2
+      probe-persisted, 1 process-disconnected. The cleanup claim that it "distinguishes all
+      three causes instead of hardcoding 'binary not found'" is confirmed by three distinct
+      reasons APPEARING in production, not by reading the code.
+    AND_THE_GRACE_WINDOW_IS_NOT_A_RUBBER_STAMP: >-
+      248 probes were forgiven as transient — five times the gating count, which is exactly
+      the shape that could mean "forgives everything, never concludes". Measured, it does not:
+      since_last_good_s min 3.0 / median 30.8 / MAX 56.5 against a 60.0 grace, and the probe
+      path DID gate 3 times when a failure persisted. The worst forgiven case came within 3.5
+      seconds of gating. That is a calibrated window, and checking it was the difference
+      between "248 warnings, something is wrong" and "248 warnings, the mechanism works".
+    the_general_point: >-
+      A large warning count is not evidence of a defect any more than a zero is evidence of
+      health. Both need the DISTRIBUTION, not the count — the same lesson as the denominator
+      rule, applied to the numerator.
   D01_1_AUDITED_and_its_LESSON_PROMOTED_to_CLAUDE_MD_2026_08_30:
     status: >-
       D01.1 audited: dead-code claims HOLD, opening gap UNMEASURABLE. Its recorded lesson is
@@ -18744,7 +18769,33 @@ items:
         cleanup_done: "The misleading orchestrator log now distinguishes all three causes (gateway role / probe did not run / binary missing) instead of hardcoding 'binary not found' for all of them."
     changes: []
     notes: null
-
+    OPEN_ACCEPTANCE_CHECK_CLOSED_2026_08_30_PROVEN_LIVE: >-
+      This item recorded, honestly: "NOT PROVEN LIVE: the gating itself. ZERO turns have run
+      since restart ... silence here is no traffic, not success." Traffic has since happened,
+      so the check was re-run rather than left open.
+      IT FIRES. `[capabilities] resolve: capability UNAVAILABLE` has fired 52 times, and the
+      three causes the cleanup set out to distinguish are all visible in the data:
+        49  "this process runs the gateway role; the browser is hosted by core"  (structural)
+         2  "unavailable"                                                        (probe)
+         1  "browser process disconnected"
+      So the gating is PROVEN LIVE, and the cleanup claim ("distinguishes all three causes
+      instead of hardcoding 'binary not found'") is confirmed by three distinct reasons
+      actually appearing rather than by reading the code.
+    THE_GRACE_WINDOW_IS_CALIBRATED_not_a_rubber_stamp: >-
+      Beside those sits a much larger number — 248 "probe failed within the grace window —
+      treating as transient", all for `browser`, steady at ~26/day. That could have been a
+      window that forgives everything and never concludes (the "no decay" shape). It is not.
+      MEASURED over all 248: since_last_good_s min 3.0, median 30.8, MAX 56.5 against
+      grace_s 60.0. Every forgiveness was genuinely inside the window and the worst case came
+      within 3.5 seconds of gating — and the probe path DID gate 3 times when a failure
+      persisted. Transient failures forgiven, persistent ones gated, structural ones gated.
+      The window is doing real work with a real margin.
+    CLOSING_QUERY: >-
+      grep '"msg": "[capabilities] resolve: capability UNAVAILABLE' ~/.stackowl/logs/stackowl.jsonl
+      and group by fields.reason — three distinct causes must remain distinguishable. For the
+      grace window: grep 'grace window' and check max(fields.since_last_good_s) against
+      fields.grace_s; if the maximum ever pins at the grace value, the window has started
+      forgiving a persistent failure and this item needs re-reading.
   - id: D05.4
     title: "Progressive tool disclosure"
     domain: D05
