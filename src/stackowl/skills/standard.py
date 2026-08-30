@@ -291,10 +291,32 @@ def validate_body(
             if t not in known_tools and t not in _SHELL_VERB_NAMES
         )
         if unknown:
+            # ADVISORY, not blocking. MEASURED 2026-08-29: this rule refused 52
+            # writes and blocked 13 skills, and every LIVE firing was a false
+            # positive — 18 of the 21 flagged tokens are not tools and never were
+            # (failure classes `stop`/`unachieved_effect`, lifecycle values
+            # `on_demand`/`scheduled`, the owl name `english_tutor`, and plain
+            # English `user`/`name`/`search`). The three real tools among them were
+            # flagged in one five-minute window on 2026-08-23, before
+            # `_known_tool_names` was fixed.
+            #
+            # It cannot be saved by a narrower regex: the rule matches on SHAPE, and
+            # tool names have no shape that domain vocabulary lacks — `stop` and
+            # `search` are indistinguishable from real tool names by any pattern. An
+            # excluded-word list is also out; this codebase forbids hardcoded
+            # keyword lists.
+            #
+            # The signal is real and is kept: naming a capability wrongly teaches
+            # the wrong name. It is simply not worth REFUSING a skill over at a 100%
+            # live false-positive rate — the same judgement `Violation.blocking`
+            # already records for the soft line cap, "because 'too detailed' is not
+            # the validator's judgement to make".
             out.append(Violation(
                 "tool_names",
                 f"backticked token(s) that are not registered tools: "
-                f"{', '.join(unknown)}. Reference capabilities by their real names.",
+                f"{', '.join(unknown)}. If these name capabilities, use their real "
+                f"names; if they are ordinary words, no change is needed.",
+                blocking=False,
             ))
 
     # Only the CODE in the document, joined. A verb in prose is a verb.

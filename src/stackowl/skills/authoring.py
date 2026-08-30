@@ -231,6 +231,21 @@ def _standard_violations(request: SkillWriteRequest) -> list[standard.Violation]
         + standard.validate_body(request.body, known_tools=_known_tool_names())
         + standard.validate_support_dirs(subdirs)
     )
+    # THE ADVISORY TIER HAD TO BE MADE REAL. `standard.blocking()` DISCARDS every
+    # non-blocking violation, and nothing logged them — so `blocking=False` meant
+    # silently dropped, and the soft line cap has been decoration since it was
+    # written. Downgrading a rule into that tier without this would delete it while
+    # appearing to keep it. INFO, because production runs at INFO and an advisory
+    # nobody can read is not an advisory.
+    advisories = [v for v in found if not v.blocking]
+    if advisories:
+        log.skills.info(
+            "[skills] authoring: advisory violation(s) — written anyway",
+            extra={"_fields": {
+                "skill": m.name,
+                "advisories": [f"{v.rule}: {v.detail}" for v in advisories],
+            }},
+        )
     return standard.blocking(found)
 
 
