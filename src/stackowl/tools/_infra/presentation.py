@@ -60,7 +60,19 @@ __all__ = ["PresentationConfig", "ToolPresentation"]
 # Without base membership it would only be reachable through tool_search's
 # fuzzy ranking — the exact "registered but not reachable" failure mode this
 # codebase has hit repeatedly for other self-extension tools. Cap bumped by 1.
-_DEFAULT_CAP = 36
+# PLANNING adds todo + update_plan to the base set. MEASURED 2026-08-29: the
+# "eligible tools NOT presented" line fired 869 times and dropped BOTH of them on
+# 869 of 869 — 100%. `todo` has 4 invocations in the platform's entire history and
+# `update_plan` has 1, against 1,785 web_search. That is not a model ignoring
+# planning; it is a model that was never offered it. The drop list is the
+# alphabetical tail (sessions_spawn, set_output_preference, task_status, todo,
+# transcripts, tts, undo_write, update_plan, vision_analyze, wait) and this file's
+# own registry comment explains why: "rank order for a tool with neither a usage
+# score nor a declared priority is the ALPHABET". Nothing decided planning was
+# unimportant — the alphabet did.
+# Same shape as the skills-awareness fix above: the mutating tool existed, the
+# thing that makes the capability usable was prunable. Cap bumped by 2 in lockstep.
+_DEFAULT_CAP = 38
 # Guaranteed base set — read-only/foundation essentials every owl always has.
 # Phase B: the self-improvement trio (skill_manage / reflect_now /
 # synthesize_skills) joins the base set so EVERY owl can reach self-learning +
@@ -110,6 +122,12 @@ _DEFAULT_BASE = frozenset({
     # sibling. Consequential → still consent-gated at dispatch; surfacing ≠ bypass.
     # Fixes the "create an agent named Brain" incident (owl_build was evictable).
     "owl_build",
+    # PLANNING — todo (mutate the working checklist) + update_plan (replace it
+    # wholesale). Read-severity, in-memory, no consent needed. Guaranteed because
+    # a plan the model cannot reach is not a plan: both were dropped on 869 of 869
+    # capped turns by the alphabetical tail-break, which is the whole reason the
+    # flow has no visible planning step.
+    "todo", "update_plan",
     # owls_list — read-only survey of already-configured owls, mirrors
     # skills_list. owl_build has no query action; without this, "check what
     # owls exist" had nowhere to go except a failing owl_build call.
