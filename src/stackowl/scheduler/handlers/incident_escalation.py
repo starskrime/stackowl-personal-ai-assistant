@@ -219,6 +219,25 @@ class _Incident:
         return (self.capability_class, self.failure_class)
 
 
+#: How many consecutive verdict-less RCA attempts one signature may make before the
+#: handler stops retrying it and registers it as handled.
+#:
+#: MUST BE > 1. The retry itself is deliberate and its reasoning is preserved: "a
+#: provider outage during the incident is precisely when the RCA call itself is most
+#: likely to also fail", so giving up after a single failure would bury a signature
+#: for a transient reason. What was missing is the OTHER half — a ceiling. A retry
+#: without one is not persistence, it is a loop, and this one costs ~70,000 input
+#: tokens per attempt.
+#:
+#: 3 is the smallest number that survives a transient outage (which rarely spans
+#: three scheduler ticks) while bounding the loop. This is deliberately NOT the
+#: broader suppression policy question — see ESC-66 — because bounding a retry that
+#: never succeeds cannot suppress a diagnosis that would have worked: a signature
+#: whose RCA produces a verdict registers on its FIRST attempt and never reaches
+#: this path.
+_MAX_VERDICT_ATTEMPTS = 3
+
+
 class IncidentEscalationHandler(JobHandler):
     """Detect recurring self-heal-didn't-fix incidents → staged RCA verdict.
 
@@ -264,9 +283,31 @@ class IncidentEscalationHandler(JobHandler):
         # OPEN incident (its RCA already ran); later ticks skip it. Cleared when
         # the signature is no longer active so it can re-open later.
         self._open_incidents: dict[str, str] = {}
+        # Consecutive RCA attempts for a signature that produced NO verdict. The
+        # no-verdict path deliberately does not register the signature so the next
+        # tick retries — see the comment at the retry site — but that retry had no
+        # ceiling, so a signature whose RCA reliably fails was re-run every tick for
+        # ever at ~70,000 input tokens a time. MEASURED: 94 "RCA produced no
+        # verdict" events, and incident lanes are 52.8% of all input tokens spent
+        # in the last 24h. Cleared on success, so a transient failure costs nothing.
+        self._verdict_failures: dict[str, int] = {}
         # Verdicts produced this process, keyed by (capability_class,
         # failure_class) — the exact map Task 7 / FailureOutcomeMiner.mine consume.
         self.verdicts: dict[tuple[str, str], RcaVerdict] = {}
+
+    def _should_retry_verdict(self, signature: str) -> bool:
+        """True while this signature may make another verdict-less RCA attempt."""
+        return self._verdict_failures.get(signature, 0) < _MAX_VERDICT_ATTEMPTS
+
+    def _record_verdict_failure(self, signature: str) -> bool:
+        """Count one verdict-less attempt. Returns True if another may be made."""
+        count = self._verdict_failures.get(signature, 0) + 1
+        self._verdict_failures[signature] = count
+        return count < _MAX_VERDICT_ATTEMPTS
+
+    def _clear_verdict_failures(self, signature: str) -> None:
+        """A verdict was produced — the signature has proven it can be diagnosed."""
+        self._verdict_failures.pop(signature, None)
 
     @property
     def handler_name(self) -> str:
@@ -351,6 +392,7 @@ class IncidentEscalationHandler(JobHandler):
             # kill — a provider outage during the incident is precisely when the
             # RCA call itself is most likely to also fail).
             if verdict is not None:
+                self._clear_verdict_failures(inc.signature)
                 self._open_incidents[inc.signature] = incident_id
                 self.verdicts[inc.key] = verdict
                 # Task 7 hook — a short-circuited fallback_verdict (ran_rca=False,
@@ -361,11 +403,35 @@ class IncidentEscalationHandler(JobHandler):
                 kind: Literal["fix", "alternative"] = "fix" if ran_rca else "alternative"
                 await self._consume_verdict(inc, verdict, kind)
             else:
-                log.scheduler.warning(
-                    "[scheduler] incident_escalation: RCA produced no verdict — "
-                    "NOT marking handled, will retry next tick",
-                    extra={"_fields": {"incident_id": incident_id, "signature": inc.signature}},
-                )
+                may_retry = self._record_verdict_failure(inc.signature)
+                if may_retry:
+                    log.scheduler.warning(
+                        "[scheduler] incident_escalation: RCA produced no verdict — "
+                        "NOT marking handled, will retry next tick",
+                        extra={"_fields": {
+                            "incident_id": incident_id, "signature": inc.signature,
+                            "attempt": self._verdict_failures[inc.signature],
+                            "max_attempts": _MAX_VERDICT_ATTEMPTS,
+                        }},
+                    )
+                else:
+                    # THE CEILING. Register the signature so the tick stops
+                    # re-running an RCA that has now failed _MAX_VERDICT_ATTEMPTS
+                    # times — counting without closing the dedup would leave the
+                    # loop exactly as it was. WARNING, not debug: "we stopped
+                    # trying to diagnose this" must never be indistinguishable
+                    # from "there was nothing to diagnose" (ADR-19 I6).
+                    self._open_incidents[inc.signature] = incident_id
+                    log.scheduler.warning(
+                        "[scheduler] incident_escalation: RCA produced no verdict "
+                        "%d times for this signature — giving up on it for now "
+                        "rather than re-running the analysis every tick",
+                        _MAX_VERDICT_ATTEMPTS,
+                        extra={"_fields": {
+                            "incident_id": incident_id, "signature": inc.signature,
+                            "attempts": _MAX_VERDICT_ATTEMPTS,
+                        }},
+                    )
             if ran_rca:
                 analyzed += 1
             else:
