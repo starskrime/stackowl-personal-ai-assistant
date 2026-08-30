@@ -108,6 +108,40 @@ _THINK_TAGS: tuple[tuple[str, str], ...] = (
 
 
 
+def cache_stats_reported(usage: Any) -> bool:
+    """Did the backend report a prefix-cache field AT ALL, whatever its value?
+
+    The other half of :func:`_cached_input_tokens`, which returns 0 for BOTH "no
+    cache hit" and "this backend does not report cache statistics" and says so:
+    "Readers must count reporting rows to tell those apart; do not read a 0 as a
+    cold cache." Nothing let a reader do that — the extractor tests ``if cached:``
+    (truthiness), so a present-but-zero field falls through as though absent, and
+    the one log line that tried to disambiguate asked ``cached_input_tokens > 0``,
+    which is the same question again.
+
+    Walks the SAME three shapes in the same order as the extractor. Two functions
+    disagreeing about where the field lives is how one of them goes silently wrong,
+    so any new naming variant must be added to both.
+
+    NEVER raises (B5): an odd usage shape is data we do not have, not an error.
+    """
+    if usage is None:
+        return False
+    try:
+        details = getattr(usage, "prompt_tokens_details", None)
+        if details is not None:
+            if getattr(details, "cached_tokens", None) is not None:
+                return True
+            if isinstance(details, dict) and details.get("cached_tokens") is not None:
+                return True
+        for attr in ("cache_read_input_tokens", "cached_tokens"):
+            if getattr(usage, attr, None) is not None:
+                return True
+    except Exception:  # B5 — must never break a completion that already happened.
+        return False
+    return False
+
+
 def _cached_input_tokens(usage: Any) -> int:
     """Prefix-cache hits reported by the provider, or 0 when it reports none (D01.6).
 
@@ -554,6 +588,7 @@ class OpenAIProvider(ModelProvider):
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
             cached_input_tokens=_cached_input_tokens(usage),
+            cache_stats_reported=cache_stats_reported(usage),
             ttft_ms=ttft_ms,
         )
 
@@ -1226,6 +1261,7 @@ class OpenAIProvider(ModelProvider):
         await self._record_cost(
             model=model, input_tokens=in_tok, output_tokens=out_tok, duration_ms=duration_ms,
             cached_input_tokens=_cached_input_tokens(usage),
+            cache_stats_reported=cache_stats_reported(usage),
         )
 
     def _ollama_extra_body(self, resolved_model: str) -> dict[str, Any]:
@@ -1562,6 +1598,7 @@ class OpenAIProvider(ModelProvider):
             output_tokens=result.output_tokens,
             duration_ms=duration_ms,
             cached_input_tokens=_cached_input_tokens(usage),
+            cache_stats_reported=cache_stats_reported(usage),
         )
         log.engine.debug(
             "[openai] complete: exit",

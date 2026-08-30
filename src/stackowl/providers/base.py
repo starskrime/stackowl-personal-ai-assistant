@@ -327,6 +327,7 @@ class ModelProvider(ABC):
         duration_ms: float,
         cached_input_tokens: int = 0,
         ttft_ms: int | None = None,
+        cache_stats_reported: bool | None = None,
     ) -> None:
         """Record ONE LLM call's cost to the shared tracker (single recording site).
 
@@ -401,6 +402,7 @@ class ModelProvider(ABC):
                 conversation_id=conversation_id,
                 owl_name=owl_name,
                 cached_input_tokens=cached_input_tokens,
+                cache_stats_reported=cache_stats_reported,
                 prompt_hash=prompt_hash,
                 system_prompt_chars=system_prompt_chars,
                 ttft_ms=ttft_ms,

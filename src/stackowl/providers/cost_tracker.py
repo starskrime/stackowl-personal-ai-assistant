@@ -157,6 +157,7 @@ class CostTracker(OwnedRepository):
         prompt_hash: str = "",
         system_prompt_chars: int = 0,
         ttft_ms: int | None = None,
+        cache_stats_reported: bool | None = None,
     ) -> CostRecord:
         """Record a completed LLM call. Persists to SQLite and checks budget.
 
@@ -181,10 +182,27 @@ class CostTracker(OwnedRepository):
         # or none at all. Logged because "cached=0" alone cannot distinguish a
         # cold cache from a silent provider (I4), and misreading that would make
         # a working D01.1 look like a failed one.
-        log.engine.debug(
+        # INFO, not DEBUG. This line exists to resolve I4 — "cached=0 alone cannot
+        # distinguish a cold cache from a silent provider" — and at DEBUG it does
+        # not exist in production at all, so it could never resolve anything. Same
+        # failure this repo already paid for once, where an acceptance check sat
+        # open because its only evidence line was below the production level.
+        #
+        # And the state is now honest. It used to read `cached_input_tokens > 0`,
+        # which answers "was the value positive", NOT "did the backend speak" — so
+        # a provider reporting cached_tokens=0 was recorded identically to one
+        # reporting nothing, which is precisely the ambiguity the line exists to
+        # remove. `reported` is None when the caller could not tell (every path
+        # that has not been threaded), and that is said out loud rather than
+        # guessed at.
+        log.engine.info(
             "[cost_tracker] record: cache stats source",
             extra={"_fields": {
-                "source": "reported" if cached_input_tokens > 0 else "absent_or_zero",
+                "source": (
+                    "unknown" if cache_stats_reported is None
+                    else "reported" if cache_stats_reported
+                    else "not_reported"
+                ),
                 "cached_input_tokens": cached_input_tokens,
                 "provider": provider_name,
             }},
