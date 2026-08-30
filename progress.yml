@@ -11533,7 +11533,7 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   partial
+      validate:   done   # I1 re-run on 18 files; I2/I3 CLOSED by boundary probe 2026-08-30
       document:   done
     doc: "docs/reference-mapping/designs/D08.4.md"
     doc_last_verified: "2026-08-22 against core boot 18:02:22Z — Verification section RUN"
@@ -11680,7 +11680,64 @@ items:
     decisions: []
     changes: []
     notes: null
+    VALIDATE_CLOSED_2026_08_30_by_BOUNDARY_PROBE_not_by_waiting:
+      why_a_probe_rather_than_more_waiting: >-
+        I2 and I3 had sat OPEN since 2026-08-22 as honest 0-over-0s: no entry had
+        exceeded the ceiling and no owl had a non-ASCII name. Waiting had already
+        failed twice. D01.5 set the precedent — "reading the DDL would only show
+        the constraint EXISTS; attempting the write proves it FIRES" — so both
+        were probed directly with the REAL code against an ISOLATED store
+        (STACKOWL_HOME redirected to a temp dir; test data has reached the
+        operator's live USER.md once before and that incident is still on record).
+      I1_RE_RUN_on_todays_denominator: >-
+        Was 12-13 files; now 18. Every one carries exactly (entries - 1)
+        delimiters — counting entries as (non-empty lines minus delimiter lines),
+        e.g. USER.md 11 lines - 5 delimiters = 6 entries with 5 delimiters. No
+        forged delimiter exists anywhere in the store. I1 HOLDS on the larger
+        denominator.
+      I2_PROVEN: |-
+        An entry 50 chars over the ceiling, through the real CuratedMemory.add:
 
+          ok=False  done=TRUE   <- terminal, not retryable
+          "That entry is 1150 characters; one entry may use at most 1100 of this
+           target's 2200-character budget. Split it, or say the same thing in
+           fewer words — a single fact that fills the file would evict everything
+           else you know."
+          asks for consolidation? FALSE
+
+        That last line IS the invariant: the ceiling refusal must never be
+        confused with the AT-CAPACITY refusal, which does ask for consolidation.
+        Both branches exist and they stayed distinct.
+        CONTROL RUN, because a guard that refuses everything also passes a
+        one-sided test: an entry UNDER the ceiling was ACCEPTED and saved.
+        The budget matches production exactly — 2200 is the same constant seen
+        live as "used=2105/2200" on 2026-08-23.
+      I3_PROVEN_and_STRONGER_THAN_WRITTEN: >-
+        All three of `сова`, `梟` and `Bakır` (the operator's own name, Turkish
+        dotless i) return an EMPTY block with NO raise, logging at INFO
+        "[curated] snapshot: target does not resolve to a file — empty block for
+        it, the rest of the profile is unaffected".
+        I ALSO PROBED THE OTHER HALF, which the invariant does not state: a WRITE
+        to the same target still RAISES ValueError("invalid memory target").
+        That asymmetry is deliberate and curated.py explains it — "READING
+        degrades; WRITING still raises, because a silent write to nowhere is how
+        this store grew five files nothing ever read." Confirmed live, both
+        directions.
+      what_the_probe_does_NOT_prove: >-
+        That production's store is configured identically. It is the same code and
+        the same constants (budget 2200 verified against a live log line), but the
+        store was isolated, so this proves the RULE FIRES rather than that it fired
+        in production. That distinction is the whole reason the checks sat open,
+        and closing them this way is a deliberate downgrade from "observed live" to
+        "boundary-probed with production constants" — stated rather than blurred.
+      CLOSING_QUERY: >-
+        If either guard ever fires in production it will say so at INFO:
+          grep '"msg": "[curated] snapshot: target does not resolve to a file' \
+            ~/.stackowl/logs/stackowl*.jsonl        # I3
+          grep 'one entry may use at most' ~/.stackowl/logs/stackowl*.jsonl  # I2
+        Both are 0 in production today, which remains NO OPPORTUNITY. The distance
+        to I2's trigger is now measurable and small: the longest live entry is 918
+        chars against a 1,100 ceiling — 83%.
   - id: D08.5
     title: "Graph memory"
     domain: D08
