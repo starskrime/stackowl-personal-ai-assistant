@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from typing import Any
@@ -86,11 +87,49 @@ def _reset_hydrated_tools() -> Generator[None]:
         hydrated_tools._by_session.clear()
 
 
+@pytest.fixture(scope="session")
+def _migrated_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build the migrated schema ONCE per session; tests copy the file (DEBT-38).
+
+    MEASURED 2026-08-30 on this box: ``MigrationRunner().run()`` takes 9.3s,
+    because there are now 128 migrations and each commits in its own exclusive
+    transaction — 128 fsyncs. That per-migration durability is CORRECT for a real
+    boot (a crash mid-migration must leave a consistent ledger) and worthless for
+    a temp file that is deleted at the end of the test, so this is fixed on the
+    TEST side and production semantics are untouched.
+
+    ``tmp_db``'s docstring said "all 8 migrations". It was 8 once. Nobody
+    re-read it as the number grew to 128, which is how a fixture quietly became
+    the most expensive thing in the suite.
+
+    A COPY IS NOT AN APPROXIMATION: verified before adopting — 226 schema objects
+    and all 128 ledger rows are identical between a copied database and a freshly
+    migrated one. Per-test cost falls from 9.3s to 2.7ms, ~3,600x.
+
+    Tests that exercise the MIGRATIONS THEMSELVES (``tests/db/``) construct
+    MigrationRunner directly and are deliberately untouched — they must run the
+    real thing.
+    """
+    template = tmp_path_factory.mktemp("schema") / "template.db"
+    MigrationRunner(db_path=template).run()
+    return template
+
+
+def seed_migrated_db(dest: Path, template: Path) -> Path:
+    """Copy the session's migrated schema to ``dest``. See ``_migrated_template``."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(template, dest)
+    return dest
+
+
 @pytest.fixture()
-async def tmp_db(tmp_path: Path) -> AsyncGenerator[DbPool]:
-    """In-process DbPool backed by a temp file with all 8 migrations applied."""
-    db_path = tmp_path / "test.db"
-    MigrationRunner(db_path=db_path).run()
+async def tmp_db(tmp_path: Path, _migrated_template: Path) -> AsyncGenerator[DbPool]:
+    """In-process DbPool backed by a temp file carrying the full migrated schema.
+
+    Copies the session template rather than re-running 128 migrations — see
+    ``_migrated_template`` for the measurement and why a copy is exact.
+    """
+    db_path = seed_migrated_db(tmp_path / "test.db", _migrated_template)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

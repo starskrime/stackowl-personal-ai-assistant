@@ -315,59 +315,61 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  BACKLOG_CLEARING_2026_08_30_three_done_one_NOT_BUILT_on_purpose:
-    ESC_68_DONE: "Hard stops deleted. Found worse than escalated: before_call had no caller either, so two of three branches were doubly dead. Commit d8b8ba81."
-    DEBT_39_and_ESC_67_DONE: >-
-      One BoundedMRU primitive; all three prior copies migrated; stable_context
-      frozen per incarnation as the fourth CALLER. And the escalation's premise
-      turned out to be its own instrument: of 204 stable_context events, 114 had
-      no conversation_id and 88 were a fresh conversation's only event — TWO were
-      real. audit_prompt_parts keyed on the LANE while the prompt freezes per
-      INCARNATION, a rule its sibling twenty lines above already had right.
-      Commit 6b6474a8.
-    DEBT_37_NOT_BUILT_and_this_is_the_report_back: >-
-      Bakir chose "give rollover its own column". I did not build it, because
-      measuring first showed the premise is void.
-      THE WRITER IS ALREADY GONE. rollover_summary_handler._checkpoint is defined
-      at line 342 and has ZERO callers; the newest rollover row carrying a blob is
-      dated 2026-08-09, three weeks ago. So there is no second writer to give a
-      column to — building one would be a column for a writer that does not exist,
-      which is the decoration anti-pattern this session has already removed twice.
-      AND THE RESIDUE IS INERT. 222 legacy blobs: 157 completed + 66 failed, and
-      ZERO in running/recovering — the only states the recoverer claims. The two
-      deserialize() call sites are recovery.py:545 (orphaned running/recovering
-      rows) and react_runner.py:196 (an active drive); neither can reach these.
-      I ALSO CORRECT MY OWN EARLIER CLAIM: I filed DEBT-37 saying "90 failed + 72
-      dead_letter are revive-sweep candidates", implying the sweep would emit 222
-      tracebacks. It would not. The sweep is a pure UPDATE that sets
-      checkpoint_blob=NULL without ever reading it (store.py:1423). I had inferred
-      the traceback rather than checking the SQL.
-      WHAT IS ACTUALLY LEFT: 222 rows holding four bytes of dead JSON that nothing
-      reads. That is untidy, not a defect, and clearing it is a data mutation on
-      live rows — Bakir's call, on a correct premise this time.
-    ESC_67_validate:
-      restart: "./start.sh — core pid 465503 at 12:10:54, commit 6b6474a8 at 12:10:11. 446 post-restart log lines, 430 INFO / 16 WARNING, ZERO ERROR or CRITICAL."
-      not_mine: "Two ERRORs in the wider window both PRE-DATE the restart: a scheduler handler timeout, and one transient provider_registry health blip at 16:24 UTC followed by ten clean sweeps — self-recovered."
-      OPEN: >-
-        The '[pipeline] stable_context: learned block frozen' INFO line is at 0 and
-        'prompt part CHANGED' is at 0 since boot — because NO TURN HAS RUN. That is
-        no opportunity, not success, and it is not being counted as proof.
-        CLOSING QUERY: grep '"msg": "[pipeline] stable_context: learned block frozen'
-        ~/.stackowl/logs/stackowl.jsonl — expect one per (conversation, owl), and
-        'prompt part CHANGED' naming stable_context should now be rare rather than
-        the largest bucket.
-    test_record_2026_08_30: >-
-      67 passed across every module the BoundedMRU migration touched, run together:
-      curated profile snapshot, prompt-carries-curated-memory, catalogue freeze,
-      tool-usage ordering, the new primitive, the new stable_context snapshot and
-      the re-keyed cache audit. Plus 63 in the curated slice on its own.
-      STATED HONESTLY: an earlier attempt to run tests/memory/ + tests/skills/ as
-      whole directories was KILLED at 82% by its own timeout and produced no
-      summary line — no failures were visible, but a truncated run is not a green
-      run and is not being counted as one. Same class as DEBT-38: these
-      directories are too slow to gate on directly, so the modules were targeted
-      instead and the full tests/memory/ sweep left running separately.
-    STILL_OPEN_for_Bakir: "ESC-63 (shorten when_to_use), ESC-64 (bound background spend), ESC-66 (RCA re-diagnosis suppression), D10.6 re-verdict, DEBT-38 (tests/skills at 13m53s), and now whether to clear the 222 inert rollover blobs."
+  DEBT_38_2026_08_30_the_test_wall_is_ONE_FIXTURE:
+    the_hypothesis_I_refused_to_guess_at_was_WRONG: >-
+      When I filed DEBT-38 I wrote that 8 files under tests/skills reference
+      embeddings/lancedb/kuzu and labelled that "a hypothesis and not a
+      measurement". It was wrong, and labelling it saved me from chasing it.
+    THE_ACTUAL_CAUSE_measured: >-
+      MigrationRunner().run() takes 9.25s on this box (three runs: 9.26 / 9.42 /
+      9.08). There are 128 migrations and each commits in its OWN exclusive
+      transaction — 128 fsyncs at ~72ms. Every test that wants a database pays
+      that in full.
+      BLAST RADIUS: 245 test files use the `tmp_db` fixture and 144 more construct
+      MigrationRunner directly. At 9.25s each, tmp_db alone projects to 41 minutes
+      of pure schema setup.
+      THE TELL WAS IN THE DOCSTRING: tmp_db said "all 8 migrations applied". It was
+      8 once. Nobody re-read it as the number grew to 128 — the comment stayed
+      still while the cost grew 16x, which is how a fixture quietly became the
+      most expensive thing in the suite.
+    WHY_THE_FIX_IS_ON_THE_TEST_SIDE_ONLY: >-
+      Per-migration durability is CORRECT for a real boot: a crash mid-migration
+      must leave a consistent ledger, and the runner says so in its own comments.
+      Relaxing it in production would be routing around stated intent for a
+      benefit only tests want. So the schema is built ONCE per session and each
+      test copies the file; production semantics are untouched.
+    A_COPY_IS_NOT_AN_APPROXIMATION_verified_before_adopting: >-
+      226 schema objects and all 128 ledger rows are IDENTICAL between a copied
+      database and a freshly migrated one. Per-test cost 9.25s -> 2.7ms, ~3,600x.
+      Checked separately that nothing outside tests/db asserts on applied_at or
+      checksums, which are the only values a copy could carry over; tests/db
+      constructs the runner directly and is deliberately untouched, because tests
+      OF the migrations must run the real thing.
+    I_BENCHMARKED_THE_WRONG_DIRECTORY_FIRST: >-
+      My first before/after used tests/pipeline/durable, which is 31 direct
+      constructors and only 2 fixture users — the one directory the fix does not
+      reach. It showed no improvement, correctly. The fix targets what DEBT-38 was
+      actually about: tests/skills is 25 fixture / 2 direct and tests/memory is
+      31 / 4. Recorded because "the change did nothing" was a true statement about
+      a badly chosen measurement, not about the change.
+    MEASURED_like_for_like: |-
+      The SAME command that ran this morning, same box, same 444 tests:
+
+        BEFORE  444 passed in 833.83s  (13m 54s)
+        AFTER   444 passed in  80.79s  (1m 21s)
+                                        10.3x
+
+      And on a single representative file, tests/skills/test_skill_fts_sync.py:
+      30.85s -> 8.87s, where the 8.87s is almost entirely the ONE-TIME template
+      build — so the saving grows with suite size rather than being a fixed
+      discount.
+    what_this_buys_beyond_speed: >-
+      DEBT-38 was filed because this wall gated every skills-touching item and had
+      already cost two long waits inside D05.1 alone. At 81s the whole sweep is
+      now cheaper than the single targeted slice used to be, so items can be
+      gated on the DIRECTORY again rather than on a hand-picked subset — which is
+      what let a truncated 82% run be mistaken for evidence earlier today.
+    remaining: "The 144 direct constructors still pay 9.25s each. A seed_migrated_db() helper now exists beside the fixture for them; converting them is mechanical and is NOT done here."
 
 waves:
   1:
