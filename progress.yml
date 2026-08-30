@@ -350,6 +350,42 @@ current:
       D10.6 (the skill-catalogue item) is now built on a premise that no longer holds — its
       whole case rests on 163 skills being dropped per turn from a 179-skill corpus. With 14
       skills the cap cannot bind at all. D10.6 must NOT be resumed until this is answered.
+  NEXT_ITEM_THE_INCIDENT_MINER_CANNOT_RECORD_WHAT_IT_LEARNS_2026_08_29:
+    status: >-
+      FOUND AND FULLY EVIDENCED, NOT YET FIXED. Surfaced while validating ESC-64 — the
+      attribution work made the background lanes visible, and this is what they were doing.
+    the_defect: >-
+      The self-healing loop opens an incident on a real failure signature, runs a staged RCA,
+      reaches a conclusion — and then THROWS THE LESSON AWAY at the final step, every time.
+      `[incident] miner.author_one: gated write refused — skipping`, with the reason:
+      "skill 'incident_shell_stop' does not meet the authoring standard (v1): description:
+      169 characters exceeds the 60-character limit — it is a one-line label, not the
+      explanation. Put the detail in when_to_use, which is what retrieval reads."
+    measured_across_every_retained_log: >-
+      48 refusals of `miner.author_one`, and 48 of 48 (100%) cite the SAME cause — the
+      60-character description limit. Not one incident lesson has ever been recorded.
+    why_it_matters_more_than_it_looks: >-
+      This is the same shape as the budget-salvage defect fixed today in 08376c14: the work
+      is done, the conclusion is reached, and it is discarded at the last inch. Here the cost
+      is the platform's ability to LEARN FROM ITS OWN FAILURES at all. Measured in one
+      10-minute window post-restart: 4 incidents opened (signatures outcome:shell:stop,
+      outcome:shell:unachieved_effect, outcome:web_fetch:stop,
+      outcome:delegate_task:unachieved_effect) consuming 340,830 of 358,951 background input
+      tokens (95%) — and producing zero recorded lessons.
+    the_shape: >-
+      A PRODUCER THAT DOES NOT KNOW ITS CONSUMER'S CONTRACT. The miner composes a
+      description; a separate gate enforces the v1 authoring standard on it. The gate is
+      correct and its message even states the fix ("Put the detail in when_to_use, which is
+      what retrieval reads"). The miner has simply never been taught the rule it must
+      satisfy. One rule, and only one side knows it.
+    the_fix_is_small_and_root_cause: >-
+      The miner must compose a <=60-char label as `description` and put the explanation in
+      `when_to_use`. Ask the standard for the limit rather than hardcoding 60 a second time.
+      Add the negative test: a miner-authored skill must pass the SAME gate the writer runs.
+    also_note_the_second_line_seen_each_time: >-
+      `[rca_router] consume_fix_verdict: no literal command in fix_pattern — skipping
+      tool_build (miner still captures)`. Worth checking whether that is the intended
+      fallback or a second silent drop on the same path — NOT yet measured.
   ESC_64_BACKGROUND_SPEND_IS_UNBOUNDED_AND_UNATTRIBUTED_2026_08_29:
     the_question: >-
       19.7% of every input token this platform has ever spent is background work that no
