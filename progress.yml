@@ -315,6 +315,71 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_65_THE_LEARNED_SKILL_CORPUS_WAS_PURGED_2026_08_29:
+    the_question: >-
+      151 learned skills were purged from the live registry today. Was that intended, and
+      should they be restored from the backup that was taken? Operator call — the purge was
+      audited, backed up and reversible, and only Bakir knows whether it was asked for.
+    what_happened_measured_from_skill_audit: >-
+      2026-08-30T00:59:24 - 01:04:57 UTC: 15 individual `delete` ops by actor
+      `agent_self:skill_manage`. Then 2026-08-30T01:09:45 UTC: one `purge_all` by actor
+      `friday` with details {"count": 151, "dump":
+      "backups/learned-skills-purge-2026-08-29/db-rows-learned.json", "pre_db_backup":
+      "stackowl.db.pre-registry-purge"}. Both backups EXIST on disk. That is 20:09 local —
+      about 25 minutes before this session restarted the platform, and NOT this session's
+      work; nothing here touched skills.
+    the_state_it_left: >-
+      skills 14 rows (all builtin, all enabled) where D10.6 measured 179 (14 builtin, 165
+      agent-authored, 131 creates, 100% agent-authored, growing ~1.5/day). The platform now
+      answers "how many skills do you have loaded" with "14 — all builtin", which is
+      HONEST about the live table and is why the answer looked wrong.
+    no_purge_all_writer_exists_in_src: >-
+      Grepped: there is no `purge_all` code path. It was a one-off maintenance operation,
+      which is also why it bypassed `store.delete()` and left dependents behind.
+    what_was_FIXED_in_code_c30b793f: >-
+      Only the root cause that will recur: `store.delete()` never purged
+      `skill_ownership`, so every future deletion orphans its rows. Now all three tables go
+      together. The 111 dangling rows already on disk are NOT touched — data deletion is the
+      operator's call, and 10 of them are attached to live owls at every boot.
+    NOT_a_defect_checked_rather_than_assumed: >-
+      skills_fts holds 165 rows against 14 skills, which looks exactly like the
+      committed_facts_fts orphan CLAUDE.md records. It is not: `keyword_recall` reads it via
+      `FROM skills_fts fts JOIN skills s ... WHERE s.enabled = 1`, so an orphan can never
+      surface a dead skill. Recorded so nobody "fixes" it twice.
+    blocked_until_answered: >-
+      D10.6 (the skill-catalogue item) is now built on a premise that no longer holds — its
+      whole case rests on 163 skills being dropped per turn from a 179-skill corpus. With 14
+      skills the cap cannot bind at all. D10.6 must NOT be resumed until this is answered.
+  ESC_64_BACKGROUND_SPEND_IS_UNBOUNDED_AND_UNATTRIBUTED_2026_08_29:
+    the_question: >-
+      19.7% of every input token this platform has ever spent is background work that no
+      budget governor sees and no trace can attribute. Is that acceptable, should it be
+      bounded, or should it merely be MEASURED first? Operator judgment: it is a spend-vs-
+      self-improvement tradeoff, not a correctness bug, so evidence cannot settle it.
+    measured_2026_08_29: >-
+      cost_records holds 123,648 calls / 643,822,541 input tokens. 67,360 of those calls
+      (54.5%) carry a BLANK trace_id and account for 127,067,066 input tokens (19.7%).
+      Identified by correlating timestamps against the log: they are background scheduler
+      handlers — critic, reflection_writer, learning/lessons — which call the model outside
+      any turn. Individually small (603-1,610 input, max seen 91,783); the volume is the
+      cost. Still running: four such calls at 01:38:15-01:38:37 UTC today.
+    why_the_new_token_cap_does_NOT_cover_them: >-
+      The governor runs inside `_run_with_tools`, which these handlers never enter, and its
+      meter keys on trace_id — `TurnCostLedger.tokens("")` returns 0 by construction. So the
+      500k ceiling is correct AND structurally inert for this population. This is recorded
+      deliberately: a zero here would otherwise read as "bounded" when it means "not on the
+      path at all".
+    also_they_are_invisible_to_cost_attribution: >-
+      A blank trace_id means /cost cannot attribute a fifth of all spend to anything. The
+      cheapest first move is almost certainly to STAMP a trace_id on background handlers —
+      that is measurement, reversible, and blocks nothing — rather than to cap work that
+      exists to make the platform better.
+    panel_recommendation: >-
+      Stamp first, decide later. Do NOT cap background reflection blind: it is the
+      self-improvement loop, and capping the thing that learns to save the thing that
+      spends is the wrong trade to make without numbers per handler.
+    blocked_until_answered: >-
+      Nothing. All turn-path work continues; this is a separate population.
   TURN_ECONOMICS_2026_08_29:
     status: >-
       SHIPPED AND VALIDATED LIVE (5 of 9 planned changes). Bakir, 2026-08-29: "i did ask
@@ -370,6 +435,15 @@ current:
       CONVERGE: grep '"msg": "[budget] converge: telling the model its budget is nearly spent'
       TOKEN CAP: a BudgetBreach with cap="tokens" in [pipeline] execute: budget cap reached
       GUARD NOTE: needs one tool failing 3+ times with DIFFERENT arguments in one turn
+    FOLLOW_UP_DEFECT_IN_MY_OWN_FIX_2026_08_29_commit_26ce16e3: >-
+      The token ceiling shipped in ef294696 was wired INSIDE the no-caps backstop, so an owl
+      that set ANY explicit cap got no token ceiling at all — and the cap most likely to be
+      set (max_cost_usd) is the one that can never fire on an unpriced model. One config
+      change would have deleted the only working meter in exchange for a dead one. MEASURED
+      LATENT: 0 of 11 live owls set explicit caps, so nothing was actually unbounded. Fixed
+      by lifting it out into `_resolve_token_ceiling` (a FLOOR, not an override) applied to
+      every turn, with `_has_explicit_resource_caps` deliberately excluding max_input_tokens
+      so a token cap never costs an owl its step backstop.
     NOT_YET_BUILT_from_the_approved_plan: >-
       1b tool-result compaction (the 43% transcript term); 2a hard stops enabled on
       autonomous/cron lanes; 2c monologue + ping-pong detectors; 2d refund steps on detected
