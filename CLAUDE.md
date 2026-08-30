@@ -104,6 +104,28 @@ did not match. It does not prove the thing is absent** — and this codebase wir
 things dynamically, so static reads of it are wrong by construction. Dump one raw
 record, or the whole field list, before believing any count built from a guess.
 
+**An empty table is a QUESTION, not an answer.** `committed_facts` had 0 rows, so
+"the archive has no writer" was reported and curated-only search was RECOMMENDED —
+which would have made 361 real memories permanently unreachable and called it a
+cleanup. They were one table over: `staged_facts`, 361 rows, embeddings populated,
+newest written minutes earlier, behind a promotion step that never runs. The
+sibling of the rule above: measure the EFFECT, never trust the CALL — and never
+trust the EMPTY TABLE either. Before concluding a store is dead, find its writer
+and ask where the writes went.
+
+**A scripted edit across many files needs a SYNTAX gate as its first check.** A
+regex that inserted an import across 110 test files put two of them INSIDE a
+multi-line `from ... import (`, and the first repair then inserted after a
+FUNCTION-LOCAL import because it matched `lstrip()`ed lines. `pytest --collect-only`
+over the whole tree and `ast.parse()` found both in seconds; a test run would have
+found them late and noisily. Cheap gate first, then tests.
+
+**Never build a commit message through `printf`.** A `%` in "36%" was read as a
+format specifier and silently truncated the message mid-sentence, losing the
+paragraph that mattered — and the commit was already pushed, where rewriting
+history is banned. Use a heredoc into a file and `git commit -F`. In this
+programme the record IS the deliverable.
+
 **Sweep EVERY engine before claiming silence.** Parking `tasks` looked like it
 stopped a runaway; `retry_queue` and `objective_subgoals` were still armed and the
 user was still being messaged hours later.
