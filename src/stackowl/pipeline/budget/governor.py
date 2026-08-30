@@ -86,6 +86,23 @@ class BudgetGovernor:
                 return BudgetBreach("cost", self._max_cost_usd, spent)
         return None
 
+    def steps_remaining(self, iteration: int, *, tool_calls: int | None = None) -> int | None:
+        """Steps left before the step cap, or None when no step cap is set.
+
+        The mirror of :meth:`remaining_seconds` for the step budget, and it uses the
+        SAME ``max(rounds, tool_calls)`` arithmetic as :meth:`check` so the number the
+        model is told cannot disagree with the number that will actually stop it —
+        two copies of one rule is how this repo's defects usually start.
+
+        Read by the budget callback to fold a convergence directive at ~75% consumed.
+        Agents are measurably not budget-aware natively but do change strategy when
+        told, which is why the number matters more than the advice.
+        """
+        if self._max_steps is None:
+            return None
+        steps_done = iteration + 1 if tool_calls is None else max(iteration + 1, tool_calls)
+        return max(0, self._max_steps - steps_done)
+
     def current_cost_usd(self) -> float:
         """Cumulative spend so far = prior durable attempts + this attempt's total.
 

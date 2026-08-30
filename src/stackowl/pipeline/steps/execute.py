@@ -50,6 +50,7 @@ from stackowl.pipeline.authz_compose import compute_effective_bounds
 from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
+from stackowl.pipeline.budget.salvage import summarize_findings
 from stackowl.pipeline.cache_audit import audit_tools_stability
 from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP
 from stackowl.pipeline.persistence import TOOL_FAILED_MARKER
@@ -2230,6 +2231,13 @@ async def _run_with_tools(
             # Warn-only by operator decision: guidance rides along with the result
             # the model sees; execution is never blocked. A genuine loop is bounded
             # by the turn iteration cap (DEFAULT_TURN_MAX_STEPS) instead.
+            #
+            # The note is appended on EVERY exit below, not just this one. It used to
+            # ride only on trustworthy success, which inverted the guard: the failure
+            # warnings `_record_failure` produces (repeated_exact_failure_warning at 2,
+            # same_tool_failure_warning at 3) were computed, logged at INFO, and then
+            # discarded — so the model was told it was looping only on the turns that
+            # were WORKING, and never on the failure loops that burn the step budget.
             return tr.output + _guard_note
         # B4a recovery ladder — RUNG 1: RETRY-ONCE on a recoverable failure. Two
         # recoverable shapes self-heal on a second attempt and so earn one retry:
@@ -2273,7 +2281,7 @@ async def _run_with_tools(
                 recovery_context.record_recovery(
                     kind="retry", failed=name, recovered_via=name, user_visible=False,
                 )
-                return retry_tr.output
+                return retry_tr.output + _guard_note
             if retry_tr is not None:
                 tr = retry_tr  # carry the freshest result forward for the floor marker
         # RUNG 2 — W3.T14 substitution: route around the broken capability via an
@@ -2291,7 +2299,7 @@ async def _run_with_tools(
             locale=state.language,
         )
         if sub is not None:
-            return sub
+            return sub + _guard_note
         # RUNG 3 — honest surrender. An UNVERIFIED EFFECT gets an HONEST message (NOT
         # the tool's own misleading "done!" output, which would re-introduce the very
         # false-success this arc exists to kill); a genuine failure renders its error.
@@ -2301,7 +2309,7 @@ async def _run_with_tools(
                 f"{TOOL_FAILED_MARKER}The action '{name}' reported success but its expected "
                 f"result could not be confirmed (the produced artifact was not observed). "
                 f"Treat it as NOT done — try another approach, or tell the user it could not "
-                f"be completed."
+                f"be completed." + _guard_note
             )
         # Context-bloat guard. A tool that keeps failing DETERMINISTICALLY (same dead
         # URL / non-2xx / SSRF block) re-appends its full failure text to the message
@@ -2336,8 +2344,8 @@ async def _run_with_tools(
                 )
                 return TOOL_FAILED_MARKER + _collapsed_failure_text(
                     name, _n, tr.error or tr.output or "",
-                )
-        return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}"
+                ) + _guard_note
+        return f"{TOOL_FAILED_MARKER}{tr.error or tr.output}{_guard_note}"
 
     # Phase D — real-time persistence enforcer. Build a deliver-vs-giveup callback
     # the provider loop calls just before accepting a final answer. The provider
@@ -2822,12 +2830,39 @@ async def _run_with_tools(
                     errors=(*state.errors, marker),
                     budget_capped=True,
                 ))
-            # Empty partial under the default backstop → graceful slot-free floor
-            # (no raw budget error / blank capability fields surfaced to the user).
+            # Empty partial under the default backstop. This is the case Bakir
+            # reported on trace f33c9fa0: 16 rounds, 683,728 input tokens, and the
+            # ONLY thing delivered was the note above. The tool results were never
+            # lost — they are in `_breach_tool_records` right here — they were simply
+            # carried past the synthesizer and dropped (`attempts=[]`).
+            #
+            # So SALVAGE first: one bounded, TOOLLESS call that turns the findings
+            # into an answer. It re-sends results only (no schemas, no reasoning),
+            # and returns None on any failure so the floor below still guarantees a
+            # non-empty honest reply.
+            _salvaged = await summarize_findings(
+                provider, choice.model, state.input_text, _breach_tool_records,
+            )
+            if _salvaged:
+                _breach_chunks = (ResponseChunk(
+                    content=f"{_salvaged}\n\n{_backstop_note}",
+                    is_final=False, chunk_index=0,
+                    trace_id=state.trace_id, owl_name=state.owl_name,
+                ),)
+                return _stamp_progress(_snapshot_consequential(state).evolve(
+                    responses=(*state.responses, *_breach_chunks),
+                    tool_calls=(*state.tool_calls, *_breach_tool_records),
+                    errors=(*state.errors, marker),
+                    budget_capped=True,
+                ))
+            # Salvage found nothing to summarise (or the provider failed) → graceful
+            # slot-free floor (no raw budget error / blank capability fields surfaced
+            # to the user). `attempts` now carries the tool NAMES that were tried, so
+            # even this fallback says what the turn did instead of nothing at all.
             floor = synthesize_floor(
                 goal=state.input_text,
                 error=None,
-                attempts=[],
+                attempts=[tc.tool_name for tc in _breach_tool_records if tc.tool_name],
                 partial=None,
             )
             floor_chunk = ResponseChunk(
@@ -2846,7 +2881,15 @@ async def _run_with_tools(
             ))
         # Explicit cap: deliver partial with a human-visible budget note.
         note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
-        _stop_content = (exc.partial_text + note) if exc.partial_text else note
+        # Same salvage as the default backstop: an OPERATOR-set cap is still no reason
+        # to throw away what the turn found. The note stays — it is deliberately
+        # developer-visible on this path — but it is no longer the whole reply.
+        _explicit_body = exc.partial_text
+        if not _explicit_body:
+            _explicit_body = await summarize_findings(
+                provider, choice.model, state.input_text, _breach_tool_records,
+            ) or ""
+        _stop_content = (_explicit_body + note) if _explicit_body else note
         _breach_chunks = (ResponseChunk(
             content=_stop_content, is_final=False, chunk_index=0,
             trace_id=state.trace_id, owl_name=state.owl_name,

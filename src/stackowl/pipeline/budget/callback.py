@@ -5,6 +5,13 @@ in-memory clarify Raise/Stop (fail-closed: Stop / timeout / no-gateway → raise
 otherwise it raises BudgetBreach immediately. The exception carries the partial
 work (last assistant text + tool calls) so execute can deliver a partial result.
 Clarify lives HERE (execute layer), never on the provider stack.
+
+It ALSO folds a one-shot convergence directive at ~75% of the step budget. Trace
+f33c9fa0 ran 16 rounds into a 20-step cap having been told nothing about its budget,
+and was then killed mid-thought. The directive costs no model call — it rides the
+existing splice contract — and is a budget FRACTION rather than a fixed step
+interval, because the measured evidence backs budget-awareness and rejects periodic
+self-evaluation.
 """
 
 from __future__ import annotations
@@ -17,6 +24,18 @@ from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover
     from stackowl.providers.react_callback import ReActIterationState
+
+# Fraction of the step budget consumed before the model is told to converge. 0.75
+# leaves a quarter of the budget to actually act on the warning; earlier is noise on
+# turns that were going to finish anyway, later leaves no room to change course.
+#
+# This is deliberately a BUDGET FRACTION and not a fixed step interval. Bakir proposed
+# "check progress every 5 steps"; the measured evidence rejects the interval (planning
+# frequency has a peak then declines, and the always-plan agent showed the highest
+# backtracking) while confirming the underlying problem (agents are not budget-aware
+# and DO change strategy when told the budget). A fraction scales with the cap; an
+# interval of 5 means something different at max_steps=8 than at max_steps=200.
+_CONVERGE_AT_FRACTION = 0.75
 
 _RAISE = "Raise"
 _STOP = "Stop"
@@ -61,6 +80,55 @@ def _last_assistant_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _converge_directive(
+    governor: Any,
+    iter_state: ReActIterationState,
+    n_calls: int,
+    already_sent: bool,
+) -> list[dict[str, Any]] | None:
+    """Return the one-shot convergence directive, or None.
+
+    Pure decision + message build. Never raises: a governor without
+    ``steps_remaining`` (a duck-typed stub, of which this repo has several) simply
+    gets no directive rather than losing its turn to an AttributeError.
+    """
+    if already_sent:
+        return None
+    try:
+        remaining = governor.steps_remaining(iter_state.iteration, tool_calls=n_calls)
+    except Exception as exc:  # noqa: BLE001 — advisory only; never cost a turn
+        log.engine.debug(
+            "[budget] converge: governor has no step budget to report",
+            extra={"_fields": {"error": str(exc)}},
+        )
+        return None
+    if remaining is None:
+        return None
+
+    done = max(iter_state.iteration + 1, n_calls)
+    total = done + remaining
+    if total <= 0 or remaining <= 0:
+        return None
+    if (done / total) < _CONVERGE_AT_FRACTION:
+        return None
+
+    log.engine.info(
+        "[budget] converge: telling the model its budget is nearly spent",
+        extra={"_fields": {"steps_done": done, "steps_total": total,
+                           "steps_remaining": remaining}},
+    )
+    return [{
+        "role": "user",
+        "content": (
+            f"[budget] {remaining} step(s) left of {total} for this turn. "
+            "Stop exploring and converge now: answer with what you already have, "
+            "and name anything you could not determine. Be concrete and brief. "
+            "If one more tool call would complete the answer, make that call and "
+            "then report."
+        ),
+    }]
+
+
 def make_budget_callback(
     governor: Any,
     *,
@@ -83,19 +151,34 @@ def make_budget_callback(
         wait_timeout_s: Seconds to wait for a human answer before failing closed.
 
     Returns:
-        An async callable ``(iter_state: ReActIterationState) -> None``.
-        Returns ``None`` always (it folds no messages — Task 9 splice contract;
-        it is a pure side-effect/gate callback) on no breach, or raises
-        BudgetBreach (breach + partial).
+        An async callable ``(iter_state: ReActIterationState) -> ...``. It returns
+        ``None`` on an ordinary round, raises ``BudgetBreach`` at the cap, and — ONCE
+        per turn, at ``_CONVERGE_AT_FRACTION`` of the step budget — folds a single
+        convergence directive via the Task 9 splice contract so the next LLM round
+        observes it. It is no longer a pure side-effect callback; the fold is the
+        cheapest available intervention (no model call) on a turn heading for the cap.
     """
 
+    # Fires at most once per turn. Re-sending the directive every round after the
+    # threshold would grow the transcript on exactly the turns already closest to the
+    # cap — paying the accumulating context cost to repeat what the model has read.
+    converge_sent = False
+
     async def _gate(iter_state: ReActIterationState) -> list[dict[str, Any]] | None:
+        nonlocal converge_sent
         # tool_call_records is the cumulative snapshot of all dispatches this turn,
         # so the step cap counts individual tool calls (not just ReAct rounds).
-        breach = governor.check(
-            iter_state.iteration, tool_calls=len(iter_state.tool_call_records)
-        )
+        n_calls = len(iter_state.tool_call_records)
+        breach = governor.check(iter_state.iteration, tool_calls=n_calls)
         if breach is None:
+            # Not out of budget — but is it nearly out? Trace f33c9fa0 ran 16 rounds
+            # into a 20-step cap and nothing ever told it to converge; it was killed
+            # mid-thought having delivered nothing. Telling it costs no model call:
+            # the fold contract splices this into `messages` before the next round.
+            folded = _converge_directive(governor, iter_state, n_calls, converge_sent)
+            if folded is not None:
+                converge_sent = True
+                return folded
             return None  # no breach — fold nothing (Task 9 splice contract)
 
         log.engine.debug(
