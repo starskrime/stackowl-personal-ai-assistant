@@ -378,9 +378,17 @@ current:
       migrations_dir, or introspects it is asserting on the RUNNER, and tests/db/
       plus every test_migration_* file must run the real thing or they would be
       asserting on a cached artefact of themselves.
-      MEASURED: tests/pipeline/durable — the directory that was 31 direct
+      MEASURED on tests/pipeline/durable — the directory that was 31 direct
       constructors to 2 fixture users, and the one my first DEBT-38 benchmark
-      wrongly used — now runs 391 passed in 70.08s.
+      wrongly used:
+        BEFORE  391 passed in 1093.31s  (18m 13s)
+        AFTER   391 passed in   70.08s  (1m 10s)
+                                         15.6x
+      A CORRECTION TO MY OWN READING: I reported that before-run as having "died
+      at 36%" and discarded it. It had not died — it completed, and I had looked
+      at a stale tail. I was about to re-measure something I already had. The
+      independent HEAD-worktree baseline was run anyway as a control, because the
+      first run shared the box with other work and could be inflated.
       10,928 tests COLLECT clean across the whole tree, which is the check that
       matters for a scripted edit of 110 files.
     two_things_the_script_broke_and_how_they_were_caught: >-
