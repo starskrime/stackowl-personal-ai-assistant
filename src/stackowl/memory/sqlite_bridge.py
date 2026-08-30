@@ -14,12 +14,12 @@ from stackowl.memory.models import MemoryRecord, StagedFact
 from stackowl.memory.recall_ranker import RecallRanker
 from stackowl.memory.remember_gate import Candidate, should_remember
 from stackowl.memory.sqlite_helpers import (
-    staged_recall,
     filter_by_scope,
     fts_recall,
     pack_embedding,
     parse_iso,
     row_to_staged,
+    staged_recall,
 )
 from stackowl.memory.trust import Trust, trust_for_source
 

@@ -734,6 +734,34 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-42
+    date: 2026-08-30
+    title: "recall() now reads staged_facts — ESC-69's interim, and it is an interim"
+    what_shipped: >-
+      staged_recall() in sqlite_helpers.py plus two lines in SqliteMemoryBridge.recall.
+      Committed facts still rank FIRST — they are distilled, staged rows are raw
+      conversation turns — but an empty committed store no longer means an empty
+      answer. MEASURED ON THE LIVE DATABASE after the change: recall("job") -> 5
+      hits, recall("telegram") -> 4, where every archive recall previously returned
+      0 on 414 of 414 searches. recall("movie") and recall("vpn") still return 0,
+      which is the control: it did not start answering everything.
+      M13 unwires it from recall() and kills exactly the wiring test.
+    a_scan_not_an_index_and_why: >-
+      There is no FTS table on staged_facts and building one is a migration. The
+      table holds 361 rows, so a LIKE scan is free at this size and reversible in
+      one commit when the store is retired — which is the stated plan. An index
+      would be right at a hundred times the size and wrong at this one.
+    the_traps_it_had_to_avoid: >-
+      An empty needle with LIKE '%%' matches EVERY row, which turns a search into a
+      dump — refused explicitly. `%` and `_` are LIKE wildcards, so an unescaped
+      `_` makes "a_c" match "abc"; both are escaped and a test pins it. Only
+      status='staged' is returned, because a rejected fact is a decision and
+      surfacing it would resurrect something the platform already declined.
+    WHY_IT_IS_STILL_DEBT: >-
+      It returns RAW CONVERSATION TURNS, not distilled facts — exactly what the
+      retired extractor used to fix (D08.1 R5Q18). Bakir's endgame is a replacement
+      memory system, after which "old one we can delete memories". This makes what
+      exists reachable until then; it does not make it good.
   - id: DEBT-41
     date: 2026-08-30
     title: "Memory-provider schemas are runnable and routable — but still not PRESENTED"
