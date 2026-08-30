@@ -378,6 +378,36 @@ current:
       Stamp first, decide later. Do NOT cap background reflection blind: it is the
       self-improvement loop, and capping the thing that learns to save the thing that
       spends is the wrong trade to make without numbers per handler.
+    FIRST_MOVE_SHIPPED_2026_08_29_commit_85af2e26: >-
+      The panel's recommendation (stamp first, decide later) is DONE. `_run_job` now binds a
+      per-run TraceContext at the one central dispatch point every handler funnels through —
+      the same site and the same argument as the existing `retry_ledger.bind()` there, not a
+      second mechanism. `TraceContext.start` was built for this ("useful for background
+      jobs/scheduler handlers that start their own root trace") and had 4 callers in src/,
+      none of them the scheduler.
+      A FRESH trace per RUN, not the job_id: job_id is stable for a recurring job, so reusing
+      it would fold that job's whole history into one accumulating per-trace total — which
+      the new token ceiling reads, so a daily job would breach a cap it never earned. The job
+      identity rides session_key ("job:<job_id>") where it groups without accumulating.
+      conversation_id stays None, honouring trace.py's recorded decision that inventing one
+      "would attribute its cost to a conversation that never happened".
+    LIVE_EVIDENCE_and_its_honest_limit: >-
+      Restarted 21:28:36 local (core pid 347435) after the commit; clean boot. First
+      background job to fire recorded: trace ff6f6a4c-8, session_key
+      "job:health_sweep-f2d80205", 13 input tokens — a real trace and a job-named lane where
+      before there was neither. Sample grew to 8 calls within four minutes: 0 blank-trace,
+      against 33.6% blank over the preceding 24h. The other 7 are an incident_escalation RCA
+      (session incident-238bec885019, ~70k tokens over 3 rounds) — a handler that builds its
+      own PipelineState and therefore already had attribution, and well under the 500k
+      ceiling. LIMIT: the reflection/critic handlers run on a longer cadence and had still
+      not fired, so they are covered by construction (same dispatch point) but not yet by
+      observation.
+      CLOSING QUERY, re-run it for a real sample:
+      SELECT COUNT(*) FILTER (WHERE trace_id IS NULL OR trace_id='') AS blank, COUNT(*) AS
+      all_calls FROM cost_records WHERE recorded_at > '2026-08-30T02:29';
+      blank must stay 0, and `session_key LIKE 'job:%'` must be non-zero.
+    THE_DECISION_STILL_OPEN: >-
+      Whether to BOUND background spend at all. Stamping does not cap anything, deliberately.
     blocked_until_answered: >-
       Nothing. All turn-path work continues; this is a separate population.
   TURN_ECONOMICS_2026_08_29:
