@@ -315,6 +315,52 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_66_RCA_RE_DIAGNOSES_THE_SAME_13_PROBLEMS_FOREVER_2026_08_29:
+    the_question: >-
+      Incident RCA is the single largest consumer of tokens on this platform, and it spends
+      almost all of it re-deriving diagnoses it already has. How aggressively may re-diagnosis
+      be suppressed? That is an operator judgment — suppress too long and a genuinely CHANGED
+      failure goes undiagnosed; suppress too little and the platform keeps paying ~70k a time
+      to re-learn what it knows. Evidence can size the waste but cannot set the appetite.
+    MEASURED_2026_08_29_and_this_is_the_headline: >-
+      cost_records, incident-* lanes: 10,258 calls / 77,079,388 input tokens across 1,106
+      incidents = 11.8% of ALL input tokens ever, at a mean of 69,692 per incident.
+      LAST 24 HOURS: 1,557 calls / 19,901,541 input tokens across 138 incidents — **52.8% of
+      every input token the platform spent**.
+      And it is 601 `incident opened` events across only **13 DISTINCT SIGNATURES** —
+      an average of 46 re-diagnoses each. Top: shell:unachieved_effect 93,
+      delegate_task:unachieved_effect 87, shell:stop 81, browser_navigate:stop 66.
+    THE_DRIVER_IS_NOT_RESTARTS_measured_not_assumed: >-
+      My first hypothesis was that my own 32 restarts cleared the in-memory dedup. WRONG, and
+      the measurement says so: only 30 of 601 incidents (5%) occur within 10 minutes of a
+      boot; 571 (95%) are steady-state churn. Per-day counts confirm it predates today:
+      80 / 60 / 83 / 142 / 35 / 38 / 133 / 30 across 2026-08-23..30.
+    THE_ROOT_CAUSE: >-
+      `_open_incidents` dedupes on "is this signature ACTIVE right now" rather than "have we
+      diagnosed this recently". incident_escalation.py:309-311 deletes a signature the moment
+      its cluster leaves `active`; the cluster then re-forms and pays a full ~70k staged RCA
+      to re-derive the same verdict. For a recurring failure that oscillates in and out of
+      the detection window, that is an unbounded re-diagnosis loop.
+    A_CORRECTION_TO_MY_OWN_FIRST_PROPOSAL: >-
+      I first proposed short-circuiting when a learned skill already exists for the
+      (capability_class, failure_class). Measured, that would save 25 of 601 RCAs — 4%, not
+      the win I implied. The miner reports "already exists" only 25 times; 601 RCAs produced
+      just 75 miner outcomes total (25 skip + 48 refused + 2 written), so most RCA output
+      never reaches authoring at all. The dominant cost is the RE-DIAGNOSIS, not the
+      duplicate write.
+    panel_recommendation: >-
+      A per-signature COOLDOWN that BACKS OFF with each diagnosis, rather than a fixed
+      duration. A signature diagnosed 46 times is demonstrably not yielding new information,
+      so the backoff is self-tuning and needs no magic constant — the same shape as the
+      scheduler's existing circuit-breaker cooldown. Do NOT suppress a signature that has
+      never been diagnosed, and never suppress permanently.
+    why_it_is_escalated_rather_than_just_built: >-
+      This changes the TRIGGER POLICY of a live self-healing subsystem. The direction is
+      clearly right and the waste is measured, but "how long may the platform decline to
+      re-diagnose a recurring failure" is an appetite question, and getting it wrong
+      suppresses real incidents silently — the failure mode this programme cares most about.
+    blocked_until_answered: >-
+      Nothing else. Recorded first so the finding is safe regardless of what is built next.
   THE_ATTEMPT_CEILING_LEAKED_2026_08_29:
     status: >-
       SHIPPED — commit a0a2fc0a. Found by measuring where the round count actually goes,
