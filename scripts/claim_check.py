@@ -62,6 +62,25 @@ _ABSENCE = re.compile(
     re.IGNORECASE,
 )
 
+#: A BUILD-GATE line, excluded from the count. "ruff src/ 46 = DEBT-1 baseline ...
+#: Zero added" is a point-in-time CI fact about a commit, not a standing claim
+#: about production behaviour — it cannot rot in the way this check exists to
+#: catch, and counting it distorts the ranking.
+#:
+#: FOUND BY USING THE TOOL, an hour after shipping it: D01.2 came top of the risk
+#: set with 27 matches, and 12 of them were lint baselines. D01.7 was 13 of 21
+#: (62%). The item's real exposure is still substantial (15 and 8), but a ranking
+#: driven by lint noise sends the reader to the wrong place first.
+#:
+#: Deliberately TIGHT — it names the tooling or is a gate field. An earlier draft
+#: also matched bare "passed" and "regressions", which risked excluding a genuine
+#: claim that happened to use those words. Validated line by line before adopting:
+#: all 40 exclusions are tooling facts, and no production claim is caught.
+_BUILD_GATE = re.compile(
+    r"\bruff\b|\bmypy\b|DEBT-\d|^\s*(?:lint|types|gates|tests|lint_types)\s*:",
+    re.IGNORECASE,
+)
+
 #: A recorded way to re-run the claim. Both spellings are in use.
 _CLOSING = re.compile(r"CLOSING[_ ]QUERY|closing query", re.IGNORECASE)
 
@@ -98,7 +117,10 @@ def main() -> int:
     for iid, body in _items(text):
         if not _MAP_ITEM.match(iid):
             continue
-        claims = len(_ABSENCE.findall(body))
+        claims = sum(
+            1 for line in body.splitlines()
+            if _ABSENCE.search(line) and not _BUILD_GATE.search(line)
+        )
         if not claims:
             continue
         done, total = _closed_stages(body)

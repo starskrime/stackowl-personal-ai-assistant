@@ -315,6 +315,30 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CLAIM_CHECK_HARDENED_BY_USING_IT_2026_08_30:
+    status: >-
+      The tool shipped an hour earlier ranked D01.2 first on LINT NOISE. Found by using it,
+      fixed in the same sitting, and D01.2 audited properly afterwards.
+    the_defect_in_my_own_tool: >-
+      19% of all absence-matches on map items were BUILD-GATE lines — "ruff src/ 46 = DEBT-1
+      baseline ... Zero added", "tests: ... zero regressions". Those are point-in-time CI
+      facts about a commit, not standing claims about production, so they cannot rot in the
+      way the check exists to catch. For D01.2 that was 12 of 27 (44%) and for D01.7 13 of 21
+      (62%). The items still carry real exposure (15 and 8), but a ranking driven by lint
+      noise sends the reader to the wrong item first.
+      RE-RANKED after the fix: D01.2 15, D16.1 13, D01.4 9, D01.7 8. D16.1 rose from fifth to
+      second — it had NO gate noise and was being under-ranked by the distortion.
+    the_exclusion_is_deliberately_TIGHT: >-
+      It names the tooling (ruff / mypy / DEBT-N) or is a gate FIELD (lint:, types:, gates:,
+      tests:). An earlier draft also matched bare "passed" and "regressions", which risked
+      excluding a genuine claim that happened to use those words — the same
+      over-matching that made the tool_names rule a 100% false-positive machine. Validated
+      line by line before adopting: all 40 exclusions are tooling facts and no production
+      claim is caught.
+    D01.2_AUDITED_SOUND: >-
+      See the item. All three real claims hold; it is dormant by CONFIGURATION (no
+      anthropic-protocol provider is configured), not by defect. Closing query recorded, so
+      it leaves the risk set.
   CLAIM_CHECK_THE_AUDITS_LESSON_BECOMES_A_CHECK_2026_08_30:
     status: >-
       SHIPPED — scripts/claim_check.py. The measured-zero audit fixed nine instances of a
@@ -14598,7 +14622,29 @@ items:
       by grepping it, and the threshold by loading the API reference instead of
       trusting memory. None of the three would have been caught by writing the
       design first and checking later.
-
+    AUDITED_2026_08_30_SOUND_and_dormant_by_CONFIGURATION: >-
+      D01.2 topped claim_check's risk set with 27 absence-claims, so it was audited next.
+      Twelve of those were LINT BASELINES ("ruff src/ 46 = DEBT-1 ... Zero added"), which are
+      point-in-time CI facts about a commit and cannot rot the way this check exists to
+      catch — that distortion is a defect in the TOOL and was fixed in the same sitting.
+      Its real production claims all HOLD, and they cohere:
+        cache_breakpoint_probes = 0 rows. Correct, and the invariant WORKING: I5 forbids
+          persisting a zero, so an empty table is the pass, not a gap.
+        `cache_control` in src/ = 15 occurrences. The WRITER whose absence this item was
+          opened to fix now exists.
+        "a reachable path with ZERO prompt caching ... a no-op for Bakir's own box" — HOLDS.
+          All four configured providers are protocol=openai (qwen36, ollama-standard,
+          ollama-powerful, NeraAiRaw). None is anthropic, so the cache-breakpoint markers
+          have no reachable path on this configuration.
+      SO D01.2 IS SOUND AND DORMANT BY CONFIGURATION, NOT BY DEFECT — the second sound item
+      of the audit, after D16.3. It also dovetails with D01.6: no anthropic backend means no
+      cache_control path, and the openai backend reports no cache statistics, so Law 1 is
+      both unexercised and unmeasurable on this box. Two independent routes to the same
+      conclusion.
+      CLOSING QUERY: (1) SELECT COUNT(*) FROM cache_breakpoint_probes — a NON-zero row means
+      an anthropic-protocol backend appeared and confirmed a breakpoint, so this item's
+      dormancy has ended; (2) any configured provider with protocol='anthropic' means the
+      same. Until either changes, the zeros stay correct.
   - id: D01.3
     title: "Per-turn tool-schema selection"
     domain: D01
