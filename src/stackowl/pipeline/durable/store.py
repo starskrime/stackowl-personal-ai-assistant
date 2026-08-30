@@ -112,6 +112,32 @@ def _split(raw: Any) -> tuple[str, ...]:
         return ()
 
 
+#: The ceiling rule, as SQL, for the paths that increment attempt_count inline.
+#:
+#: attempt_count has THREE writers and only `fail_and_requeue` used to check the
+#: ceiling. The other two — `claim_for_recovery(count_attempt=True)` and
+#: `reclaim_expired` — RE-ARM the work, so a task that reliably hangs was charged
+#: an attempt and handed straight back to the loop, for ever. MEASURED: exactly one
+#: row of 1,261 exceeded its ceiling, and it is the most expensive row the platform
+#: has produced — retry-8b7c4029 reached attempt_count 72 against max_attempts 30
+#: and billed 2,617,846 input tokens over 294 model calls.
+#:
+#: Expressed once, here, and formatted into both statements rather than retyped:
+#: three copies of one rule is exactly how two of them came to disagree. Inline SQL
+#: (not a read-then-write) so the decision stays ATOMIC with the increment on paths
+#: that update many rows at once.
+_CEILING_REACHED_SQL = (
+    f"COALESCE(attempt_count,0)+1 >= COALESCE(max_attempts, {DEFAULT_MAX_ATTEMPTS})"
+)
+
+
+def _status_or_dead_letter(on_survive: str) -> str:
+    """`CASE` that yields ``on_survive`` normally and 'dead_letter' at the ceiling."""
+    return (
+        f"CASE WHEN {_CEILING_REACHED_SQL} THEN 'dead_letter' ELSE '{on_survive}' END"
+    )
+
+
 class DurableTaskStore(OwnedRepository):
     """Owner-scoped persistence for :class:`DurableTask` rows."""
 
@@ -509,18 +535,27 @@ class DurableTaskStore(OwnedRepository):
         # change — charging it would march good work toward dead_letter on a
         # purely operational restart. The caller states what the reclaim MEANS;
         # the SQL stays in one place.
+        # When the attempt is CHARGED, the ceiling decides the destination: a row
+        # that has spent its budget is dead-lettered instead of being claimed for
+        # yet another run. Without this the charge was bookkeeping only — see
+        # _CEILING_REACHED_SQL for the row that reached 72 against a max of 30.
+        # count_attempt=False stays a plain claim: an operational restart must
+        # never be able to kill a live task.
         extra = (
             ", attempt_count = COALESCE(attempt_count,0)+1"
             ", last_failure_class = 'reclaimed_stale'"
             ", last_error = 'reclaimed while running — the worker never came back'"
             if count_attempt else ""
         )
+        status_expr = _status_or_dead_letter("recovering") if count_attempt else "?"
         sql = (
-            f"UPDATE {self._table} SET status = ?, updated_at = ?{extra} "  # noqa: S608 — table from class
+            f"UPDATE {self._table} SET status = {status_expr}, updated_at = ?{extra} "  # noqa: S608 — table from class
             "WHERE owner_id = ? AND task_id = ? AND status IN ('running', 'recovering')"
         )
-        params = [
-            "recovering",
+        params: list[object] = []
+        if not count_attempt:
+            params.append("recovering")
+        params += [
             datetime.now(tz=UTC).isoformat(),
             self._owner_id,
             task_id,
@@ -1010,7 +1045,13 @@ class DurableTaskStore(OwnedRepository):
         """
         stamp = (now or datetime.now(UTC)).isoformat()
         affected = await self._db.execute_returning_rowcount(
-            f"UPDATE {self._table} SET status='pending', lease_owner=NULL, "  # noqa: S608
+            # The ceiling decides the destination. This docstring used to claim "a
+            # task that reliably kills its worker must still reach the ceiling
+            # rather than cycle for ever" while nothing on this path ever compared
+            # the count to anything — counting toward a ceiling nobody checks is
+            # not reaching it. Now it does.
+            f"UPDATE {self._table} SET status={_status_or_dead_letter('pending')}, "  # noqa: S608
+            "lease_owner=NULL, "
             "lease_expires_at=NULL, attempt_count=COALESCE(attempt_count,0)+1, "
             "last_error='worker lease expired (crash or hang)', "
             "last_failure_class='lease_expired', updated_at=? "
