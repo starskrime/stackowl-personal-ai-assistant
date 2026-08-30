@@ -15401,7 +15401,28 @@ items:
       is worth deciding ON: metric 1 reads ZERO cache hits across 132.7M input tokens,
       so D01.2's benefit is unproven in production, and metric 4 shows 8 incarnations
       breaking the byte-identical invariant D01.1 shipped to guarantee.
-
+    EVIDENCE_MADE_READABLE_2026_08_30_commit_99f62b3a: >-
+      Re-measured as part of auditing the nine items that rest a no_change_needed on a
+      measured zero. THIS CLAIM HOLDS: still 0 cached_input_tokens, now against 654,849,862
+      input tokens across 124,683 rows (5x the data behind the original), zero on every
+      model. It did not rot.
+      BUT IT COULD NOT BE READ, and the code said so: "The 0 return is AMBIGUOUS by
+      construction — it means 'no cache hit' OR 'this backend does not report cache
+      statistics' (I4). Readers must count reporting rows to tell those apart." Nothing let
+      a reader do that. The one line that tried was at DEBUG (invisible in production, the
+      same failure paid for once already) AND asked `cached_input_tokens > 0`, which answers
+      "was the value positive" rather than "did the backend speak" — so a provider reporting
+      cached_tokens=0 was recorded identically to one reporting nothing. Presence was
+      detectable and thrown away: the extractor tests `if cached:` (truthiness).
+      NOW ANSWERED, LIVE. Core restarted 02:25:36 (pid 417998), clean boot, 558 lines, ZERO
+      errors, and the line reads at INFO: source='not_reported', provider=NeraAiRaw.
+      SO THE ZERO MEANS "WE CANNOT SEE THE CACHE", NOT "THE CACHE IS COLD". That is a
+      materially different fact about Law 1: prefix caching may or may not be working, and
+      this backend will never tell us. Metric 1 should be read as UNMEASURABLE on the current
+      provider rather than as a measured failure — and the stages stay as they are, because
+      nothing here shows the earlier decisions were wrong, only that they were unreadable.
+      CLOSING QUERY: grep '"msg": "[cost_tracker] record: cache stats source' and group by
+      fields.source — `reported` appearing at all would mean a backend that CAN be measured.
   - id: D01.7
     title: "Session lifecycle — session_key / session_id split"
     domain: D01
