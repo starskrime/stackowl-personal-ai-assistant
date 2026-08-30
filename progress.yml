@@ -11806,7 +11806,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -11818,7 +11818,85 @@ items:
     decisions: []
     changes: []
     notes: null
+    BRAINSTORM_2026_08_30_round_0_measured_first:
+      the_gap_claim_HOLDS_and_is_now_quantified: |-
+        The map says "we treat correction as a setting; they treat it as
+        procedural knowledge." Measured over 8 days:
 
+          feedback_classifier._parse: verdict      219 classifications
+            neutral/overall                        134
+            neutral/content                         67
+            neutral/format                           2
+            NEGATIVE/overall                          9
+            NEGATIVE/content                          8
+            positive/overall                          3
+          [pipeline] feedback: preference note(s) captured    8
+          skills created from a correction                    0
+
+        So 17 REAL NEGATIVE SIGNALS at 0.9-1.0 confidence, and the platform's
+        entire response was at most 8 preference notes. Zero procedural knowledge.
+      AND_THEY_CLUSTER: >-
+        All 17 negatives fall on 2026-08-28 between 00:17 and 05:25 — one long
+        dissatisfied session. That is the case for this item stated as an
+        experience rather than a metric: the operator corrected the platform
+        repeatedly across five hours and it learned nothing reusable from any of
+        it. The 219 denominator is mostly neutral chatter, so 8-from-219 is not the
+        damning number; 0-skills-from-17-negatives is.
+      THE_STRUCTURAL_FINDING_that_makes_the_Ask_unanswerable_as_written: >-
+        The map asks "adopt the prompt design directly?" — and the prompt alone
+        cannot work here, because the two systems trigger from different INPUTS.
+        OURS: skills/synthesizer.py clusters TaskOutcomes by exact tool_sequence
+        (cluster_outcomes_by_tool_sequence -> ToolSequenceCluster ->
+        build_for_new / build_for_refine). The input is what the AGENT DID.
+        THEIRS: agent/background_review.py reviews the CONVERSATION. The input is
+        what the USER SAID.
+        A prompt that says "user corrected your style ... update the relevant
+        skill" has nothing to read when its input is a tool-sequence cluster. So
+        D09.2 is not a copy-paste; it needs a vehicle that sees conversations.
+      the_prompt_is_worth_having_and_is_read_verbatim: >-
+        _SKILL_REVIEW_PROMPT in agent/background_review.py. Its four load-bearing
+        moves: (1) "Be ACTIVE — a pass that does nothing is a missed learning
+        opportunity, not a neutral outcome"; (2) a target library SHAPE —
+        class-level skills with a references/ dir, not a flat list of
+        one-session entries; (3) frustration ("stop doing X", "this is too
+        verbose", "why are you explaining") named as a FIRST-CLASS SKILL signal,
+        not a memory signal; (4) a preference ORDER — patch the skill that was
+        actually loaded this session before writing a new one.
+      VEHICLES_the_evidence_allows: >-
+        (a) D09.1's background review fork — the faithful port, but D09.1 is
+        BLOCKED on ESC-41 and D09.2 records depends_on: [] which is therefore
+        WRONG if this route is taken;
+        (b) the ROLLOVER SUMMARY handler — it already runs at the session boundary
+        with the full transcript (273 "summary staged" events in 8 days, and it
+        returns early on `no_transcript`), which is precisely the reference's
+        on_session_end position. Existing loop, no new engine;
+        (c) route feedback signals into the synthesizer, keeping the tool-sequence
+        clustering and adding a correction-triggered path.
+      recommendation_for_the_operator: >-
+        (b). It reuses a loop that already sees the whole conversation at exactly
+        the right moment, which satisfies the standing "find the existing loop and
+        extend it" rule, and it does not wait on ESC-41. (a) is the faithful port
+        but is blocked; (c) keeps the wrong input.
+    ESCALATIONS:
+      - id: ESC-71
+        question: "Adopt the review prompt — and if so, on which vehicle?"
+        why_evidence_cannot_settle_it: >-
+          The measurement settles that the GAP is real (17 negative signals, 0
+          skills). It cannot settle whether the platform SHOULD write procedural
+          knowledge from the operator's frustration — that changes what the
+          platform learns about him without being asked, and the reference's own
+          prompt is deliberately aggressive about it ("most sessions produce at
+          least one skill update"). Given the standing rule that self-learning
+          NEVER stores negatives, a prompt built on frustration signals is a
+          direct question for Bakir, not a derivation.
+        the_contradiction_worth_naming: >-
+          "Positive-only learning — wins never failures" (2026-06-24) versus a
+          review prompt whose PRIMARY signal is the user being unhappy. Both
+          cannot hold as written. One reading reconciles them: store the CORRECTED
+          BEHAVIOUR as a positive instruction ("answer directly, no preamble")
+          rather than the failure ("was too verbose"). That is a real distinction
+          and it is Bakir's to confirm, not mine to assume.
+        blocked_until_answered: "architect onward. Brainstorm is done and stands on its own measurement."
   - id: D09.3
     title: "Skill curator"
     domain: D09
