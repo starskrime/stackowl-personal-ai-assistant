@@ -84,6 +84,34 @@ _PROBE_MAX_TOKENS = 16
 _MAX_COMPRESS_ATTEMPTS = 3
 
 
+#: Fraction of the context window at which a single call is worth announcing.
+#:
+#: 0.5 is not arbitrary — it is the exact line the D03.2 closure asserted. That item
+#: ("Conversation compression", P1, blocks D03.1/D03.3) was closed by measurement on
+#: 2026-08-26 with "2,916 calls, max 62,724 against a 262,144 window, ZERO calls over
+#: 50%". Re-run on 2026-08-30 over 124,435 calls that closure is FALSIFIED: max
+#: 162,912 (62.1% of the window) and SEVEN calls over 50%, the five largest all dated
+#: after the measurement that closed the item.
+#:
+#: It reopened silently because nothing anywhere compared a call to the window — the
+#: window sat in the probe cache, the tokens in cost_records, and nobody joined them.
+#: This is the join, so "closed by measurement" cannot rot unobserved again.
+_WINDOW_HIGH_WATER = 0.5
+
+
+def window_pressure(*, input_tokens: int, window: int | None) -> float | None:
+    """Fraction of the window this call used, or None when it is not worth saying.
+
+    None for an unresolved window (the probe has not run yet) and for anything under
+    :data:`_WINDOW_HIGH_WATER` — silence is the correct answer for the overwhelming
+    majority, whose median is 5,248 tokens against a 262,144 window.
+    """
+    if not window or window <= 0:
+        return None
+    fraction = input_tokens / window
+    return fraction if fraction >= _WINDOW_HIGH_WATER else None
+
+
 class ModelProvider(ABC):
     """Abstract interface for all AI provider backends.
 
@@ -309,6 +337,36 @@ class ModelProvider(ABC):
         hard-cap raise the NEXT call would trigger) is logged and swallowed here so
         cost accounting can NEVER break or block a completion that already happened.
         """
+        # THE WATCH ON D03.2. Placed before the tracker check on purpose: a call
+        # that fills the window is worth reporting whether or not cost accounting
+        # is wired, and this is the ONE site every completion passes through.
+        # Never raises — cost accounting must never break a completion that has
+        # already happened (B5).
+        try:
+            from stackowl.providers.model_window import cached_window
+
+            _pressure = window_pressure(
+                input_tokens=input_tokens,
+                window=cached_window(self.name, model),
+            )
+            if _pressure is not None:
+                log.engine.warning(
+                    "[context] a single call used %.0f%% of the model window — "
+                    "conversation compression (D03.2) is coming due",
+                    _pressure * 100,
+                    extra={"_fields": {
+                        "provider": self.name, "model": model,
+                        "input_tokens": input_tokens,
+                        "window": cached_window(self.name, model),
+                        "fraction_of_window": round(_pressure, 3),
+                    }},
+                )
+        except Exception as exc:  # noqa: BLE001 — a watch must never cost a completion
+            log.engine.debug(
+                "[context] window-pressure check failed — skipping",
+                extra={"_fields": {"error": str(exc)}},
+            )
+
         tracker = self._cost_tracker
         if tracker is None:
             return
