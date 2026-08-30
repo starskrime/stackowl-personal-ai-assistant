@@ -25,7 +25,12 @@ from stackowl.config.provider import ProviderConfig
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.exceptions import ResumeTranscriptError
 from stackowl.providers.openai_provider import OpenAIProvider
-from stackowl.providers.resume_validation import validate_resume_transcript
+from stackowl.providers.resume_validation import (
+    CLOSING_TURN_TEXT,
+    close_interrupted_tool_sequence,
+    infer_provider_kind,
+    validate_resume_transcript,
+)
 
 # ---------------------------------------------------------------------------
 # Validator — failure cases
@@ -382,7 +387,18 @@ def test_anthropic_user_message_after_a_tool_result_is_rejected() -> None:
         validate_resume_transcript(messages, provider_kind="anthropic")
 
 
-def test_openai_user_message_after_a_tool_message_is_rejected() -> None:
+def test_openai_user_message_after_a_tool_message_is_ACCEPTED() -> None:
+    """INVERTED 2026-08-30. This test used to assert the opposite, and was wrong.
+
+    On the OpenAI wire a tool result is its own ``{"role": "tool"}`` message and
+    ``tool -> user`` is an ordinary, legal sequence — it is precisely what this
+    platform sends on every round that folds a directive in. Rejecting it killed
+    a live task (trace ``recover-4e6044f0cde9``, 2026-08-30 03:20:22) and left 12
+    more checkpoints in the live tasks table permanently unresumable, every one
+    of them ``status='failed'``.
+
+    The rule is right for Anthropic and wrong here; see the sibling test below.
+    """
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "what is 2+2?"},
         {
@@ -396,8 +412,34 @@ def test_openai_user_message_after_a_tool_message_is_rejected() -> None:
         {"role": "tool", "tool_call_id": "c1", "content": "4"},
         {"role": "user", "content": "actually, never mind"},
     ]
-    with pytest.raises(ResumeTranscriptError):
-        validate_resume_transcript(messages, provider_kind="openai")
+    validate_resume_transcript(messages, provider_kind="openai")
+
+
+def test_the_platforms_OWN_directive_shape_resumes() -> None:
+    """The exact shape taken from a refused live checkpoint must resume.
+
+    Read off ``task-a19fc46a563d`` in the live tasks table: a tool result, the
+    spliced ``[steering]``/persistence directive as a user turn, and the model's
+    answer to it. The loop built this, sent it, and the model answered — so the
+    resume validator refusing it was the guard failing its own traffic. This is
+    the regression test for that, driven by production data rather than an
+    invented fixture.
+    """
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "find the film"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "browse", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "HTTP 404"},
+        {"role": "user", "content": "You have not yet delivered the requested outcome"},
+        {"role": "assistant", "content": "You're right — let me take a different approach"},
+    ]
+    validate_resume_transcript(messages, provider_kind="openai")
 
 
 def test_a_transcript_ENDING_on_a_tool_result_is_still_valid() -> None:
@@ -440,3 +482,92 @@ def test_a_tool_result_followed_by_an_assistant_turn_is_fine() -> None:
         {"role": "assistant", "content": [{"type": "text", "text": "It is 4."}]},
     ]
     validate_resume_transcript(messages, provider_kind="anthropic")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# D01.5's closer — the half that was scoped in brainstorm and never built.
+# ---------------------------------------------------------------------------
+
+
+def _anthropic_interrupted() -> list[dict[str, Any]]:
+    """An Anthropic transcript whose user turn lands on an unclosed tool run."""
+    return [
+        {"role": "user", "content": "what is 2+2?"},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "tu1", "name": "calc", "input": {}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu1", "content": "4"}]},
+        {"role": "user", "content": "actually, never mind"},
+    ]
+
+
+def test_the_closer_makes_a_refused_transcript_resumable() -> None:
+    """The whole point: repair, then the validator that used to kill it passes.
+
+    Asserting both halves together is deliberate. A closer that runs but leaves
+    the transcript still invalid, or a validator relaxed so far that it accepts
+    the genuine defect, would each pass a narrower test.
+    """
+    messages = _anthropic_interrupted()
+    with pytest.raises(ResumeTranscriptError):
+        validate_resume_transcript(messages, provider_kind="anthropic")
+
+    inserted = close_interrupted_tool_sequence(messages, provider_kind="anthropic")
+
+    assert inserted == 1
+    assert messages[3] == {"role": "assistant", "content": CLOSING_TURN_TEXT}
+    validate_resume_transcript(messages, provider_kind="anthropic")
+
+
+def test_the_closer_leaves_a_sound_transcript_alone() -> None:
+    """No insertion, and the list is untouched — a repair that always fires is a bug."""
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "what is 2+2?"},
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "tu1", "name": "calc", "input": {}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu1", "content": "4"}]},
+        {"role": "assistant", "content": "It is 4."},
+    ]
+    before = [dict(m) for m in messages]
+    assert close_interrupted_tool_sequence(messages, provider_kind="anthropic") == 0
+    assert messages == before
+
+
+def test_the_closer_never_touches_an_openai_transcript() -> None:
+    """`tool -> user` is legal on the OpenAI wire, so there is nothing to close."""
+    messages: list[dict[str, Any]] = [
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "calc", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": "4"},
+        {"role": "user", "content": "a directive"},
+    ]
+    before = [dict(m) for m in messages]
+    assert close_interrupted_tool_sequence(messages, provider_kind="openai") == 0
+    assert messages == before
+
+
+def test_the_closer_repairs_every_break_not_just_the_first() -> None:
+    """Two breaks in one transcript. Walking forwards while inserting would skip one."""
+    messages = _anthropic_interrupted() + [
+        {"role": "assistant", "content": [
+            {"type": "tool_use", "id": "tu2", "name": "calc", "input": {}}]},
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu2", "content": "9"}]},
+        {"role": "user", "content": "and again"},
+    ]
+    assert close_interrupted_tool_sequence(messages, provider_kind="anthropic") == 2
+    validate_resume_transcript(messages, provider_kind="anthropic")
+
+
+def test_infer_provider_kind_reads_the_shape() -> None:
+    """The load point has no provider yet; the transcript itself carries the answer."""
+    assert infer_provider_kind([
+        {"role": "tool", "tool_call_id": "c1", "content": "4"}]) == "openai"
+    assert infer_provider_kind([
+        {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "tu1", "content": "4"}]}]) == "anthropic"
+    # No tool results at all: nothing to repair, so the no-op kind is correct.
+    assert infer_provider_kind([{"role": "user", "content": "hello"}]) == "openai"

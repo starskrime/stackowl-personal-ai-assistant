@@ -73,6 +73,10 @@ from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask
 from stackowl.pipeline.durable.task_runner import DurableTaskRunner
 from stackowl.pipeline.state import PipelineState
+from stackowl.providers.resume_validation import (
+    close_interrupted_tool_sequence,
+    infer_provider_kind,
+)
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
@@ -548,12 +552,24 @@ class DurableTaskRecoverer:
                 "tool_calls": len(cp.tool_call_records),
             }},
         )
+        # D01.5 (the closer, 2026-08-30) — repair BEFORE resuming rather than
+        # letting the provider's validator kill the task. An interrupted turn can
+        # leave a user message sitting on an unclosed tool sequence; on the
+        # Anthropic wire that is two consecutive user turns and the model
+        # continues the user's message instead of answering it. This is the ONE
+        # place a checkpoint becomes a resume transcript, which is why the repair
+        # lives here rather than at the four sites that splice user turns in.
+        # Copied first: ReActCheckpoint is frozen, but its list is not.
+        resume_messages = list(cp.messages)
+        close_interrupted_tool_sequence(
+            resume_messages, provider_kind=infer_provider_kind(resume_messages)
+        )
         return base.evolve(
             task_id=task_id,
             durable_owner_id=self._owner_id,
             creation_ceiling=task.creation_ceiling,
             task_envelope=task.task_envelope,
-            durable_resume_messages=cp.messages,
+            durable_resume_messages=resume_messages,
             durable_resume_tool_calls=cp.tool_call_records,
             durable_resume_iteration=cp.iteration + 1,
         )
