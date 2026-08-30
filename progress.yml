@@ -9358,6 +9358,37 @@ items:
       line appears once per conversation:
         grep '"msg": "[tools] usage snapshot: tool-usage ordering frozen' \
           ~/.stackowl/logs/stackowl.jsonl
+    validate_result_2026_08_30:
+      restart: "./start.sh — gateway pid 454936 at 10:55:57 and core 455024 at 10:56:12, both AFTER commit c0cb9a55 (10:55:53). 0 ERROR since boot."
+      PROVEN_on_the_LIVE_DATABASE_not_a_fixture: >-
+        Drove the real TaskOutcomeStore + real UsageScoreSnapshot against
+        ~/.stackowl/workspace/stackowl.db in a SEPARATE process logging to stdout
+        — deliberately not into the production log, because emitting the INFO line
+        there would pollute the very query that closes this check.
+          3 turns of ONE conversation  -> 1 store read; scores identical
+          37 tools scored from live data (shell 159.3, web_search 102.6,
+            browser_navigate 72.7, memory 59.1, web_fetch 42.5)
+          a NEW conversation           -> reads fresh, and returned DIFFERENT
+            CONTENT seconds later
+      THE_LAST_LINE_IS_THE_REAL_FINDING: >-
+        Two reads seconds apart, with no intervening tool use, disagreed. Cause,
+        read from the source rather than guessed: score_tools_for_owl computes
+        `now = time.time()` and applies a half_life_days decay, so the score is a
+        continuous function of WALL-CLOCK TIME. The ordering input therefore
+        differs on EVERY read. The instability is structural, not occasional — and
+        presentation.py's "stable for the life of a session BY CONSTRUCTION" is
+        exactly backwards for a value derived from time.time().
+      OPEN_and_why: >-
+        The INFO line has not yet appeared in production: grep count 0, because no
+        turn has run since the restart. That is NO OPPORTUNITY, not success — the
+        same state D05.2 was left in on 2026-08-02, which then sat unclosed for
+        four weeks. It is not being called proven. The live-DB probe above is the
+        strongest evidence obtainable without waiting for traffic, and it exercises
+        the real store and the real snapshot rather than doubles.
+        CLOSING QUERY (INFO, confirmed emitting in the probe):
+          grep '"msg": "[tools] usage snapshot: tool-usage ordering frozen' \
+            ~/.stackowl/logs/stackowl.jsonl
+        Expect ONE per (conversation, owl), and 'tools array CHANGED' to stay at 2.
   - id: D05.3
     title: "Service gating (check_fn)"
     domain: D05

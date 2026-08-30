@@ -5,9 +5,18 @@ per-owl usage, and both `rank_candidates` and `_tool_usage_scores` state that
 this makes the presented array "stable for the life of a session by
 construction". It does not. It makes the array independent of the QUESTION,
 which was the defect D01.3 measured — but the scores are read live from
-`TaskOutcomeStore` on EVERY turn, and they move as the owl uses tools. Same trap
-the skills catalogue had: deterministic is not stable, because a pure function of
-mutable state still moves when the state moves.
+`TaskOutcomeStore` on EVERY turn, and they move. Same trap the skills catalogue
+had: deterministic is not stable, because a pure function of mutable state still
+moves when the state moves.
+
+AND IT IS WORSE THAN "MOVES WHEN A TOOL RUNS". `score_tools_for_owl` computes
+`now = time.time()` and applies a `half_life_days` decay, so the score is a
+continuous function of WALL-CLOCK TIME. Measured 2026-08-30 against the live
+database: two reads seconds apart, with no intervening activity, returned
+different scores for all 37 scored tools. The ordering can therefore change
+between any two turns whenever two decayed scores are close enough to swap — not
+occasionally, but structurally. "Stable for the life of a session by
+construction" is exactly backwards for a value derived from `time.time()`.
 
 D05.2's own recorded decision was stricter than what shipped: "LEARNED PER-OWL
 TOOLSETS, SESSION-BOUNDARY ONLY. Each owl's core set is derived from MEASURED
