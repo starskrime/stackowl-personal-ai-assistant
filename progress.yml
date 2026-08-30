@@ -315,6 +315,77 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TURN_ECONOMICS_2026_08_29:
+    status: >-
+      SHIPPED AND VALIDATED LIVE (5 of 9 planned changes). Bakir, 2026-08-29: "i did ask
+      simple task and he come he run out of steps and task failed, 2 issues i do noot like
+      steps limitation also it did use a lot of tokens". Commits 08376c14, ced87eff,
+      ef294696. ruff src/ 37 and mypy 65 held throughout.
+    THE_MEASURED_TRIGGER: >-
+      Trace f33c9fa0 — "What agents i have" (18 characters) ran 16 rounds, billed 683,728
+      input tokens, hit the 20-step cap and delivered ONLY "[stopped: I ran out of steps]".
+      Where it went: 79 tool schemas re-sent every round 310,768 (45%); system prompt
+      re-sent every round 56,896 (8%); accumulating transcript ~291,000 (43%); the model's
+      OWN OUTPUT across all 16 rounds 25,326 (3.7%).
+    WHAT_SHIPPED: >-
+      1a SALVAGE — a capped turn now makes ONE bounded TOOLLESS call over its own tool
+      RESULTS and delivers what it found; falls back to the floor and never raises. The
+      floor fallback also names the tools tried instead of claiming none were.
+      2b GUARD NOTE — was appended to the trustworthy-success return ONLY, so the model was
+      told it was looping only on the turns that were WORKING. Now on every exit.
+      3a BUDGET AWARENESS — governor.steps_remaining() (same arithmetic as check(), so the
+      number told cannot disagree with the number that stops it); at 75% the callback folds
+      ONE convergence directive through the existing splice contract. No model call.
+      1c ROUND ECONOMY — batching + early-stop + brevity in the FROZEN prompt tier.
+      3b TOKEN CEILING — ResourceCaps.max_input_tokens, default 500,000, checked BEFORE
+      cost. Tokens ride the SAME TurnCostLedger entry as cost: one eviction policy.
+    THE_CORRECTION_BAKIR_CAUGHT_AND_IT_IS_LOAD_BEARING: >-
+      The first draft of 1c proposed presenting FEWER TOOLS. He rejected it: "Wait i see
+      you started to drop everhint. Then how llm will not about platfomr, his capabilities,
+      skills?" He is right and it is the skill-catalogue bug one layer down — we capped that
+      catalogue at 4,000 chars and produced a platform that could not answer "what agents i
+      have". The logs already carry "[presentation] select: eligible tools NOT presented"
+      naming skills_list, which has 0 invocations in 8 days partly because on those turns it
+      was not there to call. 19,423 tokens is the price of ONE round; 310,768 is SIXTEEN.
+      The schemas are byte-identical every round. The lever is ROUND COUNT, never schema
+      size. Recorded in the code so it is not re-proposed.
+    LIVE_VALIDATION_2026_08_29_trace_8efdf038: >-
+      Restarted 20:34 local (core pid 275609), clean boot — 427 lines, ZERO errors. Injected
+      the same question through dev_ingress onto the real Telegram path. Result: 6 model
+      calls, 49,916 input tokens, 16.8s, success=True, error_count=0, and it ANSWERED —
+      "You have 11 agents (plus me — Friday, the secretary)" with the full list. 13.7x fewer
+      input tokens than the failing baseline, and ONE delivery ("[loop] task COMPLETE — its
+      outcome reached its destination"), so the duplicate-reply bug did not recur.
+      THE CONTROL THAT MATTERS: context budget logged tools_count=79 tools_tokens=19423 —
+      UNCHANGED. The prefix was NOT made smaller; the round count fell. That is the
+      verification the plan demanded, asserted in the direction that proves capability was
+      not rationed.
+      HONEST LIMIT: n=1. The round-count drop is consistent with the round-economy guidance
+      but is NOT proven caused by it — an earlier self-knowledge fix is also in this build.
+    ACCEPTANCE_CHECKS_STILL_OPEN_with_their_closing_queries: >-
+      Each is ARMED and unit-tested but has not fired in production, because each needs a
+      pathological turn that has not happened since deploy. A zero here is "not yet
+      exercised", not "works" and not "broken".
+      SALVAGE: grep '"msg": "[budget] salvage: delivered findings instead of an empty stop'
+      CONVERGE: grep '"msg": "[budget] converge: telling the model its budget is nearly spent'
+      TOKEN CAP: a BudgetBreach with cap="tokens" in [pipeline] execute: budget cap reached
+      GUARD NOTE: needs one tool failing 3+ times with DIFFERENT arguments in one turn
+    NOT_YET_BUILT_from_the_approved_plan: >-
+      1b tool-result compaction (the 43% transcript term); 2a hard stops enabled on
+      autonomous/cron lanes; 2c monologue + ping-pong detectors; 2d refund steps on detected
+      repeats; 3c accumulate steps across durable retries (the 3.9M-token hole). Stage 4
+      (conditional evaluator) stays conditional and is NOT to be built as originally
+      proposed — see the rejected-mechanism table in the plan.
+    PRE_EXISTING_RED_FOUND_AND_FIXED: >-
+      6 failures in the floored-turn retry seam, confirmed present at HEAD and unrelated to
+      this work. They asserted a design deliberately deleted (persist_turn minting a
+      retry-<trace_id> row) — the deletion WAS the fix for "it always sends failed request
+      first then after some time i am getting final answer". The change had shipped leaving
+      them red. Retargeted at the new owner rather than removed, and VERIFIED LIVE first:
+      "[loop] the turn FLOORED — returning its own row to the loop" fired 3x on trace
+      916bb4b7 (pending, pending, dead_letter), row closed at attempt_count 5. The tasks
+      table shows 0 rows with last_failure_class='floored_turn' only because completion
+      clears the class — that zero is not evidence of absence.
   ESC_17_AUDIT_COMPLETE_REPORT_BEFORE_CHANGE_2026_08_25:
     status: >-
       AUDIT DONE, NOTHING CHANGED — which is exactly what Bakir asked for ("Go, importers
