@@ -27,12 +27,17 @@ class EventBus:
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[Handler]] = {}
+        # Event names already reported as unheard, so the notice fires once each.
+        self._reported_unheard: set[str] = set()
         # Strong refs to in-flight handler tasks — without this a fire-and-forget
         # task can be GC'd mid-flight (loop holds only a weak ref), silently
         # dropping a proactive delivery. Discarded on completion.
         self._pending_tasks: set[asyncio.Task[Any]] = set()
 
     def subscribe(self, event: str, handler: Handler) -> None:
+        # A late subscriber means the event was EARLY, not dead — boot order is
+        # not guaranteed, so let it be reported again if it ever goes unheard later.
+        self._reported_unheard.discard(event)
         self._handlers.setdefault(event, []).append(handler)
 
     def unsubscribe(self, event: str, handler: Handler) -> None:
@@ -54,7 +59,32 @@ class EventBus:
         ASYNC (coroutine) handlers are always scheduled on the running loop, so
         they are loop-safe regardless of the emitter's thread.
         """
-        for handler in list(self._handlers.get(event, [])):
+        handlers = list(self._handlers.get(event, []))
+        if not handlers:
+            # A WRITE WITH NO READER — this codebase's most common defect shape,
+            # and previously silent here: the loop below simply ran zero times, so
+            # emitting into nowhere looked exactly like delivering.
+            #
+            # RUNTIME, NOT GREP. Subscription in this tree is DYNAMIC —
+            # EventDeliveryBridge loops over _ALLOWED_EVENTS, the TUI coordinator
+            # loops over a handler map — so a literal scan of subscribe("name")
+            # under-counts badly. Measured 2026-08-30: such a scan found 1
+            # subscribed event against 6 emitted and would have reported the entire
+            # budget-alert path as dead. It is not; the bridge subscribes it. The
+            # bus is the only place that knows the truth at the moment it matters.
+            #
+            # ONCE PER NAME. You need to know THAT an event goes nowhere, not every
+            # time it happens; reporting each occurrence would make an unsubscribed
+            # event in a hot loop into the log-spam version of the problem.
+            if event not in self._reported_unheard:
+                self._reported_unheard.add(event)
+                log.info(
+                    "event_bus.emit: %r has no subscriber — nothing consumes it",
+                    event,
+                    extra={"_fields": {"event": event}},
+                )
+            return
+        for handler in handlers:
             if inspect.iscoroutinefunction(handler):
                 self._dispatch_async(event, handler, payload)
                 continue
