@@ -19,13 +19,13 @@ from typing import Any
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.memory.critic_scorer_handler import CriticScorerHandler
 from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.providers.registry import ModelRoute, ProviderRegistry
 from stackowl.scheduler.job import Job
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -72,7 +72,7 @@ class _ModelCapturingProvider:
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "critic_scorer_model_threading.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

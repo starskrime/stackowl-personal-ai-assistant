@@ -48,7 +48,6 @@ from stackowl.channels._format import (
     load_output_style,
     resolve_output_style,
 )
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.interaction.feedback_classifier import FeedbackSignal
 from stackowl.memory.preferences import PreferenceStore
@@ -58,6 +57,7 @@ from stackowl.pipeline.steps import feedback
 from stackowl.providers.base import Message
 
 # --- reuse proven per-story doubles/tests (no rebuilt harnesses) ------------------
+from tests._schema_template import seed_schema
 from tests.interaction.test_feedback_classifier import (
     test_low_confidence_sets_abstain as _proven_abstain,
 )
@@ -137,7 +137,7 @@ async def test_eval1_pref_persists_and_applies_across_restart(tmp_path: Path) ->
     "you lost it" guard; the assertion is on the post-seam bytes, never on prose."""
     owner_key = "telegram:7"
     db_path = tmp_path / "restart.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
 
     # --- pre-restart: write the explicit style through a real store, then close it. ---
     pool_a = await _open_pool(db_path)

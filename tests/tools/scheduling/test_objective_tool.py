@@ -16,7 +16,6 @@ from typing import Any
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.objectives.store import ObjectiveStore
@@ -25,6 +24,7 @@ from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.tools.base import ToolResult
 from stackowl.tools.scheduling.objective_tool import ObjectiveTool
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture()
 async def migrated_db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "obj_tool.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

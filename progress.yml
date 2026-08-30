@@ -369,7 +369,30 @@ current:
       now cheaper than the single targeted slice used to be, so items can be
       gated on the DIRECTORY again rather than on a hand-picked subset — which is
       what let a truncated 82% run be mistaken for evidence earlier today.
-    remaining: "The 144 direct constructors still pay 9.25s each. A seed_migrated_db() helper now exists beside the fixture for them; converting them is mechanical and is NOT done here."
+    PART_2_the_direct_constructors_2026_08_30: >-
+      The 144 direct constructors are now converted too. tests/_schema_template.py
+      builds one migrated template per PROCESS (no fixture needed, which is why
+      the direct callers could not use the conftest one) and seed_schema() copies
+      it. 110 files converted by script; 24 call sites deliberately left alone —
+      every one that captures the runner's results, passes a custom
+      migrations_dir, or introspects it is asserting on the RUNNER, and tests/db/
+      plus every test_migration_* file must run the real thing or they would be
+      asserting on a cached artefact of themselves.
+      MEASURED: tests/pipeline/durable — the directory that was 31 direct
+      constructors to 2 fixture users, and the one my first DEBT-38 benchmark
+      wrongly used — now runs 391 passed in 70.08s.
+      10,928 tests COLLECT clean across the whole tree, which is the check that
+      matters for a scripted edit of 110 files.
+    two_things_the_script_broke_and_how_they_were_caught: >-
+      The import-insertion regex matched the last `from ... import (` line and
+      inserted INSIDE a multi-line parenthesis in two files; a --collect-only pass
+      over the whole tree found both immediately as SyntaxErrors. My first repair
+      then re-inserted after a FUNCTION-LOCAL import, because the fix matched
+      `lstrip()`ed lines and so treated an indented import as top-level. Fixed by
+      matching column 0 only, and verified with ast.parse() before re-running
+      anything. A scripted edit across 110 files needs a syntax gate, not a test
+      run, as its first check.
+    lint: "tests/ went from 225 errors at HEAD to 219 — six FEWER, after fixing import order and now-unused MigrationRunner imports in the 110 touched files only. The 66 pre-existing I001s elsewhere were deliberately not swept."
 
 waves:
   1:
@@ -450,6 +473,75 @@ documentation:
 # ---------------------------------------------------------------------------
 # KNOWN DEBT — tracked, not ignored (feedback_no_skipping_preexisting_fails)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# UPCOMING — queued work that is not a map item and not debt
+# ---------------------------------------------------------------------------
+upcoming:
+  - id: UP-01
+    date_added: 2026-08-30
+    added_by: Bakir
+    title: "Study mem0's memory architecture, then propose PORT / HYBRID / BUILD against ours"
+    ask: >-
+      Bakir, 2026-08-30: "learn architecture from mem0 and discuss about bringing
+      their architecture to our memory system." The deliverable is a DISCUSSION —
+      a comparison and a recommendation he can decide on — not an implementation.
+      Nothing is to be built under this item without him choosing an option first.
+    governed_by: >-
+      The standing "port before build" rule: research the OSS first and end with an
+      EXPLICIT decision of PORT, HYBRID or BUILD, with the reason. No NIH, and
+      equally no adopting a design because it is fashionable — the question is what
+      it does that ours does not, measured against ours.
+    THE_RULE_THAT_MATTERS_MOST_HERE: >-
+      DO NOT WRITE A SINGLE CLAIM ABOUT mem0 FROM RECOLLECTION. Read their actual
+      source and docs. This programme has spent the whole of 2026-08-30 discovering
+      that recorded claims rot and that confident summaries of a system are usually
+      summaries of something else. A claim about someone ELSE'S architecture,
+      written from memory, is the least verifiable thing this repo could contain.
+    my_current_recollection_EXPLICITLY_UNVERIFIED: >-
+      Recorded as a starting hypothesis to CHECK, not as findings — the same
+      labelling that stopped me chasing the wrong cause in DEBT-38. I believe mem0
+      is an open-source memory layer for LLM agents that (a) uses an LLM to EXTRACT
+      candidate facts from a conversation, (b) then runs a second LLM step that
+      decides ADD / UPDATE / DELETE / NOOP against semantically similar existing
+      memories, (c) stores in a vector store with an optional graph store for
+      entities and relations, and (d) scopes by user / agent / run ids. Every one
+      of those four points may be wrong or out of date and must be confirmed
+      against source before it is repeated.
+    what_ours_actually_is_MEASURED_2026_08_30: >-
+      Written down so the comparison starts from facts rather than from a mental
+      model of our own system, which has also been wrong repeatedly this session:
+        * curated memory is MARKDOWN FILES under ~/.stackowl/memory — 18 files,
+          USER.md holds 11 non-empty lines. Not a vector store.
+        * it has a HARD CAPACITY and at capacity `add` REFUSES and asks the AGENT
+          to consolidate — 54 at_capacity events in 8 days. That is the direct
+          analogue of mem0's consolidation step and it is the sharpest point of
+          comparison: ours asks the model to choose; theirs (I think) decides.
+        * decay evicts only `until_changed` entries — 40 in 8 days.
+        * writes are prompted by a turn-counter nudge (NUDGE_INTERVAL_TURNS=4),
+          which produced 82 writes from 210 nudges over 8 days, a 39% conversion.
+        * separately there are committed_facts + FTS5, a messages FTS5 index,
+          embeddings, and a Kuzu graph — several of which have a history of being
+          written and never read, so their LIVE state must be re-measured as part
+          of this, not assumed.
+    the_questions_worth_answering: >-
+      1. Does their ADD/UPDATE/DELETE/NOOP consolidation beat our refuse-and-ask?
+         Ours has a measurable failure mode — 54 refusals in 8 days is 54 turns
+         where the agent was handed bookkeeping instead of the user's task.
+      2. Is a vector store actually better than markdown here, given the corpus is
+         18 files? A retrieval architecture sized for 10k memories may be strictly
+         worse at 18, and this repo has already shipped one feature whose premise
+         died when a corpus shrank (D10.6).
+      3. What does their scoping model do that our (conversation, owl) keying does
+         not, given D01.6 records that one lane runs several owls?
+      4. What is the TOKEN cost of an LLM-driven consolidation step per turn?
+         Bakir's standing concern is burning tokens; a design that adds two model
+         calls per turn has to earn them.
+    constraints:
+      research_only: "Any cloned source goes under do_not_push_to_git_research_only/ and is NEVER pushed."
+      vendor_names: "mem0 may be named here and in research docs. NEVER in src/, tests/ or scripts/ — those say 'the reference platform' or describe the technique."
+      no_implementation_without_a_decision: "This item ends at a recommendation. Bakir picks PORT / HYBRID / BUILD before anything is written."
+    status: queued
+
 known_debt:
   - id: DEBT-39
     date: 2026-08-30

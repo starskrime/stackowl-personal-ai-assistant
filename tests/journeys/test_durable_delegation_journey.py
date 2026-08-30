@@ -70,7 +70,6 @@ from typing import Any, Literal
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.messaging.a2a import A2AQueue
 from stackowl.owls.a2a_delegation import A2ADelegator
@@ -90,6 +89,7 @@ from stackowl.providers.react_callback import IterationCallback, ReActIterationS
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
+from tests._schema_template import seed_schema
 
 _PARENT_GOAL = "Have the specialist file the report"
 _SPECIALIST = "filer"
@@ -472,7 +472,7 @@ async def _delegate_ledger(pool: DbPool) -> list[dict[str, Any]]:
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "deleg.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

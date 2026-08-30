@@ -22,6 +22,7 @@ from __future__ import annotations
 import datetime
 
 import pytest
+from tests._schema_template import seed_schema
 
 from stackowl.db.pool import DbPool
 from stackowl.sessions import ChatType, ResetMode, ResetPolicy, SessionSource
@@ -39,8 +40,7 @@ async def store(tmp_path, monkeypatch):
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
     db = DbPool(db_path=tmp_path / "test.db")
     await db.open()
-    from stackowl.db.migrations.runner import MigrationRunner
-    MigrationRunner(tmp_path / "test.db").run()
+    seed_schema(tmp_path / "test.db")
     yield SessionStore(db, ResetPolicy(mode=ResetMode.BOTH, at_hour=4),
                        mirror_dir=tmp_path)
     await db.close()

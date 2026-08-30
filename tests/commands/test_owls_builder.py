@@ -18,6 +18,7 @@ from stackowl.commands.owls_helpers import manifest_to_yaml_entry
 from stackowl.owls.builder import OwlSpec, SpecialistOwlBuilder
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.state import PipelineState
+from tests._schema_template import seed_schema
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -70,7 +71,6 @@ async def test_edit_changes_field_and_repersists(tmp_yaml: Path, tmp_path: Path)
     half of this test — an edit that changes memory and persists nothing is
     exactly the bug this arc came out of.
     """
-    from stackowl.db.migrations.runner import MigrationRunner
     from stackowl.db.pool import DbPool
     from stackowl.owls.store import OwlStore
     from stackowl.pipeline.services import (
@@ -81,7 +81,7 @@ async def test_edit_changes_field_and_repersists(tmp_yaml: Path, tmp_path: Path)
 
     db = DbPool(db_path=tmp_path / "owls.db")
     await db.open()
-    MigrationRunner(tmp_path / "owls.db").run()
+    seed_schema(tmp_path / "owls.db")
     reg = OwlRegistry()
     cmd = OwlsCommand(owl_registry=reg)
     _seed_bounded(reg)

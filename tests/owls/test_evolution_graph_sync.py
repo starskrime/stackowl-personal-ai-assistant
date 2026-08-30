@@ -9,12 +9,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_hydrator import read_all_owl_dna
 from stackowl.owls.evolution import EvolutionCoordinator
 from stackowl.owls.registry import OwlRegistry
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "evo.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

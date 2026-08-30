@@ -35,7 +35,6 @@ from typing import Any
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_hydrator import hydrate_dna
@@ -47,6 +46,7 @@ from stackowl.owls.registry import OwlRegistry
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
+from tests._schema_template import seed_schema
 from tests._story_2_6_helpers import AlwaysPassShadowValidator
 
 pytestmark = pytest.mark.asyncio
@@ -73,7 +73,7 @@ def _no_test_mode_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "persona_evo_journey.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

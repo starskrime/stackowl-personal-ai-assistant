@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from stackowl.authz.bounds import BoundsSpec
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.owls.a2a_delegation import A2AResult
@@ -25,6 +24,7 @@ from stackowl.tools.agents.delegate_task import (
     resolve_commit_coupling_answer,
 )
 from stackowl.tools.registry import ToolRegistry
+from tests._schema_template import seed_schema
 
 # A write-capable specialist (edit = write severity) the parent can delegate to,
 # so the target both RESOLVES (delegate_task resolves the owl up-front) and is
@@ -37,7 +37,7 @@ _SPECIALIST = "filer"
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "d1.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

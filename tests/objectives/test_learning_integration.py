@@ -14,8 +14,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from tests._schema_template import seed_schema
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.objectives.driver import ObjectiveDriverHandler
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "obj_learning.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

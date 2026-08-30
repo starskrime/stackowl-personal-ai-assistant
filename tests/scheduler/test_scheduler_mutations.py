@@ -17,11 +17,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.scheduler.base import HandlerRegistry, JobHandler
 from stackowl.scheduler.job import Job, JobResult
 from stackowl.scheduler.scheduler import JobScheduler
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -32,7 +32,7 @@ _NY = "America/New_York"
 @pytest.fixture()
 async def migrated_db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "sched.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

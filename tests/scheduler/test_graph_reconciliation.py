@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.memory.kuzu_adapter import KuzuAdapter
 from stackowl.scheduler.handlers.graph_reconciliation import GraphReconciliationHandler
 from stackowl.scheduler.job import Job
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -20,7 +20,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "recon.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

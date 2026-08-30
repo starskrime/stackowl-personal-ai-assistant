@@ -39,16 +39,16 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.skills.store import SkillIndexStore
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+from tests._schema_template import seed_schema
 
 
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "skills.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

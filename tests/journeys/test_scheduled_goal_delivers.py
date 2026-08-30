@@ -51,7 +51,6 @@ from stackowl.channels.registry import ChannelRegistry
 from stackowl.config.notification_settings import NotificationSettings
 from stackowl.config.settings import BriefSettings, Settings, SystemSettings
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.deliverer import ProactiveDeliverer
@@ -68,6 +67,7 @@ from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.scheduler.scheduler_helpers import row_to_job
 from stackowl.tools.base import ToolResult
 from stackowl.tools.scheduling.cronjob import CronjobTool
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -157,7 +157,7 @@ def _settings() -> Settings:
 @pytest.fixture()
 async def migrated_db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "sched_goal.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

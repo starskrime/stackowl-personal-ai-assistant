@@ -14,9 +14,9 @@ from pathlib import Path
 from stackowl.channels.liveness import ChannelLivenessStore
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.health.contributors import ChannelLivenessContributor
+from tests._schema_template import seed_schema
 
 
 class FakeClock:
@@ -37,7 +37,7 @@ class FakeClock:
 
 async def _migrated_pool(tmp_path: Path) -> DbPool:
     db_path = tmp_path / "live.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path)
     await pool.open()
     return pool
@@ -140,7 +140,7 @@ async def test_default_kind_is_byte_identical_to_pre_generalization(
 async def test_signal_survives_across_separate_instances(tmp_path: Path) -> None:
     clock = FakeClock()
     db_path = tmp_path / "live.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     writer_pool = DbPool(db_path)
     reader_pool = DbPool(db_path)
     await writer_pool.open()

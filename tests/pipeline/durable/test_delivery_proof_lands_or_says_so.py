@@ -20,6 +20,7 @@ from __future__ import annotations
 import datetime
 
 import pytest
+from tests._schema_template import seed_schema
 
 from stackowl.db.pool import DbPool
 from stackowl.pipeline.durable.store import DurableTaskStore
@@ -33,11 +34,10 @@ UTC = datetime.UTC
 @pytest.fixture
 async def store(tmp_path, monkeypatch):
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
-    from stackowl.db.migrations.runner import MigrationRunner
 
     db = DbPool(db_path=tmp_path / "t.db")
     await db.open()
-    MigrationRunner(tmp_path / "t.db").run()
+    seed_schema(tmp_path / "t.db")
     yield DurableTaskStore(db)
     await db.close()
 

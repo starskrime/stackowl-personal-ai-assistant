@@ -11,7 +11,7 @@ import pytest
 
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ConsequentialActionGate
-
+from tests._schema_template import seed_schema
 
 # ---------------------------------------------------------------------------
 # Minimal concrete Tool implementations for testing
@@ -238,11 +238,10 @@ def test_ai_act_disclosure_sessions_are_independent() -> None:
 @pytest.fixture()
 async def onboarding_db(tmp_path: Path) -> Any:
     """DbPool with the onboarding_events table created."""
-    from stackowl.db.migrations.runner import MigrationRunner
     from stackowl.db.pool import DbPool
 
     db_path = tmp_path / "onboarding_test.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:
@@ -296,10 +295,9 @@ def test_migration_0025_exists() -> None:
 
 def test_migration_0025_creates_onboarding_events_table(tmp_path: Path) -> None:
     """Running all migrations creates the onboarding_events table."""
-    from stackowl.db.migrations.runner import MigrationRunner
 
     db_path = tmp_path / "mig_test.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
 
     conn = sqlite3.connect(db_path)
     tables = {

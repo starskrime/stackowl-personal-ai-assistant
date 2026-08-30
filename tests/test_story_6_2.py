@@ -8,13 +8,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import DuplicateFactError
 from stackowl.memory.bridge import HealthReport, NullMemoryBridge
 from stackowl.memory.models import MemoryRecord, StagedFact
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
-
+from tests._schema_template import seed_schema
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -25,7 +24,7 @@ from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 async def memory_db(tmp_path: Path) -> AsyncGenerator[DbPool, None]:
     """A DbPool with all migrations applied (including 0014_memory_tables)."""
     db_path = tmp_path / "memory_test.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

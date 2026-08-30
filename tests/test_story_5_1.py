@@ -23,7 +23,6 @@ from pathlib import Path
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.parliament.models import (
     ParliamentRound,
@@ -35,6 +34,7 @@ from stackowl.parliament.session_store import SessionStore
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
+from tests._schema_template import seed_schema
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -50,7 +50,7 @@ def _disable_test_mode_guard(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture()
 async def parliament_db(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "parliament.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

@@ -11,13 +11,13 @@ from typing import Any
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.tools.base import ToolResult
 from stackowl.tools.scheduling.cronjob import CronjobTool
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,7 +28,7 @@ _OWL = "scout"
 @pytest.fixture()
 async def migrated_db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "cron.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

@@ -16,9 +16,9 @@ import pytest
 
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.registry import CommandRegistry
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.plugins.manifest import PluginManifest
 from stackowl.plugins.registry import PluginRegistry
+from tests._schema_template import seed_schema
 from tests._story_6_7_helpers import make_state
 
 
@@ -30,7 +30,7 @@ def _reset_registry() -> None:
 @pytest.fixture()
 def plugin_db(tmp_path: Path) -> Path:
     db_path = tmp_path / "plugins_test.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     return db_path
 
 

@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
@@ -29,6 +28,7 @@ from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 from stackowl.tools.scheduling.objective_tool import ObjectiveTool
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -36,7 +36,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "obj_journey.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

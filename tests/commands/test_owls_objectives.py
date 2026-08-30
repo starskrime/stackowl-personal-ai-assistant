@@ -7,14 +7,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
 
 from stackowl.commands.owls_command import OwlsCommand
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.objectives.model import Objective
 from stackowl.objectives.store import ObjectiveStore
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+from tests._schema_template import seed_schema
+from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
 
 pytestmark = pytest.mark.asyncio
 
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture()
 async def migrated_db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "owls_obj.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

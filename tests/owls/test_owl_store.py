@@ -20,6 +20,7 @@ import pytest
 from stackowl.db.pool import DbPool
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.store import OwlStore
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -38,11 +39,10 @@ def _owl(name: str = "secretary", **over: object) -> OwlAgentManifest:
 @pytest.fixture
 async def store(tmp_path, monkeypatch):
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
-    from stackowl.db.migrations.runner import MigrationRunner
 
     db = DbPool(db_path=tmp_path / "t.db")
     await db.open()
-    MigrationRunner(tmp_path / "t.db").run()
+    seed_schema(tmp_path / "t.db")
     yield OwlStore(db)
     await db.close()
 

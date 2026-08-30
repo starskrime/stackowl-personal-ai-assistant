@@ -7,11 +7,11 @@ from pathlib import Path
 import pytest
 
 from stackowl.commands.explain_command import ExplainCommand
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.infra.decision_ledger import Decision
 from stackowl.pipeline.decision_store import TurnDecisionStore
 from stackowl.pipeline.state import PipelineState
+from tests._schema_template import seed_schema
 
 
 def _state(session: str = "sess-1") -> PipelineState:
@@ -29,7 +29,7 @@ def _state(session: str = "sess-1") -> PipelineState:
 def _temp_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Point DbPool()'s default path at a migrated temp DB for the command."""
     db_path = tmp_path / "explain.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     monkeypatch.setattr("stackowl.db.pool.default_db_path", lambda: db_path)
     return db_path
 

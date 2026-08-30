@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 
 from stackowl.cli.app import _install_local_plugin
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.exceptions import PluginValidationError
 from stackowl.paths import StackowlHome
+from tests._schema_template import seed_schema
 
 
 def _write_plugin(dir_: Path, name: str = "demo_plugin") -> Path:
@@ -36,7 +36,7 @@ def _write_plugin(dir_: Path, name: str = "demo_plugin") -> Path:
 
 def _migrated_db(tmp_path: Path) -> Path:
     db = tmp_path / "stackowl.db"
-    MigrationRunner(db_path=db).run()
+    seed_schema(db)
     return db
 
 

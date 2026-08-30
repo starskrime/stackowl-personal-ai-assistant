@@ -20,7 +20,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.embeddings.registry import EmbeddingRegistry
 from stackowl.memory.outcome_store import TaskOutcomeStore
@@ -29,6 +28,7 @@ from stackowl.memory.reflection_writer_handler import ReflectionWriterHandler
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job, JobResult
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -72,7 +72,7 @@ class _ScriptedProvider:
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "reflection_critic_merge.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

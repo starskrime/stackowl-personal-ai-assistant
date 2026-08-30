@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
@@ -24,6 +23,7 @@ from stackowl.owls.trigger import CronTrigger
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.scheduler.owl_lifecycle import _job_id_for, reconcile_owl_schedules
 from stackowl.tools.scheduling.owl_schedule import OwlScheduleTool
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -31,7 +31,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "sched.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.paths import StackowlHome
 from stackowl.plugins.index import PluginIndexEntry
 from stackowl.plugins.remote_install import install_remote_plugin
 from stackowl.plugins.verify import PluginVerificationError
+from tests._schema_template import seed_schema
 
 
 def _make_plugin_zip(tmp: Path) -> bytes:
@@ -40,7 +40,7 @@ def _make_plugin_zip(tmp: Path) -> bytes:
 
 def _migrated_db(tmp_path: Path) -> Path:
     db = tmp_path / "stackowl.db"
-    MigrationRunner(db_path=db).run()
+    seed_schema(db)
     return db
 
 

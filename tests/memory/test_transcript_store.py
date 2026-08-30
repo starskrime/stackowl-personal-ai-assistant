@@ -12,9 +12,9 @@ import datetime
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.memory.transcript_store import TranscriptStore
+from tests._schema_template import seed_schema
 
 UTC = datetime.UTC
 LANE = "owl:Brain:telegram:dm:123"
@@ -25,7 +25,7 @@ RUN = "20260725_040000_abcd1234"
 async def store(tmp_path, monkeypatch):
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
     path = tmp_path / "t.db"
-    MigrationRunner(path).run()
+    seed_schema(path)
     db = DbPool(db_path=path)
     await db.open()
     yield TranscriptStore(db), db

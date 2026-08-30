@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.infra.trace import TraceContext
 from stackowl.messaging.a2a import A2AQueue
@@ -25,6 +24,7 @@ from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+from tests._schema_template import seed_schema
 
 
 class _SlowSpecialistDelegator(A2ADelegator):
@@ -46,7 +46,7 @@ class _SlowSpecialistDelegator(A2ADelegator):
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "d1.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

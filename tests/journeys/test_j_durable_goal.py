@@ -59,7 +59,6 @@ import pytest
 
 from stackowl.config.settings import DurableSettings, Settings
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
@@ -72,6 +71,7 @@ from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
 from stackowl.scheduler.scheduler import JobScheduler
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
+from tests._schema_template import seed_schema
 
 _GOAL = "Write the status note and report back"
 _FINAL_ANSWER = "Done — I wrote the status note for you."
@@ -218,7 +218,7 @@ class _FakeProviderRegistry:
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "durable_goal.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

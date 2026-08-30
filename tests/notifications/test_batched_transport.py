@@ -19,6 +19,8 @@ from stackowl.notifications.deliverer import ProactiveDeliverer
 from stackowl.notifications.digest_job import NotificationDigestJob
 from stackowl.notifications.router import Notification, NotificationRouter
 from stackowl.scheduler.job import Job
+from tests._schema_template import seed_schema
+
 
 def _settings() -> Settings:
     return cast(Settings, SimpleNamespace(notifications=NotificationSettings()))
@@ -220,7 +222,7 @@ async def test_flush_dead_letters_after_max_attempts(tmp_db: DbPool) -> None:
 def test_migration_0037_idempotent(tmp_path: Path) -> None:
     db_path = tmp_path / "idem.db"
     # First run applies all migrations including 0037.
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     # Second run must be a clean no-op (no duplicate-column error).
     results = MigrationRunner(db_path=db_path).run()
     statuses = {r.version: r.action for r in results}

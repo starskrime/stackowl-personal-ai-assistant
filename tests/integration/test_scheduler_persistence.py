@@ -18,13 +18,13 @@ from typing import Any
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
 from stackowl.scheduler.job import Job
 from stackowl.scheduler.scheduler_helpers import insert_job
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.integration
 
@@ -69,7 +69,7 @@ class _StubBackend:
 async def migrated_db(tmp_path: Path) -> AsyncIterator[DbPool]:
     """A real SQLite DbPool with every migration applied."""
     db_path = tmp_path / "scheduler_integration.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

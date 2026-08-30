@@ -40,7 +40,6 @@ import pytest
 
 from stackowl.commands.owls_command import OwlsCommand
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.owls.directive_latch import DIRECTIVE_LATCH
 from stackowl.owls.dna import OwlDNA
@@ -55,6 +54,7 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
 from stackowl.scheduler.job import Job
+from tests._schema_template import seed_schema
 from tests._story_2_6_helpers import AlwaysPassShadowValidator
 
 pytestmark = pytest.mark.asyncio
@@ -76,7 +76,7 @@ def _clean_latch() -> Generator[None]:
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "dna_completion_journey.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

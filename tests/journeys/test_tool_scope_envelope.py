@@ -44,7 +44,6 @@ from stackowl.authz import BoundsSpec
 from stackowl.channels.telegram.adapter import TelegramChannelAdapter
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.gateway.scanner import GatewayScanner
 from stackowl.owls.manifest import OwlAgentManifest
@@ -60,6 +59,7 @@ from stackowl.pipeline.streaming import StreamRegistry
 from stackowl.providers.base import CompletionResult, Message
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
+from tests._schema_template import seed_schema
 
 # ---------------------------------------------------------------------------
 # Constants (mirror J4 pattern)
@@ -413,7 +413,7 @@ class _WideOwlProvider:
 async def _recovery_pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     """Real migrated DbPool for the monotonicity journey test."""
     db_path = tmp_path / "envelope_recovery.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

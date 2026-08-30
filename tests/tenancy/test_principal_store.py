@@ -9,16 +9,16 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID, Principal
 from stackowl.tenancy.store import PrincipalStore
+from tests._schema_template import seed_schema
 
 
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "principals.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

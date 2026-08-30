@@ -13,6 +13,7 @@ covered by tests/sessions/test_session_store.py.
 from __future__ import annotations
 
 import pytest
+from tests._schema_template import seed_schema
 
 from stackowl.infra.trace import TraceContext
 
@@ -63,14 +64,13 @@ async def test_the_cost_row_records_both_ids() -> None:
     import tempfile
     from pathlib import Path
 
-    from stackowl.db.migrations.runner import MigrationRunner
     from stackowl.db.pool import DbPool
     from stackowl.events.bus import EventBus
     from stackowl.providers.cost_tracker import CostTracker
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "t.db"
-        MigrationRunner(path).run()
+        seed_schema(path)
         db = DbPool(db_path=path)
         await db.open()
         try:

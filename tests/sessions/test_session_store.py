@@ -11,6 +11,7 @@ import datetime
 import json
 
 import pytest
+from tests._schema_template import seed_schema
 
 from stackowl.db.pool import DbPool
 from stackowl.sessions import ChatType, ResetMode, ResetPolicy, SessionSource
@@ -33,8 +34,7 @@ async def store(tmp_path, monkeypatch):
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
     db = DbPool(db_path=tmp_path / "test.db")
     await db.open()
-    from stackowl.db.migrations.runner import MigrationRunner
-    MigrationRunner(tmp_path / "test.db").run()
+    seed_schema(tmp_path / "test.db")
     yield SessionStore(db, ResetPolicy(mode=ResetMode.BOTH, at_hour=4),
                        mirror_dir=tmp_path)
     await db.close()
@@ -263,8 +263,7 @@ async def bus_store(tmp_path, monkeypatch):
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
     db = DbPool(db_path=tmp_path / "t.db")
     await db.open()
-    from stackowl.db.migrations.runner import MigrationRunner
-    MigrationRunner(tmp_path / "t.db").run()
+    seed_schema(tmp_path / "t.db")
     bus = _Bus()
     yield SessionStore(db, ResetPolicy(mode=ResetMode.BOTH, at_hour=4),
                        mirror_dir=tmp_path, event_bus=bus), bus
@@ -312,8 +311,7 @@ async def test_a_throwing_subscriber_never_blocks_the_conversation(tmp_path,
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
     db = DbPool(db_path=tmp_path / "t.db")
     await db.open()
-    from stackowl.db.migrations.runner import MigrationRunner
-    MigrationRunner(tmp_path / "t.db").run()
+    seed_schema(tmp_path / "t.db")
     store = SessionStore(db, ResetPolicy(mode=ResetMode.BOTH, at_hour=4),
                          mirror_dir=tmp_path, event_bus=_Bus(boom=True))
     try:

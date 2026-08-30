@@ -11,12 +11,12 @@ import pytest
 from stackowl.commands.memory_command import MemoryCommand
 from stackowl.commands.registry import CommandRegistry
 from stackowl.config.settings import MemorySettings, Settings
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.memory.budget_enforcer import MemoryBudgetEnforcer
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.scheduler.job import Job
+from tests._schema_template import seed_schema
 from tests._story_6_4_helpers import (  # noqa: F401 — fixtures re-exported
     db,
     insert_committed,
@@ -267,7 +267,7 @@ def test_migration_count_is_15(migration_runner: Any) -> None:
 
 async def test_reindex_queue_table_present(tmp_path: Path) -> None:
     db_path = tmp_path / "rq.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

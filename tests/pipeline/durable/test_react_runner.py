@@ -33,8 +33,8 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
+from tests._schema_template import seed_schema
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.pipeline.durable.context import get_active
 from stackowl.pipeline.durable.ledger_guard import ledger_guard
@@ -50,7 +50,7 @@ _OWNER = "principal-alice"
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "react_runner.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

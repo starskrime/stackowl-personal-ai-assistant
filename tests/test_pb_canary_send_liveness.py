@@ -12,9 +12,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from stackowl.channels.liveness import ChannelLivenessStore
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.health.contributors import ChannelLivenessContributor
+from tests._schema_template import seed_schema
 
 
 class FakeClock:
@@ -33,7 +33,7 @@ class FakeClock:
 
 async def _migrated_pool(tmp_path: Path) -> DbPool:
     db_path = tmp_path / "live.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path)
     await pool.open()
     return pool

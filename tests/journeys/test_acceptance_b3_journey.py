@@ -25,7 +25,6 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.notifications.proactive_job import ProactiveDeliveryOutcome
 from stackowl.objectives.driver import ObjectiveDriverHandler
@@ -35,6 +34,7 @@ from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.scheduler.job import Job
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+from tests._schema_template import seed_schema
 
 pytestmark = pytest.mark.asyncio
 
@@ -42,7 +42,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture()
 async def db(tmp_path: Path) -> AsyncIterator[DbPool]:
     db_path = tmp_path / "acceptance_b3.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     try:

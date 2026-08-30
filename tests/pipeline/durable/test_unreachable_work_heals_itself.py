@@ -46,8 +46,8 @@ import datetime
 from pathlib import Path
 
 import pytest
+from tests._schema_template import seed_schema
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.pipeline.durable.store import DurableTaskStore
 from stackowl.pipeline.durable.task import DurableTask
@@ -62,7 +62,7 @@ UTC = datetime.UTC
 async def pool(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("STACKOWL_HOME", str(tmp_path))
     db_path = tmp_path / "heal.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     from stackowl.tenancy.store import PrincipalStore

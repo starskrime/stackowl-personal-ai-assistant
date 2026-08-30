@@ -18,10 +18,10 @@ from stackowl.channels._format import OUTPUT_STYLE_KEY
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.manifest import SHIPPED_COMMANDS
 from stackowl.commands.registry import CommandRegistry
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.memory.preferences import PreferenceStore
 from stackowl.pipeline.state import PipelineState
+from tests._schema_template import seed_schema
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +32,7 @@ def _reset_registry() -> None:
 @pytest.fixture()
 async def store(tmp_path: Path) -> PreferenceStore:
     db_path = tmp_path / "style_test.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     yield PreferenceStore(pool)

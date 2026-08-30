@@ -48,7 +48,6 @@ from typing import Any, Literal
 import pytest
 
 from stackowl.config.test_mode import TestModeGuard
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.owls.registry import OwlRegistry
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
@@ -63,6 +62,7 @@ from stackowl.providers.react_callback import IterationCallback, ReActIterationS
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.registry import ToolRegistry
+from tests._schema_template import seed_schema
 
 _GOAL = "Send the report and confirm"
 _FINAL_ANSWER = "Done — the report was sent and confirmed."
@@ -326,7 +326,7 @@ class _FakeProviderRegistry:
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "durable_kill_resume.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

@@ -19,15 +19,15 @@ from stackowl.channels.telegram.approach_rating import (
     ApproachRatingCallbackHandler,
     ApproachRatingTracker,
 )
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.memory.outcome_store import TaskOutcomeStore
+from tests._schema_template import seed_schema
 
 
 @pytest.mark.asyncio
 async def test_full_approach_rating_loop(tmp_path: Path) -> None:
     db_path = tmp_path / "test.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
 
     db = DbPool(db_path)
     await db.open()

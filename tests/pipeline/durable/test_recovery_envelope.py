@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from tests._schema_template import seed_schema
 
 from stackowl.authz.bounds import BoundsSpec
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.pipeline.durable.react_checkpoint import ReActCheckpoint, serialize
 from stackowl.pipeline.durable.recovery import DurableTaskRecoverer
@@ -39,7 +39,7 @@ class _NullBackend:
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "recovery_envelope.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

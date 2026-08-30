@@ -18,8 +18,8 @@ import pytest
 from stackowl.commands.assembly import CommandDeps, register_all_commands
 from stackowl.commands.quiet_command import QuietHoursCommand
 from stackowl.commands.registry import CommandRegistry
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
+from tests._schema_template import seed_schema
 from tests._story_6_7_helpers import make_state, no_test_mode_guard  # noqa: F401
 
 
@@ -31,7 +31,7 @@ def _reset_registry() -> None:
 @pytest.fixture()
 async def db(tmp_path: Path) -> DbPool:
     db_path = tmp_path / "quiet_test.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     pool = DbPool(db_path=db_path)
     await pool.open()
     yield pool

@@ -20,8 +20,8 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
+from tests._schema_template import seed_schema
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableReplayUncertain
 from stackowl.pipeline.durable.context import (
@@ -39,7 +39,7 @@ _ARGS: dict[str, object] = {"path": "data/x", "content": "hi"}
 @pytest.fixture()
 async def pool(tmp_path: Path) -> AsyncGenerator[DbPool]:
     db_path = tmp_path / "guard.db"
-    MigrationRunner(db_path=db_path).run()
+    seed_schema(db_path)
     p = DbPool(db_path=db_path)
     await p.open()
     try:

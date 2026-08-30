@@ -7,7 +7,6 @@ Simulates moving StackOwl to a new machine:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import sqlite3
 import tempfile
@@ -15,17 +14,17 @@ from pathlib import Path
 
 import pytest
 
-from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.export.backup import BackupManager
 from stackowl.export.exporter import Exporter
 from stackowl.export.importer import Importer
+from tests._schema_template import seed_schema
 
 
 def _make_db(tmp_dir: Path) -> Path:
     db_path = tmp_dir / "stackowl.db"
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    MigrationRunner(db_path).run()
+    seed_schema(db_path)
     return db_path
 
 
