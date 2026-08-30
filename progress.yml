@@ -315,49 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
-  D01_5_CLOSED_ITS_OWN_CHECKS_AND_ONE_OF_THEM_BIT_2026_08_30:
-    what_the_audit_was_for: >-
-      D01.5 was 7/7 done with two acceptance checks left OPEN by nature. Both are
-      now closed by evidence — and closing the second one found that this item had
-      shipped a guard that was killing live tasks.
-    claim_1_CLOSED: >-
-      "Writes still succeed under the tighter CHECK" was unproven at 44 rows in a
-      quiet window. messages now holds 2,429 rows, roles exactly
-      {user: 1335, assistant: 1094}, zero CHECK-constraint failures in the log, and
-      the 0106 constraint is still verbatim at schema 0128 — it survived 22 later
-      migrations, which is not automatic when SQLite rebuilds tables.
-    claim_2_CLOSED_and_it_was_not_good_news: >-
-      "Rule 5 has zero live firings" is dead. It fired at 2026-08-30T03:20:22 on
-      trace recover-4e6044f0cde9 — and it was WRONG to fire. The task died with no
-      response. Replaying the validator over the whole live tasks table found 12
-      more permanently-unresumable checkpoints, every one status='failed'.
-    the_root_cause: >-
-      One rule applied to two different wire shapes. On the OpenAI wire a tool
-      result is its own message and `tool -> user` is the shape THIS PLATFORM SENDS
-      every time it folds a directive in — four sites do it, and two of those four
-      are mine from the turn-economics work one session earlier. The refused
-      checkpoints show the model answering the directive in the very next turn. The
-      guard was refusing its own traffic; it was invisible for a month because the
-      checkpoint callback runs FIRST, so the poison always lands one checkpoint
-      after the splice and only a resume ever reads it.
-    the_fix: >-
-      Rule 5 narrowed to Anthropic (where the same adjacency really is two
-      consecutive user turns), and close_interrupted_tool_sequence() finally built —
-      the half D01.5's own brainstorm scoped as "Rule 5 PLUS A CLOSER, so an
-      interrupted checkpoint is RESUMABLE rather than rejected" and never shipped.
-      Wired at the single resume load point, proven reached by mutation M1, and it
-      repairs the resume copy without writing back over the checkpoint.
-      Measured after: 127 of 127 decodable checkpoints resume, 0 refused.
-    what_is_still_NOT_proven: >-
-      The closer inserted zero turns live — all 12 casualties were OpenAI-shaped, so
-      the narrowing alone fixed them. The closer is armed and test-proven only. Its
-      INFO closing query is recorded on the item and was checked to exist.
-    also_found_DEBT_37: >-
-      222 of 349 checkpoint blobs cannot be deserialized — all `rollover-*` rows
-      writing {"phase":"mined","mined":N} into checkpoint_blob. One column, two
-      writers, two schemas; 90 failed + 72 dead_letter are revive-sweep candidates.
-      Fails loudly, so nothing is corrupted. Recorded, not fixed — it is a schema
-      decision.
+  D05_7_AUDITED_2026_08_30_no_code_change_one_escalation:
+    outcome: >-
+      no_change_needed in code. Both recorded claims re-run: the quality cliff
+      HOLDS (flatter by about half), and the detector gap is CLOSED and firing in
+      production. One contradiction found that is Bakir's to settle, not mine.
+    the_baseline_REPRODUCED: >-
+      Restricted to rows captured before 2026-08-05 the table lands on the
+      recorded numbers — 0.85 / 0.75 / 0.70 / 0.35 / 0.10 against a recorded
+      0.85 / 0.75 / 0.70 / 0.40 / 0.10, with n within a few rows per band. First
+      claim in this audit series reproducible rather than merely re-measurable.
+    the_cliff_flattened_but_did_not_go: "After 2026-08-05: 0.95 / 0.90 / 0.80 / 0.50 / 0.40. The 15+ band quadrupled from 0.10; the monotonic collapse with call count remains."
+    THE_CONTROL_THAT_ALMOST_DID_NOT_HAPPEN: >-
+      Since week 26 no failed turn has been scored at all (10,514 unscored rows
+      are success=0). Had the baseline included failures and the later window not,
+      the whole improvement would be an artefact of dropping the low scores. I
+      recomputed the as-of-baseline table with failures excluded: essentially
+      unchanged, and the 15+ band moved the WRONG way. Composition does not
+      explain it. And the zero is not a bug — it matches Bakir's standing
+      positive-only-learning decision, whose date is that same week.
+    ONE_MORE_INSTRUMENT_TRAP: >-
+      task_outcomes.captured_at is a FLOAT UNIX TIMESTAMP. Comparing it to
+      '2026-08-04' returns an empty set that reads exactly like "no data since the
+      baseline" — which is what my first three time-sliced queries reported. The
+      shape had to be printed before the filter could be trusted, for the ninth
+      time this session.
+    ESCALATIONS:
+      - id: ESC-68
+        question: "Should the tool-loop guardrail's hard stops be reachable at all, and if so where?"
+        why_evidence_cannot_settle_it: >-
+          Two recorded positions collide and both are yours. D05.7 decided "WARN
+          ONLY, NEVER HARD-STOP ON REPETITION" because repetition is a smell, not
+          proof — and that decision HOLDS in the shipped code: hard_stop_enabled
+          defaults False and before_call returns allow immediately when it is off.
+          But the flag has NO SETTER ANYWHERE in src/ or tests/, which makes
+          repeated_exact_failure_block, idempotent_no_progress_block and
+          same_tool_failure_halt_after unreachable code — and your other standing
+          rule is that a capability gated off with nothing to switch it on is
+          decoration, not a feature.
+          Note the two are not quite about the same thing: your warn-only decision
+          was about REPETITION, while same_tool_failure_halt_after is about
+          repeated FAILURE. They are gated behind one flag regardless.
+        the_measurement: "13 live INFO warnings, all code=repeated_exact_call_warning on skills_list at count=2. Zero blocks, because no block is reachable."
+        options: >-
+          (a) leave warn-only and DELETE the three unreachable branches, so the
+          code says what it does; (b) make the flag settable and enable it for
+          autonomous / cron / recovery lanes only, which is what the reference
+          platform documents these as — "opt-in circuit breakers for autonomous
+          sessions where stopping a loop is preferable to spending the full
+          iteration budget" — leaving interactive turns warn-only; (c) leave as is
+          and record the branches as deliberately dormant.
+        recommendation: "(b), scoped to non-interactive lanes. It honours the warn-only decision where you made it — interactive turns — and stops a recovery task burning its whole budget on a loop nobody is watching."
+        blocked_until_answered: "Nothing. D05.7 is otherwise closed; this is a behaviour change and behaviour changes are yours."
 
 waves:
   1:
@@ -10260,7 +10269,73 @@ items:
           item guards on. Stated as correlation, not causation.
     changes: []
     notes: null
+    AUDIT_2026_08_30_the_baseline_REPRODUCES_and_the_cliff_has_HALVED:
+      the_baseline_is_reproducible_which_is_rare: >-
+        Re-ran the quality-by-call-count table restricted to rows captured BEFORE
+        2026-08-05, and it lands on the recorded numbers:
+          recorded  0.85(n=3822) 0.75(n=432) 0.70(n=238) 0.40(n=476) 0.10(n=273)
+          re-run    0.85(n=3829) 0.75(n=439) 0.70(n=247) 0.35(n=489) 0.10(n=295)
+        The small n differences are rows captured between the original query and
+        midnight. This is the first claim in the audit series that could be
+        reproduced exactly rather than merely re-measured.
+      AFTER_the_baseline_the_cliff_has_flattened_by_about_half: |-
+        band      baseline   after 2026-08-05 (n)
+        0 calls     0.85          0.95  (1667)
+        1-2         0.75          0.90  (1111)
+        3-4         0.70          0.80   (259)
+        5-14        0.40          0.50   (470)
+        15+         0.10          0.40   (221)
 
+        The 15+ band quadrupled. BUT THE CLIFF STILL EXISTS — 0.95 -> 0.40 is
+        still a monotonic collapse with call count, so D05.7's core finding HOLDS
+        and only its magnitude changed.
+      I_NEARLY_REPORTED_THIS_AS_A_WIN_WITHOUT_CHECKING_THE_DENOMINATOR: >-
+        Since week 26 (late June) NO FAILED TURN HAS BEEN SCORED: 10,514 unscored
+        rows are success=0 and only 8 unscored are success=1, and `scored_FAIL`
+        is exactly 0 every week from W26 onward. If the baseline had included
+        failures and the later window had not, removing the failures alone would
+        lift every median and the "improvement" would be an artefact.
+        TESTED RATHER THAN ASSUMED: recomputing the as-of-baseline table with
+        success=0 excluded gives 0.85 / 0.75 / 0.70 / 0.40 / 0.00 — essentially
+        unchanged, and the 15+ band moves the WRONG WAY. So composition does not
+        explain it. The improvement survives the control.
+      AND_THE_ZERO_IS_NOT_A_BUG: >-
+        Scoring only successes matches Bakir's standing "positive-only learning —
+        wins never failures" decision (2026-06-24), and W26 is that week. Checked
+        before filing it as a defect. It does remain a PROPERTY worth knowing:
+        quality_score measures quality AMONG SUCCESSES, so it is structurally
+        blind to failure and cannot be the signal that notices a turn going bad.
+      NOT_ATTRIBUTED_TO_THE_TURN_ECONOMICS_WORK: >-
+        The post-2026-08-28 slice looks even better (15+ at 0.60) but its n is 45,
+        and 43 of those landed on ONE DAY — a single burst, not a trend. The
+        trustworthy window is 2026-08-05 onward (n=221 in that band). Correlation
+        either way, as the original measurement was careful to say: harder tasks
+        need more tools AND are harder to answer well.
+    THE_SECOND_CLAIM_the_detector_gap_is_CLOSED_and_FIRING: >-
+      D05.7 said our supervisor counted zero-progress dispatches per TOOL NAME and
+      was "blind to productive-looking loops". The ported controller shipped with
+      all three detectors, and the exact-repeat one is LIVE: 13 INFO
+      "[guardrails] tool-loop warning" events, code=repeated_exact_call_warning,
+      carrying tool + args_hash + count. So the tool+ARGS signature the old
+      name-only counter could not express is now real and observable in production.
+      NARROW DENOMINATOR, stated: all 13 are the same tool (skills_list) at count=2.
+      The detector fires; it has not yet been exercised broadly.
+    WARN_ONLY_HELD_and_that_is_the_finding_underneath: >-
+      hard_stop_enabled defaults False and before_call returns allow immediately
+      when it is off, so warn-only is genuinely the shipped behaviour — Bakir's
+      decision held. But the flag has NO SETTER ANYWHERE in src/ or tests/, so
+      three branches — repeated_exact_failure_block, idempotent_no_progress_block
+      and same_tool_failure_halt_after — are UNREACHABLE CODE. See ESC-68.
+    CLOSING_QUERY: >-
+      Re-run the table from task_outcomes, and note that captured_at is a FLOAT
+      UNIX TIMESTAMP, not an ISO string — comparing it to '2026-08-04' silently
+      matches nothing and returns an empty result that reads like "no data":
+        SELECT tool_call_count, quality_score, success FROM task_outcomes
+         WHERE quality_score IS NOT NULL AND captured_at >= <epoch>
+      Band as 0 / 1-2 / 3-4 / 5-14 / 15+ and take the median per band. The cliff
+      is expected to persist; watch whether 15+ falls back toward 0.10.
+      For the detector: grep '"code": "repeated_exact_call_warning"' — 13 events,
+      all skills_list, as of 2026-08-30.
   - id: D05.8
     title: "Tool count"
     domain: D05
