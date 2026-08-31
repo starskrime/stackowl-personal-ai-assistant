@@ -315,6 +315,73 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TRIAGE_2026_08_31_the_picture_request_was_NEVER_CLASSIFIED_it_INHERITED:
+    the_agreed_order: "Bakir: completion first, triage second. This is triage — the first gate in the six-gate chain, and the one where the request lost its tools."
+    WHAT_ACTUALLY_HAPPENED_and_it_is_not_misclassification: >-
+      "Explain me in easy way hiw to remember bfs for tree in python" was routed
+      `conversational` and CACHED. Then "Give me in pictures" — 19 chars, same session —
+      took FR-9's sticky-routing bypass and inherited `conversational` WITHOUT BEING
+      CLASSIFIED AT ALL. The log shows `triage: sticky-routed`, not `triage: routed`.
+      `conversational` is in TOOL_FREE_CLASSES (state.py:21), so the turn ran
+      tools_used=false with no tools presented, and the model — unable to draw — promised
+      an image instead. Not a misclassification: a NON-classification.
+    THE_2026_07_01_ADVERSARIAL_REVIEW_HAD_THE_ASYMMETRY_BACKWARDS: >-
+      Its reasoning is quoted verbatim in triage.py. It BANNED caching `standard` because a
+      stale work-turn resolution "silently defeats the F120 tool-capability gate". Right
+      worry, wrong class. A wrong `standard` costs a possibly-wrong owl AND KEEPS THE TOOLS.
+      `conversational` is the ONLY cached class that REMOVES them — and it is the one they
+      kept. Its safety case, "only the low-risk conversational-follow-up case ('ok thanks',
+      'sounds good') is fast-pathed", assumes a short follow-up is never a new task;
+      _STICKY_MAX_CHARS is 200, which comfortably fits "make me a chart of my applications
+      and send it".
+    MEASURED_BEFORE_TOUCHING_IT:
+      frequency: "92 triage entries in the retained window, 86 of them direct-address machine lanes. Of the SIX human-routed turns, THREE were sticky — 50%."
+      what_the_bypass_buys: "Three skipped router calls in the whole window."
+      what_it_cost: "One entire user-visible turn, plus a task falsely marked completed."
+      tool_free_is_absolute: "context-budget lines pair (conversational, tools_used=False) 5 times out of 5, and (standard, True) 86 times. The class decides tool presence outright."
+    the_fix_and_what_it_deliberately_KEEPS: >-
+      The owl is still inherited and the router is still not called — the saving this bypass
+      exists for lives entirely in reusing the OWL, and a test asserts mock.call_count stays
+      1 so a future change cannot throw the optimisation away while claiming to fix this.
+      What is dropped is inheriting TOOL-FREEDOM: a cached class in TOOL_FREE_CLASSES
+      becomes _STICKY_SAFE_INTENT_CLASS ("standard"). One named constant, so the one place
+      that decides "capable by default" is greppable.
+    why_UNCONDITIONAL_and_not_a_smarter_test: >-
+      Deciding per-message which short follow-up "is really a task" is exactly the new-topic
+      detection FR-9's own comment says it does not have, and adding a classifier here would
+      spend the call the bypass exists to avoid. The cost of being wrong in the new
+      direction is tool schemas on an "ok thanks"; the cost of being wrong in the old
+      direction is the whole turn. Asymmetric, so the rule is unconditional.
+    the_pre_existing_test_was_INVERTED_not_deleted: >-
+      test_fresh_session_calls_router_then_bypasses_on_followup asserted
+      `second.intent_class == "conversational"` — it encoded the bug. Inverted to assert
+      "standard", with the reason in place, and the owl-reuse and router-not-called
+      assertions kept above it so the test now proves BOTH halves. Same shape as ESC-68's
+      test_there_is_NO_hard_stop_mode_at_all.
+    TWO_PRE_EXISTING_RED_TESTS_FOUND_AND_FIXED_and_they_were_MINE: >-
+      tests/pipeline/test_assemble_skills.py had two failures with no connection to triage:
+      both asserted "skill_view research_skill" appears per catalogue entry. D10.6 Stage 1 —
+      my own earlier change — dropped that trailing per-entry pointer because
+      instruction_injector._STANDING already says "Call skill_view <name> to load a skill
+      before using it" and _CATALOG_HEADER repeats it; each entry was restating the same
+      sentence. VERIFIED the capability survives before touching the tests, then moved both
+      assertions to the invariant that still holds (the model is told HOW to load, once).
+      Leaving them red and calling them out of scope is the exact thing this programme bans.
+    baselines: "ruff src/ 35, mypy 65 — both exactly at baseline. tests/pipeline: 1,631 passed (was 1,629 + 2 red). tests/pipeline/steps: 61 passed."
+    ACCEPTANCE_CHECK_OPEN_zero_denominator_AGAIN: >-
+      "A sticky-routed turn logs intent_class=standard with tool_freedom_dropped=true."
+      NOT CLOSED. Zero sticky-routed turns — over ZERO Telegram updates since the
+      2026-08-31T04:26:09Z restart. Zero over zero is not a pass. The log line now carries
+      BOTH the effective class and the cached one it replaced, so a single real follow-up
+      closes it. CLOSING QUERY:
+      grep '"msg": "\[pipeline\] triage: sticky-routed' ~/.stackowl/logs/stackowl.jsonl | tail
+      Read `tool_freedom_dropped`; true means this fix fired on a turn that would have been
+      born toolless.
+    AN_UNRELATED_PRE_EXISTING_ERROR_SEEN_AND_NOT_FIXED: >-
+      "[scheduler] incident_escalation: handler exceeded its timeout" appeared once after
+      the restart. NOT from this item: it also occurred TWICE at 01:xx, before any change
+      today. Recorded as DEBT-55 rather than folded into this item.
+    NOT_DONE: "The judge half of the completion contract, enforcement, and secretary's image_generate — all authorised, all separate items."
   COMPLETION_CONTRACT_2026_08_31_achievement_was_a_CONSTANT_and_shadow_phase_ships:
     the_question_bakir_asked: "'Problem why task marked as completed. That is our issue.' — asked live, mid-incident, and it was the right question."
     THE_INCIDENT_MEASURED_END_TO_END: >-
@@ -1233,6 +1300,35 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-54
+    found: 2026-08-31
+    title: "Sticky routing let a short follow-up inherit tool-freedom it was never classified into"
+    what: >-
+      FR-9's bypass reused a cached `conversational` intent class for any same-session
+      message under 200 chars. "Give me in pictures" inherited it from the preceding BFS
+      question, and `conversational` is in TOOL_FREE_CLASSES, so the turn ran with no tools
+      and the model promised an image it could not make.
+    evidence: >-
+      triage.py logged `sticky-routed`, not `routed`; context-budget shows
+      intent_class=conversational with tools_used=false, 5 of 5. Of six human-routed turns in
+      the retained window, three were sticky — 50% — and the bypass saved three router calls
+      in total.
+    decision: >-
+      The owl is still inherited and the router still skipped; only tool-freedom is dropped, via
+      _STICKY_SAFE_INTENT_CLASS. Unconditional, because per-message new-topic detection is what
+      FR-9 states it does not have and would cost the very call the bypass avoids. The
+      pre-existing test asserting the old behaviour was inverted, not deleted.
+    residual_risk: >-
+      A trivial "ok thanks" follow-up now carries tool schemas it does not need. That is the
+      cheap side of the asymmetry, and it is measurable via the new tool_freedom_dropped field.
+    status: "open — shipped and live; acceptance check has a ZERO denominator (no chat turns since restart), closing query recorded in current"
+  - id: DEBT-55
+    found: 2026-08-31
+    title: "incident_escalation scheduler handler exceeds its timeout"
+    what: "[scheduler] incident_escalation-<id>: handler exceeded its timeout — the dispatch slot is released so others can run."
+    evidence: "Three occurrences in the retained window: two at 2026-08-31T01:xx and one at 04:xx. Predates every change made on 2026-08-31, so it is not caused by the shell guard, the migration backup, the recovery export, the achievement writer or the triage fix."
+    decision: "Recorded, not investigated — seen while validating an unrelated item, and folding it in would have made that item two."
+    status: "open — not investigated"
   - id: DEBT-53
     found: 2026-08-31
     title: "A task's achievement condition was a constant restating delivery, so completion never checked the goal"

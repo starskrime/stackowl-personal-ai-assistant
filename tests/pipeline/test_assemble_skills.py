@@ -92,7 +92,15 @@ async def test_owned_skill_summary_injected():
     assert "Fetch a page." in out.system_prompt
     assert "research_skill" in out.system_prompt
     assert "AVAILABLE" in out.system_prompt
-    assert "skill_view research_skill" in out.system_prompt
+    # UPDATED 2026-08-31, and this test was RED before this item touched it.
+    # D10.6 Stage 1 dropped the trailing "(skill_view <name>)" from EVERY entry
+    # because the standing line already carries it — instruction_injector's
+    # _STANDING says "Call skill_view <name> to load a skill before using it"
+    # and _CATALOG_HEADER repeats it. Each entry was restating the same
+    # sentence. The capability is unchanged; only the per-entry repetition is
+    # gone, so the assertion moves to the invariant that still holds: the model
+    # is told HOW to load, once.
+    assert "skill_view" in out.system_prompt, "the model is not told how to load a skill"
 
 
 @pytest.mark.asyncio
@@ -328,4 +336,6 @@ async def test_conversational_turn_gets_no_skills_block():
     # — costing more than the tokens it saved. Depth still arrives on demand
     # through skill_view.
     assert "research_skill" in sp, "the catalogue is present on a conversational turn"
-    assert "skill_view research_skill" in sp, "with the pointer to fetch the body"
+    # Same D10.6 Stage 1 change as above — the pointer is stated once in the
+    # standing line rather than repeated on every catalogue entry.
+    assert "skill_view" in sp, "with the pointer to fetch the body"

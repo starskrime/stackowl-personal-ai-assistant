@@ -1,5 +1,11 @@
 """Tests for FR-9 sticky routing — triage.py's LLM-router bypass.
 
+UPDATED 2026-08-31: the bypass now inherits the OWL but never tool-freedom. A
+cached "conversational" resolution no longer makes the follow-up tool-free,
+because "Give me in pictures" took this path and ran with no tools. The
+capability half is covered by test_sticky_routing_never_strips_tools.py; this
+file still covers WHEN the bypass fires.
+
 The bypass fires iff ALL hold: a StickyRouteCache is wired, the message is
 < 200 chars, a fresh (<=5 min) cache entry exists for the session, the cached
 owl still resolves in the registry, AND the cached intent_class is
@@ -77,7 +83,14 @@ async def test_fresh_session_calls_router_then_bypasses_on_followup() -> None:
         second = await triage_step.run(_state(session_key="sess-1", input_text="thanks!"))
         assert mock.call_count == 1  # bypassed — no second router call
         assert second.owl_name == "research_owl"
-        assert second.intent_class == "conversational"
+        # INVERTED 2026-08-31. This line used to assert the follow-up inherited
+        # "conversational". That is precisely the bug: "Give me in pictures" took
+        # this path, inherited a tool-free class nobody had classified it into,
+        # and ran with no tools. The OWL is still inherited (asserted above) and
+        # the router is still skipped (asserted above) — the saving is intact —
+        # but the turn is no longer born unable to act.
+        # See tests/pipeline/steps/test_sticky_routing_never_strips_tools.py.
+        assert second.intent_class == "standard"
         assert second.intent_classified is True
         assert second.clarify_question is None
     finally:

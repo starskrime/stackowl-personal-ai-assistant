@@ -22,7 +22,7 @@ from stackowl.pipeline.services import (
     get_services,
     owner_scope_key,
 )
-from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState
 from stackowl.setup.lang_detect import detect_language
 
 _FALLBACK_OWL = "secretary"
@@ -31,6 +31,10 @@ _FALLBACK_OWL = "secretary"
 # ``feedback.py:_PREFILTER_MAX_CHARS`` value; redefined locally rather than
 # imported to avoid coupling two unrelated pipeline steps.
 _STICKY_MAX_CHARS = 200
+#: What a sticky-routed turn's intent class becomes when the cached one would
+#: strip its tools. Named rather than inlined so the ONE place that decides
+#: "capable by default" is greppable.
+_STICKY_SAFE_INTENT_CLASS = "standard"
 
 
 #: Turns of conversation given to the ROUTER, and the per-turn character cap.
@@ -238,20 +242,50 @@ async def run(state: PipelineState) -> PipelineState:
                 )
             else:
                 language = detect_language(state.input_text)
+                # THE OWL IS INHERITED. TOOL-FREEDOM IS NOT.
+                #
+                # Earned 2026-08-31, user-visible. "Explain me ... bfs for tree in
+                # python" routed conversational and was cached; "Give me in
+                # pictures" — 19 chars, same session — then took this bypass and
+                # inherited `conversational` WITHOUT BEING CLASSIFIED AT ALL. That
+                # class is in TOOL_FREE_CLASSES, so the turn ran tools_used=false
+                # and the model, unable to draw, promised an image that never came.
+                #
+                # The 2026-07-01 review above banned caching `standard` because a
+                # stale work-turn resolution "silently defeats the F120
+                # tool-capability gate". Right worry, wrong class: a wrong
+                # `standard` costs a possibly-wrong owl and KEEPS the tools, while
+                # `conversational` is the only cached class that REMOVES them.
+                #
+                # The saving this bypass exists for is skipping the router call,
+                # and that lives entirely in reusing the OWL — still done, below.
+                # Reusing the tool-free class saved nothing and cost the turn.
+                # Unconditional rather than per-message, because deciding which
+                # short follow-up "is really a task" is exactly the new-topic
+                # detection FR-9 states it does not have; the cost of being wrong
+                # here is tool schemas on an "ok thanks", and the cost of being
+                # wrong the other way is the whole turn.
+                sticky_intent_class = (
+                    _STICKY_SAFE_INTENT_CLASS
+                    if cached_intent_class in TOOL_FREE_CLASSES
+                    else cached_intent_class
+                )
                 log.engine.info(
                     "[pipeline] triage: sticky-routed",
                     extra={
                         "_fields": {
                             "trace_id": state.trace_id,
                             "owl": cached_owl,
-                            "intent_class": cached_intent_class,
+                            "intent_class": sticky_intent_class,
+                            "cached_intent_class": cached_intent_class,
+                            "tool_freedom_dropped": sticky_intent_class != cached_intent_class,
                             "language": language,
                         }
                     },
                 )
                 return state.evolve(
                     owl_name=cached_owl,
-                    intent_class=cached_intent_class,
+                    intent_class=sticky_intent_class,
                     clarify_question=None,
                     language=language,
                     intent_classified=True,
