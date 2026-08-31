@@ -55,6 +55,22 @@ _LESSONS_DEGRADED_BLOCK = (
 )
 
 
+# F-49, THIRD INSTANCE — and the one that matters most. `bridge.retrieve` is the
+# LONG-TERM committed-fact read: what the operator actually told the platform. It
+# was the only gather in `run` with no guard at all, while `_gather_history`,
+# `_gather_graph_context` and `_gather_preferences` all degrade to ""/[]. A raised
+# exception there did not degrade the turn, it ENDED it — and degrading it silently
+# would be worse than the crash, because the model would then answer as though the
+# operator had never told it anything.
+_LONG_TERM_DEGRADED_BLOCK = (
+    "## Long-Term Memory: DEGRADED\n"
+    "Long-term memory could not be read this turn (the fact store failed). "
+    "Proceed WITHOUT it, and be aware your recall of what the user has told you "
+    "is currently unavailable — do not assume the absence of remembered facts "
+    "means you were never told."
+)
+
+
 #: How many query tokens are looked up. Was 5, which meant only the FIRST FIVE
 #: WORDS of a question were ever considered — and real questions put their subject
 #: late. Measured 2026-08-25: "can you please check my email on Gmail today"
@@ -670,6 +686,41 @@ async def _gather_history(
     )
 
 
+async def _gather_long_term(bridge: object, state: PipelineState) -> str:
+    """The committed-fact context, or a DEGRADED block if the store failed.
+
+    THE ONLY UNGUARDED GATHER IN ``run``, until now. Its three siblings all carry a
+    try/except and return ""/[] — `_gather_preferences` says so in its own
+    docstring, "Failures (store missing, DB error) return ''" — so a store fault
+    cost the turn nothing anywhere except here, where it ended it.
+
+    DEGRADED, NOT EMPTY. Returning "" would make a failed read indistinguishable
+    from "the user has never told me anything", which is exactly the confusion F-49
+    introduced `_REFLECTIONS_DEGRADED_BLOCK` and `_LESSONS_DEGRADED_BLOCK` to stop.
+    This is the same rule on the channel that carries the most.
+
+    NO CIRCUIT BREAKER. Measured across four days of logs: ZERO memory-read
+    failures. A breaker exists to stop hammering a sick backend; with nothing
+    hammering, its state and thresholds would be abstraction for a scale that has
+    not arrived — the same argument the memory research used to DECLINE the
+    provider ABC. See ESC-92.
+    """
+    try:
+        return await bridge.retrieve(  # type: ignore[attr-defined,no-any-return]
+            state.input_text, owner_scope_key(state),
+        )
+    except Exception as exc:
+        log.engine.error(
+            "[pipeline] classify._gather_long_term: the fact store failed — "
+            "annotating context DEGRADED (long-term recall unavailable this turn)",
+            exc_info=exc,
+            extra={"_fields": {
+                "trace_id": state.trace_id, "session_key": state.session_key,
+            }},
+        )
+        return _LONG_TERM_DEGRADED_BLOCK
+
+
 async def run(state: PipelineState) -> PipelineState:
     log.engine.debug(
         "[pipeline] classify: entry", extra={"_fields": {"trace_id": state.trace_id}}
@@ -680,7 +731,7 @@ async def run(state: PipelineState) -> PipelineState:
         log.engine.debug("[pipeline] classify: no memory_bridge — pass-through")
         return state
     # Long-term committed-fact context (FTS or semantic).
-    context = await bridge.retrieve(state.input_text, owner_scope_key(state))
+    context = await _gather_long_term(bridge, state)
     # Short-term: last N turns of the current session.
     try:
         from stackowl.config.settings import cached_settings

@@ -315,6 +315,56 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  PHASE_5_ITEM_1_2026_08_31_the_one_memory_read_that_could_END_a_turn:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-87."
+    how_this_item_was_reached: >-
+      Bakir's phase-5 order — "ALL THREE LATENCY MECHANISMS FIRST (prefetch, circuit
+      breaker, background writes with flush barrier), PLUGINS AFTER" — and the research
+      note's framing of the first: "a circuit breaker around memory reads so a sick store
+      degrades instead of failing the turn — the same rule we already hold as
+      no-hidden-errors and have not applied here."
+    THE_MEASUREMENT: >-
+      classify.run assembles a turn's context from four sources and THREE of them degrade:
+      _gather_history (try/except -> []), _gather_graph_context (-> ""), _gather_preferences
+      (-> "", and its docstring says so: "Failures (store missing, DB error) return ''").
+      The fourth, `context = await bridge.retrieve(...)`, had no guard at all — and it is
+      the LONG-TERM committed-fact read, the one carrying what the operator actually told
+      the platform. A raised exception there did not degrade the turn, it ENDED it.
+    AND_THE_CONVENTION_FOR_SAYING_SO_ALREADY_EXISTED_TWICE: >-
+      F-49 introduced _REFLECTIONS_DEGRADED_BLOCK and _LESSONS_DEGRADED_BLOCK, both wired
+      (classify.py:272 and :543), both with the reasoning written out — "a search failure
+      here must not silently look identical to 'no lessons exist'". Long-term memory had
+      neither the guard nor the block, so a failed recall would have made the model answer
+      as though the operator had never told it anything. Degrading it SILENTLY would have
+      been worse than the crash.
+    the_fix: "_gather_long_term(), shaped like its three siblings, returning
+      _LONG_TERM_DEGRADED_BLOCK and logging at ERROR when the store raises."
+    I_DELIBERATELY_DID_NOT_BUILD_THE_CIRCUIT_BREAKER_HE_ASKED_FOR: >-
+      Measured across four days of logs: ZERO memory-read failures. A breaker exists to
+      stop hammering a sick backend; with nothing hammering, its state, thresholds and
+      half-open probes would be exactly the "abstraction for a scale that never arrived"
+      the SAME research note cites when it DECLINED the provider ABC. The degradation is
+      the part that was missing and the part that has teeth. ESC-92 puts the difference in
+      front of him rather than narrowing his instruction quietly.
+    ladder_rung: "1 — one helper in the file that already has three of them, using the
+      degraded-block vocabulary that already exists. No new module, no new state."
+    tests: "5 new in tests/pipeline/steps/test_the_long_term_memory_read_can_kill_the_turn.py
+      — a sick store not ending the turn, the turn being TOLD its recall is unavailable, a
+      HEALTHY store unchanged (the expensive direction: a guard that swallows real context
+      is worse than the crash it prevents), the failure being LOUD, and the new block
+      matching the two that already exist so a reader does not learn to ignore all three."
+    suites: "tests/pipeline + tests/memory 2,186 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      RESTART 2026-08-31T21:24:55Z. 465 records, ZERO ERRORs, and a real secretary turn ran
+      the new path at 21:25:36 — "assemble: curated memory in prompt blocks 2, chars 3211" —
+      with NO degradation fired, which is the correct behaviour for a healthy store.
+    validate_the_degraded_half_is_TEST_ONLY_and_deliberately_so: >-
+      Exercising it in production means breaking the fact store on a live box. Both
+      directions are pinned by test instead. The closing query if it ever fires:
+      "classify._gather_long_term: the fact store failed" at ERROR, which is INFO-visible
+      by construction.
+
   STALE_STORE_DETECTOR_2026_08_31_NO_CHANGE_the_design_is_an_operator_question:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-85."
     outcome: no_change_needed_plus_escalation
@@ -2022,6 +2072,28 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_92_you_asked_for_a_circuit_breaker_and_I_shipped_a_guard:
+      question: >-
+        Phase 5 item 1 was "a circuit breaker around memory reads". I shipped the
+        degradation half — the read now returns a DEGRADED block instead of ending the turn
+        — and did NOT add breaker state, thresholds or half-open probes. Do you want the
+        rest?
+      why_evidence_cannot_settle_it: >-
+        The evidence says a breaker would currently protect against nothing. Whether you
+        want it anyway — as insurance, or because a future plugin-backed store will be far
+        less reliable than SQLite on the same box — is a judgement about what is coming, not
+        about what has happened.
+      the_measurement: >-
+        ZERO memory-read failures across four days of logs. The store is SQLite on the same
+        machine; the failure mode a breaker guards (a remote backend that is slow rather
+        than down) does not exist yet. It WILL exist the moment a memory plugin lands, which
+        is the item you put immediately after this one.
+      panel_recommendation: >-
+        Wait, and build it WITH the first plugin rather than before it. A breaker tuned
+        against a backend that cannot fail is tuned against nothing — the same reason the
+        stale-store detector could not be calibrated today (ESC-90). The guard that shipped
+        is what makes waiting safe: the turn already survives a store fault.
+      what_is_blocked: "Nothing. Prefetch and the flush barrier are independent."
     ESC_90_the_stale_store_detector_needs_a_rule_only_you_can_choose:
       question: >-
         You asked for "any store with readers but no writes in N days". Two rules were built
