@@ -315,6 +315,51 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  SHADOW_PATHS_PROVEN_THROUGH_THE_REAL_SEAM_2026_08_31:
+    why_this_item_and_not_another_feature: >-
+      THREE consecutive items shipped with acceptance checks whose denominator was ZERO —
+      the achievement writer, the judge, and the sticky-routing fix. No chat turn has
+      arrived since any of them went out, so none of their paths had been taken ANYWHERE.
+      Building a fourth unevidenced thing on top of three unevidenced things is how a
+      programme convinces itself it is working. This item buys evidence instead.
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-57."
+    what_it_can_and_CANNOT_do: >-
+      It CANNOT close a production check: a test is not traffic, and this programme has
+      already paid for "worked in tests, never fired in production". What it DOES is move
+      all three from "never executed anywhere" to "executed through the real seam" — a
+      different and much smaller risk, stated as such rather than dressed up as a pass.
+    the_path_is_genuine: "A real inbound Telegram update -> TelegramChannelAdapter -> GatewayScanner -> AsyncioBackend -> the whole pipeline, with the real DurableTaskStore on a real temporary database. Only the MODEL is scripted, which is the standing rule for gateway tests here."
+    PROVEN_1_the_triage_fix: "Two real turns: an ordinary question, then the 19-char follow-up. The follow-up's intent_class is NOT in TOOL_FREE_CLASSES. The 'Give me in pictures' failure cannot recur through the genuine path."
+    PROVEN_2_the_writer: "enqueue_turn_task called exactly as orchestrator.py calls it: the writer runs and its criterion LANDS ON THE ROW, verified by reading tasks.achievement back and asserting it is no longer the constant."
+    PROVEN_3_the_judge: "complete_turn_task then runs the judge, which reads that row back. Both spawned paths execute."
+    A_LIMIT_THIS_TEST_DISCOVERED_RATHER_THAN_ASSUMED: >-
+      The durable row is created by the ORCHESTRATOR's _dispatch_turn, NOT by backend.run —
+      so driving the backend alone never enqueues at all, and the first draft of the writer
+      test failed with "store.get: not found". Recorded because it means a gateway test that
+      drives backend.run is NOT exercising the task row, and anyone assuming otherwise will
+      measure nothing.
+    a_test_double_that_had_stopped_resembling_the_real_thing: "The fake registry's get_by_tier returned a bare provider; the real ProviderRegistry returns (provider, model), which resolve_fixed_tier unpacks. Corrected rather than worked around."
+    A_PRE_EXISTING_RED_TEST_ROOT_CAUSED_AND_DELIBERATELY_NOT_FIXED:
+      which: "tests/smoke/test_e5_s8s9_plan_telegram_smoke.py::test_smoke_plan_tools_through_telegram — fails in ISOLATION, so it is not contamination from this item."
+      symptom: "Turn 1 creates a plan with ids 1 and 2 and renders correctly. Turn 2's `todo set_status id=2` returns \"No plan item with id '2'\"."
+      root_cause: >-
+        NOT the wiring — registry.py:775 does build ONE PlanStore and inject it into both
+        TodoTool and UpdatePlanTool, with a loud guard for anything unwired. The cause is
+        that PlanStore is scoped PER TURN, keyed on TraceContext's trace_id
+        (store.py:126 _turn_key). Two turns are two trace ids, so turn 2 looks in a
+        different bucket. The test asserts CROSS-TURN plan persistence, which the store
+        deliberately no longer provides.
+      why_I_did_not_just_fix_the_test: >-
+        Because which side is right is a PRODUCT question, not a test question, and the
+        two sides are both reasoned. The store's docstring argues per-turn scoping is
+        required for correctness: "one store for the whole process, so a process-level
+        slot means one chat's plan overwrites another's ... a correctness bug the moment
+        the plan tools are actually used." The test argues a plan is useless if it
+        evaporates the moment the user sends their next message. Silently rewriting the
+        test would cement whichever answer I happened to prefer. Escalated as ESC-77.
+      status: "LEFT RED, loudly. Not skipped — a skipped test is a hidden red."
+    baselines: "ruff clean on the new file; src/ untouched by this item (test-only), so no restart was needed and the running platform is unaffected. tests/smoke: 63 passed, 2 skipped, 1 pre-existing failure (above)."
+    THE_THREE_PRODUCTION_CHECKS_REMAIN_OPEN: "Unchanged and still zero-denominator. One real Telegram message closes all three at once."
   COMPLETION_CONTRACT_JUDGE_2026_08_31_the_second_half_in_shadow:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-56."
     WHAT_MEASURING_FIRST_CHANGED_ABOUT_THE_ITEM: >-
@@ -611,6 +656,15 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_77_should_a_plan_survive_the_users_next_message:
+      question: "PlanStore is scoped PER TURN (keyed on trace_id). A todo list therefore vanishes the moment you send your next message. Is that right?"
+      why_evidence_cannot_settle_it: "Both sides are reasoned and the evidence supports each. The store's own docstring says a process-level slot is a correctness bug because concurrent chats would overwrite each other. The smoke test says a plan that cannot outlive one turn is not a plan. Which matters more is a product call."
+      the_measurement: "registry.py:775 correctly shares ONE PlanStore between todo and update_plan; store.py:126 keys it on TraceContext trace_id. tests/smoke/test_e5_s8s9_plan_telegram_smoke.py has been RED because of this, and is left red rather than rewritten to whichever answer I preferred."
+      options:
+        a_scope_per_session: "RECOMMENDED. Key on session_key instead of trace_id. A plan then survives the conversation it belongs to, and concurrent chats still cannot collide — which is the concern the docstring actually names."
+        b_keep_per_turn: "Accept that a plan is a within-turn scratchpad only, and rewrite the smoke to assert isolation instead of persistence."
+        c_process_level: "Revert to one slot. Simplest, and it re-introduces the cross-chat overwrite the docstring warns about."
+      blocked_until_answered: "One smoke test stays red. Nothing else."
     ESC_76_the_platform_cannot_draw_anything_and_that_is_hardware_not_code:
       question: "You asked for a picture and the platform cannot make one. Enabling that is a spend/egress decision only you can make. Which way?"
       why_evidence_cannot_settle_it: "Every option costs either money, data egress, or disk on your only dev box. All three are yours to weigh, and none is a defect to fix."
@@ -1395,6 +1449,18 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-57
+    found: 2026-08-31
+    title: "Three shipped items had never executed anywhere; a gateway smoke now proves the wiring"
+    what: >-
+      The achievement writer, the judge and the sticky-routing fix all shipped with
+      zero-denominator acceptance checks. A smoke driving a real Telegram update through the
+      genuine adapter/scanner/backend path, plus enqueue_turn_task and complete_turn_task called
+      as the orchestrator calls them, now proves all three execute.
+    evidence: "tests/smoke/test_completion_contract_telegram_smoke.py — 2 passing. The follow-up turn's intent_class is not tool-free; tasks.achievement no longer holds the constant; the judge runs at completion."
+    decision: "Ship the smoke. It does NOT close the production checks — a test is not traffic — and that distinction is recorded rather than blurred."
+    residual_risk: "The orchestrator's own call sites are verified by reading five lines of wiring, not by behaviour; driving backend.run alone does not enqueue a row."
+    status: "closed"
   - id: DEBT-56
     found: 2026-08-31
     title: "A turn that ran no tool at all could never be judged unachieved"
