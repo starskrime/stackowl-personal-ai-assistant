@@ -61,6 +61,10 @@ class _Store(Protocol):
     async def set_dependencies(
         self, task_id: str, depends_on: tuple[str, ...],
     ) -> None: ...
+    #: How many EARLIER rows for this same goal already failed for a reshaping
+    #: class. On the protocol rather than reached for with getattr, so a store that
+    #: cannot answer is a type error here and not a silently disabled ladder.
+    async def count_prior_reshaping_failures(self, goal: str) -> int: ...
     async def revive_undelivered_failures(self, *, limit: int = 50) -> int: ...
     async def resolve_unannounced_dead_letters(self, *, limit: int = 50) -> int: ...
     async def count_pending_for_other_owners(self) -> int: ...
@@ -385,7 +389,14 @@ class TaskLoop:
                 should_decompose,
             )
 
-            if not should_decompose(task):
+            # COUNT THE GOAL, NOT ONLY THE ROW — a scheduled goal retries by
+            # minting a new task, so its own attempt_count resets to 1 every time
+            # and the gate at 3 could never open. See the store method for the
+            # 1.75M-token measurement that found it.
+            prior = await self._store.count_prior_reshaping_failures(
+                getattr(task, "goal", "") or ""
+            )
+            if not should_decompose(task, prior_failures=prior):
                 return False
             children = await plan_subtasks(task, self._decomposer())
             if not children:

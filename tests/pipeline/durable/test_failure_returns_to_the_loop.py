@@ -102,6 +102,15 @@ class _FakeStore:
     def __init__(self) -> None:
         self.enqueued: list[object] = []
         self.deps: dict[str, tuple[str, ...]] = {}
+        #: Prior rows for this same goal that already failed for a reshaping class.
+        #: Added 2026-08-31 with `count_prior_reshaping_failures`: a scheduled goal
+        #: retries by minting a NEW task, so its own attempt_count resets to 1 and
+        #: the gate at 3 could never open. Zero here keeps every existing case in
+        #: this file behaving exactly as it did.
+        self.prior_failures = 0
+
+    async def count_prior_reshaping_failures(self, goal: str) -> int:
+        return self.prior_failures
 
     async def enqueue(self, task: object) -> None:
         self.enqueued.append(task)

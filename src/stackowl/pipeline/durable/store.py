@@ -21,6 +21,7 @@ from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
 from stackowl.pipeline.durable.failure_class import (
+    _RESHAPING_CLASSES,
     SMALL_CEILING_CLASSES,
     classify_failure,
     permanent_classes,
@@ -922,6 +923,43 @@ class DurableTaskStore(OwnedRepository):
                 "[loop] could not record this turn's achievement condition",
                 exc_info=exc, extra={"_fields": {"task_id": task_id}},
             )
+
+    async def count_prior_reshaping_failures(self, goal: str) -> int:
+        """How many EARLIER rows for this same goal already failed for a reason
+        repetition cannot fix.
+
+        The decomposition ladder counts a ROW's attempts, but a scheduled goal
+        retries by minting a NEW row — `task_runner.run` mints
+        `task-{uuid4().hex[:12]}` on every call. MEASURED 2026-08-31: the Daily
+        Gmail digest failed on `budget:stop:tokens` three times in twenty minutes
+        for 1.75M input tokens, each row carrying attempt_count = 1, so the gate at
+        3 could never open and no `task RESHAPED` record exists in any retained log.
+
+        Keyed on the GOAL because that is what is stable for a scheduled job (it
+        comes from the job's params) and because it is what "this same work" means.
+        Counts only failures whose class actually wants reshaping, so an ordinary
+        flaky task never accumulates toward a split it has no use for.
+
+        Never raises: a count that cannot be read returns 0 and the gate behaves
+        exactly as it did before this existed.
+        """
+        if not goal:
+            return 0
+        try:
+            rows = await self._db.fetch_all(
+                "SELECT COUNT(*) AS c FROM tasks WHERE owner_id = ? AND goal = ? "
+                "AND last_failure_class IN ({}) AND status IN ('failed', 'completed', "
+                "'dead_letter')".format(",".join("?" * len(_RESHAPING_CLASSES))),
+                (self._owner_id, goal, *sorted(_RESHAPING_CLASSES)),
+            )
+        except Exception as exc:  # noqa: BLE001 — a hint may not cost the loop
+            log.tasks.warning(
+                "[tasks] store.count_prior_reshaping_failures: unreadable — "
+                "treating this goal as having no history",
+                exc_info=exc,
+            )
+            return 0
+        return int(rows[0]["c"]) if rows else 0
 
     async def enqueue(self, task: DurableTask) -> None:
         """Write a task the loop may pick up. The universal ingress.

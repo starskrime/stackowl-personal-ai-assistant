@@ -49,14 +49,28 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
 DECOMPOSE_AFTER_ATTEMPTS = 3
 
 
-def should_decompose(task: DurableTask) -> bool:
+def should_decompose(task: DurableTask, *, prior_failures: int = 0) -> bool:
     """Is splitting this task the right next move?
 
     False in every doubtful case. A wrong "no" costs one more ordinary retry; a
     wrong "yes" spends an LLM call and multiplies the row into a fan-out that has
     to be managed, so the asymmetry justifies the conservatism.
     """
-    if task.attempt_count < DECOMPOSE_AFTER_ATTEMPTS:
+    # COUNT THE GOAL, NOT ONLY THE ROW. MEASURED 2026-08-31: the Daily Gmail digest
+    # failed on `budget:stop:tokens` three times in twenty minutes for 1.75M input
+    # tokens, and this gate never opened — because those were three SEPARATE tasks.
+    # `task_runner.run` mints `task-{uuid4().hex[:12]}` on every call and the
+    # scheduler's job-level retry calls it again, so `attempt_count` resets to 1
+    # each time and can never reach 3. Across every retained log there is not one
+    # `task RESHAPED` record: the whole decomposition path was correct and
+    # structurally unreachable for the case it exists for.
+    #
+    # `prior_failures` is how many EARLIER rows for this same goal already failed
+    # for a reason repetition cannot fix. Defaulted to 0, so every existing caller
+    # behaves exactly as before — and passed EXPLICITLY rather than stamped on the
+    # task, because a decomposition gate has no business mutating the row it judges.
+    failures = task.attempt_count + max(0, int(prior_failures))
+    if failures < DECOMPOSE_AFTER_ATTEMPTS:
         return False
     if task.depends_on:
         # Already split. Splitting again would fan out without bound: each child
