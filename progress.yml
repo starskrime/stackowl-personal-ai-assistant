@@ -315,6 +315,71 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  HEALTH_FLAP_2026_08_31_the_platform_paged_Bakir_25_times_and_was_never_down:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-76."
+    how_this_item_was_reached: "Bakir, mid-session: 'Platform failing. Check logs.'"
+    WHAT_THE_LOGS_ACTUALLY_SAID: >-
+      The platform was not failing. It was PAGING him. 25 critical operator_health
+      notifications to Telegram today, of which seven were identical degraded/recovered
+      PAIRS from one flapping probe. Every process up, scheduler ticking, Telegram adapter
+      receiving, health ok=11/11.
+    THE_FLAP:
+      provider_registry_timeouts_today: >-
+        08:45:10 (5002ms), 09:01:01 (5007ms), 09:49:50 (5002ms), 13:17:48 (5003ms),
+        13:45:18 (5005ms), 14:07:18 (5002ms), 16:28:58 (5002ms) — seven, against a probe
+        that answers in ~600ms the rest of the time (measured: 'provider NeraAiRaw
+        [openai]: ok (600ms)' and 'ok (613ms)').
+      each_one_produced: >-
+        "UNHEALTHY subsystems detected  down: ['provider_registry']" at ERROR, plus a
+        CRITICAL Telegram alert, and then the next sweep found ok=11/11 and sent the
+        recovery notice — also urgency critical. Message hashes b02232239a3c2097 and
+        b0841607e5c5fc94, seven times each.
+    WHY_NOTHING_CAUGHT_IT: >-
+      health_sweep already re-collects before alerting, but only `if attempted` — that is,
+      only when an unhealthy subsystem has a registered HealableResource to recycle first.
+      provider_registry has no healer, so `attempted` is empty, the re-collect is skipped,
+      and a SINGLE five-second sample becomes a critical page. The guard existed and did
+      not cover the case that needed it.
+    THE_ROOT_CAUSE_IS_THE_INSTRUMENT: >-
+      The aggregator's timeout branch returns status="down". A probe that did not answer
+      in five seconds has told us nothing about the subsystem — only about the probe.
+      "Measuring is the job, and the instrument lies too", applied to the platform's own
+      health check.
+    AND_IT_WAS_NOT_ONLY_NOISE: >-
+      is_live() returns False on any 'down' and is the systemd watchdog gate (F-85). A
+      single slow probe was, in principle, an argument for KILLING the process.
+    THE_FIX: >-
+      _TIMEOUT_ATTEMPTS = 2 — a timed-out probe is re-probed once, and the second word is
+      believed. Damping the alarm would have hidden a real outage just as well; re-probing
+      tells the two apart, because a dead subsystem fails the second attempt too. An
+      EXCEPTION is evidence about the subsystem and is never second-guessed; only the
+      timeout, which is a non-answer, is retried. Cost: nothing on the healthy path (one
+      probe, asserted by test), one extra probe window on a real outage.
+    ladder_rung: "1 — one method added to the class that already owns probing. No new
+      config, no flag, no second health path."
+    tests: "8 new in tests/health/test_a_slow_probe_is_not_a_dead_subsystem.py — the live
+      slow-once case, a really-dead subsystem still reported down, an exception NOT
+      re-probed, a healthy contributor probed exactly once, degraded taken at face value,
+      the retry bounded by two windows, and both liveness directions."
+    suites: "tests/health + tests/scheduler 470 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      RESTART 2026-08-31T17:04:36Z. 463 records, ZERO ERRORs, first sweep at 17:07:12
+      ok=11/11 with NO operator_health alert.
+    validate_OPEN: >-
+      That a re-probe actually rescues a slow sample needs a timeout to occur; they came
+      every 1-3 hours today, so it closes itself. Closing query, both lines INFO:
+      'aggregator: <name> did not answer in 5s — re-probing before calling it down'
+      followed by 'answered on the re-probe' — and the count of operator_health
+      deliveries, which was 25 today, should fall.
+    THREE_MORE_ERRORS_FOUND_AND_NOT_FIXED_HERE: >-
+      At 16:27:31 exactly, incident_escalation._detect_incidents, objectives driver and
+      tenancy/owned_repo all raised sqlite3.ProgrammingError "Cannot operate on a closed
+      database" — the CORE being exec-replaced by CodeWatcher while three scheduler
+      handlers were mid-query. Self-inflicted by my own commit, self-healed on the next
+      tick, and NOT the thing Bakir saw. Recorded as DEBT-77: a core swap should drain or
+      fence in-flight handlers rather than closing the pool underneath them.
+
   MACHINE_LANES_2026_08_31_the_lane_vocabulary_MOVED_and_the_predicate_did_not:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-75."
     how_this_item_was_reached: >-
