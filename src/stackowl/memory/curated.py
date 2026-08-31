@@ -46,6 +46,7 @@ profile stays global — the user is the same person to every owl.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -98,6 +99,12 @@ MAX_ENTRY_BUDGET_FRACTION = 0.5
 #: The global profile's target name. Anything else is an owl.
 USER_TARGET = "user"
 
+#: ``{casefolded spelling: routing name}`` — an owl's display name and its
+#: routing name both map to the routing name, because the PROMPT reads the
+#: routing name (``assemble.py`` passes ``state.owl_name``) and a file under
+#: any other spelling is one nothing will ever read.
+TargetAliases = Callable[[], "Mapping[str, str]"]
+
 #: ``transient`` is deliberately ABSENT. It is not a durability we store, it is a
 #: reason to refuse — the most-reinforced entry in the old store was a stale
 #: date, and a system that can express "this expires" will accumulate expired
@@ -140,6 +147,29 @@ _SHARED: CuratedMemory | None = None
 #: running is never the one dropped — evicting it would restore the exact bug this
 #: replaced.
 _MAX_TRACKED_CONVERSATIONS = 64
+
+
+def build_target_aliases(owls: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """``{casefolded spelling: routing name}`` from ``(name, display_name)`` pairs.
+
+    Takes pairs rather than a registry so this module keeps its one useful
+    property — constructible with no registry, no database and no settings.
+
+    TWO PASSES, AND THE ORDER IS A RULE. Display names go in first with
+    ``setdefault``, then routing names overwrite unconditionally: if one owl's
+    display name is another owl's routing name, the ROUTING name wins. An owl
+    losing its own memory file to somebody else's nickname is a worse failure
+    than a nickname not resolving.
+    """
+    aliases: dict[str, str] = {}
+    pairs = [(str(n or ""), str(d or "")) for n, d in owls]
+    for name, display in pairs:
+        if name and display:
+            aliases.setdefault(display.casefold(), name)
+    for name, _display in pairs:
+        if name:
+            aliases[name.casefold()] = name
+    return aliases
 
 
 def shared_memory() -> CuratedMemory:
@@ -224,6 +254,12 @@ class CuratedMemory:
 
     def __init__(self, root: Path | None = None) -> None:
         self._root = root or memory_dir()
+        #: How a SPELLING maps to an owl's routing name. Injected rather than
+        #: imported: this module must stay constructible with no registry, no
+        #: database and no settings, which is what lets the CLI and every test
+        #: build one freely. None is the ordinary state and means "resolve by
+        #: file only" — see :meth:`resolve_target`.
+        self._alias_lookup: TargetAliases | None = None
         #: Frozen at :meth:`snapshot_for_prompt`'s first call per session, never
         #: mid-session. See the module docstring's third rule.
         # PER-CONVERSATION, bounded, MRU-evicting. This was a SINGLE slot
@@ -245,10 +281,85 @@ class CuratedMemory:
 
     # ------------------------------------------------------------------ paths
 
+    def use_target_aliases(self, lookup: TargetAliases) -> None:
+        """Teach this store how a spelling maps to an owl's routing name.
+
+        Injected at startup once the owl registry is populated. Until then, and
+        in every test that does not care, resolution falls back to the files that
+        exist — which is the behaviour this store has always had.
+        """
+        self._alias_lookup = lookup
+
+    def _alias_map(self) -> Mapping[str, str]:
+        """The current spelling -> routing-name map, or empty.
+
+        Read fresh on each call rather than cached: an owl created or renamed
+        this minute must route correctly with no restart, which is the same
+        reason :meth:`known_targets` reads the directory instead of a constant.
+        """
+        if self._alias_lookup is None:
+            return {}
+        try:
+            return self._alias_lookup() or {}
+        except Exception as exc:  # a routing hint must never cost the write
+            log.memory.warning(
+                "[curated] alias_map: lookup failed — resolving by file only",
+                exc_info=exc,
+            )
+            return {}
+
+    def resolve_target(self, target: str) -> str:
+        """The ONE target this spelling means.
+
+        MEASURED 2026-08-31: over four days the prompt froze eleven targets, all
+        of them routing names, while Falcon.md, falcon.md, Friday.md, hawkeye.md
+        and Collector.md — every one of them an owl's DISPLAY name, holding real
+        operational knowledge — were read into no prompt at all. `assemble.py`
+        asks for ``state.owl_name``; the writer built its filename from whatever
+        the model typed. This is where the two are made to agree.
+
+        ORDER IS THE WHOLE FIX. Identity is consulted BEFORE any file, because
+        Falcon.md already exists on the live box: if an existing file won, every
+        future write would keep landing in the file the prompt never reads and
+        nothing would ever converge.
+
+        1. ``user`` is fixed.
+        2. The alias map — display name or routing name, case-insensitively.
+        3. An exact file, so a target with no owl behind it (jobmarket.md, and
+           any file the operator wrote by hand) keeps working untouched.
+        4. A UNIQUE case-insensitive file. Two files differing only in case and
+           no exact match is ambiguous, and guessing there is how memory gets
+           silently misfiled — so that case changes nothing.
+        5. Otherwise unchanged: a brand-new owl has no file and may not be in the
+           map yet, and its first write has to land.
+        """
+        if target == USER_TARGET:
+            return target
+        canonical = self._alias_map().get(target.casefold())
+        if canonical:
+            return canonical
+        try:
+            if (self._root / f"{target}.md").exists():
+                return target
+            matches = sorted(
+                {p.stem for p in self._root.glob("*.md")
+                 if p.stem.casefold() == target.casefold()}
+            )
+        except Exception as exc:  # B5 — resolution must never cost the turn
+            log.memory.warning(
+                "[curated] resolve_target: could not read the memory dir",
+                exc_info=exc, extra={"_fields": {"target": target}},
+            )
+            return target
+        return matches[0] if len(matches) == 1 else target
+
     def path_for(self, target: str) -> Path:
         """The file backing ``target``. Raises on a target we will not create."""
         if target == USER_TARGET:
             return self._root / "USER.md"
+        # Resolve BEFORE validating: what gets validated must be what becomes the
+        # filename, or resolution would be a way past the traversal guard.
+        target = self.resolve_target(target)
         if not _SAFE_TARGET_RE.match(target):
             # Not paranoia: owl names are user-chosen and this builds a path
             # from one. A name with a separator in it would write outside the
@@ -279,8 +390,16 @@ class CuratedMemory:
         copy of "what targets exist".
         """
         try:
+            # RESOLVED and DEDUPED, not raw stems. Both `falcon.md` and
+            # `Falcon.md` exist on the live box, so the word "falcon" in a fact
+            # matched TWO targets — and `infer_target` falls back to the user on
+            # anything but exactly one hit, so the owl's own note went into the
+            # user file. Collapsing spellings of one owl is what lets inference
+            # reach an owl at all; two DIFFERENT owls still resolve differently
+            # and still fall back, which is the behaviour that must not change.
             return [USER_TARGET] + sorted(
-                p.stem for p in self._root.glob("*.md") if p.name != "USER.md"
+                {self.resolve_target(p.stem)
+                 for p in self._root.glob("*.md") if p.name != "USER.md"}
             )
         except Exception as exc:  # B5 — inference must never cost the turn
             log.memory.warning(
@@ -315,10 +434,19 @@ class CuratedMemory:
         tokens = {t.casefold() for t in _WORD_RE.findall(text or "")}
         if not tokens:
             return USER_TARGET
-        hits = [
-            t for t in self.known_targets()
-            if t != USER_TARGET and t.casefold() in tokens
-        ]
+        # MATCH ON EVERY SPELLING, ROUTE TO THE IDENTITY. The word in the fact is
+        # the one the operator uses — "Falcon", not "scout" — so matching only
+        # routing names would make inference miss the owl entirely. Resolving the
+        # hit is what stops two spellings of ONE owl counting as two owls.
+        candidates: dict[str, str] = {
+            p.stem.casefold(): self.resolve_target(p.stem)
+            for p in self._root.glob("*.md") if p.name != "USER.md"
+        }
+        candidates.update(self._alias_map())
+        hits = sorted({
+            canonical for spelling, canonical in candidates.items()
+            if spelling in tokens and canonical != USER_TARGET
+        })
         if len(hits) != 1:
             log.memory.debug(
                 "[curated] infer_target: falling back to user",

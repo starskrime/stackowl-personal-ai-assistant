@@ -865,6 +865,30 @@ class StartupOrchestrator:
         # able to cost the user their agents.
         await self._adopt_sqlite_owls(owl_registry, db_pool)
 
+        # MEMORY ROUTES ON IDENTITY, NOT SPELLING. `assemble.py` reads an owl's
+        # curated file with `state.owl_name`; the writer used to build the
+        # filename from whatever the model typed, so a note remembered about
+        # "Falcon" landed in Falcon.md while the prompt kept reading scout.md.
+        # MEASURED 2026-08-31: five such files (Falcon.md, falcon.md, Friday.md,
+        # hawkeye.md, Collector.md) had never been read into a prompt in four
+        # days of logs. Installed HERE, after the SQLite adoption above, because
+        # that is the point the registry carries every owl and its display name.
+        try:
+            from stackowl.memory.curated import build_target_aliases, shared_memory
+
+            shared_memory().use_target_aliases(
+                lambda: build_target_aliases(
+                    (m.name, getattr(m, "display_name", "")) for m in owl_registry.all()
+                )
+            )
+            log.info("[startup] memory: target aliases installed")
+        except Exception as exc:  # never let a routing hint cost the boot
+            log.warning(
+                "[startup] memory: could not install target aliases — "
+                "curated memory will route by file only",
+                exc_info=exc,
+            )
+
         # WS-D command-sequence learning — durable per-owner "after A you usually
         # do B". Gated by ui.command_suggestions: None when off, so there is no
         # recording, no suggested lane, and the dropdown stays byte-identical to

@@ -315,6 +315,103 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  OWL_MEMORY_2026_08_31_the_platform_was_writing_to_files_it_NEVER_READS:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-74."
+    how_this_item_was_reached: >-
+      Phase 2's last open item, in Bakir's own AGREED_WORK_ORDER: "MERGE Falcon.md +
+      falcon.md into one file keeping BOTH entries with their existing tags. Back up
+      ~/.stackowl/memory first." Measuring WHY there were two files found a much larger
+      defect underneath, and phase 5's plugin work is not next — plugin_ordering says
+      "ALL THREE LATENCY MECHANISMS FIRST, PLUGINS AFTER".
+    THE_MEASUREMENT_that_changed_the_item: >-
+      assemble.py reads an owl's curated file with snapshot_for_prompt(state.owl_name) —
+      the owl's ROUTING name. The writer built its filename from whatever spelling reached
+      path_for. Over four days of production logs the prompt froze ELEVEN targets, every
+      one a routing name (user 958, rca_gatherer 494, verifier 430, hypothesis 409,
+      secretary 167, jobmarket 125, mailbutler 20, scout 15, headhunter 11, syshealth 6,
+      archivist 4) — while Falcon.md, falcon.md, Friday.md, hawkeye.md, Collector.md,
+      Brain.md, Fury.md, agent.md, owl.md, own.md, sysdesign.md and sysfup.md were read
+      into NO prompt at all.
+    AND_THEY_ARE_NOT_EMPTY: >-
+      Falcon.md carried a live-verified Gmail API gotcha and a completed trash batch;
+      falcon.md carried the LinkedIn guest-API findings. scout was read 15 times and
+      rendered 0 characters EVERY time. The owl's hardest-won operational knowledge was on
+      disk, and the owl was never shown it. Shape 1 in CLAUDE.md — a write with no reader —
+      live, in the store the platform's memory depends on.
+    TWO_CAUSES_AND_THE_FIX_COVERS_BOTH:
+      display_name_vs_routing_name: "scout's display_name is Falcon, so the model writes to
+        the name the owl is CALLED BY. Same for Friday/secretary, Hawkeye/verifier,
+        Collector/archivist."
+      case: "falcon.md and Falcon.md are two files on a case-sensitive filesystem, and
+        infer_target found BOTH for the word 'falcon' — two hits, so it routed to the USER
+        file instead of the owl. curated.py already carried a comment admitting the pair
+        existed; nothing resolved it."
+    THE_FIX: >-
+      CuratedMemory.resolve_target(), called from path_for — the single seam, since
+      entries() reads through it and _write() writes through it, so one resolution covers
+      every read and every write. Order is the whole fix: IDENTITY IS CONSULTED BEFORE ANY
+      FILE, because Falcon.md already existed — if an existing file won, every future write
+      would keep landing where the prompt never looks and nothing would converge. Then an
+      exact file (so jobmarket.md and any hand-written file keep working), then a UNIQUE
+      case-insensitive file, then unchanged so a brand-new owl's first write still lands.
+      known_targets() and infer_target() now match on every SPELLING and route to the
+      IDENTITY, which is what lets inference reach an owl at all.
+    ladder_rung: "1 — extend existing code. No new store, no new file for the resolver; the
+      alias map is INJECTED as a callable so curated.py keeps its one useful property: it
+      is constructible with no registry, no database and no settings."
+    wiring: >-
+      startup/orchestrator.py, immediately after _adopt_sqlite_owls — the point the registry
+      carries every owl AND its display name. Ships ON, no flag. INFO line
+      '[startup] memory: target aliases installed'.
+    THE_DATA_HALF_authorised_by_Bakir: >-
+      Backed up ~/.stackowl/memory to ~/.stackowl/backups/memory-pre-falcon-merge-20260831
+      (19 files, 80K, verified) BEFORE touching anything, as he required. Merged Falcon.md
+      (2 entries) + falcon.md (3) + scout.md (1) into scout.md — all SIX entries, tags
+      preserved, written through the store's own renderer and atomic write. Order is
+      CHRONOLOGICAL by file mtime, because age order is the platform's own staleness
+      evidence and _evict_to_fit reads it; tilting it would decide which memory dies first.
+    WHY_scout_md_AND_NOT_ONE_OF_THE_FALCON_FILES: >-
+      Bakir said "into one file" without naming it. The measurement names it: scout.md is
+      the only one of the three the prompt has ever read. Merging into Falcon.md would have
+      satisfied the letter and left all six entries exactly as invisible as before.
+    THE_19_CHARACTERS_I_AM_NOT_HIDING: >-
+      The merged file is 2,219 characters against OWL_BUDGET_CHARS = 2,200. Nothing is lost
+      today — the file simply sits 19 over. On the NEXT write to scout, _evict_to_fit drops
+      the oldest until_changed entry to make room, which under mtime order is falcon.md's
+      gmail_assist.py note. That is the platform's own decay rule doing exactly what it was
+      built to do, and it is logged; it is recorded here because it is a consequence of my
+      merge and he should not discover it from a log line. See ESC-84.
+    tests: "18 new in tests/memory/test_an_owls_memory_is_ONE_file.py — identity beating an
+      existing file (the ordering the whole fix rests on), a routing name never losing to
+      someone else's nickname, the ambiguous case-pair changing nothing, a brand-new owl
+      still getting a file, traversal still RAISING (resolution runs before validation, so
+      it must not become a way past the guard), a broken lookup costing nothing, inference
+      reaching the owl instead of the user, and two DIFFERENT owls still falling back."
+    suites: "tests/memory 537 passed; tests/pipeline/steps + tests/commands 442 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      RESTART 2026-08-31T15:58:38Z. '[startup] memory: target aliases installed' at INFO in
+      BOTH processes (15:58:38 gateway, 16:03:20 core). 780 records since, ZERO ERRORs.
+      Verified against the LIVE memory directory in-process: path_for('Falcon') and
+      path_for('falcon') both resolve to scout.md, entries('scout') returns all 6, and
+      known_targets() collapses Collector/Friday/hawkeye onto archivist/secretary/verifier.
+    validate_OPEN_the_one_check_I_could_not_close: >-
+      That scout's PROMPT now carries the merged text. It needs a scout turn, and the only
+      lanes that ran since the restart were the RCA owls. Closing query:
+      grep '"target": "scout"' on the '[curated] snapshot: frozen' lines — before this fix
+      it read chars 0 on all 15 occurrences; it must now read ~2219. The line is INFO and
+      already fires once per target per incarnation, so it will close itself on the next
+      scout turn. Deliberately NOT forced by delegating to scout: that would send a real
+      message to satisfy a test.
+    AND_THE_SAME_DEFECT_IS_STILL_LIVE_FOR_THREE_MORE_OWLS: >-
+      Friday.md (secretary), hawkeye.md (verifier) and Collector.md (archivist) are the same
+      shape and hold real content. The code fix means they are now RESOLVED away — writes go
+      to the right file from here — but their existing contents are stranded until merged,
+      exactly as the falcon pair was. Bakir authorised ONE merge, so the other three are
+      ESC-85 rather than mine to take. Plus eight files that belong to no owl at all
+      (Brain, Fury, agent, owl, own, sysdesign, sysfup, jobmarket) — jobmarket IS read
+      (125 times, 2,031+ chars), so that list is a question, not a cleanup.
+
   LEGACY_INCIDENT_SKILLS_2026_08_31_the_merge_changed_the_WRITER_and_left_the_ROWS:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-73."
     how_this_item_was_reached: >-
@@ -1292,6 +1389,64 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_85_three_more_owls_have_their_memory_in_a_file_nothing_reads:
+      question: >-
+        Friday.md (secretary), hawkeye.md (verifier) and Collector.md (archivist) are the
+        same defect as the falcon pair and hold real content. You authorised ONE merge. Do
+        the other three the same way?
+      why_evidence_cannot_settle_it: >-
+        The measurement says they are unread and says what is in them. Folding one owl's
+        file into another is still a change to your memory, and you made that call once
+        explicitly rather than delegating it.
+      the_measurement: >-
+        Friday.md 777 bytes, hawkeye.md 1,637, Collector.md 1,418 — none read into any
+        prompt in four days of logs. The code fix already routes FUTURE writes correctly, so
+        these three files can only shrink in relevance from here; nothing is getting worse
+        while this waits.
+      panel_recommendation: >-
+        Merge all three by the same recipe: back up first, fold chronologically by mtime
+        into the routing-name file, delete the alias file. Check the budget first —
+        verifier.md is already 1,814 characters against a 2,200 ceiling, so hawkeye.md's
+        1,637 will NOT fit and that one needs a decision about what to drop, not a merge.
+      what_is_blocked: "Nothing. The root fix is live; this is residue."
+    ESC_86_eight_memory_files_belong_to_no_owl_at_all:
+      question: >-
+        Brain.md, Fury.md, agent.md, owl.md, own.md, sysdesign.md, sysfup.md and
+        jobmarket.md name no owl in the registry. Keep, merge, or delete?
+      why_evidence_cannot_settle_it: >-
+        An empty table is a question, not an answer — and so is an orphan file. Some of
+        these are almost certainly deleted owls whose notes are still worth something, and
+        which is which is your judgement, not a measurement.
+      the_measurement: >-
+        jobmarket IS read — 125 times, 2,031 to 2,154 characters — so ghost owls still get
+        prompts and the list is NOT simply dead weight. headhunter was read 11 times at 0
+        chars and has no file at all. own.md looks like a one-character typo of owl.md, and
+        Brain.md matches the 'create agent Brain' incident already on the record.
+      panel_recommendation: >-
+        Leave them. They cost nothing while unread, and the memory target namespace is now
+        resolved rather than free text, so no NEW orphan can be minted by a typo. Revisit
+        with the drift report, which is phase 6 and is meant to be built against a clean
+        baseline.
+      what_is_blocked: "Nothing."
+    ESC_84_the_merged_scout_file_is_19_characters_over_its_budget:
+      question: >-
+        scout.md is 2,219 characters against OWL_BUDGET_CHARS = 2,200. Nothing is lost
+        today; on the next write to scout the platform's own decay drops the oldest
+        until_changed entry — falcon.md's gmail_assist.py note. Accept that, or intervene?
+      why_evidence_cannot_settle_it: >-
+        It is a consequence of the merge you asked for, and which 19 characters of your
+        agent's memory may go is your call, not an arithmetic one.
+      the_measurement: >-
+        Six entries: 521 + 435 permanent (Gmail), 356 + 343 until_changed (gmail_assist,
+        mailbutler shell), 372 permanent (LinkedIn), 93 until_changed (scout's browser
+        rule). permanent is never evicted, so the candidates are the three until_changed
+        entries and the oldest goes first.
+      panel_recommendation: >-
+        Accept it. This is exactly what the budget and the durability tags were built for,
+        the eviction is logged, and the entry at risk is a tool's CLI quirks that can be
+        re-derived in one call — unlike the permanent Gmail and LinkedIn findings, which
+        are protected by their tag and survive untouched.
+      what_is_blocked: "Nothing."
     ESC_83_your_retire_the_4_instruction_now_points_at_the_WRONG_FOUR:
       question: >-
         Round 4 said "retire the never-run learned skills only — the 4 never-executed
