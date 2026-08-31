@@ -315,6 +315,170 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  GRILLING_2026_08_30_the_graph_was_serving_DELETED_memory_and_identity_has_no_owner:
+    how_this_started: >-
+      Bakir ran /grill-me. The design tree opened on the memory system and did not
+      close where it started. Every number below was measured this session; nothing
+      is recalled.
+    FINDING_1_the_skill_purge_was_AUTHORISED_but_its_mechanism_was_not: >-
+      audit_id 260, op=purge_all, actor=friday, count=151, at 2026-08-30 01:09:45Z.
+      Executed as hand-written SQL through the `shell` tool inside an autonomous
+      recovery session (owl:secretary:recovery:bd6836fa669e) — the engine log caught
+      the first attempt failing on a schema constraint and the successful audit row
+      lands 79 seconds later. Bakir CONFIRMED he ordered it. Three defects survive
+      the authorisation: (a) skills_fts was never synced — 171 rows for a 20-row
+      table, 148 naming skills that no longer exist; (b) the audit row names a dump
+      and a pre-purge DB backup and NEITHER EXISTS anywhere under /home/boss or /ssd;
+      (c) nothing gated the SQL.
+    FINDING_2_committed_facts_was_a_COMPLETED_DEMOLITION_not_a_broken_design: >-
+      I first framed the 368-staged / 0-committed / no-promote() shape as a missing
+      half of a design. Wrong. Reconstructed from git: a4d581ab (08-09) deleted the
+      writer (fact_extractor + conversation_miner), 14fd845e (08-10, migration 0112)
+      deleted 242,477 rows after a 922MB backup ON BAKIR'S EXPLICIT INSTRUCTION quoted
+      in the migration itself, and f3d0d85a (08-14) deleted FactPromoter because it fed
+      an already-empty table. Curated markdown is the deliberate replacement.
+    FINDING_3_and_this_is_the_one_that_matters_THE_GRAPH_KEPT_SERVING_THE_DELETED_CORPUS: >-
+      kuzu_sync_handler reads committed_facts. Last sync 2026-08-10T20:30 — the day of
+      migration 0112. The graph froze at that instant and NOTHING NOTICED FOR 20 DAYS.
+      Meanwhile classify calls traverse_many on every turn: measured at INFO,
+      1,331 of 1,469 turns (91%) received non-empty graph context, 250-322 chars. The
+      Fact nodes are keyed by committed_facts fact_ids, so the content Bakir ordered
+      deleted from SQLite has been shaping 91% of his prompts from Kuzu ever since.
+    FINDING_4_the_graphs_RANKING_NEVER_EXISTED_so_a_rebuild_alone_would_not_fix_it: >-
+      Measured on a read-only copy (39MB, 20,065 Facts, 8,282 Entities, 37,483 MENTIONS):
+      Fact.confidence is 1.0 on ALL 20,065 — a weight field with one value is decoration.
+      Entity carries NO weight at all. The traversal Cypher has NO ORDER BY: RETURN
+      DISTINCT then take the first 10. RELATED_TO has ZERO edges, so half of
+      sync_traverse_many can never match and everything is co-mention — with `assistant`
+      named by 470 facts, hubs make nearly everything adjacent to nearly everything.
+      28.2% of facts mention trace/failure_class/retry/incident; 20.9% of all mention-mass
+      sits on platform-internal entities (unachieved_effect 457, web_fetch 273, owl_build
+      267, tool_search 260, shell 238). t1/T1/t2/T2 hold 1,075 mentions.
+    FINDING_4b_REPRODUCED_against_the_real_graph_this_is_what_the_prompt_receives: >-
+      "remind me to call the dentist tomorrow" -> failures, traces, trace ID, sessions.
+      "can you please check my email on Gmail today" -> skill_manage, b74684f8, skill_view,
+      tool_search, tool_build, cronjob, Movie Durandar, shell. "What agents i have" ->
+      automated downloads, skill_manage, configurations, blind retries, workflows —
+      nothing about agents. Not one relevant entity in any of them.
+    HYPOTHESIS_NOT_MEASURED: >-
+      The graph injects TOOL NAMES as "Related entities" into unrelated questions. That is
+      a plausible contributor to tool-thrash on turns like the 16-round "What agents i have"
+      that billed 683,728 tokens. Recorded as a hypothesis, NOT a measurement.
+    FINDING_5_SELF_HEALING_WORKS_AND_THAT_IS_THE_PROBLEM: >-
+      Bakir's read was "we have no self-healing and we are blind". The opposite is true and
+      it is worse. GraphReconciliationHandler exists, is registered at scheduler/assembly.py:373
+      and scheduled every 168h, and it diffs SQLite against the graph. It is working PERFECTLY.
+      Its declared sources of truth are skill_ownership and owl_dna — and BOTH ARE SHADOWS
+      NOBODY CLEANED. owl_dna (16) == graph Owl nodes (16) EXACTLY, while the owls table holds
+      10; the six ghosts are Brain, headhunter, jobmarket, newsdesk, sysdesign, sysfup.
+      skill_ownership (111) == graph Skill nodes (111), while skills holds 20. The healer
+      faithfully copies stale identity into the graph every week and reports success.
+    THE_ROOT_CAUSE_UNDERNEATH_ALL_OF_IT: >-
+      Identity for one owl or skill lives in FOUR OR FIVE stores and a delete cleans ONE.
+      OWL: owls 10 | owl_dna 16 | owl_dna_authored 21 | graph 16.
+      SKILL: skills 20 | skill_ownership 111 | skills_fts 171 | graph 111 | disk dirs 16.
+      Bakir's own purge is the worked example: it deleted `skills` rows and left four shadows,
+      one of which the weekly reconciler then promoted back into the graph as truth.
+    MY_OWN_MEASUREMENT_FAILURES_THIS_SESSION_recorded_because_they_repeat:
+      - >-
+        I reasoned about the skill corpus all morning — curator windows, "4 -> 3 never-run
+        skills", "changing nothing is correct" — NINE HOURS after it lost 151 rows, and never
+        checked whether the denominator had moved. The rule I keep quoting is "check what a
+        denominator is MADE OF"; I checked what it was made of and not whether it had just
+        CHANGED SIZE.
+      - >-
+        UP-01 states "the Kuzu directory is EMPTY and the graph is initialised every boot and
+        never queried (202 adapter ready, 0 queries)". WRONG on both halves. graph.kuzu is 39MB
+        with a WAL written today, and the traversal runs on every turn. I had measured
+        `kuzu.traverse_many` entry/exit lines that are log.memory.DEBUG while production runs at
+        INFO — the exact landmine CLAUDE.md names, walked into while quoting it.
+      - >-
+        I recommended deleting the committed_facts TABLE without reading migration 0112, which
+        had already argued the opposite: "a table that exists and returns nothing is honest,
+        while a missing table is an error at every call site." Bakir overrode me anyway and
+        chose deletion; recorded so the argument is not re-litigated blind a third time.
+    OPERATOR_DECISIONS_2026_08_30_round_5_through_9:
+      by: Bakir, over five interactive rounds during the grilling
+      purge_was_authorised: "YES — he ordered the 151-skill purge. Outcome intended; mechanism defective."
+      shell_sql: "BLOCK DML/DDL against stackowl.db from the shell tool. Data changes go through migrations. He rejected consent-gating explicitly: unattended lanes have nobody to ask."
+      graph_corpus: "PURGE Fact/Entity and REBUILD from live memory. Keep the Owl/Skill/Trait half and re-sync it."
+      measure_first: "MEASURE what graph context is worth BEFORE rebuilding. If it is worth nothing, the rebuild does not happen."
+      graph_weighting: "Frequency WITH HUB SUPPRESSION, plus recency. Both — frequency alone re-creates the hub problem."
+      graph_intake: "REFUSE machine-lane facts AT THE WRITER, using the is_machine_lane predicate that already exists."
+      committed_facts_table: "DELETE THE TABLE TOO — overriding both my recommendation and migration 0112's recorded argument. Sequencing: the graph syncer must be re-pointed FIRST, since that table is what it reads."
+      stale_store_detector: "GENERIC stale-store detector — any store with readers but no writes in N days alarms. One actuator for three defects already on the board."
+      identity: "ONE OWNER + CASCADING DELETE. `skills` and `owls` are the sole source of truth; ownership, FTS, graph and disk are derived and deleted with them in one transaction."
+      drift_report: "YES, but FIX THE CAUSES FIRST — build it against a clean baseline so it is not born full of known noise."
+      skills_fts: "REINDEX **and** make index sync non-optional inside the store. A delete that CAN forget to reindex will forget again — it already has, three times."
+      normaliser: "BOTH SUBSYSTEMS NOW — one shared Unicode normaliser for skill names, memory filenames AND graph entities. Four subsystems, one rule."
+      falcon_merge: "MERGE Falcon.md + falcon.md into one file keeping BOTH entries with their existing [permanent]/[until_changed] tags. Back up ~/.stackowl/memory first."
+      episodic_scope: "SCOPE IT FIRST (owl + conversation) and BACKFILL the existing 368 from source_ref, which already carries the signal (incident-b5545c2ec371, goal-owl_lifecycle-jobmarket, 72055773)."
+      memory_type_system: "EXTEND [permanent]/[until_changed] platform-wide. One vocabulary, already shipped, already has an actuator (40 decay evictions in 8 days)."
+      plugin_types: "The plugin WIZARD asks which memory types to connect, and the REGISTRY ENFORCES the declaration — refuses reads/writes outside it, same shape as the existing schema ceiling."
+      plugin_ordering: "ALL THREE LATENCY MECHANISMS FIRST (prefetch, circuit breaker, background writes with flush barrier), PLUGINS AFTER. This reverses my recommendation."
+      test_lane: "DEDICATED TEST OWL with its own memory scope, driven from the real Telegram. Real gateway, real pipeline; every write lands somewhere inspectable and deletable."
+      turn_economics: "2b (dropped guard note), 3c (step accumulation across retries), and the whole 1b/1c/2c/2d group. 3b (token bound) is WARN-ONLY, not a hard stop — he does not want a bound that can cut a turn off mid-work."
+      audit_contract: "VERIFY THE BACKUP PATH AT WRITE TIME — if an audit record names a backup, something confirms the file exists, or the field is not written."
+      corpus_rule: "Add the corpus-size-delta rule to PROCESS.md, NOT CLAUDE.md — it is programme measurement discipline, not a codebase landmine."
+    AGREED_WORK_ORDER:
+      phase_1_stop_the_bleeding: "Block DML/DDL via shell; audit records verify backup paths; fix _guard_note (2b)."
+      phase_2_one_identity: "Single owner + cascading delete; shared normaliser; shadow cleanup (6 ghost owls, 111 ownership rows, 148 FTS rows, 10 disk dirs); Falcon.md merge with a backup first."
+      phase_3_the_graph: "MEASURE graph-context value; then purge Fact/Entity, rebuild with weighting + machine-lane refusal + normalised entities; re-point the syncer at staged_facts, THEN delete committed_facts."
+      phase_4_memory_shape: "Scope episodic by owl+conversation and backfill the 368; [permanent]/[until_changed] becomes platform-wide."
+      phase_5_resilience_then_plugins: "Circuit breaker, prefetch, flush barrier; then wizard with enforced types, test owl, Obsidian; then 3c, 3b-as-warning, 1b/1c/2c/2d."
+      phase_6_instruments: "Generic stale-store detector + drift report, against a clean baseline."
+    GUARDRAILS_I_AM_HOLDING: >-
+      Nothing touches ~/.stackowl/memory without a backup first. The graph purge WAITS on the
+      phase-3 measurement — if graph context is worth nothing, the rebuild does not happen at all.
+    PHASE_1_ITEM_1_SHIPPED_the_shell_tool_can_no_longer_write_the_platform_database:
+      map_check: "No mapped item matches — evidence-led work, recorded as DEBT-50."
+      what_shipped: >-
+        writes_platform_db() in tools/system/shell.py, wired UNCONDITIONALLY into run_argv —
+        THE single execution seam shared by ShellTool and learned tools, so one insertion point
+        covers both. Placed BEFORE the catastrophic gate so the refusal cannot be reached by
+        approving something else. The refusal names the migrations directory.
+      why_not_the_consent_path: >-
+        _gate_catastrophic already exists and fails closed with no user present, which would have
+        caught this incident. It was NOT reused because Bakir explicitly rejected consent-gating:
+        the incident ran at 01:09 in an unattended lane, and there is no interactive case either.
+      why_WRITES_only_and_not_all_access: >-
+        MEASURED FIRST, and the measurement changed the design. The shell tool DOES NOT LOG THE
+        COMMAND IT RUNS — its entry line was log.tool.debug while production runs at INFO, so the
+        whole 30-day window holds FOUR shell.execute lines and not one carries a command. The
+        read/write mix of database access through the tool is therefore UNMEASURED, and refusing
+        every command that NAMES the database could break read paths nobody can see. Writes are
+        the narrowest rule that covers the incident.
+      why_statement_SHAPES_and_not_a_verb_list: >-
+        _is_catastrophic_segment's own docstring says it matches command STRUCTURE and target PATHS
+        and deliberately avoids keyword matching. A bare verb list fires on
+        "SELECT * FROM skill_audit WHERE op='delete'" — a query THIS PROGRAMME RAN TODAY — and on
+        created_at/deleted_at column names. Two-token SQL statement shapes (DELETE FROM, INSERT INTO,
+        UPDATE x SET) do not. SQL keywords are a formal grammar, not natural language, so the
+        no-hardcoded-English rule does not reach them.
+      the_instrument_shipped_with_it: "shell.execute entry raised from DEBUG to INFO. An arbitrary-execution tool with no production record of what it ran is the observability gap that hid the purge — it was visible only because an unrelated traceback quoted its SQL."
+      matched_on_command_TEXT_not_argv: "The incident SQL lived inside a python3 -c string, not as argv tokens. Matching the whole command text covers heredocs and chained commands with no special handling."
+      tests: "tests/tools/system/test_shell_refuses_platform_db_writes.py — 21 passing, including the reconstructed incident command, the two false-positive shapes a verb list would break, unrelated databases, and the shared run_argv seam. Whole tools/system suite: 180 passed."
+      baselines: "ruff src/ 37 (baseline), mypy 65 (baseline). Both held exactly."
+      blast_radius_checked_before_restart: "No src/ path shells out to write the database — export/backup.py uses the sqlite3 MODULE, and run_argv's only other caller is the git tool."
+      restart: "./start.sh at 2026-08-31T02:41:14Z. 477 records since boot, ZERO ERRORs."
+      ACCEPTANCE_CHECK_1_OPEN: >-
+        "The INFO entry line appears for a real shell command." NOT CLOSED — zero shell.execute
+        records since restart, because the platform only runs shell commands when an owl decides to
+        and there is no headless one-shot mode. CLOSING QUERY:
+        grep '"msg": "shell.execute: entry' ~/.stackowl/logs/stackowl.jsonl | tail
+      ACCEPTANCE_CHECK_2_OPEN: >-
+        "The guard refuses a real production write." NOT CLOSED — it needs an owl to attempt a
+        database write, which cannot be forced without spending a real turn on Bakir's account.
+        CLOSING QUERY:
+        grep 'shell.execute: refused — writes the platform database' ~/.stackowl/logs/stackowl.jsonl
+      honest_limit_of_the_guard: >-
+        This is DETECTION, not prevention. A command that computes the database path at runtime, or
+        obfuscates the SQL, is not caught. It converts "trivially easy" into "requires deliberate
+        evasion" and it fails closed on the exact shape that happened. Real prevention would need
+        filesystem-level confinement of the tool subprocess, which does not exist today.
+      one_known_false_positive_shape: >-
+        A git commit whose MESSAGE quotes SQL against stackowl.db would be refused, since the git
+        tool shares run_argv. Judged rare enough not to special-case; recorded rather than hidden.
   RETIREMENT_2026_08_30_the_PLATFORM_already_owns_this_and_is_doing_it_right:
     what_was_authorised: "Bakir: retire the never-run LEARNED skills only."
     WHY_I_DID_NOT_DO_IT_BY_HAND: >-
@@ -848,6 +1012,35 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-50
+    found: 2026-08-30
+    title: "The shell tool could write the platform's own database; now it cannot"
+    what: >-
+      An autonomous recovery session purged 151 learned skills by running hand-written SQL
+      through the `shell` tool at 2026-08-30 01:09:45Z. Bakir confirmed he ordered the purge,
+      so the OUTCOME was authorised — but nothing gated the mechanism, the search index was
+      never synced, and the audit row names two backups that do not exist on the box.
+    evidence: >-
+      skill_audit audit_id 260 (op=purge_all, actor=friday, count=151); the failed first
+      attempt visible in the engine log as a rolled-back INSERT with the successful audit row
+      79 seconds later; skills_fts holding 171 rows against a 20-row skills table with 148
+      naming skills that no longer exist; neither backups/learned-skills-purge-2026-08-29/
+      db-rows-learned.json nor stackowl.db.pre-registry-purge found anywhere under /home/boss
+      or /ssd to depth 7.
+    decision: >-
+      writes_platform_db() added to tools/system/shell.py and wired unconditionally into
+      run_argv, the single execution seam shared by ShellTool and learned tools. Matches SQL
+      statement SHAPES (DELETE FROM, INSERT INTO, UPDATE x SET) against the whole command text,
+      because the incident SQL lived inside a python3 -c string rather than as argv tokens.
+      Reads are untouched: the tool logs no commands, so the read/write mix is unmeasured and a
+      broader rule could break unseen read paths. shell.execute entry raised DEBUG -> INFO in the
+      same change, since that missing instrument is why the purge was invisible.
+    residual_risk: >-
+      Detection, not prevention — a runtime-computed path or obfuscated SQL is not caught, and a
+      git commit message quoting SQL against stackowl.db would be refused since the git tool
+      shares run_argv. Real prevention needs filesystem confinement of the tool subprocess, which
+      does not exist today.
+    status: "open — shipped and live, both live-traffic acceptance checks still OPEN with their closing queries recorded in current"
   - id: DEBT-44
     date: 2026-08-30
     title: "Incident skills are now ONE PER CAPABILITY, merged rather than minted"

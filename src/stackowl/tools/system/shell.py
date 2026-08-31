@@ -347,6 +347,67 @@ def _is_catastrophic_segment(args: list[str]) -> tuple[bool, str]:
     return (False, "")
 
 
+#: SQL statement SHAPES, not verbs. Two-token grammar so a verb appearing as a
+#: value (``WHERE op='delete'``) or inside a column name (``created_at``) does
+#: not match — a bare verb list refuses queries this programme actually runs.
+#: SQL keywords are a formal grammar, not natural language, so the no-hardcoded-
+#: English rule does not reach them.
+_SQL_WRITE_STATEMENT = re.compile(
+    r"\b(?:"
+    r"insert\s+(?:or\s+\w+\s+)?into"
+    r"|delete\s+from"
+    r"|update\s+[\w.\"'`\[\]]+\s+set"
+    r"|drop\s+(?:table|index|view|trigger|database)"
+    r"|alter\s+(?:table|index|view)"
+    r"|create\s+(?:(?:temp|temporary|unique|virtual)\s+)*(?:table|index|view|trigger)"
+    r"|replace\s+into"
+    r"|truncate\s+table"
+    r"|attach\s+database"
+    r"|reindex\b"
+    r"|vacuum\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def writes_platform_db(command: str) -> tuple[bool, str]:
+    """Detect a command that would WRITE the platform's own database.
+
+    Returns ``(True, human_reason)`` on a match, ``(False, "")`` otherwise.
+
+    EARNED 2026-08-30: an autonomous recovery session ran a ``python3 -c``
+    heredoc against ``stackowl.db`` and purged 151 learned skills, leaving four
+    shadow stores untouched and an audit row naming two backups that do not
+    exist. The catastrophic-shape check does not cover SQL, and the operator's
+    standing rule — DB problems are migration scripts only — was held by nobody.
+
+    READS ARE UNTOUCHED. The tool does not log its commands, so the read/write
+    mix of database access through it is unmeasured; refusing every command that
+    NAMES the database could break read paths that cannot be seen. This refuses
+    the narrowest shape that covers the incident.
+
+    Matches on the whole command text rather than argv because the SQL lives
+    inside a ``-c`` string or heredoc, not as separate tokens — which is exactly
+    how the incident command was shaped. Chained commands need no special
+    handling for the same reason.
+    """
+    if not command:
+        return (False, "")
+    db_path = StackowlHome.db_path()
+    if db_path.name not in command and str(db_path) not in command:
+        return (False, "")
+    match = _SQL_WRITE_STATEMENT.search(command)
+    if match is None:
+        return (False, "")
+    return (
+        True,
+        f"writes the platform database ({db_path.name}) via {match.group(0).upper()!r} — "
+        f"data and schema changes belong in a migration script under "
+        f"src/stackowl/db/migrations/, which is idempotent, reviewable and "
+        f"applied on every boot. Reads through this tool are unaffected.",
+    )
+
+
 def _preferred_shell_executable() -> str | None:
     """The shell a ``shell_command`` should run under, or None to keep the default.
 
@@ -516,7 +577,12 @@ async def run_argv(
 
     cwd = workdir or _default_workspace_cwd()
     rendered = " ".join(argv)
-    log.tool.debug(
+    # INFO, not DEBUG. Production runs at INFO, so this tool — which can run
+    # ANY command — had no record of what it ran: four shell.execute lines in a
+    # 30-day window, none carrying a command. The 2026-08-30 database purge was
+    # visible only because an unrelated traceback happened to quote its SQL.
+    # A log line that is the evidence for a claim must be INFO.
+    log.tool.info(
         "shell.execute: entry",
         extra={"_fields": {"command": rendered[:200], "timeout_sec": timeout_sec, "intent": intent}},
     )
@@ -535,6 +601,30 @@ async def run_argv(
         log.tool.debug(
             "shell.execute: read-only intent declared",
             extra={"_fields": {"honored": read_only, "named_write": has_named_write}},
+        )
+
+    # PLATFORM-DATABASE gate — UNCONDITIONAL, and deliberately not the consent
+    # path. The incident that earned it ran at 01:09 in an unattended recovery
+    # lane, where there is nobody to ask; and there is no interactive case
+    # either, because a data change that is worth making is worth writing as a
+    # migration. Placed before the catastrophic gate so the refusal is not
+    # reachable by approving something else.
+    db_write, db_reason = writes_platform_db(shell_command or rendered)
+    if db_write:
+        log.tool.warning(
+            "shell.execute: refused — writes the platform database",
+            extra={"_fields": {
+                "tool": tool_name,
+                "command": (shell_command or rendered)[:200],
+                "reason": db_reason,
+            }},
+        )
+        return ToolResult(
+            success=False,
+            output="",
+            error=f"refused: {db_reason}",
+            duration_ms=(time.monotonic() - t0) * 1000,
+            side_effect_committed=False,  # never spawned
         )
 
     # CATASTROPHIC gate — every command runs silently EXCEPT a narrow set of
