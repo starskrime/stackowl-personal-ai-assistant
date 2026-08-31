@@ -898,6 +898,31 @@ class DurableTaskStore(OwnedRepository):
 
     # ---- the ONE loop ---------------------------------------------------
 
+    async def update_achievement(self, task_id: str, achievement: str) -> None:
+        """Replace a row's achievement condition. Never raises.
+
+        The criterion is written from the REQUEST, after the row is enqueued —
+        the enqueue's own contract is "never delays the turn", so a model call
+        cannot sit inline there and the writer runs spawned. This lands its
+        result on the row the judge later reads.
+
+        Deliberately narrow: it touches ONE column and never resurrects a deleted
+        row (the WHERE finds nothing and the UPDATE is a no-op), so a late
+        criterion for a task that has since gone cannot recreate it.
+        """
+        try:
+            await self._db.execute(
+                f"UPDATE {self._table} SET achievement=? "  # noqa: S608
+                "WHERE task_id=? AND owner_id=?",
+                (achievement, task_id, self._owner_id),
+            )
+        except Exception as exc:
+            # Bookkeeping must never cost a turn — and every except logs.
+            log.tasks.warning(
+                "[loop] could not record this turn's achievement condition",
+                exc_info=exc, extra={"_fields": {"task_id": task_id}},
+            )
+
     async def enqueue(self, task: DurableTask) -> None:
         """Write a task the loop may pick up. The universal ingress.
 

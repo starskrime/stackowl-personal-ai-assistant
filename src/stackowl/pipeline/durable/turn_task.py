@@ -40,7 +40,77 @@ from typing import Any
 from stackowl.infra.observability import log
 
 
-async def observe_turn_achievement(writer: Any, *, trace_id: str, goal: str) -> None:
+def produced_artifact_of(state: Any) -> bool:
+    """Did this turn actually SEND something to the user?
+
+    The structural half of the achievement veto. There is no exact
+    "an artifact reached the user" signal on the platform: ``ToolOutcome`` carries
+    no ``artifact_path``, and ``image_generate`` declares no effect class because
+    it writes into the media dir rather than delivering. What IS true is that a
+    file reaches the user only through ``send_file``, which declares
+    ``effect_class="sends_message"`` — so that class having run is a NECESSARY
+    condition for delivery, and its absence is sound evidence that nothing landed.
+
+    It is not SUFFICIENT — a plain text message sets the same class — so this
+    proxy is permissive: it under-fires rather than over-fires. That is the right
+    direction for a veto that may only ever DOWNGRADE a verdict. The 2026-08-31
+    incident had ran_effect_classes EMPTY, so it is caught regardless.
+    """
+    try:
+        return "sends_message" in tuple(getattr(state, "ran_effect_classes", None) or ())
+    except Exception:  # pragma: no cover — a hostile state must not break delivery
+        return False
+
+
+async def judge_turn_achievement(
+    judge: Any, store: Any, *, trace_id: str, result: str, state: Any
+) -> None:
+    """SHADOW: log whether this turn met its own criterion. Reopens nothing.
+
+    Reads the criterion the writer stored on the row. A row with the default
+    constant, or none at all, yields no opinion — the judge itself refuses those
+    rather than manufacturing a verdict.
+    """
+    try:
+        task = await store.get(trace_id)
+        criterion = str(getattr(task, "achievement", "") or "")
+    except Exception as exc:
+        log.tasks.warning(
+            "[loop] achievement shadow: could not read the criterion back",
+            exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+        )
+        return
+    try:
+        verdict = await judge.judge(
+            criterion=criterion,
+            result=result,
+            produced_artifact=produced_artifact_of(state),
+        )
+    except Exception as exc:
+        log.tasks.warning(
+            "[loop] achievement shadow: judge failed — the turn is unaffected",
+            exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+        )
+        return
+    log.tasks.info(
+        "[loop] achievement shadow: verdict — NOTHING REOPENED",
+        extra={"_fields": {
+            "trace_id": trace_id,
+            "achieved": verdict.achieved,
+            "vetoed_by_structure": verdict.vetoed_by_structure,
+            "requires_artifact": verdict.requires_artifact,
+            "criterion": criterion[:160],
+            "reason": verdict.reason,
+            # What enforcement WOULD have done, so the shadow phase reports a
+            # rate rather than an anecdote.
+            "would_reopen": verdict.achieved is False,
+        }},
+    )
+
+
+async def observe_turn_achievement(
+    writer: Any, store: Any = None, *, trace_id: str, goal: str
+) -> None:
     """SHADOW: log what this turn's achievement condition WOULD be.
 
     Bakir, 2026-08-31, after "Give me in pictures" closed as ``completed`` having
@@ -48,11 +118,13 @@ async def observe_turn_achievement(writer: Any, *, trace_id: str, goal: str) -> 
     later, and enforcement waits on a measured false-positive rate from real
     traffic. This is the observation half.
 
-    NOT AWAITED BY THE CALLER, and not stored on the row. The enqueue's own
-    contract at the call site is "never raises, never delays the turn", so a model
-    call cannot sit inline; and writing a value nothing reads yet would be a write
-    with no reader — the first failure shape in this project's own list. In shadow
-    the log line IS the deliverable.
+    NOT AWAITED BY THE CALLER. The enqueue's own contract at the call site is
+    "never raises, never delays the turn", so a model call cannot sit inline.
+
+    IT IS NOW STORED, and it was not before. Until the judge shipped, writing the
+    criterion to the row would have been a value nothing read — the first failure
+    shape in this project's own list. The reader exists as of this item, so the
+    write is earned rather than speculative.
     """
     try:
         criterion = await writer.write(request=goal)
@@ -65,6 +137,11 @@ async def observe_turn_achievement(writer: Any, *, trace_id: str, goal: str) -> 
         return
     from stackowl.interaction.turn_achievement_writer import DEFAULT_ACHIEVEMENT
 
+    # STORED NOW, because it finally has a reader: the judge at completion. Until
+    # this item shipped, writing it would have been a value nothing consumed —
+    # the first failure shape in this project's own list.
+    if store is not None:
+        await store.update_achievement(trace_id, criterion)
     log.tasks.info(
         "[loop] achievement shadow: what would count as done",
         extra={"_fields": {
@@ -224,7 +301,9 @@ async def enqueue_turn_task(
         # never to delay the turn, and a fast-tier call would.
         if achievement_writer is not None:
             shadow = asyncio.create_task(
-                observe_turn_achievement(achievement_writer, trace_id=trace_id, goal=goal)
+                observe_turn_achievement(
+                    achievement_writer, store, trace_id=trace_id, goal=goal
+                )
             )
             # Hold a reference so the task is not garbage-collected mid-flight,
             # and surface a crash instead of swallowing it.
@@ -493,4 +572,37 @@ async def complete_turn_task(
             exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
         )
         return "mark_failed"
+    # SHADOW — judge the turn against its own criterion and LOG the verdict.
+    # Spawned AFTER the row is marked delivered, so it cannot change this turn's
+    # outcome or its latency: in shadow the verdict reopens nothing, and running
+    # it before the mark would put a model call between the user's answer and the
+    # record of it.
+    judge = _achievement_judge()
+    if judge is not None and state is not None:
+        shadow = asyncio.create_task(
+            judge_turn_achievement(
+                judge, store, trace_id=trace_id, result=result, state=state
+            )
+        )
+        shadow.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     return "completed"
+
+
+def _achievement_judge() -> Any:
+    """The judge, or ``None`` when nothing is wired. Never raises.
+
+    Read from services here rather than threaded through every caller of
+    ``complete_turn_task``: the completion seam has several call sites and a new
+    required argument on all of them would be a wider change than the shadow it
+    serves.
+    """
+    try:
+        from stackowl.pipeline.services import get_services
+
+        return getattr(get_services(), "turn_achievement_judge", None)
+    except Exception as exc:
+        log.tasks.warning(
+            "[loop] achievement shadow: services unavailable — skipping the verdict",
+            exc_info=exc,
+        )
+        return None

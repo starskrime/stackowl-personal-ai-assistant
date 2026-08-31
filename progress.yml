@@ -315,6 +315,56 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  COMPLETION_CONTRACT_JUDGE_2026_08_31_the_second_half_in_shadow:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-56."
+    WHAT_MEASURING_FIRST_CHANGED_ABOUT_THE_ITEM: >-
+      complete_turn_task ALREADY returns unachieved turns to the loop. unachieved_effect_of
+      reads state.effects_measured_absent — "the strict subset that was MEASURED" — and
+      UNACHIEVED_EFFECT_MAX_ATTEMPTS is 3, not 30, which is exactly the small ceiling Bakir
+      reached for independently. Its docstring already states the principle: "For a QUESTION
+      the outcome is the answer, and delivery is achievement. For an EFFECTFUL request the
+      outcome is the effect, and an apology about the effect is not the effect."
+      SO THE GAP IS NARROW AND EXACT: that machinery fires on a tool that RAN and failed
+      verification. A turn that ran NO TOOL AT ALL has an empty effects_measured_absent, so
+      there is nothing to measure and it completes. That is the "Give me in pictures" shape
+      precisely.
+    THE_STRUCTURAL_CHECK_CANNOT_STAND_ALONE_and_this_reshaped_the_design: >-
+      I first intended to ship the structural half alone and drop the model call. Working
+      the case list killed it: "Explain me BFS" runs no tools, produces no artifact, and is
+      GENUINELY ACHIEVED. So "ran nothing" is not evidence of failure — it becomes evidence
+      only once the criterion says an artifact was owed. Which is exactly why Bakir
+      specified structure as a VETO on a positive verdict, never a detector: "the judge can
+      only downgrade, never upgrade." Shipping structure alone would have floored every
+      ordinary answer on the platform.
+    what_shipped:
+      judge: "interaction/turn_achievement_judge.py — one fast-tier call returning TWO things: the verdict AND whether the criterion requires an artifact. Two things from one call because the veto needs the second and re-deriving it would be a THIRD model call on a turn already paying for two (Bakir authorised two)."
+      veto: "Downgrade only. An artifact existing can never rescue a NOT verdict — otherwise any turn that wrote a file would pass whatever was asked. Asserted explicitly in test_structure_can_only_DOWNGRADE_never_upgrade."
+      no_call_cases: "The default constant and an empty result are answered WITHOUT a provider call — the first is true of every turn ever so judging it would manufacture a verdict, and the second mirrors complete_turn_task's existing refusal to complete on an empty result. One rule, asserted the same way in both places."
+      fail_safe: "Every degraded path is achieved=None (NO OPINION), never False. A wrong 'not achieved' reopens a turn that was fine: in shadow it poisons the measurement, under enforcement it repeats answers at the user."
+      the_criterion_is_now_STORED: "store.update_achievement — one column, and a WHERE that cannot resurrect a deleted row. Writing it was a write-with-no-reader until this item; the reader exists now, so the write is earned rather than speculative."
+      wiring: "services.turn_achievement_judge, constructed beside the writer; judge_turn_achievement spawned from complete_turn_task AFTER mark_delivered, so it can change neither the outcome nor the latency."
+    THE_HONEST_LIMIT_OF_THE_STRUCTURAL_SIGNAL: >-
+      There is NO exact "an artifact reached the user" signal on this platform. ToolOutcome
+      carries no artifact_path, and image_generate declares no effect_class because it writes
+      into media_dir rather than delivering. What is true: a file reaches the user only
+      through send_file, which declares effect_class="sends_message". So that class having
+      run is a NECESSARY condition for delivery and its absence is sound evidence nothing
+      landed — but it is NOT SUFFICIENT, since a plain text message sets the same class.
+      The proxy therefore UNDER-fires, which is the correct direction for a veto that may
+      only downgrade. The incident turn had ran_effect_classes EMPTY, so it is caught anyway.
+      A precise signal would mean adding artifact_path to ToolOutcome — wider than this item.
+    tests: "tests/interaction/test_turn_achievement_judge.py — 12 passing: the live incident (judge says ACHIEVED, structure vetoes), the same turn WITH an artifact, downgrade-only, a conversational answer that must NOT be punished for producing no artifact, the two no-call cases, and every fail-safe path. tests/pipeline/durable + tests/interaction: 622 passed."
+    baselines: "ruff src/ 35, mypy 65 — both exactly at baseline. Restart 2026-08-31T05:25:01Z: 1,351 records, ZERO ERRORs."
+    ACCEPTANCE_CHECK_OPEN_zero_denominator_a_THIRD_time: >-
+      "A completed turn logs an achievement verdict." NOT CLOSED. Zero verdict lines over
+      ZERO Telegram updates since the restart. Three items in a row now rest on the same
+      missing denominator, and that is worth stating plainly rather than repeating a
+      near-miss: NOTHING about these shadow paths can be evidenced until a real chat turn
+      arrives. CLOSING QUERY:
+      grep '"msg": "\[loop\] achievement shadow: verdict' ~/.stackowl/logs/stackowl.jsonl | tail
+      Read `would_reopen` — the share of turns enforcement WOULD have reopened. That rate is
+      the entire decision input for turning enforcement on.
+    NOT_DONE: "Enforcement — no task is reopened, by Bakir's explicit choice of shadow first. The remaining escalations are ESC-75 (graph in the backup) and ESC-76 (the platform cannot draw)."
   IMAGE_CAPABILITY_2026_08_31_no_change_needed_and_I_had_the_premise_WRONG:
     what_was_authorised: "Bakir: 'Yes — you asked for a picture.' He chose to give secretary image_generate, on MY framing that her manifest lists only three tools."
     THE_PREMISE_I_GAVE_HIM_WAS_WRONG: >-
@@ -1345,6 +1395,27 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-56
+    found: 2026-08-31
+    title: "A turn that ran no tool at all could never be judged unachieved"
+    what: >-
+      complete_turn_task already requeues a turn whose effect was MEASURED absent, with a
+      3-attempt ceiling. That machinery needs a tool to have run and failed verification. A
+      turn that ran nothing has an empty effects_measured_absent, so a pure promise completed.
+    evidence: >-
+      unachieved_effect_of reads state.effects_measured_absent, "the strict subset that was
+      measured"; the incident turn ran tools_used=false with ran_effect_classes empty.
+    decision: >-
+      TurnAchievementJudge judges the stored criterion against the result, with a structural
+      veto that may only downgrade. Shipped in SHADOW: the verdict is logged with would_reopen,
+      and nothing is reopened. Structure could not ship alone — a conversational answer runs no
+      tools and is genuinely achieved, so "ran nothing" is only evidence once the criterion says
+      an artifact was owed.
+    residual_risk: >-
+      The artifact signal is a proxy ("sends_message" ran), because ToolOutcome carries no
+      artifact_path. It under-fires, which is the safe direction for a downgrade-only veto. A
+      precise signal means widening ToolOutcome.
+    status: "open — shipped and live; acceptance check has a ZERO denominator for the third consecutive item, closing query recorded in current"
   - id: DEBT-54
     found: 2026-08-31
     title: "Sticky routing let a short follow-up inherit tool-freedom it was never classified into"

@@ -1272,6 +1272,9 @@ class StartupOrchestrator:
         from stackowl.interaction.turn_achievement_writer import TurnAchievementWriter
 
         turn_achievement_writer = TurnAchievementWriter(provider_registry)
+        from stackowl.interaction.turn_achievement_judge import TurnAchievementJudge
+
+        turn_achievement_judge = TurnAchievementJudge(provider_registry)
         # Task 7 — manual "do it again" retry-intent classifier (fast tier,
         # fail-closed→not-a-retry). triage.py reads it off services to decide
         # whether a new message asking about a session's pending retry_queue
@@ -1586,6 +1589,7 @@ class StartupOrchestrator:
             retrieval_intent_classifier=retrieval_intent_classifier,
             schedule_commit_classifier=schedule_commit_classifier,
             turn_achievement_writer=turn_achievement_writer,
+            turn_achievement_judge=turn_achievement_judge,
             retry_intent_classifier=retry_intent_classifier,
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
