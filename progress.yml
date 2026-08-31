@@ -315,6 +315,56 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  STALE_STORE_DETECTOR_2026_08_31_NO_CHANGE_the_design_is_an_operator_question:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-85."
+    outcome: no_change_needed_plus_escalation
+    how_this_item_was_reached: >-
+      Round 0 found the warning census almost clean: every loud line fixed today stops at
+      the moment its fix went live, and what remains is one thin tool description and a
+      missing host library. So the item was taken from Bakir's own work order instead —
+      phase 6's "GENERIC stale-store detector — any store with readers but no writes in N
+      days alarms. One actuator for three defects already on the board."
+    THE_BASELINE_PHASE_6_ASKS_FOR_AND_NOBODY_HAD: >-
+      Every table in the live database, its row count and days since its newest write. Only
+      FOUR stores exceed seven days idle: principals (1 row, epoch), onboarding_events (1,
+      98.8d), dna_checkpoints (8, 48.6d) and owls (10, 9.7d). Everything else is under four
+      days, and the three engines already on the record sit just under the line —
+      retry_queue 3.7d (5,766 rows), objective_subgoals 3.9d, tool_heuristics 3.5d.
+      Recorded because Bakir's own condition on the sibling item was "build it against a
+      clean baseline so it is not born full of known noise", and this is that baseline.
+    I_TRIED_TWO_RULES_AND_MEASURED_BOTH_AGAINST_THE_LIVE_DATABASE:
+      rule_1_self_calibrating_ratio: >-
+        Alarm when idle_days > 7 AND idle > 10x the store's own median inter-write gap.
+        FAILS: a store seeded in one burst has a near-zero median gap for ever, so `owls`
+        scores a ratio of 104,777,809 and alarms permanently for having ten owls created on
+        three days.
+      rule_2_cadence_window: >-
+        Alarm when a store wrote on >= 3 distinct days in the last 45 and nothing in the
+        last 7. FAILS in both directions: it still alarms on `owls`, and it MISSES
+        dna_checkpoints — the one genuinely interesting store — because 48.6 days idle puts
+        every write outside the 45-day window.
+      why_a_third_attempt_is_the_wrong_move: >-
+        CLAUDE.md: "Three failed fix attempts on one problem — that is an architecture
+        question, not a fourth attempt." Two designs, both refuted by the same data, and the
+        thing they cannot decide is not measurable: whether a quiet store is BROKEN or
+        merely quiet depends on what the store is FOR.
+    AND_THE_ONE_STORE_THAT_LOOKS_STALE_IS_NOT_A_DEFECT: >-
+      dna_checkpoints has 8 rows, newest 2026-07-14, and NO writer anywhere in src/ — every
+      reference is a DELETE (OwlStore's identity cascade, the orphan sweep's _RULES) or a
+      comment. The writer was removed ON PURPOSE at commit 2a6c7528, "remove dead
+      DNACheckpointer", and its replacement is learning_artifact_store.py writing
+      learning_artifacts (565 rows, 0.6 days idle, alive). So the detector's very first
+      alarm would be a known non-defect — which is precisely the noise Bakir's condition
+      warns about. What survives is the maintenance machinery: a table, a cascade entry and
+      a sweep rule for a mechanism that was retired. DEBT-86.
+    AND_THE_OTHER_ONE_IS_DELIBERATE: >-
+      principals.created_at is 1970-01-01, and migration 0042 says why in its own comment:
+      "a fixed epoch-zero ISO timestamp so the DDL stays deterministic". Checked before
+      being 'fixed'.
+    what_shipped: "NOTHING, deliberately. Two refuted designs and a baseline are the
+      honest product of this item; a third guess would have shipped an alarm calibrated on
+      nothing, and an alarm that cries wolf is worse than no alarm."
+
   REFLECTIONS_2026_08_31_a_good_summary_was_being_thrown_away_for_its_SECOND_key:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-84."
     how_this_item_was_reached: >-
@@ -1972,6 +2022,53 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_90_the_stale_store_detector_needs_a_rule_only_you_can_choose:
+      question: >-
+        You asked for "any store with readers but no writes in N days". Two rules were built
+        and both refuted against the live database. What separates a store that is BROKEN
+        from one that is merely QUIET?
+      why_evidence_cannot_settle_it: >-
+        It is not a measurement. `owls` has had no write for 9.7 days and that is correct —
+        you have not created an owl. `retry_queue` has had none for 3.7 days and that IS a
+        stopped engine. The data looks the same; only what the store is FOR tells them apart.
+      the_measurement: >-
+        Every table surveyed. Only four exceed 7 days idle: principals (deliberate epoch
+        seed), onboarding_events (happened once), dna_checkpoints (48.6d, writer removed on
+        purpose) and owls (9.7d, correct). The three engines already on the record are at
+        3.5-3.9 days, just under any 7-day line. Rule 1 (idle > 10x the store's own median
+        gap) alarms for ever on any burst-seeded store. Rule 2 (wrote on 3+ days in 45, none
+        in 7) alarms on owls AND misses dna_checkpoints.
+      options: >-
+        (a) An EXPLICIT REGISTRY — each store declares its expected cadence once, and the
+        sweep checks it. Verbose, but it makes "quiet is fine here" a written decision
+        rather than a guess, and an unregistered store is itself a finding.
+        (b) Alarm on the RATE OF CHANGE of the write rate, ignoring absolute idle time —
+        catches an engine that stops without ever alarming on a store that was always sparse.
+        (c) Do not build it. The three defects it was meant to catch are all now fixed and
+        were found by hand in a day.
+      panel_recommendation: >-
+        (a). It is the only one that survives the owls-versus-retry_queue case, and the
+        declaration is the same shape as the achievement condition you already require of a
+        task: a store says what "healthy" means for it, and the sweep measures the effect.
+      what_is_blocked: "Phase 6's detector. The drift report beside it is unaffected."
+    ESC_91_dna_checkpoints_is_a_table_the_platform_maintains_for_nothing:
+      question: >-
+        The DNACheckpointer was removed on purpose (commit 2a6c7528) and replaced by
+        learning_artifacts. Its table still holds 8 rows from June and July, and still has a
+        cascade entry in OwlStore.delete and a rule in the orphan sweep. Drop it, or keep it?
+      why_evidence_cannot_settle_it: >-
+        Dropping a table is a destructive migration and that is your call, not mine. The
+        evidence says only that nothing writes it.
+      the_measurement: >-
+        8 rows, newest 2026-07-14 (48.6 days). Every reference in src/ is a DELETE or a
+        comment; there is no INSERT. learning_artifact_store.py writes learning_artifacts
+        instead — 565 rows, 0.6 days idle.
+      panel_recommendation: >-
+        Keep the rows, remove the MACHINERY: the cascade entry and the sweep rule maintain a
+        store nothing feeds. Migration 0112's own argument applies to the table itself — "a
+        table that exists and returns nothing is honest, while a missing table is an error at
+        every call site" — so dropping it buys little and costs a migration.
+      what_is_blocked: "Nothing. It is residue, not a defect."
     ESC_89_I_relaxed_a_contract_three_tests_asked_you_to_decide_on:
       question: >-
         A reflection with a good summary but no suggested_strategy is now KEPT rather than
