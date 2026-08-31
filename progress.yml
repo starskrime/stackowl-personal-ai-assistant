@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  SPEND_REPORT_2026_08_31_the_platform_can_now_tell_him_where_the_tokens_went:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-91."
+    the_ask_verbatim: >-
+      Bakir: "Also i want user to get the total token consumption report every 24 hours for
+      each type like how you had per task per type" — "That will give visibility to user
+      what is happening in system."
+    WHY_HE_ASKED: >-
+      He had just been shown, for the first time, that on 2026-08-31 the platform spent
+      21,744,608 input tokens of which the self-healing loop was 72.3% and his own
+      conversations 2.5%. Nothing in the platform reported that. The only reason it was ever
+      seen is that he asked a question on the night the bill got big enough to notice.
+    A_SECTION_NOT_A_SECOND_JOB: >-
+      MorningBriefHandler already runs daily, already assembles sections under a per-section
+      guard, and already delivers through the single ProactiveDeliverer seam with an honest
+      per-channel status. A new reporting job beside it would be a second engine for a thing
+      that exists — "find the existing loop and extend it".
+    it_ships_ON: >-
+      _run_assembler reads toggles.get(key, True), so a section absent from
+      settings.brief.sections is ENABLED. There is no switch for him to find, and a test
+      asserts the key is NOT in the defaults so that stays true.
+    ONE_RULE_FOR_WHAT_KIND_OF_LANE_THIS_IS: >-
+      lane_family() lives beside is_machine_lane in sessions/models.py, which already owns
+      what a lane key means. This report was the FOURTH place tonight that needed the
+      derivation; writing it ad hoc a fourth time is how "incident" and "incident-" end up
+      counted as two different things in two different reports. A key it cannot read is
+      named after its first token rather than dropped — a bucket called "other" quietly
+      holding a large share would be worse than no report.
+    rendered_against_the_LIVE_database_before_shipping: >-
+      Total input tokens (last 24h) 25,566,097 — incident 16,479,819 (64.5%), you (telegram)
+      4,387,040 (17.2%), goal 2,508,715 (9.8%), job:reflection_writer 1,078,818 (4.2%),
+      recovery 806,985 (3.2%), job:rollover_summary 197,291 (0.8%), job:evolution_batch
+      42,991 (0.2%), job:goal_execution 26,464 (0.1%), everything else (4 kinds) 37,974.
+    tests: "11 in tests/brief/test_the_daily_brief_says_where_the_tokens_went.py — every
+      lane shape measured live, the SHARE not only the count (72.3% is the number that made
+      the problem visible), the biggest consumer first, spend outside the window excluded, a
+      quiet day still reporting, a broken query answering honestly rather than raising, the
+      total stated, and two STRUCTURAL tests: that the handler actually constructs the
+      assembler, and that it needs no settings entry to appear."
+    suites: "tests/brief + tests/scheduler + tests/sessions 706 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_until_the_next_morning_brief
+    closing_query: >-
+      The next brief carries a `system_spend` section; "[brief] system_spend: assembled" at
+      INFO with total_input_tokens and families. The section was rendered against the live
+      database before shipping, so the content is known — what is unproven is that the brief
+      delivers it, which needs the daily job to fire.
+    HIS_OTHER_ASK_IS_NOT_DONE: >-
+      "And i want incidents to be delivered to user." Recorded as ESC-95 rather than guessed
+      at: he was paged 25 times yesterday and objected, and ESC-87 asked whether concluded
+      RCAs should page at CRITICAL. "Deliver incidents" and "stop paging me" need him to say
+      which, and at what urgency.
+
   ESC_66_SHIPPED_2026_08_31_the_platform_forgot_every_diagnosis_on_every_restart:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-90."
     how_this_item_was_reached: >-
@@ -2238,6 +2290,31 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_95_you_asked_for_incidents_delivered_and_you_asked_for_fewer_pages:
+      question: >-
+        "And i want incidents to be delivered to user." Today the platform already delivers
+        every concluded RCA at CRITICAL — that was 12 of the 25 pages you objected to last
+        night. So: WHICH incidents, and at what urgency?
+      why_evidence_cannot_settle_it: >-
+        The measurement says what is delivered now and how often. Whether an incident is
+        worth a phone buzz at 3am, or belongs in the daily brief you just asked for, is a
+        judgement about your attention.
+      the_measurement: >-
+        25 critical operator_health pages on 2026-08-31: 12 "RCA complete", 7 degraded/
+        recovered health flap pairs (both flaps now fixed), and the rest core/alert notices.
+        Both operator_health senders hardcode urgency="critical"
+        (scheduler/assembly.py:1101, startup/orchestrator.py:4436) — there is no severity
+        ladder, so a recovery notice and a core crash arrive identically.
+      options: >-
+        (a) An INCIDENTS section in the daily brief that just shipped — detected, diagnosed,
+        verdict — and keep CRITICAL for a subsystem still down after a heal attempt.
+        (b) Deliver every incident as it opens, at a lower urgency than critical.
+        (c) Both: (a) daily, plus (b) only for incidents whose RCA VERIFIED a cause — 12 of
+        100 yesterday, so about one page a day rather than twelve.
+      panel_recommendation: >-
+        (c). It answers "I want incidents delivered" without restoring the volume you
+        objected to, and it uses the brief section that now exists.
+      what_is_blocked: "The incidents half of tonight's request. The spend report shipped."
     ESC_94_prefetch_would_optimise_the_3_percent_not_the_97:
       question: >-
         The memory prefetch was recommended as the biggest token win. 96.5% of memory

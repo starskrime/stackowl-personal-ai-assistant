@@ -294,6 +294,42 @@ def is_machine_lane(session_key: str | None) -> bool:
     return session_key.startswith(MACHINE_LANE_PREFIXES) or _is_runner_lane(session_key)
 
 
+#: How a lane key is named in an operator-facing report. ONE rule, here, because
+#: sessions/models.py already owns what a lane key MEANS — and because writing the
+#: same derivation ad hoc is how "incident" and "incident-" end up counted as two
+#: different things in two different reports.
+_HUMAN_FAMILY = "you (telegram)"
+
+
+def lane_family(session_key: str | None) -> str:
+    """The KIND of lane this key belongs to, for reporting.
+
+    Deliberately coarse and deliberately named from the operator's point of view:
+    the question a report answers is "what part of the platform spent this", and
+    `owl:secretary:recovery:task-74e6b23` is not a useful answer while `recovery`
+    is. A key it cannot read is named after its first token rather than dropped —
+    a bucket called "other" quietly holding a large share would be worse than no
+    report at all.
+    """
+    key = (session_key or "").strip()
+    if not key:
+        return "other"
+    if key.isdigit():
+        return _HUMAN_FAMILY  # a bare chat id is a person
+    if key.startswith(_LANE_ROOT + _KEY_SEP):
+        parts = key.split(_KEY_SEP)
+        if len(parts) >= 4 and parts[3] in _CHAT_TYPE_VALUES:
+            return _HUMAN_FAMILY
+        return parts[2] if len(parts) > 2 else key
+    if key.startswith("job:"):
+        # The job NAME is the useful grain: "job:reflection_writer" tells the
+        # operator which scheduled thing spent it, "job" tells them nothing. The
+        # trailing -<id> is dropped so every run of one job counts as that job.
+        name = key.split(":", 1)[1].rsplit("-", 1)[0]
+        return f"job:{name}" if name else "job"
+    return key.split("-", 1)[0] or "other"
+
+
 def build_session_key(source: SessionSource, *, group_per_user: bool = True,
                       thread_per_user: bool = False) -> str:
     """Derive the lane name. Deterministic: same source, same key, forever (I1).

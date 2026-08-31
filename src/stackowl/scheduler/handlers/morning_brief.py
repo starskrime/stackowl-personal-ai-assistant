@@ -29,6 +29,7 @@ from stackowl.brief.assemblers import (
     BriefContext,
     BriefSectionAssembler,
     DateAndPrioritiesAssembler,
+    SystemSpendAssembler,
     now_iso_utc,
 )
 from stackowl.brief.models import BriefSection, MorningBrief
@@ -108,6 +109,13 @@ class MorningBriefHandler(JobHandler):
         self._assemblers: list[BriefSectionAssembler] = [
             DateAndPrioritiesAssembler(db=db),
             AgentStatusAssembler(scheduler=scheduler),
+            # Bakir, 2026-08-31: "I want the total token consumption report every
+            # 24 hours for each type ... that will give visibility to user what is
+            # happening in system." Asked after being shown that the self-healing
+            # loop spent 72.3% of a 21.7M-token day and his own conversations 2.5%
+            # — a fact the platform had no way of telling him. Not optional and not
+            # behind a toggle: `_run_assembler` defaults an unlisted section to ON.
+            SystemSpendAssembler(db=db),
         ]
         # ADR-19 — the platform reporting on its own autonomic loops. Optional
         # so every existing construction site (tests, legacy wiring) is

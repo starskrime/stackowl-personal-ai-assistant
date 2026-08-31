@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from stackowl.brief.models import BriefSection
 from stackowl.config.settings import Settings
 from stackowl.infra.observability import log
-from stackowl.sessions.models import MACHINE_LANE_PREFIXES
+from stackowl.sessions.models import MACHINE_LANE_PREFIXES, lane_family
 from stackowl.skills import standard
 from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 
@@ -459,3 +459,88 @@ class AutonomicHealthAssembler:
 def now_iso_utc() -> str:
     """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(UTC).isoformat()
+
+
+#: How many lane families the spend section names before it stops. The tail is
+#: summed into one line rather than dropped: a report that silently omits part of
+#: the total teaches its reader to distrust the part it shows.
+_MAX_SPEND_ROWS = 8
+
+#: The window the report covers. Bakir asked for "every 24 hours", and a running
+#: total would stop meaning anything by week two.
+_SPEND_WINDOW_HOURS = 24.0
+
+
+class SystemSpendAssembler:
+    """Where the last 24 hours of tokens went, by kind of work.
+
+    ASKED FOR, AFTER BEING SHOWN IT. On 2026-08-31 the platform spent 21,744,608
+    input tokens: incident RCA 72.3%, goal 11.5%, reflection_writer 4.8%, and
+    Bakir's own conversations 2.5%. Nothing reported that, so the only reason it
+    was ever seen is that he asked on the night the bill got big enough to notice.
+    His words: "that will give visibility to user what is happening in system."
+
+    A SECTION, NOT A SECOND JOB. The morning brief already runs daily, already
+    assembles sections under a per-section guard, and already delivers through the
+    single ProactiveDeliverer seam with an honest per-channel status. Adding a
+    reporting job beside it would be a second engine for a thing that exists.
+
+    SHIPS ON: `_run_assembler` reads `toggles.get(key, True)`, so a section absent
+    from settings.brief.sections is enabled with no operator switch to find.
+    """
+
+    key = "system_spend"
+
+    def __init__(self, db: DbPool) -> None:
+        self._db = db
+
+    async def assemble(self, ctx: BriefContext) -> BriefSection:
+        log.scheduler.debug("[brief] system_spend: entry", extra={"_fields": {}})
+        since = datetime.now(UTC) - timedelta(hours=_SPEND_WINDOW_HOURS)
+        try:
+            rows = await self._db.fetch_all(
+                "SELECT session_key, input_tokens FROM cost_records "
+                "WHERE recorded_at > ?",
+                (since.isoformat(),),
+            )
+        except Exception as exc:  # B5 — answer honestly rather than raise
+            # The handler would turn a raise into an error block; saying what is
+            # missing is more useful to the reader than a stack summary.
+            log.scheduler.error(
+                "[brief] system_spend: could not read cost_records",
+                exc_info=exc,
+            )
+            return BriefSection(
+                key=self.key, title=self.key,
+                items=["Token spend unavailable — the cost ledger could not be read."],
+                omitted=False,
+            )
+        totals: dict[str, int] = {}
+        for row in rows:
+            family = lane_family(str(row["session_key"] or ""))
+            totals[family] = totals.get(family, 0) + int(row["input_tokens"] or 0)
+        grand = sum(totals.values())
+        if not grand:
+            # A quiet day still reports. Silence must be distinguishable from a
+            # broken report — the same rule the brief's F-79 empty-recall follows.
+            return BriefSection(
+                key=self.key, title=self.key,
+                items=[f"No model calls in the last {int(_SPEND_WINDOW_HOURS)}h."],
+                omitted=False,
+            )
+        ordered = sorted(totals.items(), key=lambda kv: -kv[1])
+        items = [f"Total input tokens (last {int(_SPEND_WINDOW_HOURS)}h): {grand:,}"]
+        for family, tokens in ordered[:_MAX_SPEND_ROWS]:
+            items.append(f"{family}: {tokens:,} ({100 * tokens / grand:.1f}%)")
+        tail = ordered[_MAX_SPEND_ROWS:]
+        if tail:
+            rest = sum(t for _f, t in tail)
+            items.append(
+                f"everything else ({len(tail)} kinds): {rest:,} "
+                f"({100 * rest / grand:.1f}%)"
+            )
+        log.scheduler.info(
+            "[brief] system_spend: assembled",
+            extra={"_fields": {"total_input_tokens": grand, "families": len(totals)}},
+        )
+        return BriefSection(key=self.key, title=self.key, items=items, omitted=False)
