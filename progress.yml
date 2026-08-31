@@ -315,6 +315,44 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  MEMORY_2026_08_31_retry_prompts_were_being_filed_as_things_BAKIR_SAID:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-72."
+    how_this_item_was_reached: >-
+      Bakir authorised re-pointing the frozen graph writer at staged_facts. Measuring the
+      SOURCE before wiring anything to it found that staged_facts has the same disease as
+      the corpus it replaced, so wiring the graph to it would have rebuilt the exact problem
+      migration 0112 deleted 107,576 rows to escape.
+    THE_MEASUREMENT_THAT_STOPPED_THE_ORIGINAL_PLAN:
+      staged_facts: 368
+      with_retry_or_RCA_markers: "145 (39%) — content reading 'User: (Retry attempt 2. What happened last time: the turn was BLOCKED: ...'"
+      the_comparison: "Migration 0112 deleted 107,576 facts because 37.1% mentioned a trace id or failure_class — 'the platform's own diagnostics stored as durable memory ABOUT THE USER'. The replacement store is at 39%."
+      lane_kinds: "72055773 105, recovery 99, objective 74, telegram 35, outcome:* 30."
+    BOTH_EXISTING_GATES_MISS_IT_AND_NEITHER_IS_AT_FAULT: >-
+      is_machine_lane is a PREFIX check on ("goal-","incident-"); a retry REUSES the original
+      human session key (owl:secretary:telegram:dm:...), so it is not a machine lane and
+      never was. input_is_synthetic is set in exactly ONE place — orchestrator.py:2434, from
+      `_prompt_depth > 0` — which catches text a COMMAND builder produced. The RetryActuator
+      is not a command builder, so the flag stayed False.
+    THE_SAME_DEFECT_IS_ALREADY_ON_THE_RECORD_FOR_A_DIFFERENT_BUILDER: >-
+      state.py's own comment: four rows reading 'User: [/skill use] The user has invoked the
+      skill "..."' were staged as things Bakir said, and this flag was the fix. The
+      RetryActuator writes machine text into input_text the same way and never set it. One
+      builder was fixed; the rule was not generalised to builders.
+    the_fix: "input_is_synthetic=True at BOTH PipelineState constructions in retry_actuator. It uses the gate that already exists rather than adding a third predicate — no keyword list, no content sniffing, nothing that can drift out of step with the builders. The actuator KNOWS its input is synthetic because it composed it."
+    the_test_is_STRUCTURAL_over_the_source: "It counts PipelineState( constructions against input_is_synthetic=True occurrences and asserts they are equal, so a THIRD construction site cannot be added without tripping it. Asserting on the source because both call sites need a live pool, provider and backend, while the property being pinned — the builder always marks its own output — is visible where it is written."
+    tests: "tests/pipeline/test_retry_input_is_not_a_user_utterance.py — 4 passing, including the both-gates-miss-it case stated directly and the expensive direction (a real user turn is still staged). tests/pipeline: 1,635 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline. Restart 2026-08-31T14:50:49Z: 3,557 records, ZERO ERRORs after it (three health_sweep UNHEALTHY errors at 13:17-14:07 PRE-DATE the restart)."
+    ACCEPTANCE_CHECK_OPEN: >-
+      "A retry no longer stages a fact." NOT CLOSED — it needs a retry to occur, which
+      cannot be forced without a failing turn. staged_facts is unchanged at 368, as expected:
+      this is PREVENTION and it does not clean the 145 already there. CLOSING QUERY:
+      SELECT COUNT(*) FROM staged_facts WHERE content LIKE '%Retry attempt%';
+      It should stop growing. Today it is 145.
+    NOT_DONE_and_deliberately: >-
+      The 145 existing machine-authored facts are NOT removed. That is a data deletion, it
+      needs the snapshot-first treatment the sweep already has, and Bakir has not been asked.
+      Raised as ESC-82 rather than taken.
+    AND_THE_ORIGINAL_ITEM_IS_NOW_BLOCKED_ON_IT: "Re-pointing the graph writer at staged_facts should wait until the source is clean, or the graph inherits 39% machine text on its first rebuild — the precise mistake this whole line of work exists to stop repeating."
   STAGE_1b_2026_08_31_the_safety_case_is_GONE_because_the_cap_works:
     map_check: "No mapped item matches — evidence-led verification, recorded as DEBT-71."
     outcome: "NOTHING BUILT. 1b's premise was a runaway that is now bounded, and the evidence for that is production, not argument."
@@ -1162,6 +1200,15 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_82_145_machine_authored_facts_are_sitting_in_memory_right_now:
+      question: "145 of 368 staged_facts are retry/RCA text filed as things you said — 'User: (Retry attempt 2. What happened last time...'. The leak is now closed. Do the existing 145 get removed?"
+      why_evidence_cannot_settle_it: "It is a data deletion from your live memory, and the same judgement you already made once about 107,576 facts. The measurement can say what they are; only you decide whether they go."
+      the_measurement: "368 staged facts, 145 (39%) carrying retry/RCA/diagnostic markers. Migration 0112 deleted 107,576 for the same reason at 37.1%. Lanes: recovery 99, objective 74, outcome:* 30."
+      options:
+        a_delete_them_snapshot_first: "RECOMMENDED. Record each row whole into audit_log via the deletion audit that already exists, then remove them — the same treatment the orphan sweep uses. Recoverable for 365 days, and it stops 39% of your memory being the platform talking to itself."
+        b_leave_them: "They are searchable via staged_recall and mostly harmless noise. Costs nothing to decide; leaves the store 39% machine text and any future graph rebuild inherits it."
+        c_mark_rather_than_delete: "Add a flag so recall can exclude them without losing the record. Preserves everything; needs a column and a reader change, and leaves the rows in every naive query."
+      blocked_until_answered: "Re-pointing the graph writer at staged_facts — feeding it a 39%-machine source would rebuild the problem 0112 deleted 107,576 rows to escape."
     ESC_81_is_compaction_worth_changing_what_the_model_SEES_now_that_the_cap_holds:
       question: "1b was justified by a 683k runaway. That cannot recur — the cap fires and was measured firing. Compaction would now shave a p90 of ~49.5k tokens, at the price of editing the transcript the model reads. Worth it?"
       why_evidence_cannot_settle_it: "The cost side is measured and modest; the risk side is a quality change that only you can judge acceptable, and the plan's own boundary warns that a quality drop means the threshold is wrong rather than the idea."
@@ -1991,6 +2038,17 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-72
+    found: 2026-08-31
+    title: "Retry prompts were staged as durable user facts — 39% of staged_facts is machine text"
+    what: >-
+      The RetryActuator composes an augmented prompt and reuses the original human session
+      key, so is_machine_lane cannot see it and input_is_synthetic was never set. The result
+      is memory rows reading "User: (Retry attempt 2. What happened last time...".
+    evidence: "145 of 368 staged_facts carry retry/RCA/diagnostic markers. Migration 0112 deleted 107,576 facts for the same reason at 37.1%. input_is_synthetic is set in exactly one place, orchestrator.py:2434."
+    decision: "input_is_synthetic=True at both PipelineState constructions in retry_actuator, using the gate that already exists rather than a third predicate. A structural test counts constructions against marks so a third site cannot be added unmarked."
+    residual_risk: "Prevention only — the 145 existing rows remain, raised as ESC-82. It also blocks re-pointing the graph writer at staged_facts until the source is clean."
+    status: "open — shipped and live; acceptance check needs a retry to occur, closing query recorded in current"
   - id: DEBT-71
     found: 2026-08-31
     title: "Stage 1b: the runaway it was built for is bounded, and the cap firing is evidenced"

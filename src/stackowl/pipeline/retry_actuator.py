@@ -153,6 +153,16 @@ class RetryActuator:
             owl_name=original.owl_name,
             pipeline_step="",
             interactive=False,
+            # THIS TEXT IS OURS, NOT THE USER'S. The correction above is composed
+            # here, and this state keeps the ORIGINAL human session key — so
+            # `is_machine_lane` cannot see it (a prefix check on
+            # "goal-"/"incident-", and this is a Telegram lane). Without the flag
+            # the augmented prompt is filed as a durable user utterance.
+            # MEASURED 2026-08-31: 145 of 368 staged_facts (39%) carry retry/RCA
+            # markers reading 'User: (Retry attempt 2. What happened last
+            # time...' — almost exactly the 37.1% of diagnostics that migration
+            # 0112 deleted 107,576 rows to be rid of.
+            input_is_synthetic=True,
             defer_delivery=True,
             retry_replay=True,
             corrective_replay=True,
@@ -210,6 +220,10 @@ class RetryActuator:
             owl_name="secretary",
             pipeline_step="",
             interactive=False,
+            # Same reason as the correction path above: `augmented_goal` is
+            # composed by _augment_goal, not typed by anyone, and this state
+            # reuses the row's human session key.
+            input_is_synthetic=True,
             defer_delivery=True,
             # This run IS the retry — its own outcome is tracked below via
             # mark_attempt_failed(). Without this flag, a floor on THIS
