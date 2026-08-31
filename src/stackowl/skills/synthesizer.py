@@ -492,10 +492,18 @@ class SkillSynthesizer:
             # synthesizer minted at 08:33 on 2026-08-24 beside the existing
             # `incident-evidence-brief`, hours after the fix that revived it.
             by_base = {_base_name(sk.name): sk for sk in existing}
-            by_canon = {_canonical_key(sk.name): sk for sk in existing}
+            # AN EMPTY KEY IS NOT AN IDENTITY. canonical_key returns "" for a name
+            # with no word characters at all, and before 2026-08-31 it also
+            # returned "" for every name in a non-Latin script — so an unguarded
+            # dict mapped four unrelated skills onto one entry. The regex is fixed;
+            # this makes the CALLER unable to match on emptiness regardless.
+            by_canon = {
+                key: sk for sk in existing if (key := _canonical_key(sk.name))
+            }
+            proposed_canon = _canonical_key(proposed_name)
             match = (
                 by_base.get(_base_name(proposed_name))
-                or by_canon.get(_canonical_key(proposed_name))
+                or (by_canon.get(proposed_canon) if proposed_canon else None)
             )
             if match is None:
                 return False

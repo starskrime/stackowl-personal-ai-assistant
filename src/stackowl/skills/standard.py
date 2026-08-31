@@ -89,11 +89,25 @@ ALLOWED_SUPPORT_DIRS: frozenset[str] = frozenset({"scripts", "references", "temp
 SOFT_MAX_LINES = 200
 
 #: Any run of non-alphanumerics separates words — hyphen, underscore, space, dot.
-#: `\w` would NOT do: it INCLUDES the underscore, so `a_b_c` arrives as one token
-#: while `a-b-c` splits into three. That exact mistake made my own duplicate
+#: `\w` alone would NOT do: it INCLUDES the underscore, so `a_b_c` arrives as one
+#: token while `a-b-c` splits into three. That exact mistake made my own duplicate
 #: measurement read 35% when the truth was 60%, and hid three of the six
-#: identical-token families outright.
-_CANONICAL_SPLIT_RE = re.compile(r"[^a-z0-9]+")
+#: identical-token families outright. Hence `[\W_]` — everything `\w` excludes,
+#: PLUS the underscore.
+#:
+#: UNICODE, NOT ASCII (2026-08-31). This was `[^a-z0-9]+`, which treats every
+#: character outside ASCII as a SEPARATOR. Measured:
+#:
+#:     'Почта проверить' -> ''      'Погода сегодня' -> ''
+#:     '日報作成'         -> ''      '週報作成'        -> ''
+#:     'Şəkil çək'       -> 'k kil'
+#:
+#: Four unrelated skills sharing one key, which is precisely the wrong merge
+#: `canonical_key`'s own docstring forbids — and reachable, because `validate_name`
+#: returns ZERO violations for 'Почта-проверить'. `\w` is Unicode-aware for `str`
+#: patterns in Python 3, so letters in any script survive while separators still
+#: split. See [[feedback_no_hardcoded_english]].
+_CANONICAL_SPLIT_RE = re.compile(r"[\W_]+")
 
 #: The ``-N`` suffix existed for exactly one reason: the synthesizer needed a
 #: free directory name. Forbidding it makes a collision LOUD, so the writer must
@@ -180,7 +194,9 @@ def canonical_key(name: str) -> str:
     near-miss would merge two skills that are genuinely different, and a wrong
     merge corrupts a reader where a duplicate only wastes a row.
     """
-    tokens = sorted(t for t in _CANONICAL_SPLIT_RE.split(base_name(name).lower()) if t)
+    # casefold(), not lower(): lower() is ASCII-shaped case mapping, while
+    # casefold() is the Unicode caseless-matching operation these names need.
+    tokens = sorted(t for t in _CANONICAL_SPLIT_RE.split(base_name(name).casefold()) if t)
     return " ".join(tokens)
 
 

@@ -315,6 +315,52 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_73_2026_08_31_the_normaliser_EXISTED_and_erased_every_script_but_Latin:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-59."
+    THE_FOURTH_TIME_MEASURING_FIRST_FOUND_THE_THING_ALREADY_BUILT: >-
+      ESC-73 asked for "one shared Unicode normaliser". It already exists:
+      `standard.canonical_key` splits a name into tokens, casefolds and SORTS them (so
+      word-order permutations collapse), with `base_name` applied first (so `foo-2` and
+      `foo` stay one family). And it is already USED AT MINT TIME — synthesizer.py:494
+      looks a proposed name up in `by_canon` before creating anything, with a comment
+      citing the exact case: `incident_evidence_brief` minted at 08:33 on 2026-08-24
+      beside the existing `incident-evidence-brief`.
+      Confirmed by measurement: the live `skills` table has 23 rows and ZERO normalised
+      collisions. The mechanism works. After the MemoryProvider ABC, the SkillStore
+      cascade and skill_audit's snapshots, this is the fourth.
+    BUT_MEASURING_IT_ON_NON_LATIN_INPUT_FOUND_A_LIVE_WRONG_MERGE:
+      the_regex: "_CANONICAL_SPLIT_RE was `[^a-z0-9]+` — every character outside ASCII treated as a SEPARATOR."
+      measured: >-
+        'Почта проверить' -> ''   'Погода сегодня' -> ''
+        '日報作成' -> ''            '週報作成' -> ''
+        'Şəkil çək' -> 'k kil'
+        Four unrelated skills — check mail, weather today, daily report, weekly report —
+        share ONE key. Azerbaijani ş/ə/ç are dropped outright.
+      why_it_is_not_theoretical: "validate_name returns ZERO violations for 'Почта-проверить' and 'şəkil-çək'. The platform PERMITS these names and then collapses them, and the synthesizer matches by_canon BEFORE minting — so the second non-Latin skill ever created would be treated as the first."
+      and_the_function_forbids_it_in_its_own_words: "canonical_key's docstring: 'a near-miss would merge two skills that are genuinely different, and a wrong merge corrupts a reader where a duplicate only wastes a row.' This was that wrong merge, at 100% for any non-Latin script."
+    the_fix: >-
+      `[\\W_]+` (Unicode-aware for str patterns in Python 3) instead of `[^a-z0-9]+`, and
+      casefold() instead of lower() — lower() is ASCII-shaped case mapping while casefold()
+      is the Unicode caseless-matching operation. The underscore stays in the class for the
+      original recorded reason: bare `\\w` includes it, so `a_b_c` would arrive as one token
+      while `a-b-c` splits into three.
+    BLAST_RADIUS_IS_PROVABLY_ZERO_FOR_ASCII: "`\\w` and `[a-z0-9]` agree on ASCII, so every existing name canonicalises exactly as before — demonstrated by the eight regression assertions (separator variants, word-order permutations, case folding, -N composition, genuinely-different names) passing BEFORE the fix and after it."
+    and_the_CALLER_is_guarded_too: >-
+      An empty key is not an identity. synthesizer's by_canon dict now SKIPS empty keys and
+      refuses to look one up. The regex fix makes "" rare (punctuation-only names), but a
+      guard at the caller means emptiness can never again map several skills onto one entry
+      — closing the hazard rather than only documenting it.
+    tests: "tests/skills/test_canonical_key_is_multilingual.py — 15 passing: Cyrillic, CJK, Greek and Azerbaijani names keep a distinct identity; the four that used to key to '' are now four keys; plus every prior behaviour asserted as a regression. tests/skills: 424 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline. Restart 2026-08-31T06:53:39Z: 486 records, ZERO ERRORs."
+    a_filter_error_of_my_own: "My first validation query filtered ts > '2026-08-31T07:' against a 06:53 restart and reported 0 records. The instrument, not the system — caught by checking the newest timestamp rather than believing the count."
+    ACCEPTANCE_CHECK_OPEN: >-
+      "A non-Latin skill name mints as its own skill." NOT CLOSED: it needs the synthesizer
+      to mint a non-Latin-named skill, which has not happened and cannot be forced without
+      real traffic in another language. The unit evidence is strong and the ASCII path is
+      provably unchanged. CLOSING QUERY:
+      sqlite3 stackowl.db "SELECT name FROM skills WHERE name GLOB '*[^ -~]*'"
+      More than one such row, with distinct canonical keys, closes it.
+    NOT_DONE: "The memory-filename half of ESC-73 (Falcon.md / falcon.md). Bakir authorised merging them WITH A BACKUP FIRST — that is a change to his live curated memory, and it is its own item rather than a rider on a regex fix."
   OWL_DELETE_CASCADE_2026_08_31_TWO_paths_each_cleaning_a_DIFFERENT_half:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-58."
     THE_SHAPE_WAS_WORSE_THAN_A_MISSING_CASCADE: >-
@@ -1501,6 +1547,23 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-59
+    found: 2026-08-31
+    title: "The skill identity key erased every script but Latin, merging unrelated skills"
+    what: >-
+      standard._CANONICAL_SPLIT_RE was `[^a-z0-9]+`, so any non-ASCII character counted as a
+      separator. Cyrillic, CJK and Greek names canonicalised to the empty string and therefore
+      to each other; Azerbaijani letters were stripped mid-word.
+    evidence: >-
+      Measured: 'Почта проверить', 'Погода сегодня', '日報作成' and '週報作成' all -> ''.
+      'Şəkil çək' -> 'k kil'. validate_name permits these names with zero violations, and
+      synthesizer matches by_canon before minting.
+    decision: >-
+      Unicode-aware `[\W_]+` plus casefold(). ASCII behaviour is provably identical, asserted by
+      eight regression tests. The caller also now skips and refuses empty keys, so emptiness can
+      never map several skills onto one entry.
+    residual_risk: "No non-Latin skill has been minted yet, so the fix is proven by unit evidence rather than by production."
+    status: "open — shipped and live; acceptance check needs a non-Latin mint, closing query recorded in current"
   - id: DEBT-58
     found: 2026-08-31
     title: "Two owl deletion paths, each cleaning a different half, and owl_dna_authored cleaned by neither"
