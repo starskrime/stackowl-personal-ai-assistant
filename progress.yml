@@ -315,6 +315,44 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  PREFETCH_2026_08_31_the_premise_MOVED_and_the_deciding_question_is_unlogged:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-89."
+    how_this_item_was_reached: >-
+      Prefetch is the last genuinely open phase-5 mechanism, and the research note that
+      proposed it says its value is unproven: "The prefetch saving is an argument, not yet
+      a measurement — the 414 synchronous searches are measured, the saving is not."
+    THE_PREMISE_MOVED: >-
+      171 memory searches across the retained logs, and 165 of them — 96.5% — run on MACHINE
+      lanes: incident RCA 118, owl:*:recovery:* 37, goal 6, owl:*:objective:* 4. SIX are on
+      a human chat lane. The recommendation was framed as a user-facing win ("each costs the
+      whole re-sent prefix"), but nobody is waiting on 96.5% of these, and a prefetch keyed
+      on TURN START would not fire usefully on an incident lane whose input is an RCA
+      prompt. See ESC-94.
+    AND_THE_DECIDING_QUESTION_CANNOT_BE_ASKED: >-
+      Whether a prefetch would SATISFY a search depends on how close the model's query is to
+      the turn's input text. The log recorded only {'action': 'search'} — the query was not
+      there. So the one measurement that settles the prefetch's value could not be taken
+      from four days of production traffic.
+    what_shipped: >-
+      The instrument. `memory.execute: entry` now carries the query for `search` and only
+      for `search`, bounded at _QUERY_PREVIEW_CHARS = 120 the same way
+      describe_parse_failure's raw_preview is. NOT for add/replace: their payload is the
+      user's own words being committed to durable memory, and putting that in the log on
+      every write is a different decision from recording what was ASKED.
+      The programme's own rule, applied before rather than after: "If a log line is the
+      evidence for a claim, it must be INFO — and run the closing query BEFORE you need it."
+    tests: "6 new in tests/tools/test_a_memory_search_records_what_it_asked_for.py — the
+      query recorded, a long query bounded, a non-search action recording NO query, the
+      refusal path still diagnosable, and the bound stated once."
+    suites: "tests/tools 1,845 passed, 4 skipped."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: PARTIAL_the_item_was_interrupted_by_a_live_incident
+    what_is_NOT_done: >-
+      No restart and no production evidence for the new field: Bakir reported a live
+      goal_execution runaway mid-item and the investigation took priority. The code is
+      committed and tested; the closing query is a `memory.execute: entry` line carrying a
+      non-empty `query` field, and it needs one restart.
+
   SHADOW_TASKS_2026_08_31_my_own_done_callback_did_the_OPPOSITE_of_its_comment:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-88."
     how_this_item_was_reached: >-
@@ -2133,6 +2171,27 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_94_prefetch_would_optimise_the_3_percent_not_the_97:
+      question: >-
+        The memory prefetch was recommended as the biggest token win. 96.5% of memory
+        searches turn out to be the platform searching its own memory on incident/recovery
+        lanes, not you waiting for an answer. Do you still want it, and for which lane?
+      why_evidence_cannot_settle_it: >-
+        The split is measured. Whether the token cost of the platform's OWN searching is
+        worth optimising — nobody is waiting on it, but it is real spend — is your call.
+      the_measurement: >-
+        171 searches: incident 118 (69.0%), recovery 37 (21.6%), goal 6, objective 4, and
+        SIX on a human chat lane (3.5%). The research note's framing — "our 414 searches are
+        all synchronous round-trips and each costs the whole re-sent prefix" — is arithmetic
+        that still holds; what moved is who pays and who waits.
+      panel_recommendation: >-
+        Not as specified. A prefetch on turn start serves the 3.5%. If the goal is token
+        spend, the 118 incident searches are the target and the mechanism is different —
+        the RCA lane asking memory once per session rather than once per stage. The query
+        field shipped with this item is what makes that measurable; give it a few days
+        before choosing.
+      what_is_blocked: "Phase 5 is now fully answered or escalated: ESC-92 (breaker),
+        ESC-93 (background writes), ESC-94 (prefetch). Nothing else in it is open."
     ESC_93_phase_5s_background_writes_are_already_done_or_forbidden:
       question: >-
         The third latency mechanism is "background writes with a flush barrier". Measuring

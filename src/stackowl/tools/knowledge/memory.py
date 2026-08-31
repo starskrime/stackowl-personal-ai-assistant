@@ -53,6 +53,11 @@ from typing import TYPE_CHECKING
 from stackowl.commands.memory_helpers import forget_fact
 from stackowl.infra.observability import log
 from stackowl.memory.curated import DURABILITIES, CuratedMemory, note_write
+
+#: How much of a search query reaches the log. Bounded the same way
+#: `describe_parse_failure`'s `raw_preview` is: enough to compare a query against
+#: the turn's input text, never a second full copy of the conversation in the log.
+_QUERY_PREVIEW_CHARS = 120
 from stackowl.memory.trust import render_at_trust
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -188,10 +193,20 @@ class MemoryTool(Tool):
         t0 = time.monotonic()
         action = str(kwargs.get("action", "")).strip().lower()
         # 1. ENTRY
-        log.tool.info(
-            "memory.execute: entry",
-            extra={"_fields": {"action": action}},
-        )
+        # THE QUERY IS RECORDED FOR `search` AND ONLY FOR `search`. Phase 5's
+        # first-ranked mechanism is a speculative memory prefetch, and whether a
+        # prefetch would SATISFY a search depends on how close the model's query is
+        # to the turn's input text — which four days of production traffic could not
+        # answer, because this line carried only {'action': 'search'}. The
+        # programme's own rule: "run the closing query BEFORE you need it."
+        #
+        # NOT for `add`/`replace`: their payload is the user's own words being
+        # committed to durable memory, and putting that in the log on every write is
+        # a different decision from recording what was ASKED.
+        fields: dict[str, object] = {"action": action}
+        if action == "search":
+            fields["query"] = str(kwargs.get("query", ""))[:_QUERY_PREVIEW_CHARS]
+        log.tool.info("memory.execute: entry", extra={"_fields": fields})
 
         # Hard-validate the action enum with a structured 'did you mean' — never
         # a stack trace, never a silent default to one of the branches.
