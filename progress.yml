@@ -315,6 +315,64 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT_82_RESOLVED_2026_08_31_the_health_check_was_a_LIVE_INFERENCE:
+    map_check: "No mapped item matches — evidence-led work; closes DEBT-82."
+    how_this_item_was_reached: >-
+      The re-probe shipped two items ago turned the provider_registry flap from noise into
+      a signal: at 19:17 it timed out TWICE, 10,011ms, so the subsystem genuinely was not
+      answering. This is the question that made askable.
+    WHAT_IT_ACTUALLY_DOES: >-
+      ProviderRegistry.health_check gathered p.health_check() over every provider, and
+      ModelProvider.health_check (base.py:670) calls complete([{"role":"user",
+      "content":"ping"}]) — A REAL GENERATION REQUEST. So the platform's answer to "is the
+      provider registry healthy" was a live inference, whose latency depends on what the
+      model host is doing at that instant. A BUSY provider read as DOWN.
+    THE_19_17_CASE_END_TO_END: >-
+      An incident-4ebd60e0d442 turn was running at 19:16:38. The sweep began at 19:17:37;
+      the bounded connectivity probe answered "provider NeraAiRaw [openai]: ok (631ms)" in
+      the SAME sweep; the registry's ping then queued behind the live turn and returned
+      neither within 5s nor within 10s on the re-probe.
+    A_HYPOTHESIS_I_HELD_AND_THE_DATA_REFUTED: >-
+      17 of the 18 timeouts land within 0.05s of a "[config] Loaded providers" line, which
+      looked like config-reload contention blocking the event loop — and Settings() is in
+      fact constructed 1,060 times a day, on the hot path, at 19ms each. But those log lines
+      carry the SAME trace_id as the timeout, so they are the sweep's own continuation
+      logging AFTER the cancellation, and 19ms cannot starve a 5,000ms window. Correlation
+      explained, causation refused. Recorded because the correlation was strong and wrong,
+      and because the 1,060 uncached Settings() constructions are a real finding of their
+      own — DEBT-83, not this item.
+    THE_DIVISION_OF_LABOUR_WAS_ALREADY_WRITTEN_DOWN: >-
+      One line above the registration in scheduler/assembly.py: "FX-03 — the live
+      circuit-breaker signal (real traffic health), complementary to the synthetic
+      per-provider probes just registered." Connectivity is ProviderContributor's job; it is
+      registered per enabled provider into the SAME aggregator and probes over httpx with
+      its own timeout. The registry was running a second, worse copy — unbounded,
+      load-sensitive, and paid in inference every five minutes.
+    NO_COVERAGE_IS_LOST_AND_IT_IS_MEASURED_NOT_ASSUMED: >-
+      The connectivity probe's own log line fires once per sweep — 1,248 samples across four
+      days, p50 715ms, p90 1,154ms, p99 1,761ms, max 5,746ms. A genuinely unreachable
+      provider is still caught by provider:<name> in the same collect.
+    the_fix: "ProviderRegistry.health_check reports breaker state only. Two branches
+      unchanged (no providers -> degraded; any OPEN breaker -> degraded, naming them); the
+      gather and its all_ok term are gone."
+    tests: "6 new in tests/providers/test_the_registry_reports_traffic_not_a_ping.py — the
+      health check must not GENERATE (asserted by counting completions), a provider mid-
+      generation must not stall the sweep (30s sleep against a 2s wait_for), an open breaker
+      still degraded, no-providers still degraded, the name unchanged, and the synthetic
+      probe still existing and still bounding itself."
+    suites: "tests/providers + tests/health 741 passed."
+    baselines: "ruff src/ 35 (a now-unused asyncio import was removed rather than left),
+      mypy 65 — both at baseline."
+    validate: >-
+      RESTART 2026-08-31T19:27:12Z. 658 records, ZERO ERRORs, two sweeps (19:28:14 and
+      19:33:44) both ok=11/11 — and each collect now EXITS IN THE SAME MILLISECOND as the
+      connectivity probe that precedes it (622ms and 640ms), where before the registry's
+      inference added seconds to every sweep.
+    closing_query: >-
+      "provider_registry timed out" should not appear again; it fired 18 times across the
+      retained logs and 7 times on 2026-08-31 alone. And the sweep no longer costs one
+      inference per 5 minutes — 288 a day.
+
   SKILL_INDEX_2026_08_31_the_cheapest_tier_was_the_first_one_cut:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-81."
     how_this_item_was_reached: >-

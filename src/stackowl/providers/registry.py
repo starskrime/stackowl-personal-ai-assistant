@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, NamedTuple, cast
 
 from stackowl.exceptions import AllProvidersUnavailableError, ProviderNotFoundError
@@ -825,12 +824,29 @@ class ProviderRegistry(RegistryAccessorsMixin):
                 message="no providers",
                 latency_ms=0,
             )
+        # REAL TRAFFIC, NOT A SYNTHETIC PING. This used to gather
+        # `p.health_check()` over every provider, and `ModelProvider.health_check`
+        # (base.py) issues `complete([... "ping"])` — a LIVE INFERENCE. So the
+        # answer to "is the provider registry healthy" depended on what the model
+        # host happened to be doing, and a BUSY provider read as DOWN.
+        #
+        # MEASURED 2026-08-31: 18 `provider_registry timed out` events across the
+        # retained logs, 7 of them today, each costing a critical operator page
+        # plus a critical recovery page. At 19:17 an incident turn was mid-flight;
+        # the bounded connectivity probe answered `provider NeraAiRaw [openai]: ok
+        # (631ms)` in the same sweep, and the registry's ping still did not return
+        # within 5s — nor within 10s on the re-probe.
+        #
+        # THE DIVISION OF LABOUR WAS ALREADY WRITTEN DOWN, one line above this
+        # contributor's registration in scheduler/assembly.py: "FX-03 — the live
+        # circuit-breaker signal (real traffic health), complementary to the
+        # synthetic per-provider probes just registered." Connectivity is
+        # `ProviderContributor`'s job; it is registered per enabled provider into
+        # the same aggregator and probes over httpx WITH ITS OWN TIMEOUT (1,248
+        # samples: p50 715ms, p90 1,154ms, max 5,746ms). This was a second, worse
+        # copy of that job — unbounded, load-sensitive, and paid in inference every
+        # five minutes. No coverage is lost by removing it.
         open_breakers = [name for name, breaker in self._breakers.items() if breaker.state is CircuitState.OPEN]
-        statuses = await asyncio.gather(
-            *(p.health_check() for p in self._providers.values()),
-            return_exceptions=True,
-        )
-        all_ok = all(isinstance(s, HealthStatus) and s.status == "ok" for s in statuses)
         if open_breakers:
             log.engine.warning(
                 "[registry] health: open circuits present",
@@ -844,7 +860,7 @@ class ProviderRegistry(RegistryAccessorsMixin):
             )
         return HealthStatus(
             name=self.contributor_name,
-            status="ok" if all_ok else "degraded",
+            status="ok",
             message=None,
             latency_ms=0,
         )
