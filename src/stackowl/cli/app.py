@@ -1209,6 +1209,65 @@ def export_cmd(
     typer.echo(f"✓ Export written to {result_path}")
 
 
+@app.command("recover-skills")
+def recover_skills_cmd(
+    output: Path | None = typer.Option(
+        None, "--output", "-o", help="Directory to write recovered skill bodies into"
+    ),
+    list_only: bool = typer.Option(
+        False, "--list", help="Show what could be recovered without writing anything"
+    ),
+) -> None:
+    """Reconstruct deleted skills from the audit trail's own snapshots.
+
+    ``skill_audit.snapshot_json`` keeps the full body of a skill at the moment of
+    an audited change. A skill deleted through the normal path can therefore be
+    read back long after its row is gone. Writes files only — nothing is
+    re-registered, and recovering a skill into the live catalogue stays a
+    separate, deliberate act.
+    """
+    import asyncio
+    import sys
+
+    from stackowl.db.pool import DbPool, default_db_path
+    from stackowl.paths import StackowlHome
+    from stackowl.skills.audit_recovery import SkillAuditRecovery
+
+    # 1. ENTRY
+    log.debug("[cli] recover_skills_cmd: entry — output=%s list_only=%s", output, list_only)
+    dest = output or (StackowlHome.knowledge_dir() / "recovered-skills")
+
+    async def _run() -> tuple[int, int, Path]:
+        db = DbPool(default_db_path())
+        await db.open()
+        try:
+            recovery = SkillAuditRecovery(db)
+            found = await recovery.recoverable()
+            if list_only:
+                for skill in found:
+                    typer.echo(f"  {skill.skill_name}  ({skill.total_bytes} bytes, {skill.op})")
+                return len(found), 0, dest
+            written = await recovery.export(dest)
+            return len(found), written, dest
+        finally:
+            await db.close()
+
+    # 2. DECISION / 3. STEP
+    try:
+        found_n, written_n, path = asyncio.run(_run())
+    except Exception as exc:
+        log.warning("[cli] recover_skills_cmd: failed — %s", exc)
+        typer.echo(f"✗ Recovery failed: {exc}", err=True)
+        sys.exit(1)
+
+    # 4. EXIT
+    log.info("[cli] recover_skills_cmd: exit — found=%d written=%d", found_n, written_n)
+    if list_only:
+        typer.echo(f"✓ {found_n} deleted skill(s) have a recoverable body")
+    else:
+        typer.echo(f"✓ {written_n} of {found_n} recoverable skill(s) written to {path}")
+
+
 @app.command("import")
 def import_cmd(
     archive: Path = typer.Argument(..., help="Path to export archive"),

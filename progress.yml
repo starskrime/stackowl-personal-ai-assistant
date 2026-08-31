@@ -315,6 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  PHASE_2_ITEM_0_2026_08_31_the_purge_was_RECOVERABLE_after_all:
+    the_correction_this_item_exists_to_make: >-
+      On 2026-08-30 I told Bakir the 151 purged skills were unrecoverable, measured that
+      neither backup named in the audit row exists anywhere on the box, and RECOMMENDED
+      ACCEPTING THE LOSS. He agreed on that basis. It was wrong.
+      `skill_audit.snapshot_json` is a working row-snapshot facility: 132 rows carry the
+      full file contents of a skill, and 128 of those name a skill that no longer exists
+      in `skills`. Exactly 151 rows are EMPTY — the purge's own, because it bypassed
+      SkillStore with hand-written SQL. The skills deleted through the NORMAL path left
+      their bodies behind.
+    why_this_went_FIRST_in_the_agreed_order: "Bakir chose bound-by-age retention on skill_audit, keeping deletion snapshots longest. That rule will eventually prune these rows. Exporting before it lands is the difference between a reversible decision and an irreversible one."
+    the_second_thing_that_already_existed: >-
+      Bakir asked me to build a row-snapshot mechanism so the coming reconciliation sweep
+      could undo itself. It already exists and is the same facility. Third time this week
+      that measuring first found the thing already built — after the MemoryProvider ABC
+      and the SkillStore cascade.
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-52."
+    what_shipped: >-
+      SkillAuditRecovery (skills/audit_recovery.py) + `stackowl recover-skills [--list]`.
+      Reads skill_audit, writes files. NEVER writes `skills`, never re-registers, never
+      deletes an audit row — recovery into the live catalogue stays a separate deliberate
+      act, which is what keeps this from quietly undoing a purge Bakir ordered.
+    newest_snapshot_wins: "Ordering is by ts ascending so the LAST edit wins. Two names in the live audit carry several snapshots (reks-research-specialist x4, trading-specialist x2); an edited-then-deleted skill should come back as its final version, not its first."
+    THE_HAZARD_THAT_NEEDED_A_TEST: >-
+      The skill name AND the filename keys inside snapshot_json are DATA — they reach the
+      database from model-authored skills. A key of "../../escaped.md" would write outside
+      the archive. _safe_component reduces both to a single path component and refuses
+      what is left of ".", ".." or an absolute path. One hostile key is skipped without
+      losing the rest of that skill, which is tested explicitly.
+    the_manifest_had_to_be_TRUE: >-
+      The manifest is written LAST and every path it names is observed with
+      verify_artifact first. A manifest listing a file it did not write is the same defect
+      as the purge audit row naming a backup that was never taken — refusing to repeat it
+      in my own output.
+    ACCEPTANCE_CHECK_1_CLOSED_in_production: >-
+      "128 recoverable skills are on disk." Ran against the LIVE database:
+      "128 of 128 recoverable skill(s) written to
+      /home/boss/.stackowl/workspace/knowledge/recovered-skills". 129 entries (128 skill
+      directories + the manifest), 1.1MB. Spot-checked download-instagram-video/SKILL.md —
+      real frontmatter, real body.
+    ACCEPTANCE_CHECK_2_CLOSED: >-
+      "The manifest is true." 128 skills listed, 128 files named, ZERO missing on disk.
+    ACCEPTANCE_CHECK_3_CLOSED_the_thing_that_would_be_worst_to_get_wrong: >-
+      "Nothing was re-registered." After the export AND a restart: skills still 20 rows,
+      skill_audit still 283 rows. The export cannot silently undo a purge the operator
+      ordered.
+    a_verification_failure_of_my_own_worth_recording: >-
+      My first check reported the export directory missing. The export was fine —
+      knowledge_dir() resolves to ~/.stackowl/WORKSPACE/knowledge, and I had guessed
+      ~/.stackowl/knowledge. The tool printed the real path in its own success line and I
+      checked a path I had assumed instead of the one it named. Print the real shape
+      before you filter it, applied to my own output.
+    tests: "tests/skills/test_audit_recovery.py — 11 passing, including both path-traversal shapes, the empty-snapshot rows the purge left, newest-snapshot-wins, idempotence, and that a live skill is never offered. Whole tests/skills suite: 409 passed in 45s."
+    a_fixture_failure_again: "One test first failed on 'NOT NULL constraint failed: skills.loaded_at'. A fixture that cannot insert a skill cannot exercise the live-skill branch at all. Fixed against the real column list rather than by dropping the assertion."
+    baselines: "ruff src/ 35, mypy 65 — both exactly at baseline. Restart 2026-08-31T03:25:00Z: 874 records, ZERO ERRORs."
+    what_this_does_NOT_do: >-
+      It does not restore anything to the catalogue, and the 23 skills whose rows the
+      purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
+      bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
     ESC_75_the_graph_is_the_one_store_a_migration_backup_does_not_cover:
       question: "A pre-migration snapshot now protects SQLite. The 39MB Kuzu graph is NOT in it — BackupManager writes a kuzu/README.txt saying 'snapshot deferred — adapter snapshot() not yet implemented'. Should the graph be brought into the backup, and if so, before or after the phase-3 purge-and-rebuild?"
@@ -1091,6 +1150,28 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-52
+    found: 2026-08-31
+    title: "128 purged skills were recoverable from the audit trail, after I reported the loss as final"
+    what: >-
+      I measured that both backups named in the purge audit row were absent and recommended
+      accepting the loss of 151 learned skills. skill_audit.snapshot_json holds the full body
+      of 128 skills that no longer exist in the skills table; only the purge's own 151 rows
+      are empty, because it bypassed SkillStore with raw SQL.
+    evidence: >-
+      132 of 283 skill_audit rows carry a non-empty snapshot_json keyed {filename: content};
+      128 distinct names, none present in skills; 346KB of bodies. Exported live to
+      ~/.stackowl/workspace/knowledge/recovered-skills — 128 of 128, manifest names 128 files,
+      0 missing.
+    decision: >-
+      SkillAuditRecovery + `stackowl recover-skills` ships the recovery path as a durable
+      capability rather than a one-off script, because bound-by-age retention on skill_audit
+      is already agreed and will eventually prune these rows. Read-only: skills stayed at 20
+      rows and skill_audit at 283 across the export and a restart.
+    residual_risk: >-
+      The 23 names the purge deleted without a prior snapshot remain unrecoverable. Nothing is
+      re-registered, by design — restoring a skill to the live catalogue is a separate act.
+    status: "closed"
   - id: DEBT-51
     found: 2026-08-31
     title: "Migrations changed the production database with no backup, while the record claimed one was routine"
