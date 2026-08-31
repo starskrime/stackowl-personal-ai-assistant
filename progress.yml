@@ -315,6 +315,73 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ONE_SHOT_JOBS_2026_08_31_92_finished_jobs_are_armed_to_fire_again_tomorrow:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-79."
+    how_this_item_was_reached: >-
+      Round 0 over two days of logs, ranking what the platform complains about most.
+      176 occurrences of "compute_next_run: cron parse failed — defaulting to +1d" stood
+      out as the only one that looked like a live functional defect rather than known noise.
+    THE_MEASUREMENT:
+      jobs_with_schedule_manual: >-
+        92, every one of them rollover_summary, every one status='pending' and enabled=1,
+        every one last_run_at 2026-08-31T09:0x and next_run_at 2026-09-01T09:0x.
+      the_log: >-
+        326 occurrences since 2026-08-28 of "compute_next_run: cron parse failed —
+        defaulting to +1d" with fields {'schedule': 'manual'}.
+      what_that_means: >-
+        rollover_summary summarises ONE conversation boundary that happened ONCE. Ninety-two
+        of them are armed to fire in a burst tomorrow morning and re-summarise conversations
+        that ended days ago. They have been doing it daily.
+      the_terminal_state_was_used_by_NOTHING: >-
+        jobs.status is CHECK IN ('pending','running','completed','failed') and the live
+        table held 126 pending, 1 failed and ZERO completed — while a method named
+        _mark_completed had never written it.
+    THE_GUARD_EXISTS_IS_DOCUMENTED_AND_WAS_NOT_ASKED: >-
+      enqueue_rollover_summary sets params['run_once'] and its comment names this exact
+      failure: "Without it a boundary's job would re-arm onto a cadence for ever and
+      re-summarise a conversation that ended once." _is_recurring reads the marker
+      correctly. _idempotent_skip asks it. _mark_completed did NOT — it recomputed
+      compute_next_run(job.schedule) unconditionally and wrote status='pending' back. Two
+      copies of one rule, and only one of them asked.
+    WHY_THE_SCHEDULE_STRING_IS_NOT_THE_FIX: >-
+      "manual" is not a cadence, so compute_next_run falls through daily@ / at / every / in
+      / croniter and its except branch returns +1 day. Tightening that would only change
+      WHICH wrong cadence a one-shot gets. The marker is the answer and it already existed.
+    THE_FIX: >-
+      _mark_completed asks _is_recurring. A one-shot keeps its next_run_at untouched and
+      goes to ONE_SHOT_TERMINAL_STATUS = 'completed', which drops it out of the claim query
+      (status='pending' AND enabled=1) structurally rather than merely dating it far ahead.
+      NOT deleted: job_runs.job_id is a real FK and the run history is the record of what
+      the platform did, so the row stays inspectable. The rowcount==0 branch that exists for
+      handlers which self-delete (goal_execution) is untouched and covered by a test.
+    ladder_rung: "1 — one predicate the class already owns, asked in a second place. No new
+      column, no new status, no new config; 'completed' was already in the schema."
+    tests: "8 new in tests/scheduler/test_a_one_shot_job_does_not_re_arm.py, including the
+      behavioural one (it must not run a SECOND time), the expensive direction (a recurring
+      job completely unchanged), the run history still written, the self-deleting handler
+      path still working, and the claim query returning nothing."
+    suites: "tests/scheduler + tests/health 485 passed; tests/pipeline/durable + retry queue
+      419 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      RESTART 2026-08-31T17:55:50Z. 451 records, ZERO ERRORs. The new evidence field is
+      already emitting at INFO on every completion — turn_sweep, objective_driver,
+      task_liveness_sweep and retry_sweep all logged one_shot: False with their next_run,
+      so the recurring path is provably unchanged in production.
+    validate_OPEN: >-
+      A one-shot completing needs a rollover boundary, and the 92 existing rows are armed
+      for ~09:0x tomorrow. Closing query, both signals INFO: a rollover_summary "exit —
+      completed" carrying one_shot: true and next_run: null, and the disappearance of
+      "cron parse failed {'schedule': 'manual'}", which ran 326 times in three days.
+    THE_92_ROWS_RETIRE_THEMSELVES_AND_THAT_IS_THE_POINT: >-
+      Bakir's standing rule is "never cancel the user's scheduled jobs unilaterally — fix
+      the root cause in code only", and here the code fix IS the cleanup: when each of the
+      92 fires tomorrow morning it will be marked completed instead of re-armed, so they
+      retire one final run each and the burst never happens again. Deleting them by hand
+      would pre-empt a mechanism that now works, which is the same argument the 2026-08-30
+      retirement item already settled. ESC-88 only asks whether one more run each is
+      acceptable.
+
   CANARY_THRESHOLD_2026_08_31_the_detector_sat_on_top_of_its_own_distribution:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-78."
     how_this_item_was_reached: >-
@@ -1602,6 +1669,24 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_88_92_finished_rollover_jobs_will_each_run_once_more_tomorrow_morning:
+      question: >-
+        92 rollover_summary jobs are armed for ~09:0x tomorrow. The fix retires each one as
+        it fires, so they cost one final summary apiece and then stop for ever. Accept that,
+        or should they be stopped before then?
+      why_evidence_cannot_settle_it: >-
+        Your standing rule is that I never cancel your scheduled jobs unilaterally, and one
+        more burst of 92 summaries is a cost only you can judge against the alternative of
+        touching the jobs table by hand.
+      the_measurement: >-
+        92 rows, all rollover_summary, all with next_run_at between 09:01 and 09:17 tomorrow.
+        Each writes one conversation_summary staged fact; 45 such rows already exist. They
+        have been firing daily since at least 2026-08-28 (326 re-arm log lines in three days).
+      panel_recommendation: >-
+        Let them retire themselves. The code fix marks each completed on its next run, the
+        burst is bounded and observable, and it PROVES the fix in production — which a hand
+        cleanup would deny. It is also the platform healing itself, which is the rule.
+      what_is_blocked: "Nothing. The root cause is fixed and live."
     ESC_87_every_concluded_RCA_pages_you_at_CRITICAL_urgency:
       question: >-
         12 of today's 25 critical Telegram pages were "incident_escalation: RCA complete" —

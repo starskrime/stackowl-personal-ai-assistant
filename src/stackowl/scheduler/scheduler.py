@@ -52,6 +52,12 @@ _MAX_DEFER_SEC = 900.0
 # bounding the worst case. A timeout routes into the SAME retry/re-arm path an
 # ordinary handler exception already takes — recurring jobs self-heal (F-60),
 # one-shots retry up to _MAX_RETRIES.
+#: Where a ONE-SHOT job goes when it succeeds. Already in the ``jobs`` CHECK
+#: constraint ('pending','running','completed','failed') and, until 2026-08-31,
+#: written by nothing — the live table held 126 pending, 1 failed and 0 completed
+#: while a method named ``_mark_completed`` re-armed every one-shot to 'pending'.
+ONE_SHOT_TERMINAL_STATUS = "completed"
+
 _HANDLER_TIMEOUT_SEC = 1200.0
 # ESC-53. Backoff ladder for RE-ARMING a one-shot that failed transiently. Bakir,
 # 2026-08-24: "Re-arm one-shots too." Backoff is what makes never-give-up safe —
@@ -573,8 +579,31 @@ class JobScheduler(SupervisedTask):
 
     async def _mark_completed(self, job: Job, result: JobResult, duration_ms: float) -> None:
         now_iso = datetime.now(UTC).isoformat()
-        next_run = compute_next_run(job.schedule, tz=self._tz)
         run_id = str(uuid.uuid4())
+        # A ONE-SHOT HAS NO NEXT OCCURRENCE, and this is the path that kept giving
+        # it one. MEASURED 2026-08-31: 92 `rollover_summary` rows on the live table,
+        # every one status='pending' with last_run_at today and next_run_at TOMORROW,
+        # armed to re-summarise conversation boundaries that happened once, days ago.
+        # The log carries the mechanism 326 times since 2026-08-28: "compute_next_run:
+        # cron parse failed — defaulting to +1d  {'schedule': 'manual'}".
+        #
+        # THE MARKER ALREADY EXISTED AND THIS PATH DID NOT ASK IT.
+        # `enqueue_rollover_summary` sets `run_once` and its comment names this exact
+        # failure; `_is_recurring` reads it; `_idempotent_skip` asks it. Only here did
+        # the rule have a second, silent copy — recompute the cadence unconditionally.
+        #
+        # NOT the schedule string: "manual" is not a cadence, so tightening
+        # compute_next_run would only change WHICH wrong cadence a one-shot gets.
+        one_shot = not self._is_recurring(job)
+        next_run = job.next_run_at if one_shot else compute_next_run(
+            job.schedule, tz=self._tz,
+        )
+        # 'completed' is in the jobs CHECK constraint and was written by NOTHING —
+        # 126 pending, 1 failed, 0 completed. Terminal, not deleted: `job_runs.job_id`
+        # is a real FK and the run history is the record of what the platform did, so
+        # the row stays inspectable while dropping out of the claim query, which
+        # selects `status='pending' AND enabled=1`.
+        status = ONE_SHOT_TERMINAL_STATUS if one_shot else "pending"
         # STEER-5/F113 — on success, recompute the canonical cadence AND clear the
         # transient retry state (retry_count=0, retry_at=NULL) so a previously
         # flaky job returns to a clean steady state on its real schedule. Also reset
@@ -604,10 +633,10 @@ class JobScheduler(SupervisedTask):
             # through scheduler_helpers into the TUI job list. requeue(),
             # owl_lifecycle and resume_job already clear it on recovery; this was
             # the one path that did not.
-            "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
+            "UPDATE jobs SET status = ?, last_run_at = ?, next_run_at = ?, "
             "retry_count = 0, retry_at = NULL, failure_count = 0, last_error = NULL "
             "WHERE job_id = ?",
-            (now_iso, next_run, job.job_id),
+            (status, now_iso, next_run, job.job_id),
         )
         if rows_affected == 0:
             log.heartbeat.info(
@@ -624,7 +653,11 @@ class JobScheduler(SupervisedTask):
         log.heartbeat.info(
             "[scheduler] %s: exit — completed",
             job.job_id,
-            extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms, "next_run": next_run}},
+            extra={"_fields": {
+                "job_id": job.job_id, "duration_ms": duration_ms,
+                "next_run": None if one_shot else next_run,
+                "one_shot": one_shot,
+            }},
         )
 
     @staticmethod
