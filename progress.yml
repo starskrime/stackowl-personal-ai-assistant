@@ -315,6 +315,62 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CANARY_THRESHOLD_2026_08_31_the_detector_sat_on_top_of_its_own_distribution:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-78."
+    how_this_item_was_reached: >-
+      The previous item fixed one of the two flapping health signals and, eight minutes
+      after that restart, the OTHER one fired: 17:12:43
+      "degraded: ['telegram_canary_send']" -> critical page, then 17:18:13 ok=11/11 ->
+      critical recovery page. provider_registry answered fine (1185ms), so the timeout fix
+      was working and had simply uncovered the second flap.
+    THE_MEASUREMENT:
+      confirmed_canary_sends_in_every_retained_log: 250
+      gaps_between_them: "249, median 1230s — the 20-minute schedule, exactly."
+      over_the_2400s_threshold: >-
+        TEN. And nine of the ten were over by 19 to 79 SECONDS: 2419, 2419, 2434, 2438,
+        2445, 2447, 2458, 2458, 2479. The threshold sat on top of its own distribution's
+        tail. The tenth, 6226s (22:31 -> 00:15), was a real outage and deserved its alert.
+      cost: >-
+        Each crossing produced a critical "UNHEALTHY subsystems detected" page AND a
+        critical recovery page for a send path that was working before and after.
+    THE_CONSTANT_DID_NOT_DO_WHAT_ITS_OWN_COMMENT_CLAIMED: >-
+      "stale_after_s = 2x the 20-min canary interval so one missed tick isn't a false
+      alarm". But ONE missed tick puts the next confirmed send exactly TWO intervals out,
+      so the threshold equalled the gap it was meant to tolerate and any jitter tripped it.
+      The measurement IS that jitter — 19 to 79 seconds, ten times. Tolerating a missed
+      tick means EXCEEDING two intervals, which is why it is now three.
+    AND_IT_WAS_TWO_COPIES_OF_ONE_RULE: >-
+      The interval was written as `every 20m` / `interval_minutes=20` at the seed, and
+      again as the arithmetic `2400.0` six hundred lines later. Changing the schedule would
+      have silently left the threshold behind. Now TELEGRAM_CANARY_INTERVAL_MINUTES is one
+      constant and both sites ask it; TELEGRAM_CANARY_STALE_AFTER_S is derived, never a
+      literal, and a test asserts the literal has not come back.
+    the_fix_is_BOUNDED_on_both_sides: >-
+      A detector that needs hours is not a detector, so a test pins the threshold at no
+      more than 4 intervals, and the receive-loop contributor is deliberately UNCHANGED at
+      120s — a dead INBOUND path is still caught in two minutes. This is the slow
+      end-to-end signal, and only it moves.
+    tests: "7 new in tests/health/test_the_canary_threshold_survives_a_missed_tick.py.
+      The strongest are replays of the REAL data: all nine measured false alarms must now
+      be below the line, and the one genuine 6226s outage must still be above it."
+    suites: "tests/health + tests/scheduler 477 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      RESTART 2026-08-31T17:24:54Z. 751 records, ZERO ERRORs, two health sweeps (17:28:58
+      and 17:34:28) both ok=11/11 with NO operator_health page, across a restart that
+      delayed the canary tick to 17:33:57. The seeded job is unchanged in the database:
+      schedule 'every 20m'.
+    validate_OPEN_and_stated_precisely: >-
+      This restart's canary gap was 1215s, which would NOT have flapped under the old
+      threshold either — so the production run has not yet exercised the 2400-2500s band
+      the fix exists for. The historical band is covered by replay in the tests. Closing
+      query: count operator_health deliveries per day (25 on 2026-08-31) and check that no
+      "degraded: ['telegram_canary_send']" appears for a gap under 3600s.
+    A_THIRD_SOURCE_OF_PAGES_IS_NOT_A_DEFECT_AND_IS_NOT_MINE_TO_DECIDE: >-
+      Of the 25 critical pages, 12 were "incident_escalation: RCA complete" — every
+      concluded self-heal RCA pages Bakir at CRITICAL urgency. That is working as built,
+      and whether a concluded RCA is a critical interruption is a product decision. ESC-87.
+
   HEALTH_FLAP_2026_08_31_the_platform_paged_Bakir_25_times_and_was_never_down:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-76."
     how_this_item_was_reached: "Bakir, mid-session: 'Platform failing. Check logs.'"
@@ -1546,6 +1602,26 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_87_every_concluded_RCA_pages_you_at_CRITICAL_urgency:
+      question: >-
+        12 of today's 25 critical Telegram pages were "incident_escalation: RCA complete" —
+        the self-heal loop reporting that it finished a diagnosis. Should a concluded RCA
+        interrupt you at critical urgency, or belong in the digest?
+      why_evidence_cannot_settle_it: >-
+        Nothing is broken. The measurement can say how many and how often; only you can say
+        whether the platform finishing a diagnosis is worth a phone buzz.
+      the_measurement: >-
+        12 pages on 2026-08-31 at 00:59, 01:05, 01:11, 03:48, 04:06, 04:55, 06:02, 07:19,
+        07:49, 08:34, 09:44, 10:16 — roughly one every 40 minutes through the night. Both
+        operator_health senders hardcode urgency="critical" (scheduler/assembly.py:1101 and
+        startup/orchestrator.py:4436); there is no severity ladder on this path, so a
+        recovery notice and a core crash arrive identically.
+      panel_recommendation: >-
+        Route a CONCLUDED RCA to the existing notification_digest (which ran today and
+        flushed 0) and keep critical for what actually needs you: a core crash, a subsystem
+        down after a heal attempt, a delivery path that cannot reach you. That uses the
+        digest the platform already has rather than adding a severity system.
+      what_is_blocked: "Nothing. Both flapping detectors are fixed; this is volume, not noise."
     ESC_85_three_more_owls_have_their_memory_in_a_file_nothing_reads:
       question: >-
         Friday.md (secretary), hawkeye.md (verifier) and Collector.md (archivist) are the

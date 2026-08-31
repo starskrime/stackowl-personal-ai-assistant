@@ -77,6 +77,39 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # garbage-collected mid-execution. Self-discards via add_done_callback.
 _background_tasks: set[asyncio.Task[None]] = set()
 
+#: PB-CANARY — the send-path heartbeat's cadence. ONE source: the schedule seed
+#: and the staleness threshold below both read it, because the whole 2026-08-31
+#: flap was this number written twice (``every 20m`` at the seed, and the
+#: arithmetic ``2400.0`` six hundred lines away) so changing one left the other
+#: behind.
+TELEGRAM_CANARY_INTERVAL_MINUTES = 20
+
+#: How many canary intervals of silence mean the SEND path is actually stale.
+#:
+#: MEASURED 2026-08-31 across every retained log — 249 gaps between confirmed
+#: canary sends, median 1230s (the schedule, exactly) and TEN over the old 2400s
+#: threshold. Nine of those ten were over by 19 to 79 SECONDS: 2419, 2419, 2434,
+#: 2438, 2445, 2447, 2458, 2458, 2479. The threshold sat on top of its own
+#: distribution's tail, and each crossing cost a critical operator page plus a
+#: critical recovery page for a send path that was working the whole time.
+#:
+#: THE OLD VALUE COULD NOT DO WHAT ITS COMMENT CLAIMED. "2x the interval so one
+#: missed tick isn't a false alarm" — but ONE missed tick puts the next confirmed
+#: send exactly two intervals out, so the threshold equalled the gap it was meant
+#: to tolerate and any jitter at all tripped it. Tolerating a missed tick means
+#: EXCEEDING two intervals, which is why this is 3 and not 2.
+#:
+#: It does not drift higher than that: a detector that needs hours is not a
+#: detector, and the receive-loop contributor stays at 120s, so a dead INBOUND
+#: path is still caught in two minutes. This is the slow end-to-end signal.
+TELEGRAM_CANARY_STALE_INTERVALS = 3
+
+#: Derived, never a literal — see the two constants above.
+TELEGRAM_CANARY_STALE_AFTER_S = float(
+    TELEGRAM_CANARY_INTERVAL_MINUTES * 60 * TELEGRAM_CANARY_STALE_INTERVALS
+)
+
+
 _INSERT_JOB_SQL = """
 INSERT INTO jobs
     (job_id, handler_name, schedule, idempotency_key, last_run_at,
@@ -722,8 +755,9 @@ class SchedulerAssembly:
         canary_addresses = _resolve_owner_addresses(settings, canary_channels)
         if canary_addresses:
             await _seed_minutes_schedule(
-                db, handler_name="telegram_canary", schedule="every 20m",
-                interval_minutes=20,
+                db, handler_name="telegram_canary",
+                schedule=f"every {TELEGRAM_CANARY_INTERVAL_MINUTES}m",
+                interval_minutes=TELEGRAM_CANARY_INTERVAL_MINUTES,
                 target_channels=canary_channels, target_addresses=canary_addresses,
             )
         else:
@@ -1057,13 +1091,14 @@ def _build_health_aggregator(
     if liveness_store is not None:
         agg.register(ChannelLivenessContributor(liveness_store, "telegram", WallClock()))
         # PB-CANARY — send-path sibling signal: a confirmed real send (not just
-        # the receive loop) stamps this row. stale_after_s = 2x the 20-min canary
-        # interval so one missed tick isn't a false alarm, but a genuinely dead
-        # canary is caught within ~40 min.
+        # the receive loop) stamps this row. The threshold is DERIVED from the
+        # canary's own interval rather than restated here; see
+        # TELEGRAM_CANARY_STALE_INTERVALS for the 249-gap measurement that moved
+        # it from 2 intervals to 3.
         agg.register(
             ChannelLivenessContributor(
                 liveness_store, "telegram_canary", WallClock(),
-                kind="send", stale_after_s=2400.0,
+                kind="send", stale_after_s=TELEGRAM_CANARY_STALE_AFTER_S,
             )
         )
     return agg
