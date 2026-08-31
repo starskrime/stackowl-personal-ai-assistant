@@ -107,14 +107,27 @@ def test_the_predicate_recognises_the_real_lanes() -> None:
     """These are the two prefixes the platform mints for its own work."""
     assert is_machine_lane("incident-b5545c2ec371")
     assert is_machine_lane("goal-1234")
-    assert MACHINE_LANE_PREFIXES == ("goal-", "incident-")
+    assert MACHINE_LANE_PREFIXES == (
+        "goal-", "incident-", "job:", "recover-", "shadow-",
+    )
 
 
 def test_the_predicate_leaves_human_lanes_alone() -> None:
     """A wrong answer here silently drops REAL user facts, which is far worse
     than keeping a prompt — so it keys on our own minted prefixes, never on
-    content."""
-    assert not is_machine_lane("owl:secretary:telegram:72055773")
+    content.
+
+    THE FIXTURE WAS STALE AND HAD TO BE CORRECTED, 2026-08-31. It read
+    ``owl:secretary:telegram:72055773`` — a shape ``build_session_key`` has not
+    emitted since the chat_type segment was added, and which exists NOWHERE in
+    production: scanning every table that carries a session_key found 4,150
+    distinct lanes, of which the ``owl:`` ones are 6 five-segment chat lanes
+    (segment 3 a ChatType, always) and 109 four-segment runner lanes (104
+    ``recovery``, 5 ``objective``). Not one four-segment chat lane exists. A test
+    double that stopped resembling the real thing, asserting a shape the builder
+    cannot produce."""
+    assert not is_machine_lane("owl:secretary:telegram:dm:72055773")
+    assert not is_machine_lane("owl:secretary:slack:channel:C0123")
     assert not is_machine_lane("cli")
     assert not is_machine_lane(None)
     assert not is_machine_lane("")
@@ -164,7 +177,7 @@ async def test_a_REAL_user_turn_is_still_staged(monkeypatch: pytest.MonkeyPatch)
     )
 
     await persist_turn(
-        _state("owl:secretary:telegram:72055773", "my dentist is Dr Antoon in Plano")
+        _state("owl:secretary:telegram:dm:72055773", "my dentist is Dr Antoon in Plano")
     )
 
     assert len(store.stored) == 1, "a real user turn must still be remembered"

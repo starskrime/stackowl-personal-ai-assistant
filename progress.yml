@@ -315,6 +315,98 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  MACHINE_LANES_2026_08_31_the_lane_vocabulary_MOVED_and_the_predicate_did_not:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-75."
+    how_this_item_was_reached: >-
+      Phase 4's first half — "SCOPE IT FIRST (owl + conversation) and BACKFILL the existing
+      368 from source_ref". Measuring source_ref first found something more urgent in the
+      same data, and it is the same rule Bakir already chose under graph_intake: "REFUSE
+      machine-lane facts AT THE WRITER, using the is_machine_lane predicate that already
+      exists." The predicate exists. It could not see the lanes.
+    THE_MEASUREMENT:
+      staged_facts: 368
+      on_a_lane_with_no_person_on_it: >-
+        178 (48%) — owl:*:recovery:* 99, owl:*:objective:* 74, and only 5 of the old
+        prefixed form the check could actually see. Every one filed as a durable fact
+        ABOUT THE USER.
+      every_session_key_in_the_database: >-
+        4,150 distinct lanes across every table that carries one. Of the owl: lanes, 109
+        are four-segment runner lanes (104 recovery, 5 objective) and 6 are five-segment
+        chat lanes whose fourth segment is always a ChatType. ZERO four-segment chat lanes
+        exist — which is what makes the discriminator safe, and it was measured before a
+        line of it was written.
+      other_families_nothing_was_watching: >-
+        523 shadow- (owls/shadow_validator.py:271), 96 job: (scheduler/scheduler.py:133),
+        23 recover- (pipeline/durable/recovery.py:509 — the durable retry driver, the same
+        family as the RetryActuator fixed this morning). All minted in src/ with no user
+        input near them.
+    THE_ROOT_CAUSE: >-
+      is_machine_lane shipped 2026-08-25 after "4,480 of 5,212 staged rows turned out to be
+      the platform's own prompts". It was a prefix check on goal-/incident- — the machine
+      lane names of that day. build_session_key has since minted a second, structurally
+      different machine lane, and nothing told the predicate. The builder's own comment
+      already draws the line: a runner lane is keyed "by what it is and which one", because
+      isolation asks "whose messages are these, a question a cron job or an objective does
+      not have". The platform knew. The predicate was not asking.
+    THE_DISCRIMINATOR: >-
+      A chat lane's FOURTH segment is a ChatType — a closed enum with four values that we
+      own. A runner lane's fourth is a runner id. So "does segment 4 name a chat type"
+      separates them exactly, with NO list of runner names to keep in sync: runner is free
+      text on SessionSource ("objective", "cron", "subagent", "recovery"...) precisely so a
+      new kind of background work needs no migration, and a list of them would be the next
+      thing to drift — which is how recovery leaked in the first place. _CHAT_TYPE_VALUES
+      is built FROM the enum, and _LANE_ROOT is now one constant the builder writes and the
+      reader reads, so they cannot drift apart.
+    fails_toward_keeping_the_memory: >-
+      Anything unparseable reads as HUMAN. The docstring's own warning — "a wrong answer
+      here silently drops real user facts" — is one-directional, and every test asserting
+      False is protecting that direction.
+    A_STALE_TEST_FIXTURE_WAS_ASSERTING_A_SHAPE_THE_BUILDER_CANNOT_PRODUCE: >-
+      test_machine_lanes_are_not_staged_as_facts pinned `owl:secretary:telegram:72055773` —
+      four segments, no chat_type. build_session_key has not emitted that since the
+      chat_type segment was added, and the 4,150-key scan found not one such lane in
+      production. Corrected to the real shape with the measurement written beside it.
+      Shape 2 in CLAUDE.md — a test double that stopped resembling the real thing.
+    PRE_EXISTING_RED_FOUND_AND_FIXED_AND_IT_WAS_NOT_MINE: >-
+      Running four suites together produced 15 failures across tests/memory reading
+      "'_Services' object has no attribute 'conversation_store'"; the same tests passed
+      alone. Root cause: tests/pipeline/test_the_skill_reader_says_what_it_chose.py did
+      `mod.get_services = lambda: _Services(...)` — a RAW attribute assignment on a module,
+      never restored — so every later test in the same process saw the stand-in. Converted
+      to monkeypatch.setattr. tests/pipeline + tests/memory now 2,172 passed together where
+      15 failed before, and this had nothing to do with the change being shipped.
+    tests: "29 new in tests/sessions/test_a_runner_lane_is_a_machine_lane.py — the five
+      runner lanes measured live, five chat lanes that must stay human, EVERY ChatType
+      generated from the enum (so a fifth cannot silently start reading as machine), five
+      runner kinds including one the platform has never minted, both builder branches for
+      the SAME owl, the three newly-recognised prefixes each named with the file that mints
+      it, and degenerate input failing toward human."
+    suites: "tests/sessions + tests/pipeline + tests/memory + tests/scheduler: 2,815 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline; the two lint errors in the test
+      files touched were fixed rather than left."
+    validate: >-
+      RESTART 2026-08-31T16:52:41Z. 312 records in the first 30 seconds, ZERO ERRORs.
+    validate_OPEN_and_the_reason_is_honest: >-
+      That a runner-lane turn is now REFUSED needs a runner-lane turn, and those lanes are
+      quiet right now: today's log carries 274 persist_turn refusals, all of them
+      incident-/goal-, and not one owl:*:recovery:* or owl:*:objective:* turn. The 178 rows
+      are historical evidence that they were NOT always quiet. Closing query, on an INFO
+      line that already exists: grep 'persist_turn: not a user utterance' and look for a
+      session_key matching owl:*:recovery:*, owl:*:objective:*, job:*, recover-* or
+      shadow-* with reason machine_lane.
+    AND_THE_HONEST_OVERLAP: >-
+      The 99 recovery rows would now be caught TWICE — once by input_is_synthetic (the
+      RetryActuator fix that went live at 14:50) and once by the runner branch. The
+      non-redundant half is the 74 objective rows and every job:/shadow-/recover- lane,
+      which nothing else covers. Said plainly rather than claiming the whole 178.
+    WHAT_THIS_ITEM_DELIBERATELY_DID_NOT_DO: >-
+      scope_key. Phase 4 also asks for the backfill, and measuring found scope_key is a
+      complete round-trip with NO writer and NO reader: migration 0085 added it to both
+      tables, models.py declares it, filter_by_scope and recall(scope_key=...) implement
+      it, and ZERO callers pass it on either side — all 368 rows are NULL. That is its own
+      item with its own risk (scoping a fact RESTRICTS it, so backfilling scope onto 368
+      rows changes what recall returns), and it is next rather than bolted onto this one.
+
   OWL_MEMORY_2026_08_31_the_platform_was_writing_to_files_it_NEVER_READS:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-74."
     how_this_item_was_reached: >-

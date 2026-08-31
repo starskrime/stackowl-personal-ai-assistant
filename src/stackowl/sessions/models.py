@@ -25,6 +25,9 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 
 _KEY_SEP = ":"
+#: First segment of every lane this module mints. One source: the builder writes
+#: it and `_is_runner_lane` reads it, so they cannot drift apart.
+_LANE_ROOT = "owl"
 
 
 class ChatType(StrEnum):
@@ -215,22 +218,80 @@ def new_conversation_id(now: datetime.datetime) -> str:
 #:   ``goal-``      scheduler/handlers/goal_execution.py — job lanes
 #:   ``incident-``  scheduler/handlers/incident_escalation.py — self-heal RCA lanes
 #:
+#:   ``job:``       scheduler/scheduler.py:133 — every scheduled job's lane
+#:   ``recover-``   pipeline/durable/recovery.py:509 — the durable retry driver
+#:   ``shadow-``    owls/shadow_validator.py:271 — shadow-mode replay lanes
+#:
 #: A human lane is ``owl:{owl}:{channel}:...`` (see build_session_key below), so
 #: these prefixes cannot collide with one.
-MACHINE_LANE_PREFIXES: tuple[str, ...] = ("goal-", "incident-")
+#:
+#: THE LAST THREE WERE MEASURED, NOT GUESSED. Scanning every table that carries a
+#: session_key found 4,150 distinct lanes, and beyond the two above there were
+#: 523 ``shadow-``, 96 ``job:`` and 23 ``recover-`` — all minted in src/ with no
+#: user input anywhere near them. ``recover-`` matters most: it is the durable
+#: retry driver, the same family as the RetryActuator whose prompts were being
+#: staged as things the operator said.
+MACHINE_LANE_PREFIXES: tuple[str, ...] = (
+    "goal-", "incident-", "job:", "recover-", "shadow-",
+)
+
+
+#: The four values a CHAT lane can carry in its fourth segment. Derived from the
+#: enum rather than restated, so a fifth ChatType cannot silently start reading as
+#: a runner lane — which would classify a real conversation as the platform
+#: talking to itself and drop the user's facts.
+_CHAT_TYPE_VALUES: frozenset[str] = frozenset(c.value for c in ChatType)
+
+
+def _is_runner_lane(session_key: str) -> bool:
+    """Whether this key came from :func:`build_session_key`'s RUNNER branch.
+
+    THE DISCRIMINATOR IS STRUCTURAL AND WE OWN IT, which is what makes it safe to
+    read rather than guess. The builder emits exactly two shapes::
+
+        owl:{owl}:{runner}:{runner_id}                  a runner lane
+        owl:{owl}:{channel}:{chat_type}[:{chat_id}]...  a chat lane
+
+    so the fourth segment is a ``ChatType`` for every chat lane and a runner id
+    for every runner lane. There is deliberately NO list of runner names here:
+    ``SessionSource.runner`` is free text ("objective", "cron", "subagent",
+    "recovery", …) precisely so the platform can mint a new kind of background
+    work without a migration, and a list of them would be the next thing to drift
+    out of date — which is how ``recovery`` leaked in the first place.
+
+    Fails toward HUMAN on anything it cannot read. `session_key` is not always a
+    lane this module minted (the CLI and tests pass their own strings), and an
+    unparseable key is a question; the answer that loses a memory is the wrong one
+    to guess.
+    """
+    parts = session_key.split(_KEY_SEP)
+    if len(parts) < 4 or parts[0] != _LANE_ROOT:
+        return False
+    return parts[3] not in _CHAT_TYPE_VALUES
 
 
 def is_machine_lane(session_key: str | None) -> bool:
     """Whether this lane is the platform talking to itself (DEBT-35).
 
     Used by the conversation miner to skip lanes that cannot contain a user fact
-    by construction. Deliberately a PREFIX check on our own minted keys, not a
-    heuristic over content: a wrong answer here silently drops real user facts,
-    so it keys on something we control rather than something we infer.
+    by construction. Keys on something we CONTROL rather than something we infer:
+    a wrong answer here silently drops real user facts, so it reads the shape of
+    our own minted keys and never the content of a turn.
+
+    TWO SHAPES, BECAUSE THE LANE VOCABULARY MOVED AND THIS DID NOT. The prefix
+    form (``goal-``, ``incident-``) was the machine lane of 2026-08-25, when this
+    shipped after "4,480 of 5,212 staged rows turned out to be the platform's own
+    prompts". ``build_session_key`` has since minted a second machine lane —
+    the RUNNER branch — and nothing told this function.
+
+    MEASURED 2026-08-31: of 368 rows in ``staged_facts``, 178 came from a lane
+    with no person on it — 99 ``owl:*:recovery:*``, 74 ``owl:*:objective:*``, and
+    only 5 of the old prefixed form this check could actually see. Every one was
+    filed as a durable fact ABOUT THE USER.
     """
     if not session_key:
         return False
-    return session_key.startswith(MACHINE_LANE_PREFIXES)
+    return session_key.startswith(MACHINE_LANE_PREFIXES) or _is_runner_lane(session_key)
 
 
 def build_session_key(source: SessionSource, *, group_per_user: bool = True,
@@ -260,9 +321,13 @@ def build_session_key(source: SessionSource, *, group_per_user: bool = True,
     # not a new conversation every morning, and a per-run key would rebuild the
     # frozen prompt every time — losing the exact D01.1 win this divergence buys.
     if source.runner and source.runner_id:
-        return _KEY_SEP.join(["owl", source.owl_name, source.runner, source.runner_id])
+        return _KEY_SEP.join(
+            [_LANE_ROOT, source.owl_name, source.runner, source.runner_id]
+        )
 
-    parts: list[str] = ["owl", source.owl_name, source.channel, source.chat_type.value]
+    parts: list[str] = [
+        _LANE_ROOT, source.owl_name, source.channel, source.chat_type.value,
+    ]
     if source.chat_id:
         parts.append(source.chat_id)
     if source.thread_id:

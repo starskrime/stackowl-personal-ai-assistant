@@ -38,10 +38,17 @@ def test_none_and_empty_are_not_machine():
 
 
 def test_the_prefixes_match_where_they_are_minted():
-    """Pins the constant against the two sites that actually create these keys —
-    goal_execution.py and incident_escalation.py. Before DEBT-35 these were
-    f-strings in two files with nothing tying them together."""
-    assert set(MACHINE_LANE_PREFIXES) == {"goal-", "incident-"}
+    """Pins the constant against the sites that actually create these keys. Before
+    DEBT-35 they were f-strings in two files with nothing tying them together.
+
+    THREE MORE, MEASURED 2026-08-31 by scanning every table that carries a
+    session_key — 4,150 distinct lanes, of which 523 were ``shadow-``
+    (owls/shadow_validator.py:271), 96 ``job:`` (scheduler/scheduler.py:133) and
+    23 ``recover-`` (pipeline/durable/recovery.py:509). All minted in src/ with no
+    user input near them; ``recover-`` is the durable retry driver."""
+    assert set(MACHINE_LANE_PREFIXES) == {
+        "goal-", "incident-", "job:", "recover-", "shadow-",
+    }
 
 
 # test_mine_all_SKIPS_and_MARKS_machine_lanes REMOVED with ConversationMiner

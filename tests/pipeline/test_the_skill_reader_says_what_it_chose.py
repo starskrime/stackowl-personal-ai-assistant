@@ -52,7 +52,7 @@ class _Services:
         self.skill_store = _Store(hits)
         self.embedding_registry = self  # get() returns self; embed() below
 
-    def get(self) -> "_Services":
+    def get(self) -> _Services:
         return self
 
     async def embed(self, _texts: object) -> list[list[float]]:
@@ -61,7 +61,7 @@ class _Services:
 
 @pytest.mark.asyncio
 async def test_the_reader_logs_the_NAMES_it_chose_at_INFO(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The names are the evidence. Without them the block length says nothing."""
     from stackowl.pipeline.steps import classify as mod
@@ -71,7 +71,12 @@ async def test_the_reader_logs_the_NAMES_it_chose_at_INFO(
         (_Skill("ai-news-briefing"), 0.74),
     ]
 
-    mod.get_services = lambda: _Services(hits)  # type: ignore[assignment]
+    # monkeypatch, NOT a raw assignment. A bare `mod.get_services = ...` was never
+    # restored, so from this test onward every later test in the same process saw
+    # the stand-in: 15 tests across tests/memory failed with "'_Services' object
+    # has no attribute 'conversation_store'" whenever tests/pipeline ran first, and
+    # passed when tests/memory ran alone. Found 2026-08-31.
+    monkeypatch.setattr(mod, "get_services", lambda: _Services(hits))
 
     with caplog.at_level(logging.INFO):
         out = await mod._gather_relevant_skills(
@@ -93,7 +98,7 @@ async def test_the_reader_logs_the_NAMES_it_chose_at_INFO(
 
 @pytest.mark.asyncio
 async def test_it_stays_silent_when_nothing_was_chosen(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A no-hit turn must not emit a misleading empty record.
 
@@ -102,7 +107,7 @@ async def test_it_stays_silent_when_nothing_was_chosen(
     """
     from stackowl.pipeline.steps import classify as mod
 
-    mod.get_services = lambda: _Services([])  # type: ignore[assignment]
+    monkeypatch.setattr(mod, "get_services", lambda: _Services([]))
 
     with caplog.at_level(logging.INFO):
         out = await mod._gather_relevant_skills("hello", limit=3)
