@@ -315,6 +315,50 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ORPHAN_SWEEP_2026_08_31_the_self_healing_reconciler_SHIPPED_and_SCHEDULED:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-64."
+    his_decisions_carried_out: "A self-healing sweep rather than a one-off; DAILY; UNCAPPED; snapshotting rows before deleting; logging enough to reconstruct."
+    WHY_IT_SHIPPED_ENABLED_AND_SCHEDULED: >-
+      Shipping it dormant would be the exact 'a feature ships ON; if nothing sets the flag,
+      you shipped decoration' failure Bakir objects to most. It is seeded and live:
+      jobs row `orphan_reconciliation-45ddc8bc`, schedule `daily@04:30`, status pending.
+      04:30 is deliberate — AFTER knowledge_prune (04:00) and the synthesizer (03:30), so it
+      cleans up after the jobs that themselves delete things rather than racing them.
+    WHAT_IT_WILL_REMOVE_ON_ITS_FIRST_RUN_measured_today:
+      owl_dna_with_no_owls_row: 6
+      owl_dna_authored_with_no_owls_row: 11
+      dna_checkpoints_with_no_owls_row: 1
+      skill_ownership_whose_skill_is_gone: 110
+      total: "128 rows. Every one of them written to audit_log WHOLE, before it goes."
+    what_it_deliberately_does_NOT_touch: >-
+      skills_fts holds 147 rows for skills that no longer exist, but it is an INDEX, not
+      identity. The repair for a stale index is a RESYNC, and deleting from an FTS table row
+      by row is how FTS indexes get corrupted. Different mechanism, different item — and
+      saying so is the difference between a scoped sweep and one that damages what it meant
+      to fix.
+    THE_ONE_GUARD_AND_IT_IS_NOT_A_CAP: >-
+      If an OWNER table is empty, every dependent row looks orphaned and an uncapped sweep
+      would delete all of them. Bakir's own rule: 'an empty table is a QUESTION, not an
+      answer.' He rejected a cap on VOLUME; this refuses an obviously broken PREMISE, which
+      is a different thing, and it is the single failure mode that turns 'no cap' into
+      catastrophe. It fires per owner table, so a fresh install with zero skills refuses the
+      ownership rules while still sweeping owls.
+      TWO OF MY OWN TESTS FAILED ON THIS GUARD and they were right to: they seeded owls but
+      not skills, so the sweep correctly refused. The tests were fixed to seed both owners —
+      the guard was not weakened to make them pass.
+    reuse_not_a_second_engine: "Owls are removed through the identity cascade that shipped this morning, and every deletion goes through record_deleted_rows onto the existing hash-chained audit_log. No new deletion SQL, no new audit table, no second copy of 'what it means to remove an owl'."
+    tests: "tests/scheduler/test_orphan_reconciliation_sweep.py — 8 passing: orphaned DNA removed, phantom ownership removed, rows RECORDED before deletion, the empty-owner guard refuses and deletes nothing, a healthy database triggers nothing, running twice converges to zero, a clean database records nothing, and one unreadable table does not abandon the rest. tests/scheduler: 430 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline. mypy briefly read 66 (a missing duration_ms on JobResult); fixed, not baselined."
+    ACCEPTANCE_CHECK_PARTLY_CLOSED_for_once:
+      wiring_CLOSED: "The job is seeded in production — `orphan_reconciliation-45ddc8bc`, daily@04:30, pending. Measured on the live database after the 08:55:14Z restart, not inferred from the code."
+      effect_OPEN: >-
+        The sweep has NOT run yet — 6 orphaned owl_dna rows are still present, exactly as
+        expected before 04:30. CLOSING QUERY after its first run:
+        grep '"msg": "\[scheduler\] orphan_reconciliation.sweep: exit' ~/.stackowl/logs/stackowl.jsonl
+        and: SELECT COUNT(*) FROM owl_dna WHERE owl_name NOT IN (SELECT name FROM owls);
+        The first should report deleted=128 refused=false, and the second should be 0.
+    a_filter_error_of_mine_AGAIN: "I validated the restart with ts > '2026-08-31T09:0' against an 08:55 restart and got 0 records. Second time today. The tell is always the same — check the NEWEST timestamp before believing a count of zero."
+    one_boot_ERROR_not_from_this: "[scheduler] incident_escalation.execute: detection raised — the same handler already filed as DEBT-55, still unfixed and still unrelated to this item."
   DELETION_AUDIT_2026_08_31_the_general_hash_chained_log_ALREADY_EXISTED:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-63."
     his_decision: "'Generalise the existing audit, ONE table — one deletion-audit record for every store, carrying table, key, full row and reason. A per-store audit table is that mistake in miniature.' Plus: 'enough to reconstruct the row', and 'bound by age, keep deletions longest'."
@@ -1683,6 +1727,18 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-64
+    found: 2026-08-31
+    title: "Identity rows outlived their owners with nothing to clean them up"
+    what: "128 orphaned identity rows (owl_dna 6, owl_dna_authored 11, dna_checkpoints 1, skill_ownership 110) and no mechanism that would ever remove them. The graph reconciler then republished the shadows weekly as if they were truth."
+    evidence: "Measured on the live database 2026-08-31 immediately before shipping; the job row orphan_reconciliation-45ddc8bc daily@04:30 confirms the wiring landed."
+    decision: >-
+      A daily OrphanReconciliationHandler, uncapped per Bakir, made safe by recording every
+      row whole into audit_log before deleting it. Guarded against an empty owner table —
+      not a volume cap but a refusal of a broken premise. skills_fts excluded deliberately:
+      an index wants a resync, not row-by-row deletion.
+    residual_risk: "It has not run yet. First execution is 04:30 and will remove 128 rows; each is recoverable from audit_log's row.deleted records, which are retained 365 days."
+    status: "open — wiring evidenced in production, effect pending its first run; closing queries recorded in current"
   - id: DEBT-63
     found: 2026-08-31
     title: "Deleted rows left no record of what they contained"

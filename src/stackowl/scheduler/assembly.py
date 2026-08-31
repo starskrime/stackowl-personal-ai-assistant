@@ -372,6 +372,15 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(graph_reconciliation_handler)
 
+        # 2026-08-31 — identity rows whose OWNER no longer exists. Uncapped by
+        # Bakir's explicit decision, made acceptable by the snapshot-before-delete
+        # that shipped first: every row it removes is written to audit_log whole.
+        from stackowl.scheduler.handlers.orphan_reconciliation import (
+            OrphanReconciliationHandler,
+        )
+
+        HandlerRegistry.instance().register(OrphanReconciliationHandler(db))
+
         # FR-4 (learning-loop consolidation) — ReflectionWriterHandler now scores
         # AND reflects in one execute() call (every 15 min). The standalone
         # critic_scorer job (was every 10 min) is gone: ReflectionWriterHandler
@@ -892,6 +901,13 @@ class SchedulerAssembly:
         await _seed_minutes_schedule(
             db, handler_name="graph_reconciliation", schedule="every 168h",
             interval_minutes=10080,
+        )
+        # Orphan reconciliation runs daily at 04:30 — AFTER knowledge_prune
+        # (04:00) and the synthesizer (03:30), so it cleans up after the jobs
+        # that themselves delete things rather than racing them.
+        await _seed_daily_schedule(
+            db, handler_name="orphan_reconciliation",
+            schedule="daily@04:30", next_hour=4,
         )
         # Skill synthesizer runs once per day at 03:30 (between knowledge_prune
         # at 04:00 and evolution at 02:00) — needs ≥several days of outcomes
