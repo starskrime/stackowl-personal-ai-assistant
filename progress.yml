@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RETIREMENT_2026_08_30_the_PLATFORM_already_owns_this_and_is_doing_it_right:
+    what_was_authorised: "Bakir: retire the never-run LEARNED skills only."
+    WHY_I_DID_NOT_DO_IT_BY_HAND: >-
+      SkillCurator already owns retirement — synthesizer.py:892 calls it "the
+      single retirement path" — it is wired at scheduler/assembly.py:235, and it
+      RUNS daily at 09:00. Measured from the logs:
+        2026-08-28  scanned 178  changed 0  (stale 0, archived 0, revived 0)
+        2026-08-29  scanned 179  changed 0
+        2026-08-30  scanned  19  changed 0
+      Changing nothing is CORRECT, not broken: STALE_AFTER_DAYS is 30 and the
+      corpus is days old. D10.6's own gap line already said so — "decay is floored
+      off for 24 more days".
+      Hand-retiring three rows would pre-empt a mechanism that is working, and it
+      is the exact thing Bakir's own standing rule forbids: "we are always fixing
+      root of the issue not an issue itself. Issue itself should be fixed by
+      platform due to self healing capability."
+    WHEN_IT_WILL_HAPPEN_BY_ITSELF: >-
+      The three never-run learned skills were created 2026-08-29/30, so they reach
+      STALE at ~2026-09-28 and ARCHIVED at ~2026-10-28. Stale is a RANKING signal,
+      not removal — the skill stays reachable and is restored to active the moment
+      it is used, which is what makes waiting cheap.
+    AND_THE_LIST_MOVED_WHILE_I_WAS_LOOKING: >-
+      An hour ago FOUR learned skills had never run. Re-measured immediately
+      before acting: THREE. incident_browser_navigate_stop went 0 -> 1 run and
+      incident_owl_build_stop 1 -> 2 in the interval. Acting on the stale list
+      would have retired a skill that had since been used. Re-measuring
+      immediately before a destructive action is not ceremony.
+    ESCALATIONS:
+      - id: ESC-74
+        question: "Should a NEVER-used skill age out faster than a used-then-idle one?"
+        why_evidence_cannot_settle_it: >-
+          The curator treats both the same: 30 days without use. But "created 30
+          days ago and never once used" and "used ten times, idle for 30 days" are
+          different facts about a skill's worth, and which should decay faster is a
+          judgement about what a skill is FOR, not a measurement.
+        the_measurement: >-
+          3 of 6 learned skills have never executed. Under the current rule they
+          occupy ranking budget until 2026-09-28. Under a never-used rule of, say,
+          7 days they would have gone already.
+        options: >-
+          (a) leave it — one window, simple, and archival is reversible;
+          (b) add a shorter NEVER_USED_STALE_AFTER_DAYS, so a skill that has never
+          earned its place goes sooner than one that has;
+          (c) retire the three by hand now and leave the policy alone.
+        recommendation: >-
+          (b) if the corpus grows again, (a) for now. At 20 skills nothing is being
+          crowded out since the when_to_use trim restored all 8 proven skills to
+          the prompt, so the cost of waiting is currently zero. NOT (c) — it fixes
+          three rows and leaves the policy that produced them untouched.
+        blocked_until_answered: "Nothing. The corpus is healthy today; this is about what happens when it is not."
+
   OPERATOR_DECISIONS_2026_08_30_round_4:
     by: Bakir
     miner: "MERGE INTO ONE SKILL PER TOOL — `recovering-<tool>` covering all outcome classes, patched as new outcomes appear. The class-level shape the reference platform's review prompt argues for, and the opposite of the current (tool x outcome) expansion."
