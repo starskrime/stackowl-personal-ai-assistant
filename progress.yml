@@ -13393,7 +13393,7 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
+      brainstorm: done
       architect:  not_started
       implement:  not_started
       cleanup:    not_started
@@ -13662,6 +13662,74 @@ items:
         and 163 are dropped on 95.5% of assemblies" — died when Bakir purged the
         learned corpus on 2026-08-29. Stage 1 stands on its own at any corpus size,
         but D10.6's overall re-verdict remains an open question for Bakir.
+    RE_VERDICT_2026_08_30_three_premises_void_one_sharper:
+      why_re_verdicted: "Bakir purged the learned corpus on 2026-08-29, and this item's every number was taken before that. He asked for the re-verdict."
+      VOID: |-
+        1. "179 enabled skills"        -> 20 rows (14 builtin + 6 learned), 21 SKILL.md on disk.
+        2. "163 dropped on 95.5% of
+            assemblies"                -> ZERO dropped. Rendering all 21 against the
+                                          real _DEFAULT_CAP=4000 gives 3,577 chars
+                                          and 21 of 21 entries, no truncation.
+        3. "corpus grows ~1.5/day"     -> 1-2 creates/day and mostly `reinforce`
+                                          (08-29: 1 create + 3 reinforce; 08-28: 2 + 3).
+      SURVIVES_AND_IS_SHARPER_THAN_WRITTEN: |-
+        4. "one capability occupies N slots as near-duplicate skills the
+           consolidator cannot see" — TRUE, and now measurable at the source:
+
+             125 create events across 111 DISTINCT names
+             incident-evidence-brief   minted 7x
+             incident_evidence_brief   minted 5x     <- the same skill, 12 times
+             rca-verifier-evidence-brief 3x, list-owls 2x, rca_evidence_verifier 2x
+
+           TWO names exist in BOTH separator forms:
+             check-stock-price-today / check_stock_price_today
+             incident-evidence-brief / incident_evidence_brief
+
+           And the ENTIRE learned corpus today is ONE template:
+             incident_<tool>_<outcome>, 6 of them, 4 with n_executions=0.
+           Its combinatorial ceiling is 213 distinct tools x 11 failure classes
+           = 2,343 possible skills.
+      THE_ITEM_SHOULD_RE_AIM: >-
+        D10.6 is titled "Skill relevance scoring" and its gap line is about
+        choosing among too many. NOTHING IS BEING DROPPED, so scoring has nothing
+        to choose between — the corpus reached 179 by MINTING, not by failing to
+        rank. The target is duplicate minting at the source, and one concrete
+        cause is checkable in a line: there is NO NAME NORMALISATION anywhere in
+        src/stackowl/skills/, and the consolidator compares raw names
+        (consolidation.py:270, `m.name == base`), so a hyphen and an underscore
+        form are two distinct skills to every mechanism, permanently.
+      what_I_did_NOT_do_and_why: >-
+        Did not change name identity. A skill's name is how the operator invokes
+        it (`/skill-name`), so normalising it is user-facing and the standing rule
+        is to brief rather than proceed. See ESC-73.
+      a_smaller_finding_worth_keeping: >-
+        `skills.updated_at` records LOAD time, not authorship: all six learned
+        skills and every builtin share the timestamp of my 23:54:59 restart. It
+        cannot be used to date a skill's creation, which is what I first tried.
+        skill_audit.ts is the authorship record.
+    ESCALATIONS:
+      - id: ESC-73
+        question: "Should skill names be normalised for identity — is `incident-evidence-brief` the same skill as `incident_evidence_brief`?"
+        why_evidence_cannot_settle_it: >-
+          The measurement is unambiguous — 12 mints of one skill across two
+          separator forms, and 2 name-pairs that differ only by hyphen-vs-
+          underscore. What evidence cannot settle is whether the two forms SHOULD
+          be one skill. A skill name is the operator's handle for invoking it, so
+          collapsing them changes a user-facing address, and an existing
+          deployment may have both installed deliberately.
+        options: >-
+          (a) normalise for IDENTITY only — dedupe and consolidate on the
+          normalised form while keeping the authored name for display and
+          invocation. Nothing the operator types changes;
+          (b) normalise at authoring — force one separator when a skill is
+          created, leaving existing names alone;
+          (c) leave it — accept that the two forms are distinct skills.
+        recommendation: >-
+          (a). It removes the duplicate class without changing any name the
+          operator already uses, and it is the "one source, have the other ask it"
+          shape rather than a second rule about names. (b) alone would not merge
+          the pairs that already exist.
+        blocked_until_answered: "The minting fix. The RE-VERDICT above stands on its own and needs no decision."
   - id: D10.7
     title: "Skill ownership per persona"
     domain: D10
