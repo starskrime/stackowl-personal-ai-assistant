@@ -315,6 +315,84 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  LEGACY_INCIDENT_SKILLS_2026_08_31_the_merge_changed_the_WRITER_and_left_the_ROWS:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-73."
+    how_this_item_was_reached: >-
+      Bakir's round-4 order, item 1: "MERGE INTO ONE SKILL PER TOOL — recovering-<tool>
+      covering all outcome classes." Measuring it first found the GENERATOR half already
+      shipped (commit 020b4145, 2026-08-30 20:23) and the CORPUS half never done.
+    THE_MEASUREMENT:
+      learned_skills: 14
+      three_capabilities_hold_the_same_knowledge_TWICE: >-
+        incident_shell_stop (3 runs, 08-30 03:04) + incident_shell_unachieved_effect
+        (0 runs, 08-30 06:42) + incident_shell (0 runs, 08-31 04:06);
+        incident_owl_build_stop (3 runs) + incident_owl_build (0 runs);
+        incident_delegate_task_unachieved_effect (2 runs) + incident_delegate_task (0 runs).
+      the_production_log_carries_BOTH_HALVES_at_INFO: >-
+        01:11 "author_one: skill already exists — existing_dir: incident_shell_stop"
+        (old identity, correct); 04:06 "author_one: exit — written + indexed —
+        skill_name: incident_shell" (new identity, wrote a third copy of knowledge it
+        already had); 08:35, 09:44, 10:16 "outcome already covered by this capability's
+        skill — existing_dir: incident_shell", so every future outcome now flows to the
+        new skill while the old two are frozen with the run history.
+      capability_vocabulary: "26 distinct failed_capability values, 11 failure classes,
+        and ZERO capability is a prefix of another — which is what makes a prefix rule
+        safe, and it was measured rather than assumed."
+    WHY_DECAY_CANNOT_CLEAN_THIS_UP_AND_WOULD_MAKE_IT_WORSE: >-
+      SkillCurator anchors idle time on `last_used_at if n_executions > 0 else loaded_at`,
+      and `catalogue_order_key` sorts by -n_executions. So the 3-run legacy skill outranks
+      the 0-run survivor on every turn, keeps being selected, and never goes stale — while
+      the survivor the miner MAINTAINS reaches STALE at ~2026-09-30 and ARCHIVED at
+      ~2026-10-30. Left alone the self-healing mechanism converges on the WRONG survivor:
+      it archives the living skill and keeps the two frozen duplicates. Read from
+      lifecycle.py's `_target_state` and its anchor line, not inferred.
+    THE_FIX: >-
+      `FailureOutcomeMiner.adopt_legacy_siblings()` — transfer the legacy run history to
+      the capability's skill, then archive the legacy row. Called from `mine()` AFTER the
+      authoring loop, so a skill written this pass is adopted in the SAME pass and a
+      capability never spends a tick with both forms live. `mine()` ran 80 times on
+      2026-08-31 (roughly every 12 minutes), so this is not a one-off script — it is the
+      existing engine, extended. Ladder rung 1. No new queue, no new store method: it uses
+      `list_for_source`, `set_n_executions` and `set_lifecycle_state`, all of which already
+      exist, and it asks `_canonical_incident_slug` for the identity rather than restating
+      the formula (two copies of one rule is the defect being cleaned).
+    WHY_ARCHIVE_AND_NOT_DELETE: >-
+      `_NOT_ARCHIVED` already keeps an archived skill out of every catalogue read, so
+      archival IS the whole of the fix; the row and its SKILL.md stay on disk and one
+      `set_lifecycle_state` puts it back. It is the curator's own state, not a second
+      vocabulary. And it is reversible, which is why this did not need to stop and ask.
+    WHAT_IT_DELIBERATELY_DOES_NOT_DO: >-
+      It does not copy the legacy prose into the survivor. Every write to a skill body goes
+      through `gated_skill_write`, and the miner already owns a merge path for a new outcome
+      (`_merge_outcome_into_body`), so the content is RE-DERIVED from live failures by the
+      mechanism that exists rather than by a second writer that bypasses the gate. The cost
+      is stated plainly: incident_shell_stop's step-budget analysis leaves the catalogue
+      until (shell, stop) next clusters with a verified verdict — at which point it is
+      re-authored INTO incident_shell, which is where it should have been all along.
+    tests: "13 new in tests/learning/test_legacy_incident_skills_are_adopted.py, including
+      the prefix-collision case closed structurally, the running-total case (two siblings),
+      idempotency (a pass every 12 minutes must not double-count), the no-survivor case
+      (browser_navigate today — archiving its only skill would be the harm), the provenance
+      gate (category, not the name prefix), and a broken read costing the pass nothing."
+    suites: "tests/learning + tests/skills 557 passed; tests/scheduler 440 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_pending_the_next_miner_tick
+    closing_query: >-
+      grep '"msg": "[incident] miner.adopt: legacy skill folded' on
+      ~/.stackowl/logs/stackowl.jsonl (INFO, so it exists in production), and
+      SELECT name, n_executions, lifecycle_state FROM skills WHERE name LIKE 'incident_%'
+      — expected: incident_shell 3 / active, incident_shell_stop archived,
+      incident_shell_unachieved_effect archived, incident_owl_build 3 / active,
+      incident_delegate_task 2 / active.
+    A_SECOND_OPERATOR_DECISION_HAS_EXPIRED_AND_I_DID_NOT_ACT_ON_IT: >-
+      Round 4 also said "RETIRE the never-run LEARNED skills only — the 4 never-executed
+      incident_* templates". Measured today there are FIVE never-executed incident_*
+      skills, and THREE of them are the merged-form skills the generator minted on 08-31.
+      Executing that instruction literally today would delete the merged form and keep the
+      pair form — the exact opposite of decision 1 in the same list. The list moved while
+      it was being looked at, which is the same lesson the 2026-08-30 retirement item
+      already recorded. Not acted on; see ESC-83.
+
   MEMORY_2026_08_31_retry_prompts_were_being_filed_as_things_BAKIR_SAID:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-72."
     how_this_item_was_reached: >-
@@ -1200,6 +1278,29 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_83_your_retire_the_4_instruction_now_points_at_the_WRONG_FOUR:
+      question: >-
+        Round 4 said "retire the never-run learned skills only — the 4 never-executed
+        incident_* templates". Today there are FIVE, and three of them are the MERGED-form
+        skills your decision 1 in the same list asked for. Do you still want a retirement,
+        and of which ones?
+      why_evidence_cannot_settle_it: >-
+        The measurement can say which skills have never run; it cannot say whether an
+        instruction given about one list still applies to a different list. Two of your own
+        decisions now point opposite ways and only you can say which one governs.
+      the_measurement: >-
+        Never-executed incident_* skills on 2026-08-31: incident_shell_unachieved_effect,
+        incident_web_fetch_stop (both pair-form, 08-30), and incident_shell,
+        incident_owl_build, incident_delegate_task (all merged-form, authored 08-31 after
+        the identity change). Adoption archives the three pair-form duplicates and hands
+        their run history to the merged form, so after it runs the merged skills are no
+        longer never-run: incident_shell 3, incident_owl_build 3, incident_delegate_task 2.
+      panel_recommendation: >-
+        Do nothing by hand. After adoption the only genuinely never-run incident skill left
+        is incident_web_fetch_stop, and SkillCurator reaches it at ~2026-09-29 on its own.
+        This is the same answer the 2026-08-30 retirement item reached and for the same
+        reason: hand-retiring pre-empts a mechanism that is working.
+      what_is_blocked: "Nothing. The merge shipped; only the retirement half waits."
     ESC_82_145_machine_authored_facts_are_sitting_in_memory_right_now:
       question: "145 of 368 staged_facts are retry/RCA text filed as things you said — 'User: (Retry attempt 2. What happened last time...'. The leak is now closed. Do the existing 145 get removed?"
       why_evidence_cannot_settle_it: "It is a data deletion from your live memory, and the same judgement you already made once about 107,576 facts. The measurement can say what they are; only you decide whether they go."

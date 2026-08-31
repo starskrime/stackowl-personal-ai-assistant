@@ -64,7 +64,7 @@ from __future__ import annotations
 import re
 import time
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -102,6 +102,19 @@ _CONSENT_TOOL_NAME_LIVE = "failure_outcome_miner"
 _CONSENT_TOOL_NAME_SCHEDULED = "failure_outcome_miner_scheduled"
 
 CapabilityTagLookup = Callable[[str], "str | None"]
+
+#: Where a legacy pair-form skill goes once its capability's skill has taken over
+#: its run history. ARCHIVED, not deleted, and deliberately so: `_NOT_ARCHIVED`
+#: already keeps an archived skill out of every catalogue read, so archival is
+#: the whole of the fix, while the row and its SKILL.md stay on disk and one
+#: `set_lifecycle_state` puts it back. This is the same state the curator uses,
+#: not a second vocabulary for the same idea.
+ADOPTED_LIFECYCLE_STATE = "archived"
+
+#: The manifest field that says the MINER wrote a skill. The name prefix alone is
+#: a spelling; this is provenance. A hand-authored skill that happens to share the
+#: prefix is not this module's to archive.
+_INCIDENT_CATEGORY = "incident"
 
 
 @dataclass(frozen=True)
@@ -210,6 +223,49 @@ def _canonical_incident_slug(capability_class: str, failure_class: str) -> str:
     return slug or "incident_fix"
 
 
+def merged_skill_name(capability_class: str) -> str:
+    """The ONE skill that holds every outcome for *capability_class*.
+
+    Asks :func:`_canonical_incident_slug` rather than restating its formula. Two
+    copies of one rule is precisely the defect this pass exists to clean up, so
+    the cleaner must not become a second copy of the identity it is cleaning.
+    """
+    return _canonical_incident_slug(capability_class, "")
+
+
+def legacy_siblings_for(
+    capability_class: str,
+    skill_names: Iterable[str],
+    *,
+    live_capabilities: Iterable[str] = (),
+) -> dict[str, str]:
+    """``{legacy skill name: the failure class it covers}`` for *capability_class*.
+
+    A legacy skill is one written under the OLD ``incident_<capability>_<failure>``
+    identity, before commit 020b4145 made identity capability-only. Its remainder
+    after the base IS the failure class, by construction — the old formula put it
+    there — so no vocabulary of failure classes is needed and none is kept here.
+
+    THE ONE WAY A PREFIX RULE CAN BE WRONG is a capability whose name prefixes
+    another: ``incident_shell_stop`` is a legacy sibling of ``shell`` but would be
+    the SURVIVOR of a capability literally named ``shell_stop``. Measured on the
+    live database, 26 distinct ``failed_capability`` values and zero prefix pairs
+    among them — so this cannot happen today. *live_capabilities* closes it
+    structurally anyway, because "cannot happen today" is not a guarantee.
+    """
+    base = merged_skill_name(capability_class)
+    prefix = f"{base}_"
+    reserved = {merged_skill_name(c) for c in live_capabilities} - {base}
+    siblings: dict[str, str] = {}
+    for name in skill_names:
+        if not name.startswith(prefix) or name in reserved:
+            continue
+        failure_class = name[len(prefix) :]
+        if failure_class:
+            siblings[name] = failure_class
+    return siblings
+
+
 def _capability_class_for(tool: str, tag_lookup: CapabilityTagLookup | None) -> str:
     """Resolve *tool*'s clustering key: its registered ``capability_tag``, or
     the raw tool name when none is registered (documented fallback — a tool
@@ -270,6 +326,9 @@ class MiningReport:
     n_outcomes_scanned: int
     n_clusters_found: int
     n_skills_written: int
+    #: Legacy pair-form skills folded into their capability's skill this pass.
+    #: Defaulted so every existing construction site keeps working unchanged.
+    n_legacy_adopted: int = 0
 
 
 def _fit_to_standard(verdict: RcaVerdict) -> tuple[str, str]:
@@ -427,11 +486,18 @@ class FailureOutcomeMiner:
                 continue
             if await self._author_one(cluster, verdict):
                 written += 1
+        # AFTER authoring, not before: a skill written by the loop above is then
+        # adopted in the SAME pass, so a capability never spends a tick with its
+        # new skill sitting beside the pair-form one it replaces.
+        adopted = await self.adopt_legacy_siblings(
+            {cluster.capability_class for cluster in clusters}
+        )
         # 4. EXIT
         report = MiningReport(
             n_outcomes_scanned=len(outcomes),
             n_clusters_found=len(clusters),
             n_skills_written=written,
+            n_legacy_adopted=adopted,
         )
         log.memory.info(
             "[incident] miner.mine: exit",
@@ -439,9 +505,109 @@ class FailureOutcomeMiner:
                 "n_outcomes": report.n_outcomes_scanned,
                 "n_clusters": report.n_clusters_found,
                 "n_written": report.n_skills_written,
+                "n_legacy_adopted": report.n_legacy_adopted,
             }},
         )
         return report
+
+    async def adopt_legacy_siblings(self, capabilities: set[str]) -> int:
+        """Fold every pair-form skill for *capabilities* into that capability's
+        one skill: move the run history across, then archive the legacy row.
+
+        WHY THIS EXISTS. Commit 020b4145 changed skill identity from
+        ``incident_<capability>_<failure>`` to ``incident_<capability>`` and
+        migrated nothing, so the corpus carries both forms for three
+        capabilities. The production log has both halves at INFO — 01:11
+        "skill already exists ... incident_shell_stop", then 04:06 "written +
+        indexed ... incident_shell".
+
+        WHY DECAY CANNOT DO IT. The curator anchors idle time on ``last_used_at``
+        when a skill has runs, and ``catalogue_order_key`` sorts by
+        ``-n_executions`` — so the legacy skill outranks the survivor, keeps being
+        selected, and never goes stale, while the survivor it duplicates ages out
+        in 30 days. Left alone the platform archives the skill the miner
+        MAINTAINS and keeps the two it has frozen.
+
+        WHY THE RUN HISTORY MOVES. Without it the survivor looks unused the moment
+        its duplicate stops being selected, and the curator archives it for exactly
+        that. The consolidator's docstring already names this trap; this is the
+        same rule applied to the same kind of family.
+
+        WHAT IT DOES NOT DO. It does not copy the legacy prose across. Every write
+        to a skill body goes through ``gated_skill_write``, and this module already
+        has a merge path for a new outcome (``_merge_outcome_into_body``), so the
+        content is re-derived from live failures by the mechanism that exists
+        rather than by a second writer that would bypass the gate. The archived
+        SKILL.md stays on disk and one ``set_lifecycle_state`` brings it back.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[incident] miner.adopt: entry",
+            extra={"_fields": {"n_capabilities": len(capabilities)}},
+        )
+        try:
+            learned = await self._skills.list_for_source("learned")
+        except Exception as exc:  # noqa: BLE001 — hygiene must never cost a pass
+            # Adoption is catalogue hygiene. If it cannot read, the miner must
+            # still author the skill the incident actually needs.
+            log.memory.warning(
+                "[incident] miner.adopt: catalogue read failed — skipping adoption",
+                exc_info=exc,
+            )
+            return 0
+        by_name = {sk.name: sk for sk in learned}
+        adopted = 0
+        for capability in sorted(capabilities):
+            survivor = by_name.get(merged_skill_name(capability))
+            if survivor is None:
+                # Nothing to be a duplicate OF. Archiving the pair-form skill here
+                # would remove the only skill this capability has.
+                continue
+            runs = int(getattr(survivor, "n_executions", 0) or 0)
+            siblings = legacy_siblings_for(
+                capability, by_name, live_capabilities=capabilities,
+            )
+            for name, failure_class in sorted(siblings.items()):
+                legacy = by_name[name]
+                if str(getattr(legacy, "lifecycle_state", "active") or "active") == (
+                    ADOPTED_LIFECYCLE_STATE
+                ):
+                    continue  # already adopted — a pass every ~12 minutes must not re-count
+                manifest = getattr(legacy, "manifest_json", None) or {}
+                if str(manifest.get("category") or "") != _INCIDENT_CATEGORY:
+                    continue  # the prefix is a spelling; the category is provenance
+                # A RUNNING total, not the snapshot read once: with two siblings the
+                # second write would otherwise overwrite the first's contribution.
+                runs += int(getattr(legacy, "n_executions", 0) or 0)
+                try:
+                    await self._skills.set_n_executions(survivor.skill_id, runs)
+                    await self._skills.set_lifecycle_state(
+                        legacy.skill_id, ADOPTED_LIFECYCLE_STATE, time.time(),
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.memory.warning(
+                        "[incident] miner.adopt: could not adopt a legacy sibling",
+                        exc_info=exc,
+                        extra={"_fields": {"legacy": name, "survivor": survivor.name}},
+                    )
+                    continue
+                adopted += 1
+                # 3. STEP — INFO, because this line is the acceptance evidence.
+                log.memory.info(
+                    "[incident] miner.adopt: legacy skill folded into its capability",
+                    extra={"_fields": {
+                        "capability_class": capability,
+                        "legacy": name,
+                        "failure_class": failure_class,
+                        "survivor": survivor.name,
+                        "survivor_runs": runs,
+                    }},
+                )
+        # 4. EXIT
+        log.memory.debug(
+            "[incident] miner.adopt: exit", extra={"_fields": {"n_adopted": adopted}},
+        )
+        return adopted
 
     async def _author_one(self, cluster: FailureCluster, verdict: RcaVerdict) -> bool:
         """One gated write: build the manifest/body from *verdict*, then run
