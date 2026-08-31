@@ -376,8 +376,22 @@ current:
       gate (category, not the name prefix), and a broken read costing the pass nothing."
     suites: "tests/learning + tests/skills 557 passed; tests/scheduler 440 passed."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    validate: OPEN_pending_the_next_miner_tick
-    closing_query: >-
+    validate: >-
+      CLOSED IN PRODUCTION at 2026-08-31T15:49:33Z, first miner tick after the
+      15:34:19Z restart. Four INFO lines, one per adoption:
+      delegate_task <- incident_delegate_task_unachieved_effect (survivor_runs 2);
+      owl_build <- incident_owl_build_stop (3);
+      shell <- incident_shell_stop (3) and incident_shell_unachieved_effect (3, unchanged
+      because that sibling had none). Pass summary: n_outcomes 2000, n_clusters 16,
+      n_written 0, n_legacy_adopted 4. Catalogue after: incident_shell 3/active,
+      incident_owl_build 3/active, incident_delegate_task 2/active, and all four legacy
+      rows 'archived'. Active learned skills 14 -> 10. 899 records since the restart,
+      ZERO ERRORs.
+    the_no_survivor_case_also_HELD: >-
+      incident_browser_navigate_stop is still active with 2 runs. It has no merged-form
+      skill, so adoption correctly left it alone rather than archiving the only skill its
+      capability has — the test that pins this is not hypothetical, it is the live row.
+    closing_query_used: >-
       grep '"msg": "[incident] miner.adopt: legacy skill folded' on
       ~/.stackowl/logs/stackowl.jsonl (INFO, so it exists in production), and
       SELECT name, n_executions, lifecycle_state FROM skills WHERE name LIKE 'incident_%'
