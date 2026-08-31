@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  OWL_DELETE_CASCADE_2026_08_31_TWO_paths_each_cleaning_a_DIFFERENT_half:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-58."
+    THE_SHAPE_WAS_WORSE_THAN_A_MISSING_CASCADE: >-
+      There were TWO owl deletion paths and NEITHER was complete, each cleaning a
+      different subset. `/owls remove` (owls_command) called registry.deregister +
+      _remove_from_yaml + its own DNA SQL — and NEVER TOUCHED OwlStore, so it left the
+      `owls` ROW behind. `owls_helpers.delete_owl` called store.delete, which removed the
+      `owls` row AND NOTHING ELSE. The union of the two is what a delete always needed to
+      be. Live counts: owls 10, owl_dna 16, owl_dna_authored 21, skill_ownership 111.
+    owl_dna_authored_had_NO_deleter_ANYWHERE: "grep for 'DELETE FROM owl_dna_authored' across src/ returned nothing. 21 rows for 10 owls, and nothing had ever removed one."
+    the_split_was_already_on_the_record: >-
+      tests/owls/test_owl_store's own docstring, 2026-08-16: "one owl lived in four places
+      — stackowl.yaml, owl_dna (12), owl_dna_authored (17, SO 5 ORPHANS)". OwlStore was
+      built to end that split FOR WRITES. Deletion was never made to follow, and the orphan
+      count grew from 5 to 11 in the fifteen days since.
+    WHY_THIS_NEEDS_NO_GRAPH_LEG_and_that_is_the_good_part: >-
+      GraphReconciliationHandler treats owl_dna and skill_ownership as AUTHORITATIVE and
+      republishes them into Kuzu weekly — which is exactly why graph Owl nodes matched
+      owl_dna at 16 and graph Skill nodes matched skill_ownership at 111. A healthy
+      reconciler faithfully copying a shadow. It PRUNES as well as backfills
+      (delete_skill_node / delete_trait_node), so cleaning the SQLite identity lets the
+      loop that ALREADY EXISTS heal the graph. Adding a second Kuzu writer in the stores
+      would have been the "never a second engine" rule broken to fix its own symptom.
+    IDENTITY_NEVER_HISTORY: >-
+      Twelve tables carry owl_name. cost_records (127k), task_outcomes, reflections,
+      conversations, tasks and sessions are the record of what the owl DID and this
+      programme measures with them. The cascade takes owls + owl_dna + owl_dna_authored +
+      dna_checkpoints + skill_ownership, and nothing else. The precedent is
+      SkillStore.delete leaving skill_audit alone — the restraint that made 128 purged
+      skills recoverable yesterday.
+    the_duplicate_is_GONE_not_moved: "owls_command._delete_dna_rows now ASKS OwlStore instead of carrying its own SQL, and the two now-unreferenced DELETE constants were removed. A spare 'DELETE FROM owl_dna' string in a command module is a second copy waiting to be re-used."
+    A_TEST_OF_MINE_HUNG_AND_THAT_IS_A_FAILING_TEST: >-
+      The first version used a plain helper that opened a DbPool per test and never closed
+      it. Outside pytest that is untidy; inside it the run HUNG and was killed at 300s —
+      aiosqlite keeps a thread per connection and the leaked ones never let the loop
+      finish. Converted to a fixture that closes, mirroring tests/owls/test_owl_store.
+      Diagnosed by reproducing OUTSIDE pytest first, which ran clean in 3s and proved the
+      hang was mine rather than the code's.
+    and_a_second_fixture_bug: "dna_checkpoints.checkpoint_id is GLOBALLY unique, not per-owl. Seeding two owls with the same literal made the blast-radius test fail on the fixture rather than on the code."
+    tests: "tests/owls/test_owl_delete_cascades.py — 8 passing: identity removed from all four tables, HISTORY (conversations) preserved, another owl untouched, deleting a non-existent owl is a clean no-op, and the cascade still runs when ONLY the shadows remain (the state the live database is in). tests/owls + tests/commands: 702 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline. I first read 41 because I mixed tests/owls into the scope; corrected."
+    ACCEPTANCE_CHECK_OPEN_and_it_needs_a_DELETION_not_a_message: >-
+      "An owl deletion leaves no shadow." NOT CLOSED, and this one cannot be closed by
+      chat traffic — it needs an owl to actually be deleted, which does not happen
+      spontaneously. Re-measured after the 06:33:09Z restart and the counts are UNCHANGED
+      (owls 10, owl_dna 16, owl_dna_authored 21, skill_ownership 111) exactly as expected:
+      this item is PREVENTION. CLOSING QUERY, after any future /owls remove:
+      SELECT (SELECT COUNT(*) FROM owls), (SELECT COUNT(*) FROM owl_dna),
+             (SELECT COUNT(*) FROM owl_dna_authored);
+      The three should move together.
+    THE_EXISTING_SHADOWS_ARE_NOT_TOUCHED: "Six ghost owls and 111 ownership rows remain. Removing them is a DATA DELETION and belongs to the agreed self-healing sweep, which Bakir specified must snapshot rows before deleting. Doing it here would be the destructive act this loop is required to stop and ask about."
+    an_unrelated_boot_error_seen: "[tool_build] no channel/session to scope consent — refused. A machine-lane consent refusal, nothing to do with owl deletion. Not investigated; noted so it is not mistaken for fallout."
   SHADOW_PATHS_PROVEN_THROUGH_THE_REAL_SEAM_2026_08_31:
     why_this_item_and_not_another_feature: >-
       THREE consecutive items shipped with acceptance checks whose denominator was ZERO —
@@ -1449,6 +1501,23 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-58
+    found: 2026-08-31
+    title: "Two owl deletion paths, each cleaning a different half, and owl_dna_authored cleaned by neither"
+    what: >-
+      /owls remove cleared DNA but left the owls row (it never touched OwlStore);
+      owls_helpers.delete_owl cleared the owls row but left the DNA. owl_dna_authored had no
+      deleter anywhere in src/. The shadows were then republished into the Kuzu graph weekly
+      by a reconciler that treats owl_dna and skill_ownership as authoritative.
+    evidence: "Live: owls 10, owl_dna 16, owl_dna_authored 21, skill_ownership 111; graph Owl nodes == owl_dna == 16 and graph Skill nodes == skill_ownership == 111. The same split was recorded in tests/owls/test_owl_store's docstring on 2026-08-16 with 5 orphans; it is now 11."
+    decision: >-
+      OwlStore.delete cascades over owls + owl_dna + owl_dna_authored + dna_checkpoints +
+      skill_ownership in one transaction, and runs even when the owls row is already gone.
+      owls_command._delete_dna_rows now asks the store instead of carrying its own SQL. No
+      graph leg: the weekly reconciler prunes, so cleaning SQLite heals the graph through the
+      loop that already exists.
+    residual_risk: "Prevention only. The six existing ghost owls and 111 ownership rows remain, and removing them is a data deletion belonging to the agreed snapshot-first sweep."
+    status: "open — shipped and live; acceptance check needs an actual owl deletion, closing query recorded in current"
   - id: DEBT-57
     found: 2026-08-31
     title: "Three shipped items had never executed anywhere; a gateway smoke now proves the wiring"

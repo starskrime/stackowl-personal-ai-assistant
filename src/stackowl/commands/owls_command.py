@@ -194,8 +194,9 @@ _SELECT_DNA_SQL = (
     "SELECT challenge_level, verbosity, curiosity, formality, creativity, "
     "precision, updated_at FROM owl_dna WHERE owl_name = ?"
 )
-_DELETE_DNA_SQL = "DELETE FROM owl_dna WHERE owl_name = ?"
-_DELETE_CHECKPOINTS_SQL = "DELETE FROM dna_checkpoints WHERE owl_name = ?"
+# The DNA/checkpoint DELETE constants that lived here are GONE, not moved:
+# OwlStore.delete owns the whole cascade now, and a spare "DELETE FROM owl_dna"
+# string sitting in a command module is a second copy waiting to be re-used.
 
 
 class OwlsCommand(SlashCommand):
@@ -870,7 +871,24 @@ class OwlsCommand(SlashCommand):
         )
 
     async def _delete_dna_rows(self, name: str) -> None:
-        """Best-effort cleanup of ``owl_dna`` and ``dna_checkpoints`` for the owl."""
+        """Ask the STORE to remove this owl's identity. Best-effort; never raises.
+
+        REWRITTEN 2026-08-31, and the rewrite fixes a leak this method WAS half of.
+        It used to delete ``owl_dna`` and ``dna_checkpoints`` with its own SQL —
+        a second copy of a rule that also lived in ``OwlStore``, and an incomplete
+        one: it never touched ``owl_dna_authored`` (which had no deleter anywhere
+        in the tree), never touched ``skill_ownership``, and — because this command
+        path calls the registry and the YAML rather than the store — never removed
+        the ``owls`` ROW either.
+
+        So the platform had TWO deletion paths cleaning DIFFERENT subsets:
+        ``/owls remove`` cleared DNA but left the row, and
+        ``owls_helpers.delete_owl`` cleared the row but left the DNA. Measured on
+        the live database: ``owls`` 10, ``owl_dna`` 16, ``owl_dna_authored`` 21.
+        The union of the two paths is what a delete always needed to be, and
+        ``OwlStore.delete`` is now that union — so this asks it instead of keeping
+        its own half.
+        """
         if self._db is None:
             log.gateway.debug(
                 "[commands] owls._delete_dna_rows: no db wired",
@@ -878,8 +896,9 @@ class OwlsCommand(SlashCommand):
             )
             return
         try:
-            await self._db.execute(_DELETE_DNA_SQL, (name,))
-            await self._db.execute(_DELETE_CHECKPOINTS_SQL, (name,))
+            from stackowl.owls.store import OwlStore
+
+            await OwlStore(self._db).delete(name)
         except Exception as exc:
             log.gateway.warning(
                 "[commands] owls._delete_dna_rows: cleanup failed",
@@ -887,8 +906,8 @@ class OwlsCommand(SlashCommand):
                 extra={"_fields": {"name": name}},
             )
             return
-        log.gateway.debug(
-            "[commands] owls._delete_dna_rows: exit",
+        log.gateway.info(
+            "[commands] owls._delete_dna_rows: exit — identity removed via the store",
             extra={"_fields": {"name": name}},
         )
 

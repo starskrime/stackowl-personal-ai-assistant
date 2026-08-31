@@ -117,12 +117,55 @@ class OwlStore:
         )
 
     async def delete(self, name: str) -> bool:
-        """Remove an owl. Returns whether a row was actually removed, so a caller
-        can tell 'retired it' from 'it was already gone' rather than assuming."""
+        """Remove an owl and EVERY store that holds its identity, in one transaction.
+
+        Returns whether an ``owls`` row was actually removed, so a caller can tell
+        'retired it' from 'it was already gone' rather than assuming. The cascade
+        runs either way: the live database already holds DNA for six owls whose
+        ``owls`` row is long gone, and a delete that skipped them could never
+        clean them up.
+
+        THE CASCADE WAS MISSING AND IT LEAKED, measured 2026-08-31: ``owls`` held
+        10 rows against ``owl_dna`` 16 and ``owl_dna_authored`` 21. The DNA cleanup
+        existed but lived one layer up, in ``owls_command._delete_dna_rows``, so it
+        only ran for ``/owls remove`` — every other deletion path left shadows.
+        Mirrors :meth:`SkillStore.delete`, which had the same gap fixed on
+        2026-08-29 for ``skill_ownership``.
+
+        AND THE SHADOWS PROPAGATED. ``GraphReconciliationHandler`` treats
+        ``owl_dna`` and ``skill_ownership`` as AUTHORITATIVE and republishes them
+        into the Kuzu graph weekly — graph Owl nodes matched ``owl_dna`` exactly.
+        A healthy reconciler faithfully copying a shadow. That is also why this
+        needs no graph leg: the reconciler PRUNES as well as backfills, so
+        cleaning the SQLite identity lets the loop that already exists heal the
+        graph, rather than adding a second writer to Kuzu.
+
+        IDENTITY, NEVER HISTORY. Twelve tables carry ``owl_name``, but
+        ``cost_records`` (127k rows), ``task_outcomes``, ``reflections``,
+        ``conversations``, ``tasks`` and ``sessions`` are the record of what the
+        owl DID, and this programme measures with them. The precedent is
+        ``SkillStore.delete`` leaving ``skill_audit`` alone — the restraint that
+        made 128 purged skills recoverable.
+        """
         before = await self.count()
-        await self._db.execute(
-            "DELETE FROM owls WHERE name = ? AND owner_id = ?", (name, self._owner_id)
-        )
+        async with self._db.transaction() as tx:
+            await tx.execute(
+                "DELETE FROM owls WHERE name = ? AND owner_id = ?", (name, self._owner_id)
+            )
+            # The evolved DNA, the authored baseline, and the checkpoints between
+            # them. owl_dna_authored had NO deleter anywhere in the tree before
+            # this; owl_dna and dna_checkpoints had one only in the command layer.
+            await tx.execute("DELETE FROM owl_dna WHERE owl_name = ?", (name,))
+            await tx.execute("DELETE FROM owl_dna_authored WHERE owl_name = ?", (name,))
+            await tx.execute("DELETE FROM dna_checkpoints WHERE owl_name = ?", (name,))
+            # Which skills this owl owned is part of WHO IT WAS, and the boot
+            # hydrator re-attaches these names to owls — a dead owl's rows would
+            # be re-attached forever (the same "phantom ownership" that
+            # purge_skill_ownership names on the skill side).
+            await tx.execute(
+                "DELETE FROM skill_ownership WHERE owner_id = ? AND owl_name = ?",
+                (self._owner_id, name),
+            )
         after = await self.count()
         removed = after < before
         log.startup.info(
