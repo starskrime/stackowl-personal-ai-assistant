@@ -315,6 +315,44 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  STAGE_2c_2026_08_31_the_data_rejected_the_plan_and_then_a_RECORDED_DECISION_rejected_the_data:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-70."
+    outcome: "NOTHING SHIPPED, and the detector I built was REVERTED. Two separate findings, in order."
+    FINDING_1_the_plan_asked_for_the_wrong_detector: >-
+      Stage 2c proposed MONOLOGUE and PING-PONG detectors, ported from another agent's
+      defaults. Measured over 3,967 turns carrying a tool_sequence: ping-pong (3+ alternating
+      A-B cycles) occurs in 27 turns — 0.68% — and EVERY example is web_search <-> web_fetch.
+      Search, fetch, search, fetch is how research works. A ping-pong detector on this
+      platform is a false-positive machine, not a defect detector. Building it because a
+      reference implementation has it would have been the port-without-measuring mistake.
+    FINDING_2_the_data_pointed_somewhere_else_and_it_looked_compelling:
+      the_correlation: >-
+        longest same-tool run per turn, against outcome:
+          <= 2   n=2250  success 98.0%  quality 0.691
+          3-5    n= 780  success 88.6%  quality 0.445
+          6-9    n= 463  success 86.6%  quality 0.402
+          10-14  n= 300  success 75.3%  quality 0.365
+          15-19  n= 119  success 77.3%  quality 0.345
+          >= 20  n=  55  success 70.9%  quality 0.485
+        Monotonic, and the existing repeated_exact_call detector cannot see it because it
+        keys on args_hash — its own comment admits "46 successful searches with 46 different
+        queries produce 46 distinct signatures and never fire."
+      what_I_built: "A same-tool-run detector, args-blind, warn-only, threshold 10 chosen from the table, with 9 passing tests."
+    AND_THEN_A_RECORDED_DECISION_KILLED_IT: >-
+      tests/pipeline/test_tool_guardrails.py carries a test under the section header "The
+      measured case this item must not break":
+        test_a_fan_out_with_distinct_args_never_warns
+        "46 web_searches with 46 DIFFERENT queries — THE REAL HEADHUNTER TURN."
+      So the 46-call run I had identified as the pathology is a REAL, PRODUCTIVE turn that
+      the platform already measured and deliberately protected, and the module docstring
+      states the same position: the detector must not "risk a truncated valid fan-out".
+      My correlation is real, but it establishes that long runs are worse ON AVERAGE — not
+      that any GIVEN long run is bad. The one concrete example on record is legitimate.
+      That is escalation rule 5 — a finding that contradicts a recorded decision — so the
+      detector was REVERTED rather than shipped, and the tree is back to baseline: ruff 35,
+      test_tool_guardrails 15 passing.
+    THE_HONEST_TENSION_that_only_Bakir_can_settle: "The correlation says a long run predicts a worse turn. The recorded decision says a distinct-args fan-out must never be flagged. Both are supported by measurement, and the 46-call headhunter turn is the SAME SHAPE as both. ESC-80."
+    a_fixture_bug_worth_recording: "Two of my nine tests failed on the helper, not the code: it restarted its url numbering per batch, so a second run reused the first run's arguments and tripped the EXACT-REPEAT detector instead. Fixed with a monotonic nonce before the real finding surfaced."
   TURN_ECONOMICS_PLAN_REMEASURED_2026_08_31_most_of_it_ALREADY_SHIPPED:
     map_check: "No mapped item matches — evidence-led verification, recorded as DEBT-69."
     why_this_became_the_item: >-
@@ -1102,6 +1140,15 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_80_a_long_tool_run_predicts_a_worse_turn_but_one_is_a_protected_fan_out:
+      question: "Turns whose longest same-tool run is 10+ succeed 75% of the time against 98% for short ones. But the platform already measured a 46-call web_search run as a PRODUCTIVE headhunter turn and wrote a test to protect it. Should a long run warn?"
+      why_evidence_cannot_settle_it: "Both sides ARE the evidence. The correlation is across 3,967 turns; the protected case is one concrete turn of exactly that shape. Nothing in the data distinguishes a productive fan-out from a loop, so the call is about which error you prefer."
+      the_measurement: "longest run <=2: n=2250, 98.0% success, quality 0.691. 10-14: n=300, 75.3%, 0.365. >=20: n=55, 70.9%. repeated_exact_call cannot see any of it — it keys on args_hash, and its own comment says 46 different queries never fire."
+      options:
+        a_leave_it_alone: "RECOMMENDED. The recorded decision is specific, measured, and protected by a test that names the real turn. A correlation across all long runs does not overturn a concrete counter-example, and warn-only still costs prompt space on every productive fan-out."
+        b_warn_at_a_much_higher_threshold: "Flag only >=20 (1.4% of turns, 70.9% success). Leaves the headhunter's 46 flagged, so it does not actually resolve the contradiction."
+        c_warn_only_when_the_run_is_ALSO_not_progressing: "Combine run length with the existing no-progress signal, so a fan-out that keeps returning new information stays quiet. Most faithful to both findings; needs a definition of progress that the guardrail does not currently have."
+      blocked_until_answered: "Stage 2c only. 1b compaction is independent and untouched."
     ESC_79_should_a_detected_repeat_give_a_step_BACK:
       question: "You selected 2d — refund a step when the guardrail detects a repeat. Measuring it changed its shape twice. Do you still want it?"
       why_evidence_cannot_settle_it: "It is a trade between two things you have both asked for: not wasting rounds on repeats, and bounding what a turn can spend. Which wins is appetite."
@@ -1913,6 +1960,16 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-70
+    found: 2026-08-31
+    title: "Stage 2c: the plan's detectors do not match this platform, and the data's alternative hits a protected case"
+    what: >-
+      Ping-pong occurs in 0.68% of turns and is entirely legitimate research. Long same-tool
+      runs correlate strongly with worse outcomes, but the one concrete example on record is a
+      productive 46-call fan-out the platform deliberately protects with a test.
+    evidence: "3,967 turns with a tool_sequence. Ping-pong: 27 turns, all web_search<->web_fetch. Run-length vs success: 98.0% at <=2 falling to 70.9% at >=20. test_a_fan_out_with_distinct_args_never_warns: '46 web_searches with 46 DIFFERENT queries — the real headhunter turn.'"
+    decision: "Built the run detector, then REVERTED it on finding the recorded decision it contradicts. Escalated as ESC-80 rather than overridden. Tree returned to baseline."
+    status: "open — blocked on ESC-80"
   - id: DEBT-69
     found: 2026-08-31
     title: "The turn-economics plan was substantially stale; most of it had already shipped"
