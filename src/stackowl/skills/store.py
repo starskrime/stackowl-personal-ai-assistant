@@ -223,6 +223,73 @@ _CURATOR_RAN_KEY = "skill_curator_last_run"
 _COUPLING_UNREADABLE = "\x00unreadable"
 
 
+def _remove_skill_dir(name: str, raw_path: str, source: str) -> bool:
+    """Remove a deleted skill's directory. Returns whether it did. Never raises.
+
+    Bakir, 2026-08-31: "one delete removes the skill entirely." Called AFTER the
+    rows are gone and OUTSIDE the transaction — a directory removal cannot join a
+    SQL transaction, and of the two possible crash windows he chose this one: an
+    orphan DIRECTORY harms nothing (measured — 10 such shells held no SKILL.md and
+    nothing loaded them), while a row pointing at missing content is a skill the
+    catalogue offers the model and that can never load.
+
+    THE PATH IS A DATABASE COLUMN, so it is data rather than a constant, and both
+    guards below follow from that.
+    """
+    import shutil
+    from pathlib import Path
+
+    from stackowl.paths import StackowlHome
+
+    if not raw_path:
+        # The column predates this, so a row may simply not have one.
+        return False
+    if source == "builtin":
+        # Seeded idempotently from a packaged directory on every boot
+        # (loader.load_all(builtin_seed_dir=...)), so removing one is churn the
+        # next restart undoes — which reads as a delete that did not work.
+        log.skills.info(
+            "[skills] store.delete: builtin directory left in place — it is re-seeded on boot",
+            extra={"_fields": {"skill": name, "path": raw_path}},
+        )
+        return False
+    try:
+        root = StackowlHome.skills_dir().resolve()
+        target = Path(raw_path).resolve()
+    except OSError as exc:
+        log.skills.warning(
+            "[skills] store.delete: could not resolve the skill directory — leaving it",
+            exc_info=exc, extra={"_fields": {"skill": name, "path": raw_path}},
+        )
+        return False
+    # CONFINEMENT. rmtree on an unconfined, data-supplied absolute path is
+    # unrecoverable, and this codebase already paid once the same day for trusting
+    # a filename that came from stored data.
+    if not target.is_relative_to(root) or target == root:
+        log.skills.warning(
+            "[skills] store.delete: REFUSING to remove a path outside the skills root",
+            extra={"_fields": {"skill": name, "path": str(target), "root": str(root)}},
+        )
+        return False
+    if not target.is_dir():
+        return False
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        # The rows are already gone and the user's delete succeeded; a stranded
+        # directory is the harmless half. Never let it raise.
+        log.skills.warning(
+            "[skills] store.delete: rows removed but the directory would not go",
+            exc_info=exc, extra={"_fields": {"skill": name, "path": str(target)}},
+        )
+        return False
+    log.skills.info(
+        "[skills] store.delete: directory removed",
+        extra={"_fields": {"skill": name, "path": str(target)}},
+    )
+    return True
+
+
 class SkillIndexStore(OwnedRepository):
     """Async SQLite wrapper for the ``skills`` + ``skill_audit`` tables (migration 0031).
 
@@ -1032,10 +1099,12 @@ class SkillIndexStore(OwnedRepository):
         # row is gone. A skill_id with no row (already deleted) yields no name and
         # the ownership delete is simply skipped: idempotent, never an error.
         name_rows = await self._db.fetch_all(
-            "SELECT name FROM skills WHERE skill_id = ? AND owner_id = ?",
+            "SELECT name, path, source FROM skills WHERE skill_id = ? AND owner_id = ?",
             (skill_id, self._owner_id),
         )
         skill_name = str(name_rows[0]["name"]) if name_rows else ""
+        skill_path = str(name_rows[0]["path"] or "") if name_rows else ""
+        skill_source = str(name_rows[0]["source"] or "") if name_rows else ""
         async with self._db.transaction() as tx:
             await tx.execute(
                 "DELETE FROM skills_fts WHERE rowid = ?", (skill_id,),
@@ -1048,9 +1117,12 @@ class SkillIndexStore(OwnedRepository):
                 "DELETE FROM skills WHERE skill_id = ? AND owner_id = ?",
                 (skill_id, self._owner_id),
             )
+        # 3. STEP — the FILES, after the rows and outside the transaction.
+        removed_dir = _remove_skill_dir(skill_name, skill_path, skill_source)
         # 4. EXIT
         log.skills.info("[skills] store.delete: deleted",
-                 extra={"_fields": {"skill_id": skill_id, "skill": skill_name}})
+                 extra={"_fields": {"skill_id": skill_id, "skill": skill_name,
+                                    "directory_removed": removed_dir}})
 
     async def _sync_fts(self, skill_id: int) -> None:
         """Re-sync ``skills_fts`` for one ``skill_id`` from the current

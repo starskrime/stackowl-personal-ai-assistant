@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  SKILL_DISK_LEG_2026_08_31_one_delete_removes_the_skill_entirely:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-60."
+    the_authorised_decision: "Bakir: 'Yes — one delete removes the skill entirely', and when asked which crash window he preferred, 'database rows first, then the directory'."
+    the_gap_it_closes: "SkillStore.delete removed skills + skills_fts + skill_ownership in one transaction and its docstring said 'File system deletion is the caller's job'. That is how a job gets done by nobody: measured, ~/.stackowl/skills/learned held 16 directories against 6 rows, 10 of them empty shells."
+    why_rows_first_is_the_right_order: >-
+      A directory removal cannot join a SQL transaction, so one of two crash windows has to
+      be chosen. Rows-first leaves an orphan DIRECTORY, and we MEASURED that doing no harm —
+      the 10 shells held no SKILL.md and nothing loaded them. The other order leaves a row
+      pointing at content that no longer exists: a skill the catalogue offers the model and
+      that can never load.
+    TWO_GUARDS_BECAUSE_THE_PATH_IS_A_DATABASE_COLUMN:
+      confinement: "A path that does not resolve INSIDE StackowlHome.skills_dir() is refused and logged at WARNING, and the root itself is refused. rmtree on an unconfined data-supplied absolute path is unrecoverable — and this codebase paid for trusting a stored filename once already the SAME DAY, in the audit-recovery export."
+      builtins_are_left_alone: "Builtin skills are seeded idempotently from a packaged directory on every boot (loader.load_all(builtin_seed_dir=...)), so removing one is churn the next restart silently undoes — which reads to the operator as a delete that did not work. The ROW still goes; only the files stay."
+    A_DUPLICATE_I_DELIBERATELY_DID_NOT_REMOVE_and_this_is_the_interesting_part: >-
+      consolidation.py and skill_manage.py ALREADY rmtree the directory themselves, so the
+      obvious cleanup was to delete their copies now that the store owns the rule. Reading
+      the surroundings first showed both are load-bearing:
+        * consolidation ARCHIVES first and REFUSES TO DELETE WHAT IT COULD NOT ARCHIVE —
+          on an archive failure it `continue`s and never calls store.delete at all.
+        * skill_manage takes a before-snapshot so `/skill restore` can resurrect the
+          directory, then removes it inside that mutation wrapper.
+      Both orderings carry a safety property the STORE cannot know about. Moving the removal
+      down would silently drop the guard. So the duplicate stays, and it stays on purpose —
+      not every second copy of a rule is a defect. Both callers rmtree BEFORE store.delete,
+      so the store's removal finds the directory already gone and cleanly no-ops.
+    tests: "tests/skills/test_skill_delete_removes_the_directory.py — 7 passing: a learned directory goes, the rows still go, a BUILTIN directory survives, a path outside the skills root is refused, a ../ traversal is refused, a missing directory is a clean no-op, and an empty path (the column predates this) is a clean no-op. tests/skills: 431 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline. Restart 2026-08-31T07:22:48Z: 2,401 records."
+    ACCEPTANCE_CHECK_OPEN: >-
+      "A real skill deletion removes its directory." NOT CLOSED — it needs a skill to
+      actually be deleted, which does not happen spontaneously. learned directories on disk
+      went 16 -> 19 during the session (three new incident skills minted), so nothing was
+      deleted to observe. CLOSING QUERY, after any future deletion:
+      grep '"msg": "\[skills\] store.delete: directory removed' ~/.stackowl/logs/stackowl.jsonl
+      The companion line to watch for is the WARNING "REFUSING to remove a path outside the
+      skills root" — if that ever appears, a stored path is wrong and the guard earned itself.
+    EIGHT_BOOT_ERRORS_INVESTIGATED_AND_RULED_OUT: >-
+      "[dna] coordinator.promote: shadow gate REJECTED" x8 appeared after the restart and
+      NOWHERE ELSE in the retained window, which looked like fallout. It is not: ALL 112
+      [dna] records sit in that single hour, and `evolution_batch` is scheduled daily@02:00 —
+      the job fired on catch-up after the restart. Eight of nine promotions were rejected by
+      the shadow gate, which is the gate doing its job. Recorded as DEBT-61 that a gate
+      CORRECTLY rejecting is logged at ERROR: eight ERRORs for normal operation is how an
+      operator learns to ignore ERROR.
   ESC_73_2026_08_31_the_normaliser_EXISTED_and_erased_every_script_but_Latin:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-59."
     THE_FOURTH_TIME_MEASURING_FIRST_FOUND_THE_THING_ALREADY_BUILT: >-
@@ -1547,6 +1590,25 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-60
+    found: 2026-08-31
+    title: "Deleting a skill left its files behind — 16 directories for 6 rows"
+    what: "SkillStore.delete removed three tables in one transaction and left the filesystem to 'the caller', which meant nobody for any path that was not consolidation or skill_manage."
+    evidence: "~/.stackowl/skills/learned held 16 directories against 6 database rows; 10 were empty shells with no SKILL.md."
+    decision: >-
+      The store removes the directory after the rows commit, confined to the skills root and
+      skipping builtins (re-seeded from a packaged directory every boot). The existing rmtree
+      calls in consolidation and skill_manage are KEPT deliberately — each sits inside a guard
+      (archive-succeeded, before-snapshot) that the store cannot know about.
+    residual_risk: "Prevention only; the 13 existing stray directories are untouched and belong to the agreed snapshot-first sweep."
+    status: "open — shipped and live; acceptance check needs a real deletion, closing query recorded in current"
+  - id: DEBT-61
+    found: 2026-08-31
+    title: "A shadow gate correctly rejecting a DNA promotion is logged at ERROR"
+    what: "[dna] coordinator.promote: shadow gate REJECTED fired 8 times in one evolution_batch run. The gate refusing an unsafe promotion is the gate working, not a platform error."
+    evidence: "All 112 [dna] records in the retained window sit in the 07:xx hour of 2026-08-31; evolution_batch is scheduled daily@02:00 and fired on catch-up after a restart. 8 of 9 promotions rejected."
+    decision: "Recorded, not changed — seen while validating an unrelated item, and eight ERRORs for normal operation is how an operator learns to ignore ERROR."
+    status: "open — not investigated"
   - id: DEBT-59
     found: 2026-08-31
     title: "The skill identity key erased every script but Latin, merging unrelated skills"
