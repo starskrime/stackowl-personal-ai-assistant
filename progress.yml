@@ -315,6 +315,33 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TURN_ECONOMICS_2b_2026_08_31_no_change_needed_MY_PLAN_WAS_STALE:
+    map_check: "No mapped item matches — evidence-led verification, recorded as DEBT-68."
+    what_the_plan_claimed: "'_guard_note is appended only on the trustworthy-success branch (execute.py:2233), so loop-guard guidance NEVER reaches the model on the exact turns that are looping on failures. One-line class of bug, live today.' Bakir selected it on that basis."
+    IT_IS_NOT_LIVE_AND_HAS_NOT_BEEN_SINCE_2026_08_29: >-
+      _guard_note is appended on EVERY return path that has a tool result — 2318, 2361,
+      2379, 2389, 2424 and 2425. The only return without it is 2292, guarded by
+      `if tr is None`, where there is no tool result to guard on. Dated precisely:
+      commit 08376c14, 2026-08-29 20:18, "a capped turn delivers what it found", added
+      _guard_note to all FIVE failure branches. So Stage 1a fixed 2b as a side effect two
+      days before Bakir chose it, and my plan text was stale when I put it in front of him.
+    AND_IT_FIRES: "8 [guardrails] tool-loop warning events, all repeated_exact_call_warning on browser_navigate. _warn() logs at INFO and returns action='warn', which is the same condition that sets _guard_note — so those 8 logged warnings ARE 8 attached notes. The evidence already existed; I simply had not looked."
+    THE_CONTROL_THAT_STOPPED_ME_REPORTING_A_FALSE_FINDING: >-
+      I first measured ZERO occurrences of the '[loop-guard]' text and was about to record a
+      write-with-no-reader. Then I tested the INSTRUMENT: no tool RESULT text is logged
+      anywhere on this platform — no TOOL_FAILED_MARKER text, no result/output preview
+      field. So a zero for '[loop-guard]' proves nothing at all. Same shape as the four
+      false negatives CLAUDE.md already records: a grep returning zero proves the pattern
+      did not match, never that the thing is absent.
+    outcome: "no_change_needed. Nothing shipped, and the plan entry corrected rather than quietly dropped."
+    THE_REAL_FINDING_and_it_is_an_INSTRUMENT_gap: >-
+      No tool result text is logged, so NO claim about what a tool actually returned to the
+      model can be evidenced from production. That is the same gap as the shell tool's
+      unlogged commands, fixed this morning for exactly this reason, and it will keep
+      producing unfalsifiable claims until something records at least a bounded preview.
+      Recorded as DEBT-68 rather than fixed here: logging tool output touches every tool
+      result on the platform and carries a real sensitive-data question, which is its own
+      item and arguably Bakir's call.
   JOB_TRACE_HAD_NO_LANE_2026_08_31_self_healing_could_diagnose_but_not_ACT:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-67."
     the_measurement: >-
@@ -1848,6 +1875,19 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-68
+    found: 2026-08-31
+    title: "No tool result text is logged, so nothing the model receives from a tool can be evidenced"
+    what: >-
+      Verifying whether the loop-guard note reaches the model was impossible: no
+      TOOL_FAILED_MARKER text, no result or output preview, nothing. A zero-count grep over
+      tool output therefore proves only that the pattern did not match.
+    evidence: "Control run while checking 2b: searched the whole retained log for any tool result text and found none. The 8 [guardrails] tool-loop warning events had to be used as a proxy instead."
+    decision: >-
+      Recorded, not fixed. Logging tool output touches every tool result on the platform and
+      raises a real sensitive-data question (image prompts, credentials, message bodies), so
+      it is its own item and arguably the operator's call rather than mine.
+    status: "open — not investigated"
   - id: DEBT-67
     found: 2026-08-31
     title: "A scheduled job's trace had no channel, so consent had nothing to scope and every autonomous tool_build was refused"
