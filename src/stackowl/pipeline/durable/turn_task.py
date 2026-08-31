@@ -108,6 +108,51 @@ async def judge_turn_achievement(
     )
 
 
+#: Strong references to in-flight shadow tasks. asyncio keeps only a WEAK
+#: reference to a bare `create_task` handle, so without this the task can be
+#: garbage-collected mid-flight — which is the job the old lambda was also doing,
+#: and the reason dropping it needed a replacement rather than a deletion.
+_SHADOW_TASKS: set[asyncio.Task[Any]] = set()
+
+
+def _on_shadow_done(task: asyncio.Task[Any]) -> None:
+    """Release the reference and REPORT a crashed shadow. Never raises.
+
+    THE CALLBACK THIS REPLACES DID THE OPPOSITE OF ITS OWN COMMENT. It read
+    ``lambda t: t.exception() if not t.cancelled() else None`` under the note
+    "surface a crash instead of swallowing it" — but ``Task.exception()``
+    RETRIEVES the exception, and retrieving it is exactly what suppresses
+    asyncio's "Task exception was never retrieved" warning. It took the only
+    report a crashed shadow would ever produce and silenced it.
+
+    Every other done-callback in src/ passes a named handler — `_on_drive_done`
+    (durable/recovery.py), `_on_liveness_task_done` (telegram/adapter.py),
+    `_on_story_task_done` (objectives/driver.py) — and `_on_drive_done`'s own
+    docstring states the rule this broke: an exception there "would otherwise
+    surface only as an unretrieved-exception warning", so it is logged.
+
+    A CANCELLED shadow is NOT an error: shutdown cancels in-flight work, and
+    reporting that would write a false alarm on every restart.
+
+    THESE ARE NOT JOINED, DELIBERATELY. `feedback.py` carries its background task
+    on `state.feedback_classify_task` and `execute.py` joins it — a real flush
+    barrier, correctly built. The shadow tasks must NOT be joined, because the
+    enqueue promises never to delay the turn; that is precisely why their failure
+    has to be LOGGED instead of awaited.
+    """
+    _SHADOW_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is None:
+        return
+    log.tasks.error(
+        "[tasks] achievement shadow: the background task FAILED — this turn has "
+        "no achievement opinion and nothing else would have said so",
+        exc_info=exc,
+    )
+
+
 async def observe_turn_achievement(
     writer: Any, store: Any = None, *, trace_id: str, goal: str
 ) -> None:
@@ -305,9 +350,8 @@ async def enqueue_turn_task(
                     achievement_writer, store, trace_id=trace_id, goal=goal
                 )
             )
-            # Hold a reference so the task is not garbage-collected mid-flight,
-            # and surface a crash instead of swallowing it.
-            shadow.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+            _SHADOW_TASKS.add(shadow)
+            shadow.add_done_callback(_on_shadow_done)
         if loop_produces and loop is not None:
             # Someone is WAITING on this one. A five-second tick is fine for a
             # sweep and awful for a person, so the enqueue wakes the loop now and
@@ -584,7 +628,8 @@ async def complete_turn_task(
                 judge, store, trace_id=trace_id, result=result, state=state
             )
         )
-        shadow.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        _SHADOW_TASKS.add(shadow)
+        shadow.add_done_callback(_on_shadow_done)
     return "completed"
 
 

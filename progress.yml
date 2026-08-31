@@ -315,6 +315,67 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  SHADOW_TASKS_2026_08_31_my_own_done_callback_did_the_OPPOSITE_of_its_comment:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-88."
+    how_this_item_was_reached: >-
+      Phase 5's third mechanism is "background writes with a flush barrier ... the barrier
+      is the part that matters, since a background write that fails silently is the
+      write-with-no-reader shape". Measuring which writes are actually detached found the
+      instance — in code I wrote this morning.
+    THE_DEFECT_IN_ITS_OWN_WORDS: >-
+      Both shadow spawn sites in durable/turn_task.py read
+      "# Hold a reference so the task is not garbage-collected mid-flight, and surface a
+      crash instead of swallowing it" above
+      `shadow.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)`.
+      Task.exception() RETRIEVES the exception, and retrieving it is exactly what
+      suppresses asyncio's "Task exception was never retrieved" warning — the only report a
+      crashed shadow would ever produce. The callback silenced it and the comment claimed
+      the reverse.
+    THE_HOUSE_STYLE_WAS_ALREADY_RIGHT_EVERYWHERE_ELSE: >-
+      Every other add_done_callback in src/ passes a NAMED handler — _on_drive_done
+      (durable/recovery.py:405, 722), _on_liveness_task_done (telegram/adapter.py:273),
+      _on_story_task_done (objectives/driver.py:410) — or a set discard. The
+      retrieve-and-drop lambda existed at exactly two sites, both added 2026-08-31, and
+      _on_drive_done's own docstring states the rule they broke: an exception there "would
+      otherwise surface only as an unretrieved-exception warning", so it is LOGGED.
+    why_it_matters_beyond_tidiness: >-
+      The two tasks are the achievement observer and the achievement judge — the shadow half
+      of the completion contract. If either dies the platform has no opinion about whether a
+      turn achieved anything, and nothing says so.
+    THE_FLUSH_BARRIER_QUESTION_ANSWERED_RATHER_THAN_BUILT: >-
+      feedback.py already carries its background classify on state.feedback_classify_task
+      and execute.py:3378 JOINS it — a real flush barrier, already built and correct. The
+      shadow tasks must NOT be joined: the enqueue promises never to delay the turn, which
+      is precisely why their failure has to be logged instead of awaited. And persist_turn
+      may never be backgrounded at all — LM-4, in its own module docstring: "Must run
+      SYNCHRONOUSLY inside the turn ledger ContextVar binding ... never detached as a
+      create_task." So phase 5's "background writes" half is either already done, or
+      forbidden, depending on the write. ESC-93.
+    the_fix: "_on_shadow_done — a named handler that releases the reference, ignores
+      cancellation (shutdown cancels in-flight work; reporting it would write a false alarm
+      on every restart) and logs a real exception at ERROR. _SHADOW_TASKS holds the strong
+      reference the lambda was also providing, so dropping it did not drop that job."
+    tests: "6 new in tests/pipeline/durable/test_a_shadow_task_cannot_fail_in_silence.py —
+      a crashed task LOGGED, a successful one quiet, a CANCELLED one not an error, the
+      inline lambda gone from both sites, and the strong reference still held. The
+      structural test targets `add_done_callback(lambda`, not the idiom's text, because
+      _on_shadow_done's docstring quotes the removed line on purpose and a test that cannot
+      tell an explanation from the thing it explains would forbid documenting the defect."
+    suites: "tests/pipeline 1,645 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: "RESTART 2026-08-31T21:53:25Z. 889 records, ZERO ERRORs."
+    validate_the_reporting_half_is_TEST_ONLY_and_deliberately_so: >-
+      Exercising it in production means crashing a live shadow task. No shadow ran at all in
+      the eleven minutes after the restart — the observer spawns only when a turn task is
+      enqueued with an achievement writer wired, and the RCA lanes do not take that path.
+      Closing query if it ever fires: "[tasks] achievement shadow: the background task
+      FAILED" at ERROR.
+    AND_I_TRIPPED_A_RECORDED_LANDMINE_WHILE_CLEANING_UP: >-
+      `pkill -f "achievement shadow"` matched its OWN command line and killed the shell
+      running it (exit 144) — the same self-match the background-task-hygiene note already
+      records for `pgrep -f`. The platform was unharmed (gateway, core and playwright all
+      still up from 21:53:25, log current), checked rather than assumed.
+
   PHASE_5_ITEM_1_2026_08_31_the_one_memory_read_that_could_END_a_turn:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-87."
     how_this_item_was_reached: >-
@@ -2072,6 +2133,27 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_93_phase_5s_background_writes_are_already_done_or_forbidden:
+      question: >-
+        The third latency mechanism is "background writes with a flush barrier". Measuring
+        every detached write found no write that wants one. Do you still want something
+        here, or does the item close?
+      why_evidence_cannot_settle_it: >-
+        The evidence settles what exists; it does not settle whether you had a different
+        write in mind — most likely a future plugin-backed store, which does not exist yet.
+      the_measurement: >-
+        Detached work in the pipeline: feedback's classify (carried on
+        state.feedback_classify_task and JOINED at execute.py:3378 — a correct flush
+        barrier, already built), the two achievement shadows (deliberately not joined; their
+        failure is now logged), and the durable recovery drivers (already using named
+        done-callbacks). persist_turn — the actual memory write — may NOT be backgrounded:
+        LM-4 requires it to run synchronously inside the turn-ledger ContextVar binding
+        because is_consequential_giveup_now reads it.
+      panel_recommendation: >-
+        Close the item as already-satisfied, and re-open it WITH the first memory plugin —
+        the same answer as ESC-92 and for the same reason: a barrier around a store that
+        cannot be slow is a barrier around nothing.
+      what_is_blocked: "Nothing. Prefetch is the only phase-5 mechanism still genuinely open."
     ESC_92_you_asked_for_a_circuit_breaker_and_I_shipped_a_guard:
       question: >-
         Phase 5 item 1 was "a circuit breaker around memory reads". I shipped the
