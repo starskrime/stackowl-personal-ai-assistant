@@ -97,10 +97,17 @@ class SkillsAssembly:
         loaded = await loader.load_all(
             root, store=store, builtin_seed_dir=seed,
         )
+        # The scan UPSERTS every skill it finds; nothing in it removes an index
+        # row whose skill went away by some other route. Measured 2026-08-31:
+        # skills_fts held 179 rows against 28 skills, 147 of them naming skills
+        # the 2026-08-30 raw-SQL purge removed without going through the store.
+        # Pruning here, right after the scan, so the index can never offer the
+        # model a skill that does not exist. Never raises.
+        pruned = await store.prune_fts()
         # 4. EXIT
         log.skills.info(
             "[skills] assembly.load_only: exit",
-            extra={"_fields": {"loaded_count": len(loaded)}},
+            extra={"_fields": {"loaded_count": len(loaded), "fts_pruned": pruned}},
         )
         return SkillsComponents(
             loader=loader, store=store, loaded=tuple(loaded),

@@ -1149,6 +1149,74 @@ class SkillIndexStore(OwnedRepository):
                 ),
             )
 
+    async def prune_fts(self) -> int:
+        """Remove index rows whose skill no longer exists. Returns how many. Never raises.
+
+        Measured 2026-08-31: ``skills`` 28 rows, ``skills_fts`` 179, of which 147
+        named a skill that is gone — so skill search could surface and rank
+        ``jarvis_warm_greeting`` and ``download-youtube-video``. Third time this
+        shape has appeared; ``committed_facts_fts`` indexed 1,112 dead rows before it.
+
+        IT IS RESIDUE, NOT AN ONGOING LEAK. Checking BOTH directions found zero
+        skills missing from the index, and both writers set ``rowid`` explicitly,
+        so the sync is healthy. The 2026-08-30 purge removed 151 skills with raw
+        SQL, bypassing this store and its FTS cleanup — 151 purged, 147 stale.
+        That bypass was closed the same morning by the shell DML guard; this
+        removes what it left behind, and anything a future bypass leaves.
+
+        DELETE BY ROWID. FTS5's supported delete form is by rowid, and a general
+        predicate against a virtual table is how an FTS index gets corrupted. The
+        rowids are read first, then removed one by one.
+
+        AN EMPTY ``skills`` TABLE PRUNES NOTHING. Every index row would look
+        orphaned, and emptying the index on what is far more likely a broken read
+        is the same failure the orphan sweep refuses: an empty table is a
+        question, not an answer.
+        """
+        # 1. ENTRY
+        log.skills.debug("[skills] store.prune_fts: entry")
+        try:
+            live = await self._db.fetch_all("SELECT COUNT(*) AS c FROM skills")
+            if not live or int(live[0]["c"]) == 0:
+                log.skills.info(
+                    "[skills] store.prune_fts: skills is EMPTY — pruning nothing, "
+                    "because that is a question rather than permission",
+                )
+                return 0
+            stale = await self._db.fetch_all(
+                "SELECT rowid AS rid, name FROM skills_fts "
+                "WHERE name NOT IN (SELECT name FROM skills)"
+            )
+        except Exception as exc:
+            # A stale index is survivable; failing boot is not.
+            log.skills.warning(
+                "[skills] store.prune_fts: could not read the index — leaving it alone",
+                exc_info=exc,
+            )
+            return 0
+        if not stale:
+            return 0
+        removed = 0
+        for row in stale:
+            try:
+                await self._db.execute(
+                    "DELETE FROM skills_fts WHERE rowid = ?", (int(row["rid"]),)
+                )
+            except Exception as exc:
+                log.skills.warning(
+                    "[skills] store.prune_fts: could not remove one index row",
+                    exc_info=exc, extra={"_fields": {"name": str(row["name"])}},
+                )
+                continue
+            removed += 1
+        # 4. EXIT — INFO, because this is the evidence the index stopped lying.
+        log.skills.info(
+            "[skills] store.prune_fts: exit — removed index rows for skills that no "
+            "longer exist",
+            extra={"_fields": {"removed": removed, "found": len(stale)}},
+        )
+        return removed
+
     # ----- audit ------------------------------------------------------------
 
     async def audit_write(

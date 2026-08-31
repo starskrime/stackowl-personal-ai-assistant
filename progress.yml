@@ -315,6 +315,44 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  FTS_PRUNE_2026_08_31_the_index_offered_147_skills_that_do_not_exist_and_now_does_not:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-65."
+    what_was_wrong: "skills 28 rows, skills_fts 179, of which 147 named a skill that is gone. Skill search could surface and rank jarvis_warm_greeting, download-youtube-video and the-chiefs-dashboard. Third occurrence of this shape; committed_facts_fts indexed 1,112 dead rows before it."
+    WHAT_MEASURING_BOTH_DIRECTIONS_CHANGED: >-
+      ZERO skills were missing from the index, and BOTH writers (_sync_fts and migration
+      0081) set rowid explicitly — so the sync is healthy and alignment is not the defect.
+      The residue is historical: the 2026-08-30 purge removed 151 skills with raw SQL,
+      bypassing SkillStore.delete and its FTS cleanup. 151 purged, 147 stale. That bypass was
+      closed the same morning by the shell DML guard, so this is a PRUNE of what it left
+      behind, not a rewrite of a sync that works.
+    delete_by_rowid_always: "FTS5's supported delete form is by rowid; a general predicate against a virtual table is how an FTS index gets corrupted. prune_fts reads the rowids first, then removes them one at a time."
+    the_same_guard_as_the_sweep: "An empty `skills` table prunes NOTHING. Every index row would look orphaned, and emptying the index on what is far more likely a broken read is the failure the orphan sweep already refuses."
+    ACCEPTANCE_CHECK_CLOSED_IN_PRODUCTION: >-
+      Restart 2026-08-31T09:24:30Z, gateway boot:
+        [skills] store.prune_fts: exit  {"removed": 147, "found": 147}
+        [skills] assembly.load_only: exit {"loaded_count": 28, "fts_pruned": 147}
+      and the core's own boot right after: {"fts_pruned": 0} — idempotent, one process did
+      the work. Final state measured: skills 28, skills_fts 32, dead rows 0, missing rows 0.
+      Predicted 147, removed 147.
+    I_NEARLY_TALKED_MYSELF_OUT_OF_A_REAL_DEFECT: >-
+      Mid-item I re-measured and got "skills_fts 32, dead 0" and concluded the 147 had
+      evaporated — the DEBT-40 shape, where an alarming count dissolves on re-measurement. I
+      then ran a CONTROL on the instrument (an in-memory FTS5 table: 10 inserts, 5 deletes,
+      COUNT drops immediately) which ruled out my tombstone theory, and recorded the
+      disappearance as unexplained rather than claiming credit for it. The production
+      actuator then found EXACTLY the 147 I first measured. So the intermediate reading was
+      the wrong one, not the original. Recorded because the instinct that saved it —
+      refusing to claim a fix for a defect I could not demonstrate — is the same instinct
+      that nearly discarded a real one.
+    AND_THE_SWEEP_FROM_THE_PREVIOUS_ITEM_RAN_IN_PRODUCTION: >-
+      Its acceptance check is CLOSED, a day earlier than expected: seeded daily@04:30 with
+      next_hour=4, the scheduler fired it on catch-up at 09:00:26Z rather than waiting.
+        owl_dna 6, owl_dna_authored 11, dna_checkpoints 1, skill_ownership 110 = 128 rows,
+      exactly the 128 predicted, each written WHOLE into audit_log first — four row.deleted
+      records now hold them. Live counts after: owl_dna orphans 0, ownership orphans 0,
+      skill_ownership 111 -> 5. The uncapped sweep deleted 128 rows and every one is
+      recoverable.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline. tests/skills: 436 passed (5 new). Restart 09:24:30Z: 1,647 records, ZERO ERRORs."
   ORPHAN_SWEEP_2026_08_31_the_self_healing_reconciler_SHIPPED_and_SCHEDULED:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-64."
     his_decisions_carried_out: "A self-healing sweep rather than a one-off; DAILY; UNCAPPED; snapshotting rows before deleting; logging enough to reconstruct."
@@ -1727,6 +1765,14 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-65
+    found: 2026-08-31
+    title: "The skill keyword index offered 147 skills that no longer exist"
+    what: "skills_fts held 179 rows against 28 skills; 147 named skills removed by the 2026-08-30 raw-SQL purge, which bypassed SkillStore.delete and its FTS cleanup."
+    evidence: "Measured both directions: 147 dead rows, ZERO skills missing, both writers rowid-explicit — so a prune, not a sync rewrite. Production boot 2026-08-31T09:24:30Z logged removed=147 found=147, then fts_pruned=0 on the second process."
+    decision: "SkillIndexStore.prune_fts, called after the boot scan. Deletes by rowid only, refuses when skills is empty, never raises."
+    residual_risk: "None outstanding — the state is measured clean (dead 0, missing 0). The guard remains for any future bypass."
+    status: "closed — acceptance check evidenced in production"
   - id: DEBT-64
     found: 2026-08-31
     title: "Identity rows outlived their owners with nothing to clean them up"
