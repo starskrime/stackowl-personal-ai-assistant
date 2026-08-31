@@ -315,6 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  GHOST_OWLS_2026_08_31_the_self_heal_loop_was_chasing_owls_that_do_not_exist:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-80."
+    how_this_item_was_reached: >-
+      Round 0 over the warning census. "capability_gap_escalation: owl vanished before
+      self-heal" ran 165 times in four days at a steady rate — the loudest thing left that
+      was not known noise.
+    THE_MEASUREMENT:
+      the_warning: "08-28 37, 08-29 47, 08-30 48, 08-31 33 = 165, naming jobmarket,
+        newsdesk and Brain — none of which is in the registry."
+      the_detectors_input: >-
+        90 capability.denied rows in audit_log, of which 75 (83%) name a DELETED owl:
+        jobmarket 61, headhunter 10, newsdesk 3, Brain 1.
+      cadence: "The job runs every 6h, so ~41 warnings per run — one per ghost owl x tool
+        pair, every run, indefinitely."
+    WHY_IT_REPEATED_FOR_EVER_RATHER_THAN_ONCE: >-
+      A pair is skipped on later runs only if it carries a capability.escalated marker. For
+      a deleted owl the run reaches heal_within_ceiling, snapshot_owl returns None, the
+      warning is logged and False is returned — and NOTHING is ever written. So the same
+      dead pair is re-detected on the next run, and the next.
+    THE_FIX: >-
+      find_recurring_gaps drops refusals whose owl no longer exists, at the QUERY rather
+      than at the heal: work that will certainly be discarded should not be planned. This
+      is "measure the EFFECT" pointed one step earlier. INFO line names the count and the
+      owls, and fires only when something was dropped.
+    the_guard_is_the_one_the_orphan_sweep_already_uses: >-
+      An empty OR unreadable owls table returns None, meaning DO NOT FILTER. "An empty
+      table is a QUESTION, not an answer" — with no owls readable every gap looks orphaned
+      and filtering there would silently disable the entire capability self-heal. It also
+      keeps every pre-existing test in that suite honest, since they seed audit rows
+      without ever creating an owl.
+    AND_IT_IS_NOT_ONLY_A_CLEANUP: >-
+      These particular rows age out of the 7-day window in about three days. What does not
+      age out is the SHAPE: every future owl deletion recreates it, exactly as this one did.
+    A_MUCH_BIGGER_NUMBER_THAT_IS_NOT_A_DEFECT_AND_MUST_NOT_BE_SWEPT: >-
+      A full census of every table with an owl-name column found 7,673 rows referencing
+      deleted owls — cost_records 5,238, task_outcomes 1,574, reflections 332, tasks 326,
+      conversations 142, session_prompts 45, sessions 16. It is TEMPTING to extend the
+      orphan sweep to them and it would be WRONG: those are HISTORY, not identity. They are
+      what the platform spent, did, said and learned; cost_records is the spend ledger and
+      task_outcomes is what the learning loop mines. The sweep's own docstring scopes it to
+      "identity rows whose owner no longer exists", and the four tables it does cover
+      measured ZERO orphans today — the cascade and the sweep both worked. Recorded here so
+      the 7,673 is not mistaken for damage by the next reader.
+    tests: "7 new in tests/scheduler/handlers/test_a_deleted_owl_is_not_a_capability_gap.py
+      — the live jobmarket case, a live owl's gap untouched (the expensive direction), the
+      empty-table guard, an UNREADABLE table also filtering nothing, the INFO evidence line
+      with its exact fields, the already-escalated skip still working, and a clean board
+      staying silent."
+    suites: "tests/scheduler + tests/owls 778 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: "RESTART 2026-08-31T18:24:17Z. 441 records, ZERO ERRORs, handler registered
+      in both processes."
+    validate_OPEN_with_the_time_it_closes: >-
+      The job runs every 6h and its next run is 2026-08-31T19:48:14Z — I did not block the
+      loop for 83 minutes to watch it. Closing query, both lines INFO: that run must emit
+      "refusals from a deleted owl are not gaps — dropped" with owls
+      [Brain, headhunter, jobmarket, newsdesk], and must emit ZERO "owl vanished before
+      self-heal" warnings where the previous runs each emitted about 41.
+
   ONE_SHOT_JOBS_2026_08_31_92_finished_jobs_are_armed_to_fire_again_tomorrow:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-79."
     how_this_item_was_reached: >-

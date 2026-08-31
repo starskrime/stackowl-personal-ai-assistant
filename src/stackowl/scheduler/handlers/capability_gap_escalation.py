@@ -118,6 +118,28 @@ def within_ceiling(manifest: object, tool: str) -> bool:
     return tool not in bounds.tools
 
 
+async def _live_owl_names(db: DbPool) -> set[str] | None:
+    """The owls that still exist, or ``None`` when that cannot be established.
+
+    ``None`` means DO NOT FILTER, and it is returned for both an empty table and a
+    failed read. Bakir's rule — "an empty table is a QUESTION, not an answer" — is
+    the whole of the reasoning: with no owls readable every gap looks orphaned, and
+    filtering on that would silently disable the entire capability self-heal. It is
+    the same guard, for the same reason, as ``OrphanReconciliationHandler``'s.
+    """
+    try:
+        rows = await db.fetch_all("SELECT name FROM owls")
+    except Exception as exc:  # never let a hygiene filter cost a real self-heal
+        log.scheduler.warning(
+            "[scheduler] capability_gap_escalation: could not read the owl roster — "
+            "keeping every gap",
+            exc_info=exc,
+        )
+        return None
+    names = {str(r["name"]) for r in rows if r["name"]}
+    return names or None
+
+
 async def find_recurring_gaps(
     db: DbPool, *, min_occurrences: int, window_days: int
 ) -> list[CapabilityGap]:
@@ -149,12 +171,34 @@ async def find_recurring_gaps(
         else:
             escalated_at[key] = escalated_at.get(key, 0) + 1
 
+    live = await _live_owl_names(db)
+    dropped: set[str] = set()
     gaps: list[CapabilityGap] = []
     for (owl, tool), count in denied.items():
         # Escalated once already, and it has not meaningfully worsened since.
         if escalated_at.get((owl, tool)):
             continue
+        # A GAP FOR AN OWL THAT DOES NOT EXIST IS NOT A GAP. Measured 2026-08-31:
+        # 75 of 90 `capability.denied` rows (83%) named a deleted owl — jobmarket
+        # 61, headhunter 10, newsdesk 3, Brain 1 — and the loop planned a heal for
+        # each of them on every run, reaching `snapshot_owl` and logging "owl
+        # vanished before self-heal" 165 times in four days. Nothing was ever
+        # written for a failed heal, so the same dead pair came back every run.
+        # Filtering HERE rather than at the heal is the point: work that will
+        # certainly be discarded should not be planned.
+        if live is not None and owl not in live:
+            dropped.add(owl)
+            continue
         gaps.append(CapabilityGap(owl=owl, tool=tool, occurrences=count))
+    if dropped:
+        # INFO, because this line is the evidence the ghosts stopped being chased,
+        # and production runs at INFO. Emitted only when something was dropped —
+        # a record every run for zero would put a zero into every denominator.
+        log.scheduler.info(
+            "[scheduler] capability_gap_escalation: refusals from a deleted owl "
+            "are not gaps — dropped",
+            extra={"_fields": {"dropped": len(dropped), "owls": sorted(dropped)}},
+        )
     gaps.sort(key=lambda g: (-g.occurrences, g.owl, g.tool))
     return gaps
 
