@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  GRAPH_REPLAY_2026_08_31_the_measurement_Bakir_made_the_rebuild_conditional_ON:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-62."
+    his_condition: "'MEASURE what graph context is worth BEFORE rebuilding. If it is worth nothing, the rebuild does not happen.' Method also his: offline replay against a copy, ALL real user messages with machine lanes excluded, lexical overlap primary."
+    how_it_was_measured: >-
+      scripts/measure_graph_context_value.py IMPORTS the production functions rather than
+      reimplementing them — `_candidate_entity_ids` from classify and the same co-mention
+      Cypher the live traversal runs — because a hand-written copy would measure my
+      reimplementation, which is the fixture-drift failure this project keeps paying for.
+      Read-only, on a COPY of the graph, so a measurement cannot damage what it measures.
+    THE_HEADLINE_AND_THEN_WHAT_IT_IS_MADE_OF:
+      corpus: "594 user/assistant pairs from real lanes (922 user messages; a pair needs a reply to follow)."
+      coverage: "390 of 594 turns (65.7%) would receive graph context, mean 8.2 entities."
+      raw_overlap: "144 (36.9% of contexted turns) had an injected entity appear in the answer."
+      after_the_length_filter: "105 (26.9%)."
+      AFTER_THE_CONTROL_THAT_DECIDES_IT: >-
+        79 (20.3%). The control is: was the entity ALREADY IN THE QUESTION? If it was, it
+        would appear in the reply whether the graph existed or not, and counting it credits
+        the graph for the user's own words. Only entities the graph SUPPLIED count.
+      AND_THEN_THE_BREAKDOWN_THAT_DISSOLVES_IT: >-
+        67% of those hits (69 of 103) are PLATFORM-INTERNAL vocabulary: traces 32,
+        failure class 10, session 7, memory 4, system 3, node 3, owl_build 2, JSON 2.
+        Words an answer about debugging contains anyway — the graph is 28.2% diagnostics by
+        construction, so these are coincidence, not contribution.
+      what_is_actually_left: >-
+        ~33% of 20.3% — roughly 6.7% of contexted turns, about 4.4% of all turns — and even
+        that is lexical co-occurrence, not demonstrated causation. The genuine domain hits
+        are thin and real: Senior Software Engineer 4, Plano TX 2, Capital One 2, Reddit 2.
+    the_cost_side: "8.2 entities, 250-322 characters, injected into 65.7% of turns, on every turn, from a graph frozen since 2026-08-10 and built from the 107,576 facts Bakir ordered deleted."
+    MY_READING: >-
+      This does not clear the bar he set. A subsystem earning ~4% coincidental lexical
+      overlap while injecting a quarter-kilobyte of deleted-corpus content into two turns in
+      three is not paying for itself. BUT the measurement also names exactly what a rebuild
+      would fix — 67% of the noise is the machine-lane diagnostics his agreed
+      refuse-at-the-writer rule would exclude — and this same script re-measures whether it
+      worked. So "purge and do not rebuild" and "rebuild then re-measure" are both defensible,
+      and which one is his appetite, not my derivation. ESC-78.
+    what_I_did_NOT_do: "I did not remove the injection. Bakir's authorisation was conditional on this measurement, the result is close to his 'contributes nothing' threshold rather than plainly past it, and ripping out a live path on my own reading of a borderline number is exactly what the stop-and-brief rule is for."
+    the_script_is_the_durable_part: "It re-runs against any future graph, so the rebuild has a before/after rather than an opinion. Reusable, ruff-clean, no vendor names."
+    baselines: "ruff src/ 35 unchanged; script ruff-clean. No src/ change, so no restart was needed and the running platform is unaffected."
+    ACCEPTANCE_CHECK_CLOSED_and_this_one_actually_is: >-
+      "The value of graph context is measured." CLOSED, on the real corpus, with the control
+      applied and the residue broken down. This is the first acceptance check in six items
+      that did not need traffic to close, because an offline replay is not waiting on anyone.
   SKILL_DISK_LEG_2026_08_31_one_delete_removes_the_skill_entirely:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-60."
     the_authorised_decision: "Bakir: 'Yes — one delete removes the skill entirely', and when asked which crash window he preferred, 'database rows first, then the directory'."
@@ -797,6 +840,15 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_78_the_graph_measurement_is_in_and_it_is_borderline_not_damning:
+      question: "Graph context supplies a genuinely novel, non-platform entity to roughly 4% of turns, while injecting 250-322 chars into 65.7% of them from a corpus you ordered deleted. Purge without rebuilding, or rebuild and re-measure?"
+      why_evidence_cannot_settle_it: "The number is close to your own 'contributes nothing' threshold rather than clearly past it, and the measurement names exactly what a rebuild would fix — 67% of the residual hits are machine-lane diagnostics your agreed refuse-at-the-writer rule would exclude. Whether that justifies the rebuild is appetite, not derivation."
+      the_measurement: "594 real turn pairs. 390 contexted. 20.3% supplied an entity that reached the answer AND was absent from the question; 67% of those are platform vocabulary (traces 32, failure class 10, session 7) that a debugging answer contains anyway. Residue ~4.4% of all turns, lexical co-occurrence only."
+      options:
+        a_purge_no_rebuild: "RECOMMENDED, narrowly. Stop injecting graph context and keep the code. Removes a quarter-kilobyte of deleted-corpus content from two turns in three, costs ~4% coincidental overlap, and can be reversed the moment a measured need appears."
+        b_rebuild_then_remeasure: "Do the agreed purge-and-rebuild with weighting, hub suppression and machine-lane refusal, then re-run scripts/measure_graph_context_value.py for a real before/after. Most informative; spends the work before knowing it pays."
+        c_leave_it: "Keep serving pre-08-10 context. Costs nothing to decide and leaves deleted memory shaping your answers."
+      blocked_until_answered: "Phase 3 only. Everything else continues."
     ESC_77_should_a_plan_survive_the_users_next_message:
       question: "PlanStore is scoped PER TURN (keyed on trace_id). A todo list therefore vanishes the moment you send your next message. Is that right?"
       why_evidence_cannot_settle_it: "Both sides are reasoned and the evidence supports each. The store's own docstring says a process-level slot is a correctness bug because concurrent chats would overwrite each other. The smoke test says a plan that cannot outlive one turn is not a plan. Which matters more is a product call."
@@ -1590,6 +1642,14 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-62
+    found: 2026-08-31
+    title: "Graph context measured: ~4% of turns get a genuinely novel entity, 67% of hits are platform vocabulary"
+    what: "The offline replay Bakir made the graph rebuild conditional on. It closes the question with a number instead of an argument."
+    evidence: "594 real turn pairs, machine lanes excluded. 390 contexted (65.7%), mean 8.2 entities. 36.9% raw overlap -> 26.9% after a length filter -> 20.3% after excluding entities already present in the question -> 67% of THAT is platform vocabulary (traces 32, failure class 10, session 7, memory 4)."
+    decision: "Measurement shipped as scripts/measure_graph_context_value.py, importing the production functions so it measures the real path. Nothing removed: the result is borderline against Bakir's own threshold, so the call is escalated as ESC-78 rather than taken."
+    residual_risk: "Lexical overlap undercounts — context can steer an answer without appearing in it — so this is an honest floor, not a fair estimate."
+    status: "closed — the acceptance check is genuinely closed; the resulting decision is ESC-78"
   - id: DEBT-60
     found: 2026-08-31
     title: "Deleting a skill left its files behind — 16 directories for 6 rows"
