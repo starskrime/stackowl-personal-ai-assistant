@@ -104,9 +104,9 @@ def _unify_gateway_enabled() -> bool:
     default) on any config error — a flag read must never break turn replay. Consulted ONLY
     on the replay-failure path, so a healthy reconnect never constructs Settings here."""
     try:
-        from stackowl.config.settings import Settings
+        from stackowl.config.settings import cached_settings
 
-        return bool(Settings().unify_gateway_recovery)
+        return bool(cached_settings().unify_gateway_recovery)
     except Exception:  # noqa: BLE001 — a flag read must never raise into the gateway link
         return True
 

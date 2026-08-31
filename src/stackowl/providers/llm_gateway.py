@@ -45,9 +45,9 @@ def _retry_same_tier_enabled() -> bool:
     owner-approved default) on any config error — a flag read must never break a turn.
     Consulted ONLY on a fault path, so the happy path never constructs Settings here."""
     try:
-        from stackowl.config.settings import Settings
+        from stackowl.config.settings import cached_settings
 
-        return bool(Settings().provider_retry_same_tier_once)
+        return bool(cached_settings().provider_retry_same_tier_once)
     except Exception:  # noqa: BLE001 — a flag read must never raise into the gateway
         return True
 

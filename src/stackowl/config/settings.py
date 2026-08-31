@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -1077,3 +1078,69 @@ class Settings(BaseSettings):
             TestModeGuard.activate()
 
         return self
+
+
+# --------------------------------------------------------------------- cache
+
+#: ``(config-file fingerprint, STACKOWL_ env fingerprint) -> Settings``, one slot.
+_CACHE: tuple[tuple[object, object], Settings] | None = None
+
+
+def _config_fingerprint() -> object:
+    """What would change the file's contribution: its (mtime, size), or None.
+
+    ``None`` for an absent file is not an error — a fresh install has no config —
+    and it is a DISTINCT fingerprint, so the file appearing later invalidates.
+    """
+    try:
+        st = StackowlHome.config_file().stat()
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size)
+
+
+def _env_fingerprint() -> object:
+    """What would change the environment's contribution.
+
+    ``settings_customise_sources`` puts ``env_settings`` FIRST, so a cache keyed
+    only on the file would keep answering with a value the environment has already
+    overridden. Only ``STACKOWL_``-prefixed names can reach these settings
+    (``env_prefix``), so nothing else costs a reparse.
+    """
+    return tuple(sorted(
+        (k, v) for k, v in os.environ.items() if k.startswith("STACKOWL_")
+    ))
+
+
+def cached_settings() -> Settings:
+    """The current settings, re-parsed only when something that feeds them changed.
+
+    MEASURED 2026-08-31: ``Settings()`` was constructed 1,060 times in one day —
+    324 of them immediately after "[pipeline] execute: tool_loop entry" — and each
+    construction reads and parses stackowl.yaml and runs the full model validation
+    at **19ms** (30 runs: min 18.8, p50 19.0, max 19.9). A ``stat()`` on the same
+    file is 0.0044ms. That is 19ms of EVENT-LOOP time and one INFO line per call,
+    on the hot path.
+
+    THIS IS NOT THE RELOAD MECHANISM AND NEVER WAS. ``ConfigWatcher`` polls the
+    file's mtime every 5s, debounces until it settles, and emits
+    ``settings_reloaded`` with a fresh Settings — that is how a config change is
+    meant to propagate. Re-parsing inside the tool loop was an accident.
+
+    And this is strictly FRESHER than that watcher: it notices a change on the
+    next call rather than after up to two poll windows, because the fingerprint is
+    checked every time. The only thing saved is the parse.
+    """
+    global _CACHE  # noqa: PLW0603 — one process-wide slot, deliberately
+    key = (_config_fingerprint(), _env_fingerprint())
+    if _CACHE is not None and _CACHE[0] == key:
+        return _CACHE[1]
+    settings = Settings()
+    _CACHE = (key, settings)
+    return settings
+
+
+def reset_settings_cache() -> None:
+    """Drop the cached settings. For tests that change the world some other way."""
+    global _CACHE  # noqa: PLW0603
+    _CACHE = None

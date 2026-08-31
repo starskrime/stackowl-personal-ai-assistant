@@ -233,9 +233,9 @@ async def _gather_recent_reflections(
     # falls back to recency on any embed failure, so this is fail-safe.
     use_semantic = False
     try:
-        from stackowl.config.settings import Settings
+        from stackowl.config.settings import cached_settings
 
-        use_semantic = bool(Settings().trustworthy_learning)
+        use_semantic = bool(cached_settings().trustworthy_learning)
     except Exception:  # noqa: BLE001 — a flag read must never break recall
         use_semantic = False
     embeddings = getattr(services, "embedding_registry", None)
@@ -683,9 +683,9 @@ async def run(state: PipelineState) -> PipelineState:
     context = await bridge.retrieve(state.input_text, owner_scope_key(state))
     # Short-term: last N turns of the current session.
     try:
-        from stackowl.config.settings import Settings
+        from stackowl.config.settings import cached_settings
 
-        short_term_window = Settings().memory.short_term_window
+        short_term_window = cached_settings().memory.short_term_window
     except Exception:
         short_term_window = 6
     # BOTH keys a turn may be filed under. The write key is CONDITIONAL —

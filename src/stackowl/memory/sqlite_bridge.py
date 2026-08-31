@@ -51,9 +51,9 @@ _TURN_HISTORY_FLOOR = 50
 def _turns_to_keep() -> int:
     """Turns retained per owner scope. Never raises."""
     try:
-        from stackowl.config.settings import Settings
+        from stackowl.config.settings import cached_settings
 
-        window = int(Settings().memory.short_term_window)
+        window = int(cached_settings().memory.short_term_window)
     except Exception as exc:  # never silent, never fatal
         log.memory.warning(
             "[memory] sqlite_bridge: could not read short_term_window — using the floor",

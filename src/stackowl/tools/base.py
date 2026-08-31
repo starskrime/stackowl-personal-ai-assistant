@@ -24,9 +24,9 @@ def _acceptance_authority_enabled() -> bool:
     call by failing to read a flag. Consulted ONLY when a tool declares a
     post-condition, so the ~92 un-migrated tools never construct Settings here."""
     try:
-        from stackowl.config.settings import Settings
+        from stackowl.config.settings import cached_settings
 
-        return bool(Settings().acceptance_authority)
+        return bool(cached_settings().acceptance_authority)
     except Exception as exc:  # noqa: BLE001 — flag read must never raise into a turn
         log.tool.debug(
             "tool.__call__: could not read acceptance_authority flag — treating OFF",

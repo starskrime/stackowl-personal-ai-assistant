@@ -315,6 +315,67 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT_83_RESOLVED_2026_08_31_the_config_file_was_reparsed_inside_the_tool_loop:
+    map_check: "No mapped item matches — evidence-led work; closes DEBT-83."
+    how_this_item_was_reached: >-
+      Found while investigating DEBT-82 and explicitly SET ASIDE there, because the
+      correlation that surfaced it was refuted as a cause. It stands on its own numbers.
+    THE_MEASUREMENT:
+      how_it_is_countable: >-
+        "[config] Loaded providers" is logged by Settings._post_init, a pydantic model
+        validator that runs on EVERY construction — so the log counts them exactly.
+      constructions: "5,499 across the retained logs; 1,060 today."
+      where_they_come_from: >-
+        The line immediately preceding each one: 324 "[pipeline] execute: tool_loop entry",
+        308 "[asyncio_backend] run: step ok", 91 "[format] OutputStyle.enforce: exit",
+        88 "[owls] revalidate_agent_owls: exit".
+      what_one_costs: >-
+        19ms — 30 runs, min 18.8, p50 19.0, max 19.9 — to read and parse a 2,034-byte YAML
+        and run the full model validation. A stat() on the same file is 0.0044ms, 4,300x
+        cheaper. That is 19ms of EVENT-LOOP time and one INFO line per call, on the hot path.
+    WHAT_IT_IS_NOT: >-
+      Not the cause of the provider_registry timeouts. 17 of 18 of those landed within 0.05s
+      of one of these lines, but they carry the SAME trace_id as the timeout — the sweep's
+      own continuation logging after cancellation — and 19ms cannot starve a 5,000ms window.
+      Recorded on the DEBT-82 item too, because a strong wrong correlation is worth keeping.
+    THE_RELOAD_CONTRACT_ALREADY_EXISTS_AND_IS_NOT_THIS: >-
+      ConfigWatcher polls the file's mtime every 5s, debounces until it settles, and emits
+      settings_reloaded with a fresh Settings. That is how a config change is meant to
+      propagate. Re-parsing the file inside the tool loop was never the reload mechanism.
+    the_fix: >-
+      cached_settings(), keyed on what would actually change the answer: the config file's
+      (mtime_ns, size) AND the STACKOWL_ environment — because settings_customise_sources
+      puts env_settings FIRST, so a file-only key would keep answering with a value the
+      environment had already overridden. It is strictly FRESHER than the watcher (next
+      call, not up to two poll windows) while doing a stat instead of a parse.
+    ladder_rung: "1 — one function beside the model it caches, and eight call sites pointed
+      at it. Settings() itself is untouched, so the CLI and every test that constructs one
+      directly behave exactly as before."
+    converted: >-
+      tools/base.py, runtime/gateway_link.py, pipeline/steps/classify.py (x2),
+      pipeline/steps/execute.py, gateway/turn_registry.py, memory/sqlite_bridge.py,
+      providers/llm_gateway.py.
+    tests: "8 new in tests/config/test_settings_are_not_reparsed_on_every_call.py — the same
+      object back when nothing changed, a changed FILE invalidating, an ENV change
+      invalidating, an UNRELATED env change NOT invalidating, a missing config file still
+      answering and then noticing the file appear, a reset hook, and a timing assertion that
+      20 cached reads cost less than ONE construction."
+    suites: "tests/config + steps + providers + tools 2,718 passed, 4 skipped;
+      tests/memory + gateway + runtime 802 passed."
+    baselines: "ruff src/ 35 (unused Settings imports removed at the converted sites rather
+      than left), mypy 65 — both at baseline."
+    validate: >-
+      CLOSED IN PRODUCTION by adjacency, which is the same instrument that found it. In the
+      hour and a half BEFORE the restart, 24 constructions followed "tool_loop entry" and 23
+      followed "run: step ok". After the 19:56:26Z restart: ZERO of either. 543 records,
+      ZERO ERRORs.
+    WHAT_IS_STILL_CONSTRUCTING_AND_I_DID_NOT_CONVERT: >-
+      Boot and scheduler paths — "[format] OutputStyle.enforce: exit" (91 today), "[owls]
+      revalidate_agent_owls: exit" (88), and the orchestrator's own startup. Nine
+      constructions in the seven minutes after the restart, two of them per-process boot.
+      Named with counts rather than swept in, because converting a boot path buys nothing
+      and the hot loop was the whole cost.
+
   DEBT_82_RESOLVED_2026_08_31_the_health_check_was_a_LIVE_INFERENCE:
     map_check: "No mapped item matches — evidence-led work; closes DEBT-82."
     how_this_item_was_reached: >-

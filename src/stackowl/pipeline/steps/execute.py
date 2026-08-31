@@ -1693,9 +1693,9 @@ async def _run_with_tools(
     deterministic_fail_count: dict[str, int] = {}
     _trustworthy_learning = False
     try:
-        from stackowl.config.settings import Settings
+        from stackowl.config.settings import cached_settings
 
-        _trustworthy_learning = bool(Settings().trustworthy_learning)
+        _trustworthy_learning = bool(cached_settings().trustworthy_learning)
     except Exception:  # noqa: BLE001 — a flag read must never break dispatch
         _trustworthy_learning = False
     # TurnProgressTracker — unified replacement for the P2 fail_streak/circuit_open
