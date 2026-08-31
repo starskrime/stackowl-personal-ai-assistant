@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  JOB_TRACE_HAD_NO_LANE_2026_08_31_self_healing_could_diagnose_but_not_ACT:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-67."
+    the_measurement: >-
+      Five refusals across one day, roughly one every 1-3 hours, ALL from
+      job:incident_escalation-9fb1c485:
+        tool_build.execute: no channel/session to scope consent — refused
+        {"tool": "verify_shell_effect_before_retry", "interactive": false,
+         "channel": null, "has_session": true}
+      and the same for delegate_task_scope_gate,
+      incident_delegate_task_unachieved_effect and owl_build_verify_before_claim.
+      So EVERY time the RCA concluded "build this tool", the build was refused. The
+      self-healing loop diagnosed correctly and then could not act — Bakir's ★★
+      authority-versus-action shape, occurring in the lane whose whole job is to heal the
+      platform.
+    TOOL_BUILD_WAS_NOT_THE_DEFECT_and_its_own_comment_said_so: >-
+      "Not 'no human' — no LANE at all, so there is nothing to scope a grant or an audit
+      record to. That is a WIRING FAULT, not an autonomy case." The measurement agrees
+      exactly: has_session TRUE, channel NULL. The session existed; the channel was never
+      set. _bind_job_trace called TraceContext.start(session_key=...) and nothing else,
+      while start has accepted a `channel` parameter all along. Fixing tool_build would have
+      been treating the symptom at the wrong layer.
+    the_vocabulary_was_NOT_invented: "sessions_spawn, sessions_send and delegate_task already write str(ctx.get('channel') or 'internal') for a lane with no user channel. Reusing that keeps one name for one concept instead of minting a second."
+    a_job_with_a_real_target_uses_it: "morning_brief carries ['telegram'], so its consent scope is telegram rather than a placeholder. primary_channel first, then the first target_channel, then 'internal'. Measured: 4 of 127 jobs have a primary_channel; the rest are genuinely address-less maintenance."
+    interactive_STAYS_FALSE: "Giving a job a lane must not make it look like a human is attached — that would invert consent in the OTHER direction, which is the failure the ★★ note already records (denied attended, granted unattended). Asserted by its own test."
+    A_PRE_EXISTING_RED_TEST_FOUND_AND_FIXED_and_it_was_CLOCK_DEPENDENT: >-
+      test_tool_revalidation_seeded_after_tool_outcome_miner_by_hour failed, and not because
+      of this change. _next_local_hour_iso returns the NEXT occurrence of an hour, so at
+      10:15 UTC the miner's hour-10 slot had passed and rolled to 2026-09-01 while
+      revalidation's hour-11 slot was still due today — making the earlier job compare
+      GREATER. The invariant it asserts is about the daily CYCLE, not about what time the
+      suite happens to run, so the comparison now uses TIME OF DAY. A test that is red for a
+      few hours out of every twenty-four and green the rest is worse than one that is simply
+      red.
+    tests: "tests/scheduler/test_job_trace_has_a_lane.py — 7 passing: a maintenance job gets 'internal', a job with a real channel uses it, target_channels is honoured when primary is absent, the lane identity and the deliberate conversation_id=None are unchanged, an object that cannot describe itself still gets a lane, and interactive stays False. tests/scheduler: 440 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline. Restart 2026-08-31T10:26:16Z: 474 records, ZERO ERRORs."
+    ACCEPTANCE_CHECK_OPEN: >-
+      "A scheduled job can now build a tool." NOT CLOSED — it needs the next RCA cycle to
+      conclude 'build this tool', which happened roughly every 1-3 hours before the fix.
+      Only 3 job-lane records exist since the restart and none carries a channel field, so
+      there is nothing to read yet. CLOSING QUERIES:
+      grep 'no channel/session to scope consent' ~/.stackowl/logs/stackowl.jsonl   # should stop appearing
+      grep '"msg": "tool_build' ~/.stackowl/logs/stackowl.jsonl | tail            # should show a build proceeding
+    what_this_does_NOT_claim: "That the build will SUCCEED. It removes a wiring fault that refused it before any policy could be consulted; ConsentPolicy still decides, and its documented behaviour is to fall through to the autonomous grant when no human is attached."
   DEBT_55_RESOLVED_2026_08_31_the_handler_attempted_SEVEN_RCAs_in_one_20_minute_slot:
     map_check: "No mapped item matches — evidence-led work; DEBT-55 closed, DEBT-66 opened for the残 residue."
     what_the_measurement_showed_and_then_reframed:
@@ -1805,6 +1848,20 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-67
+    found: 2026-08-31
+    title: "A scheduled job's trace had no channel, so consent had nothing to scope and every autonomous tool_build was refused"
+    what: >-
+      _bind_job_trace bound only a session_key. tool_build requires both a channel and a
+      session to scope a grant, so five RCA-driven builds were refused across one day — the
+      self-healing loop diagnosing correctly and then unable to act.
+    evidence: "Five 'no channel/session to scope consent — refused' events, all from job:incident_escalation, all with has_session=true and channel=null, for verify_shell_effect_before_retry, delegate_task_scope_gate, incident_delegate_task_unachieved_effect and owl_build_verify_before_claim."
+    decision: >-
+      _bind_job_trace now binds primary_channel, else the first target_channel, else
+      'internal' — the name sessions_spawn/sessions_send/delegate_task already use for a lane
+      with no user channel. interactive stays False so consent is not inverted the other way.
+    residual_risk: "Not yet observed in production; the next RCA cycle is the evidence. It removes a wiring fault, it does not grant anything — ConsentPolicy still decides."
+    status: "open — shipped and live; closing queries recorded in current"
   - id: DEBT-66
     found: 2026-08-31
     title: "incident_escalation residue: detection raises, consent has no address, timeouts do not cancel"

@@ -171,10 +171,19 @@ async def test_tool_revalidation_seeded_after_tool_outcome_miner_by_hour(
     two jobs must be seeded at genuinely distinct hours."""
     await _build(tmp_db)
     rows = await tmp_db.fetch_all(
-        "SELECT handler_name, next_run_at FROM jobs "
+        "SELECT handler_name, next_run_at, schedule FROM jobs "
         "WHERE handler_name IN ('tool_outcome_miner', 'tool_revalidation')"
     )
-    by_handler = {r["handler_name"]: r["next_run_at"] for r in rows}
+    # COMPARE THE TIME OF DAY, NOT THE ABSOLUTE NEXT RUN. Fixed 2026-08-31 after
+    # this test failed at 10:15 UTC: _next_local_hour_iso returns the NEXT
+    # occurrence of an hour, so once the earlier job's hour has passed today it
+    # rolls to tomorrow and compares GREATER than the later job still due today.
+    # The invariant being asserted is about the daily CYCLE — revalidation runs
+    # after the miner within a day — and that is a property of the schedules, not
+    # of what time it happens to be when the suite runs. A test whose truth
+    # depends on the wall clock is red for a few hours out of every twenty-four
+    # and green the rest, which is worse than red.
+    by_handler = {r["handler_name"]: str(r["next_run_at"])[11:16] for r in rows}
     assert "tool_outcome_miner" in by_handler
     assert "tool_revalidation" in by_handler
     assert by_handler["tool_revalidation"] > by_handler["tool_outcome_miner"], (

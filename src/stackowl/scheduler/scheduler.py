@@ -101,8 +101,36 @@ def _bind_job_trace(job: Any) -> Any:
     answer: background work that never passed through ingress has a lane but no
     incarnation, and inventing one would attribute its cost to a conversation that
     never happened." A job gets a trace and a lane, never a conversation.
+
+    A CHANNEL IS BOUND TOO, and its absence was a live defect. Measured
+    2026-08-31: five ``tool_build.execute: no channel/session to scope consent —
+    refused`` across one day, all from ``job:incident_escalation``, with
+    ``has_session`` TRUE and ``channel`` NULL. So every time the RCA concluded
+    "build this tool" the build was refused — the self-healing loop diagnosing
+    correctly and then unable to act. ``tool_build``'s own comment names it: "no
+    LANE at all, so there is nothing to scope a grant or an audit record to. That
+    is a WIRING FAULT, not an autonomy case." ``TraceContext.start`` has accepted
+    ``channel`` all along; this never passed one.
+
+    A job with a real target uses it — morning_brief's consent scope is telegram,
+    not a placeholder. "internal" is NOT invented here: ``sessions_spawn``,
+    ``sessions_send`` and ``delegate_task`` already write
+    ``str(ctx.get("channel") or "internal")`` for a lane with no user channel, so
+    this reuses that vocabulary rather than minting a second one.
+
+    ``interactive`` STAYS FALSE. Giving the job a lane must not make it look like
+    a human is attached; that would invert consent in the other direction, which
+    is the failure the authority-versus-action note already records.
     """
-    return TraceContext.start(session_key=f"job:{job.job_id}")
+    targets = getattr(job, "target_channels", None) or ()
+    if isinstance(targets, str):  # an undecoded JSON column is not a list
+        targets = ()
+    channel = (
+        getattr(job, "primary_channel", None)
+        or (targets[0] if targets else None)
+        or "internal"
+    )
+    return TraceContext.start(session_key=f"job:{job.job_id}", channel=str(channel))
 
 
 class JobScheduler(SupervisedTask):
