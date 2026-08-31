@@ -315,6 +315,46 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT_55_RESOLVED_2026_08_31_the_handler_attempted_SEVEN_RCAs_in_one_20_minute_slot:
+    map_check: "No mapped item matches — evidence-led work; DEBT-55 closed, DEBT-66 opened for the残 residue."
+    what_the_measurement_showed_and_then_reframed:
+      first_read: "8 dispatch timeouts on incident_escalation, plus 'detection raised' — looked like a slow handler."
+      the_distribution: "6,684 runs: p50 0.3s, p90 13.0s, max 1198.5s. A handler with a third-of-a-second median does not reach twenty minutes by being slow."
+      the_schedule: "every-10m against a 1200s handler timeout — the interval is HALF the ceiling."
+    THE_ROOT_CAUSE_and_it_defeats_a_carefully_reasoned_budget: >-
+      staged_rca reasons explicitly: "The ceiling that makes this safe is the scheduler's own
+      _HANDLER_TIMEOUT_SEC (1200s) — worst case here is three stages plus one retry
+      (4 x 240 = 960s), leaving 240s of margin, and a test pins that relationship so the
+      inner budget can never be silently pre-empted by the outer one." That is correct FOR
+      ONE RCA. execute() ran `for inc in new_incidents: await self._resolve_incident(...)` —
+      sequentially, UNBOUNDED. A test pinned 960 < 1200; nothing pinned one-RCA-per-tick.
+    AND_THE_LIVE_NUMBER_IS_WORSE_THAN_THE_TIMEOUTS_SUGGESTED: >-
+      The first run under the fix reported new_incidents 7, rca_bound 7. SEVEN RCAs were
+      being attempted in a single tick — up to 7 x 960 = 6,720s against a 1200s ceiling. Not
+      an occasional overrun: a guaranteed timeout, with six RCAs continuing untracked past
+      it, because asyncio.wait_for cancels the awaited coroutine and NOT the tasks it spawned
+      (the scheduler's own comment records "RCA complete" logged NINE MINUTES after a
+      timeout). The row then sits 'running' until reaped at 2400s, so detection is blind for
+      up to forty minutes.
+    THE_FIX_AND_THE_CORRECTION_A_TEST_FORCED: >-
+      First attempt capped NEW INCIDENTS at one. A pre-existing test
+      (test_new_verdict_routed_with_kind_derived_from_ran_rca) went red and was RIGHT to: a
+      `non_retryable` incident short-circuits to a fallback verdict WITHOUT entering the RCA
+      cycle, so it costs no stage time and deferring it defers work for nothing. The cap now
+      bounds only the RCA-BOUND incidents, predicted with the SAME classifier
+      _resolve_incident itself uses so the two can never disagree about what is expensive.
+      The test was not adjusted; the fix was.
+    nothing_is_lost_by_deferring: "The handler already assumes incidents persist across ticks — it dedupes to one incident/one RCA and its own comment says the NEXT tick retries a persistent one. Deferred incidents stay out of _open_incidents, so they are re-detected. The tick is every 10 minutes."
+    tests: "tests/scheduler/test_incident_escalation_one_rca_per_tick.py — 3 passing, and they assert the ARITHMETIC rather than the number: MAX_RCA_PER_TICK x 4 stages x DEFAULT_PER_STAGE_TIMEOUT_S < _HANDLER_TIMEOUT_SEC, the 240s margin staged_rca claims, and that the ceiling arithmetic is written beside the constant so a later reader raising it 'to catch up faster' sees why they must not. tests/scheduler: 433 passed."
+    ACCEPTANCE_CHECK_CLOSED_IN_PRODUCTION:
+      before: "09:52:15Z — [scheduler] incident_escalation: handler exceeded its timeout (old code; restart was 09:56:46Z)."
+      after: "09:57:33Z first run under the fix; 09:57:34Z — {new_incidents: 7, rca_bound: 7, running_rca: 1, deferred_to_next_tick: 6}."
+      state: "1,227 records since restart, 1 ERROR and it is the 09:52 timeout that PRE-DATES the restart."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    STILL_OPEN_and_recorded_not_waved_away:
+      detection_raised: "[scheduler] incident_escalation.execute: detection raised — 1 occurrence, an exception inside _detect_incidents. Caught and returned as a failed JobResult, so it degrades rather than wedging, but the cause is un-diagnosed."
+      tool_build_consent: "tool_build.execute: no channel/session to scope consent — refused, x4, for verify_shell_effect_before_retry with interactive=false and channel=null. The authority-vs-address shape Bakir's ★★ memory names: an autonomous lane cannot obtain consent because it has no address to ask at."
+      not_stopped_on_timeout: "A timed-out handler is still not cancelled. The cap makes the timeout far less likely rather than making cancellation work; structured cancellation of spawned children is a scheduler-wide change."
   FTS_PRUNE_2026_08_31_the_index_offered_147_skills_that_do_not_exist_and_now_does_not:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-65."
     what_was_wrong: "skills 28 rows, skills_fts 179, of which 147 named a skill that is gone. Skill search could surface and rank jarvis_warm_greeting, download-youtube-video and the-chiefs-dashboard. Third occurrence of this shape; committed_facts_fts indexed 1,112 dead rows before it."
@@ -1765,6 +1805,17 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-66
+    found: 2026-08-31
+    title: "incident_escalation residue: detection raises, consent has no address, timeouts do not cancel"
+    what: >-
+      Three things left after capping RCAs per tick. (1) _detect_incidents raised once and the
+      cause is un-diagnosed. (2) tool_build refused 4x with "no channel/session to scope consent"
+      for an autonomous lane — the authority-vs-address shape. (3) A timed-out handler is still
+      not cancelled; wait_for does not reach tasks spawned with create_task.
+    evidence: "1 'detection raised' ERROR; 4 tool_build consent refusals with interactive=false, channel=null; the scheduler's own comment records 'RCA complete' logged nine minutes after a timeout."
+    decision: "Recorded, not fixed — each is a separate item, and (3) is a scheduler-wide change to structured cancellation."
+    status: "open — not investigated"
   - id: DEBT-65
     found: 2026-08-31
     title: "The skill keyword index offered 147 skills that no longer exist"

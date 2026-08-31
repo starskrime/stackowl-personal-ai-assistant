@@ -238,6 +238,33 @@ class _Incident:
 _MAX_VERDICT_ATTEMPTS = 3
 
 
+#: How many incidents may get a full RCA in ONE tick. ONE, and the number is
+#: load-bearing rather than cautious.
+#:
+#: ``staged_rca`` reasons explicitly about the ceiling: "worst case here is three
+#: stages plus one retry (4 x 240 = 960s), leaving 240s of margin, and a test pins
+#: that relationship so the inner budget can never be silently pre-empted by the
+#: outer one." That is correct FOR ONE RCA. This handler used to loop over every
+#: new incident sequentially, so two in a tick was up to 1920s against a 1200s
+#: ceiling — a guaranteed timeout, with the pinned margin never having a chance.
+#:
+#: MEASURED 2026-08-31 over 6,684 runs: p50 0.3s, p90 13s, max 1198.5s, and 8
+#: dispatch timeouts sitting exactly at the ceiling. A handler with a
+#: third-of-a-second median does not reach twenty minutes by being slow.
+#:
+#: AND THE TIMEOUT DOES NOT STOP IT. The scheduler's own comment records that
+#: ``asyncio.wait_for`` cancels the awaited coroutine but not the tasks it spawned,
+#: so a timed-out RCA keeps running — "RCA complete" logged NINE MINUTES after its
+#: own timeout — while the row stays 'running' until reaped at 2400s. The second
+#: RCA was not merely late; it ran untracked and blocked detection for up to forty
+#: minutes.
+#:
+#: NOTHING IS LOST. The handler already assumes incidents persist across ticks: it
+#: dedupes to one incident/one RCA and its own comment says the NEXT tick retries a
+#: persistent one. The tick is every 10 minutes.
+MAX_RCA_PER_TICK = 1
+
+
 class IncidentEscalationHandler(JobHandler):
     """Detect recurring self-heal-didn't-fix incidents → staged RCA verdict.
 
@@ -378,6 +405,39 @@ class IncidentEscalationHandler(JobHandler):
 
         analyzed = 0
         short_circuited = 0
+        # AT MOST ONE RCA PER TICK — see MAX_RCA_PER_TICK. The cap is on the
+        # EXPENSIVE incidents only: a `non_retryable` one short-circuits to a
+        # fallback verdict without entering the RCA cycle at all, so it costs no
+        # stage time and capping it would defer work for nothing. Predicting which
+        # is which uses the same classifier _resolve_incident itself uses, so the
+        # two can never disagree about what is expensive.
+        rca_bound = [
+            inc for inc in new_incidents
+            if classify_incident_retryability(inc.failure_class) != "non_retryable"
+        ]
+        if len(rca_bound) > MAX_RCA_PER_TICK:
+            keep = set(id(i) for i in rca_bound[:MAX_RCA_PER_TICK])
+            deferred_rca = len(rca_bound) - MAX_RCA_PER_TICK
+            # The deferred ones are NOT dropped: they stay out of _open_incidents,
+            # so the next tick detects them again and takes the next one.
+            log.scheduler.info(
+                "[scheduler] incident_escalation: %d incident(s) need an RCA; running "
+                "%d this tick and re-detecting the rest next tick, so the staged-RCA "
+                "budget stays under the dispatch ceiling",
+                len(rca_bound), MAX_RCA_PER_TICK,
+                extra={"_fields": {
+                    "new_incidents": len(new_incidents),
+                    "rca_bound": len(rca_bound),
+                    "running_rca": MAX_RCA_PER_TICK,
+                    "deferred_to_next_tick": deferred_rca,
+                }},
+            )
+            new_incidents = [
+                inc for inc in new_incidents
+                if classify_incident_retryability(inc.failure_class) == "non_retryable"
+                or id(inc) in keep
+            ]
+
         for inc in new_incidents:
             incident_id = f"incident-{uuid.uuid4().hex[:12]}"
             verdict, ran_rca = await self._resolve_incident(inc, incident_id)
