@@ -315,6 +315,42 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  IMAGE_CAPABILITY_2026_08_31_no_change_needed_and_I_had_the_premise_WRONG:
+    what_was_authorised: "Bakir: 'Yes — you asked for a picture.' He chose to give secretary image_generate, on MY framing that her manifest lists only three tools."
+    THE_PREMISE_I_GAVE_HIM_WAS_WRONG: >-
+      I reported "secretary's manifest lists only web_fetch, browser_extract,
+      browser_recall_url" — true as a fact, wrong as an inference. execute.py:444 states
+      it plainly: "presented_pins = base owl tools UNION owned skills' tool names.
+      PRESENTATION ONLY". The manifest list is PINS, not an allowlist. Measured on the
+      live log: secretary presents 79 tools — the full catalogue — exactly like every
+      other owl (rca_gatherer 79, hypothesis 79, verifier 79). image_generate is one of
+      77 registered tools and was ALREADY REACHABLE. The manifest change is a no-op.
+    and_the_measurement_that_matters_more: >-
+      image_generate CANNOT WORK ON THIS BOX. Awaited ImageSelector.select() against live
+      Settings and it returns available=False with a fully actionable reason: the host is
+      a Tegra/unified-memory board (/etc/nv_tegra_release present), no CUDA-capable torch
+      wheel is installed, vanilla torch is a CPU build that would OOM unified memory — and
+      cloud is disabled with no API key (image.cloud_enabled=False, cloud_api_key='').
+      So adding it to the manifest would have shipped nothing, and the capability gap is
+      hardware/config, not wiring.
+    WHY_THE_TURN_STILL_FAILED_and_it_is_already_fixed: >-
+      The reason "Give me in pictures" produced a promise was NOT that image_generate was
+      missing. The turn had NO TOOLS AT ALL — sticky routing gave it a tool-free class it
+      was never classified into (DEBT-54, fixed and shipped in 40ad6136). With that fix,
+      the same request now reaches the tool loop, the model calls image_generate, and gets
+      that unavailable message back.
+    AND_THAT_OUTCOME_IS_ACHIEVEMENT_BY_BAKIRS_OWN_RULE: >-
+      His words, 2026-08-31: "If model can not do or there is a limitation which is not
+      possible to avoid then task can be completed by informing user." The tool's
+      unavailable string is exactly that — specific, honest, and it names the two ways to
+      fix it. So the corrected chain ends in a legitimate completion rather than a false
+      one, without adding anything.
+    no_matplotlib_path_either: >-
+      Checked, because a BFS-tree diagram needs a PLOTTER, not a diffusion model, and that
+      would have been the better answer to what he actually asked. matplotlib, graphviz
+      and PIL are all absent from the venv; only networkx is present. execute_code and
+      send_file ARE registered, so the delivery half exists and the drawing half does not.
+    outcome: "no_change_needed on the manifest. Nothing shipped, deliberately — the authorised change was measured to be a no-op, and shipping it anyway would have been decoration."
   TRIAGE_2026_08_31_the_picture_request_was_NEVER_CLASSIFIED_it_INHERITED:
     the_agreed_order: "Bakir: completion first, triage second. This is triage — the first gate in the six-gate chain, and the one where the request lost its tools."
     WHAT_ACTUALLY_HAPPENED_and_it_is_not_misclassification: >-
@@ -525,6 +561,15 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_76_the_platform_cannot_draw_anything_and_that_is_hardware_not_code:
+      question: "You asked for a picture and the platform cannot make one. Enabling that is a spend/egress decision only you can make. Which way?"
+      why_evidence_cannot_settle_it: "Every option costs either money, data egress, or disk on your only dev box. All three are yours to weigh, and none is a defect to fix."
+      the_measurement: "ImageSelector.select() returns available=False on this host: Tegra/unified-memory board, no CUDA torch wheel, CPU torch would OOM; cloud disabled with no key. matplotlib, graphviz and PIL are all absent from the venv (networkx is present). execute_code and send_file exist, so delivery works and drawing does not."
+      options:
+        a_cloud_image_model: "Set image.cloud_enabled + image.cloud_api_key. Real image generation; costs per image and the PROMPT LEAVES THE MACHINE, which the tool discloses in its output."
+        b_install_a_plotting_stack: "matplotlib (and/or graphviz) in the venv, driven through execute_code and delivered by send_file. RECOMMENDED: for what you actually asked — a BFS tree diagram — a plotter is the RIGHT tool, not a diffusion model. No egress, no per-image cost, and it stays self-hosted, which is your standing rule."
+        c_accept_it: "Leave it. The tool now returns an honest, specific unavailable message naming both fixes, and by your own rule that is a legitimate completion."
+      blocked_until_answered: "Nothing. The judge half of the completion contract is the next item and does not depend on this."
     ESC_75_the_graph_is_the_one_store_a_migration_backup_does_not_cover:
       question: "A pre-migration snapshot now protects SQLite. The 39MB Kuzu graph is NOT in it — BackupManager writes a kuzu/README.txt saying 'snapshot deferred — adapter snapshot() not yet implemented'. Should the graph be brought into the backup, and if so, before or after the phase-3 purge-and-rebuild?"
       why_evidence_cannot_settle_it: "It is a sequencing and appetite call. The graph is already scheduled for deletion and rebuild, so snapshotting today would preserve a corpus we have agreed is noise — but between now and then it is the only store with no recovery path."
