@@ -315,6 +315,20 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  OPERATOR_DECISIONS_2026_08_30_round_4:
+    by: Bakir
+    miner: "MERGE INTO ONE SKILL PER TOOL — `recovering-<tool>` covering all outcome classes, patched as new outcomes appear. The class-level shape the reference platform's review prompt argues for, and the opposite of the current (tool x outcome) expansion."
+    cleanup: "RETIRE the never-run LEARNED skills only — the 4 never-executed incident_* templates. Builtins untouched."
+    ESC_73_names: "NORMALISE FOR IDENTITY ONLY — dedupe and consolidate on the normalised form, keep the authored name for display and invocation."
+    first_plugin: "BUILD AN OBSIDIAN PROVIDER — as a plugin, never in core."
+    the_order_and_why: >-
+      1. The miner merge — it is the generator, and retiring the old templates is
+         its cleanup rather than a separate errand.
+      2. ESC-73 name normalisation — small, and it is what lets the merge actually
+         consolidate rather than mint a third naming family.
+      3. The Obsidian provider — the largest and the only one that is directly
+         useful to Bakir rather than to the corpus.
+
   ESC_63_RESOLVED_2026_08_30_trim_when_to_use_and_the_intuitive_fix_did_NOTHING:
     the_question: "Shorten when_to_use? Bakir's stated risk: 'cutting the when signal could lower loads while raising visibility', with load rate as the acceptance metric."
     FOUR_OPTIONS_MEASURED_against_the_live_corpus: |-
@@ -783,6 +797,47 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-44
+    date: 2026-08-30
+    title: "Incident skills are now ONE PER CAPABILITY, merged rather than minted"
+    the_decision: "Bakir, 2026-08-30, choosing among four ways to constrain the miner: 'merge into one skill per tool'."
+    what_it_replaces: >-
+      Identity was incident_<capability>_<failure>, one skill per PAIR. Measured
+      ceiling: 213 distinct tools x 11 failure classes = 2,343 possible skills.
+      The learned corpus reached 179 that way, and 4 of the 6 that survived the
+      purge had never executed.
+    THE_TRAP_THIS_HAD_TO_AVOID: >-
+      Dropping failure_class from the identity without a patch path would make the
+      SECOND outcome for a capability hit the existing directory and be SKIPPED,
+      silently discarding every failure class after the first. The old skip was
+      CORRECT for the old identity — it did not become wrong, the thing it was
+      checking changed underneath it. That distinction is why the merge exists
+      rather than a deletion of the guard.
+    how_idempotency_is_kept: >-
+      One marker string, built in one place and read in one place:
+      "- Outcome <failure_class>:". The renderer emits it for the FIRST outcome in
+      the same form a merge uses, so renderer and merger share one convention —
+      without that, merging an outcome into a freshly-rendered body would not
+      recognise it as covered and would append a duplicate on the very next
+      scheduler tick. A still-open incident re-triggers mining every tick and its
+      dedup is in-memory, so this is the common path, not the rare one.
+    other_things_it_had_to_get_right: >-
+      Sections are appended to, never re-created — the renderer generates FROM
+      REQUIRED_SECTIONS so a section added to the standard appears automatically,
+      and rebuilding them in the merger would be a second copy of that rule. The
+      frontmatter is stripped before merging and put back by _render_skill_md; a
+      doubled frontmatter block only surfaces when the skill is next LOADED. And
+      the merged body is asserted to pass validate_body, because a body missing a
+      required section is refused by the gated write and the miner goes silent —
+      which is exactly how ADR-19's learning half went quiet once before.
+    A_MIGRATION_CONSEQUENCE_STATED_RATHER_THAN_DISCOVERED: >-
+      This changes FUTURE identity only. The 6 existing pair-named skills
+      (incident_shell_stop, incident_owl_build_stop, ...) are not renamed, so they
+      will never be matched again and a fresh incident_shell would be authored
+      beside them. The 4 never-executed ones are being retired under Bakir's
+      separate decision; the 2 that HAVE run are kept, and will simply age out
+      through the ordinary lifecycle.
+    verified: "8 tests in tests/learning/test_incident_skills_merge_per_capability.py; tests/learning 108 passed. ruff 37, mypy 65 — both at baseline."
   - id: DEBT-43
     date: 2026-08-30
     title: "CLOSES DEBT-41 — memory-provider tools now reach the model and run"

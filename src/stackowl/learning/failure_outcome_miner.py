@@ -197,7 +197,14 @@ def _canonical_incident_slug(capability_class: str, failure_class: str) -> str:
     ``verdict.skill_name`` — an RCA verifier prompted twice for the same
     incident is not guaranteed to propose the same name text twice.
     """
-    raw = f"incident_{capability_class}_{failure_class}"
+    # ONE SKILL PER CAPABILITY, not per (capability x failure) pair — Bakir,
+    # 2026-08-30. The pair form minted one skill per combination and its ceiling
+    # was 213 tools x 11 failure classes = 2,343; the learned corpus reached 179
+    # that way and 4 of the 6 that survived the purge had never executed.
+    # `failure_class` is still a parameter because callers pass it and because it
+    # is what `_merge_outcome_into_body` keys idempotency on — it just no longer
+    # forms the identity.
+    raw = f"incident_{capability_class}"
     slug = _SLUG_RE.sub("_", raw.strip().lower())
     slug = _LEADING_NON_ALPHA_RE.sub("", slug).strip("_-")
     return slug or "incident_fix"
@@ -470,17 +477,45 @@ class FailureOutcomeMiner:
         target_dir = self._root / "learned" / _canonical_incident_slug(
             cluster.capability_class, cluster.failure_class,
         )
+        merged_body: str | None = None
         if target_dir.exists():
+            # The skill for this CAPABILITY exists. Under the old identity that
+            # meant "this exact incident is already covered" and skipping was
+            # right; under capability identity it means "a sibling outcome is
+            # covered", and skipping would silently discard every failure class
+            # after the first. Merge instead — and return False when the outcome
+            # is already covered, which is the common case because a still-open
+            # incident re-triggers mining on every scheduler tick.
+            try:
+                existing = (target_dir / "SKILL.md").read_text(encoding="utf-8")
+            except OSError as exc:
+                log.skills.warning(
+                    "[incident] miner.author_one: capability skill exists but is "
+                    "unreadable — skipping rather than overwriting it",
+                    exc_info=exc, extra={"_fields": {"dir": target_dir.name}},
+                )
+                return False
+            merged_body = _merge_outcome_into_body(_body_of(existing), verdict)
+            if merged_body is None:
+                log.skills.info(
+                    "[incident] miner.author_one: outcome already covered by this "
+                    "capability's skill — nothing to merge",
+                    extra={"_fields": {
+                        "capability_class": cluster.capability_class,
+                        "failure_class": cluster.failure_class,
+                        "existing_dir": target_dir.name,
+                    }},
+                )
+                return False
             log.skills.info(
-                "[incident] miner.author_one: skill already exists for this "
-                "incident — skip (no duplicate authored)",
+                "[incident] miner.author_one: MERGING a new outcome into the "
+                "capability's existing skill",
                 extra={"_fields": {
                     "capability_class": cluster.capability_class,
                     "failure_class": cluster.failure_class,
-                    "existing_dir": target_dir.name,
+                    "skill": target_dir.name,
                 }},
             )
-            return False
         final_name = target_dir.name
         _fitted_description, _fitted_when_to_use = _fit_to_standard(verdict)
         try:
@@ -497,7 +532,7 @@ class FailureOutcomeMiner:
                     verdict.parent_trace_ids or [o.trace_id for o in cluster.outcomes[:10]]
                 ),
             )
-            body = _render_incident_body(verdict)
+            body = merged_body if merged_body is not None else _render_incident_body(verdict)
             skill_md_text = _render_skill_md(manifest, body)
             tool_name, channel, session_key = resolve_consent_identity(
                 live_tool_name=_CONSENT_TOOL_NAME_LIVE,
@@ -575,11 +610,19 @@ def _render_incident_body(verdict: RcaVerdict) -> str:
             "This is a reference skill, not a runnable procedure — read it when the "
             "failure below recurs and apply the pattern in Procedure."
         ),
+        # The FIRST outcome is written in the SAME marker form a merged one uses,
+        # so the renderer and `_merge_outcome_into_body` share one convention.
+        # Without that, merging the same outcome into a freshly-rendered body
+        # would not recognise it as covered and would append a duplicate on the
+        # very next scheduler tick — caught by
+        # test_the_SAME_outcome_twice_is_a_no_op.
         "Quick Reference": (
-            f"Failure class {verdict.failure_class}, seen in {verdict.capability_class}. "
-            f"{verdict.description.strip()}"
+            f"Outcomes seen in {verdict.capability_class}:\n"
+            f"{_outcome_marker(verdict.failure_class)} {verdict.description.strip()}"
         ),
-        "Procedure": verdict.fix_pattern.strip(),
+        "Procedure": (
+            f"{_outcome_marker(verdict.failure_class)} {verdict.fix_pattern.strip()}"
+        ),
         "Pitfalls": (
             f"The root cause found by analysis: {verdict.root_cause.strip()}"
         ),
@@ -593,6 +636,77 @@ def _render_incident_body(verdict: RcaVerdict) -> str:
         f"## {section}\n\n{filled.get(section, '').strip() or _NOTHING_TO_SAY}"
         for section in REQUIRED_SECTIONS
     ) + "\n"
+
+
+def _body_of(skill_md_text: str) -> str:
+    """The markdown body of a SKILL.md, without its YAML frontmatter.
+
+    Merging must not fold the frontmatter into the body — `_render_skill_md` puts
+    it back, and a doubled frontmatter block is the kind of corruption that only
+    shows up when the skill is next loaded.
+    """
+    text = skill_md_text.lstrip()
+    if not text.startswith("---"):
+        return skill_md_text
+    end = text.find("\n---", 3)
+    return skill_md_text if end == -1 else text[end + 4 :].lstrip("\n")
+
+
+def _outcome_marker(failure_class: str) -> str:
+    """The line that records a failure class as COVERED by a capability's skill.
+
+    Idempotency hangs on this string, so it is built in one place and read in one
+    place. A still-open incident re-triggers a mining pass on every scheduler tick
+    (its dedup is in-memory and resets on restart), so without an exact,
+    machine-checkable marker the body would grow on every tick — the same
+    unbounded-growth defect one level down from the one being fixed.
+    """
+    return f"- Outcome {failure_class}:"
+
+
+def _merge_outcome_into_body(body: str, verdict: RcaVerdict) -> str | None:
+    """Fold a new failure class into an existing capability skill's body.
+
+    Returns the new body, or ``None`` when this failure class is ALREADY covered —
+    which is the common case, because the same incident re-triggers mining until
+    its escalation dedup closes it.
+
+    THE OLD BEHAVIOUR WAS `skip`, AND IT WAS RIGHT FOR THE OLD IDENTITY. When the
+    directory name carried the failure class, an existing directory meant "this
+    exact incident already has a skill". Under capability-only identity the same
+    check would mean "this capability already has a skill", and skipping would
+    silently discard every failure class after the first. The skip did not become
+    wrong; the thing it was checking changed underneath it.
+
+    Sections are appended to, never re-created: the renderer generates FROM
+    ``REQUIRED_SECTIONS`` so a section added to the standard appears
+    automatically, and rebuilding them here would be a second copy of that rule.
+    """
+    marker = _outcome_marker(verdict.failure_class)
+    if marker in body:
+        return None
+    quick = (
+        f"{marker} {verdict.description.strip()}"
+        if verdict.description.strip()
+        else f"{marker} seen in {verdict.capability_class}."
+    )
+    procedure = f"{marker} {verdict.fix_pattern.strip()}"
+    out: list[str] = []
+    for line in body.splitlines():
+        out.append(line)
+    text = "\n".join(out)
+    # Append under the two sections that carry per-outcome content. Splitting on
+    # the heading keeps every other section byte-identical, so a merge cannot
+    # disturb a section it has no business touching.
+    for heading, addition in (("## Quick Reference", quick), ("## Procedure", procedure)):
+        idx = text.find(heading)
+        if idx == -1:
+            continue
+        nxt = text.find("\n## ", idx + len(heading))
+        end = len(text) if nxt == -1 else nxt
+        section = text[idx:end].rstrip()
+        text = text[:idx] + section + "\n" + addition + text[end:]
+    return text
 
 
 def _render_skill_md(manifest: SkillManifest, body: str) -> str:
