@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_63_RESOLVED_2026_08_30_trim_when_to_use_and_the_intuitive_fix_did_NOTHING:
+    the_question: "Shorten when_to_use? Bakir's stated risk: 'cutting the when signal could lower loads while raising visibility', with load rate as the acceptance metric."
+    FOUR_OPTIONS_MEASURED_against_the_live_corpus: |-
+      At the real cap of 4,000, counting how many of the 8 skills that have EVER
+      executed reach the prompt:
+
+        A  today                         11 visible   used-visible 4/8   4,157 chars
+        B  drop the 4 never-used dupes   11 visible   used-visible 4/8   4,157 chars
+        C  trim when_to_use to 80        17 visible   used-visible 8/8   4,124 chars
+        D  drop when_to_use entirely     20 visible   used-visible 8/8   3,422 chars
+    B_IS_THE_RESULT_THAT_MATTERS_AND_IT_REFUTED_MY_OWN_RECOMMENDATION: >-
+      Twenty minutes earlier I had recommended fixing the near-duplicate minting
+      INSTEAD of trimming, on the reasoning that removing junk skills frees the
+      same budget without costing signal. Measured, it frees NOTHING: ordering
+      puts the never-used duplicates last anyway, so deleting them changes neither
+      the visible count nor which skills are visible. The intuitive fix was
+      intuitive and wrong.
+    WHAT_WAS_ACTUALLY_BEING_LOST: >-
+      verify-before-claim (executed 3 times) and write-your-own-skill were
+      truncated OUT of the system prompt, while five never-executed incident_*
+      templates sat inside the budget. Four of the eight proven skills were
+      invisible to the model.
+    the_choice_and_why_80_not_zero: >-
+      C. It reaches the same 8/8 as dropping the field entirely, so the trade
+      Bakir was worried about does not have to be made — the WHEN signal is kept
+      in shortened form and the full text is still there for skill_view. Trimming
+      only the CATALOGUE blurb, not the stored value.
+    measured_after: "17/20 visible, used-visible 8/8, 4,135 chars. Every proven skill reaches the prompt. 398 tests in tests/skills pass."
+    validate: >-
+      RESTARTED: core pid 527910 at 19:53:50, last src write 19:51:34 — two
+      minutes earlier, so the change is live. ZERO ERROR/CRITICAL since boot.
+      "catalog truncated by budget" reads 0 in the post-boot window, against a
+      pre-change render that emitted it on every assembly.
+      HONEST LIMIT: no conversational turn has assembled a prompt since the
+      restart, so that 0 is partly NO OPPORTUNITY. The measurement that carries
+      this item is the direct render against the live corpus — 17/20 visible,
+      8/8 proven skills — not the log line.
+      CLOSING QUERY: grep "catalog truncated by budget" — it should stay rare and
+      never name a skill with n_executions > 0. If it returns while the corpus is
+      near 20, the trim is no longer enough and the next lever is the cap itself,
+      which has never been measured (D10.6 records it as a constant nobody chose).
+    AND_IT_CORRECTED_MY_D10_6_RE_VERDICT_AN_HOUR_EARLIER: >-
+      I had reported "ZERO dropped, all 21 render" for D10.6. That fixture read
+      only the `description:` frontmatter and left when_to_use EMPTY — a test
+      double that did not resemble the real thing, understating the render by
+      exactly the field this escalation is about. With the real values the cap
+      DOES bind. D10.6's premise 2 is corrected in place rather than quietly
+      edited.
+
   OPERATOR_DECISIONS_2026_08_30_round_3:
     by: Bakir
     plugin_wiring: "WIRE IT NOW — presentation adds registry.active_schemas(); the memory tool routes via registry.provider_for(name).handle_tool_call()."
@@ -13666,10 +13715,8 @@ items:
       why_re_verdicted: "Bakir purged the learned corpus on 2026-08-29, and this item's every number was taken before that. He asked for the re-verdict."
       VOID: |-
         1. "179 enabled skills"        -> 20 rows (14 builtin + 6 learned), 21 SKILL.md on disk.
-        2. "163 dropped on 95.5% of
-            assemblies"                -> ZERO dropped. Rendering all 21 against the
-                                          real _DEFAULT_CAP=4000 gives 3,577 chars
-                                          and 21 of 21 entries, no truncation.
+        2. "163 dropped on 95.5% of    -> CORRECTED BELOW. My first re-measurement
+            assemblies"                   said ZERO dropped and it was WRONG.
         3. "corpus grows ~1.5/day"     -> 1-2 creates/day and mostly `reinforce`
                                           (08-29: 1 create + 3 reinforce; 08-28: 2 + 3).
       SURVIVES_AND_IS_SHARPER_THAN_WRITTEN: |-
@@ -13689,11 +13736,31 @@ items:
              incident_<tool>_<outcome>, 6 of them, 4 with n_executions=0.
            Its combinatorial ceiling is 213 distinct tools x 11 failure classes
            = 2,343 possible skills.
+      I_GOT_PREMISE_2_WRONG_AND_HERE_IS_THE_CORRECTION: |-
+        I built the fixture for that render by reading only the `description:`
+        frontmatter out of each SKILL.md and leaving `when_to_use` EMPTY. That is
+        a test double that does not resemble the real thing — the named defect
+        shape in CLAUDE.md — and it understated the render by exactly the field
+        ESC-63 is about.
+
+        Re-measured from the DATABASE, with the real values:
+
+          render WITH when_to_use     4,157 chars   10 of 20 entries   TRUNCATED
+          render WITHOUT when_to_use  3,422 chars   20 of 20 entries
+          when_to_use therefore costs   735 chars of a 4,000 budget (18%)
+
+        The live log confirms it: "skill injection: catalog truncated by budget".
+
+        SO THE CAP STILL BINDS. Half the corpus does not reach the prompt — 10 of
+        20, not 163 of 179, so the RATIO changed enormously and the PHENOMENON did
+        not. Premise 2 is not void; it is smaller. Premises 1 and 3 stand as
+        corrected above.
       THE_ITEM_SHOULD_RE_AIM: >-
         D10.6 is titled "Skill relevance scoring" and its gap line is about
-        choosing among too many. NOTHING IS BEING DROPPED, so scoring has nothing
-        to choose between — the corpus reached 179 by MINTING, not by failing to
-        rank. The target is duplicate minting at the source, and one concrete
+        choosing among too many. Ranking DOES still have something to choose
+        between — 10 of 20 are dropped — but the corpus reached 179 by MINTING,
+        and at 20 skills the cheaper lever is not ranking them better, it is not
+        creating twenty near-duplicates in the first place. The target is duplicate minting at the source, and one concrete
         cause is checkable in a line: there is NO NAME NORMALISATION anywhere in
         src/stackowl/skills/, and the consolidator compares raw names
         (consolidation.py:270, `m.name == base`), so a hyphen and an underscore

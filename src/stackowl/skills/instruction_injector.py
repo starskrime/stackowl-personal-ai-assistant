@@ -62,6 +62,29 @@ class _SkillLike(Protocol):
     def when_to_use(self) -> str: ...
 
 
+#: How much of `when_to_use` the CATALOGUE carries. ESC-63, Bakir 2026-08-30.
+#:
+#: MEASURED against the live 20-skill corpus at the real cap of 4,000, counting
+#: how many of the 8 skills that have EVER executed reach the prompt:
+#:
+#:   today                          11 visible   used-visible 4/8   4,157 chars
+#:   drop the 4 never-used dupes    11 visible   used-visible 4/8   4,157 chars
+#:   trim when_to_use to 80         17 visible   used-visible 8/8   4,124 chars
+#:   drop when_to_use entirely      20 visible   used-visible 8/8   3,422 chars
+#:
+#: The second row is the one that matters: removing near-duplicate skills — the
+#: intuitive fix — changes NOTHING, because ordering puts them last anyway. What
+#: was being lost is `verify-before-claim` (executed 3x) and `write-your-own-skill`,
+#: truncated out while five never-executed `incident_*` templates sat in budget.
+#:
+#: 80 AND NOT ZERO. The stated risk on this escalation was that "cutting the when
+#: signal could lower loads while raising visibility". 80 chars reaches the same
+#: 8/8 as dropping the field entirely, so the signal is kept and the trade is not
+#: one that has to be made. The full text is still there for `skill_view`; this
+#: caps only the one-line CATALOGUE blurb.
+WHEN_TO_USE_CATALOGUE_CHARS = 80
+
+
 def _resolve_text(sk: _SkillLike) -> str:
     """The one-line operational blurb injected for a skill.
 
@@ -70,8 +93,16 @@ def _resolve_text(sk: _SkillLike) -> str:
     was already the fallback path; D10.2 made it the whole story by capping
     description at 60 chars and requiring when_to_use to carry the retrieval
     signal, so there is nothing left for a generated summary to add.
+
+    ``when_to_use`` is trimmed to :data:`WHEN_TO_USE_CATALOGUE_CHARS` — see there
+    for the measurement. ``description`` is NOT trimmed here: D10.2 already caps
+    it at 60, and capping it twice in two places is the two-copies-of-one-rule
+    shape this codebase keeps paying for.
     """
-    return f"{sk.description} — {sk.when_to_use}"
+    when = sk.when_to_use or ""
+    if len(when) > WHEN_TO_USE_CATALOGUE_CHARS:
+        when = when[:WHEN_TO_USE_CATALOGUE_CHARS].rstrip() + "…"
+    return f"{sk.description} — {when}"
 
 
 def _neutralize(text: str) -> str:
