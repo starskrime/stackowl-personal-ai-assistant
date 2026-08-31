@@ -13,14 +13,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from stackowl.db.agent_pause import AgentPauseContext
+from stackowl.exceptions import MigrationError
+from stackowl.export.backup import BackupManager
+from stackowl.paths import StackowlHome
+from stackowl.tools.verification import verify_artifact
+
 # Word-boundary token scanner used by the tokenizer-aware splitter (F020). Only
 # the keywords that affect trigger-body bracketing are recognised; everything
 # else (including ``end``/``begin`` inside strings/comments) is skipped by the
 # tokenizer before these ever match.
 _WORD_RE = re.compile(r"[A-Za-z_]+")
-
-from stackowl.db.agent_pause import AgentPauseContext
-from stackowl.exceptions import MigrationError
 
 log = logging.getLogger("stackowl.db")
 
@@ -173,16 +176,28 @@ def _exclusive_tx(conn: sqlite3.Connection) -> Iterator[None]:
 class MigrationRunner:
     """Runs SQL migration files in numeric order, tracking applied versions."""
 
+    #: How many pre-migration backups survive. Anything that only appends will
+    #: poison its reader; each snapshot is a VACUUMed copy of the whole database,
+    #: so an unbounded series fills the disk that the next backup needs.
+    BACKUPS_RETAINED = 3
+
+    #: Prefix for the directories this runner creates. Retention deletes ONLY
+    #: directories matching it — a backup that something else made is never this
+    #: code's to remove.
+    BACKUP_PREFIX = "pre-migration-"
+
     def __init__(
         self,
         db_path: Path,
         migrations_dir: Path | None = None,
         agent_pause: AgentPauseContext | None = None,
+        backup_root: Path | None = None,
     ) -> None:
         log.debug("[db] runner.init: entry — db_path=%s", db_path)
         self._db_path = db_path
         self._migrations_dir = migrations_dir or Path(__file__).parent
         self._agent_pause = agent_pause
+        self._backup_root = backup_root
 
     def run(self) -> list[MigrationResult]:
         """Apply all pending migrations. Returns one result per migration file."""
@@ -210,6 +225,13 @@ class MigrationRunner:
         conn.isolation_level = None  # manual transaction control
         try:
             conn.execute(_CREATE_SCHEMA_MIGRATIONS)
+            # A VERIFIED SNAPSHOT BEFORE THE FIRST CHANGE, and only when there is
+            # a change to make. _exclusive_tx already prevents a HALF-applied
+            # migration; it does nothing about a migration that runs perfectly and
+            # deletes the wrong thing, which is what 0112's 242,477 rows were.
+            pending = self._pending(conn, files)
+            if pending:
+                self._backup_before_applying(pending)
             results: list[MigrationResult] = []
             for version, name, path in files:
                 result = self._apply(conn, version, name, path)
@@ -217,6 +239,80 @@ class MigrationRunner:
             return results
         finally:
             conn.close()
+
+    def _pending(
+        self, conn: sqlite3.Connection, files: list[tuple[str, str, Path]]
+    ) -> list[str]:
+        """Versions present on disk and absent from ``schema_migrations``."""
+        applied = {r[0] for r in conn.execute("SELECT version FROM schema_migrations")}
+        return [version for version, _name, _path in files if version not in applied]
+
+    def _backup_before_applying(self, pending: list[str]) -> Path:
+        """Snapshot the database, OBSERVE the snapshot, prune old ones.
+
+        Fails CLOSED: any failure raises, so nothing is applied. A migration is
+        precisely the operation that needs the backup, and an operator who cannot
+        write 300MB has a problem worth stopping for. The alternative — apply
+        anyway with a warning — is how "we thought we had a backup" happens.
+        """
+        root = self._backup_root or (StackowlHome.knowledge_dir() / "backups")
+        stamp = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%S%f")
+        dest = root / f"{self.BACKUP_PREFIX}{stamp}"
+        log.info(
+            "[db] runner.backup: entry — %d pending migration(s), snapshotting to %s",
+            len(pending), dest,
+        )
+        try:
+            produced = BackupManager(self._db_path).backup(output_dir=dest)
+        except Exception as exc:
+            log.error("[db] runner.backup: FAILED — refusing to migrate", exc_info=exc)
+            raise RuntimeError(
+                f"refusing to apply {len(pending)} migration(s): the pre-migration "
+                f"backup could not be taken ({exc}). Free space or fix permissions "
+                f"under {root}, then restart."
+            ) from exc
+
+        # The returned path is a CLAIM. Observe the file, exactly as every tool
+        # that names an artifact already does — this is the 2026-08-30 shape,
+        # where an audit row named a backup that was never on disk.
+        snapshot = Path(produced) / "stackowl.db"
+        if verify_artifact(snapshot) is not True:
+            log.error(
+                "[db] runner.backup: backup REPORTED success but the file is not there — "
+                "refusing to migrate",
+                extra={"_fields": {"claimed": str(snapshot)}},
+            )
+            raise RuntimeError(
+                f"refusing to apply {len(pending)} migration(s): the backup claimed "
+                f"{snapshot} but no readable, non-empty file is there."
+            )
+
+        self._prune_backups(root)
+        log.info(
+            "[db] runner.backup: exit — verified snapshot at %s (%d bytes)",
+            snapshot, snapshot.stat().st_size,
+        )
+        return Path(produced)
+
+    def _prune_backups(self, root: Path) -> None:
+        """Keep the newest ``BACKUPS_RETAINED``; delete only our own directories."""
+        import shutil
+
+        try:
+            mine = sorted(
+                (p for p in root.glob(f"{self.BACKUP_PREFIX}*") if p.is_dir()),
+                key=lambda p: p.name,
+            )
+        except OSError as exc:
+            log.warning("[db] runner.backup: could not list %s to prune", root, exc_info=exc)
+            return
+        for old in mine[: max(0, len(mine) - self.BACKUPS_RETAINED)]:
+            try:
+                shutil.rmtree(old)
+                log.info("[db] runner.backup: pruned old snapshot %s", old)
+            except OSError as exc:
+                # Never fail a migration because an OLD backup would not delete.
+                log.warning("[db] runner.backup: could not prune %s", old, exc_info=exc)
 
     def _load_sql_files(self) -> list[tuple[str, str, Path]]:
         files: list[tuple[str, str, Path]] = []

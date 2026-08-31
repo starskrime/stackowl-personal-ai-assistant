@@ -315,6 +315,85 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESCALATIONS:
+    ESC_75_the_graph_is_the_one_store_a_migration_backup_does_not_cover:
+      question: "A pre-migration snapshot now protects SQLite. The 39MB Kuzu graph is NOT in it — BackupManager writes a kuzu/README.txt saying 'snapshot deferred — adapter snapshot() not yet implemented'. Should the graph be brought into the backup, and if so, before or after the phase-3 purge-and-rebuild?"
+      why_evidence_cannot_settle_it: "It is a sequencing and appetite call. The graph is already scheduled for deletion and rebuild, so snapshotting today would preserve a corpus we have agreed is noise — but between now and then it is the only store with no recovery path."
+      recommendation: "AFTER the rebuild. Backing up 20,065 facts whose ranking never existed, and which 91% of turns are being served in error, spends effort protecting the thing we decided to throw away. Revisit the moment the rebuilt graph holds facts worth losing."
+      blocked_until_answered: "Nothing. Phase 2 and phase 3 both proceed."
+  PHASE_1_ITEM_2_2026_08_31_migrations_could_delete_anything_with_NO_BACKUP:
+    the_decision_it_came_from: "Bakir: VERIFY THE BACKUP PATH AT WRITE TIME — if an audit record names a backup, something confirms the file exists, or the field is not written."
+    WHERE_THE_MEASUREMENT_SENT_ME_INSTEAD: >-
+      The decision as stated had NO PLACE TO LIVE, and finding that out is the item.
+      (a) The only record naming a backup was the hand-written purge row, and that
+      path is now blocked by yesterday's shell guard. (b) NO platform code writes an
+      audit row naming a backup — checked skill_audit's writer at store.py:1112 and
+      every 'backup'/'dump' string in src/. (c) My first count said 16 audit rows name
+      paths that do not exist on disk; that was a NAIVE MEASUREMENT — all 16 are
+      `delete` ops recording the path of the skill that was deleted, where absence is
+      the point. (d) The artefact-verification contract ALREADY EXISTS as
+      verify_artifact(), and it is applied by ALL SIX tools that set artifact_path;
+      owl_build's apparent gap is a deliberate overload carrying an owl NAME with its
+      own registry re-read. There was no gap at the tool layer.
+    THE_REAL_HOLE_ONE_LAYER_DOWN: >-
+      Migration 0112's own message says "a routine pre-change database backup was taken,
+      AS BEFORE EVERY MIGRATION." There is no such routine. src/stackowl/db/ contained
+      ZERO occurrences of 'backup', and runner.py's 270 lines had no backup, no snapshot
+      and no copy. That backup was taken BY HAND, and the sentence describes a platform
+      behaviour that has never existed — the same shape as the purge audit row, one layer
+      down and far more dangerous.
+    AND_YESTERDAYS_FIX_MADE_IT_WORSE: >-
+      The 2026-08-30 shell guard forces every data change through a migration. So
+      migrations became the ONLY write path for destructive changes — and that path had
+      no backup. Closing one hole opened the other wider. Recorded because it is the
+      argument for doing this item SECOND rather than later.
+    what_atomicity_does_and_does_not_buy: >-
+      _exclusive_tx already prevents a HALF-applied migration. It buys NOTHING against a
+      migration that executes perfectly and deletes the wrong thing — which is exactly
+      what 0112's 242,477 rows were.
+    what_shipped: >-
+      MigrationRunner takes a VERIFIED snapshot before the first change and fails CLOSED
+      if it cannot. Reuses BackupManager (VACUUM INTO + sha256 manifest) and
+      verify_artifact() — rung 1, no new machinery. Only fires when a migration is
+      actually PENDING, so an ordinary boot copies nothing. Retention bounded at 3, and
+      retention deletes ONLY directories matching its own `pre-migration-` prefix,
+      because something already ate one backup on this box and this code will not be the
+      next thing that does.
+    why_fail_closed: >-
+      Applying anyway with a warning is precisely how "we thought we had a backup"
+      happens. An operator who cannot write 336MB has a problem worth stopping for.
+      Matches the established _gate_catastrophic idiom in this tree.
+    MEASURED_COST_before_claiming_it_is_safe:
+      vacuum_into_alone: "6.49s for the live 338.8MB database -> a 335.7MB snapshot."
+      full_rehearsal_end_to_end: "36.69s, on a COPY of the real database. The gap over 6.49s is sha256 of 336MB plus a cross-filesystem write to /tmp; production writes to the same disk."
+      disk: "3 retained x 336MB = ~1GB against 20GB free."
+      when_it_fires: "Only on a boot with a pending migration — i.e. once per upgrade, while agents are already paused. NOT every boot."
+    ACCEPTANCE_CHECK_1_CLOSED_in_production: >-
+      "A boot with nothing pending takes no backup." CLOSED on the live platform at
+      2026-08-31T02:59:00Z: 464 records, ZERO ERRORs, "[db] runner.run: found 128
+      migration files" / "exit — applied=0 skipped=128", zero runner.backup lines, and
+      zero pre-migration-* directories created.
+    ACCEPTANCE_CHECK_2_CLOSED_by_rehearsal_on_the_REAL_database_shape: >-
+      "A pending migration produces a verified snapshot, taken BEFORE the change."
+      Run against a COPY of the live 338MB database with one pending migration — labelled
+      a rehearsal, not production, because nothing is pending in production. Log at INFO:
+      "runner.backup: entry — 1 pending migration(s)" then "runner.backup: exit — verified
+      snapshot at ... (335745024 bytes)" then "applying 9999". The snapshot opened as a
+      real database with 20 skills rows, did NOT contain the migration's change, and the
+      live copy DID. Ordering proven on real data, not asserted.
+    tests: "tests/db/test_migrations_back_up_before_applying.py — 7 passing: backup happens, backup PRE-DATES the damage, no-op boot copies nothing, fail-closed when backup raises, fail-closed when backup LIES (returns a path it never wrote — the 2026-08-30 shape), retention bounded, retention never touches a directory it did not create. Whole tests/db suite: 102 passed in 305s."
+    a_fixture_failure_worth_recording: >-
+      Five of the seven first failed inside _set_schema_version with "no such table:
+      stackowl_meta" — my FIXTURE, not the code. A seeded database without stackowl_meta
+      cannot take the path production takes. Fixed by copying the table definition out of
+      0001_initial.sql rather than inventing one, so it cannot drift silently.
+    baselines: "ruff src/ 35 — BELOW the 37 baseline, because moving the new imports above the _WORD_RE block also cleared two pre-existing E402s in the same file. mypy 65, exactly at baseline."
+    NOT_DONE_AND_WHY: >-
+      The Kuzu graph is NOT in the snapshot. BackupManager writes a kuzu/README.txt saying
+      "snapshot deferred — adapter snapshot() not yet implemented". So a migration is now
+      recoverable and the 39MB graph is not. Raised as ESC-75 rather than fixed here,
+      because the graph is already scheduled for a purge-and-rebuild in phase 3 and
+      backing up a corpus we have agreed to delete would be work aimed at the wrong target.
   GRILLING_2026_08_30_the_graph_was_serving_DELETED_memory_and_identity_has_no_owner:
     how_this_started: >-
       Bakir ran /grill-me. The design tree opened on the memory system and did not
@@ -1012,6 +1091,27 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-51
+    found: 2026-08-31
+    title: "Migrations changed the production database with no backup, while the record claimed one was routine"
+    what: >-
+      src/stackowl/db/ contained zero occurrences of 'backup'. Migration 0112 deleted
+      242,477 rows and its message says "a routine pre-change database backup was taken,
+      as before every migration" — the routine did not exist; that backup was manual.
+      The 2026-08-30 shell guard then made migrations the ONLY path for destructive data
+      changes, so the gap widened.
+    evidence: >-
+      grep 'backup' over src/stackowl/db/*.py and db/migrations/runner.py returned nothing;
+      runner.py's 270 lines wrap _apply in _exclusive_tx (atomicity) with no snapshot.
+      Live boot 2026-08-31T02:59Z shows 128 migrations found, 0 applied.
+    decision: >-
+      MigrationRunner now takes a VERIFIED snapshot before the first change, only when a
+      migration is pending, and fails closed if it cannot. Reuses BackupManager and
+      verify_artifact — no new machinery. Retention bounded at 3 and scoped to its own
+      pre-migration- prefix. Measured: 6.49s for VACUUM INTO of the live 338MB database,
+      36.69s for the full rehearsal including sha256, once per upgrade.
+    residual_risk: "The Kuzu graph is not in the snapshot — see ESC-75."
+    status: "closed — both acceptance checks evidenced, one in production and one by rehearsal on a copy of the real database"
   - id: DEBT-50
     found: 2026-08-30
     title: "The shell tool could write the platform's own database; now it cannot"
