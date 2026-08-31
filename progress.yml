@@ -315,6 +315,35 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TURN_ECONOMICS_PLAN_REMEASURED_2026_08_31_most_of_it_ALREADY_SHIPPED:
+    map_check: "No mapped item matches — evidence-led verification, recorded as DEBT-69."
+    why_this_became_the_item: >-
+      2b turned out to have been fixed two days before Bakir selected it. Rather than
+      discover the rest one stale entry at a time — and risk BUILDING something that already
+      exists, which has now happened five times this week — the item became: re-measure the
+      whole remaining plan against the tree and report what is actually left.
+    THE_STATUS_TABLE_measured_not_recalled:
+      "2b guard note": "SHIPPED 2026-08-29 (08376c14). Appended on all six return paths that have a tool result; the only one without it is guarded by `if tr is None`. Fires: 8 [guardrails] tool-loop warning events, and _warn() logs at INFO under the same condition that sets the note."
+      "3b token bound": "SHIPPED (ef294696, 'pay the fixed prefix fewer times, and bound a turn in TOKENS'). DEFAULT_TURN_MAX_INPUT_TOKENS = 500,000 is applied whenever no explicit cap exists (execute.py:1374-1376). The plan said 'no token bound exists at any scope' — that is no longer true. 500k would have caught the 683,728-token turn that started all of this."
+      "3c cumulative across retries": "SHIPPED as F093 — GovernorBudget seeds _prior_input_tokens and _prior_cost_usd from earlier durable attempts, and its comment cites the SAME incident I did: 'recover-task-925aa68-fix billed 3,893,308 input tokens across 137 model calls under ONE trace_id against a 20-step ceiling'. Note the design differs from my plan and is better: STEPS stay per-attempt and TOKENS go cumulative, because steps bound a loop and tokens bound a task."
+      "1c batching": "SHIPPED in the same commit as 3b — the commit title is literally 'pay the fixed prefix fewer times'."
+      "1b tool-result compaction": "NOT DONE. No compaction module exists under pipeline/budget/."
+      "2c monologue and ping-pong detectors": "NOT DONE. Neither appears in tool_guardrails.py."
+      "2d refund a step on a detected repeat": "RECLASSIFIED — see below."
+    2d_IS_AN_ARCHITECTURE_QUESTION_NOT_A_WIRING_GAP: >-
+      IterationBudget.refund() exists and is called three times — but only from
+      anthropic_provider (steer_folded, format_fix, give_up_directive). execute.py, where the
+      tool-loop guardrail runs, contains ZERO references to IterationBudget or iter_budget:
+      the budget lives inside the PROVIDER and the detector lives in the PIPELINE, with no
+      connection between the layers. Wiring them means threading a provider-internal budget
+      into pipeline dispatch, or moving the detector into the provider — neither is a small
+      change.
+      AND IT PULLS AGAINST WORK THAT JUST SHIPPED. refund()'s own docstring calls it "the one
+      method that can make a bounded loop run longer than its nominal cap suggests". Giving
+      steps back on detected repeats deliberately extends loops, days after a token bound was
+      added to stop exactly that. That tension is a decision, not a defect. ESC-79.
+    what_this_item_prevented: "Building three things that already exist. Five times this week measuring first has found the thing already built — the MemoryProvider ABC, the SkillStore cascade, skill_audit snapshots, canonical_key, and audit_log — and this is the sixth, seventh and eighth."
+    outcome: "no_change_needed on 2b/3b/3c/1c. 1b and 2c remain genuinely undone and are now the only live entries. 2d escalated."
   TURN_ECONOMICS_2b_2026_08_31_no_change_needed_MY_PLAN_WAS_STALE:
     map_check: "No mapped item matches — evidence-led verification, recorded as DEBT-68."
     what_the_plan_claimed: "'_guard_note is appended only on the trustworthy-success branch (execute.py:2233), so loop-guard guidance NEVER reaches the model on the exact turns that are looping on failures. One-line class of bug, live today.' Bakir selected it on that basis."
@@ -1073,6 +1102,15 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_79_should_a_detected_repeat_give_a_step_BACK:
+      question: "You selected 2d — refund a step when the guardrail detects a repeat. Measuring it changed its shape twice. Do you still want it?"
+      why_evidence_cannot_settle_it: "It is a trade between two things you have both asked for: not wasting rounds on repeats, and bounding what a turn can spend. Which wins is appetite."
+      the_measurement: "IterationBudget.refund() exists and is called 3x, but only from anthropic_provider. execute.py — where the tool-loop guardrail runs — has ZERO references to IterationBudget: the budget is provider-internal, the detector is pipeline-level. And refund()'s own docstring calls it 'the one method that can make a bounded loop run longer than its nominal cap suggests', days after DEFAULT_TURN_MAX_INPUT_TOKENS=500,000 shipped to stop long loops."
+      options:
+        a_drop_it: "RECOMMENDED. The token bound now does the job 2d was reaching for, and refunding steps works against it. The 8 detected repeats cost 8 rounds, not a turn."
+        b_move_the_detector_into_the_provider: "Put the repeat detection where the budget already is. Structurally clean; touches the provider's loop, which is the most load-bearing code on the platform."
+        c_thread_the_budget_into_dispatch: "Pass the iteration budget down to execute.py. Smallest conceptual change, and it leaks a provider internal into the pipeline."
+      blocked_until_answered: "Nothing. 1b and 2c are independent."
     ESC_78_the_graph_measurement_is_in_and_it_is_borderline_not_damning:
       question: "Graph context supplies a genuinely novel, non-platform entity to roughly 4% of turns, while injecting 250-322 chars into 65.7% of them from a corpus you ordered deleted. Purge without rebuilding, or rebuild and re-measure?"
       why_evidence_cannot_settle_it: "The number is close to your own 'contributes nothing' threshold rather than clearly past it, and the measurement names exactly what a rebuild would fix — 67% of the residual hits are machine-lane diagnostics your agreed refuse-at-the-writer rule would exclude. Whether that justifies the rebuild is appetite, not derivation."
@@ -1875,6 +1913,18 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-69
+    found: 2026-08-31
+    title: "The turn-economics plan was substantially stale; most of it had already shipped"
+    what: >-
+      Of the stages Bakir selected, 2b, 3b, 3c and 1c were already implemented — two of them
+      by commits that cite the same measurements the plan does. Only 1b (tool-result
+      compaction) and 2c (monologue/ping-pong detectors) remain undone, and 2d turned out to
+      be an architecture question rather than a wiring gap.
+    evidence: "2b: 08376c14, 2026-08-29. 3b/1c: ef294696, DEFAULT_TURN_MAX_INPUT_TOKENS=500,000 applied at execute.py:1374. 3c: F093 seeds _prior_input_tokens, citing the 3,893,308-token incident. 2d: execute.py has zero references to IterationBudget."
+    decision: "Re-measure the whole plan in one pass rather than discovering staleness one entry at a time, and correct the record. Nothing built."
+    residual_risk: "A plan is a snapshot; this one aged in days. Any stage should be re-measured immediately before it is worked, not when it was written."
+    status: "closed"
   - id: DEBT-68
     found: 2026-08-31
     title: "No tool result text is logged, so nothing the model receives from a tool can be evidenced"
