@@ -315,6 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  SKILL_INDEX_2026_08_31_the_cheapest_tier_was_the_first_one_cut:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-81."
+    how_this_item_was_reached: >-
+      Round 0 re-ranked on the SECOND HALF of today only, so a fix shipped this morning
+      could not still look loud. "skill injection: catalog truncated by budget" was first
+      by a distance — 71 since noon and still firing at 18:49.
+    THE_MEASUREMENT:
+      records_today: 249
+      every_one_identical: >-
+        dropped: 3, presented: 21, last_presented 'plan-and-track',
+        first_dropped 'recover-and-retry'.
+      the_corpus: >-
+        TWENTY-FOUR active skills. Rendered as bare names the WHOLE catalogue costs 487
+        characters against a 4,000 cap — and three names, about 66 characters, were dropped
+        on every turn. `recover-and-retry` was invisible to every owl all day.
+    AN_ORDERING_FAULT_NOT_A_SIZE_ONE: >-
+      The renderer funds FULL bodies first, then SUMMARY lines, and gives the catalogue
+      `remaining = cap - used`. So the tier costing len(name)+2 per entry is starved by the
+      tiers costing hundreds.
+    THE_PATTERN_ALREADY_EXISTED_AND_WAS_NEVER_EXTENDED_DOWN_ONE_STEP: >-
+      "_SUMMARY_BUDGET_RESERVE = 800  # chars the FULL tiers cannot consume, so SUMMARY
+      isn't starved". SUMMARY was protected from FULL. CATALOG was protected from nothing,
+      and it is the tier that most deserves it: it is the index of what EXISTS. A skill
+      whose TEXT is missing can still be loaded by name with skill_view; a skill whose NAME
+      is missing cannot be asked for at all. Bakir's own recorded position on the sibling
+      defect one layer up says the same: the capability surface is not overhead.
+    the_reserve_is_DERIVED_and_BOUNDED: >-
+      It is the actual cost of the actual names, so a three-skill corpus holds back about
+      thirty characters. CATALOG_RESERVE_SHARE only bounds it, because an index is not a
+      licence to crowd out every instruction — past the bound the old behaviour returns
+      unchanged, truncating and recording where the cut fell. A SHARE rather than a size so
+      that changing _DEFAULT_CAP moves it too, instead of leaving a second number behind.
+    I_SHIPPED_IT_WRONG_ONCE_AND_PRODUCTION_CAUGHT_IT: >-
+      The first version reserved against the INCOMING tier — skills already marked
+      SkillTier.CATALOG. All eight unit tests passed. Then the restart measurement at 19:03
+      read `dropped: 3, presented: 21` exactly as before. assemble.py:335 passes the whole
+      catalogue as SkillTier.SUMMARY and NOTHING in src/ ever sends CATALOG in, so that tier
+      is reached only by DEMOTION inside the loop — and the reserve was always ZERO in
+      production while the tests, which construct CATALOG entries directly, were green. The
+      programme's own recorded lesson, paid for again: a test proves the path it exercises,
+      not the path production takes. The corrected reserve is over EVERY skill, since any of
+      them can be demoted, and a new test drives the production shape.
+    tests: "8 new in tests/skills/test_the_index_is_not_starved_by_the_text.py, including
+      the production shape (every skill arriving as SUMMARY), a tiny corpus not holding back
+      budget it cannot use, the bound restoring the old truncation for 400 skills, the total
+      still fitting the cap, the text tiers still populated, and the SUMMARY reserve intact."
+    suites: "tests/skills + tests/pipeline/steps 505 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      CLOSED IN PRODUCTION. Before, at 19:03:11 and 19:04:38, rca_gatherer and hypothesis
+      each logged dropped: 3, presented: 21. After the corrected fix and the 19:06:36
+      restart: one rca_gatherer turn at 19:16 and ZERO catalog truncations — the same owl
+      that had truncated thirteen minutes earlier. 568 records since the restart, ZERO
+      ERRORs.
+    closing_query_for_the_longer_run: >-
+      Count "skill injection: catalog truncated by budget" per day. It was 249 on
+      2026-08-31 and should be 0 while the corpus stays under the reserve bound; if it
+      returns, the fields say which name fell off and the corpus has outgrown the share.
+
   GHOST_OWLS_2026_08_31_the_self_heal_loop_was_chasing_owls_that_do_not_exist:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-80."
     how_this_item_was_reached: >-

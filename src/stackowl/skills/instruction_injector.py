@@ -18,6 +18,32 @@ FULL_FLOOR = 0.40     # score >= this -> eligible for ACTIVE (FULL)
 SUMMARY_FLOOR = 0.20  # SUMMARY_FLOOR <= score < FULL_FLOOR -> AVAILABLE (SUMMARY)
 
 _SUMMARY_BUDGET_RESERVE = 800  # chars the FULL tiers cannot consume, so SUMMARY isn't starved
+
+#: The share of the cap the CATALOGUE index may hold back from the text tiers.
+#:
+#: MEASURED 2026-08-31: 249 "catalog truncated by budget" records in one day,
+#: every one reading dropped: 3, presented: 21 — against a corpus of TWENTY-FOUR
+#: skills whose names, rendered bare, cost 487 characters out of a 4,000 cap.
+#: Three names, about 66 characters, were dropped on every turn so that a full
+#: skill body could keep its space, and `recover-and-retry` was invisible to every
+#: owl all day.
+#:
+#: AN ORDERING FAULT, NOT A SIZE ONE. The renderer funds FULL, then SUMMARY, and
+#: gives the catalogue whatever is left — so the tier costing `len(name) + 2` is
+#: starved by the tiers costing hundreds. `_SUMMARY_BUDGET_RESERVE` above already
+#: protects SUMMARY from FULL; nothing protected CATALOG from either, and it is
+#: the tier that most deserves it: it is the index of what EXISTS. A skill whose
+#: text is missing can still be loaded by name with skill_view; a skill whose NAME
+#: is missing cannot be asked for at all.
+#:
+#: THE RESERVE ITSELF IS DERIVED — the actual cost of the actual names — so a
+#: three-skill corpus holds back about thirty characters and a growing one holds
+#: back what it needs. This SHARE only bounds it, because an index is not a licence
+#: to crowd out every instruction; past the bound the old behaviour returns
+#: unchanged, truncating and recording where the cut fell. A share rather than a
+#: size so that changing `_DEFAULT_CAP` moves it too, instead of leaving a second
+#: number behind.
+CATALOG_RESERVE_SHARE = 0.25
 _ACTIVE_HEADER = "## ACTIVE SKILLS — apply these now"
 _PINNED_SUBHEADER = "Core standing skills (always apply):"
 _AVAILABLE_HEADER = "## AVAILABLE — load before using"
@@ -185,8 +211,26 @@ class SkillInstructionInjector:
         full: list[tuple[str, bool]] = []
         summary: list[tuple[str, bool]] = []
         catalog: list[str] = []
+        # RESERVE THE INDEX BEFORE FUNDING THE TEXT. Costed with the same
+        # `len(name) + 2` the catalogue writer below uses, so the two cannot drift,
+        # and bounded by CATALOG_RESERVE_SHARE — see that constant for the
+        # 249-a-day measurement this exists to stop.
+        #
+        # OVER EVERY SKILL, NOT ONLY THOSE ARRIVING AS CATALOG. `assemble.py:335`
+        # passes the whole catalogue as `SkillTier.SUMMARY`; NOTHING in src/ ever
+        # sends `SkillTier.CATALOG` in, so that tier is reached only by DEMOTION
+        # inside the loop below. Reserving against the incoming tier computed ZERO
+        # in production while the unit tests — which construct CATALOG entries
+        # directly — passed. Caught 2026-08-31 by re-measuring after the restart:
+        # still `dropped: 3, presented: 21`. Any skill can be demoted, so the index
+        # they might land in is the whole set.
+        catalog_reserve = min(
+            sum(len(self._catalog_name(sk)) + 2 for sk, _t, _p in tiered),
+            int(cap * CATALOG_RESERVE_SHARE),
+        )
         used = len(_STANDING)
-        full_budget = max(0, cap - _SUMMARY_BUDGET_RESERVE)
+        text_budget = max(0, cap - catalog_reserve)
+        full_budget = max(0, text_budget - _SUMMARY_BUDGET_RESERVE)
         pin_demoted = False
         fenced_sections: set[str] = set()
 
@@ -211,7 +255,7 @@ class SkillInstructionInjector:
                         pin_demoted = True
             if not placed and tier is SkillTier.SUMMARY:
                 extra = _fence_cost("summary", untrusted)
-                if used + len(line) + extra <= cap:
+                if used + len(line) + extra <= text_budget:
                     summary.append((line, untrusted))
                     used += len(line) + extra
                     if extra:
@@ -238,7 +282,7 @@ class SkillInstructionInjector:
             parts.extend(self._fence_runs(summary))
         if catalog:
             parts.append(_CATALOG_HEADER)
-            remaining = max(0, cap - used)
+            remaining = max(0, cap - used)  # the reserve is already unspent here
             shown: list[str] = []
             length = 0
             for nm in catalog:
