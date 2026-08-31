@@ -686,6 +686,10 @@ class SchedulerAssembly:
             # "Update memory depending on the reason" — the SAME bridge live
             # conversation turns stage facts through (memory_components.bridge).
             memory_bridge=memory_components.bridge,
+            # The DURABLE dedup ledger. Without this the handler forgets every
+            # diagnosis on every restart — measured 2026-08-31 at 15,724,829 input
+            # tokens, 72.3% of all spend, re-diagnosing the same 7-8 signatures.
+            db=db,
         )
         HandlerRegistry.instance().register(incident_escalation_handler)
 

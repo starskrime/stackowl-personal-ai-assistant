@@ -315,6 +315,73 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_66_SHIPPED_2026_08_31_the_platform_forgot_every_diagnosis_on_every_restart:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-90."
+    how_this_item_was_reached: >-
+      Bakir, seeing the night's spend: "Why my incidents using 15 million thats is a lot and
+      we need to fix it to have 0." Offered three fixes; he chose (1), RCA re-diagnosis
+      suppression — which is ESC-66, one of the four he had already approved in round 3 and
+      which was never built.
+    THE_MEASUREMENT_and_it_is_the_largest_line_item_on_the_platform:
+      incident_lanes_today: "15,724,829 input tokens — 72.3% of ALL spend."
+      sessions: "126 distinct RCA sessions, mean 125,181 input tokens each."
+      what_they_produced: "100 completions: verified TRUE 12, verified FALSE 86, none 2.
+        Two distinct incident signatures."
+      the_detector_every_tick_all_day: >-
+        21:42 new 7 / 21:56 new 8 / 22:11 new 7 / 22:31 new 8 — the same seven or eight
+        signatures reported NEW every ten minutes.
+      for_scale: "Bakir's own conversations were 2.5% of the day's tokens. The self-healing
+        loop was 72.3%."
+    THE_ROOT_CAUSE: >-
+      The suppression EXISTS and is correct — and it lives in RAM. `_open_incidents` is an
+      instance dict, and so is `_verdict_failures`, the ceiling that stops a no-verdict RCA
+      retrying for ever. Both are perfect within one process and both are EMPTY the moment
+      it is replaced — and this platform exec-replaces its core on every commit as well as
+      on every operator restart. With MAX_RCA_PER_TICK = 1 and seven signatures waiting, the
+      dedup could not even converge before the next restart wiped it. So the loop was:
+      restart, forget, re-diagnose the same seven, reach verified=False 86 times in 100,
+      forget again.
+    THE_STORE_WAS_ALREADY_THERE_AND_ALREADY_USED_FOR_THIS: >-
+      audit_log carries capability.denied / capability.escalated, and find_recurring_gaps
+      skips a pair that already has the escalated marker "so a gap that fires every run
+      alerts once rather than every sweep". Same pattern, same table, no migration, no
+      second engine — the footprint-ladder answer.
+    the_fix: >-
+      record_diagnosis() writes incident.diagnosed on BOTH conclusions — a real verdict AND
+      the give-up ceiling — and recently_diagnosed() filters the new-incident set.
+      VERIFIED OR NOT, because 86 of 100 concluded verified=False and suppressing only the
+      verified would have left the 86 running for ever, which is exactly what happened.
+    the_window_is_arithmetic: >-
+      _DIAGNOSIS_GOOD_FOR_HOURS = 24. At roughly eight live signatures that is at most eight
+      RCAs a day — about 1M tokens against today's 15.7M — and it EXPIRES, because a problem
+      still present tomorrow deserves a fresh look.
+    it_fails_toward_DIAGNOSING: >-
+      An unreadable ledger returns the empty set and the loop behaves exactly as before; a
+      failed write is logged and swallowed. A suppression that fired because a query failed
+      would silently disable the self-heal loop — the failure mode this arc exists to stop.
+    tests: "11 in tests/scheduler/handlers/test_a_diagnosed_incident_survives_a_restart.py,
+      including an UNVERIFIED diagnosis still suppressing, an OLD one expiring, a DIFFERENT
+      signature never suppressed (the expensive direction — over-suppressing blinds the
+      loop), a broken read and a failed write costing nothing, and two STRUCTURAL tests that
+      the handler actually asks the ledger and that assembly passes the db (db=None is a
+      byte-identical no-op, which is exactly how this could have shipped looking done and
+      changing nothing)."
+    suites: "tests/scheduler + tests/tools 2,311 passed, 4 skipped."
+    baselines: "ruff src/ 35, mypy 65 — and a 5-error E402 rise I had introduced in
+      memory.py earlier in the evening was found and fixed here rather than left."
+    validate_CLOSED_IN_PRODUCTION_ACROSS_A_RESTART: >-
+      23:03:27 the RCA concluded verified=False and wrote the ledger row
+      (outcome:shell:stop / incident-b0c290d2cd7d). RESTART at 23:14:30 — which wipes
+      _open_incidents, and before tonight would have made the count 8 again. First tick
+      after it, 23:25:12: "already diagnosed within 24h — not re-running the RCA
+      {'suppressed': 1, 'signatures': ['outcome:shell:stop'], 'still_new': 7}". The
+      diagnosis survived the thing that was erasing it.
+    what_is_a_PROJECTION_and_not_a_measurement: >-
+      The saving. One signature is suppressed so far because the ledger has one row; the
+      other seven earn theirs as they are diagnosed. 8 signatures x ~125k tokens per 24h is
+      about 1M/day against 15.7M, but that is arithmetic on today's shape, not an observed
+      total. The closing query is tomorrow's incident-lane sum in cost_records.
+
   PREFETCH_2026_08_31_the_premise_MOVED_and_the_deciding_question_is_unlogged:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-89."
     how_this_item_was_reached: >-

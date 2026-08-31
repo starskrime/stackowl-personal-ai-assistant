@@ -55,6 +55,7 @@ delegate_task, and feeding the ``FailureOutcomeMiner``) is Task 7, not here.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -235,6 +236,87 @@ class _Incident:
 #: never succeeds cannot suppress a diagnosis that would have worked: a signature
 #: whose RCA produces a verdict registers on its FIRST attempt and never reaches
 #: this path.
+#: The audit event that records "this signature has had an RCA".
+#:
+#: THE SUPPRESSION ALREADY EXISTED AND LIVED IN RAM. `_open_incidents` and
+#: `_verdict_failures` are instance dicts — perfect within one process, EMPTY the
+#: moment it is replaced, and this platform exec-replaces its core on every commit.
+#: MEASURED 2026-08-31: incident lanes spent 15,724,829 input tokens, 72.3% of ALL
+#: spend, over 126 RCA sessions averaging 125,181 tokens; 86 of 100 completions
+#: concluded verified=False; and the detector reported the SAME seven or eight
+#: incidents as "new" on every tick, all day. With one RCA per tick the in-memory
+#: dedup could not even converge before the next restart wiped it.
+#:
+#: THE DURABLE STORE IS THE ONE ALREADY USED FOR THIS EXACT PURPOSE. `audit_log`
+#: carries capability.denied / capability.escalated, and `find_recurring_gaps`
+#: skips a pair that already has the escalated marker "so a gap that fires every
+#: run alerts once rather than every sweep". Same pattern, no new table.
+DIAGNOSED_EVENT = "incident.diagnosed"
+
+#: How long a diagnosis suppresses its signature.
+#:
+#: ARITHMETIC, NOT TASTE: at 24 hours and roughly eight live signatures this is at
+#: most eight RCAs a day — about 1M tokens against today's 15.7M. And it EXPIRES,
+#: because a problem still present tomorrow deserves a fresh look: a stale
+#: diagnosis of a changed system is worth less than a new one.
+_DIAGNOSIS_GOOD_FOR_HOURS = 24.0
+
+
+async def record_diagnosis(
+    db: object, *, signature: str, incident_id: str,
+    verified: bool | None = None, now: float | None = None,
+) -> None:
+    """Record that *signature* has had an RCA. Never raises.
+
+    VERIFIED OR NOT. 86 of today's 100 RCAs concluded verified=False; if only a
+    verified verdict suppressed, those 86 would keep re-running for ever — which is
+    precisely what happened. "We looked and could not explain it" is still an
+    answer, and re-deriving it every ten minutes costs 125,000 tokens a time.
+
+    Bookkeeping must never fail a sweep, so a write error is logged and swallowed.
+    """
+    stamp = time.time() if now is None else now
+    try:
+        await db.execute(  # type: ignore[attr-defined]
+            "INSERT INTO audit_log (event_type, actor, target, timestamp, details, "
+            "integrity_hash, chain_version) VALUES (?,?,?,?,?,?,?)",
+            (DIAGNOSED_EVENT, signature, incident_id, stamp,
+             json.dumps({"verified": verified}), "", "v1"),
+        )
+    except Exception as exc:  # noqa: BLE001 — a ledger write may not cost a tick
+        log.scheduler.warning(
+            "[scheduler] incident_escalation: could not record the diagnosis — "
+            "this signature may be re-diagnosed after a restart",
+            exc_info=exc, extra={"_fields": {"signature": signature}},
+        )
+
+
+async def recently_diagnosed(db: object, *, now: float | None = None) -> set[str]:
+    """Signatures whose RCA is still recent enough to stand.
+
+    FAILS TOWARD DIAGNOSING. An unreadable ledger returns the empty set, so the
+    loop behaves exactly as it did before this existed. A suppression that fired
+    because a query failed would silently disable the self-heal loop — the failure
+    mode this whole arc exists to prevent.
+    """
+    stamp = time.time() if now is None else now
+    since = stamp - _DIAGNOSIS_GOOD_FOR_HOURS * 3600.0
+    try:
+        rows = await db.fetch_all(  # type: ignore[attr-defined]
+            "SELECT DISTINCT actor FROM audit_log WHERE event_type = ? "
+            "AND timestamp >= ? AND actor IS NOT NULL",
+            (DIAGNOSED_EVENT, since),
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.scheduler.warning(
+            "[scheduler] incident_escalation: could not read the diagnosis ledger — "
+            "diagnosing as if nothing had been seen before",
+            exc_info=exc,
+        )
+        return set()
+    return {str(r["actor"]) for r in rows if r["actor"]}
+
+
 _MAX_VERDICT_ATTEMPTS = 3
 
 
@@ -289,7 +371,11 @@ class IncidentEscalationHandler(JobHandler):
         miner: FailureOutcomeMiner | None = None,
         alert: AlertSink | None = None,
         memory_bridge: MemoryBridge | None = None,
+        # The DURABLE half of the dedup. None keeps the old in-memory-only
+        # behaviour exactly, so an unwired handler is byte-identical.
+        db: object | None = None,
     ) -> None:
+        self._db = db
         self._health = health_sweep
         self._outcomes = outcome_store
         self._rca = rca_session
@@ -378,6 +464,32 @@ class IncidentEscalationHandler(JobHandler):
             if sig not in active:
                 del self._open_incidents[sig]
         new_incidents = [inc for sig, inc in active.items() if sig not in self._open_incidents]
+        # THE DURABLE HALF. `_open_incidents` above is an instance dict and is EMPTY
+        # after any restart — and this platform exec-replaces its core on every
+        # commit. MEASURED 2026-08-31: the same seven or eight signatures were
+        # reported "new" on every tick all day, 126 RCA sessions, 15,724,829 input
+        # tokens, 72.3% of ALL spend, 86 of 100 completions concluding
+        # verified=False. Reading the ledger here means a diagnosis survives the
+        # thing that was erasing it.
+        if self._db is not None and new_incidents:
+            already = await recently_diagnosed(self._db, now=self._clock_time())
+            if already:
+                suppressed = [i for i in new_incidents if i.signature in already]
+                if suppressed:
+                    new_incidents = [
+                        i for i in new_incidents if i.signature not in already
+                    ]
+                    # INFO, because this line is the evidence the 15.7M stopped.
+                    log.scheduler.info(
+                        "[scheduler] incident_escalation: already diagnosed within "
+                        "%.0fh — not re-running the RCA",
+                        _DIAGNOSIS_GOOD_FOR_HOURS,
+                        extra={"_fields": {
+                            "suppressed": len(suppressed),
+                            "signatures": sorted(i.signature for i in suppressed)[:8],
+                            "still_new": len(new_incidents),
+                        }},
+                    )
 
         # ADR-19 — drop incidents whose cause is that the diagnostic engine
         # itself is unreachable, BEFORE opening them. Filtered here rather than
@@ -454,6 +566,12 @@ class IncidentEscalationHandler(JobHandler):
             if verdict is not None:
                 self._clear_verdict_failures(inc.signature)
                 self._open_incidents[inc.signature] = incident_id
+                if self._db is not None:
+                    await record_diagnosis(
+                        self._db, signature=inc.signature, incident_id=incident_id,
+                        verified=bool(getattr(verdict, "verified", False)),
+                        now=self._clock_time(),
+                    )
                 self.verdicts[inc.key] = verdict
                 # Task 7 hook — a short-circuited fallback_verdict (ran_rca=False,
                 # the non-retryable/deterministic-domain-failure path) is always an
@@ -482,6 +600,15 @@ class IncidentEscalationHandler(JobHandler):
                     # trying to diagnose this" must never be indistinguishable
                     # from "there was nothing to diagnose" (ADR-19 I6).
                     self._open_incidents[inc.signature] = incident_id
+                    if self._db is not None:
+                        # The ceiling has to be durable too, or a restart hands the
+                        # same signature three more failed RCAs at ~125,000 tokens
+                        # each — which is most of what today's 15.7M bought.
+                        await record_diagnosis(
+                            self._db, signature=inc.signature,
+                            incident_id=incident_id, verified=None,
+                            now=self._clock_time(),
+                        )
                     log.scheduler.warning(
                         "[scheduler] incident_escalation: RCA produced no verdict "
                         "%d times for this signature — giving up on it for now "

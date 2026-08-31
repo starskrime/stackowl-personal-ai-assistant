@@ -53,11 +53,6 @@ from typing import TYPE_CHECKING
 from stackowl.commands.memory_helpers import forget_fact
 from stackowl.infra.observability import log
 from stackowl.memory.curated import DURABILITIES, CuratedMemory, note_write
-
-#: How much of a search query reaches the log. Bounded the same way
-#: `describe_parse_failure`'s `raw_preview` is: enough to compare a query against
-#: the turn's input text, never a second full copy of the conversation in the log.
-_QUERY_PREVIEW_CHARS = 120
 from stackowl.memory.trust import render_at_trust
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -67,6 +62,11 @@ from stackowl.tools.knowledge.skill_validation import scan_text
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.memory.bridge import MemoryBridge
     from stackowl.memory.models import MemoryRecord, StagedFact
+
+#: How much of a search query reaches the log. Bounded the same way
+#: `describe_parse_failure`'s `raw_preview` is: enough to compare a query against
+#: the turn's input text, never a second full copy of the conversation in the log.
+_QUERY_PREVIEW_CHARS = 120
 
 _VALID_ACTIONS: tuple[str, ...] = (
     "add", "replace", "remove", "search", "get", "forget",
