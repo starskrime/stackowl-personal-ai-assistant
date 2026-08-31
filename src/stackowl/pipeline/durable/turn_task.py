@@ -33,10 +33,49 @@ net at all.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
 from stackowl.infra.observability import log
+
+
+async def observe_turn_achievement(writer: Any, *, trace_id: str, goal: str) -> None:
+    """SHADOW: log what this turn's achievement condition WOULD be.
+
+    Bakir, 2026-08-31, after "Give me in pictures" closed as ``completed`` having
+    produced only a promise: the criterion is written from the request, judged
+    later, and enforcement waits on a measured false-positive rate from real
+    traffic. This is the observation half.
+
+    NOT AWAITED BY THE CALLER, and not stored on the row. The enqueue's own
+    contract at the call site is "never raises, never delays the turn", so a model
+    call cannot sit inline; and writing a value nothing reads yet would be a write
+    with no reader — the first failure shape in this project's own list. In shadow
+    the log line IS the deliverable.
+    """
+    try:
+        criterion = await writer.write(request=goal)
+    except Exception as exc:
+        # Every except logs. A failed observation must never affect the turn.
+        log.tasks.warning(
+            "[loop] achievement shadow: writer failed — the turn is unaffected",
+            exc_info=exc, extra={"_fields": {"trace_id": trace_id}},
+        )
+        return
+    from stackowl.interaction.turn_achievement_writer import DEFAULT_ACHIEVEMENT
+
+    log.tasks.info(
+        "[loop] achievement shadow: what would count as done",
+        extra={"_fields": {
+            "trace_id": trace_id,
+            "goal": goal[:160],
+            "achievement": criterion[:160],
+            # The measurement the shadow phase exists to produce: how often a
+            # REAL criterion is written versus falling back to the old constant.
+            "specific": criterion != DEFAULT_ACHIEVEMENT,
+        }},
+    )
 
 #: How long the fast path is trusted to finish before the loop may take the turn
 #: over. Generously longer than a slow real turn (p90 TTFT on this box is ~45s and
@@ -139,6 +178,7 @@ async def enqueue_turn_task(
     owl_name: str | None = None,
     loop_produces: bool = False,
     loop: Any = None,
+    achievement_writer: Any = None,
 ) -> None:
     """Record this turn as a durable task. Never raises.
 
@@ -180,6 +220,15 @@ async def enqueue_turn_task(
             owl_name=owl_name,
             lease_owner=None if loop_produces else f"turn-{uuid.uuid4().hex[:8]}",
         ))
+        # SHADOW observation, spawned rather than awaited — the enqueue promises
+        # never to delay the turn, and a fast-tier call would.
+        if achievement_writer is not None:
+            shadow = asyncio.create_task(
+                observe_turn_achievement(achievement_writer, trace_id=trace_id, goal=goal)
+            )
+            # Hold a reference so the task is not garbage-collected mid-flight,
+            # and surface a crash instead of swallowing it.
+            shadow.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         if loop_produces and loop is not None:
             # Someone is WAITING on this one. A five-second tick is fine for a
             # sweep and awful for a person, so the enqueue wakes the loop now and

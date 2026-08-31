@@ -1269,6 +1269,9 @@ class StartupOrchestrator:
         )
 
         schedule_commit_classifier = ScheduleCommitClassifier(provider_registry)
+        from stackowl.interaction.turn_achievement_writer import TurnAchievementWriter
+
+        turn_achievement_writer = TurnAchievementWriter(provider_registry)
         # Task 7 — manual "do it again" retry-intent classifier (fast tier,
         # fail-closed→not-a-retry). triage.py reads it off services to decide
         # whether a new message asking about a session's pending retry_queue
@@ -1582,6 +1585,7 @@ class StartupOrchestrator:
             feedback_classifier=feedback_classifier,
             retrieval_intent_classifier=retrieval_intent_classifier,
             schedule_commit_classifier=schedule_commit_classifier,
+            turn_achievement_writer=turn_achievement_writer,
             retry_intent_classifier=retry_intent_classifier,
             web_search_registry=web_search_registry,
             delegation_governor=delegation_governor,
@@ -2464,6 +2468,7 @@ class StartupOrchestrator:
                     owl_name=decision.target,
                     loop_produces=_loop_answers,
                     loop=getattr(services, "task_loop", None),
+                    achievement_writer=getattr(services, "turn_achievement_writer", None),
                 )
                 if _loop_answers:
                     # Bakir's design in full: the loop finds the answer and returns

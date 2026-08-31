@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from stackowl.interaction.retrieval_intent_classifier import RetrievalIntentClassifier
     from stackowl.interaction.retry_intent_classifier import RetryIntentClassifier
     from stackowl.interaction.schedule_commit_classifier import ScheduleCommitClassifier
+    from stackowl.interaction.turn_achievement_writer import TurnAchievementWriter
     from stackowl.learning.failure_outcome_miner import RcaVerdict
     from stackowl.learning.lessons_index import LessonsIndex
     from stackowl.learning.tool_heuristic_store import ToolHeuristicStore
@@ -154,6 +155,9 @@ class StepServices:
     # None → the stamp is a no-op — requires_scheduling_commit stays False,
     # byte-identical.
     schedule_commit_classifier: ScheduleCommitClassifier | None = field(default=None)
+    #: Writes what would COUNT as a turn being done, from the request alone.
+    #: SHADOW (2026-08-31): observed and logged; nothing judges or reopens yet.
+    turn_achievement_writer: TurnAchievementWriter | None = field(default=None)
     web_search_registry: WebSearchRegistry | None = field(default=None)
     # E8-S0 — shared budget for in-flight delegated + parliament pipelines.
     # ONE instance, injected here AND into the parliament fan-out so both draw

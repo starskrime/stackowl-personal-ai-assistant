@@ -315,6 +315,89 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  COMPLETION_CONTRACT_2026_08_31_achievement_was_a_CONSTANT_and_shadow_phase_ships:
+    the_question_bakir_asked: "'Problem why task marked as completed. That is our issue.' — asked live, mid-incident, and it was the right question."
+    THE_INCIDENT_MEASURED_END_TO_END: >-
+      03:32:58 Bakir: "Give me in pictures". The turn ran intent_class=conversational with
+      tools_used=FALSE — no tools were presented at all — so the model could only TALK about
+      drawing. It replied "I'll draw this as an actual image for you." Zero image_generate,
+      media_generate or send_file calls anywhere in the window. Task f681e2f0... closed
+      status=completed, delivered_at=03:32:59, verified=NULL.
+    THE_SIX_GATES_THAT_ALL_SAID_YES: >-
+      1. triage classified an artifact request as conversational -> toolless turn.
+      2. the model, having no tools, promised.
+      3. ScheduleCommitClassifier returned NONE — CORRECTLY: it detects promises of
+         SCHEDULED work ("I'll ping you in 5 minutes"), and this was an IMMEDIATE promise.
+         Right answer, wrong detector. The classifier is not broken.
+      4. AcceptanceChecker abstained — as it has 55 times out of 55, never once judging a
+         turn, because acceptance_criteria is None on every chat turn (state.py:272).
+      5. achievement = "the reply is delivered to the user who asked" — SATISFIED.
+      6. task -> completed.
+    THE_ROOT_IN_ONE_LINE: >-
+      turn_task.py:177 hardcoded achievement="the reply is delivered to the user who asked"
+      for EVERY chat turn. All three distinct achievement values across 1,283 live tasks are
+      restatements of delivery (43 + 3 + 3 = 49 tasks carry any achievement at all). So
+      completion checked DELIVERY TWICE and THE GOAL ZERO TIMES. Deliver a promise, and the
+      goal is "achieved". Failure-shape #5 exactly: the field exists, is stored, is read back
+      — and always says the same thing.
+    OPERATOR_DECISIONS_2026_08_31:
+      by: Bakir, across two interactive rounds during the grilling
+      which_engine: "achievement becomes real, and AcceptanceChecker READS it. Not a second mechanism — one source, the other asks it."
+      where_from: "Stated at turn start, from the REQUEST ONLY, before the work — so it cannot be retrofitted to whatever happened."
+      degeneracy: "FORCE IT TO NAME THE OBSERVABLE. 'A reply is delivered' must be structurally invalid as a criterion, because it is true of every turn ever."
+      judge_power: "STRUCTURAL EVIDENCE OVERRULES THE JUDGE. If the criterion names an artifact and no artifact exists, the turn is unachieved whatever the judge says. The judge may downgrade, never upgrade."
+      on_failure: "Back to pending WITH the reason — the ONE LOOP rule verbatim."
+      termination_HIS_OWN_RULE_better_than_my_options: >-
+        "If model can not do or there is a limitation which is not possible to avoid then task
+        can be completed by informing user." An honest, specific impossibility report IS
+        achievement — not a floor, not a failure. The loop ends on either the observable
+        existing OR the user being told plainly what cannot be done, so no arbitrary attempt
+        ceiling is needed as the primary mechanism.
+      escape_hatch_guard: "Check the impossibility claim against WHAT WAS PRESENTED. If a capable tool was offered and simply not called, 'I can't' is false and the task stays open. Free and structural — and it cleanly separates tonight's genuine case (no tools presented at all) from a model taking the easy way out."
+      cost: "TWO calls — one to state the criterion, one to judge it. Against my one-call recommendation; recorded as his deliberate trade."
+      rollout: "SHADOW FIRST — write, judge, log at INFO, reopen NOTHING — until real traffic gives a false-positive rate. Then enforce."
+      order: "Completion first, triage second. Completion is the backstop that catches every future variant; triage is the next item, and the completion check can then measure whether the triage fix worked."
+      image_tool: "YES — secretary should get image_generate. Its manifest lists only web_fetch, browser_extract, browser_recall_url. NOT done in this item."
+    what_shipped_THIS_item_the_shadow_half:
+      map_check: "No mapped item matches — evidence-led work, recorded as DEBT-53."
+      module: "interaction/turn_achievement_writer.py — TurnAchievementWriter.write(request=...) returns a criterion naming the observable, or DEFAULT_ACHIEVEMENT."
+      integrity_is_STRUCTURAL_not_a_docstring_promise: >-
+        write() takes the request and NOTHING ELSE, and the suite asserts that on the
+        SIGNATURE via inspect. A criterion written after seeing the result can be retrofitted
+        to whatever happened, which is the failure being replaced.
+      THE_GUARD_AND_HOW_IT_WAS_WRONG_FIRST: >-
+        "Name the observable" cannot be a list of English phrases — the platform is
+        multilingual. The structural form is: a criterion sharing no content token with the
+        REQUEST is generic by construction, and that works in any script. FIRST VERSION
+        REFUSED A CORRECT CRITERION: "Give me in pictures" vs "an image file is delivered to
+        the user" share nothing — they are SYNONYMS, not the same word — and exact equality
+        is defeated by inflection alone (picture/pictures). Fixed by requiring the prompt to
+        REUSE THE USER'S OWN WORDS and matching by 4-char prefix. The test caught this, not
+        me: the guard looked obviously right and was not.
+      fail_safe_direction: "Every degraded path — no provider, timeout, provider error, empty request, empty criterion, refused criterion — returns the OLD CONSTANT. The worst case of this module is exactly the behaviour that shipped before it, so it cannot regress a turn."
+      NOT_awaited_and_NOT_stored_and_why: >-
+        The enqueue call site states its own contract: "Best-effort: never raises, never
+        delays the turn." A fast-tier call inline would violate it, so the observation is
+        SPAWNED. And the criterion is NOT written to the task row: in shadow nothing reads
+        it, and storing a value with no reader is failure-shape #1. In shadow the INFO log
+        line IS the deliverable.
+      wiring: "services.turn_achievement_writer + constructed in orchestrator beside ScheduleCommitClassifier + passed through enqueue_turn_task. Ships ON."
+    tests: "tests/interaction/test_turn_achievement_writer.py — 16 passing: the live incident request, the degeneracy refusals, an Azerbaijani case proving the guard is not English-specific, inflection tolerance, every fail-safe path, and the signature assertion. tests/interaction + turn_is_a_task: 230 passed. tests/pipeline/durable: 391 passed."
+    baselines: "ruff src/ 35, mypy 65 — both exactly at baseline. Restart 2026-08-31T03:54:39Z: 1,367 records, ZERO ERRORs."
+    ACCEPTANCE_CHECK_OPEN_and_the_denominator_is_ZERO: >-
+      "The shadow line appears for a real chat turn." NOT CLOSED. Zero achievement-shadow
+      lines — over ZERO Telegram updates since the restart. A zero numerator over a zero
+      denominator is not a pass and not a failure; it is no evidence. The path fires only on
+      a chat turn and there is no headless one-shot mode. CLOSING QUERY:
+      grep '"msg": "\[loop\] achievement shadow' ~/.stackowl/logs/stackowl.jsonl | tail
+      The field to read is `specific` — how often a REAL criterion is written versus falling
+      back to the old constant. That rate is what decides whether enforcement is safe.
+    NOT_DONE_deliberately:
+      - "The JUDGE half — nothing evaluates the criterion against the result yet."
+      - "Enforcement — no task is reopened. Bakir chose shadow first."
+      - "The store write — achievement stays the constant on the row until something reads it."
+      - "Triage — the true first gate, and the agreed NEXT item."
+      - "secretary's image_generate — authorised, separate item."
   PHASE_2_ITEM_0_2026_08_31_the_purge_was_RECOVERABLE_after_all:
     the_correction_this_item_exists_to_make: >-
       On 2026-08-30 I told Bakir the 151 purged skills were unrecoverable, measured that
@@ -1150,6 +1233,30 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-53
+    found: 2026-08-31
+    title: "A task's achievement condition was a constant restating delivery, so completion never checked the goal"
+    what: >-
+      turn_task.py:177 hardcoded achievement="the reply is delivered to the user who asked" for
+      every chat turn. "Give me in pictures" ran toolless, the model promised an image it had no
+      tool to make, the promise was delivered, and the task closed completed.
+    evidence: >-
+      All three distinct achievement values across 1,283 tasks restate delivery; only 49 tasks
+      carry any achievement at all. AcceptanceChecker has logged "abstained — no acceptance
+      criteria for this turn" 55 times out of 55, never judging anything. The incident turn shows
+      intent_class=conversational, tools_used=false, zero media tool calls, status=completed,
+      verified=NULL.
+    decision: >-
+      TurnAchievementWriter writes a criterion from the request alone, before the work, refusing
+      any criterion that references nothing in the request. Shipped in SHADOW at Bakir's
+      direction: logged at INFO, not stored, nothing judged, nothing reopened. Fail-safe on every
+      degraded path is the old constant, so it cannot regress a turn.
+    residual_risk: >-
+      The guard is lexical overlap, which refused a correct synonym-based criterion on its first
+      version; the prompt now requires reusing the user's words and matching tolerates inflection,
+      but the true refusal rate is unmeasured until real traffic arrives. That rate is the shadow
+      phase's whole purpose.
+    status: "open — shipped and live; the live acceptance check has a ZERO denominator (no chat turns since restart) and its closing query is recorded in current"
   - id: DEBT-52
     found: 2026-08-31
     title: "128 purged skills were recoverable from the audit trail, after I reported the loss as final"
