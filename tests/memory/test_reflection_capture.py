@@ -61,9 +61,14 @@ def test_parse_reflection_response_rejects_empty_summary() -> None:
 
 
 def test_parse_reflection_response_tolerates_missing_strategy() -> None:
-    # Spec says both keys required, so this returns None (validator catches it).
+    """The name was right and the assertion was not — CHANGED 2026-08-31 on the
+    evidence its sibling instrumentation was built to collect: 15 of 64 live parse
+    failures were a VALID object with keys ['summary'] and missing
+    ['suggested_strategy']. Both readers already guard on the field
+    (classify.py:284, reflection_writer_handler.py:424) and the parser itself
+    defaults it to "" four lines below the gate that rejected it."""
     raw = '{"summary": "x"}'
-    assert parse_reflection_response(raw) is None
+    assert parse_reflection_response(raw) == ("x", "")
 
 
 def test_parse_reflection_response_handles_fenced_block() -> None:

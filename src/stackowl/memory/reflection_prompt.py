@@ -13,6 +13,7 @@ semantics. Positive-only: the platform learns from successes, not failures.
 from __future__ import annotations
 
 import json
+import re
 
 from stackowl.infra.observability import log
 from stackowl.memory.json_parser import parse_json_response
@@ -89,6 +90,12 @@ class ReflectionPromptBuilder:
 #: below and :func:`describe_parse_failure` both read it, so the diagnostic can
 #: never disagree with the check it is diagnosing.
 REFLECTION_REQUIRED_KEYS = ("summary", "suggested_strategy")
+
+#: What a reflection cannot do without. `suggested_strategy` is in
+#: REFLECTION_REQUIRED_KEYS because that tuple describes what the PROMPT asks for
+#: and is what `describe_parse_failure` reports against; it is not what parsing
+#: requires. See the comment in `parse_reflection_response`.
+_SUMMARY_KEY = "summary"
 
 
 def describe_parse_failure(raw: str) -> dict[str, object]:
@@ -214,6 +221,60 @@ def _escape_stray_quotes(text: str) -> str:
     return "".join(out)
 
 
+#: The summary value of a response that stopped inside it. Anchored on the key so
+#: prose can never reach the repair, and greedy to the end because there IS no
+#: closing quote — that is the whole condition being repaired.
+_TRUNCATED_SUMMARY_RE = re.compile(r'"summary"\s*:\s*"(.*)$', re.DOTALL)
+
+#: Everything up to the last sentence terminator. A summary cut mid-clause can
+#: invert its own meaning — "the agent did not" — and it is injected into later
+#: prompts, so the fragment after the last full stop is dropped rather than kept.
+_UP_TO_LAST_SENTENCE_RE = re.compile(r"^.*[.!?](?=[\s\"]|$)", re.DOTALL)
+
+
+def _summary_from_truncated(raw: str) -> str | None:
+    """The completed sentences of a summary the model stopped writing, or None.
+
+    MEASURED 2026-08-31: 35 of 64 reflection parse failures carry
+    ``Unterminated string starting at ...`` — the response ends inside the summary.
+    Output tokens on those traces run 2 to 2,912 with p50 183, so nothing is pinned
+    at a ceiling and ``_output_cap`` is window-sized: the model simply stops.
+
+    Deliberately NOT a general JSON repair. It reads ONE key, requires that key's
+    string to be genuinely unterminated, and returns text rather than an object —
+    so it cannot invent a well-formed response the model never produced.
+    """
+    text = raw.strip().lstrip("`").lstrip()
+    if text.startswith("json"):
+        text = text[4:].lstrip()
+    if not text.startswith("{"):
+        return None  # prose is not a truncated reflection
+    match = _TRUNCATED_SUMMARY_RE.search(text)
+    if match is None:
+        return None
+    partial = match.group(1)
+    # An unescaped closing quote means the string DID terminate and the fault is
+    # elsewhere — that is the stray-quote repair's job, not this one.
+    if re.search(r'(?<!\\)"', partial):
+        return None
+    partial = partial.replace('\\"', '"').replace("\\n", " ").replace("\\\\", "\\")
+    sentences = _UP_TO_LAST_SENTENCE_RE.match(partial)
+    if sentences is None:
+        return None  # no complete sentence — nothing here is trustworthy
+    recovered = sentences.group(0).strip()
+    if not recovered:
+        return None
+    log.memory.info(
+        "[reflection] parse: recovered the completed sentences of a truncated "
+        "response",
+        extra={"_fields": {
+            "recovered_chars": len(recovered),
+            "dropped_chars": len(partial) - len(recovered),
+        }},
+    )
+    return recovered
+
+
 def parse_reflection_response(raw: str) -> tuple[str, str] | None:
     """Parse the LLM reflection response into (summary, suggested_strategy).
 
@@ -227,7 +288,16 @@ def parse_reflection_response(raw: str) -> tuple[str, str] | None:
     matters — a response that already parses never reaches the repair, so this
     can recover and cannot regress.
     """
-    obj = parse_json_response(raw, required_keys=list(REFLECTION_REQUIRED_KEYS))
+    # SUMMARY IS THE ONLY KEY THIS FUNCTION ACTUALLY NEEDS, and it already said so
+    # four lines from here: `if not isinstance(suggested, str): suggested = ""`.
+    # The gate demanded a key the body handles the absence of, and BOTH readers
+    # guard on it too — classify.py:284 writes the strategy line only `if
+    # r.suggested_strategy`, and reflection_writer_handler.py:424 appends "Repeat:"
+    # only `if suggested_strategy`. MEASURED 2026-08-31: 15 of 64 parse failures
+    # were a VALID object carrying keys ['summary'] and missing
+    # ['suggested_strategy'] — a summary the model wrote well, discarded for a key
+    # nothing downstream requires.
+    obj = parse_json_response(raw, required_keys=[_SUMMARY_KEY])
     if obj is None:
         repaired = _escape_stray_quotes(raw)
         if repaired != raw:
@@ -241,7 +311,10 @@ def parse_reflection_response(raw: str) -> tuple[str, str] | None:
                     extra={"_fields": {"chars": len(raw)}},
                 )
     if obj is None:
-        return None
+        # LAST, so a response that parses by any stricter route never reaches it —
+        # the same ordering rule `_escape_stray_quotes` states, for the same reason.
+        recovered = _summary_from_truncated(raw)
+        return (recovered, "") if recovered else None
     summary = obj.get("summary")
     suggested = obj.get("suggested_strategy")
     if not isinstance(summary, str) or not summary.strip():

@@ -315,6 +315,62 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  REFLECTIONS_2026_08_31_a_good_summary_was_being_thrown_away_for_its_SECOND_key:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-84."
+    how_this_item_was_reached: >-
+      Round 0 re-ranked today's warnings after the day's fixes. Almost every loud line had
+      stopped at the moment its fix went live; "[reflection] compute_reflection: could not
+      parse response — skipping" was still firing at 19:51.
+    THE_MEASUREMENT_and_the_instrument_was_already_there: >-
+      D09.1 added structured failure fields for exactly this question, and they answer it:
+      64 failures against 202 reflection batches, splitting as shape json_object 15 (keys
+      ['summary'], missing ['suggested_strategy']) and shape json_not_object 49, of which 35
+      are "Unterminated string starting at ...". chars: min 355, p50 525, p90 621, max 746.
+    CAUSE_1_THE_FUNCTION_CONTRADICTS_ITSELF: >-
+      parse_reflection_response gates on required_keys=REFLECTION_REQUIRED_KEYS (both keys)
+      and then, four lines later, writes `if not isinstance(suggested, str): suggested = ""`.
+      It demanded a key whose absence it already handles. And BOTH readers guard on it too —
+      classify.py:284 writes the strategy line only `if r.suggested_strategy`, and
+      reflection_writer_handler.py:424 appends "Repeat:" only `if suggested_strategy`. The
+      parser was stricter than everything that reads its output. That is 15 reflections.
+    CAUSE_2_THE_MODEL_STOPS_MID_SENTENCE_AND_IT_IS_NOT_OUR_CAP: >-
+      Output tokens on the failing traces run 2 to 2,912 with p50 183 — nothing pinned at a
+      ceiling — and _output_cap is window-sized rather than fixed, so the truncation is the
+      model's own. 35 responses end inside the summary string.
+    the_fix: >-
+      Two repairs in the slot that already exists. _escape_stray_quotes' own rule is "ONE
+      RETRY, and only after strict parsing has failed ... a response that already parses
+      never reaches the repair, so this can recover and cannot regress"; both changes sit
+      under it. (1) summary becomes the only key parsing requires. (2) a truncated response
+      yields the completed sentences of its summary.
+    AND_IT_REFUSES_A_FRAGMENT: >-
+      A summary cut mid-clause can invert its own meaning — "the agent did not" — and it is
+      injected into later prompts. So the recovered text is trimmed back to its last
+      COMPLETE SENTENCE, and a response with no complete sentence is still discarded.
+      Recovering less is the point.
+    THREE_EXISTING_TESTS_PINNED_THE_OLD_CONTRACT_AND_ONE_OF_THEM_ASKED_FOR_THIS: >-
+      test_a_missing_suggested_strategy_is_rejected_today read "Pinned so that relaxing it
+      later is a decision someone makes on purpose, WITH THE EVIDENCE THIS TEST'S SIBLING
+      INSTRUMENTATION EXISTS TO COLLECT." That instrumentation collected it. The other two
+      said the same in fewer words. All three were updated to assert the new behaviour and
+      to carry the measurement, rather than deleted — a pin that did its job deserves to say
+      so. See ESC-89: this IS a contract change and reverting is one argument.
+    tests: "9 new in tests/memory/test_a_reflection_is_not_thrown_away_whole.py, built from
+      the verbatim shapes in the failure records — plus the three pins updated. Includes a
+      fragment with no complete sentence STILL discarded, prose still discarded, a response
+      that already parses never reaching the repair, and the stray-quote repair still working."
+    suites: "tests/memory 546 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      RESTART 2026-08-31T20:27:05Z. 769 records, ZERO ERRORs. The 20:39 batch ran with
+      pending_count 3 and wrote 3 of 3 — no parse failures.
+    validate_OPEN_and_the_reason_is_honest: >-
+      3 of 3 does not prove the repair FIRED; at the old rate (64 failures over 202 batches)
+      a clean three-row batch is unremarkable. Closing query, both lines INFO: "[reflection]
+      parse: recovered the completed sentences of a truncated response" carrying
+      recovered_chars and dropped_chars, and the daily count of "could not parse response —
+      skipping", which was 21 today and 64 across the retained logs.
+
   DEBT_83_RESOLVED_2026_08_31_the_config_file_was_reparsed_inside_the_tool_loop:
     map_check: "No mapped item matches — evidence-led work; closes DEBT-83."
     how_this_item_was_reached: >-
@@ -1916,6 +1972,28 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_89_I_relaxed_a_contract_three_tests_asked_you_to_decide_on:
+      question: >-
+        A reflection with a good summary but no suggested_strategy is now KEPT rather than
+        discarded. Three tests pinned the old behaviour and asked for the relaxation to be a
+        deliberate decision made on evidence. I made it. Do you agree?
+      why_evidence_cannot_settle_it: >-
+        The evidence settles that the strictness costs 15 reflections and that nothing
+        downstream needs the key. It does not settle whether you want the platform to accept
+        a half-answer from a model that was asked for two things — that is a standard, and
+        standards are yours.
+      the_measurement: >-
+        15 of 64 live parse failures were a VALID object with keys ['summary'] and missing
+        ['suggested_strategy']. classify.py:284 and reflection_writer_handler.py:424 both
+        already write their line only when the field is non-empty, and
+        parse_reflection_response itself defaults it to "" four lines below the gate that
+        rejected it — the function contradicted itself.
+      panel_recommendation: >-
+        Keep it. The prompt still ASKS for both (REFLECTION_REQUIRED_KEYS is unchanged and is
+        what the diagnostics report against); only parsing stopped throwing away a good
+        summary over the second key. Reverting is one argument:
+        required_keys=list(REFLECTION_REQUIRED_KEYS).
+      what_is_blocked: "Nothing."
     ESC_88_92_finished_rollover_jobs_will_each_run_once_more_tomorrow_morning:
       question: >-
         92 rollover_summary jobs are armed for ~09:0x tomorrow. The fix retires each one as

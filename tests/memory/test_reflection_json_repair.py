@@ -109,10 +109,14 @@ def test_prose_is_still_rejected() -> None:
     assert _both("I think it went well, honestly.") is None
 
 
-def test_a_missing_required_key_is_STILL_rejected() -> None:
-    """The fifth record's shape. Deliberately unchanged — relaxing the contract is
-    a separate decision, and this repair is not a backdoor to it."""
-    assert _both(json.dumps({"summary": "only one key"})) is None
+def test_a_missing_strategy_is_now_KEPT_and_that_was_a_deliberate_decision() -> None:
+    """This test used to read "STILL rejected — relaxing the contract is a separate
+    decision, and this repair is not a backdoor to it". That was right: it was not
+    a backdoor. The decision was made separately on 2026-08-31, on measurement —
+    15 of 64 live failures were a valid object missing only this key, while both
+    readers and the parser's own body already treat it as optional. Reverting is
+    one argument: `required_keys=list(REFLECTION_REQUIRED_KEYS)`."""
+    assert _both(json.dumps({"summary": "only one key"})) == ("only one key", "")
 
 
 def test_empty_and_garbage_never_raise() -> None:

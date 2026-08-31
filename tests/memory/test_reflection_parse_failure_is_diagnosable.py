@@ -44,13 +44,20 @@ def test_both_keys_parse() -> None:
     ) == ("X worked", "do X")
 
 
-def test_a_missing_suggested_strategy_is_rejected_today() -> None:
-    """Current behaviour, and the docstring agrees: both keys are required.
+def test_a_missing_suggested_strategy_is_KEPT_since_2026_08_31() -> None:
+    """This pin asked for exactly one thing and got it.
 
-    Pinned so that relaxing it later is a decision someone makes on purpose,
-    with the evidence this test's sibling instrumentation exists to collect.
+    It read: "Pinned so that relaxing it later is a decision someone makes on
+    purpose, with the evidence this test's sibling instrumentation exists to
+    collect." That instrumentation collected it: across the retained logs, 64
+    reflection parse failures, of which 15 carried shape json_object, keys
+    ['summary'], missing ['suggested_strategy'] — a summary the model wrote well,
+    discarded whole for a key that classify.py:284 and
+    reflection_writer_handler.py:424 both already guard on.
     """
-    assert parse_reflection_response(json.dumps({"summary": "X worked"})) is None
+    assert parse_reflection_response(
+        json.dumps({"summary": "X worked"})
+    ) == ("X worked", "")
 
 
 def test_a_present_but_non_string_suggested_strategy_is_TOLERATED() -> None:
