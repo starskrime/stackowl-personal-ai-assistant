@@ -315,6 +315,47 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DELETION_AUDIT_2026_08_31_the_general_hash_chained_log_ALREADY_EXISTED:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-63."
+    his_decision: "'Generalise the existing audit, ONE table — one deletion-audit record for every store, carrying table, key, full row and reason. A per-store audit table is that mistake in miniature.' Plus: 'enough to reconstruct the row', and 'bound by age, keep deletions longest'."
+    THE_FIFTH_TIME_MEASURING_FIRST_FOUND_THE_THING_ALREADY_BUILT: >-
+      I was about to design a deletion-audit table. `audit_log` already IS the platform's
+      general audit — 11,053 rows spanning memory.contradiction 9,134, consent.decision 928,
+      job_rearmed_after_failure 518, capability.denied 90 — with event_type / actor / target /
+      JSON details, an INTEGRITY_HASH and chain_version, an async writer
+      (audit/logger.chain_append_via_pool) that keeps the chain intact across writers, and a
+      retention sweep that AUDITS ITS OWN PRUNING. A new table would have been the exact
+      mistake he named, and would have thrown away tamper-evidence that already works.
+    so_the_item_became_two_narrow_gaps:
+      one: "Nothing wrote a deletion event carrying the ROW. `row.deleted` is now an event type on the log that exists, written through the writer that exists, inheriting the hash chain for free."
+      two: "Retention was a flat 90 days for everything. Deletion records are the only rows on that log that are a RECOVERY PATH rather than a history, so they now hold to their own 365-day cutoff — ordinary edits age out first."
+    THE_FIRST_CALLER_IS_REAL_not_a_placeholder: >-
+      OwlStore.delete — shipped hours earlier — removed owls + owl_dna + owl_dna_authored +
+      dna_checkpoints + skill_ownership with NO record of what was in them. It now SELECTs *
+      from each table and records the full rows BEFORE the transaction. A key alone restores
+      nothing, and restoring is the only reason the record exists. Wiring it to the sweep
+      only, with no caller today, would have been decoration.
+    why_not_ALSO_the_skill_store: "Skills already have a richer trail — skill_audit.snapshot_json holds full SKILL.md bodies, which is what made 128 purged skills recoverable. Recording skill deletions twice would be the duplicate this item exists to avoid."
+    BEFORE_not_after_and_the_trade_is_stated: >-
+      Writing the record first means a delete that then fails leaves a record of a deletion
+      that did not happen — misleading. Writing after means a crash between the two loses the
+      only copy of the data. His instruction was explicit ("then deletes"), and losing the
+      data is the worse of the two. Recorded rather than hidden.
+    A_BUG_RUFF_CAUGHT_THAT_338_PASSING_TESTS_DID_NOT: >-
+      My scripted edit added DELETION_EVENT to retention.py's prune SQL but its import
+      replacement silently did not apply — the anchor string was not in that file. `prune()`
+      would have raised NameError the first time it ran. 338 tests passed anyway BECAUSE NOT
+      ONE OF THEM CALLS prune(). ruff's F821 found it; I then ran prune() for real against a
+      seeded database to prove the path executes rather than trusting the linter. A test that
+      never takes the path proves nothing about the path.
+    tests: "tests/audit/test_deletion_audit.py — 7 passing: the whole row is preserved, table/actor recorded, the record joins the hash chain, an empty deletion writes nothing, a broken database does not raise, a 500KB row is bounded and says truncated, and a BLOB column does not lose the rest of the record. tests/owls gains 2: the cascade records what it deletes, and deleting a missing owl records nothing. tests/audit + tests/owls: 338 passed."
+    baselines: "ruff src/ 35 (it briefly read 39 — those were the four F821s above, fixed, not baselined). mypy 65. Restart 2026-08-31T08:24:22Z: 2,198 records, 1 ERROR and it is the already-filed DEBT-55 incident_escalation timeout, not fallout."
+    ACCEPTANCE_CHECK_OPEN: >-
+      "A real deletion leaves a reconstructable record." NOT CLOSED — it needs an owl to be
+      deleted, which does not happen spontaneously. CLOSING QUERY:
+      SELECT target, json_extract(details,'$.row_count'), json_extract(details,'$.reason')
+        FROM audit_log WHERE event_type='row.deleted' ORDER BY audit_id DESC LIMIT 10;
+    NEXT_and_now_UNBLOCKED: "The daily reconciliation sweep. Bakir made an UNCAPPED sweep conditional on exactly this snapshot existing; it does now."
   GRAPH_REPLAY_2026_08_31_the_measurement_Bakir_made_the_rebuild_conditional_ON:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-62."
     his_condition: "'MEASURE what graph context is worth BEFORE rebuilding. If it is worth nothing, the rebuild does not happen.' Method also his: offline replay against a copy, ALL real user messages with machine lanes excluded, lexical overlap primary."
@@ -1642,6 +1683,18 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-63
+    found: 2026-08-31
+    title: "Deleted rows left no record of what they contained"
+    what: >-
+      The owl identity cascade removed five tables with no snapshot, and Bakir made an uncapped
+      reconciliation sweep conditional on that snapshot existing. audit_log already provided a
+      general, hash-chained audit with a writer and a retention sweep; only a deletion EVENT
+      carrying the row was missing, plus a longer retention for it.
+    evidence: "audit_log: 11,053 rows, event_type/actor/target/details + integrity_hash + chain_version; audit/logger.chain_append_via_pool keeps the chain across writers; AuditRetention.prune audits its own pruning at a flat 90 days."
+    decision: "row.deleted as an event type on the existing log, written before the delete, bounded at 100KB, never raising. Retention differentiated: deletions held 365 days because they are a recovery path rather than a history. Wired into OwlStore.delete; NOT into SkillStore, which already has skill_audit.snapshot_json."
+    residual_risk: "Written BEFORE the delete, so a delete that then fails leaves a record of one that did not happen. The alternative loses the data on a crash; the trade is stated in the module."
+    status: "open — shipped and live; acceptance check needs a real deletion, closing query recorded in current"
   - id: DEBT-62
     found: 2026-08-31
     title: "Graph context measured: ~4% of turns get a genuinely novel entity, 67% of hits are platform vocabulary"

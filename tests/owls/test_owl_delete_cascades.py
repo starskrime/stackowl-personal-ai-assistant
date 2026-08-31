@@ -181,3 +181,49 @@ async def test_the_cascade_runs_even_when_only_the_shadows_remain(db: DbPool) ->
 
     assert await _count(db, "owl_dna", "orphan") == 0
     assert await _count(db, "skill_ownership", "orphan") == 0
+
+
+# =========================================================================== #
+# 4. The cascade records what it removed
+# =========================================================================== #
+
+
+async def test_the_cascade_records_the_rows_it_deletes(db: DbPool) -> None:
+    """Bakir: "snapshot the deleted rows before deleting."
+
+    A record saying "removed an owl" tells you the damage happened and nothing
+    about undoing it — which is exactly where the 2026-08-30 purge left us.
+    """
+    import json
+
+    from stackowl.audit.deletions import DELETION_EVENT
+
+    store = OwlStore(db)
+    await store.upsert(_manifest("ghost"))
+    await _seed_owl_everywhere(db, "ghost")
+
+    await store.delete("ghost")
+
+    rows = await db.fetch_all(
+        "SELECT target, details FROM audit_log WHERE event_type = ?", (DELETION_EVENT,)
+    )
+    by_table = {str(r["target"]): json.loads(str(r["details"])) for r in rows}
+    assert "owl_dna" in by_table, "the DNA rows went unrecorded"
+    assert by_table["owl_dna"]["rows"][0]["owl_name"] == "ghost"
+    assert "ghost" in by_table["owl_dna"]["reason"]
+    # skill_ownership is identity too, and its loss is what re-attached dead
+    # skill names to live owls at boot.
+    assert "skill_ownership" in by_table
+
+
+async def test_deleting_a_missing_owl_records_nothing(db: DbPool) -> None:
+    """An empty sweep must not fill the audit with empty records."""
+    from stackowl.audit.deletions import DELETION_EVENT
+
+    store = OwlStore(db)
+    await store.delete("never-existed")
+
+    rows = await db.fetch_all(
+        "SELECT COUNT(*) AS c FROM audit_log WHERE event_type = ?", (DELETION_EVENT,)
+    )
+    assert int(rows[0]["c"]) == 0

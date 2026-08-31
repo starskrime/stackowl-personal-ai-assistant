@@ -116,6 +116,45 @@ class OwlStore:
                                "display_name": manifest.display_name or ""}},
         )
 
+    #: Every store this cascade empties, with the column each is keyed by. One
+    #: list, so a table added to the cascade cannot be forgotten by the recorder.
+    _IDENTITY_TABLES: tuple[tuple[str, str], ...] = (
+        ("owls", "name"),
+        ("owl_dna", "owl_name"),
+        ("owl_dna_authored", "owl_name"),
+        ("dna_checkpoints", "owl_name"),
+        ("skill_ownership", "owl_name"),
+    )
+
+    async def _record_identity_before_delete(self, name: str) -> None:
+        """Write what the cascade is about to remove into the shared audit log.
+
+        SELECT * rather than a key list: a key alone restores nothing, and
+        restoring is the only reason the record exists.
+
+        Never raises — the caller is mid-delete.
+        """
+        from stackowl.audit.deletions import record_deleted_rows
+
+        for table, column in self._IDENTITY_TABLES:
+            try:
+                rows = await self._db.fetch_all(
+                    f"SELECT * FROM {table} WHERE {column} = ?", (name,),  # noqa: S608
+                )
+            except Exception as exc:
+                log.startup.warning(
+                    "[owls] store.delete: could not read %s before deleting it",
+                    table, exc_info=exc, extra={"_fields": {"owl": name}},
+                )
+                continue
+            await record_deleted_rows(
+                self._db,
+                table=table,
+                rows=[dict(r) for r in rows],
+                reason=f"owl {name!r} deleted — identity cascade",
+                actor="OwlStore.delete",
+            )
+
     async def delete(self, name: str) -> bool:
         """Remove an owl and EVERY store that holds its identity, in one transaction.
 
@@ -148,6 +187,13 @@ class OwlStore:
         made 128 purged skills recoverable.
         """
         before = await self.count()
+        # WHAT WAS IN THEM, BEFORE THEY STOP EXISTING. Bakir, 2026-08-31:
+        # "snapshot the deleted rows before deleting". A record saying "removed
+        # an owl" tells you the damage happened and nothing about undoing it —
+        # which is precisely the position the 2026-08-30 purge left us in.
+        # Best-effort and never raises: a failed record must not become a failed
+        # deletion.
+        await self._record_identity_before_delete(name)
         async with self._db.transaction() as tx:
             await tx.execute(
                 "DELETE FROM owls WHERE name = ? AND owner_id = ?", (name, self._owner_id)

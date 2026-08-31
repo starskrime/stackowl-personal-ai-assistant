@@ -9,6 +9,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from stackowl.audit.deletions import DELETION_EVENT
+
 log = logging.getLogger("stackowl.audit")
 
 _TRIGGER_SQL = """\
@@ -30,7 +32,20 @@ class AuditRetention:
     in the DreamWorker scheduled context.
     """
 
-    def __init__(self, db_path: Path, retention_days: int = 90) -> None:
+    #: Deletion records outlive everything else, because they are the only rows
+    #: on this log that are a RECOVERY PATH rather than a history. Bakir,
+    #: 2026-08-31: "bound by age, keep deletions longest" — ordinary edits age
+    #: out; the record of what a row CONTAINED is what someone needs at 3am
+    #: trying to undo something. Anything that only appends poisons its reader,
+    #: so this is a longer bound, not the absence of one.
+    DELETION_RETENTION_DAYS = 365
+
+    def __init__(
+        self,
+        db_path: Path,
+        retention_days: int = 90,
+        deletion_retention_days: int = DELETION_RETENTION_DAYS,
+    ) -> None:
         # 1. ENTRY
         log.debug(
             "[audit] retention.init: entry",
@@ -38,6 +53,7 @@ class AuditRetention:
         )
         self._db_path = db_path
         self._retention_days = retention_days
+        self._deletion_retention_days = deletion_retention_days
         # 4. EXIT
         log.debug("[audit] retention.init: exit")
 
@@ -59,6 +75,9 @@ class AuditRetention:
         # 2. DECISION — compute cutoff timestamp
         cutoff_dt = datetime.now(UTC) - timedelta(days=self._retention_days)
         cutoff_ts = cutoff_dt.timestamp()
+        deletion_cutoff_ts = (
+            datetime.now(UTC) - timedelta(days=self._deletion_retention_days)
+        ).timestamp()
         log.debug(
             "[audit] retention.prune: decision — cutoff computed",
             extra={"_fields": {"cutoff_iso": cutoff_dt.isoformat(), "cutoff_ts": cutoff_ts}},
@@ -70,8 +89,10 @@ class AuditRetention:
             try:
                 # 3. STEP — count rows to prune
                 row = conn.execute(
-                    "SELECT COUNT(*) FROM audit_log WHERE timestamp < ?",
-                    (cutoff_ts,),
+                    "SELECT COUNT(*) FROM audit_log WHERE "
+                    "(timestamp < ? AND event_type != ?) OR "
+                    "(timestamp < ? AND event_type = ?)",
+                    (cutoff_ts, DELETION_EVENT, deletion_cutoff_ts, DELETION_EVENT),
                 ).fetchone()
                 count_to_prune: int = row[0] if row else 0
                 log.debug(
@@ -85,9 +106,16 @@ class AuditRetention:
                     conn.execute("BEGIN EXCLUSIVE")
                     try:
                         conn.execute("DROP TRIGGER IF EXISTS audit_log_no_delete")
+                        # Deletion records are held to their own, longer cutoff.
                         conn.execute(
-                            "DELETE FROM audit_log WHERE timestamp < ?",
-                            (cutoff_ts,),
+                            "DELETE FROM audit_log WHERE timestamp < ? "
+                            "AND event_type != ?",
+                            (cutoff_ts, DELETION_EVENT),
+                        )
+                        conn.execute(
+                            "DELETE FROM audit_log WHERE timestamp < ? "
+                            "AND event_type = ?",
+                            (deletion_cutoff_ts, DELETION_EVENT),
                         )
                         conn.execute(_TRIGGER_SQL)
                         conn.execute("COMMIT")
