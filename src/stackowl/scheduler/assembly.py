@@ -512,6 +512,12 @@ class SchedulerAssembly:
             TaskOutcomeStore(db),
         )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
+        # A CONCLUDED RCA IS DURABLE CONTENT, not a flap. Same builder — the address
+        # resolution is the fiddly half and two copies of it is two things to get
+        # wrong — with the one flag that differs made explicit.
+        incident_alert = _build_health_alert_sink(
+            proactive_deliverer, settings, ephemeral=False,
+        )
         from stackowl.health.channel_healers import ChannelHealers
         from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
 
@@ -682,7 +688,7 @@ class SchedulerAssembly:
             miner=incident_miner,
             # SAME alert sink health_sweep already uses — an incident verdict
             # rides the existing operator-alert channel, not a new one.
-            alert=health_alert,
+            alert=incident_alert,
             # "Update memory depending on the reason" — the SAME bridge live
             # conversation turns stage facts through (memory_components.bridge).
             memory_bridge=memory_components.bridge,
@@ -1109,13 +1115,29 @@ def _build_health_aggregator(
 
 
 def _build_health_alert_sink(
-    proactive_deliverer: ProactiveDeliverer | None, settings: Settings
+    proactive_deliverer: ProactiveDeliverer | None,
+    settings: Settings,
+    *,
+    ephemeral: bool = True,
 ) -> Callable[[str], Awaitable[None]] | None:
-    """An operator-alert sink for the health sweep, or None if undeliverable.
+    """An operator-alert sink, or None if undeliverable.
 
     Builds a closure that sends a CRITICAL operator notification through the same
     :class:`ProactiveDeliverer` seam the briefs use. Returns None when no deliverer
-    is wired (the sweep then alerts via its LOUD log only — never a fake "sent").
+    is wired (the caller then alerts via its LOUD log only — never a fake "sent").
+
+    ``ephemeral`` IS AN ARGUMENT BECAUSE IT WAS A LITERAL AND THAT WAS THE BUG.
+    Bakir, 2026-08-31: "Today when rsa comes and disappears." He was right. This one
+    sink served the health sweep AND IncidentEscalationHandler, and it hard-coded
+    ephemeral=True — which the deliverer documents as "sent via send_ephemeral
+    (silent, muted) ... then best-effort DELETED once sent — so the probe proves the
+    real send path without leaving a visible message behind."
+
+    That is correct for a health FLAP, and the reasoning is kept below. It is wrong
+    for an INCIDENT: a concluded RCA is the platform's account of something that
+    broke and what it decided, and the twelve he received that day were sent muted
+    and then deleted. He could not read them — which is why the same operator both
+    objected to the page volume and asked for "incidents to be delivered to user".
     """
     if proactive_deliverer is None:
         return None
@@ -1140,7 +1162,7 @@ def _build_health_alert_sink(
             category="operator_health",
             channel_name=channel,
             target=target_chat_id,
-            ephemeral=True,
+            ephemeral=ephemeral,
         )
         await proactive_deliverer.deliver(note)
 

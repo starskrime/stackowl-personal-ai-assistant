@@ -315,6 +315,52 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC_95_ANSWERED_2026_08_31_the_incident_alerts_were_DELETING_THEMSELVES:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-92."
+    the_report_verbatim: 'Bakir: "Today when rsa comes and disappears."'
+    HE_WAS_RIGHT_AND_IT_IS_NOT_A_DISPLAY_QUIRK: >-
+      Every incident alert went through _build_health_alert_sink, which hard-coded
+      ephemeral=True. The deliverer's own docstring says what that does: "sent via
+      send_ephemeral (silent, muted) instead of send_text, then best-effort DELETED once
+      sent — so the probe proves the real send path without leaving a visible message
+      behind." So the twelve "RCA complete" messages he received on 2026-08-31 were silent,
+      muted, and deleted themselves. He could not read them.
+    AND_IT_EXPLAINS_A_CONTRADICTION_I_HAD_ESCALATED: >-
+      ESC-95 asked how he could both object to 25 pages and ask for "incidents to be
+      delivered to user". The answer is that the incident ones VANISHED. He was not asking
+      for more alerts; he was asking to be able to read the ones he already got. The
+      escalation was the right instinct and the wrong question — the evidence WAS available,
+      in the sink's own flag.
+    THE_REASONING_WAS_RIGHT_FOR_A_FLAP_AND_REUSED_FOR_A_DIAGNOSIS: >-
+      The sink's comment justifies ephemeral honestly: "Health degraded/recovered flaps are
+      operator noise, not durable content — they should not linger in the chat forever."
+      True of a flap. One sink then served BOTH the health sweep (assembly.py:634) and
+      IncidentEscalationHandler (assembly.py:685), so a concluded RCA — the platform's
+      account of something that broke and what it decided — inherited a probe's
+      disappearing act.
+    the_fix: >-
+      `ephemeral` becomes an argument of the ONE builder rather than a literal inside it;
+      the health sweep keeps ephemeral=True with its reasoning intact, and the incident
+      handler gets ephemeral=False. One builder because the address resolution is the fiddly
+      half and two copies of it is two things to get wrong.
+    ladder_rung: "1 — one parameter on the function that already existed. No new sink, no
+      new notification path, no severity system."
+    tests: "4 in tests/scheduler/test_an_incident_alert_does_not_delete_itself.py, pinned at
+      the WIRING: the incident handler must not get the ephemeral sink, the health sweep
+      must KEEP it, both must come from one builder, and the flag must be the builder's
+      argument rather than a literal — because a literal is how one call site's decision
+      became every call site's behaviour."
+    suites: "tests/scheduler + tests/notifications 605 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: "RESTART 2026-08-31T23:48:19Z."
+    validate_OPEN: >-
+      It needs the next incident alert to arrive AND STAY. Closing query is Bakir's own eyes
+      — the message no longer disappears — plus "[notifications] router.deliver: delivered"
+      with category operator_health from the incident lane, which already logs. What CANNOT
+      be evidenced from the log is the deletion itself: send_ephemeral's delete is
+      best-effort and cosmetic, so the log says "delivered" either way. That is precisely
+      why this went unnoticed until he said so.
+
   SPEND_REPORT_2026_08_31_the_platform_can_now_tell_him_where_the_tokens_went:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-91."
     the_ask_verbatim: >-
@@ -2290,7 +2336,7 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
-    ESC_95_you_asked_for_incidents_delivered_and_you_asked_for_fewer_pages:
+    ESC_95_RESOLVED_the_incidents_were_deleting_themselves_see_the_item_above:
       question: >-
         "And i want incidents to be delivered to user." Today the platform already delivers
         every concluded RCA at CRITICAL — that was 12 of the 25 pages you objected to last
