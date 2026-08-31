@@ -315,6 +315,28 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  STAGE_1b_2026_08_31_the_safety_case_is_GONE_because_the_cap_works:
+    map_check: "No mapped item matches — evidence-led verification, recorded as DEBT-71."
+    outcome: "NOTHING BUILT. 1b's premise was a runaway that is now bounded, and the evidence for that is production, not argument."
+    THE_PLAN_S_BASELINE_vs_NOW:
+      then: "p50 11,574 / p90 106,752 / p99 434,849 input tokens per trace; 84 traces over 500k; one turn billed 683,728 and delivered nothing."
+      now: "Across 431 traces since the cap went live at the 02:41Z restart on 2026-08-31: p50 17,804 / p90 49,504 / max 541,072. EXACTLY ONE over 500k — and it STOPPED."
+      the_stop_is_evidenced_not_assumed: "2026-08-31T03:43:49 [budget] gate: cap reached — stopping {cap: tokens, limit: 500000.0, actual: 540720.0}, and the pipeline line beside it names the trace and the owl. p90 has HALVED and breaches went from 84 to one-and-caught."
+    WHY_THE_OTHER_NINE_BREACHES_ARE_NOT_COUNTER_EVIDENCE: >-
+      Ten traces exceeded 500k on or after 2026-08-30, which looked at first like a cap that
+      does not fire. Nine of them were last seen between 00:14 and 16:17 on 08-30 — BEFORE
+      the restart that made ef294696 live. The tenth is the 08-31 one, and it fired. Code is
+      not live until the process holding the old code is gone, and that rule is what
+      separated a working cap from a broken-looking one here.
+    what_the_over_cap_turns_were_MADE_of: "All ten are SINGLE turns — 15 to 32 model calls on one trace in one session — at 25,000 to 37,000 input tokens PER CALL. That is the accumulating-transcript signature 1b targets, so the phenomenon is real; it is the HARM that is now bounded."
+    and_the_plan_over_stated_the_prize: "It attributed 43% of the 683k turn to transcript. Measured per call: tool schemas are ~19,423 fixed, against 25-37k total, so the schema term is 52-78% and transcript is 22-48%. Compaction attacks the smaller half of a problem whose worst case is already capped."
+    WHY_I_DID_NOT_BUILD_IT_ANYWAY: >-
+      Compaction is the only item on this plan that CHANGES WHAT THE MODEL SEES. The plan
+      states its own boundary — "compaction touches OBSERVATIONS, never DECLARATIONS" — and
+      warns that a quality drop means the trim threshold is wrong. Spending that risk to
+      shave a p90 of 49,504 tokens, after the catastrophic case has been closed by something
+      cheaper and safer, is not a call I should make unprompted. ESC-81.
+    the_turn_economics_arc_is_effectively_COMPLETE: "2b, 3b, 3c and 1c shipped; 2c was measured wrong for this platform and its data-led replacement hit a protected case (ESC-80); 2d is an architecture question (ESC-79); 1b is now a cost optimisation rather than a safety fix (ESC-81). The 683,728-token turn that started this cannot recur — it would stop at 500k."
   STAGE_2c_2026_08_31_the_data_rejected_the_plan_and_then_a_RECORDED_DECISION_rejected_the_data:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-70."
     outcome: "NOTHING SHIPPED, and the detector I built was REVERTED. Two separate findings, in order."
@@ -1140,6 +1162,15 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_81_is_compaction_worth_changing_what_the_model_SEES_now_that_the_cap_holds:
+      question: "1b was justified by a 683k runaway. That cannot recur — the cap fires and was measured firing. Compaction would now shave a p90 of ~49.5k tokens, at the price of editing the transcript the model reads. Worth it?"
+      why_evidence_cannot_settle_it: "The cost side is measured and modest; the risk side is a quality change that only you can judge acceptable, and the plan's own boundary warns that a quality drop means the threshold is wrong rather than the idea."
+      the_measurement: "431 traces since the cap went live: p50 17,804, p90 49,504, ONE over 500k and it stopped at 540,720. Plan baseline was p90 106,752 with 84 breaches. Per call, tool schemas are ~19,423 of 25-37k, so transcript is 22-48% — the smaller half."
+      options:
+        a_drop_it: "RECOMMENDED. The safety case is closed by something cheaper and safer, p90 has already halved, and compaction is the one change on this plan that alters what the model sees."
+        b_dedup_only: "Ship ONLY the lossless half — drop byte-identical tool results — and never truncate. Small, safe, and it does nothing on turns whose results all differ, which the fan-out data suggests is most of them."
+        c_full_compaction: "Dedup plus truncation of older results beyond a size threshold. The largest saving and the only option that can degrade an answer."
+      blocked_until_answered: "Nothing. This was the last live entry on the turn-economics plan."
     ESC_80_a_long_tool_run_predicts_a_worse_turn_but_one_is_a_protected_fan_out:
       question: "Turns whose longest same-tool run is 10+ succeed 75% of the time against 98% for short ones. But the platform already measured a 46-call web_search run as a PRODUCTIVE headhunter turn and wrote a test to protect it. Should a long run warn?"
       why_evidence_cannot_settle_it: "Both sides ARE the evidence. The correlation is across 3,967 turns; the protected case is one concrete turn of exactly that shape. Nothing in the data distinguishes a productive fan-out from a loop, so the call is about which error you prefer."
@@ -1960,6 +1991,13 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-71
+    found: 2026-08-31
+    title: "Stage 1b: the runaway it was built for is bounded, and the cap firing is evidenced"
+    what: "Compaction was justified by a 683,728-token turn. Since the token cap went live, 431 traces show p50 17,804 / p90 49,504 with exactly one breach, which stopped."
+    evidence: "2026-08-31T03:43:49 [budget] gate: cap reached — stopping {limit: 500000.0, actual: 540720.0}. Nine earlier breaches were last seen on 08-30, before the restart that made the cap live. Plan baseline: p90 106,752, 84 breaches."
+    decision: "Nothing built. 1b is now a cost optimisation rather than a safety fix, and it is the only item on the plan that changes what the model sees, so it is escalated as ESC-81 rather than taken."
+    status: "open — blocked on ESC-81"
   - id: DEBT-70
     found: 2026-08-31
     title: "Stage 2c: the plan's detectors do not match this platform, and the data's alternative hits a protected case"
