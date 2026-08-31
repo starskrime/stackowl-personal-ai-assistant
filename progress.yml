@@ -484,12 +484,15 @@ current:
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
     validate: "RESTART 2026-08-31T18:24:17Z. 441 records, ZERO ERRORs, handler registered
       in both processes."
-    validate_OPEN_with_the_time_it_closes: >-
-      The job runs every 6h and its next run is 2026-08-31T19:48:14Z — I did not block the
-      loop for 83 minutes to watch it. Closing query, both lines INFO: that run must emit
-      "refusals from a deleted owl are not gaps — dropped" with owls
-      [Brain, headhunter, jobmarket, newsdesk], and must emit ZERO "owl vanished before
-      self-heal" warnings where the previous runs each emitted about 41.
+    validate_CLOSED_IN_PRODUCTION_at_19_48_14: >-
+      The 19:48:14Z run emitted "capability_gap_escalation: refusals from a deleted owl are
+      not gaps — dropped {'dropped': 2, 'owls': ['headhunter', 'jobmarket']}" and ZERO "owl
+      vanished before self-heal" warnings, where each previous run emitted about 41.
+    and_the_count_was_TWO_not_four_which_is_correct: >-
+      Brain and newsdesk were named in the earlier warnings but their capability.denied rows
+      have since aged past the 7-day window, so they are no longer in the detector's input
+      at all. The prediction said four; the mechanism explains two. Recorded rather than
+      quietly matched, because a prediction that misses by half is worth understanding.
 
   ONE_SHOT_JOBS_2026_08_31_92_finished_jobs_are_armed_to_fire_again_tomorrow:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-79."
