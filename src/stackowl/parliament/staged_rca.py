@@ -435,6 +435,36 @@ def _verifier_prompt(evidence: RcaEvidence, brief: str, hypothesis: str) -> str:
     )
 
 
+#: What the verifier's VERDICT field actually said, as one word.
+#:
+#: MEASURED 2026-08-31: 86 of 100 RCA completions concluded verified=False on the
+#: day the incident lane spent 15,724,829 input tokens — 72.3% of everything — and
+#: all three stages ran and proposed a fix in every one of them. The miner authors a
+#: SKILL.md only for verified=True, so those proposals were discarded, and nothing
+#: recorded WHY.
+#:
+#: `_build_verdict` computed `verdict_token` and threw it away, so "the verifier
+#: read the evidence and said no" and "the verifier did not answer in the expected
+#: form" were the same record. The second is exactly what a local model produces —
+#: the same evening, 15 of 64 reflection failures were a valid object with one
+#: required key simply absent.
+#:
+#: D09.1 already paid for this shape one module over: "three separate reviewers read
+#: those previews as proof that suggested_strategy was missing and proposed relaxing
+#: the parser; on this field that was a guess." So this NAMES the disposition and
+#: changes no behaviour — the decision waits for the evidence it collects.
+def verdict_shape(verdict_text: str) -> str:
+    """``verified`` | ``rejected`` | ``absent`` | ``unrecognised``."""
+    token = (_block_field(verdict_text or "", "VERDICT") or "").strip().upper()
+    if not token:
+        return "absent"
+    if token.startswith("VERIFIED"):
+        return "verified"
+    if token.startswith("REJECT"):
+        return "rejected"
+    return "unrecognised"
+
+
 def _build_verdict(
     evidence: RcaEvidence, hypothesis: str, verdict_text: str,
 ) -> RcaVerdict | None:
@@ -445,8 +475,20 @@ def _build_verdict(
     exactly like "no verdict"). Root-cause/fix prefer the verifier's refined
     text, falling back to the hypothesis's. Returns None only when there is no
     usable root-cause text at all (nothing to author)."""
-    verdict_token = (_block_field(verdict_text, "VERDICT") or "").strip().upper()
-    verified = verdict_token.startswith("VERIFIED")
+    shape = verdict_shape(verdict_text)
+    verified = shape == "verified"
+    # INFO, because this is the line that makes 86 unexplained rejections a day
+    # explicable, and production runs at INFO. It reports the DISPOSITION and
+    # changes nothing about it — see `verdict_shape` for why that restraint is
+    # deliberate.
+    log.parliament.info(
+        "[rca] build_verdict: verdict disposition",
+        extra={"_fields": {
+            "incident_id": evidence.incident_id,
+            "verdict_shape": shape,
+            "verified": verified,
+        }},
+    )
 
     root_cause = (
         _block_field(verdict_text, "ROOT_CAUSE")

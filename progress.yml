@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RCA_VERDICTS_2026_09_01_86_percent_concluded_nothing_and_nothing_said_why:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-93."
+    how_this_item_was_reached: >-
+      The suppression shipped earlier tonight stops the platform re-diagnosing the same
+      incidents. It does not make the diagnoses any good. Of 100 RCA completions on
+      2026-08-31, 86 concluded verified=False — and the miner authors a SKILL.md only for a
+      verified verdict, so roughly 10.7M tokens a day bought proposals that were discarded.
+    THE_MEASUREMENT: >-
+      350 `staged.analyze: exit` records, EVERY one carrying all three stages
+      ['rca_gatherer','hypothesis','verifier'] and a proposed skill_name. So the analyses
+      are not failing — they run, propose a fix, and then the verdict is dropped.
+    TWO_DIFFERENT_THINGS_LOOKED_IDENTICAL: >-
+      _build_verdict computed `verdict_token = _block_field(verdict_text, "VERDICT")` and
+      `verified = token.startswith("VERIFIED")`, then threw the token away. Its own
+      docstring admits the collision: "a REJECTED or MISSING verdict yields
+      verified=False". "The verifier read the evidence and said no" and "the verifier did
+      not answer in the expected form" were recorded the same way — and the second is
+      exactly what a local model produces: the same evening, 15 of 64 reflection failures
+      were a valid object with one required key simply absent.
+    THE_PROGRAMME_HAS_PAID_FOR_THIS_SHAPE_BEFORE: >-
+      D09.1, one module over: "three separate reviewers read those previews as proof that
+      suggested_strategy was missing and proposed relaxing the parser; on this field that
+      was a guess, because it cannot tell 'key absent' from 'key past the cap' from 'model
+      output truncated'."
+    what_shipped_is_the_INSTRUMENT_and_deliberately_not_a_fix: >-
+      verdict_shape() returns verified | rejected | absent | unrecognised, and the
+      disposition is logged at INFO. Behaviour is unchanged and a test pins that: deciding
+      now that a missing VERDICT should count as verified is precisely the guess D09.1
+      names. The decision waits for the evidence this line collects.
+    tests: "7 in tests/parliament/test_a_rejected_rca_is_told_apart_from_an_unparseable_one.py
+      — each shape named, an unrecognised token NOT silently a rejection, an empty response
+      distinguished from an odd one, the INFO record carrying the shape, and an explicit
+      test that the BEHAVIOUR did not change."
+    suites: "tests/parliament + tests/scheduler 550 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      RESTART 2026-08-31T23:54:18Z. First RCA after it, 2026-09-01T00:10:25:
+      "[rca] build_verdict: verdict disposition {'incident_id': 'incident-ed31de2d36eb',
+      'verdict_shape': 'rejected', 'verified': False}". The instrument is live and answered.
+    AND_THE_FIRST_ANSWER_IS_n_EQUALS_ONE: >-
+      That verdict was a GENUINE rejection, not a parsing gap. One sample is not a
+      distribution and the "86% might be malformed output" hypothesis is NOT confirmed —
+      recorded plainly, because the whole point of this item was to stop guessing. Closing
+      query: the verdict_shape histogram over a day; if `absent` or `unrecognised` dominates
+      it is a compliance defect, and if `rejected` dominates the verifier is doing its job
+      and the cost question moves to whether an RCA that will be rejected should run at all.
+    AND_THE_SUPPRESSION_IS_COMPOUNDING: >-
+      Same tick, 00:02:54: "already diagnosed within 24h — not re-running the RCA
+      {'suppressed': 2, 'signatures': ['outcome:shell:stop','outcome:shell:unachieved_effect'],
+      'still_new': 6}". Eight new incidents per tick all day yesterday; six now, across two
+      restarts.
+
   ESC_95_ANSWERED_2026_08_31_the_incident_alerts_were_DELETING_THEMSELVES:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-92."
     the_report_verbatim: 'Bakir: "Today when rsa comes and disappears."'
