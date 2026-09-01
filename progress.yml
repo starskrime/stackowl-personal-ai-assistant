@@ -414,6 +414,50 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  CAPLOG_2026_09_01_the_fix_restored_propagate_and_left_the_LEVEL_behind:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-113."
+    how_this_item_was_reached: >-
+      The previous item found six failures that only the full 31-minute run shows and
+      deliberately left them unrepaired as a separate diagnosis. This is that diagnosis.
+    root_cause_measured: >-
+      THREE of the six are one cause. setup_logging does two things to the `stackowl` logger:
+      `propagate = False` AND `setLevel(INFO)`. tests/conftest.py already had an autouse
+      fixture for the first — written for exactly this class of bug, and its docstring says
+      so — and it restored ONLY propagate. A DEBUG record is discarded AT THE LOGGER before
+      propagation is ever consulted; measured directly: before configure
+      `level=NOTSET propagate=True`, after `level=INFO propagate=False`, and
+      isEnabledFor(DEBUG) goes False. caplog.at_level(DEBUG) raises the level on the ROOT
+      logger and its own handler, neither of which can undo a named logger's own gate.
+      So the propagate-only fix rescued the ERROR/WARNING assertions it was written for (the
+      kuzu ones named in its docstring) and left EVERY DEBUG assertion still blind. The three
+      failures are precisely the three that assert on DEBUG records.
+    reproduced_before_fixing: >-
+      `pytest tests/cli tests/mcp/...::test_register_on_recycled_noop` — 1 failed, 43 passed,
+      deterministic in 94s. tests/cli calls setup_logging and sorts early. After the fix the
+      SAME command is 44 passed, and with all three appended, 46 passed.
+    fix: >-
+      The existing fixture now saves and restores the LEVEL as well as propagate, and sets
+      NOTSET (not DEBUG) during the test so the logger defers to the root level — which is
+      exactly the knob caplog.at_level controls, so a test asking for WARNING still gets
+      WARNING rather than a flood. One fixture, the one that already existed; no new
+      mechanism.
+    the_other_THREE_are_a_different_thing_and_I_was_wrong_about_them: >-
+      The previous item implied all six might be pollution. MEASURED: the other three fail
+      ALONE — tests/journeys/test_memory_fix_guards.py ("'types.SimpleNamespace' object has
+      no attribute 'memory_providers'" — a test double that stopped resembling the real
+      thing), tests/journeys/test_skill_injection_journey.py, and
+      tests/smoke/test_e5_s8s9_plan_telegram_smoke.py ("assert '[>] 2' in
+      TOOL_FAILED No plan item with id '2'"). They are plain red in directories this loop had
+      never swept — tests/journeys (106 files) and tests/smoke (29) — the same family as the
+      previous items eleven, NOT pollution. Recorded, not claimed, and not repaired here.
+    tests: "No new test — the reproduction command IS the test, and the fixture it fixes is
+      the suite's own guard."
+    suites: "tests/cli + the three formerly-failing tests: 46 passed (was 3 failed)."
+    baselines: "ruff clean on tests/conftest.py; no src/ change."
+    validate: >-
+      CLOSED by re-running the exact reproduction that failed before the change. The full
+      31-minute run is the broader confirmation and is recorded as the next natural check.
+
   SUITESPEED_2026_09_01_the_suite_does_not_hang_it_takes_hours:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-112."
     how_this_item_was_reached: >-
@@ -466,9 +510,11 @@ current:
       tests/owls/test_a_fast_delegation_is_not_a_warning.py::TestTheHappyPathIsQuiet::test_it_is_still_observable_at_debug;
       tests/pipeline/test_acceptance_llm_skip.py::test_derive_skips_observably_when_tier_unset;
       tests/smoke/test_e5_s8s9_plan_telegram_smoke.py::test_smoke_plan_tools_through_telegram.
-      AT LEAST THREE ARE POLLUTION-ONLY: tests/mcp (101), tests/owls (334) and tests/pipeline
-      (1687) all passed cleanly in isolation this same session. No targeted path can ever
-      surface them, which is the sharpest possible argument for the corrected landmine.
+      EXACTLY THREE ARE POLLUTION-ONLY: tests/mcp (101), tests/owls (334) and tests/pipeline
+      (1687) all passed cleanly in isolation this same session. CORRECTED in the next item —
+      the other three (journeys x2, smoke) fail ALONE and are plain red in never-swept
+      directories, not pollution. No targeted path can surface the first three, which is the
+      sharpest possible argument for the corrected landmine.
     NOT_fixed_here_and_deliberately: >-
       The six are recorded, not repaired — that is a separate item with its own diagnosis,
       and lumping six cross-test-pollution failures into this one would be exactly the

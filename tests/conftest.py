@@ -272,11 +272,33 @@ def _caplog_can_see_stackowl_logs() -> Generator[None]:
 
     Restored per-test rather than once, because configure_logging may run at any
     point during a test and flip it back.
+
+    THE LEVEL MATTERS AS MUCH AS ``propagate``, and restoring only the latter
+    left half the bug in place until 2026-09-01. ``setup_logging`` also calls
+    ``setLevel(INFO)`` on that same ``stackowl`` logger, and a DEBUG record is
+    discarded AT THE LOGGER before propagation is ever consulted —
+    ``isEnabledFor(DEBUG)`` goes False. ``caplog.at_level(DEBUG)`` raises the
+    level on the ROOT logger and on its own handler, neither of which can undo a
+    named logger's own gate.
+
+    So the propagate-only fix rescued the ERROR/WARNING assertions this
+    docstring was written for (the kuzu ones) and left every DEBUG assertion
+    still blind. MEASURED: three tests — mcp's register_on_recycled_noop, owls'
+    it_is_still_observable_at_debug and pipeline's
+    derive_skips_observably_when_tier_unset — passed alone and failed in the
+    full run, reproducible with `pytest tests/cli <the test>`.
+
+    NOTSET rather than DEBUG: it makes the logger defer to the root level, which
+    is exactly the knob ``caplog.at_level`` controls, so a test asking for
+    WARNING still gets WARNING rather than a flood.
     """
     logger = logging.getLogger("stackowl")
-    previous = logger.propagate
+    previous_propagate = logger.propagate
+    previous_level = logger.level
     logger.propagate = True
+    logger.setLevel(logging.NOTSET)
     try:
         yield
     finally:
-        logger.propagate = previous
+        logger.propagate = previous_propagate
+        logger.setLevel(previous_level)
