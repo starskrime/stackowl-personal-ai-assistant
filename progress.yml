@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RCA_VERDICTS_2026_09_01_two_reports_from_Bakir_DIAGNOSED_not_yet_fixed:
+    status: "DIAGNOSED. The diagnosis is done here, in writing, per the rule that a report is EVIDENCE OF A CAUSE. Nothing is escalated; these are the next items."
+    VERDICT_1_shell_stop_the_artifact_was_never_read_BACK: >-
+      His verdict: the turn wrote a deliverable, ran a plain `ls`, hit the stop floor at 17
+      calls, and asserted success from the spawn report rather than a fresh observation.
+      CORROBORATED AT SCALE: of 207 'stop' turns that used tools, 152 wrote something, and
+      139 of those 152 — 91% — performed NO read of any kind after their last write.
+    BUT_THE_PROPOSED_FIX_ALREADY_EXISTS_which_is_the_real_finding: >-
+      shell.verify already calls verify_artifact, and so do write_file, skill_manage, tts and
+      image_generate. It did not fire because shell sets artifact_path ONLY when the command
+      redirects stdout to a named file (`> out.md`). A heredoc, a `python3 -c`, a `tee`, or
+      any program that writes internally leaves artifact_path None, so verify_artifact returns
+      None and `verified` stays None.
+    THE_ROOT_CAUSE_IN_ONE_LINE: >-
+      Verification is bound to one SYNTACTIC FORM (stdout redirection) rather than to the
+      effect. The tool's own docstring defends the principle — "never over-claim verification
+      for an arbitrary command" — and that principle is RIGHT. What is missing is any way for
+      an invocation to name its artifact in the other forms, so the most common way a shell
+      command produces a file is structurally unverifiable.
+    the_fix_that_follows_from_it: >-
+      Let the invocation name its own effect: an explicit `expect_file` argument on shell, so
+      the model declares the artifact it intends and the EXISTING verify path fires. That
+      preserves the no-over-claim rule exactly rather than weakening it, and adds no second
+      verification mechanism. NOT a new "re-read the file" step in the loop, which would be a
+      second copy of machinery that already works.
+    VERDICT_2_browser_click_ONE_OF_ITS_THREE_ROOT_CAUSES_IS_FABRICATED: >-
+      It asserts "Output formatted for Telegram (no markdown) despite web channel allowing
+      Markdown". THERE IS NO WEB CHANNEL. The adapters are telegram, slack, discord, whatsapp,
+      cli, socket and dev_ingress; `grep -rl "web"` across src/stackowl/channels/ returns
+      nothing, and the live corpus carries only telegram (9,549), rca (9,486), cli (979) and
+      internal (50). The verdict is labelled "(verified)".
+    WHY_THAT_MATTERS_MORE_THAN_THE_FORMATTING: >-
+      A verdict marked verified names an entity that does not exist. Today's GROUNDING item
+      marked URLs that were cited but never opened; this is the same gap one level up —
+      nothing checks that the ENTITIES in a verdict (channels, tools, capabilities) exist in
+      the platform's own registries. That is the next item after verdict 1, and it is
+      checkable cheaply because those registries are all in-process.
+    AND_A_REAL_ADJACENT_GAP_THAT_IS_MINE: >-
+      channel_shape() is a CLOSED enumeration of five names and returns None for anything
+      else, deliberately ("no opinion, never a default"). Measured: the socket adapter has no
+      shape, and neither does the rca lane — 9,486 outcomes, 47% of the corpus — so those
+      turns are never told their destination. My morning fix covered the six channels I
+      enumerated and is silent for every other one. Not fabricated, unlike his #2, but not
+      covered either.
+    what_was_NOT_done_and_why: >-
+      No code shipped for either verdict this item. One item to done is the loop's rule and
+      TOOLNAME was that item; acting on verdict 2's stated cause would have meant building for
+      a channel that does not exist, which is exactly what measuring it first prevented.
   TOOLNAME_2026_09_01_a_tool_NAME_field_was_carrying_a_1400_character_payload:
     map_check: "No mapped item matches — evidence-led work."
     how_it_surfaced: >-
