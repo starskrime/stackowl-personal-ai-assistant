@@ -22,6 +22,14 @@ An item is not done until you have written down *what made this possible, and
 what else does that same cause reach*. If that answer only restates the symptom,
 keep going: you have not found the root cause yet.
 
+## Retired means deleted
+
+**Bakir, 2026-09-01: whatever is retired is DELETED — code, registration, tests
+and job rows, in the same change. Never a dead seat, never empty scaffolding
+"for later".** If you find dead code while working an item, delete it in that
+item rather than filing it as debt. Measure that it is unreferenced first, and
+remove the WRITER, not just the rows.
+
 ## The one rule that makes this safe
 
 **Never write a claim into `progress.yml` or a document that you did not measure.**

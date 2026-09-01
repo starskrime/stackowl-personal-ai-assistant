@@ -315,6 +315,56 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEADCODE_2026_09_01_retired_means_deleted_the_standing_rule_and_a_first_sweep:
+    map_check: "No mapped item — a standing rule from Bakir plus its first application."
+    the_rule: >-
+      Bakir, 2026-09-01: "What ever retired should be deleted from code and we should not and
+      never have dead code." Recorded in CLAUDE.md (its own section, above "Read these
+      first"), in the item-loop skill, and in durable memory.
+    DELETED_THIS_PASS_job_queue: >-
+      Migration 0129 drops job_queue and its two indexes. Measured before dropping: ZERO
+      references in src/, tests/ and scripts/ — the name appears nowhere outside migrations
+      (0005 creates it; 0043 and 0119 only mention it in comments) — and ZERO rows live. So
+      no writer to remove first and no reader to break. tests/db 102 passed: all 129
+      migrations replay cleanly.
+    why_it_was_not_harmless_while_it_sat_there: >-
+      CLAUDE.md records four overlapping work engines as a standing hazard, and this was one
+      of them. A schema for a fourth queue is an invitation to build against it, and 0119's
+      own comment is the evidence: every reconciliation of "which engine runs work here" has
+      had to stop and account for a table that never ran anything.
+    the_one_exception_and_it_is_deliberate: >-
+      0005 itself is NOT deleted. Migrations are an append-only ledger replayed in order by
+      every existing database; removing a past one rewrites history rather than the tree. The
+      ledger records that the table existed and that it is now gone.
+    MEASURED_INVENTORY_of_what_else_is_dead_or_dormant: >-
+      committed_facts — 0 rows since D08.1 migration 0112 retired it, but TWENTY-FOUR src
+      files still read it (every FTS/semantic recall path). committed_facts_fts — 0 rows.
+      objectives — 0 rows and 21 src files, with objective_driver ticking every 60 seconds
+      against the empty table (visible in today's logs). objective_subgoals — 28 rows, so NOT
+      dead. dreamworker_runs — 762 rows. retry_queue 5,766 and tasks 1,372 — both live.
+    WHY_ONLY_ONE_THING_WAS_DELETED_THIS_PASS: >-
+      job_queue is the only candidate where deletion is provably free. committed_facts has 24
+      readers, so removing it removes recall CODE PATHS — that is capability removal and needs
+      its own item with its own tests, not a sweep. objectives is 21 files. Deleting either
+      carelessly is exactly the "removed a writer without asking what it fed" mistake this
+      programme has already paid for.
+    A_TENSION_THAT_IS_HIS_TO_SETTLE: >-
+      The DreamWorker is registered, unscheduled and deliberately EMPTY — dead code by the new
+      rule. But its docstring records that D08.1 kept the seat ON PURPOSE so N01 Dreaming,
+      Bakir's own idea, would have somewhere to land, and says the plan to delete it was
+      reversed once the record was re-read. The new rule says delete it; the recorded intent
+      says keep it. Flagged rather than silently reconciled — ESC-104.
+    my_own_sweep_was_a_BAD_INSTRUMENT_and_is_recorded_as_such: >-
+      A static "which modules does nothing import" scan returned 14 candidates including
+      memory/conversation_compressor, which had been wired an hour earlier through a local
+      import inside a function. This codebase wires dynamically, so static reads of it are
+      wrong by construction — CLAUDE.md already says so. The scan was discarded rather than
+      acted on; the deletions above rest on direct reference counts and live row counts.
+    suites: "tests/db 102 passed (5:01) — every migration replayed."
+    validate: >-
+      CLOSED by the migration replay itself: 129 migrations apply in order on a fresh
+      database with the drop in place, which is the only thing dropping an unreferenced,
+      empty table can be verified against.
   WINDOW_2026_09_01_a_three_character_Hey_came_back_as_an_apology:
     map_check: "No mapped item matches — a LIVE OUTAGE reported by Bakir mid-session."
     the_report: >-
@@ -4109,6 +4159,26 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_104_the_DreamWorker_seat_is_dead_code_you_asked_to_KEEP:
+      question: >-
+        Your new rule says whatever is retired gets deleted. The DreamWorker is registered,
+        unscheduled and deliberately empty — dead by that rule. But D08.1 kept the seat ON
+        PURPOSE so N01 Dreaming (your own idea, outside the reference map) would have
+        somewhere to land, and the plan to delete it was reversed once that record was
+        re-read. Delete it now, or does N01 keep its seat?
+      why_evidence_cannot_settle_it: >-
+        Both positions are yours and the evidence supports each. The code is provably inert —
+        the handler is enabled=0, its five phases all operated on a fact store retired to
+        zero rows, and kuzu_sync_handler (its only trigger) joins ON committed_facts. What
+        evidence cannot decide is whether N01 is still coming.
+      the_panel_recommendation: >-
+        Delete it. Git history holds the class, the scheduler wiring is 20 lines to
+        re-create, and "somewhere to land" is not a capability. Keeping an empty seat is the
+        exact shape the new rule exists to stop — and it has already cost: it was read as
+        live twice while diagnosing the conversation-memory gap today.
+      what_is_blocked: >-
+        Nothing else. job_queue is deleted; committed_facts and objectives are separate items
+        with their own tests.
     ESC_103_three_memory_files_are_permanently_starved_and_only_you_can_unwind_them:
       question: >-
         user (1,246 permanent chars against a 1,031 ceiling), jobmarket (2,039/1,650) and owl

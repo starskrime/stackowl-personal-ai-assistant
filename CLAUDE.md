@@ -29,6 +29,33 @@ Before any fix is called done, answer in writing: *what made this possible, and
 what else does that same cause reach?* If the answer is only a restatement of
 the symptom, the root cause has not been found yet.
 
+## RETIRED MEANS DELETED
+
+**Bakir, 2026-09-01: "Whatever retired should be deleted from code and we should
+never have dead code."**
+
+Retiring something means deleting its code, its registration, its tests and its
+scheduler/job rows — in the SAME change as the retirement. Not
+registered-but-unscheduled. Not empty-but-present. Not "kept as a seat for a
+future feature". Git history holds the old code; the tree holds what runs.
+
+This rule is earned. Every dead thing left in this tree has cost diagnosis time
+because it *looked* live: `committed_facts` retired to zero rows by migration
+0112 while every recall path still queried it; `DreamWorker` kept as a
+deliberately empty seat; `job_queue` with **zero references anywhere in `src/`**;
+`objectives`/`objective_subgoals` (~2,400 lines) with a driver firing every 60s
+against an empty table; `committed_facts_fts` still indexing 1,112 rows of
+content whose writer was removed.
+
+Two things to check before deleting, and only these two: that it is genuinely
+unreferenced (**measure it**), and that removing it does not remove something
+that was *bounding* or *triggering* another component. Then delete the WRITER,
+not just the rows — a row deleted while its writer lives is re-seeded on the next
+boot (migration 0125 vs scheduler assembly, thirty-one seconds apart, every boot).
+
+**Find dead code while doing something else? Delete it then.** Do not file it as
+debt.
+
 ## Read these first
 
 `progress.yml` is the state of record — `current` says where we are. Then
