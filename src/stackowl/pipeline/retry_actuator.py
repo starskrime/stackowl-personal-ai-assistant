@@ -28,7 +28,11 @@ from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
 from stackowl.memory.retry_queue_store import RetryQueueRow, RetryQueueStore
 from stackowl.notifications.deliverer import _TargetedSender
-from stackowl.pipeline.delivery_gate import _attempts_for_state
+from stackowl.pipeline.delivery_gate import (
+    _attempts_for_state,
+    describe_attempt_evidence,
+    failed_capabilities_for_state,
+)
 from stackowl.pipeline.state import PipelineState
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
@@ -76,6 +80,12 @@ class RetryOutcome:
     #: writing, and lost. Task 8b7c4029 then failed IDENTICALLY 74 times over
     #: 14h33m because every attempt re-tread what the last one had already burned.
     banned: tuple[str, ...] = ()
+    #: WHAT THE WORK HIT, in the turn's own evidence — not what the machinery
+    #: did. Without this the durable loop re-describes every failure as "retry
+    #: did not deliver (actuator reported 'pending')" and stores THAT as the
+    #: task's last_error, which is what the next attempt is then shown as "what
+    #: happened last time". A tautology cannot change a strategy.
+    reason: str = ''
 
 
 def _native_chat_id(raw: str) -> str | int:
@@ -278,8 +288,23 @@ class RetryActuator:
         )
         if floored:
             newly_failed = self._pick_newly_failed(row, final_state)
+            # "retry attempt still floored" is a TAUTOLOGY — it says the retry
+            # failed, which the loop already knows, and it is what `_augment_goal`
+            # then shows the NEXT attempt as "what happened last time". That is
+            # why retries 2-6 of one task re-entered an identical web_fetch-first
+            # path five times over. The turn's own evidence is in hand right here;
+            # carry THAT instead, and fall back to the old wording only when the
+            # attempt touched nothing to describe.
+            reason = describe_attempt_evidence(final_state) or "retry attempt still floored"
+            log.scheduler.info(
+                "retry_actuator.attempt_retry: carrying the attempt's evidence "
+                "forward",
+                extra={"_fields": {"retry_id": row.id, "attempt": row.attempt_count,
+                                   "reason": reason[:200],
+                                   "newly_failed": newly_failed}},
+            )
             outcome = await self._handle_failure(
-                row, "retry attempt still floored", newly_failed_capability=newly_failed,
+                row, reason, newly_failed_capability=newly_failed,
             )
             # 4. EXIT
             log.scheduler.info(
@@ -405,6 +430,16 @@ class RetryActuator:
         store treats an empty string as "nothing to add" (no bogus re-ban of
         an already-banned capability).
         """
+        # WHAT FAILED, not what was touched first. The positional guess banned
+        # `send_message` on a turn whose tool_sequence was
+        # ["search_files","search_files","read_file"] — steering the next attempt
+        # away from something innocent while the real dead end stayed open.
+        # Falls back to the attempted list only when the turn recorded no
+        # consequential failure at all, which keeps the previous behaviour rather
+        # than silently learning nothing.
+        for name in failed_capabilities_for_state(final_state):
+            if name not in row.banned_capabilities:
+                return name
         for name in _attempts_for_state(final_state):
             if name not in row.banned_capabilities:
                 return name
@@ -473,6 +508,7 @@ class RetryActuator:
             return RetryOutcome(
                 status="pending",
                 banned=(newly_failed_capability,) if newly_failed_capability else (),
+                reason=error,
             )
         # Workstream B — the real attempt_number mark_attempt_failed just
         # persisted (not the pre-attempt count captured at attempt_retry's

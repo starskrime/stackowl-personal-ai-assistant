@@ -269,6 +269,86 @@ def _attempts_for_state(state: PipelineState) -> list[str]:
         return []
 
 
+def describe_attempt_evidence(state: PipelineState) -> str:
+    """What this attempt actually DID, in the turn's own evidence.
+
+    WHY THIS EXISTS. A retry's "what happened last time" was the literal string
+    ``"retry attempt still floored"`` — and, one layer up, ``"retry did not
+    deliver (actuator reported 'pending')"``. Both are TAUTOLOGIES: they describe
+    the retry MACHINERY's status, never what the work hit. MEASURED 2026-09-01:
+    of 82 tasks with a failed attempt, 80 (98%) carried no banned capability at
+    all, and every recorded ``last_error`` but one was about the machinery. So
+    ``_augment_goal``'s carefully-built channel — Bakir's own contract, "next
+    loop when it picks it, it also looks: is any previous one? Yes — learn from
+    that experience" — was wired end to end and carrying nothing.
+
+    The platform's own RCA found the consequence and Bakir sent it back as the
+    item: retries 2-6 of one task shared IDENTICAL text, led with web_fetch every
+    time (125 web_fetch calls against 92 web_search), and burned 44-52 calls
+    before flooring, five times over. An attempt cannot change strategy when the
+    only thing it is told about the last one is that it failed.
+
+    READS THE SAME SOURCE AS :func:`_attempts_for_state` so the floor the USER
+    sees and the signal the NEXT ATTEMPT gets can never tell different stories.
+
+    Args:
+        state: The floored attempt's final state.
+
+    Returns:
+        One evidence sentence, or ``""`` when the turn touched nothing (the
+        caller then keeps its own generic reason). Never raises — a retry must
+        survive a missing ledger.
+    """
+    try:
+        attempted = _attempts_for_state(state)
+        if not attempted:
+            return ""
+        recovered = set(state.recovered_consequential)
+        failed = [n for n in state.consequential_failures if n not in recovered]
+        parts = [f"it tried {', '.join(attempted)}"]
+        if failed:
+            parts.append(
+                f"and {', '.join(dict.fromkeys(failed))} did not resolve it"
+            )
+        return "the last attempt floored: " + " ".join(parts)
+    except Exception as exc:  # noqa: BLE001 — never cost a retry its attempt
+        log.engine.warning(
+            "[giveup_floor] describe_attempt_evidence: could not summarise the "
+            "attempt — the retry keeps its generic reason",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return ""
+
+
+def failed_capabilities_for_state(state: PipelineState) -> list[str]:
+    """The capabilities that actually FAILED, not the first one attempted.
+
+    ``_pick_newly_failed`` returned "the FIRST capability this retry attempt
+    touched that wasn't already banned", which is a positional guess. MEASURED
+    2026-09-01: a task banned ``send_message`` whose tool_sequence was
+    ``["search_files","search_files","read_file"]``, and another banned ``shell``
+    over a sequence of ``["read_file"]`` — in both cases the ban landed on a
+    capability the turn never failed on, so the next attempt was steered away
+    from something innocent while the real dead end stayed open.
+
+    ``consequential_failures`` is the turn's own record of what failed, minus
+    anything a substitution already bridged (a recovered failure was not a
+    give-up — the same invariant :func:`_attempts_for_state` enforces).
+    """
+    try:
+        recovered = set(state.recovered_consequential)
+        return list(dict.fromkeys(
+            n for n in state.consequential_failures if n not in recovered
+        ))
+    except Exception as exc:  # noqa: BLE001
+        log.engine.warning(
+            "[giveup_floor] failed_capabilities_for_state: lookup failed — the "
+            "retry bans nothing rather than banning the wrong thing",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return []
+
+
 def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk:
     """Build an is_floor=True honest-floor ResponseChunk naming ``failed_name``.
 

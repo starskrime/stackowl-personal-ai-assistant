@@ -97,8 +97,15 @@ def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
             # loop reads an empty tuple every time and `banned_capabilities` never
             # accumulates — which is precisely how 8b7c4029 failed identically 74
             # times against a ceiling of 30.
+            # THE WORK'S REASON WINS over the machinery's. `loop.py` stores this
+            # exception's text as the task's last_error, and `_augment_goal` shows
+            # that text to the NEXT attempt as "what happened last time". Reporting
+            # the actuator's own status there made every retry read "retry did not
+            # deliver (actuator reported 'pending')" — true, and useless, and
+            # measured on every one of the five tasks that carried it.
+            reason = str(getattr(outcome, "reason", "") or "").strip()
             err = RuntimeError(
-                f"retry did not deliver (actuator reported {status!r})"
+                reason or f"retry did not deliver (actuator reported {status!r})"
             )
             err.banned_capabilities = tuple(  # type: ignore[attr-defined]
                 getattr(outcome, "banned", ()) or ()
