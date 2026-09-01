@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ROUTER_2026_09_01_it_asked_for_two_lines_got_them_and_threw_the_answer_away:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-94."
+    how_this_item_was_reached: >-
+      Re-ranking the last four hours of warnings. "[router] _parse_intent_class: no valid
+      class token — fail-safe to standard" stood out because it is the THIRD instance
+      tonight of one shape: the local model complies in substance and not in form, and the
+      platform discards the answer.
+    THE_MEASUREMENT_and_the_previews_made_it_obvious: >-
+      46 records across the retained logs, and every one is the same reply shape —
+      'Line 1: secretary\nLine 2: standard' 28, 'Line 1: jobmarket...' 7,
+      'Line 1: headhunter...' 6, 'Line 1: syshealth...' 3, 'Line 1: mailbutler...' 2. The
+      model answered correctly and echoed OUR OWN LABELS: the prompt itself says
+      "Line 1 (...)", "Line 2 (...)", "Line 3 (ONLY if line 2 is 'clarify')".
+    REPRODUCED_THROUGH_THE_REAL_PARSERS_ON_THOSE_EXACT_STRINGS: >-
+      owl=secretary for all five, while the model said jobmarket, headhunter, syshealth and
+      mailbutler on four of them. So EIGHTEEN of the 46 named a specialist and were routed
+      to the secretary instead.
+    AND_THE_OWL_HALF_FAILED_SILENTLY: >-
+      The class miss logs at WARNING; the owl miss logged at DEBUG —
+      "[router] _parse_choice: no fuzzy match — secretary fallback" — and production runs at
+      INFO, so the misrouting left no record at all. The only reason it was visible is that
+      its noisy sibling shared the same reply. Raised to INFO: a fallback that decides WHICH
+      AGENT answers the user is not a debug detail.
+    the_fix_is_STRUCTURAL_not_a_vocabulary: >-
+      `_without_label` returns the text after the last colon. It does not look for the word
+      "Line" — that would be a hardcoded English keyword, against a standing rule, and it
+      would miss whatever label the model invents next. Both parsers try the WHOLE line
+      first, exactly as before, and reach the strip only when that failed: it can recover
+      and cannot regress, and a name that legitimately contains a colon is matched before
+      the strip is ever consulted.
+    the_fuzzy_matcher_gets_the_NAME_not_the_LABEL: >-
+      When the de-labelled form is still unknown, it is what goes to the fuzzy matcher — so
+      PARL-6's near-miss correction ("jobmarkett" -> "jobmarket") works through a label too,
+      instead of being handed "Line 1: jobmarkett" and failing.
+    tests: "11 in tests/owls/test_the_router_reads_its_own_labels.py — one per measured
+      misrouted owl, the unlabelled format unchanged, an unknown owl STILL falling back (the
+      strip must not become a route to something that does not exist), the fuzzy correction
+      surviving a label, an empty reply still failing safe to conversational, a name
+      containing a colon not broken, and the silent fallback now visible at INFO."
+    suites: "tests/owls + tests/pipeline/steps 400 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: "RESTART 2026-09-01T00:22:44Z."
+    validate_OPEN: >-
+      It needs a routing turn whose reply carries labels. Closing query, both lines INFO:
+      "[router] _parse_choice: recovered the owl from a labelled reply" appearing, and
+      "_parse_intent_class: no valid class token" — 46 across the retained logs — falling to
+      zero. The parsers were exercised against the five verbatim production strings before
+      shipping, so the behaviour is known; what is unproven is the rate in live traffic.
+
   RCA_VERDICTS_2026_09_01_86_percent_concluded_nothing_and_nothing_said_why:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-93."
     how_this_item_was_reached: >-

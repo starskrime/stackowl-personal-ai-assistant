@@ -149,6 +149,25 @@ class FuzzyMatcher:
         return best
 
 
+def _without_label(text: str) -> str:
+    """The text after the last colon, or "" when there is no label to strip.
+
+    MEASURED across every retained log: 46 routing replies came back as
+    ``Line 1: <owl>\nLine 2: standard`` — the model answering correctly and echoing
+    OUR OWN LABELS, which the prompt introduces as "Line 1 (...)", "Line 2 (...)".
+    Eighteen of them named a specialist (jobmarket 7, headhunter 6, syshealth 3,
+    mailbutler 2) and every one was routed to the secretary instead.
+
+    STRUCTURAL, NOT A VOCABULARY. It does not look for the word "Line" — that would
+    be a hardcoded English keyword, which is a standing rule against, and it would
+    miss whatever label the model invents next. Callers try the WHOLE line first and
+    reach this only when that failed, so it can recover and cannot regress; a name
+    that legitimately contains a colon is matched before this is ever consulted.
+    """
+    head, sep, tail = text.rpartition(":")
+    return tail.strip() if sep else ""
+
+
 class SecretaryRouter:
     """Routes requests to the best specialist owl via LLM intent analysis.
 
@@ -248,6 +267,17 @@ class SecretaryRouter:
             return _DEFAULT_FALLBACK
         if candidate in known_names:
             return candidate
+        # The whole line did not match; try it without a leading label. See
+        # `_without_label` for the 46 measured replies this recovers.
+        unlabelled = _without_label(candidate).strip("\"'`.,:;()[]{}<>")
+        if unlabelled in known_names:
+            log.engine.info(
+                "[router] _parse_choice: recovered the owl from a labelled reply",
+                extra={"_fields": {"raw_candidate": candidate, "owl": unlabelled}},
+            )
+            return unlabelled
+        if unlabelled:
+            candidate = unlabelled  # give the fuzzy matcher the name, not the label
         # PARL-6 (F080) — a non-exact candidate is run through the fuzzy matcher
         # BEFORE the secretary fallback. A high-confidence correction ('scoutt' →
         # 'scout') is accepted and logged; only a far miss collapses to secretary.
@@ -268,7 +298,10 @@ class SecretaryRouter:
                 },
             )
             return corrected
-        log.engine.debug(
+        # INFO, not debug. This decides WHICH AGENT answers the user, and at debug
+        # it left no record in production — 46 measured misroutings were only ever
+        # visible because their noisy sibling warning shared the same reply.
+        log.engine.info(
             "[router] _parse_choice: no fuzzy match — secretary fallback",
             extra={"_fields": {"raw_candidate": candidate}},
         )
@@ -296,6 +329,11 @@ class SecretaryRouter:
             token = line.strip().strip("\"'`.,:;()[]{}<>").lower()
             if token in _VALID_CLASSES:
                 return token  # type: ignore[return-value]
+            # Same recovery as `_parse_choice`, and for the same measured replies:
+            # the model answers "Line 2: standard" and the class is right there.
+            labelled = _without_label(token).strip("\"'`.,:;()[]{}<>")
+            if labelled in _VALID_CLASSES:
+                return labelled  # type: ignore[return-value]
         log.engine.warning(
             "[router] _parse_intent_class: no valid class token — fail-safe to standard",
             extra={"_fields": {"trace_id": trace_id, "raw_preview": raw[:80]}},
