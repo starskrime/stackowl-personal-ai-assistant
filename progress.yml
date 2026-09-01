@@ -408,6 +408,71 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  INCIDENT_2026_09_01_a_failure_count_is_not_an_incident_without_a_denominator:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-97."
+    how_this_item_was_reached: >-
+      Round-0 measurement of 24h spend: 27,097,714 tokens, of which the incident lane was
+      17,343,104 (64.0%) over 1,202 calls. Bakir had already named this: "Why my incidents
+      using 15 million thats is a lot and we need to fix it to have 0."
+    the_previous_fix_was_a_symptom_fix_and_the_platform_said_so: >-
+      Last night a durable 24h dedup ledger shipped on audit_log. It WORKS — five signature
+      rows written, "already diagnosed within 24h — not re-running" firing with
+      suppressed=5. Incident spend carried on at 500k-1.7M tokens an HOUR for 26 straight
+      hours regardless. By this programme's own rule (if the platform does not heal itself
+      after your fix, the core is not fixed), de-duplicating the diagnoses was never the
+      root cause. The dedup was a WHAT-fix; the WHY was one layer under it.
+    root_cause_measured: >-
+      _MIN_RECURRENCE = 3 escalates any capability with three precisely-attributed failures
+      inside a 7-day lookback — an absolute count with NO denominator. So any capability the
+      platform uses regularly sits permanently over the floor. Seven days, 2,395 turns:
+      browser_navigate 66/163 = 40.5% (z 14.8); web_fetch 60/145 = 41.4% (z 14.4); shell
+      36/158 = 22.8% (z 6.6); read_file 14/148 = 9.5% (z 0.5) against a pooled 8.35%; todo
+      3/25 = 12.0% (z 0.7). read_file and todo were indistinguishable from normal and each
+      bought a ~140,000-token staged RCA. 86 of 100 verdicts came back unverified — a
+      detector running at roughly 10% precision. This is CLAUDE.md's "check what a
+      denominator is MADE OF" rule one layer down: the detector read only the numerator.
+    what_else_that_same_cause_reaches: >-
+      EVERY capability class, not only the ten signatures that happened to fire. Any tool the
+      platform calls regularly is permanently over an absolute floor of three, for ever.
+    fix: >-
+      A capability is an incident only when it fails MORE than the platform itself does — a
+      one-sided 3-sigma test against the platform's own pooled rate. Scale-aware where a bare
+      rate is not (3-in-25 and 60-in-145 are both above average; only one is distinguishable
+      from chance), and the baseline is COMPUTED from the rows, so a fleet-wide bad day
+      raises the bar instead of opening an incident against every tool at once. The
+      denominator is aggregated in SQLite via json_each over tool_sequence, counting TURNS
+      distinctly to match the numerator's per-turn attribution.
+    deliberately_unchanged: >-
+      Health incidents (SOURCE 1) do not pass through the gate — a subsystem still down after
+      a recycle is an incident whatever the tool rates say. And the gate FAILS TOWARD
+      DIAGNOSING like recently_diagnosed before it: no rates means every cluster escalates
+      exactly as before, because a gate that silenced the self-heal loop on a failed query
+      would be the failure mode this arc exists to prevent.
+    tests: "18 in tests/scheduler/handlers/test_a_recurring_failure_is_not_yet_an_incident.py,
+      built on the live seven-day numbers, including the expensive direction — the three
+      genuinely-anomalous capabilities must still escalate."
+    suites: "tests/scheduler + tests/memory 1042 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    commits: "1ce62223"
+    validate: >-
+      RESTART 2026-09-01T01:55:00Z; the handler ticked at 01:58:00 and the gate fired on the
+      live corpus. CLOSED: "[scheduler] incident_escalation: capability fails no more than
+      the platform does — not an incident {capability: read_file, failures: 14, turns: 148,
+      pooled_rate: 0.0834, z: 0.49, bar: 3.0}" and the same for owl_build (4/14, z 2.74).
+      Production's pooled rate 0.0834 matches the 8.35% this item was designed against.
+      Neither appeared in "incident opened"; web_fetch:stop still did, and the 24h ledger
+      suppressed browser_navigate and shell — the three genuinely anomalous capabilities.
+    honest_about_the_target: >-
+      Bakir asked for ZERO. This does not deliver zero and should not: web_fetch fails 41.4%
+      of the time and browser_navigate 40.5%, which are real defects worth diagnosing. What
+      it removes is the ~90% of RCAs that had nothing to find. Expect roughly 3-4 RCAs a day
+      (~500k tokens) against 137 (19.2M) — a ~97% reduction with the self-heal loop still ON.
+    validate_OPEN: >-
+      The 24h effect. Closing query: the incident lane's share of cost_records over
+      2026-09-02 must fall from 64%; run the per-lane 24h aggregate again (recorded_at is
+      TEXT ISO — compare against an ISO string, never strftime('%s'), or SQLite type
+      ordering matches every row and reports all-time as 24h).
+
   FORMAT_2026_09_01_the_channel_owns_its_shape_not_a_user_preference:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-95."
     how_this_item_was_reached: >-
