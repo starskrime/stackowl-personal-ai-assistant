@@ -27,6 +27,7 @@ from types import SimpleNamespace
 import pytest
 
 from stackowl.db.pool import DbPool
+from stackowl.memory.assembly import MemoryComponents
 from stackowl.memory.outcome_store import TaskOutcomeStore
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
 from stackowl.owls.manifest import OwlAgentManifest
@@ -583,12 +584,30 @@ async def test_guard_memory_command_registered_via_orchestrator(
     # test-doubles-drift failure mode.
     bridge = SqliteMemoryBridge(db=tmp_db)
 
-    memory_components = SimpleNamespace(
+    # THE REAL DATACLASS, not a SimpleNamespace with the five fields this test
+    # happened to need. MEASURED 2026-09-01: MemoryComponents has ELEVEN required
+    # fields and this double had five, so when the orchestrator started reading
+    # `memory_components.memory_providers` the double answered with
+    # AttributeError — deep inside _phase_gateway, six fields out of date, in a
+    # directory no targeted run ever executed.
+    #
+    # Constructing the real type is the fix for the CLASS, not the field: a new
+    # required field now fails HERE, immediately, with a TypeError that names it,
+    # instead of surfacing as a stale-double AttributeError somewhere downstream.
+    # SimpleNamespace() stands in for the collaborators this test never touches —
+    # it raises _SentinelStop immediately after registration.
+    memory_components = MemoryComponents(
         bridge=bridge,
-        preference_store=SimpleNamespace(),
-        kuzu_adapter=SimpleNamespace(),
-        embedding_registry=None,
-        lessons_index=SimpleNamespace(),
+        preference_store=SimpleNamespace(),  # type: ignore[arg-type]
+        embedding_registry=None,  # type: ignore[arg-type]
+        kuzu_adapter=SimpleNamespace(),  # type: ignore[arg-type]
+        entity_extractor=SimpleNamespace(),  # type: ignore[arg-type]
+        kuzu_sync_handler=SimpleNamespace(),  # type: ignore[arg-type]
+        dream_worker=SimpleNamespace(),  # type: ignore[arg-type]
+        rollover_summary_handler=SimpleNamespace(),  # type: ignore[arg-type]
+        lessons_index=SimpleNamespace(),  # type: ignore[arg-type]
+        memory_providers=None,  # type: ignore[arg-type]
+        graph_health=SimpleNamespace(),  # type: ignore[arg-type]
     )
 
     class _SentinelStop(Exception):

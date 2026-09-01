@@ -460,8 +460,28 @@ async def test_journey_a_owned_skill_summary_trust_wrapped_in_prompt(
         "the skill blurb is present but OUTSIDE the <skill_reference> fence — "
         f"fence body was: {inner!r}"
     )
-    assert 'name="image_resize"' in inner
-    assert 'source="installed"' in inner
+    # THE SKILL MUST BE IDENTIFIABLE INSIDE THE FENCE — that is what this line
+    # has always been for. It asserted the per-entry attribute `name="..."`,
+    # which D10.6 Stage 1 deliberately removed: "ONE fence around a run of
+    # untrusted entries instead of ~70 chars of identical attributes on every
+    # one. Safe because prompt_safety.neutralize strips <, > and " ... the
+    # per-entry wrapper was providing DELIMITATION, not DEFENCE."
+    #
+    # The property survived the change; only the syntax moved. The entry now
+    # reads "- image_resize (installed): ..." inside the single fence, so the
+    # assertion is repointed at the INTENT rather than the removed attribute.
+    # Asserting the old syntax would pin a prompt-budget optimisation the
+    # platform deliberately made.
+    assert "image_resize" in inner, (
+        "the blurb is inside the fence but nothing names WHICH skill it "
+        f"describes — fence body was: {inner!r}"
+    )
+    # Same D10.6 repoint as the name above: the provenance is still stated, as
+    # "(installed)" in the entry text rather than a per-entry attribute.
+    assert "(installed)" in inner, (
+        "the fence no longer says where the skill came from — provenance is "
+        f"part of the trust story; fence body was: {inner!r}"
+    )
 
 
 # ===========================================================================

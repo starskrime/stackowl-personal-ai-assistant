@@ -414,6 +414,43 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  JOURNEYS_2026_09_01_the_last_two_red_and_a_double_that_enumerated_fields:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-115."
+    outcome: >-
+      The full-run sweep is now CLOSED: all six failures it surfaced are green, and the
+      31-minute run has no known red left.
+    how_this_item_was_reached: >-
+      The tail of the six. The previous item's smoke failure turned out to be a PRODUCTION
+      defect, so neither of these was assumed to be test-side until measured.
+    both_measured_production_is_right: >-
+      SKILL INJECTION asserted the per-entry attributes name="image_resize" and
+      source="installed" inside the trust fence. D10.6 Stage 1 deliberately removed them —
+      "ONE fence around a run of untrusted entries instead of ~70 chars of identical
+      attributes on every one. Safe because prompt_safety.neutralize strips <, > and " ...
+      the per-entry wrapper was providing DELIMITATION, not DEFENCE." The properties survive
+      as "- image_resize (installed): ..." inside the single fence; only the syntax moved,
+      so both assertions were REPOINTED AT THE INTENT rather than deleted. Asserting the old
+      form would have pinned a prompt-budget optimisation the platform meant to make.
+      MEMORY GUARD died on "'types.SimpleNamespace' object has no attribute
+      memory_providers". memory_providers is real production state (services.py:76, read
+      three times in execute.py); MemoryComponents is a dataclass with ELEVEN required
+      fields and the hand-built double had FIVE.
+    the_root_cause_worth_naming: >-
+      A double that ENUMERATES the fields it happens to need rots silently the moment the
+      real type gains one, and only announces itself as an AttributeError somewhere
+      downstream. Fixed for the CLASS, not the field: the test now constructs the REAL
+      MemoryComponents, so a new required field fails AT THE DOUBLE with a TypeError that
+      names it. That is the recorded "generate fixtures from the same constants the code
+      uses" rule, and it is the third double this session to have drifted (the _Db
+      transaction fake and the PlanStore probe were the others).
+    tests: "No new test file — two repointed assertions and one double rebuilt from its real
+      type; the guard is that the type now enforces its own completeness."
+    suites: "tests/journeys 354 passed, 1 skipped — the whole 106-file directory, swept for
+      the first time and green."
+    baselines: "ruff clean on both touched files; no src/ change."
+    validate: >-
+      CLOSED by running the two named tests and then the entire directory they live in.
+
   PLANSCOPE_2026_09_01_a_plan_that_dies_at_the_end_of_the_turn:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-114."
     how_this_item_was_reached: >-
