@@ -456,11 +456,16 @@ current:
       that always passes) and that the remediation message survives."
     suites: "tests/startup 114 passed."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    validate: OPEN_awaiting_the_next_boot
-    closing_query: >-
-      The INFO line "[startup] browser_probe: all required system libraries present" must
-      appear, and "missing system libraries" must STOP appearing. Both land on the next
-      restart, so this closes within minutes rather than waiting on rare traffic.
+    validate: >-
+      CLOSED on a boot at 2026-09-01T04:52:54Z, strictly after the 04:52:37Z commit:
+      "[startup] browser_probe: all required system libraries present (libgtk-3, libx11-xcb,
+      libasound)" at INFO, and ZERO "missing system libraries" warnings after that boot —
+      against 644 in the retained history. Post-commit tally: {(present, INFO): 1}.
+    why_this_one_closed_in_minutes: >-
+      Worth noting beside the four checks still open. This item's evidence fires on every
+      BOOT, which the loop controls, rather than on rare organic traffic. When a fix can be
+      given a closing query that the loop itself can trigger, it should be — that is the
+      difference between a validated fix and a hopeful one.
 
   TURNECONOMICS_2026_09_01_measured_and_NO_CHANGE_NEEDED_the_fix_already_shipped:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-105."
