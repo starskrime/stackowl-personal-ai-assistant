@@ -1215,6 +1215,7 @@ def _turn_context_prefix(state: PipelineState, now: datetime.datetime | None = N
     to the user's text unchanged.
     """
     try:
+        from stackowl.channels._format import channel_shape
         from stackowl.owls.base_prompt import volatile_turn_context
 
         context = volatile_turn_context(
@@ -1246,6 +1247,17 @@ def _turn_context_prefix(state: PipelineState, now: datetime.datetime | None = N
         nudge = None
     if nudge:
         context = f"{context}\n\n{nudge}"
+    # INFO, not debug, and deliberately so: this is the ONLY evidence that the
+    # model was told where its answer is going, and production runs at INFO. A
+    # DEBUG line here could never close the acceptance check it exists to close.
+    # ``shaped`` False on a live user channel means that channel has no declared
+    # shape — the model is composing blind, which is the 2026-08-31 defect.
+    log.engine.info(
+        "[pipeline] execute: turn context composed",
+        extra={"_fields": {"trace_id": state.trace_id, "channel": state.channel,
+                           "shaped": channel_shape(state.channel) is not None,
+                           "nudged": bool(nudge)}},
+    )
     return f"{context}\n\n{state.input_text}"
 
 
