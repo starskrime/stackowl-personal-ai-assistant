@@ -4,6 +4,31 @@ Rebuilt from what work in this repo has actually needed. Add a line only when it
 been earned — something non-obvious that cost time or nearly caused damage. Keep it
 short; the previous version grew to 180 lines and was cleared on 2026-08-10.
 
+## THE RULE ABOVE ALL OTHER RULES
+
+**Bakir, 2026-08-31: always fix WHY it happened, never WHAT happened.**
+
+This one is MANDATORY and it OUTRANKS everything else in this file, in
+`PROCESS.md`, in every skill and in every loop. Where another rule would let you
+ship a repair for the reported symptom, this rule overrides it.
+
+A report from the operator is EVIDENCE OF A CAUSE, not a work item. "The reply
+had asterisks" is what happened; "nothing ever told the model where its answer
+was being delivered, so output shape could only be stored as one person's
+preference" is why. Fix the second and the first cannot recur. Fix the first and
+you have bought one quiet day.
+
+**Never defer the root cause to an escalation while shipping the symptom fix.**
+That is the specific move he rejected: the formatter was repaired, the reason it
+mattered was filed as a question for him, and he answered "you did fix only my
+ask but you should fix the core off issue why it is happening not what
+happaned". Escalate a DECISION he alone can make. Never escalate the DIAGNOSIS
+to avoid doing it.
+
+Before any fix is called done, answer in writing: *what made this possible, and
+what else does that same cause reach?* If the answer is only a restatement of
+the symptom, the root cause has not been found yet.
+
 ## Read these first
 
 `progress.yml` is the state of record — `current` says where we are. Then

@@ -248,7 +248,7 @@ def stable_operational_context(*, describe_tool_protocol: bool = True) -> str:
 
 
 def volatile_turn_context(
-    now: datetime, *, capabilities_offered: bool = True
+    now: datetime, *, capabilities_offered: bool = True, channel: str | None = None
 ) -> str:
     """The operational facts that belong to ONE turn, delivered with it.
 
@@ -263,9 +263,33 @@ def volatile_turn_context(
 
     This is the seam every future per-turn fact should use, instead of being
     smuggled into the system prompt and quietly costing the cached prefix.
+
+    THE DESTINATION IS THE THIRD SUCH FACT, added 2026-08-31. Measured that day:
+    ``grep channel`` over this whole module returned NOTHING — the model writing
+    a reply had never been told where the reply was going, so it wrote markdown
+    reports into a phone chat and the only lever the platform had left was to
+    record one user's complaint as a personal preference. A destination belongs
+    to one turn (the same owl answers on Telegram and in a terminal), so it
+    rides here and never the frozen prefix. The wording comes from
+    :func:`stackowl.channels._format.channel_shape`, the same record the
+    delivery seam enforces, so the instruction and the enforcement are one
+    source. An unknown channel says nothing at all.
+
+    Args:
+        now: The wall-clock to render.
+        capabilities_offered: False adds the explicit no-tools instruction.
+        channel: Destination channel name, or None to say nothing about it.
+
+    Returns:
+        The per-turn context block; never raises.
     """
+    from stackowl.channels._format import channel_shape
+
     human_now = now.strftime("%A, %B %d, %Y at %I:%M %p %Z").strip()
     parts = [f"Right now it is {human_now}."]
+    shape = channel_shape(channel)
+    if shape is not None:
+        parts.append(shape.describe)
     if not capabilities_offered:
         parts.append(_NO_CAPABILITIES_THIS_TURN)
     return "\n\n".join(parts)
@@ -300,6 +324,14 @@ def strip_turn_context(text: str | None) -> str:
     if not text:
         return ""
     stripped = _TURN_CONTEXT_RE.sub("", text, count=1)
+    # Every declared channel description, by exact string — derived from the one
+    # record that produces them, so a new channel can never be added with a
+    # description this forgets to strip.
+    from stackowl.channels._format import CHANNEL_SHAPES
+
+    for shape in CHANNEL_SHAPES.values():
+        if shape.describe in stripped:
+            stripped = stripped.replace(shape.describe, "", 1)
     if _NO_CAPABILITIES_THIS_TURN in stripped:
         stripped = stripped.replace(_NO_CAPABILITIES_THIS_TURN, "", 1)
     return stripped.strip()

@@ -350,7 +350,14 @@ class ProactiveDeliverer:
         try:
             from stackowl.channels._format import load_output_style
 
-            style = await load_output_style(store, str(target))
+            # The channel floor applies HERE too. A proactive message is
+            # delivered to a channel exactly like a reply is, so leaving this
+            # call channel-blind would have fixed the pipeline seam and left
+            # every incident alert and morning brief rendering by preference
+            # alone — the same defect, one delivery path over.
+            style = await load_output_style(
+                store, str(target), channel=notification.channel_name,
+            )
             styled = style.enforce(body)
         except Exception as exc:  # B5 — styling must never cost a delivery
             log.notifications.error(

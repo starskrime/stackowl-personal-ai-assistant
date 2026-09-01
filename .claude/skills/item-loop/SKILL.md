@@ -8,6 +8,20 @@ Work **one** item to done. Never two. The programme's state of record is `progre
 its method is `docs/reference-mapping/PROCESS.md`; every document obeys
 `docs/reference-mapping/DOC_STANDARD.md`. Read `current` before anything else.
 
+## The rule above all others — WHY, not WHAT
+
+**Bakir, 2026-08-31, mandatory and outranking every other rule in this skill:
+always fix WHY it happened, never WHAT happened.**
+
+Every item, every incident report, every acceptance failure. The symptom is
+EVIDENCE OF A CAUSE, not the work item. Repairing the reported thing and filing
+its cause as an escalation is the exact move he rejected — escalate a DECISION
+only he can make, never the DIAGNOSIS.
+
+An item is not done until you have written down *what made this possible, and
+what else does that same cause reach*. If that answer only restates the symptom,
+keep going: you have not found the root cause yet.
+
 ## The one rule that makes this safe
 
 **Never write a claim into `progress.yml` or a document that you did not measure.**

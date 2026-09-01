@@ -54,7 +54,12 @@ class StyleCommand(SlashCommand):
         # resolved, else the per-channel session — so what /style reports is the
         # same record the next reply is enforced against.
         owner_key = state.identity_key or state.session_key
-        style = await load_output_style(self._store, owner_key)
+        # WITH the channel: this command's own description promises "the active
+        # output formatting style for this channel", and reading it without one
+        # reported the stored preference while the user received something
+        # plainer. What /style says and what the next reply is enforced against
+        # must be the same resolution.
+        style = await load_output_style(self._store, owner_key, channel=state.channel)
         rules = style.describe_rules()
         channel = (state.channel or "this channel").capitalize()
         if not rules:

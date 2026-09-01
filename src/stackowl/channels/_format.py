@@ -282,6 +282,33 @@ class OutputStyle(BaseModel):
         )
         return result
 
+    def narrow(self, other: OutputStyle) -> OutputStyle:
+        """Compose two styles, keeping the PLAINER value of every field.
+
+        Used to layer a user preference (``other``) over a channel's capability
+        floor (``self``). The result can never be richer than either input, and
+        that one-directional invariant is what makes "format for the channel"
+        true without anybody having to ask for it: a preference may make output
+        plainer, it may not ask a terminal to render bold it cannot display.
+
+        ``links`` is not a richness axis (a titled link is not "more" than a
+        bare URL), so the floor wins only when it states something other than
+        the default; otherwise the preference carries.
+
+        Args:
+            other: The style to compose over this one — typically the user's.
+
+        Returns:
+            A new :class:`OutputStyle`; neither input is mutated.
+        """
+        merged: dict[str, str] = {}
+        for field, order in _PLAINEST_FIRST.items():
+            mine, theirs = getattr(self, field), getattr(other, field)
+            merged[field] = mine if order.index(mine) <= order.index(theirs) else theirs
+        default_links = OutputStyle.model_fields["links"].default
+        merged["links"] = self.links if self.links != default_links else other.links
+        return OutputStyle.model_validate(merged)
+
     def describe_rules(self) -> list[str]:
         """The enforced style as plain, observable rules (not field names).
 
@@ -306,6 +333,112 @@ class OutputStyle(BaseModel):
 # Field names of the style record — derived from the model (no hardcoded list to
 # drift) so callers can tell a style sub-field from another preference key.
 OUTPUT_STYLE_FIELDS: frozenset[str] = frozenset(OutputStyle.model_fields)
+
+
+# --------------------------------------------------------------------------- #
+# The CHANNEL's own shape — the floor a preference layers on top of            #
+# --------------------------------------------------------------------------- #
+# MEASURED 2026-08-31, and the reason this exists. Two greps, both empty:
+#
+#   * ``grep channel src/stackowl/owls/base_prompt.py`` -> NOTHING. The model
+#     composing a reply was never told where the reply was going, so it wrote a
+#     markdown report into a phone chat.
+#   * ``deliver.py``'s enforcement began ``if not prefs: return state`` and its
+#     own docstring said "channel-agnostic" — so output shape was ENTIRELY a
+#     per-user preference. A user with no preference got no channel policy at
+#     all.
+#
+# Which is why the platform's only possible answer to "always format output for
+# the channel the user is interacting with" was to write that down as one
+# person's taste. It is not a taste. A terminal renders no markdown whether or
+# not anyone prefers it: ``cli_adapter.send_text`` writes the string straight
+# out, and the TUI has no markdown renderer either (both measured, zero hits).
+#
+# ONE record per channel, read by BOTH sides of the model — ``describe`` rides
+# the per-turn context into generation, ``floor`` is enforced at delivery — so
+# what we ask for and what we enforce cannot drift apart.
+
+# Restrictiveness order per field, PLAINEST FIRST. ``narrow`` keeps the lower
+# index of two styles, which is what makes the composition safe in one
+# direction only: a preference may make output plainer, never richer than the
+# channel can actually render.
+_PLAINEST_FIRST: dict[str, tuple[str, ...]] = {
+    "markdown": ("off", "minimal", "full"),
+    "tables": ("off", "on"),
+    "emoji": ("off", "on"),
+    "length": ("terse", "normal"),
+}
+
+
+class ChannelShape(BaseModel):
+    """What one channel can render, and what an answer written for it looks like.
+
+    Attributes:
+        describe: One sentence naming the destination and the shape that suits
+            it, delivered with the turn (never the frozen prompt — the channel
+            is a per-turn fact).
+        floor: Enforced at the delivery seam whatever the model produced, so the
+            instruction is a constraint rather than a hint.
+    """
+
+    describe: str
+    floor: OutputStyle = OutputStyle()
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+# A chat app. Its adapters DO convert GFM (Telegram MarkdownV2, Slack mrkdwn),
+# so the floor stays permissive — the defect there was never the escaping, it
+# was writing a document into a message window. That is a generation-side fact,
+# so it is carried by ``describe`` and not by a transform.
+_CHAT_SHAPE = ChannelShape(
+    describe=(
+        "You are answering in a chat app. Reply as a chat message, not a "
+        "document: no headings, no report structure, no long preamble — just "
+        "the answer, in as few lines as it honestly takes."
+    ),
+)
+
+# A terminal. Measured: ``cli_adapter.send_text`` writes the string verbatim and
+# nothing in ``src/stackowl/tui/`` renders markdown, so every ``**bold**`` and
+# ``## heading`` reaches the user as literal punctuation. Tables are left alone
+# deliberately — a pipe table is at least aligned in a monospace terminal, so
+# stripping it would trade a readable render for an unmeasured one.
+_CLI_SHAPE = ChannelShape(
+    describe=(
+        "You are answering in a plain-text terminal, which displays no "
+        "formatting at all. Write plain sentences: no markdown, no headings, "
+        "no bold."
+    ),
+    floor=OutputStyle(markdown="off"),
+)
+
+#: Channel name -> its shape. A channel absent from this map has no declared
+#: shape and gets NO floor and NO instruction — silence rather than a guess,
+#: because inventing a shape for an unknown destination is how a working render
+#: gets quietly degraded.
+CHANNEL_SHAPES: dict[str, ChannelShape] = {
+    "telegram": _CHAT_SHAPE,
+    "slack": _CHAT_SHAPE,
+    "whatsapp": _CHAT_SHAPE,
+    "discord": _CHAT_SHAPE,
+    "cli": _CLI_SHAPE,
+}
+
+
+def channel_shape(channel: str | None) -> ChannelShape | None:
+    """The declared shape for ``channel``, or ``None`` when it has none.
+
+    Args:
+        channel: A ``ChannelAdapter.channel_name`` (case-insensitive), or None.
+
+    Returns:
+        The :class:`ChannelShape`, or ``None`` for an unknown/absent channel —
+        callers must treat that as "no opinion", never as a default.
+    """
+    if not channel:
+        return None
+    return CHANNEL_SHAPES.get(channel.strip().casefold())
 
 
 # --------------------------------------------------------------------------- #
@@ -405,8 +538,15 @@ def _strip_emoji(text: str) -> str:
     return re.sub(r"(?m)[ \t]+$", "", stripped)
 
 
-def resolve_output_style(prefs: Mapping[str, str]) -> OutputStyle:
-    """Resolve the effective :class:`OutputStyle` from a merged preference map.
+def resolve_output_style(
+    prefs: Mapping[str, str], *, channel: str | None = None,
+) -> OutputStyle:
+    """Resolve the effective :class:`OutputStyle` for a channel and a preference.
+
+    The channel's declared floor is the BASE and the preference narrows it (see
+    :meth:`OutputStyle.narrow`), so a channel that cannot render something never
+    depends on the user having asked. ``channel=None`` keeps the historical
+    preference-only behaviour for callers with no destination.
 
     ``prefs`` is an already-merged ``{key: value}`` map (e.g. global UNDER
     channel). Reads the JSON under ``OUTPUT_STYLE_KEY`` (only the fields actually
@@ -433,16 +573,22 @@ def resolve_output_style(prefs: Mapping[str, str]) -> OutputStyle:
         if legacy is not None and legacy.strip().casefold() in _OFF_VALUES:
             raw["tables"] = "off"
     try:
-        return OutputStyle.model_validate(raw)
+        preferred = OutputStyle.model_validate(raw)
     except Exception as exc:  # value out of vocabulary in store — degrade loudly
         log.gateway.warning(
             "[format] resolve_output_style: invalid stored style — using defaults",
             extra={"_fields": {"error": str(exc)}},
         )
-        return OutputStyle()
+        preferred = OutputStyle()
+    shape = channel_shape(channel)
+    if shape is None:
+        return preferred
+    return shape.floor.narrow(preferred)
 
 
-async def load_output_style(store: PreferenceStore, owner_key: str) -> OutputStyle:
+async def load_output_style(
+    store: PreferenceStore, owner_key: str, *, channel: str | None = None,
+) -> OutputStyle:
     """Read the resolved :class:`OutputStyle` for ``owner_key``, merging scopes.
 
     Merges the cross-channel GLOBAL prefs UNDER the per-channel ``owner_key``
@@ -453,7 +599,7 @@ async def load_output_style(store: PreferenceStore, owner_key: str) -> OutputSty
 
     global_prefs = await store.list_for_owner(GLOBAL_OWNER_KEY)
     owner_prefs = await store.list_for_owner(owner_key)
-    return resolve_output_style({**global_prefs, **owner_prefs})
+    return resolve_output_style({**global_prefs, **owner_prefs}, channel=channel)
 
 
 # Telegram wraps a monospace line well before this on a standard phone in

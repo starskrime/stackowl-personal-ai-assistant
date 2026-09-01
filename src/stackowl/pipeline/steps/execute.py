@@ -1220,6 +1220,7 @@ def _turn_context_prefix(state: PipelineState, now: datetime.datetime | None = N
         context = volatile_turn_context(
             now or now_local(),
             capabilities_offered=state.intent_class not in TOOL_FREE_CLASSES,
+            channel=state.channel,
         )
     except Exception as exc:  # no-hidden-errors: never cost the turn its text
         log.engine.error(

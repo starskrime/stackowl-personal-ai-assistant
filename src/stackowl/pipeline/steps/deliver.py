@@ -174,8 +174,11 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
     documented but deferred in ``OutputStyle._enforce_length``, actually
     happens — then re-verifies the deterministic fields on the result (a fresh
     LLM summary could reintroduce markdown the style forbids).
-    Channel-agnostic and fail-safe (B5): a missing store, no preferences, or any
-    error returns ``state`` unchanged — enforcement never crashes delivery. When a
+    CHANNEL-AWARE (2026-08-31) and fail-safe (B5): the destination channel's
+    declared floor is the base and the owner's preference narrows it, so a
+    channel never depends on the user having asked for correct rendering. A
+    missing store or any error returns ``state`` unchanged — enforcement never
+    crashes delivery. When a
     transform actually rewrites the text, the response chunks are collapsed into
     one transformed content chunk (preserving the turn's owl, target, and floor
     marker). owner_key mirrors classify: ``identity_key`` when set, else
@@ -195,11 +198,17 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
         global_prefs = await store.list_for_owner(GLOBAL_OWNER_KEY)
         owner_prefs = await store.list_for_owner(owner_key)
         prefs = {**global_prefs, **owner_prefs}
-        if not prefs:
-            return state
+        # NO early-out on an empty preference map. Until 2026-08-31 this read
+        # ``if not prefs: return state``, which meant a user who had never
+        # stated a preference got NO channel policy at all — the channel's own
+        # rendering limits were unrepresentable, and the only way to get
+        # correct output for a destination was for each person to ask for it.
+        # The channel floor applies whether or not anyone has a preference; an
+        # all-default resolved style is still a byte-identical fast path inside
+        # ``enforce``.
         from stackowl.channels._format import resolve_output_style
 
-        resolved_style = resolve_output_style(prefs)
+        resolved_style = resolve_output_style(prefs, channel=state.channel)
         combined = "".join(c.content for c in state.responses if c.content)
         transformed = resolved_style.enforce(combined)
         if resolved_style.length == "terse":
@@ -216,7 +225,9 @@ async def _enforce_output_prefs(state: PipelineState, services: StepServices) ->
         })
         log.gateway.info(
             "[pipeline] deliver: output preference enforced",
-            extra={"_fields": {"owner_key": owner_key, "before_len": len(combined),
+            extra={"_fields": {"owner_key": owner_key, "channel": state.channel,
+                               "style": resolved_style.model_dump(),
+                               "before_len": len(combined),
                                "after_len": len(transformed)}},
         )
         return state.evolve(responses=(chunk,))

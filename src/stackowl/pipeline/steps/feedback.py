@@ -256,6 +256,12 @@ async def _handle_negative(
         # The user says it broke but no known artifact is present. Re-assert the
         # existing explicit style (durability) if any; otherwise we genuinely do not
         # know what broke → ask rather than guess.
+        # DELIBERATELY channel-blind, unlike every delivery-side reader. This
+        # value is about to be WRITTEN back as the user's preference, and
+        # folding the channel floor into it would put the channel's policy in a
+        # per-user record — a second copy of a rule that already has one source
+        # (channels/_format.CHANNEL_SHAPES). The floor is applied at delivery,
+        # to everyone, whether or not it was ever stored.
         current = await load_output_style(store, owner_key)
         changes = _explicit_fields(current)
         if not changes:
@@ -279,6 +285,9 @@ async def _handle_positive(
     set, the clean attributes of the last render) so "keep doing this" becomes
     durable. No outcome row: a pin is not a rejection (positive-only corpus
     untouched)."""
+    # Channel-blind for the same reason as _handle_negative: this is read to be
+    # written back as a preference, and the channel floor must not be copied
+    # into a per-user record.
     current = await load_output_style(store, owner_key)
     changes = _explicit_fields(current) or _infer_clean_style(render, aspects)
     style = await _merge_write_style(store, owner_key, changes)
