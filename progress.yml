@@ -414,6 +414,63 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  DRAIN_2026_09_01_the_scheduler_defers_to_turns_and_nothing_waited_for_it:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-108."
+    how_this_item_was_reached: >-
+      Round 0 found spend at ZERO since 04:00 — which is the incident furnace being out, a
+      good result — so the sweep moved to the unexplained DB events. Three hypotheses were
+      tested and refuted before the real one: (1) the empty-table pollers cause the
+      contention — 60% of locks within 2s of a poll, but a CONTROL against ALL scheduler
+      ticks gave 62%, so the polls are proportional, not enriched; (2) SQLite is
+      misconfigured — WAL is on and the pool sets busy_timeout=15000 (my probe's 5000 was my
+      OWN connection, not the platform's); (3) it is a worsening leak — it tracks boots.
+    root_cause_measured: >-
+      48 "Cannot operate on a closed database" events, 100% of them within 120 SECONDS of a
+      boot (52% within 30s, none within 5s) — and auto_restart.grace_seconds is 120.0. The
+      correlation window IS the drain window. Per-day counts track boots rather than load:
+      8/47/69/91 boots against 2/4/12/26 events.
+      THE ASYMMETRY: scheduler.py already defers to turns ("deferred — user turn active
+      (heavy job yields)") and quiesce drained turns, so background work yielded in BOTH
+      directions and nothing ever waited for it. Worse, quiesce's FIRST line was a fast path
+      on has_active_turns(), and an automatic restart is by definition the case where no
+      user is attached — it returned "draining clean" immediately and exec-replaced whatever
+      the scheduler had in flight.
+    the_same_cause_explains_the_other_symptom: >-
+      This is the SAME root cause as the interrupted-RCA item earlier tonight: 85 of 462
+      staged analyses had a restart as their next event. That item fixed the ACCOUNTING (a
+      durable start marker so an interrupted analysis is not re-run blindly); this fixes the
+      INTERRUPTION for everything short enough to finish.
+    fix: >-
+      quiesce gains an optional background_in_flight probe and waits on it alongside turns,
+      within the SAME 120s ceiling. count_running_jobs asks the scheduler's own durable
+      vocabulary — a claimed row is status='running' under its CAS claim, the same thing
+      reap_stale_running reaps — so there is no second tracker. Wired at the one restart
+      seam; unwired it would be the very bug it fixes. Fails toward RESTARTING everywhere:
+      an absent, raising or nonsensical probe reports zero in flight, because a probe that
+      cannot answer must never hold a deploy open.
+    what_is_NOT_fixed_and_why: >-
+      A staged RCA budgets up to 960s, EIGHT TIMES the 120s grace, so a long one is still
+      abandoned. Raising the ceiling trades deploy speed for work loss and that is the
+      operator's call — ESC-101. What ships removes the common case: incident_escalation has
+      a p50 of 0.3s and p90 of 13s, so almost every handler now finishes.
+    tests: "9 in tests/runtime/test_the_drain_waits_for_background_work_too.py, including the
+      bounded-abandonment ceiling, back-compat for an unwired caller, three fail-open paths,
+      and two structural pins (the probe uses the reaper's vocabulary; the probe is WIRED)."
+    suites: "tests/runtime + tests/scheduler 592 passed."
+    a_flake_found_and_recorded_not_ignored: >-
+      tests/scheduler/test_concurrent_dispatch.py::test_slow_job_does_not_delay_sibling_dispatch
+      failed once in a 591-test run and passed both in isolation and on an identical re-run
+      (592 passed). It is a wall-clock assertion on a loaded box, and nothing in this change
+      touches dispatch. Recorded as a known flake rather than silently re-run away; it
+      deserves its own item.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_restart
+    closing_query: >-
+      Boot-triggered, so it closes in minutes rather than on rare traffic: the INFO line
+      "[runtime] quiesce: nothing in flight — draining clean" (new wording) or "waiting for
+      in-flight work to drain" with a background field. Then over 24h: "Cannot operate on a
+      closed database" should stop being 100% boot-correlated.
+
   JOBLANE_2026_09_01_a_contract_with_two_halves_and_no_meeting_point:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-107."
     outcome: verified_and_pinned_no_production_change
@@ -3202,6 +3259,27 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_101_how_long_may_a_deploy_wait_for_background_work:
+      question: >-
+        A restart now waits for in-flight scheduler handlers, but only within the existing
+        120-second grace. A staged RCA budgets up to 960s — eight times that — so a long one
+        is still killed mid-flight. Should the grace be raised for background work, or
+        should a long analysis stay abandonable?
+      why_evidence_cannot_settle_it: >-
+        It is a straight tradeoff between deploy speed and work loss, and you value fast
+        self-updating: CodeWatcher exec-replaces the core on every commit, 232 boots in four
+        days. Waiting up to 960s for an RCA would make some deploys sixteen minutes slower.
+      the_measurement: >-
+        85 of 462 staged analyses were killed by a restart, each having spent up to ~140,000
+        tokens. But incident_escalation's p50 is 0.3s and p90 is 13s, so the 120s ceiling
+        already saves almost everything EXCEPT the staged RCA.
+      panel_recommendation: >-
+        Leave the ceiling at 120s and make the RCA resumable instead — it is the only handler
+        that outruns the grace, and a resumable analysis is worth more than a slower deploy.
+        That is a larger piece of work and should be its own item once you confirm the
+        direction.
+      what_is_blocked: >-
+        Nothing. The drain waits for background work within the existing ceiling today.
     ESC_100_two_pinned_tests_were_pinning_the_defect:
       question: >-
         Two tests had to move for the grounding fix. One of them,

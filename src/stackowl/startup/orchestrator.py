@@ -4475,7 +4475,25 @@ class StartupOrchestrator:
                         loop_task.cancel()
                         with contextlib.suppress(asyncio.CancelledError, Exception):
                             await loop_task
-                        await quiesce(turn_registry, grace_seconds=_restart_grace)
+                        # WITHOUT THIS PROBE the drain waits for user turns only,
+                        # and an automatic restart (no user attached) took the
+                        # fast path on its first line — killing whatever the
+                        # scheduler had in flight. 85 of 462 staged RCAs died
+                        # that way, and every one of the 48 closed-database
+                        # errors landed inside the 120s grace window.
+                        from stackowl.scheduler.scheduler_helpers import (
+                            count_running_jobs,
+                        )
+
+                        _db_for_drain = db_pool
+                        await quiesce(
+                            turn_registry,
+                            grace_seconds=_restart_grace,
+                            background_in_flight=(
+                                (lambda: count_running_jobs(_db_for_drain))
+                                if _db_for_drain is not None else None
+                            ),
+                        )
                         restart_requested["value"] = True
                 finally:
                     stop_task.cancel()

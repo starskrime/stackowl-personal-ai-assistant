@@ -306,6 +306,36 @@ async def reap_timed_out_running(db: DbPool) -> int:
     return len(rows)
 
 
+async def count_running_jobs(db: DbPool) -> int:
+    """How many scheduler handlers are in flight right now.
+
+    THE SAME 'running' VOCABULARY :func:`reap_stale_running` reaps, deliberately
+    — a claimed job row is ``status='running'`` under the scheduler's CAS claim,
+    so the count already exists and is durable. Asking it here is one source, not
+    a second tracker.
+
+    Written for the restart drain. MEASURED 2026-09-01: 85 of 462 staged RCAs had
+    a RESTART as their next event, and 48 "Cannot operate on a closed database"
+    events were 100% within 120 seconds of a boot — because ``quiesce`` waited
+    for user TURNS and nothing waited for background work.
+
+    Returns 0 on any read failure: a probe that cannot answer must never hold a
+    deploy open.
+    """
+    try:
+        rows = await db.fetch_all(
+            "SELECT COUNT(*) AS n FROM jobs WHERE status = 'running'"
+        )
+    except Exception as exc:  # noqa: BLE001 — never block a restart
+        log.scheduler.warning(
+            "[scheduler] count_running_jobs: read failed — reporting 0 so the "
+            "restart is not held open",
+            exc_info=exc,
+        )
+        return 0
+    return int(rows[0]["n"]) if rows else 0
+
+
 async def reap_stale_running(db: DbPool, *, tz: str = "UTC") -> int:
     """Reset jobs stuck in ``status='running'`` back to a runnable state.
 

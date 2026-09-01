@@ -49,6 +49,12 @@ class _Drainable(Protocol):
     def active_turn_count(self) -> int: ...  # noqa: D102
 
 
+#: Returns the number of background operations currently in flight. The scheduler
+#: already maintains this durably — a claimed job row is ``status='running'`` — so
+#: this asks the existing source rather than introducing a second tracker.
+BackgroundProbe = Callable[[], Awaitable[int]]
+
+
 async def quiesce(
     turn_registry: _Drainable,
     *,
@@ -56,13 +62,40 @@ async def quiesce(
     poll_interval_s: float = 0.5,
     notify: NotifySink | None = None,
     has_checkpoint: CheckpointProbe | None = None,
+    background_in_flight: BackgroundProbe | None = None,
 ) -> bool:
-    """Wait for all RUNNING turns to finish, up to ``grace_seconds``.
+    """Wait for all RUNNING turns AND in-flight background work, up to ``grace_seconds``.
 
     Returns True if the core drained cleanly (no active turns), False if the
     grace ceiling elapsed with stragglers still running. Never raises — a
     restart proceeds regardless; the bool just tells the caller whether any
     turn was abandoned (for an operator-visible log).
+
+    BACKGROUND WORK COUNTS TOO, added 2026-09-01. It did not, and the asymmetry
+    was the defect: the SCHEDULER already defers to turns (``scheduler.py`` logs
+    "deferred — user turn active (heavy job yields)"), and this drained turns —
+    so background work yielded in BOTH directions and nothing ever waited for it.
+    A restart with no user attached, which is the normal case for an automatic
+    one, took the fast path on the very first line and exec-replaced immediately.
+
+    MEASURED that day, two symptoms of that one cause:
+
+    * ``[rca] staged.analyze`` entered 462 times and exited 355 — **85 of the 107
+      lost analyses had a RESTART as their next event**, each having spent up to
+      ~140,000 tokens;
+    * 48 "Cannot operate on a closed database" events, **100% of them within 120
+      seconds of a boot** — and ``grace_seconds`` is 120.0. The number is the
+      drain window itself.
+
+    ``background_in_flight`` is a probe, not a registry: the scheduler already
+    marks claimed rows ``status='running'`` under its CAS claim, so the count
+    exists and is durable. Asking it here is one source, not a second tracker.
+
+    THE CEILING IS UNCHANGED and that is deliberate. A staged RCA budgets up to
+    960s, eight times this grace, so a long one is still abandoned — that
+    tradeoff (deploy speed against work loss) is the operator's and is recorded
+    as ESC-101. What this removes is the common case: ``incident_escalation`` has
+    a p50 of 0.3s and a p90 of 13s, so almost every handler now finishes.
 
     F-37 — when a straggler IS abandoned, ``notify`` (if supplied) emits a
     user-facing "interrupted by restart, retrying" message so the cut-off turn is
@@ -71,34 +104,70 @@ async def quiesce(
     (we never assert automatic resume unconditionally). Both are best-effort: a
     failing ``notify`` or ``has_checkpoint`` is logged and the restart proceeds.
     """
-    if not turn_registry.has_active_turns():
-        log.gateway.info("[runtime] quiesce: no active turns — draining clean")
+    if not turn_registry.has_active_turns() and not await _background_busy(
+        background_in_flight
+    ):
+        log.gateway.info("[runtime] quiesce: nothing in flight — draining clean")
         return True
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(0.0, grace_seconds)
     log.gateway.info(
-        "[runtime] quiesce: waiting for turns to drain",
+        "[runtime] quiesce: waiting for in-flight work to drain",
         extra={"_fields": {
-            "active": turn_registry.active_turn_count(),
+            "active_turns": turn_registry.active_turn_count(),
+            "background": await _background_count(background_in_flight),
             "grace_seconds": grace_seconds,
         }},
     )
-    while turn_registry.has_active_turns():
+    while turn_registry.has_active_turns() or await _background_busy(
+        background_in_flight
+    ):
         if loop.time() >= deadline:
             abandoned = turn_registry.active_turn_count()
             resumable = _probe_checkpoint(has_checkpoint)
             log.gateway.warning(
                 "[runtime] quiesce: grace ceiling reached — restarting with "
                 "stragglers still running",
-                extra={"_fields": {"abandoned": abandoned, "resumable": resumable}},
+                extra={"_fields": {
+                    "abandoned": abandoned, "resumable": resumable,
+                    # WHICH background work was abandoned — the count alone could
+                    # not distinguish "a turn was cut" from "an RCA was killed",
+                    # and those have very different costs.
+                    "background_abandoned": await _background_count(
+                        background_in_flight
+                    ),
+                }},
             )
             await _notify_straggler(notify, resumable)
             return False
         await asyncio.sleep(poll_interval_s)
 
-    log.gateway.info("[runtime] quiesce: turns drained — safe to restart")
+    log.gateway.info("[runtime] quiesce: in-flight work drained — safe to restart")
     return True
+
+
+async def _background_count(probe: BackgroundProbe | None) -> int:
+    """How many background operations are in flight. 0 when unprobed or on error.
+
+    FAILS TOWARD RESTARTING, deliberately: a probe that cannot answer must never
+    be able to hold a deploy open, which would be a worse failure than the one it
+    exists to prevent.
+    """
+    if probe is None:
+        return 0
+    try:
+        return max(0, int(await probe()))
+    except Exception as exc:  # noqa: BLE001 — never block a restart
+        log.gateway.warning(
+            "[runtime] quiesce: background probe raised — restarting as before",
+            exc_info=exc,
+        )
+        return 0
+
+
+async def _background_busy(probe: BackgroundProbe | None) -> bool:
+    return await _background_count(probe) > 0
 
 
 def _probe_checkpoint(has_checkpoint: CheckpointProbe | None) -> bool | None:
