@@ -368,10 +368,14 @@ current:
       construction cannot repair state that predates it; unwinding means editing Bakir's
       curated memory, which is his call. ESC-103. The DIAGNOSIS is complete and here — only
       the decision is escalated.
-    validate: OPEN_awaiting_the_next_boot
-    closing_query: >-
-      Boot-triggered, so it closes in minutes: "[startup] memory: permanent tier over its
-      ceiling" naming user, jobmarket and owl with their permanent/ceiling/other figures.
+    validate: >-
+      CLOSED on a boot at 2026-09-01T11:39:48Z, strictly after the 11:39:27Z commit:
+      "[startup] memory: permanent tier over its ceiling — these targets have no room for a
+      fact that decays" naming user {permanent 1246, ceiling 1031, other 0}, jobmarket
+      {2039, 1650, 0} and owl {2142, 1650, 0}. The figures match the independent measurement
+      taken against the live store before the change, which is what makes the report an
+      instrument rather than an echo — and the condition is now observable on every boot
+      instead of never.
   ASTERISKS_2026_09_01_the_agent_recorded_a_PREFERENCE_for_a_FORMATTER_BUG:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-96."
     the_report_verbatim: >-
