@@ -13,8 +13,10 @@ rather than inventing a parallel enum.
 from __future__ import annotations
 
 import json
+import math
 import re
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from stackowl.db.pool import DbPool
@@ -125,6 +127,50 @@ def classify_failure(errors: tuple[str, ...]) -> str | None:
             return match.group(1)
     # Fallback — first error string truncated.
     return errors[0][:120]
+
+
+@dataclass(frozen=True)
+class CapabilityFailureRates:
+    """How often each capability failed, and how often it ran at all.
+
+    The pair is the whole point: a failure COUNT says nothing without the
+    denominator it happened over. Holds the arithmetic (pooled rate, z-score) so
+    the detector holds only the POLICY (where to put the bar) — one source for
+    the numbers, one place for the judgement.
+    """
+
+    failures: Mapping[str, int]
+    turns: Mapping[str, int]
+
+    def pooled_rate(self) -> float:
+        """The platform's own failure rate across every capability — the
+        baseline a single capability is anomalous WITH RESPECT TO.
+
+        Derived from the data rather than configured, so it moves as the platform
+        does: a fleet-wide bad day raises the bar instead of opening an incident
+        against every tool at once.
+        """
+        total_turns = sum(self.turns.values())
+        if total_turns <= 0:
+            return 0.0
+        counted = sum(self.failures.get(k, 0) for k in self.turns)
+        return counted / total_turns
+
+    def z_score(self, capability: str) -> float:
+        """Standard deviations by which *capability* exceeds the pooled rate.
+
+        A one-sided normal approximation to the binomial, which is what makes
+        this scale-aware where a bare rate is not: 3 failures in 25 turns (12%)
+        and 60 in 145 (41%) are both "above average", but only the second is
+        distinguishable from chance. Returns 0.0 for an unseen capability or a
+        degenerate baseline — never raises, and never invents an anomaly.
+        """
+        n = self.turns.get(capability, 0)
+        p0 = self.pooled_rate()
+        if n <= 0 or p0 <= 0.0 or p0 >= 1.0:
+            return 0.0
+        observed = self.failures.get(capability, 0) / n
+        return (observed - p0) / math.sqrt(p0 * (1.0 - p0) / n)
 
 
 class TaskOutcomeStore(OwnedRepository):
@@ -491,6 +537,81 @@ class TaskOutcomeStore(OwnedRepository):
             extra={"_fields": {"owl_name": owl_name, "n": len(results)}},
         )
         return results
+
+    async def capability_failure_rates(
+        self, *, since_epoch: float = 0.0,
+    ) -> CapabilityFailureRates:
+        """Per-capability failure counts AND the denominator they belong over.
+
+        THE DENOMINATOR IS THE POINT. The incident detector clustered failures by
+        capability and escalated any cluster of three within its lookback — an
+        absolute count with nothing under it. MEASURED 2026-09-01: ``shell``
+        failed 36 times in 7 days and was an incident; it also ran in 158 turns,
+        so 22.8%. ``read_file`` failed 14 times and ran in 148, so 9.5% against a
+        platform-wide 8.35% — indistinguishable from normal, and it cost a
+        140,000-token root-cause analysis that concluded nothing. Three failures
+        of a tool the platform calls constantly is not evidence of a defect, and
+        without a denominator no rule can tell the two apart.
+
+        Aggregated in SQLite via ``json_each`` over ``tool_sequence`` rather than
+        pulled into Python — the same table is 20,042 rows and the read runs on
+        every escalation tick.
+
+        Args:
+            since_epoch: Lower bound on ``captured_at``; the caller passes the
+                SAME lookback the clustering uses, so numerator and denominator
+                can never describe different windows.
+
+        Returns:
+            A :class:`CapabilityFailureRates`; empty on any read failure, which
+            the caller must treat as "no opinion" (never as "nothing is wrong").
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[outcomes] capability_failure_rates: entry",
+            extra={"_fields": {"since_epoch": since_epoch}},
+        )
+        turns: dict[str, int] = {}
+        failures: dict[str, int] = {}
+        try:
+            # 2. DECISION — turns in which each capability APPEARED (the
+            # denominator), counted distinctly so a tool called five times in one
+            # turn is one turn, matching the numerator's per-turn attribution.
+            for row in await self._db.fetch_all(
+                """SELECT je.value AS capability,
+                          COUNT(DISTINCT t.outcome_id) AS turns
+                     FROM task_outcomes t, json_each(t.tool_sequence) je
+                    WHERE t.owner_id = ? AND t.captured_at >= ?
+                      AND t.tool_sequence NOT IN ('', '[]')
+                    GROUP BY je.value""",
+                (self._owner_id, since_epoch),
+            ):
+                turns[str(row["capability"])] = int(row["turns"])
+            # 3. STEP — turns whose failure was pinned on a specific capability.
+            for row in await self._db.fetch_all(
+                """SELECT failed_capability AS capability, COUNT(*) AS failures
+                     FROM task_outcomes
+                    WHERE owner_id = ? AND captured_at >= ?
+                      AND failed_capability IS NOT NULL
+                    GROUP BY failed_capability""",
+                (self._owner_id, since_epoch),
+            ):
+                failures[str(row["capability"])] = int(row["failures"])
+        except Exception as exc:  # noqa: BLE001 — a rate read may not cost a tick
+            log.memory.error(
+                "[outcomes] capability_failure_rates: read failed — returning no "
+                "opinion, which the caller must not read as 'nothing is wrong'",
+                exc_info=exc, extra={"_fields": {"since_epoch": since_epoch}},
+            )
+            return CapabilityFailureRates(failures={}, turns={})
+        rates = CapabilityFailureRates(failures=failures, turns=turns)
+        # 4. EXIT
+        log.memory.debug(
+            "[outcomes] capability_failure_rates: exit",
+            extra={"_fields": {"capabilities": len(turns),
+                               "pooled_rate": rates.pooled_rate()}},
+        )
+        return rates
 
     async def list_failed_global(
         self, *, since_epoch: float = 0.0, limit: int = 2000,

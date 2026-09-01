@@ -99,6 +99,35 @@ _LOOKBACK_DAYS_DEFAULT = 7
 _SECONDS_PER_DAY = 86_400
 _MIN_RECURRENCE = 3  # mirrors FailureOutcomeMiner._MIN_EVIDENCE
 
+#: How far above the platform's OWN failure rate a capability must sit before its
+#: failures are an incident rather than the cost of doing business.
+#:
+#: WHY A COUNT WAS NEVER ENOUGH. `_MIN_RECURRENCE` is an absolute count with no
+#: denominator under it, so any capability the platform uses regularly crosses it
+#: permanently. MEASURED 2026-09-01 over seven days and 2,395 turns:
+#:
+#:     capability          failed  ran in   rate     z
+#:     browser_navigate        66     163   40.5%  14.8
+#:     web_fetch               60     145   41.4%  14.4
+#:     shell                   36     158   22.8%   6.6
+#:     read_file               14     148    9.5%   0.5   <- pooled was 8.35%
+#:     todo                     3      25   12.0%   0.7
+#:
+#: `read_file` at 9.5% against a platform-wide 8.35% is indistinguishable from
+#: normal, and `todo` was three failures total — yet each opened an incident and
+#: each bought a ~140,000-token staged RCA that concluded nothing. That is why 10
+#: signatures produced 145 incidents and 19,167,115 tokens in 26 hours, ~64% of
+#: ALL platform spend, with 86 of 100 verdicts coming back unverified. There was
+#: no defect to find.
+#:
+#: THREE SIGMA, AND IT IS NOT A TUNING KNOB. The bar is one-sided ~0.1%: the
+#: chance this capability's failures came from the same process as everything
+#: else's. It is scale-aware where a bare rate is not — 3-in-25 and 60-in-145 are
+#: both "above average" and only the second is distinguishable from chance. And
+#: the baseline is the PLATFORM'S OWN rate, so a fleet-wide bad day raises the bar
+#: rather than opening an incident against every tool at once.
+_ANOMALY_Z = 3.0
+
 # Synthetic failure_class for a SOURCE-3 (masked-recurring-substitution) incident:
 # there is no real exception (the turn succeeded), so this is not a
 # stackowl.exceptions name. classify_incident_retryability resolves it to
@@ -691,6 +720,18 @@ class IncidentEscalationHandler(JobHandler):
                 "list_failed_global — skipping outcome incidents",
             )
             outcomes = []
+        # The denominator, read ONCE per gather and over the SAME window the
+        # clustering uses, so numerator and denominator can never describe
+        # different periods.
+        rates = None
+        try:
+            rates = await self._outcomes.capability_failure_rates(since_epoch=since)
+        except AttributeError:
+            log.scheduler.warning(
+                "[scheduler] incident_escalation: outcome_store has no "
+                "capability_failure_rates — escalating on raw counts, which is "
+                "the pre-2026-09-01 behaviour and its token cost",
+            )
         clusters = cluster_failures_by_capability_and_signature(
             list(outcomes), min_size=self._recurrence_threshold,
             capability_tag_lookup=self._capability_tag_lookup,
@@ -735,6 +776,32 @@ class IncidentEscalationHandler(JobHandler):
                     }},
                 )
                 continue
+            # THE DENOMINATOR GATE. Recurring is necessary and not sufficient:
+            # a capability the platform leans on will always recur. It is an
+            # incident only when it fails MORE than the platform itself does.
+            #
+            # FAILS TOWARD DIAGNOSING, deliberately and for the same reason
+            # `recently_diagnosed` does: an unreadable store returns no opinion
+            # and every cluster escalates exactly as it did before this existed.
+            # A gate that silenced the self-heal loop because a query failed
+            # would be the failure mode this whole arc exists to prevent.
+            if rates is not None:
+                z = rates.z_score(cluster.capability_class)
+                if z < _ANOMALY_Z:
+                    log.scheduler.info(
+                        "[scheduler] incident_escalation: capability fails no more "
+                        "than the platform does — not an incident",
+                        extra={"_fields": {
+                            "capability": cluster.capability_class,
+                            "failure_class": cluster.failure_class,
+                            "failures": rates.failures.get(
+                                cluster.capability_class, 0),
+                            "turns": rates.turns.get(cluster.capability_class, 0),
+                            "pooled_rate": round(rates.pooled_rate(), 4),
+                            "z": round(z, 2), "bar": _ANOMALY_Z,
+                        }},
+                    )
+                    continue
             samples = tuple(
                 f"- trace={o.trace_id} tools={list(o.tool_sequence)} "
                 f"failure_class={o.failure_class} input={(o.input_text or '')[:120]!r}"
