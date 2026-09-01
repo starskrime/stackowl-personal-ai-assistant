@@ -13707,17 +13707,23 @@ items:
     blocks: [D03.1, D03.3]
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial
       document:   not_started
-    doc: null
+    doc: "src/stackowl/memory/conversation_compressor.py + tests/memory/test_a_long_conversation_is_compressed_not_forgotten.py — the module docstring carries the architect stage; a DOC_STANDARD document is still owed."
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-01: ported the reference platform's compressor design. New module memory/conversation_compressor.py (pure, token-budgeted selection + prompt building) wired into classify: history is now READ deep (40 turns) and the middle compressed, where before short_term_window=6 dropped everything older AT THE DATABASE, so no later stage could compress what it never saw."
+      - "validate=partial: 11 tests green and the wiring asserted, but no live conversation has yet exceeded the 12,000-token history budget, so the compression path has not fired in production. Closing query: '[pipeline] classify: conversation compressed'."
+      - "THE OLD MEASUREMENT NEARLY CLOSED THIS ITEM WRONGLY. 129,675 calls, max 162,912 tokens = 62.1% of the window, ZERO over 90% — which reads as 'no context pressure'. Input never approaches the window BECAUSE history was truncated to 6 turns before being sent. The denominator was made of already-truncated history."
+      - "WHAT TRUNCATION COST, measured: beyond 6 turns the conversation was unreachable by ANY path. Every FTS/semantic recall reads committed_facts, which has held ZERO rows since D08.1 migration 0112 retired the fact store, while staged_facts holds 369 rows whose embeddings nothing searches."
+      - "THE FACT STORE WAS NOT RESURRECTED. D08.1 retired it deliberately and kept the DreamWorker seat for N01; re-pointing recall at it would reconcile away a recorded decision. Compression is the replacement and needs no fact store."
+
     notes: >-
       REOPENED BY RE-MEASUREMENT 2026-08-30. This item was treated as closed: a note in
       current (ESC "also_falsified_while_answering_this", 2026-08-29) said "D03.2 was already

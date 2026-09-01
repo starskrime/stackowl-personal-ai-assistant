@@ -658,6 +658,95 @@ def _dedup_assistant_history(messages: list[Message]) -> list[Message]:
     return out
 
 
+#: How far back history is READ before compression decides what survives. The
+#: old behaviour read exactly `short_term_window` (6) and dropped the rest at the
+#: database, so no later stage could have compressed what it never saw.
+_DEEP_HISTORY_TURNS = 40
+
+#: Tokens history may occupy before the middle is compressed. Deliberately well
+#: below any real window: this bounds the PROMPT's history share, it is not a
+#: window guard. Measured 2026-09-01, live history was ~1,166 tokens per turn, so
+#: this only engages on genuinely long sessions.
+_HISTORY_BUDGET_TOKENS = 12_000
+
+
+async def _compress_history(history: list[Message], state: PipelineState) -> list[Message]:
+    """Summarize the middle of a long conversation instead of dropping it.
+
+    Fails toward the OLD behaviour in every error path: a compression that cannot
+    run returns head + tail, which is what truncation already did. Never raises —
+    history assembly may not be the thing that fails a turn.
+    """
+    from stackowl.memory import conversation_compressor as cc
+
+    try:
+        selection = cc.select(history, budget_tokens=_HISTORY_BUDGET_TOKENS)
+        if not selection.needs_compression:
+            return cc.apply(selection, None)
+        # 2. DECISION — a long session; pay one cheap call to keep its middle.
+        log.engine.info(
+            "[pipeline] classify: conversation too long for the history budget — "
+            "compressing the middle instead of dropping it",
+            extra={"_fields": {
+                "trace_id": state.trace_id,
+                "turns": len(history),
+                "middle_turns": len(selection.middle),
+                "budget_tokens": _HISTORY_BUDGET_TOKENS,
+                "had_prior_summary": selection.prior_summary is not None,
+            }},
+        )
+        summary = await _summarize_region(cc.build_prompt(selection), state)
+        out = cc.apply(selection, summary)
+        log.engine.info(
+            "[pipeline] classify: conversation compressed",
+            extra={"_fields": {
+                "trace_id": state.trace_id,
+                "turns_before": len(history), "turns_after": len(out),
+                "summarized": summary is not None,
+            }},
+        )
+        return out
+    except Exception as exc:
+        log.engine.error(
+            "[pipeline] classify: compression FAILED — falling back to the "
+            "untouched history, never worse than before",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return history
+
+
+async def _summarize_region(prompt: str, state: PipelineState) -> str | None:
+    """One cheap-tier call. Returns None on any failure — the caller degrades."""
+    try:
+        from stackowl.providers.llm_gateway import LLMGateway
+
+        registry = get_services().provider_registry
+        if registry is None:
+            log.engine.info(
+                "[pipeline] classify: no provider registry — the middle is dropped "
+                "as before rather than compressed",
+                extra={"_fields": {"trace_id": state.trace_id}},
+            )
+            return None
+        # floor == ceiling == "fast": summarizing a transcript is exactly the
+        # auxiliary-model job, and allowing escalation would let a long history
+        # pull the expensive tier on a housekeeping call.
+        result = await LLMGateway(registry).complete(
+            [Message(role="user", content=prompt)],
+            floor="fast",
+            ceiling="fast",
+            purpose="classify.compress_history",
+        )
+        return (result.content or "").strip() or None
+    except Exception as exc:
+        log.engine.warning(
+            "[pipeline] classify: history summarizer unavailable — the middle is "
+            "dropped as before rather than failing the turn",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return None
+
+
 async def _gather_history(
     session_key: str, limit: int, extra_refs: tuple[str, ...] = (),
 ) -> list[Message]:
@@ -749,9 +838,19 @@ async def run(state: PipelineState) -> PipelineState:
     # between the two buckets depending on whether identity resolved on that turn,
     # and reading one bucket loses the other. Measured 2026-08-16 on Bakir's own
     # lane: 26 turns visible, 8 invisible, including real user messages.
+    # D03.2 — READ DEEP, THEN COMPRESS. `short_term_window` (6) was a hard
+    # truncation: everything older was dropped and unreachable by any path, since
+    # every recall route reads `committed_facts`, retired to zero rows by D08.1's
+    # migration 0112. Fetching a deeper window and compressing the middle keeps
+    # the session's earlier turns present instead of discarding them. The deep
+    # read is bounded, and when everything fits the selection is a no-op with NO
+    # model call — which is the overwhelming majority of turns.
     history = await _gather_history(
-        owner_scope_key(state), short_term_window, conversation_scope_keys(state),
+        owner_scope_key(state),
+        max(short_term_window, _DEEP_HISTORY_TURNS),
+        conversation_scope_keys(state),
     )
+    history = await _compress_history(history, state)
     # No lean gate (owner decision 2026-07-22): a "conversational"-classified
     # turn used to skip lessons/graph-context/skill-relevance entirely — but
     # the router's intent_class is coarser than "greetings/small-talk" (e.g.
