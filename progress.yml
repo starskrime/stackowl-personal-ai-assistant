@@ -408,6 +408,101 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  RCA_2026_09_01_an_analysis_killed_mid_flight_looked_like_one_that_never_ran:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-101."
+    how_this_item_was_reached: >-
+      Chasing RCA verdict QUALITY. The verdict instrumentation added earlier tonight
+      settled that question honestly and negatively: five dispositions since it went live —
+      3 rejected, 1 absent, 1 verified — so verified=False mostly means the verifier
+      genuinely REJECTED the hypothesis, not that a good verdict was discarded. That killed
+      the hypothesis and pointed at a bigger number.
+    root_cause_measured: >-
+      "[rca] staged.analyze: entry" 462 times against "exit" 355 — 107 analyses (23%) never
+      finished. 85 of those 107 had a RESTART as their next event, and there were 232 boots
+      in four days, one every ~25 minutes, because CodeWatcher exec-replaces the core on
+      every commit. A staged RCA budgets up to 960s. Work that takes sixteen minutes cannot
+      survive a process replaced every twenty-five. That is not an edge case — a
+      self-updating platform restarting constantly is the NORMAL condition here, and the
+      analysis was built as though it were not.
+      THE ACTUAL DEFECT IS THAT NOTHING RECORDED IT. record_diagnosis is written on
+      COMPLETION only, so an interrupted analysis left the signature looking "never
+      diagnosed": the next tick started the identical analysis from zero, spent another
+      ~140,000 tokens, and was interrupted again. 85 x 140k is roughly 12M tokens producing
+      no verdict, no record and no way to notice. The platform could not tell "we tried and
+      were killed" from "we never tried".
+    what_else_that_same_cause_reaches: >-
+      Any long-running background work here. None of it has a durable "I started", so a
+      restart is indistinguishable from never having begun. The RCA is simply where it was
+      measurable, because it is the expensive one.
+    fix: >-
+      STARTED_EVENT is written to the SAME audit_log ledger, keyed the same way (actor =
+      signature), BEFORE the analysis runs; recently_diagnosed reads both events in one
+      query. An analysis that began and never returned therefore suppresses a repeat for the
+      same 24h window — deliberately, because four days of evidence say it will be
+      interrupted again. The incident is still DETECTED every tick and the window still
+      expires, so only the expensive re-analysis is held.
+    NOT_done_and_why: >-
+      Making the analysis RESUMABLE is the larger answer and is an architecture question,
+      not a fourth attempt at bookkeeping. What ships is interrupted_diagnoses() and its
+      INFO line, which count exactly how much work is being lost — so that becomes a
+      measured decision instead of a guess.
+    tests: "10 in tests/scheduler/handlers/test_an_interrupted_analysis_leaves_a_trace.py,
+      including the structural pin that the marker is written BEFORE the analysis (writing
+      it after is precisely the bug), that yesterday's success cannot mask today's
+      interruption, and that suppression still expires."
+    suites: "tests/scheduler 506 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_incident_escalation_tick
+    closing_query: >-
+      Two INFO lines: "analyses started and never finished — killed mid-flight, tokens
+      spent, no verdict" with a count, and an audit_log row with event_type
+      'incident.diagnosis_started'. The handler ticks every 10 minutes, so both land within
+      the hour if any incident is still eligible after the denominator gate.
+
+  CONFIRMATION_2026_09_01_it_announced_a_repair_it_had_not_made:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-100."
+    how_this_item_was_reached: >-
+      Bakir, verbatim: "Why platform repeats : Fixed. From now on here: no asterisks, no raw
+      tables and replies kept short. 714 in / 33 out". He had been told this twice already,
+      word for word.
+    root_cause_measured: >-
+      All five negative/format captures, ever. 22:20:15 changes={length:terse,tables:off}
+      defects=[]; 22:25:40 and 00:56:46 changes={markdown:minimal} defects=['asterisks'];
+      02:32:05 and 02:32:24 changes={tables:off,markdown:minimal,length:terse} defects=[].
+      The last two are NINETEEN SECONDS APART, both with defects=[] and changes equal to the
+      ENTIRE already-stored style. Nothing was detected wrong with the render — correctly,
+      the formatter had been repaired hours earlier — and nothing was written that was not
+      already there. _negative_confirmation([], style) returned the literal "Fixed."
+    the_loop_is_self_sustaining: >-
+      The branch also SHORT-CIRCUITS the turn, so what he actually asked was never answered
+      — which is why he asked again, which classified negative again, which produced the
+      identical receipt. His "714 in / 33 out" is the signature: almost no output because
+      there was nothing to say. And _CLARIFY_QUESTION, the one branch that would have ASKED
+      him what was wrong, is guarded by `if not changes` and is therefore UNREACHABLE for
+      anyone who has ever set a style — dead code for exactly the people who complain most.
+    what_else_that_same_cause_reaches: >-
+      Every short-circuit that announces an outcome without checking whether the outcome
+      occurred. _positive_confirmation has the same shape ("pinned"), and this is the fourth
+      item in one night whose cause is the platform REPORTING work instead of doing it —
+      here in the one function whose entire job is to report honestly on a correction.
+    fix: >-
+      _merge_write_style now returns whether anything actually moved. "fixed" is reserved
+      for a DETECTED defect; "Noted" for a real preference change; and when neither happened
+      the turn falls through and ANSWERS him instead of sending a receipt. The durability
+      write stays — what is removed is the claim, not the write — and so does the rejection
+      row, because he was dissatisfied whether or not a transform was at fault.
+    tests: "10 in tests/pipeline/steps/test_the_platform_does_not_confirm_work_it_did_not_do.py,
+      including both structural pins: no third confirmation branch, and the fall-through must
+      precede the confirmation or it never runs."
+    suites: "tests/pipeline 1673 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    commits: "ae08b334"
+    validate: OPEN_awaiting_the_next_format_complaint
+    closing_query: >-
+      grep "[pipeline] feedback: no defect and no change — answering instead of confirming"
+      in ~/.stackowl/logs/stackowl.jsonl. Only five negative/format captures exist in the
+      whole retained history, so this closes on his next one rather than on a timer.
+
   CONSENT_2026_09_01_the_gate_asked_what_a_tool_is_called_not_what_it_does:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-99."
     how_this_item_was_reached: >-
@@ -451,11 +546,22 @@ current:
       (ls/grep/git must NOT classify) and evasion via pipe, chain and $() substitution."
     suites: "tests/tools 1861 passed, 4 skipped."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    validate: OPEN_awaiting_the_next_interpreter_shell_call
-    closing_query: >-
-      grep "shell.execute: code execution through the shell — not gated as code_execution"
-      in ~/.stackowl/logs/stackowl.jsonl. It fires on ~72% of shell calls, so it should
-      appear within the hour; its count over 24h is the number ESC-98 needs.
+    validate: >-
+      CLOSED 2026-09-01T02:49 on a live Telegram turn driven through the real ingress
+      (trace 0774dd5ae53941c6b7883704c53208ad), after a restart at 02:38:27Z that carried
+      the commit. BOTH DIRECTIONS in one turn, which is what makes it evidence rather than
+      a single anecdote: three shell calls, of which the two ordinary ones ("ls -la && find
+      ...", "sqlite3 ... SELECT COUNT(*)") produced NO capability line, and the third
+      produced "shell.execute: code execution through the shell — not gated as
+      code_execution {capability: code_execution, tool: shell, interactive: true, channel:
+      telegram, command_head: 'python3 -c\nimport sqlite3...'}".
+      So the classifier is live, silent on ordinary commands, and correct on the real thing
+      — and the turn ITSELF is the finding: the platform executed arbitrary Python through
+      shell with no consent prompt while execute_code remains always-ask.
+    validate_still_open: >-
+      The 24h COUNT that ESC-98 wants (how often this fires unattended vs with a human
+      present) needs a day of ordinary traffic. Closing query: group the capability lines by
+      the `interactive` field over 2026-09-02.
 
   RETRY_2026_09_01_the_machinery_described_itself_instead_of_the_work:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-98."
@@ -2774,7 +2880,9 @@ current:
       the_measurement: >-
         110 of 153 shell commands (72%) invoke python3/node/ruby/perl. shell's only consent
         gate is is_catastrophic (rm -rf /, fork bombs). 26 execute_code refusals, all on
-        channel=rca, over five days.
+        channel=rca, over five days. CONFIRMED LIVE 2026-09-01T02:49: a Telegram turn ran
+        "python3 -c import sqlite3 ..." through shell with no prompt, logged as
+        capability=code_execution, interactive=true — while execute_code remains always-ask.
       panel_recommendation: >-
         (b), keeping the classifier for audit. The status quo is ALREADY (b) in effect for
         72% of code execution; what (a) buys is a prompt on the one path least likely to be

@@ -291,6 +291,63 @@ DIAGNOSED_EVENT = "incident.diagnosed"
 _DIAGNOSIS_GOOD_FOR_HOURS = 24.0
 
 
+#: An analysis that STARTED. Written before the RCA runs, so an attempt that never
+#: returns still leaves a trace.
+#:
+#: MEASURED 2026-09-01 over the retained logs: `[rca] staged.analyze: entry` 462
+#: times against `exit` 355 — **107 analyses (23%) never finished** — and 85 of
+#: those 107 had a RESTART as their next event. There were **232 boots in four
+#: days**, one every ~25 minutes, because CodeWatcher exec-replaces the core on
+#: every commit. A staged RCA budgets up to 960s. Work that takes sixteen minutes
+#: cannot survive a process that is replaced every twenty-five, and roughly one in
+#: five never did.
+#:
+#: NOTHING RECORDED IT. `record_diagnosis` is written on COMPLETION only, so an
+#: interrupted analysis left the signature looking "never diagnosed" — the next
+#: tick started the identical analysis from zero, spent another ~140,000 tokens,
+#: and was interrupted again. 85 x 140k is roughly 12M tokens that produced no
+#: verdict, no record, and no way to notice.
+#:
+#: A START MARKER SUPPRESSES TOO, and that is the point rather than a side effect.
+#: Four days of evidence say an analysis interrupted once will be interrupted
+#: again; re-entering it every ten minutes is the furnace. The 24h expiry still
+#: applies, so a genuinely-needed analysis is retried tomorrow, and the incident
+#: itself is still DETECTED every tick — only the expensive re-analysis is held.
+STARTED_EVENT = "incident.diagnosis_started"
+
+
+async def record_diagnosis_started(
+    db: object, *, signature: str, incident_id: str, now: float | None = None,
+) -> None:
+    """Record that an RCA for *signature* has BEGUN. Never raises.
+
+    Written before the analysis so a process replacement mid-flight still leaves
+    the signature accounted for. Same ledger, same key (``actor`` = signature) as
+    :func:`record_diagnosis`, so :func:`recently_diagnosed` reads both with one
+    query and there is no second store to drift.
+
+    Args:
+        db: The pool. A ledger write may never fail a sweep.
+        signature: The incident signature this analysis is for.
+        incident_id: The minted id, for correlation with the log.
+        now: Injectable clock for tests.
+    """
+    stamp = time.time() if now is None else now
+    try:
+        await db.execute(  # type: ignore[attr-defined]
+            "INSERT INTO audit_log (event_type, actor, target, timestamp, details, "
+            "integrity_hash, chain_version) VALUES (?,?,?,?,?,?,?)",
+            (STARTED_EVENT, signature, incident_id, stamp,
+             json.dumps({"completed": False}), "", "v1"),
+        )
+    except Exception as exc:  # noqa: BLE001 — a ledger write may not cost a tick
+        log.scheduler.warning(
+            "[scheduler] incident_escalation: could not record the analysis start "
+            "— an interruption here will look like it never ran",
+            exc_info=exc, extra={"_fields": {"signature": signature}},
+        )
+
+
 async def record_diagnosis(
     db: object, *, signature: str, incident_id: str,
     verified: bool | None = None, now: float | None = None,
@@ -320,8 +377,49 @@ async def record_diagnosis(
         )
 
 
+async def interrupted_diagnoses(db: object, *, now: float | None = None) -> list[str]:
+    """Signatures whose analysis STARTED in the window and never completed.
+
+    The measurement that was impossible before :data:`STARTED_EVENT` existed: an
+    RCA killed by a process replacement left no trace at all, so 85 of 462
+    analyses over four days were invisible — the tokens were spent, no verdict
+    was produced, and the next tick began the same work.
+
+    Args:
+        db: The pool.
+        now: Injectable clock for tests.
+
+    Returns:
+        Sorted signatures started-but-not-finished; empty on any read failure,
+        which the caller must treat as "cannot tell", never as "none".
+    """
+    stamp = time.time() if now is None else now
+    since = stamp - _DIAGNOSIS_GOOD_FOR_HOURS * 3600.0
+    try:
+        rows = await db.fetch_all(  # type: ignore[attr-defined]
+            "SELECT DISTINCT s.actor AS actor FROM audit_log s "
+            "WHERE s.event_type = ? AND s.timestamp >= ? AND s.actor IS NOT NULL "
+            "AND NOT EXISTS (SELECT 1 FROM audit_log d WHERE d.event_type = ? "
+            "AND d.actor = s.actor AND d.timestamp >= s.timestamp)",
+            (STARTED_EVENT, since, DIAGNOSED_EVENT),
+        )
+    except Exception as exc:  # noqa: BLE001 — a metric may never cost a tick
+        log.scheduler.warning(
+            "[scheduler] incident_escalation: could not read interrupted analyses",
+            exc_info=exc,
+        )
+        return []
+    return sorted(str(r["actor"]) for r in rows if r["actor"])
+
+
 async def recently_diagnosed(db: object, *, now: float | None = None) -> set[str]:
-    """Signatures whose RCA is still recent enough to stand.
+    """Signatures whose RCA is still recent enough to stand — STARTED or finished.
+
+    Both events count. An analysis that began and never returned consumed the same
+    ~140,000 tokens as one that finished, and four days of evidence say it will be
+    interrupted again; treating "started" as "not to be repeated within the window"
+    is what turns an unbounded retry into a bounded one.
+    
 
     FAILS TOWARD DIAGNOSING. An unreadable ledger returns the empty set, so the
     loop behaves exactly as it did before this existed. A suppression that fired
@@ -332,9 +430,9 @@ async def recently_diagnosed(db: object, *, now: float | None = None) -> set[str
     since = stamp - _DIAGNOSIS_GOOD_FOR_HOURS * 3600.0
     try:
         rows = await db.fetch_all(  # type: ignore[attr-defined]
-            "SELECT DISTINCT actor FROM audit_log WHERE event_type = ? "
+            "SELECT DISTINCT actor FROM audit_log WHERE event_type IN (?, ?) "
             "AND timestamp >= ? AND actor IS NOT NULL",
-            (DIAGNOSED_EVENT, since),
+            (DIAGNOSED_EVENT, STARTED_EVENT, since),
         )
     except Exception as exc:  # noqa: BLE001
         log.scheduler.warning(
@@ -501,6 +599,19 @@ class IncidentEscalationHandler(JobHandler):
         # verified=False. Reading the ledger here means a diagnosis survives the
         # thing that was erasing it.
         if self._db is not None and new_incidents:
+            # INFO, because this is the ONLY evidence that an analysis was killed
+            # mid-flight — there is no exit line for a process that was replaced,
+            # and production runs at INFO.
+            interrupted = await interrupted_diagnoses(
+                self._db, now=self._clock_time(),
+            )
+            if interrupted:
+                log.scheduler.info(
+                    "[scheduler] incident_escalation: analyses started and never "
+                    "finished — killed mid-flight, tokens spent, no verdict",
+                    extra={"_fields": {"count": len(interrupted),
+                                       "signatures": interrupted[:8]}},
+                )
             already = await recently_diagnosed(self._db, now=self._clock_time())
             if already:
                 suppressed = [i for i in new_incidents if i.signature in already]
@@ -581,6 +692,14 @@ class IncidentEscalationHandler(JobHandler):
 
         for inc in new_incidents:
             incident_id = f"incident-{uuid.uuid4().hex[:12]}"
+            # BEFORE the analysis, not after. A restart during the next ~16
+            # minutes kills the RCA with no exit line and no ledger row, and the
+            # next tick then starts the identical analysis from zero. See
+            # STARTED_EVENT: 85 of 462 analyses died exactly this way.
+            if self._db is not None:
+                await record_diagnosis_started(
+                    self._db, signature=inc.signature, incident_id=incident_id,
+                )
             verdict, ran_rca = await self._resolve_incident(inc, incident_id)
             # Only mark the signature "handled" (dedupe closed) when a verdict was
             # ACTUALLY produced (verified OR explicitly rejected — both are a real
