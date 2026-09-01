@@ -414,6 +414,51 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  FLAKE_2026_09_01_the_concurrency_test_could_not_tell_the_bug_from_the_fix:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-109."
+    how_this_item_was_reached: >-
+      The previous item recorded a flake rather than re-running it away, and said it deserved
+      its own item. This is that item.
+    root_cause_measured: >-
+      TWO defects in one test, and the second is far worse than the flake that surfaced it.
+      (1) FRAGILE: "assert fast.ran_at - t0 < _SLOW_SECONDS / 2" gave the fast handler a 150
+      MILLISECOND absolute budget to be dispatched; under load, opening the pool, inserting
+      two jobs and polling can burn that on scheduling latency alone, so it failed for a
+      reason unrelated to the property it names — 1 failure in a 591-test run, 8/8 passes in
+      isolation. (2) VACUOUS: "assert total < _SLOW_SECONDS * 1.8", whose own comment called
+      it "the definitive proof concurrency actually happened", MEASURED at 0.301s sequential
+      and 0.301s concurrent — it passes either way because the fast handler takes no time.
+      It could never have failed in either direction.
+      So the test was flaky in the direction that cost nothing and BLIND in the direction
+      that mattered: the 2026-07-09 incident it was written for would have slipped past it.
+    a_third_hole_found_while_reading: >-
+      Its discrimination also depended on the SLOW job being dispatched first, and nothing
+      orders the rows. Had the fast job come first, even the 150ms assertion would have
+      passed under fully sequential dispatch.
+    fix: >-
+      Both handlers now occupy time and record their own start and end, and the test asserts
+      their INTERVALS OVERLAP. Sequential execution cannot produce overlapping intervals
+      whichever job goes first; concurrent execution always does. No wall-clock threshold
+      remains — the only absolute bound is the asyncio.wait_for hang guard, which sequential
+      dispatch of two 0.3s jobs finishes well inside, so it can never be what fails when
+      concurrency breaks.
+    proven_by_MUTATION_not_by_passing: >-
+      The old assertion passed; that was the problem. So the new one was verified by
+      temporarily reverting scheduler.py:278 from asyncio.gather to a sequential loop: the
+      test FAILED with "the two due jobs did not overlap — they were dispatched one after
+      the other, which is the 2026-07-09 incident". The scheduler was restored immediately
+      and git diff confirms no change to src/. A second test (test_the_overlap_check_can_
+      actually_FAIL) drives two handlers sequentially in-process and asserts the verdict
+      flips, so the guard has its own guard permanently.
+    tests: "2 in tests/scheduler/test_concurrent_dispatch.py (was 1)."
+    suites: "tests/runtime + tests/scheduler 593 passed, TWICE under full load — the exact
+      condition that produced the original flake."
+    baselines: "ruff src/ 35 — no src/ change at all."
+    validate: >-
+      CLOSED deterministically. The mutation test is the validation: the assertion fails
+      against the regression it exists to catch and passes against the fix, both demonstrated
+      rather than assumed.
+
   DRAIN_2026_09_01_the_scheduler_defers_to_turns_and_nothing_waited_for_it:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-108."
     how_this_item_was_reached: >-
@@ -465,10 +510,11 @@ current:
       deserves its own item.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
     validate: >-
-      PARTIAL. The code is LIVE — the core booted 2026-09-01T06:01:10Z, after the 06:00:16Z
-      commit — but the drain path has NOT run with it: zero lines carrying the new wording
-      across the whole log history. Two restarts since the commit produced no quiesce line
-      at all, so the probe is unexercised. NOT CLAIMED.
+      CLOSED 2026-09-01T06:23:06Z: "[runtime] quiesce: nothing in flight — draining clean"
+      — the NEW wording, which only exists in the changed code, on a restart after the
+      06:00:16Z commit. The drain ran with the probe wired and correctly found nothing in
+      flight (the platform was idle). Recorded as PARTIAL for twenty minutes first, because
+      until that line appeared the fix was live but unexercised and could not be claimed.
     validate_OPEN: >-
       Closing query: the INFO line "[runtime] quiesce: nothing in flight — draining clean",
       or "waiting for in-flight work to drain" with a `background` field. quiesce runs on
