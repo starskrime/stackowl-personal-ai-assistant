@@ -26,6 +26,7 @@ from stackowl.infra.trace import TraceContext
 from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
+from stackowl.tools.consent import CODE_EXECUTION, launches_an_interpreter
 
 # Default per-command timeout. Raised from the old 30s so an agent-requested
 # self-install / longer build / download can complete (Phase D). A per-call
@@ -635,6 +636,33 @@ async def run_argv(
         if decision is not None:
             return decision  # refused / declined / fail-closed — never spawns
 
+    # THE CAPABILITY THIS TOOL EXERCISES, named where it happens. `execute_code`
+    # is always-ask by a recorded decision ("code execution... never relaxed"),
+    # and MEASURED 2026-09-01 it was refused 26 times on the RCA lane while this
+    # tool ran a general-purpose interpreter 110 times out of 153 — unattended,
+    # unprompted, and unrecorded as code execution, because `is_catastrophic`
+    # looks for `rm -rf /` and `python3 - <<PY` is not that shape.
+    #
+    # NOT GATED HERE, DELIBERATELY. Gating it would refuse the self-heal loop its
+    # main evidence tool, and which way to close the gap — tighten this path or
+    # stop pretending `execute_code` is special — is a risk decision that belongs
+    # to the operator (ESC-98). What ships now is the thing that was missing
+    # either way: the platform can finally SEE and COUNT it. INFO, because it is
+    # the evidence that closes that escalation and production runs at INFO.
+    if launches_an_interpreter(rendered):
+        ctx = TraceContext.get()
+        log.tool.info(
+            "shell.execute: code execution through the shell — not gated as "
+            "code_execution",
+            extra={"_fields": {
+                "capability": CODE_EXECUTION,
+                "tool": tool_name,
+                "interactive": bool(ctx.get("interactive", False)),
+                "channel": ctx.get("channel"),
+                "session_key": ctx.get("session_key"),
+                "command_head": rendered[:120],
+            }},
+        )
     log.tool.debug(
         "shell.execute: launching subprocess",
         extra={"_fields": {"args": argv[:5], "shell": shell_command is not None}},

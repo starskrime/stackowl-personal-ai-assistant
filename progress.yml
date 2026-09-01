@@ -408,6 +408,55 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  CONSENT_2026_09_01_the_gate_asked_what_a_tool_is_called_not_what_it_does:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-99."
+    how_this_item_was_reached: >-
+      Round-0 sweep of the current log: "[consent] autonomous grant REFUSED — this is
+      always-ask and no human is attached", 26 occurrences, ALL of them one tool
+      (execute_code) on one lane (channel: rca), at a steady 1-9 a day. The self-heal loop
+      being denied its evidence tool is Bakir's recorded authority-vs-action shape.
+    root_cause_measured: >-
+      The refusal is real and buys NOTHING. execute_code is always-ask on a recorded
+      decision (E11/E12/E13 party reviews: "code execution, GUI control, and Home-Assistant
+      locks/alarms are never relaxed"). Measured the same day: `shell` invoked a
+      general-purpose interpreter 110 times out of 153 (72%) — python3 - <<PY, node -e —
+      unattended, unprompted and unrecorded as code execution. shell's ONLY consent gate is
+      is_catastrophic, which looks for `rm -rf /` and fork bombs; a heredoc of arbitrary
+      Python is not that shape. So the recorded decision was NAMED and never ENFORCED, and
+      the model reached the identical effect through shell on the next round. The gate asked
+      "what is this tool called" where the risk belongs to "what does this call DO", and
+      NOTHING anywhere computed the second question — the two paths could not have agreed
+      even in principle. "Two copies of one rule", with one copy missing entirely.
+    what_else_that_same_cause_reaches: >-
+      Any tool that can hand control to an interpreter — a learned tool built through
+      run_argv, an MCP client, a future scripting tool. Each inherits the same gap by
+      default, because there was no capability for the rule to attach to.
+    fix: >-
+      CODE_EXECUTION plus launches_an_interpreter() in tools/consent.py are now the ONE
+      source for "does this call execute code", and the category joins the always-ask set.
+      That changes NOTHING for execute_code (already always-ask by name) — it gives the rule
+      a single address so a third interpreter-launching tool cannot silently miss it. The
+      classifier was validated against the live corpus BEFORE being wired: 110 of 153 real
+      commands classify true; the 43 that do not are shell loops, awk/sed pipelines and
+      ordinary invocations. bash/sh are deliberately excluded — the shell tool IS bash, so
+      including them would classify everything and the signal would carry no information.
+    NOT_done_and_why: >-
+      The shell path is INSTRUMENTED, not gated. Gating it would refuse the self-heal loop
+      its main evidence tool — "removing or disabling anything user-facing" is on this
+      skill's stop-list, and which way to close the gap is risk appetite. See ESC-98. What
+      ships is the thing missing under EITHER answer: the platform can now see and count the
+      divergence, at INFO, which it never could before.
+    tests: "16 in tests/tools/test_the_consent_gate_knows_a_capability_from_a_name.py, every
+      command shape taken verbatim from the live corpus, including the expensive direction
+      (ls/grep/git must NOT classify) and evasion via pipe, chain and $() substitution."
+    suites: "tests/tools 1861 passed, 4 skipped."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_interpreter_shell_call
+    closing_query: >-
+      grep "shell.execute: code execution through the shell — not gated as code_execution"
+      in ~/.stackowl/logs/stackowl.jsonl. It fires on ~72% of shell calls, so it should
+      appear within the hour; its count over 24h is the number ESC-98 needs.
+
   RETRY_2026_09_01_the_machinery_described_itself_instead_of_the_work:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-98."
     how_this_item_was_reached: >-
@@ -2709,6 +2758,31 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_98_code_execution_is_gated_by_NAME_and_runs_freely_under_another:
+      question: >-
+        execute_code is always-ask and was refused 26 times on the RCA lane. In the same
+        logs `shell` ran a general-purpose interpreter 110 times out of 153 (72%),
+        unattended, with no prompt. Which way should this close — (a) interpreter-launching
+        shell commands become always-ask too, or (b) execute_code stops being always-ask,
+        matching what the platform already does in practice?
+      why_evidence_cannot_settle_it: >-
+        Both are coherent and the choice is risk appetite plus user-facing behaviour. (a)
+        means more prompts and, unattended, the self-heal loop loses its main evidence tool
+        — the RCA already concludes "no verdict" in most runs. (b) means arbitrary code runs
+        unattended by design rather than by accident, and revises the recorded E11/E12/E13
+        decision, which only you can do.
+      the_measurement: >-
+        110 of 153 shell commands (72%) invoke python3/node/ruby/perl. shell's only consent
+        gate is is_catastrophic (rm -rf /, fork bombs). 26 execute_code refusals, all on
+        channel=rca, over five days.
+      panel_recommendation: >-
+        (b), keeping the classifier for audit. The status quo is ALREADY (b) in effect for
+        72% of code execution; what (a) buys is a prompt on the one path least likely to be
+        abused — the platform's own diagnostics — while leaving every other route open.
+        Your call, not the panel's.
+      what_is_blocked: >-
+        Enforcement only. The capability, its classifier and the INFO evidence line are live
+        and unblocked, and the count they produce is what makes the answer informed.
     ESC_97_output_style_is_a_PREFERENCE_and_you_said_it_is_the_CHANNEL:
       question: >-
         "Always format output for the channel which users interacting." Today OutputStyle

@@ -21,9 +21,11 @@ prompter wired the policy fails CLOSED — silence is never consent.
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import Protocol, runtime_checkable
 
 from stackowl.infra.clock import Clock, WallClock
@@ -46,6 +48,74 @@ __all__ = [
     "TtyConsentPrompter",
     "ConsentPolicy",
 ]
+
+#: THE CAPABILITY, not the tool name. Added 2026-09-01 because the recorded
+#: decision below ("code execution... never relaxed") was NAMED and never
+#: ENFORCED.
+#:
+#: MEASURED that day across the retained logs: ``execute_code`` was refused 26
+#: times — every one on the RCA lane, "always-ask and no human is attached" —
+#: while ``shell`` invoked a general-purpose interpreter **110 times out of 153
+#: (72%)**, unattended, with no prompt and no audit of it as code execution.
+#: ``shell``'s only consent gate is :func:`is_catastrophic`, which looks for
+#: ``rm -rf /`` and fork bombs; ``python3 - <<PY`` is not catastrophic by that
+#: detector, so arbitrary code ran freely under a different tool's name.
+#:
+#: So the gate was keyed on a NAME while the risk belongs to a CAPABILITY, and
+#: the refusal bought nothing: the model reached the identical effect through
+#: ``shell`` on the very next round. This category is the ONE source for "does
+#: this call execute code", so a later reader cannot add a third tool that runs
+#: an interpreter and silently miss the rule.
+CODE_EXECUTION = "code_execution"
+
+#: General-purpose interpreters. A closed vocabulary of PROGRAM NAMES, not a
+#: natural-language word list — these are the executables that turn an argument
+#: into a running program. ``bash``/``sh`` are deliberately ABSENT: the shell tool
+#: IS bash, so including them would classify every command and the signal would
+#: carry no information.
+_INTERPRETERS = frozenset({
+    "python", "python3", "node", "deno", "bun", "ruby", "perl", "php",
+    "rscript", "osascript",
+})
+
+#: Segment separators — a command is code execution if ANY segment invokes an
+#: interpreter, so a pipeline or a `$(...)` substitution cannot hide one.
+_SEGMENT_RE = re.compile(r"[;&|]{1,2}|\n|`|\$\(")
+
+
+def launches_an_interpreter(command: str) -> bool:
+    """Whether ``command`` hands control to a general-purpose interpreter.
+
+    The predicate behind :data:`CODE_EXECUTION`. Splits on segment boundaries so
+    ``ls && python3 x.py`` and ``$(node -e ...)`` are both caught, then compares
+    the leading program of each segment (basename, case-folded) against
+    :data:`_INTERPRETERS`.
+
+    Validated against the live corpus 2026-09-01: 110 of 153 real shell commands
+    classify true; the 43 that do not are shell loops, ``awk``/``sed`` pipelines
+    and ordinary program invocations.
+
+    Args:
+        command: The full command line as the shell tool received it.
+
+    Returns:
+        True when any segment invokes an interpreter. Never raises — a
+        classification failure must not be able to cost a command its run.
+    """
+    try:
+        for segment in _SEGMENT_RE.split(command or ""):
+            tokens = segment.strip().split()
+            if tokens and PurePosixPath(tokens[0]).name.casefold() in _INTERPRETERS:
+                return True
+        return False
+    except Exception as exc:  # noqa: BLE001 — never cost a command its run
+        log.tool.warning(
+            "[consent] launches_an_interpreter: could not classify — treating as "
+            "not code execution",
+            exc_info=exc, extra={"_fields": {"chars": len(command or "")}},
+        )
+        return False
+
 
 # Default tools that ALWAYS re-prompt — never satisfied by batch/window/auto.
 # Per E11/E12/E13 party reviews (readiness Section 9 #7): code execution, GUI
@@ -82,9 +152,12 @@ _DEFAULT_ALWAYS_ASK_TOOLS = frozenset(
 #: STRICTLY SAFER than before, when the category was absent here and such a caller had
 #: it auto-granted; it became reachable at all when `owl_build` entered ROUTER_TOOLS so
 #: that an owl could appeal its own ceiling.
+#: ``code_execution`` (2026-09-01) — see :data:`CODE_EXECUTION`. Listing it here
+#: changes NOTHING for ``execute_code``, which was already always-ask by name; it
+#: makes the rule addressable by capability so both halves of it have one source.
 _DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset(
     {"lock", "alarm", "destructive", "prompt_surface", "authority_widening",
-     "owl_build"}
+     "owl_build", CODE_EXECUTION}
 )
 _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 
