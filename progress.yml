@@ -452,12 +452,25 @@ current:
       interruption, and that suppression still expires."
     suites: "tests/scheduler 506 passed."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    validate: OPEN_awaiting_the_next_incident_escalation_tick
-    closing_query: >-
-      Two INFO lines: "analyses started and never finished — killed mid-flight, tokens
-      spent, no verdict" with a count, and an audit_log row with event_type
-      'incident.diagnosis_started'. The handler ticks every 10 minutes, so both land within
-      the hour if any incident is still eligible after the denominator gate.
+    validate: >-
+      HALF CLOSED, and the halves are stated separately because one of them is 0-over-0.
+      RESTART 2026-09-01T02:58:52Z; the handler ticked at 03:02:52. THE START MARKER IS
+      PROVEN: audit_log now holds event_type='incident.diagnosis_started', actor
+      'outcome:browser_click:stop', target 'incident-c65091a4a99b', written at 03:02:52.572
+      — the SAME timestamp as "[rca] staged.analyze: entry" for that incident, which is the
+      ordering the whole item depends on.
+    validate_OPEN: >-
+      The interruption COUNTER has not been exercised and its silence proves nothing: there
+      were zero start markers before this tick, so interrupted_diagnoses() was 0 over 0. It
+      cannot fire until an analysis is actually killed mid-flight. Closing query: the INFO
+      line "analyses started and never finished — killed mid-flight, tokens spent, no
+      verdict" with a non-zero count, after the next restart that lands inside an RCA.
+    the_gate_from_the_previous_item_verified_on_the_same_tick: >-
+      browser_click 3 fails / 4 turns = 75.0%, z=4.79 -> ESCALATED; read_file 14/148 = 9.5%,
+      z=0.45 -> suppressed; owl_build 4/14 = 28.6%, z=2.71 -> suppressed; pooled 8.43%. This
+      is the scale-awareness claim demonstrated on live data rather than asserted: THREE
+      failures escalate when they are 3-of-4, and FOUR do not when they are 4-of-14. A raw
+      count of 3 would have escalated all three.
 
   CONFIRMATION_2026_09_01_it_announced_a_repair_it_had_not_made:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-100."
