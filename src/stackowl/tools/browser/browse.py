@@ -11,6 +11,7 @@ import json
 import re
 import time
 from typing import Any
+from urllib.parse import urlparse
 
 from stackowl.audit.batch_logger import BatchAuditLogger
 from stackowl.infra.observability import log
@@ -53,6 +54,110 @@ class _NavigationError(Exception):
     propagate (which ``tools/base.py`` would log as an unhandled ERROR). Carries
     only the already-scrubbed, code-classified summary string.
     """
+
+
+# --------------------------------------------------------------------------- #
+# Per-host circuit breaking — a host that never answers is not tried forever   #
+# --------------------------------------------------------------------------- #
+# MEASURED 2026-09-01 across the retained logs: **168 navigation timeouts across
+# only SEVENTEEN distinct hosts, and 151 of them (90%) were on a host that had
+# ALREADY timed out.** www.linkedin.com alone timed out 46 times, api.lever.co
+# 32, api.ashbyhq.com 29. Each wait is the full 30s budget, so LinkedIn by itself
+# cost about 23 minutes of wall-clock — plus a model round every time, on a host
+# that had not once responded.
+#
+# The platform had no memory of it. Every navigation was its first: the same
+# "re-enter the identical path" shape as the retry loop, one layer below.
+#
+# THE PLATFORM'S OWN RCA ASKED FOR EXACTLY THIS, and asked for it in the right
+# order: "(4) Before hard-coding the per-host circuit-break, collect the per-call
+# host/status/error data — per-host failure attribution is a documented gap and
+# the circuit-break as specified is not yet evidence-anchored." The data above is
+# that evidence.
+#
+# NO SECOND ENGINE: this reuses ``providers/circuit_breaker.CircuitBreaker``
+# unchanged — a general per-key failure state machine that already has the
+# half-open probe and the FX-02 doubling backoff. Only the key is new.
+#
+# THE WINDOW IS DERIVED, NOT CHOSEN. Consecutive timeouts on one host arrive a
+# median 31s apart (p75 158s), and **142 of 147 gaps are under 900s**, so a
+# 900-second window captures 96.6% of the repeats this exists to stop. The
+# breaker's own 60s default would have caught barely half.
+_HOST_BREAKER_WINDOW_SECONDS = 900
+_HOST_BREAKER_THRESHOLD = 3
+
+#: Navigation outcomes that mean THE HOST DID NOT ANSWER. ``unknown_host`` is
+#: excluded deliberately: DNS failure is a property of the URL, not a host under
+#: load, and tripping a breaker on it would suppress a typo'd domain rather than
+#: an unresponsive one.
+_HOST_DOWN_KINDS = frozenset({"timeout", "connection_reset"})
+
+_host_breakers: dict[str, object] = {}
+
+
+def _host_of(url: str) -> str:
+    """The netloc a breaker is keyed by; empty when the URL has none."""
+    try:
+        return urlparse(url).netloc.casefold()
+    except Exception:  # noqa: BLE001 — a breaker lookup may never cost a navigation
+        return ""
+
+
+def _breaker_for(host: str) -> object:
+    """The (lazily created) breaker for *host*. One per host, process-wide."""
+    from stackowl.providers.circuit_breaker import CircuitBreaker
+
+    if host not in _host_breakers:
+        _host_breakers[host] = CircuitBreaker(
+            host,
+            failure_threshold=_HOST_BREAKER_THRESHOLD,
+            window_seconds=_HOST_BREAKER_WINDOW_SECONDS,
+        )
+    return _host_breakers[host]
+
+
+def host_is_open_circuit(url: str) -> bool:
+    """True when *url*'s host has failed enough recently to skip the attempt.
+
+    Reads the breaker's cheap sync ``state`` property. Fails CLOSED (returns
+    False) on any error: a broken breaker must never be able to block browsing,
+    which is the opposite failure from the one it exists to prevent.
+    """
+    host = _host_of(url)
+    if not host:
+        return False
+    try:
+        from stackowl.providers.circuit_breaker import CircuitState
+
+        return _breaker_for(host).state is CircuitState.OPEN  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001
+        log.tool.warning(
+            "browser: could not read the host breaker — attempting anyway",
+            exc_info=exc, extra={"_fields": {"host": host}},
+        )
+        return False
+
+
+async def record_host_outcome(url: str, *, kind: str | None) -> None:
+    """Tell the host's breaker what happened. ``kind=None`` means success.
+
+    Only :data:`_HOST_DOWN_KINDS` count as failures — a 404 or a page that loaded
+    and disappointed is not the host being down. Never raises.
+    """
+    host = _host_of(url)
+    if not host:
+        return
+    try:
+        breaker = _breaker_for(host)
+        if kind is None:
+            await breaker.record(ok=True)  # type: ignore[attr-defined]
+        elif kind in _HOST_DOWN_KINDS:
+            await breaker.record(ok=False)  # type: ignore[attr-defined]
+    except Exception as exc:  # noqa: BLE001 — bookkeeping may never cost a turn
+        log.tool.warning(
+            "browser: could not record the host outcome",
+            exc_info=exc, extra={"_fields": {"host": host, "kind": kind}},
+        )
 
 
 def _classify_nav_error(exc: BaseException) -> str:
@@ -281,17 +386,38 @@ class BrowserBrowseTool(Tool):
 
                 # If seed URL given, navigate first.
                 if target_url:
+                    # A host that has not answered its last three attempts is not
+                    # given a fourth 30-second wait. Refusing in milliseconds and
+                    # SAYING SO gives the turn something it can act on — which,
+                    # since the retry path now carries the attempt's evidence
+                    # forward, actually reaches the next attempt.
+                    if host_is_open_circuit(target_url):
+                        log.tool.info(
+                            "browser_navigate: host circuit OPEN — skipping the "
+                            "30s wait",
+                            extra={"_fields": {"host": _host_of(target_url),
+                                               "url": url_path_only(target_url)}},
+                        )
+                        return _err(
+                            f"host {_host_of(target_url)} has failed its last "
+                            f"{_HOST_BREAKER_THRESHOLD} navigations (timeout or "
+                            f"connection reset) — not retried yet. Try a different "
+                            f"host, or web_search for another source.",
+                            t0,
+                        )
                     await runtime.acquire_domain_slot(target_url)
                     try:
                         await page.goto(
                             target_url, wait_until="domcontentloaded", timeout=_DEFAULT_NAV_TIMEOUT_MS,
                         )
+                        await record_host_outcome(target_url, kind=None)
                     except Exception as exc:
                         from stackowl.infra.resilience import looks_like_dead_handle
 
                         if looks_like_dead_handle(exc):
                             raise  # a dead handle is unexpected here — let it propagate/wrap
                         kind = _classify_nav_error(exc)
+                        await record_host_outcome(target_url, kind=kind)
                         status = "nav_error"
                         final_summary = (
                             f"navigation failed: {kind} for {url_path_only(target_url)}"

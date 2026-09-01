@@ -408,6 +408,57 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  BROWSER_2026_09_01_a_host_that_never_answers_was_tried_forever:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-104."
+    how_this_item_was_reached: >-
+      Round 0 on the current log. browser_navigate is one of the capabilities the new
+      denominator gate flags as genuinely anomalous (66 fails / 163 turns = 40.5%, z=14.8),
+      and the browser carries 25.7% of all retrieval, so its failure rate is load-bearing.
+    root_cause_measured: >-
+      168 navigation timeouts across only SEVENTEEN distinct hosts, and 151 of them (90%)
+      on a host that had ALREADY timed out. www.linkedin.com 46, api.lever.co 32,
+      api.ashbyhq.com 29, boards-api.greenhouse.io 17. Every one waits the full 30s budget,
+      so LinkedIn alone cost about 23 minutes of wall-clock plus a model round each time,
+      on a host that had not once responded. The platform had no memory of it — every
+      navigation was its first. Same "re-enter the identical path" shape as the retry loop,
+      one layer below it.
+    a_hypothesis_recorded_as_REFUTED: >-
+      The obvious first guess was a wait-strategy mistake. It was not: 149 of 168 timeouts
+      were already waiting on domcontentloaded, the fastest condition available. The pages
+      genuinely never delivered a DOM. A second refuted guess: the boot warning
+      "browser_probe: missing system libraries ['libx11-xcb']" (644 occurrences) is NOT the
+      cause — the dominant failure is a 30s navigation timeout, not a library crash.
+    what_else_that_same_cause_reaches: >-
+      Any per-target retry with no memory of the target. web_fetch has the same shape and
+      the same 40%-ish failure rate, and the RCA Bakir forwarded named it: "aggregate 125
+      webfetch vs 92 websearch... each retry burned 44-52 calls before flooring".
+    fix: >-
+      A per-host circuit breaker on the EXISTING providers/circuit_breaker.CircuitBreaker —
+      a general per-key failure state machine that already has the half-open probe and the
+      FX-02 doubling backoff. Only the key is new; a second breaker would be the duplication
+      this codebase has paid for repeatedly. An OPEN host is refused in milliseconds with a
+      message naming the host and suggesting another source, which the retry path now
+      carries forward.
+    the_window_is_derived_not_chosen: >-
+      Consecutive timeouts on one host arrive a median 31s apart (p75 158s) and 142 of 147
+      gaps are under 900s, so a 900-second window catches 96.6% of the repeats. The
+      breaker's own 60s default would have caught barely half.
+    what_it_must_never_do: >-
+      Refuse a working host. Recovery is the breaker's own half-open probe; unknown_host is
+      excluded (DNS failure is a property of the URL, not a host under load); and every
+      helper fails CLOSED, so a broken breaker lets the navigation through.
+    tests: "12 in tests/tools/browser/test_a_host_that_never_answers_is_not_tried_forever.py,
+      leading with the expensive direction (a working host is never refused) and pinning both
+      the derived window and the reuse of the existing breaker."
+    suites: "tests/tools/browser + tests/providers 957 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_a_live_navigation_to_a_failing_host
+    closing_query: >-
+      The INFO line "browser_navigate: host circuit OPEN — skipping the 30s wait" with a
+      host field. Then, over 24h: navigation timeouts should concentrate at 3 per host per
+      15-minute window instead of 46 for linkedin.com — re-run the per-host timeout
+      histogram and compare against 168/17 hosts/151 repeats.
+
   GROUNDING_2026_09_01_a_browsed_page_is_a_source_a_search_hit_is_not:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-103."
     how_this_item_was_reached: >-
