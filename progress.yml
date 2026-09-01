@@ -464,8 +464,9 @@ current:
       Chunk 1 re-run: 189 passed, 3 skipped (was 4 failed). Chunk 2: 296 passed. The two
       chunk-3 files verified individually — test_story_7_3b.py 9 passed (was 2 failed),
       test_story_4_4.py::TestOwlsRemove 7 passed (was 1 failed). The full chunk-3 re-run
-      (~4 minutes) was still running at commit time and is the one piece not yet witnessed
-      end to end; it is recorded as such rather than assumed from the per-file greens.
+      (~5.5 minutes) landed after the commit: 396 PASSED, 0 failed — was 3 failed. All
+      three chunks are now witnessed green end to end: 189+3s / 296 / 396 = 884 tests
+      across the 69 top-level files that no tests/<package> run had ever executed.
     what_would_make_this_not_recur: >-
       A run that includes tests/*.py. The loop's targeted-path habit is correct for speed
       and is the recorded way to avoid the hang, but it needs the top-level files added
