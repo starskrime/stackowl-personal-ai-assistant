@@ -414,6 +414,54 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  PROBE_2026_09_01_a_boot_warning_that_was_wrong_644_times:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-106."
+    how_this_item_was_reached: >-
+      "[startup] browser_probe: missing system libraries ['libx11-xcb']" is the single
+      highest-count WARNING in the log, once per boot. The previous item had already had to
+      refute it as a cause of the browser's navigation timeouts, which is itself the reason
+      it was worth coming back to.
+    root_cause_measured: >-
+      The library was installed the whole time. `ldconfig -p | grep -c 'libx11-xcb'` returns
+      0; `grep -c 'libX11-xcb'` returns 2. _REQUIRED_LIBS_LINUX holds DEBIAN PACKAGE-name
+      prefixes (libx11-xcb1, lowercase by Debian policy) because that is what the
+      remediation message tells the operator to install, and _check_lib compared them
+      CASE-SENSITIVELY against ldconfig's SONAME output, which is not lowercase
+      (libX11-xcb.so.1). Two vocabularies, one case-sensitive substring test — the same
+      family as tonight's SQL-LIKE underscore trap and the retrieval-tool set.
+      libgtk-3 and libasound passed only because their SONAME happens to be lowercase too:
+      by luck, not design, which is why the fix is the class and not the entry.
+    what_it_cost_stated_honestly: >-
+      NOTHING at runtime. BrowserProbeResult.ready requires only the binary and the probe's
+      own docstring calls libs advisory; 163 browser_navigate turns in the same period prove
+      the browser was never blocked. What it cost was TRUST — a false "sudo apt install"
+      instruction in the operator's boot log 644 times — and it cost this session real time,
+      having to be measured and refuted as a suspected cause before the browser's actual
+      root cause (no per-host memory) was found. A warning that is always wrong teaches
+      everyone to ignore warnings.
+    what_else_that_same_cause_reaches: >-
+      Every future entry in the list. Two of the three current ones pass by coincidence of
+      capitalisation, so adding a library whose SONAME is mixed-case would have reproduced
+      this immediately.
+    fix: >-
+      Case-insensitive comparison, plus a new INFO line naming the libraries when they are
+      ALL present — because the absence of a warning was not evidence the check had run, and
+      that ambiguity is what let a permanently-false result sit unnoticed for 644 boots. The
+      probe deliberately still does NOT auto-install: it already fetches the 622 MB browser
+      binary (its own dependency), but system packages need root, which the platform does
+      not have and should not assume. Only the DETECTION was broken.
+    tests: "10 in tests/startup/test_the_library_check_reads_the_right_vocabulary.py, built
+      on the real ldconfig output shape, including the expensive direction (a genuinely
+      absent library must still be reported — case-insensitivity must not become a check
+      that always passes) and that the remediation message survives."
+    suites: "tests/startup 114 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_boot
+    closing_query: >-
+      The INFO line "[startup] browser_probe: all required system libraries present" must
+      appear, and "missing system libraries" must STOP appearing. Both land on the next
+      restart, so this closes within minutes rather than waiting on rare traffic.
+
   TURNECONOMICS_2026_09_01_measured_and_NO_CHANGE_NEEDED_the_fix_already_shipped:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-105."
     outcome: no_change_needed

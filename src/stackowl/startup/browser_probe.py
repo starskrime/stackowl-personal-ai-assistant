@@ -12,6 +12,10 @@ from pathlib import Path
 
 log = logging.getLogger("stackowl.startup")
 
+#: DEBIAN PACKAGE-name prefixes, deliberately — they are what the remediation
+#: message tells the operator to install. They are matched CASE-INSENSITIVELY
+#: against ldconfig's SONAME output, which uses different capitalisation
+#: (``libX11-xcb.so.1``); see :func:`_check_lib`.
 _REQUIRED_LIBS_LINUX = ("libgtk-3", "libx11-xcb", "libasound")
 
 
@@ -57,7 +61,28 @@ def _binary_present() -> Path | None:
 
 
 async def _check_lib(lib_prefix: str) -> bool:
-    """Best-effort check that a shared library is present on Linux via ldconfig."""
+    """Best-effort check that a shared library is present on Linux via ldconfig.
+
+    CASE-INSENSITIVE, AND THAT IS THE WHOLE POINT. MEASURED 2026-09-01: this had
+    reported ``missing system libraries ['libx11-xcb']`` on EVERY boot — 644
+    times in the retained logs — and the library was installed the entire time.
+    ``ldconfig -p`` spells it ``libX11-xcb.so.1`` with a capital X; the names in
+    :data:`_REQUIRED_LIBS_LINUX` are DEBIAN PACKAGE names (``libx11-xcb1``),
+    which are lowercase by policy. Two different vocabularies compared with one
+    case-sensitive substring test.
+
+    ``libgtk-3`` and ``libasound`` passed only because their SONAME happens to be
+    lowercase too — by luck, not design, which is why this is fixed as a class
+    rather than by respelling one entry.
+
+    WHAT IT COST: nothing at runtime — ``ready`` requires only the binary and the
+    libs are advisory, so the browser was never blocked (163 browser_navigate
+    turns prove it). What it cost was TRUST: a boot-time instruction to run
+    ``sudo apt install`` for a package already present, 644 times, in logs the
+    operator reads. A warning that is always wrong teaches everyone to ignore
+    warnings — it cost this session real time as a suspected cause of browser
+    timeouts before being measured and refuted.
+    """
     ldconfig = shutil.which("ldconfig")
     if ldconfig is None:
         return True  # cannot verify — assume ok rather than blocking
@@ -65,7 +90,7 @@ async def _check_lib(lib_prefix: str) -> bool:
         out = await asyncio.to_thread(lambda: os.popen(f"{ldconfig} -p").read())
     except OSError:
         return True
-    return lib_prefix in out
+    return lib_prefix.casefold() in out.casefold()
 
 
 class BrowserProbe:
@@ -126,6 +151,13 @@ class BrowserProbe:
                 missing,
             )
             return False
+        # INFO, and new. The absence of a warning is not evidence the check RAN —
+        # that ambiguity is what let a permanently-false result sit unnoticed for
+        # 644 boots. Saying so positively makes the passing case observable.
+        log.info(
+            "[startup] browser_probe: all required system libraries present (%s)",
+            ", ".join(_REQUIRED_LIBS_LINUX),
+        )
         return True
 
     def _check_xvfb(self) -> bool:
