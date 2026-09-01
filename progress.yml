@@ -370,11 +370,23 @@ current:
     dedup_target: "None — no second window store; this writes the existing memoized cache."
     suites: "tests/providers 712 passed, tests/pipeline/steps 76 passed."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    validate: OPEN_awaiting_the_next_provider_rejection_or_a_clean_turn
-    closing_query: >-
-      Two halves. Immediate: a real Telegram turn now succeeds where "Hey" failed. Ongoing:
-      "[model_window] learned the real context window" — and after this ships, ZERO further
-      ContextWindowExceededError events, against eight in the day before.
+    validate: >-
+      IMMEDIATE HALF CLOSED. After the 22:03 restart, "Hey" — the exact input that failed —
+      was driven down the REAL Telegram ingress (scripts/dev_ingress.py, trace b03afee1).
+      Every step logged ok, "[pipeline] execute: exit" instead of "tool_loop failed", NO
+      critical_failure and NO apology, and "[notifications] router.deliver: delivered
+      {channel: telegram}". "[model_window] resolved via openai-compatible probe" fired, so
+      the window came from the probe rather than the floor. Since that boot: ZERO
+      ContextWindowExceededError events (eight in the preceding day) and ZERO apologies.
+    what_could_NOT_be_evidenced: >-
+      The model_window FIELD read None on all three post-boot budget lines, the same bucket
+      as the 22 of 68 earlier that day, so the resolved value could not be observed directly
+      in production and is NOT claimed. The turn succeeding end to end is the evidence; the
+      number is not.
+    still_OPEN_by_nature: >-
+      "[model_window] learned the real context window" cannot fire until a provider rejection
+      happens, and no rejection has occurred since the fix — which is the desired state, not
+      a missing check. It stays open as a standing tripwire rather than a pending task.
   EXPECTFILE_2026_09_01_the_primitive_works_and_shell_could_never_use_it:
     map_check: "No mapped item matches — evidence-led, from Bakir's shell:stop RCA verdict."
     THE_MEASUREMENT_THAT_DECIDED_IT: >-
