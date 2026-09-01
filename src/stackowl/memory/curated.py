@@ -77,6 +77,30 @@ ENTRY_DELIMITER = "\n§\n"
 #: Adopted as-is from the reference platform (D08.1 R2Q7), the same call as
 #: D10.2's 60-character description cap. Small enough that adding forces
 #: dropping, which is the entire mechanism.
+#: The share of a target's budget that ``permanent`` entries may NOT occupy, so
+#: the decaying tier always has somewhere to live.
+#:
+#: MEASURED 2026-09-01 on the live USER.md: 1,350 of 1,375 characters used —
+#: 98.2% — across SIX entries, every one of them ``[permanent]``. Decay never
+#: touches ``permanent`` ("which is what separates decay from data loss"), so
+#: ``until_changed`` had TWENTY-FIVE characters of room and any real fact was
+#: evicted almost the moment it arrived. Three separate days show it happening,
+#: and the evicted text was Bakir's own: "Dental: Cigna DHMO (in-network-only);
+#: in-network dentists near 75025." (85 chars) and a 172-char jobmarket
+#: deliverable. Forty ``at_capacity`` events say the file has been full for days.
+#:
+#: THE DECAY WAS NEVER THE DEFECT — it did exactly what its docstring promises.
+#: What was missing is a bound on the tier ABOVE it: nothing stopped ``permanent``
+#: consuming the whole file, and a tier that can take everything will.
+#:
+#: A SHARE, and the same shape ``CATALOG_RESERVE_SHARE`` already uses in the skill
+#: injector for exactly this failure (a cheap tier starved by an expensive one).
+#: 25% of 1,375 is 344 characters — room for two to four entries the size of the
+#: ones actually evicted, rather than a number picked for feel. Past the reserve a
+#: ``permanent`` write hits the at-capacity path and ASKS for consolidation, which
+#: is a mechanism that already exists and already runs.
+UNTIL_CHANGED_RESERVE_SHARE = 0.25
+
 USER_BUDGET_CHARS = 1375
 OWL_BUDGET_CHARS = 2200
 
@@ -458,6 +482,19 @@ class CuratedMemory:
     def budget_for(self, target: str) -> int:
         return USER_BUDGET_CHARS if target == USER_TARGET else OWL_BUDGET_CHARS
 
+    def _effective_budget(self, target: str, durability: str) -> int:
+        """The budget THIS write may use.
+
+        ``until_changed`` sees the whole budget; ``permanent`` sees it minus
+        :data:`UNTIL_CHANGED_RESERVE_SHARE`, so the tier that decays always has
+        somewhere to live. Without this, six permanent entries filled 98.2% of
+        the live USER.md and every non-permanent fact was evicted on arrival.
+        """
+        budget = self.budget_for(target)
+        if durability == "permanent":
+            return int(budget * (1.0 - UNTIL_CHANGED_RESERVE_SHARE))
+        return budget
+
     def _max_entry_chars(self, target: str) -> int:
         """Ceiling for a SINGLE entry — see MAX_ENTRY_BUDGET_FRACTION."""
         return int(self.budget_for(target) * MAX_ENTRY_BUDGET_FRACTION)
@@ -638,15 +675,19 @@ class CuratedMemory:
 
         candidate = [*existing, Entry(text=text, durability=durability)]
         budget = self.budget_for(target)
+        # A `permanent` write may not consume the reserve — see
+        # UNTIL_CHANGED_RESERVE_SHARE. `until_changed` writes still see the whole
+        # budget, because the reserve exists FOR them.
+        effective_budget = self._effective_budget(target, durability)
         projected = len(self._render(candidate))
         evicted: list[Entry] = []
-        if projected > budget:
+        if projected > effective_budget:
             # 2. DECISION — at capacity. Make room by DECAY first; the
             # consolidation protocol is the fallback when nothing may be dropped.
-            candidate, evicted = self._evict_to_fit(candidate, budget)
+            candidate, evicted = self._evict_to_fit(candidate, effective_budget)
             projected = len(self._render(candidate))
-        if projected > budget:
-            return self._at_capacity(target, text, budget)
+        if projected > effective_budget:
+            return self._at_capacity(target, text, effective_budget)
 
         self._write(target, candidate)
         # 4. EXIT

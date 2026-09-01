@@ -127,14 +127,22 @@ def test_a_hand_edited_entry_without_a_marker_still_loads(mem, tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-def _fill(mem, target=USER_TARGET):
-    """Fill to just under the cap with entries the agent could plausibly write."""
+def _fill(mem, target=USER_TARGET, durability="permanent"):
+    """Fill to just under the cap with entries the agent could plausibly write.
+
+    Against the ceiling for the DURABILITY being written, not the whole budget.
+    ``permanent`` may not consume UNTIL_CHANGED_RESERVE_SHARE (2026-09-01), so
+    asking ``budget_for`` here overshot and the add inside this loop refused —
+    the helper was measuring a different limit than the writes it was making.
+    Same source as production, so the two cannot drift apart again.
+    """
     i = 0
     while True:
         text = f"Fact number {i} about the user and how they work."
-        if mem.used_chars(target) + len(text) + len(ENTRY_DELIMITER) + 14 > mem.budget_for(target):
+        ceiling = mem._effective_budget(target, durability)  # noqa: SLF001
+        if mem.used_chars(target) + len(text) + len(ENTRY_DELIMITER) + 14 > ceiling:
             return i
-        assert mem.add(target, text, "permanent").ok
+        assert mem.add(target, text, durability).ok
         i += 1
 
 

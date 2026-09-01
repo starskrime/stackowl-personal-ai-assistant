@@ -414,6 +414,55 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  CURATED_2026_09_01_the_permanent_tier_had_eaten_the_whole_file:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-117."
+    how_this_item_was_reached: >-
+      Round 0 on the live warning profile. "[curated] decay: evicted the oldest until_changed
+      entry to make room" — 11 events — and the evicted TEXT is Bakir's own.
+    root_cause_measured: >-
+      Bakir's live USER.md holds 1,350 of 1,375 characters — 98.2% — across SIX entries,
+      every one [permanent]. Decay never touches permanent (correctly: "that is what
+      separates decay from data loss"), so until_changed had TWENTY-FIVE characters of room
+      and any fact at that durability was evicted almost on arrival. Three separate days
+      show it, and the text is real: "Dental: Cigna DHMO (in-network-only); in-network
+      dentists near 75025." (85 chars) and a 172-char jobmarket deliverable. Forty
+      at_capacity events say the file has been full for days.
+      THE DECAY WAS NEVER THE DEFECT. What was missing is a bound on the tier ABOVE it:
+      nothing stopped permanent consuming the whole file, and a tier that can take
+      everything will.
+    fix: >-
+      UNTIL_CHANGED_RESERVE_SHARE = 0.25 — permanent writes see budget * 0.75 (1,031 of
+      1,375), until_changed still sees the whole budget because the reserve exists for it.
+      Past the reserve a permanent write hits the at-capacity path and ASKS for
+      consolidation, a mechanism that already exists and has already run forty times.
+      SAME SHAPE, SAME FIX AS CATALOG_RESERVE_SHARE in the skill injector, which exists
+      because the cheap catalogue tier was starved by the expensive text tiers. This is that
+      failure in the memory store and it takes the same answer. The share is justified by the
+      MEASURED evictions: 344 reserved chars holds entries of the 85 and 172 sizes actually
+      lost, rather than a number picked for feel.
+    a_test_helper_was_measuring_a_different_limit: >-
+      Six tests in tests/memory/test_curated.py went red: _fill() stopped at budget_for()
+      while WRITING permanent entries, so it overshot the new ceiling and its own inner
+      assert refused. Fixed at the source — the helper now asks _effective_budget for the
+      durability it writes, so helper and production cannot drift apart again.
+    what_is_NOT_fixed_and_why: >-
+      Two of the six permanent entries are jobmarket CONFIGURATION — ~730 chars, 54% of the
+      file — and Bakir's own standing rule is that USER.md is "the person only; job
+      config/logs go on the owl". Moving them is a change to HIS curated memory and is his
+      call. See ESC-102.
+    tests: "6 in tests/memory/test_the_permanent_tier_cannot_starve_the_decaying_one.py,
+      including the end-to-end case (fill permanent to its ceiling, then store the exact
+      dental fact that was being lost and find it still there), that until_changed is not
+      also charged for the reserve, that owls get the same protection, and a pin that the
+      98.2% measurement lives beside the constant."
+    suites: "tests/memory 552 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_curated_write
+    closing_query: >-
+      "[curated] decay: evicted the oldest until_changed entry" must stop appearing for the
+      user target, and "[curated] at_capacity" should now name 1,031 rather than 1,375 as the
+      permanent ceiling. Both land on the next memory write.
+
   SHADOWGATE_2026_09_01_a_promotion_gate_that_could_never_pass:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-116."
     how_this_item_was_reached: >-
@@ -3676,6 +3725,27 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_102_your_USER_md_is_54_percent_jobmarket_configuration:
+      question: >-
+        Two of the six permanent entries in USER.md are jobmarket config — "verify every
+        posting LIVE ... Deliverable: deduped md list of Staff/Senior/Lead/Principal/FDE in
+        downloads/" and "Jobmarket filter rule ... keep ONLY roles explicitly marked FULLY
+        REMOTE" — about 730 of 1,350 characters. Your own standing rule is that USER.md is
+        "the person only; job config/logs go on the owl". Move them to the jobmarket owl?
+      why_evidence_cannot_settle_it: >-
+        It is YOUR curated memory. The measurement is unambiguous and the rule is yours, but
+        moving durable facts out of the person's file changes what every turn is told about
+        you, and this programme does not edit your memory unilaterally.
+      the_measurement: >-
+        USER.md 1,350/1,375 chars, six entries, all permanent. The two jobmarket entries are
+        ~730 chars (54%). Freeing them would take the file to ~46% and end the at-capacity
+        pressure entirely — the reserve shipped today bounds the symptom, this would remove
+        the cause.
+      panel_recommendation: >-
+        Move both to the jobmarket owl's memory. They are operational config for one owl's
+        job, they are the largest entries in the file, and the rule that says so is yours.
+        The reserve keeps your non-permanent facts safe either way, so nothing is urgent.
+      what_is_blocked: "Nothing. The reserve is live; this would remove the pressure at source."
     ESC_101_how_long_may_a_deploy_wait_for_background_work:
       question: >-
         A restart now waits for in-flight scheduler handlers, but only within the existing
