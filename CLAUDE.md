@@ -50,14 +50,27 @@ across a full session.
 `progress.yml`, `docs/`, or `tests/`, and on a broad question it returns ~1,100 nodes,
 which is worse than useless. Use it for "where does X live in src", not for everything.
 
-**Never a full `pytest` run** — it hangs on this box. Targeted paths with timeouts.
-A hanging test is a failing test.
+**A full `pytest` run does NOT hang — it takes 31 minutes.** MEASURED 2026-09-01,
+launched detached: `6 failed, 11440 passed, 19 skipped in 1885.47s (0:31:25)`. The
+old line here said "it hangs on this box" and had said so since 2026-08-10. It was
+wrong, and the wrongness was expensive: "it hangs" reads as *impossible*, so every
+run this programme makes is a targeted path — and that habit is what let ELEVEN
+tests sit red and a multi-tenancy tripwire sit dark while four unscoped statements
+landed. **Run it detached (`nohup ... &`) and come back**; a foreground timeout
+kills it mid-run, which is exactly what "hangs" was a misreading of.
+
+Interactively, targeted paths with timeouts are still right — but **a hanging test
+is a failing test only after you have checked it is not merely slow.** `tests/db`
+is 7 minutes (102 tests, each replaying all 128 migrations); I recorded it as a
+hang at a 250s timeout and was wrong.
+
+**Only the FULL run finds cross-test pollution.** Of the 6 failures above, at least
+three are in directories that pass cleanly in isolation (`tests/mcp` 101, `tests/owls`
+334, `tests/pipeline` 1687). No targeted path can ever see them.
 
 **`tests/<package>` NEVER runs `tests/*.py`.** 69 test files sit directly in `tests/`
 — consent, audit chains, the SSRF guard, capability profiles, migrations — and no
-package path touches one of them. Measured 2026-09-01: ELEVEN were red, two of them
-a six-hour-old regression of my own, and the targeted-path habit is why nobody saw
-it. Add `tests/*.py` to the paths you run, in chunks.
+package path touches one of them.
 
 **Restart with `./start.sh`, then verify via `~/.stackowl/logs/stackowl.jsonl`, never a
 PID.** A deletion is not live until the process holding the old code is gone. Check the

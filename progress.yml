@@ -414,6 +414,67 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  SUITESPEED_2026_09_01_the_suite_does_not_hang_it_takes_hours:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-112."
+    how_this_item_was_reached: >-
+      The previous item left tests/db recorded as a HANG. That record was mine and it was
+      wrong; correcting it led to the landmine that has shaped this whole programme's testing
+      habits.
+    correction_to_my_own_record: >-
+      tests/db does not hang. MEASURED: 102 passed in 419.71s (6m59s). My 250s timeout cut it
+      at 83% of its real duration and I wrote "a hanging test is a failing test" into
+      progress.yml and a commit message. The instrument was my timeout, not the suite.
+    the_landmine_itself_is_wrong_and_that_is_the_finding: >-
+      CLAUDE.md has said since 2026-08-10 "Never a full pytest run — it hangs on this box."
+      MEASURED 2026-09-01: it does NOT hang. Launched detached at 07:53:58Z it ran steadily —
+      6% at 90s, 11% at 08:01, 13% at 08:04 — a consistent ~0.67%/min, which projects to
+      roughly 2.5 HOURS. Nobody waits that long, and any sane timeout kills it, which is
+      indistinguishable from a hang unless you look. So the landmine describes the symptom
+      correctly and the cause wrongly, and that mattered: "it hangs" reads as "impossible",
+      while "it takes 2.5 hours" reads as "run it detached overnight".
+    why_it_is_slow_measured: >-
+      tests/db's slowest eight are ALL migration tests at 7.4-8.4s each, and each one replays
+      the ENTIRE 128-file migration history from scratch through MigrationRunner. 102 tests,
+      most of them doing that, is the seven minutes. tests/_schema_template.py already exists
+      as a seeded-schema helper and the migration tests do not use it — correctly for the ones
+      that genuinely test the runner, unnecessarily for the many that only need the schema.
+    what_this_cause_actually_explains: >-
+      The blind spot behind the last two items. Because "it hangs" was believed, every run
+      this programme makes is a TARGETED path, and that habit is what let eleven tests sit red
+      and a multi-tenancy tripwire sit dark while four unscoped statements landed. The cost of
+      the wrong diagnosis was not slow tests; it was no whole-suite signal at all.
+    a_failure_only_the_full_run_shows: >-
+      An "F" appeared in the full run at roughly 13% that none of the chunked runs produced —
+      the cross-test-pollution shape this repo has recorded before (a test that leaks global
+      state and only fails when its neighbour runs first). Recorded as observed; not yet
+      identified, because -q names failures only in its final summary.
+    validate: >-
+      CLOSED, and the projection was WRONG in the safe direction. The detached run finished:
+      "6 failed, 11440 passed, 19 skipped, 283 warnings in 1885.47s (0:31:25)". THIRTY-ONE
+      MINUTES, not 2.5 hours and not a hang. The early rate I extrapolated from was dominated
+      by the migration tests at the front of the run; it accelerated from 13% to 92% in
+      twenty minutes. Recording it as a projection rather than a measurement is what kept
+      that honest.
+    the_landmine_is_now_corrected_in_CLAUDE_md: >-
+      "Never a full pytest run — it hangs on this box" had stood since 2026-08-10 and is
+      false. Replaced with the measurement, the instruction to run it DETACHED, and the
+      caveat that a foreground timeout is what "hangs" was a misreading of.
+    SIX_failures_only_the_full_run_can_see: >-
+      tests/journeys/test_memory_fix_guards.py::test_guard_memory_command_registered_via_orchestrator;
+      tests/journeys/test_skill_injection_journey.py::test_journey_a_owned_skill_summary_trust_wrapped_in_prompt;
+      tests/mcp/test_client_healable.py::TestMcpClientHealable::test_register_on_recycled_noop;
+      tests/owls/test_a_fast_delegation_is_not_a_warning.py::TestTheHappyPathIsQuiet::test_it_is_still_observable_at_debug;
+      tests/pipeline/test_acceptance_llm_skip.py::test_derive_skips_observably_when_tier_unset;
+      tests/smoke/test_e5_s8s9_plan_telegram_smoke.py::test_smoke_plan_tools_through_telegram.
+      AT LEAST THREE ARE POLLUTION-ONLY: tests/mcp (101), tests/owls (334) and tests/pipeline
+      (1687) all passed cleanly in isolation this same session. No targeted path can ever
+      surface them, which is the sharpest possible argument for the corrected landmine.
+    NOT_fixed_here_and_deliberately: >-
+      The six are recorded, not repaired — that is a separate item with its own diagnosis,
+      and lumping six cross-test-pollution failures into this one would be exactly the
+      "fix the symptom you tripped over" move. The measurement that makes them findable is
+      this item's deliverable.
+
   TENANCY_2026_09_01_the_blind_spot_had_disabled_a_SECURITY_TRIPWIRE:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-111."
     how_this_item_was_reached: >-
@@ -461,9 +522,9 @@ current:
       setup 53, paths 28, ipc 36, authz 86, audit 15, config 113."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
     still_open_and_NOT_claimed: >-
-      tests/db was TERMINATED at a 250s timeout — a hanging test is a failing test, and it is
-      recorded as unresolved rather than swept under. tests/journeys (106 files),
-      tests/providers (75), tests/tui (36), tests/smoke (29) remain unswept.
+      tests/db was TERMINATED at a 250s timeout, and I recorded it as a HANG. CORRECTED
+      2026-09-01 in the next item: it is SLOW, not hung. tests/journeys (106 files),
+      tests/providers (75), tests/tui (36), tests/smoke (29) remained unswept at that point.
     validate: >-
       CLOSED for the tripwire itself: tests/tenancy 38 passed, deterministically, and the
       assertion is the validation.
