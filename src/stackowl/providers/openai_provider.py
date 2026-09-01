@@ -872,6 +872,17 @@ class OpenAIProvider(ModelProvider):
                             "duration_ms": (time.monotonic() - _t_call) * 1000,
                         }},
                     )
+                    # SELF-HEAL THE BELIEF THAT CAUSED THIS. When the rejection is
+                    # "your request exceeds my context window", the provider has
+                    # just stated the real number — the only authority on it. Read
+                    # it here, where both the provider name and the resolved model
+                    # are in hand, so the NEXT turn budgets against the truth
+                    # instead of repeating the same 400. Shrink-only; never raises.
+                    from stackowl.providers.model_window import (
+                        learn_window_from_error,
+                    )
+
+                    learn_window_from_error(self._name, resolved_model, str(exc))
                     raise ProviderError(self._name, exc) from exc
                 except TimeoutError as exc:
                     log.engine.error(

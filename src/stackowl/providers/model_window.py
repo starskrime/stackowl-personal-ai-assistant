@@ -21,10 +21,25 @@ from stackowl.infra.observability import log
 # cap — by default the window comes DYNAMICALLY from the model's own reported
 # context length, with no platform-imposed upper bound. Raised 8192 -> 262144
 # (256K) 2026-07-18, then -> 1_000_000 2026-07-22 (owner decision): probing
-# genuinely failing should assume a large modern-context model, not a small
-# one — this is a probe-failure floor, never a substitute for the real probe.
-DEFAULT_WINDOW_FALLBACK = 1_000_000
-_CLOUD_DEFAULT = 1_000_000
+# genuinely failing should assume a large modern-context model, not a small one.
+#
+# LOWERED 1_000_000 -> 100_000 on 2026-09-01 (Bakir, after the live incident
+# below). THE DIRECTION OF THE ERROR IS WHAT MATTERS. This is a bound, and an
+# optimistic bound does not degrade — it FAILS. With the fallback at 1,000,000
+# against a real 262,144 window, `_output_cap` sized max_tokens against a window
+# four times too large and the provider rejected the request outright: a
+# three-character "Hey" came back as "I apologize, but I can't complete your
+# request right now" (2026-09-01T21:56:19Z, trace d4e875f8). Measured over 68
+# context-budget records that day: 39 turns got the true 262,144 from the probe
+# and worked; the 7 that fell back to 1,000,000 are the ones that broke.
+#
+# 100_000 sits BELOW every window this platform has met, so a probe failure now
+# costs a little unused capacity instead of the whole turn. It is still only a
+# probe-failure floor, never a substitute for the real probe — and since
+# `learn_window_from_error` corrects the belief from the provider's own
+# rejection, being wrong here is now survivable in both directions.
+DEFAULT_WINDOW_FALLBACK = 100_000
+_CLOUD_DEFAULT = 100_000
 
 
 def _ceiling() -> int | None:
@@ -99,6 +114,97 @@ def window_from_config(*, context_chars: int) -> int:
 def cached_window(provider_name: str, model: str) -> int | None:
     """Sync read of an already-resolved window (None if not yet resolved)."""
     return _WINDOW_CACHE.get((provider_name, model))
+
+
+#: A window smaller than this is not a real model window — it is a parse
+#: accident. Below it the correction is refused rather than believed.
+_MIN_CREDIBLE_WINDOW = 1024
+
+#: The number a provider states when it rejects an over-long request. Matched on
+#: the SHAPE of the sentence, not on any vendor's name or product string: some
+#: quantity of tokens described as the maximum context length/window. Kept
+#: deliberately narrow — an unrelated 400 must teach nothing.
+_STATED_WINDOW_RE = re.compile(
+    r"(?:maximum|max)\s+context\s+(?:length|window)\s*(?:is|of|:)?\s*([0-9][0-9_,]{2,})\s*tokens?",
+    re.IGNORECASE,
+)
+
+
+def learn_window_from_error(
+    provider_name: str, model: str, error_text: object
+) -> int | None:
+    """Correct the cached window from a provider's own rejection. Never raises.
+
+    THE PROVIDER IS THE ONLY AUTHORITY ON ITS WINDOW, and it says the number out
+    loud when it refuses a request. Nothing read it, so a wrong window was reused
+    on every following turn — eight recorded ContextWindowExceededError 400s,
+    the last of which turned a three-character "Hey" into an apology while the
+    platform believed the window was 1,000,000 and it was 262,144.
+
+    THIS IS NOT A FIFTH REPAIR OF THE INPUT ESTIMATE. ``_output_cap`` already
+    carries four dated fixes for this same 400, each making the estimate more
+    accurate; none of them could help when the WINDOW was wrong by 738k. The
+    estimate is a heuristic and may always be slightly wrong — the belief about
+    the window is the thing that had no way to be corrected.
+
+    IT ONLY EVER SHRINKS. A rejection proves a window is too small to hold the
+    request; it can never prove one is larger. Accepting a LARGER value from an
+    error string would let a parse bug manufacture an outage, so a parsed window
+    is applied only when it is below what is currently believed.
+
+    Independent of the fallback's VALUE (lowered to 100,000 the same day): this
+    makes being wrong about the window survivable in either direction, correcting
+    the belief once instead of repeating the rejection every turn.
+
+    Args:
+        provider_name: Provider whose window is being corrected.
+        model: The resolved model name the request was sent to.
+        error_text: The provider's error, in any form; non-strings are ignored.
+
+    Returns:
+        The newly learned window, or ``None`` when nothing was learned.
+    """
+    try:
+        text = error_text if isinstance(error_text, str) else ""
+        if not text:
+            return None
+        match = _STATED_WINDOW_RE.search(text)
+        if match is None:
+            return None
+        stated = int(match.group(1).replace(",", "").replace("_", ""))
+        if stated < _MIN_CREDIBLE_WINDOW:
+            log.engine.warning(
+                "[model_window] a rejection stated an implausible context window — "
+                "refusing it rather than believing it",
+                extra={"_fields": {
+                    "provider": provider_name, "model": model, "stated": stated,
+                    "floor": _MIN_CREDIBLE_WINDOW,
+                }},
+            )
+            return None
+        key = (provider_name, model)
+        believed = _WINDOW_CACHE.get(key)
+        if believed is not None and stated >= believed:
+            # A rejection can prove a window is too SMALL, never too large.
+            return None
+        _WINDOW_CACHE[key] = stated
+        log.engine.info(
+            "[model_window] learned the real context window from the provider's "
+            "own rejection — the belief that caused it is now corrected",
+            extra={"_fields": {
+                "provider": provider_name, "model": model,
+                "believed": believed, "actual": stated,
+            }},
+        )
+        return stated
+    except Exception as exc:  # noqa: BLE001 — a correction may never cost a turn
+        log.engine.warning(
+            "[model_window] could not read a window from the rejection — leaving "
+            "the cached value alone",
+            exc_info=exc,
+            extra={"_fields": {"provider": provider_name, "model": model}},
+        )
+        return None
 
 
 def invalidate(provider_name: str) -> None:

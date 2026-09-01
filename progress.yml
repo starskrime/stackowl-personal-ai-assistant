@@ -315,6 +315,66 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  WINDOW_2026_09_01_a_three_character_Hey_came_back_as_an_apology:
+    map_check: "No mapped item matches — a LIVE OUTAGE reported by Bakir mid-session."
+    the_report: >-
+      "Got from platform: I apologize, but I can't complete your request right now." He then
+      asked why the token use was so high and why compaction had not worked.
+    HIS_PREMISE_WAS_WRONG_AND_THAT_IS_THE_FINDING: >-
+      It was not a volume problem and compaction was irrelevant. The platform's own budget
+      line for that turn, 2026-09-01T21:56:18Z trace d4e875f8: model_window 1000000,
+      system_prompt 3757, history 1166, tools 79 -> 19572, total_est_tokens 24495. TWENTY-FOUR
+      THOUSAND tokens. He had typed "Hey" — text_len 3.
+    the_cause: >-
+      The provider rejected it with "maximum context length is 262144 tokens". The platform
+      believed the window was 1,000,000. _output_cap sizes max_tokens from the resolved
+      window, so it requested an output budget against a window FOUR TIMES the real one, and
+      input + max_tokens blew the real ceiling. 1,000,000 was not a probe result — it was
+      DEFAULT_WINDOW_FALLBACK, the probe-FAILURE floor.
+    the_denominator: >-
+      68 context-budget records that day: 39 saw the true 262144 (probe worked, turns fine),
+      22 saw None, 7 saw 1000000. His was one of the 7. Eight ContextWindowExceededError
+      events are on record, first 09:10:04, last 21:56:19.
+    WHY_A_FIFTH_PATCH_TO_output_cap_WAS_REFUSED: >-
+      That function already carries FOUR dated repairs for this exact 400 — 2026-07-18,
+      07-21, 07-22, 07-23 — each making the input ESTIMATE more accurate (bound by
+      max_output_tokens, reserve headroom, safety margin, count tool schemas). PROCESS says
+      three failed attempts on one problem is an architecture question, not a fourth attempt.
+      This is the fifth occurrence. And none of those repairs could have helped: the estimate
+      was not wrong here, the WINDOW was wrong by 738,000 tokens.
+    THE_ARCHITECTURAL_ANSWER: >-
+      The provider is the only authority on its own window and it states the number out loud
+      in the rejection. Nothing read it, so the same wrong belief was used on the next turn,
+      eight times over. learn_window_from_error parses the stated limit at the one place that
+      holds both the provider name and the resolved model, and corrects the cache. Verified
+      against the ACTUAL logged error string, not a reconstruction: 1000000 -> 262144.
+    it_only_ever_SHRINKS: >-
+      A rejection proves a window is too small to hold a request; it can never prove one is
+      larger. Accepting a larger value from an error string would let a parse bug manufacture
+      an outage, so a parsed window is applied only below what is currently believed. Asserted
+      directly, and an unrelated 400/401/429 teaches nothing.
+    THE_OPERATOR_DECIDED_THE_SECOND_HALF: >-
+      The 1,000,000 floor was his own recorded decision (2026-07-22, in the code comment), so
+      it was NOT changed unilaterally — it was put to him with the measurement. He answered:
+      "Now then default should be 100 000 not a million". Applied to both
+      DEFAULT_WINDOW_FALLBACK and _CLOUD_DEFAULT, with the reasoning recorded beside them.
+    why_100k_is_the_right_DIRECTION: >-
+      A bound that errs optimistically does not degrade, it FAILS. 100,000 sits below every
+      window this platform has met (smallest real one on record: 262,144), so a probe failure
+      now costs a little unused capacity instead of the whole turn. A test asserts the floor
+      stays below 262,144 so it cannot drift back above a real window.
+    the_two_halves_compose: >-
+      Probe works -> 262,144. Probe fails -> 100,000, safe. Belief wrong anyway -> the
+      provider's own rejection corrects it once. Being wrong is now survivable in BOTH
+      directions, which is what the previous single-sided fixes never achieved.
+    dedup_target: "None — no second window store; this writes the existing memoized cache."
+    suites: "tests/providers 712 passed, tests/pipeline/steps 76 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_provider_rejection_or_a_clean_turn
+    closing_query: >-
+      Two halves. Immediate: a real Telegram turn now succeeds where "Hey" failed. Ongoing:
+      "[model_window] learned the real context window" — and after this ships, ZERO further
+      ContextWindowExceededError events, against eight in the day before.
   EXPECTFILE_2026_09_01_the_primitive_works_and_shell_could_never_use_it:
     map_check: "No mapped item matches — evidence-led, from Bakir's shell:stop RCA verdict."
     THE_MEASUREMENT_THAT_DECIDED_IT: >-
