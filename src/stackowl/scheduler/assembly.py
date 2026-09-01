@@ -675,6 +675,14 @@ class SchedulerAssembly:
             skill_store=skills_components.store,
             skills_root=StackowlHome.skills_dir(),
             consent_gate=consent_gate,
+            # WITHOUT THESE TWO THE MINER WRITES SKILLS NOBODY OWNS. Measured
+            # 2026-09-01: eleven authored skills, zero skill_ownership rows, so
+            # every mined lesson was invisible to every owl and the same defect
+            # was re-diagnosed on three consecutive days at ~140,000 tokens a
+            # time. The registry attaches it live for THIS process; the pool
+            # persists it so the next boot's hydrator restores it.
+            owl_registry=owl_registry,
+            db=db,
         )
 
         incident_escalation_handler = IncidentEscalationHandler(

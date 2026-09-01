@@ -408,6 +408,52 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  SELFHEAL_2026_09_01_the_platform_learned_the_lesson_and_gave_it_to_nobody:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-102."
+    how_this_item_was_reached: >-
+      Bakir sent the platform's OWN verified RCA — the second in two turns — on fabricated
+      citations: "links were cited in the reply without being retrieved in this run... the
+      unverified state was only acknowledged after the fact." Two verdicts in a row is
+      itself the message: the platform is diagnosing correctly and nothing is happening.
+    root_cause_measured: >-
+      THE PLATFORM HAD ALREADY LEARNED IT. The same defect was diagnosed on 2026-08-30,
+      08-31 and 09-01 — three staged RCAs at ~140,000 tokens each — and the miner authored
+      correct guidance every time. incident_browser_click carries exactly the right trigger:
+      "Before citing any source or URL, confirm it was actually retrieved in this run".
+      THE CHAIN BROKE AT THE LAST LINK: skill_ownership holds five rows and NOT ONE names a
+      skill this miner authored. All ELEVEN mined skills are orphaned. The
+      SkillInstructionInjector renders an OWL'S OWNED skills, so every one of them was
+      written, indexed, searchable — and invisible to every owl that could use it. The
+      platform diagnosed correctly, wrote the lesson correctly, and could not reach it.
+    what_else_that_same_cause_reaches: >-
+      The whole ADR-19 self-improvement half. Every future mined lesson had the same fate,
+      and the rca_verdict_router's skip path says so in its own comment — "the miner still
+      captures the guidance as a skill" — which was true and useless. 64 of 84 routed
+      verdicts (76%) take that path because they carry no literal command, so for
+      three-quarters of all verdicts this WAS the entire remediation.
+    fix: >-
+      _attach_to_the_owls_that_failed, called on the authoring path: the owls named in
+      cluster.outcomes get the skill via the EXISTING primitives — attach_skill_to_owl for
+      the live overlay so this process presents it immediately, persist_skill_ownership for
+      the durable row so the next boot's hydrator restores it. Both halves or it does not
+      survive a restart. Evidence-scoped rather than broadcast: an owl that never hit the
+      failure is not given a skill it has no use for, and the catalogue tier is the one that
+      truncates first. Wired at assembly with owl_registry and db — an unwired miner warns
+      loudly instead of silently orphaning, because silent is how eleven went unnoticed.
+    tests: "8 in tests/learning/test_a_mined_lesson_reaches_the_owl_that_failed.py, including
+      both structural pins (the attach must live on the authoring path; the assembly must
+      pass both collaborators) and that one failing owl does not cost the others the lesson."
+    suites: "tests/learning + tests/owls + tests/skills 907 passed; tests/scheduler 506."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline (rose to 67 on object-typed
+      collaborators; fixed by typing them properly under TYPE_CHECKING, not by silencing)."
+    validate: OPEN_awaiting_the_next_mined_skill
+    closing_query: >-
+      The INFO line "[incident] miner.attach: the owls that failed now own the lesson" with
+      a non-empty owls list, and a skill_ownership row whose skill_name starts with
+      "incident_". Today there are ELEVEN orphaned skills and zero such rows, so any row at
+      all closes it. NOTE the eleven existing orphans are NOT retro-attached: that is a data
+      change to owl behaviour and belongs to Bakir, not to this fix — see ESC-99.
+
   RCA_2026_09_01_an_analysis_killed_mid_flight_looked_like_one_that_never_ran:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-101."
     how_this_item_was_reached: >-
@@ -2877,6 +2923,30 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_99_eleven_lessons_the_platform_already_paid_for_are_orphaned:
+      question: >-
+        Eleven skills the incident miner authored have no owner and never have had one, so
+        no owl has ever seen them. The fix stops NEW ones being orphaned. Should the
+        existing eleven be retro-attached to the owls whose failures produced them?
+      why_evidence_cannot_settle_it: >-
+        It is a behaviour change to live owls, from data written over several days under a
+        broken path. The guidance is good — one of them is the exact citation rule you were
+        just handed as an RCA verdict — but attaching eleven skills at once changes what
+        every affected owl is instructed to do, and the catalogue tier is the one that
+        truncates first.
+      the_measurement: >-
+        11 orphaned: incident_shell, incident_shell_stop, incident_shell_unachieved_effect,
+        incident_web_fetch, incident_web_fetch_stop, incident_browser_click,
+        incident_browser_navigate_stop, incident_owl_build, incident_owl_build_stop,
+        incident_delegate_task, incident_delegate_task_unachieved_effect. skill_ownership
+        holds 5 rows, none of them mined.
+      panel_recommendation: >-
+        Attach incident_browser_click and incident_web_fetch only — the two whose defects
+        you have personally reported in the last hour — and let the rest arrive naturally as
+        their clusters re-fire under the new path. That tests the mechanism on the cases you
+        care about without a fleet-wide instruction change in one step.
+      what_is_blocked: >-
+        Nothing. New mined skills are attached from now on; this is only about the backlog.
     ESC_98_code_execution_is_gated_by_NAME_and_runs_freely_under_another:
       question: >-
         execute_code is always-ask and was refused 26 times on the RCA lane. In the same

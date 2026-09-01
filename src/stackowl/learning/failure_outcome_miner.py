@@ -84,8 +84,10 @@ from stackowl.skills.standard import (
     validate_frontmatter,
 )
 
-if TYPE_CHECKING:  # pragma: no cover — typing-only
+if TYPE_CHECKING:
+    from stackowl.db.pool import DbPool
     from stackowl.memory.outcome_store import TaskOutcome, TaskOutcomeStore
+    from stackowl.owls.registry import OwlRegistry  # pragma: no cover — typing-only
     from stackowl.skills.store import SkillIndexStore
     from stackowl.tools.registry import ConsequentialActionGate
 
@@ -419,6 +421,8 @@ class FailureOutcomeMiner:
         lookback_days: int = _LOOKBACK_DAYS_DEFAULT,
         min_evidence: int = _MIN_EVIDENCE,
         capability_tag_lookup: CapabilityTagLookup | None = None,
+        owl_registry: OwlRegistry | None = None,
+        db: DbPool | None = None,
     ) -> None:
         self._outcomes = outcome_store
         self._skills = skill_store
@@ -427,6 +431,13 @@ class FailureOutcomeMiner:
         self._lookback_days = lookback_days
         self._min_evidence = min_evidence
         self._capability_tag_lookup = capability_tag_lookup
+        # THE LAST STEP OF THE SELF-HEAL LOOP, missing until 2026-09-01. Writing
+        # the skill was never the end of the job — an unowned skill is presented
+        # to nobody. Both are optional so an unwired miner degrades to its old
+        # behaviour loudly (see _attach_to_the_owls_that_failed) rather than
+        # crashing a mining pass.
+        self._owl_registry = owl_registry
+        self._db = db
         log.memory.debug(
             "[incident] miner.init: ready",
             extra={"_fields": {
@@ -732,11 +743,80 @@ class FailureOutcomeMiner:
                 extra={"_fields": {"skill_name": final_name, "reason": result.reason}},
             )
             return False
+        await self._attach_to_the_owls_that_failed(final_name, cluster)
         log.skills.info(
             "[incident] miner.author_one: exit — written + indexed",
             extra={"_fields": {"skill_name": final_name}},
         )
         return True
+
+    async def _attach_to_the_owls_that_failed(
+        self, skill_name: str, cluster: FailureCluster,
+    ) -> None:
+        """Give the new skill to the owls whose failures produced it.
+
+        WHY THIS EXISTS — THE SELF-HEAL LOOP STOPPED ONE STEP SHORT. MEASURED
+        2026-09-01: ELEVEN skills authored by this miner, and **not one of them
+        had a row in ``skill_ownership``**. ``SkillInstructionInjector`` renders
+        an OWL'S OWNED skills, so every one of them was invisible to every owl —
+        written, indexed, searchable, and presented to nobody.
+
+        The consequence is measurable and expensive. The platform diagnosed the
+        SAME defect ("links cited without being retrieved in this run") on
+        2026-08-30, 08-31 and 09-01, authoring correct guidance each time —
+        ``when_to_use: "Before citing any source or URL, confirm it was actually
+        retrieved in this run"`` — which nothing ever read. Three RCAs at roughly
+        140,000 tokens each, for a lesson the platform had already learned and
+        could not reach. Bakir received the third verdict and asked why.
+
+        WHICH OWLS: the ones that actually failed. ``cluster.outcomes`` carries
+        ``owl_name`` per row, so this is evidence rather than a guess — the
+        lesson lands where the mistake was made, and an owl that never hit this
+        failure is not given a skill it has no use for.
+
+        BOTH HALVES, OR IT DOES NOT SURVIVE A RESTART: the live overlay
+        (``attach_skill_to_owl``) so THIS process presents it immediately, and
+        the durable row (``persist_skill_ownership``) so the next boot's
+        hydrator restores it. Writing only one is how this class of bug is made.
+
+        Never raises: a mining pass may not die on bookkeeping.
+        """
+        owls = sorted({
+            str(o.owl_name) for o in cluster.outcomes if getattr(o, "owl_name", None)
+        })
+        if self._owl_registry is None or self._db is None or not owls:
+            log.skills.warning(
+                "[incident] miner.attach: NOT attached — the skill is written but "
+                "no owl owns it, so nothing will ever present it",
+                extra={"_fields": {"skill_name": skill_name, "owls": owls,
+                                   "has_registry": self._owl_registry is not None,
+                                   "has_db": self._db is not None}},
+            )
+            return
+        from stackowl.owls.skill_ownership import (
+            attach_skill_to_owl,
+            persist_skill_ownership,
+        )
+
+        attached: list[str] = []
+        for owl in owls:
+            try:
+                attach_skill_to_owl(self._owl_registry, owl, skill_name)
+                await persist_skill_ownership(self._db, owl, skill_name)
+                attached.append(owl)
+            except Exception as exc:  # noqa: BLE001 — bookkeeping may not kill a pass
+                log.skills.error(
+                    "[incident] miner.attach: could not give the skill to an owl",
+                    exc_info=exc,
+                    extra={"_fields": {"skill_name": skill_name, "owl": owl}},
+                )
+        # INFO: this line is the ONLY evidence that a mined lesson reached anyone,
+        # and production runs at INFO.
+        log.skills.info(
+            "[incident] miner.attach: the owls that failed now own the lesson",
+            extra={"_fields": {"skill_name": skill_name, "owls": attached,
+                               "candidates": owls}},
+        )
 
 
 #: What a section says when the verdict carries nothing for it. Deliberately a
