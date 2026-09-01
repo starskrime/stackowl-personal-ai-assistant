@@ -267,13 +267,43 @@ async def _handle_negative(
         if not changes:
             return _short_circuit(state, _CLARIFY_QUESTION)
 
-    style = await _merge_write_style(store, owner_key, changes)
+    style, changed = await _merge_write_style(store, owner_key, changes)
     await _record_rejection(services, state, render)
     log.gateway.info(
         "[pipeline] feedback: negative/format captured",
         extra={"_fields": {"trace_id": state.trace_id, "owner_key": owner_key,
-                           "changes": changes, "defects": defects}},
+                           "changes": changes, "defects": defects,
+                           "changed": changed}},
     )
+    if not defects and not changed:
+        # NOTHING WAS WRONG AND NOTHING MOVED — so there is nothing to confirm,
+        # and confirming anyway is what made this repeat.
+        #
+        # MEASURED 2026-09-01: five negative/format captures, and the last two
+        # (02:32:05 and 02:32:24, NINETEEN SECONDS APART) both carried
+        # defects=[] with changes equal to the entire already-stored style. Each
+        # answered Bakir with the identical "Fixed. From now on here: no
+        # asterisks, no raw tables and replies kept short." Nothing was detected,
+        # nothing was written, and the reply claimed a repair.
+        #
+        # WORSE, IT SHORT-CIRCUITED THE TURN, so what he actually asked was never
+        # answered — which is why he asked again, which classified negative
+        # again, which produced the same receipt. A self-sustaining loop, and the
+        # one branch that would have asked him what was wrong
+        # (_CLARIFY_QUESTION) is guarded by `if not changes` and is therefore
+        # UNREACHABLE for anyone who has ever set a style — dead code for exactly
+        # the people who complain most.
+        #
+        # Falling through lets the turn answer him. The rejection row above is
+        # still recorded: he was dissatisfied, and that is true whether or not a
+        # transform was at fault.
+        log.gateway.info(
+            "[pipeline] feedback: no defect and no change — answering instead of "
+            "confirming",
+            extra={"_fields": {"trace_id": state.trace_id, "owner_key": owner_key,
+                               "style": style.model_dump()}},
+        )
+        return state
     return _short_circuit(state, _negative_confirmation(defects, style))
 
 
@@ -290,7 +320,7 @@ async def _handle_positive(
     # into a per-user record.
     current = await load_output_style(store, owner_key)
     changes = _explicit_fields(current) or _infer_clean_style(render, aspects)
-    style = await _merge_write_style(store, owner_key, changes)
+    style, _changed = await _merge_write_style(store, owner_key, changes)
     log.gateway.info(
         "[pipeline] feedback: positive/format pinned",
         extra={"_fields": {"trace_id": state.trace_id, "owner_key": owner_key,
@@ -412,7 +442,7 @@ async def _write_preference_notes(
 
 async def _merge_write_style(
     store: PreferenceStore, owner_key: str, changes: dict[str, str],
-) -> OutputStyle:
+) -> tuple[OutputStyle, bool]:
     """Read-merge-write the ``output_style`` JSON for ``owner_key`` (format keys
     only). Mirrors ``set_output_preference._set_style`` but scoped to the
     per-(identity, channel) owner key the delivery seam reads."""
@@ -428,7 +458,10 @@ async def _merge_write_style(
     merged = {**existing, **changes}
     style = OutputStyle.model_validate(merged)  # controlled tokens — validates
     await store.set(owner_key, OUTPUT_STYLE_KEY, json.dumps(merged))
-    return style
+    # WHETHER ANYTHING ACTUALLY MOVED. Without this the caller cannot tell a real
+    # change from a re-assertion of what was already stored, and announced both
+    # as "Fixed." — see _negative_confirmation.
+    return style, merged != existing
 
 
 async def _record_rejection(services: object, state: PipelineState, render: str) -> None:
@@ -486,12 +519,22 @@ def _positive_confirmation(style: OutputStyle) -> str:
 
 
 def _negative_confirmation(defects: list[str], style: OutputStyle) -> str:
-    """Name the exact detected defect, no cheer; state the now-enforced rule."""
+    """Name the exact detected defect, no cheer; state the now-enforced rule.
+
+    "Fixed" IS A CLAIM ABOUT WORK DONE and may only be said when work was done.
+    The old third branch said it for a turn in which no defect was detected and
+    no preference moved — the overclaim shape, in the one place whose whole job
+    is to report honestly on a correction.
+    """
     rules = style.describe_rules()
     rule_clause = f" From now on here: {_join(rules)}." if rules else ""
     if defects:
         return f"Last message had {_join(defects)} — fixed.{rule_clause}"
-    return f"Fixed.{rule_clause}"
+    # Nothing was detectably broken, but the stored style DID move — so this is a
+    # note, not a repair, and says so. There is deliberately no third branch:
+    # when nothing was detected AND nothing moved there is nothing to confirm,
+    # and the caller answers the user instead of sending a receipt.
+    return f"Noted.{rule_clause}"
 
 
 def _join(items: list[str]) -> str:
