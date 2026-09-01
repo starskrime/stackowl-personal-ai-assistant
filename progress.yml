@@ -315,6 +315,46 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DESTINATION_2026_09_01_a_recovered_answer_had_nowhere_to_go:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-95."
+    THE_MEASUREMENT: >-
+      "[deliver] stream-miss: no durable fallback available — answer not delivered
+      {'request_id': 'recover-task-74e6b23', 'has_deliverer': True, 'has_target': False,
+      'body_len': 2053}" — 2,053 characters of a real answer discarded, belonging to the very
+      Gmail digest job Bakir was paged about. 181 such records across four days.
+    THE_ADDRESS_EXISTED_AT_EVERY_LAYER_EXCEPT_THE_ONE_THAT_NEEDED_IT: >-
+      jobs.target_addresses {"telegram": 72055773}; tasks.channel telegram;
+      tasks.destination NULL — and NULL on all but 15 of 1,257 rows. A conversation-turn
+      task recovers fine (destination 'telegram:72055773'); a scheduled goal's does not,
+      through the same code path and the same helper.
+    A_READER_WITH_NO_WRITER: >-
+      reply_target_for_task reads `destination` and was added 2026-08-18 after "222
+      characters of a real reply thrown away". The reader was built; for a scheduled goal
+      the writer never had anything to write.
+    WHY_THE_ROW_WAS_BLANK_AND_IT_WAS_NOT_AN_OVERSIGHT: >-
+      goal_execution deliberately set no reply_target: "the pipeline deliver step must NOT
+      also send (prevents a double-send)". destination_for_turn then saw a bare channel and
+      correctly refused to record it — "A CHANNEL NAME IS NOT AN ADDRESS". The row was
+      honest and empty, and recovery has only that row.
+    THE_GUARD_IS_THE_FLAG_NOT_THE_MISSING_ADDRESS: >-
+      deliver.run opens with `if state.defer_delivery: return state`, the first statement in
+      the function. Checked rather than assumed — and so was the progress emitter, which
+      returns False on defer_delivery AND on not-interactive before it ever reads
+      reply_target, so no scheduled goal starts streaming progress at Bakir.
+    a_PINNED_test_asserted_the_old_behaviour_and_was_updated_with_the_evidence: >-
+      test_pipeline_state_defers_delivery_and_uses_job_channel read "The handler does NOT
+      set reply_target on a goal state". Its stated reason was the double-send, which is a
+      different guard. Updated to assert the address AND that defer_delivery is still on,
+      rather than deleted. See ESC-96.
+    tests: "8 new + 1 pin updated. tests/scheduler + durable + steps 947 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_needs_the_next_scheduled_goal_to_create_a_task
+    closing_query: >-
+      SELECT destination FROM tasks WHERE task_id = <the next goal_execution task> — it must
+      read 'telegram:72055773' where every previous one read NULL. And
+      "stream-miss: no durable fallback available" should stop appearing for
+      recover-task-* lanes.
+
   ROUTER_2026_09_01_it_asked_for_two_lines_got_them_and_threw_the_answer_away:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-94."
     how_this_item_was_reached: >-
@@ -2437,6 +2477,26 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_96_a_scheduled_goal_now_carries_an_ADDRESS_and_that_touches_consent:
+      question: >-
+        A scheduled goal's turn now carries reply_target (its job's own telegram id) so the
+        durable task records where its answer belongs. reply_target is also what consent
+        scopes a request to. Do you want an unattended goal to be ABLE to ask you?
+      why_evidence_cannot_settle_it: >-
+        The delivery half is measured and unambiguous — 2,053 characters were discarded. The
+        consent half is your ★★ authority-versus-action distinction: an address is not
+        authority, but it is what an ask would be addressed to.
+      the_measurement: >-
+        state.interactive stays False for a scheduled goal, and the tool_build refusals
+        earlier today logged both "channel: null" AND "interactive: false" — so the address
+        changes what a request could be SCOPED to, not whether a human is attached. What I
+        could NOT establish quickly is whether any consent path keys on the address alone.
+      panel_recommendation: >-
+        Keep it. The lost answers are certain and the consent change is at most enabling a
+        scope that was previously unresolvable — which is the direction your authority-
+        versus-action finding asks for. If a scheduled goal starts asking you things you did
+        not expect, that is the signal to look, and it is loud rather than silent.
+      what_is_blocked: "Nothing."
     ESC_95_RESOLVED_the_incidents_were_deleting_themselves_see_the_item_above:
       question: >-
         "And i want incidents to be delivered to user." Today the platform already delivers

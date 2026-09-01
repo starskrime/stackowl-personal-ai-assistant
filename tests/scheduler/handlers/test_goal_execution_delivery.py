@@ -122,8 +122,20 @@ class TestGoalExecutionDelivery:
         # FULL job_id in the session, not a truncated prefix (collision fix).
         assert state.session_key == f"goal-{job.job_id}"
         assert job.job_id in state.session_key
-        # The handler does NOT set reply_target on a goal state.
-        assert state.reply_target is None
+        # CHANGED 2026-09-01, deliberately. This read "The handler does NOT set
+        # reply_target on a goal state", and the reason given in the handler was to
+        # prevent a double-send. That guard is `defer_delivery` itself — `deliver.run`
+        # opens with `if state.defer_delivery: return state`, its first statement —
+        # so the address was never what stopped the second send.
+        #
+        # What the absence DID do: `destination_for_turn` saw a bare channel,
+        # correctly refused to record it ("A CHANNEL NAME IS NOT AN ADDRESS"), and
+        # the durable task was written with destination NULL — so recovery had no
+        # target and DISCARDED the answer. Measured: 2,053 characters of the Gmail
+        # digest's reply thrown away, and NULL on all but 15 of 1,257 task rows.
+        assert state.reply_target == 12345
+        # And the guard that actually prevents the double-send is still on.
+        assert state.defer_delivery is True
 
     async def test_owl_name_from_params(
         self, monkeypatch: pytest.MonkeyPatch

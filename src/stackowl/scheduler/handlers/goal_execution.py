@@ -18,6 +18,7 @@ preserved.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from datetime import UTC, datetime
@@ -51,6 +52,45 @@ _DELETE_JOB_SQL = "DELETE FROM jobs WHERE job_id = ?"
 # met" that the handler can act on, reusing the existing empty-response path
 # (see test_empty_response_skips_delivery) rather than parsing natural language.
 _NO_NOTIFY_SENTINEL = "NO_NOTIFY_NEEDED"
+
+
+def reply_target_for_job(job: object) -> str | int | None:
+    """The address this job's answer belongs to, in its channel-native form.
+
+    MEASURED 2026-09-01: `jobs.target_addresses` holds {"telegram": 72055773} for
+    every goal_execution row, while `tasks.destination` is NULL on all but 15 of
+    1,257 tasks — so a recovered answer had nowhere to go and 2,053 characters of
+    the Gmail digest's reply were discarded with
+    "stream-miss: no durable fallback available ... has_target: False".
+
+    CHANNEL-NATIVE, NOT COERCED: slack ids are not numeric, and `reply_target_for_task`
+    already states the same rule for the sibling read. A job for one channel never
+    answers to another's address — delivering a telegram answer to a slack id is
+    worse than not delivering.
+
+    Never raises: this runs inside a scheduler tick, and a parsing error here would
+    cost the run it is meant to make deliverable.
+    """
+    channel = getattr(job, "primary_channel", None)
+    raw = getattr(job, "target_addresses", None)
+    if not channel or not raw:
+        return None
+    try:
+        addresses = json.loads(raw) if isinstance(raw, str) else raw
+        if not isinstance(addresses, dict):
+            return None
+        target = addresses.get(str(channel))
+    except Exception as exc:  # noqa: BLE001 — a bad column may not cost the tick
+        log.scheduler.warning(
+            "[scheduler] goal_execution: unreadable target_addresses — the task "
+            "will record no destination",
+            exc_info=exc, extra={"_fields": {"channel": str(channel)}},
+        )
+        return None
+    if target is None or (isinstance(target, str) and not target.strip()):
+        return None
+    return target  # type: ignore[no-any-return]
+
 
 
 class GoalExecutionHandler(JobHandler):
@@ -199,9 +239,19 @@ class GoalExecutionHandler(JobHandler):
             # scheduler worker slot waiting for an answer that cannot come.
             interactive=False,
             # THIS handler owns delivery via the durable seam — the pipeline
-            # deliver step must NOT also send (prevents a double-send). No
-            # reply_target is set: a cron poll has no live session, so the
-            # recipient comes from the job's durable target columns.
+            # deliver step must NOT also send (prevents a double-send). That guard
+            # is `defer_delivery` itself: `deliver.run` opens with
+            # `if state.defer_delivery: return state`, the first statement in the
+            # function, so an address here cannot produce a second send.
+            #
+            # AND THE ADDRESS IS WHAT THE DURABLE ROW NEEDS. Without it
+            # `destination_for_turn` sees a bare channel, correctly refuses to
+            # record it ("A CHANNEL NAME IS NOT AN ADDRESS"), and the task is
+            # written with destination NULL — so when recovery later drives that
+            # task it has no target and DISCARDS the answer. Measured 2026-09-01:
+            # 2,053 characters of the Gmail digest's reply thrown away, and NULL on
+            # all but 15 of 1,257 task rows.
+            reply_target=reply_target_for_job(job),
             defer_delivery=True,
         )
 
