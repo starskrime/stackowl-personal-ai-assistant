@@ -414,6 +414,54 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  JOBLANE_2026_09_01_a_contract_with_two_halves_and_no_meeting_point:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-107."
+    outcome: verified_and_pinned_no_production_change
+    how_this_item_was_reached: >-
+      Chasing the last dead self-heal remediation path. Of the three the RCA verdict router
+      has — skill (fixed tonight, was orphaned), tool_build, and read-only substitution —
+      tool_build was 0 for 20.
+    root_cause_measured: >-
+      EVERY one of the 20 RCA-driven tool_build attempts failed (3 on 08-29, 11 on 08-30, 6
+      on 08-31) with "no channel/session to scope consent — refused ... needs a conversation
+      to attribute the approval to". For three days the self-heal loop diagnosed correctly
+      and could not build. The fix (ee3ba6e0, 2026-08-31T10:28:34Z) landed twelve minutes
+      AFTER the last refusal at 10:16:25Z — and was never verified: since then there have
+      been 2 verdicts routed and ZERO tool_build attempts, because the denominator gate
+      suppresses most incidents and the router skips verdicts with no literal command. Zero
+      refusals over zero attempts is not evidence, and this programme has paid for reading
+      that as a pass.
+      THE ACTUAL DEFECT IS STRUCTURAL: the contract has two halves and nothing checked they
+      meet. test_job_trace_has_a_lane.py pins the PRODUCER and quotes the consumer's error
+      message as its own motivation; tool_build pins its own refusal. Both green in
+      isolation while the composition was broken for three days.
+    what_the_same_cause_reaches: >-
+      Every consumer of the job lane — owl_build carries the identical check and wording.
+    verified_by_driving_it: >-
+      The real _bind_job_trace output driven through the real ConsentPolicy: lane
+      {channel: internal, session_key: job:incident_escalation-9fb1c485, interactive: False,
+      conversation_id: None}; lane check PASSES; and consent GRANTS tool_build (autonomous,
+      reversible=True). So the path is alive, not merely unrefused. owl_build and
+      code_execution are correctly REFUSED on the same lane — always-ask categories, and
+      `internal` is not a gateway channel so provenance does not grant them either.
+    no_production_change_and_why: >-
+      Nothing in src/ needed changing; the fix was already correct. What was missing was the
+      evidence, and this programme's rule is that an unverified fix is not a fix. The pin
+      converts an assumption into an invariant that closes DETERMINISTICALLY rather than
+      waiting on traffic that may not arrive for days.
+    tests: "6 in tests/scheduler/test_the_job_lane_is_a_contract_with_two_halves.py: the
+      producer/consumer composition; that consent actually GRANTS rather than the refusal
+      merely moving one step later; that always-ask categories are STILL refused so giving
+      jobs a lane did not widen authority; that a laneless trace still fails; and that the
+      lane does not fake attendance (interactive False, conversation_id None)."
+    suites: "tests/scheduler + tests/tools/test_autonomous_consent.py 520 passed."
+    baselines: "ruff src/ 35, mypy 65 — untouched, no src/ change."
+    validate: >-
+      CLOSED deterministically at 2026-09-01T05:2x — the assertions ARE the validation and
+      they run against the real trace binder and the real consent policy, not doubles. This
+      is the property the previous item recorded as worth preferring: a closing query the
+      loop itself can trigger.
+
   PROBE_2026_09_01_a_boot_warning_that_was_wrong_644_times:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-106."
     how_this_item_was_reached: >-
