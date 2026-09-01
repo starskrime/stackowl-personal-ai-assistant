@@ -21,8 +21,10 @@ Both go through the same invariants here:
 ``format_for_injection()`` renders the active list so the checklist survives
 context compaction by being re-injected into the message history.
 
-Lifetime note: the plan is scoped PER TURN, keyed on ``TraceContext``'s
-``trace_id``, bounded and MRU-evicting like ``TurnCostLedger``. This closes the
+Lifetime note: the plan is scoped PER CONVERSATION, keyed on ``TraceContext``'s
+``session_key`` — the chat LANE — falling back to ``conversation_id``, then
+``trace_id``, then a shared bucket;
+bounded and MRU-evicting like ``TurnCostLedger``. This closes the
 deferral this docstring used to carry ("there is no per-session signal yet ...
 revisit when a per-session plan slot lands") — the signal exists now, and
 ``ToolRegistry.with_defaults()`` builds exactly ONE store for the whole process,
@@ -124,13 +126,44 @@ class PlanStore:
     # ------------------------------------------------------------- turn scoping
     @staticmethod
     def _turn_key() -> str:
-        """The current turn's identity, or the shared untraced bucket.
+        """The current CONVERSATION's identity, falling back to the turn's.
+
+        WHY THE LANE AND NOT THE TRACE. This keyed on ``trace_id`` — which is
+        minted fresh per TURN — so a plan could not outlive the turn that wrote
+        it, and a plan that dies at the end of the turn cannot do the one thing a
+        plan is for. MEASURED 2026-09-01: the E5-S8/S9 smoke test writes a
+        two-item plan in turn 1 (both items render:
+        "[>] 1. gather requirements" and "[ ] 2. implement") and turn 2's
+        ``todo set_status id=2`` answers "No plan item with id '2'". Correct
+        behaviour for a per-turn key, and useless.
+
+        THE DOCSTRING ABOVE ALREADY WANTED THIS. It records closing the deferral
+        "there is no per-session signal yet ... revisit when a per-session plan
+        slot lands" with the words "the signal exists now" — and then keyed on
+        the per-TURN identifier anyway. ``session_key`` IS that per-session
+        signal: it is the chat lane, stable across a conversation's turns and
+        distinct between chats, so it meets the stated goal ("one chat's plan
+        overwrites another's" must not happen) AND survives the turn.
+
+        MEASURED before and after: update_plan wrote under key 81c9bc461a1e and
+        todo read under f74aaab9d90b — two turns, two trace ids, the plan still
+        sitting in the first bucket. ``conversation_id`` is None on the Telegram
+        path, so it cannot carry this alone and is kept only as a fallback.
+
+        Concurrency is not a hazard here: this platform serialises turns WITHIN a
+        chat and parallelises only ACROSS chats, so one conversation never has
+        two turns racing for its plan — and two turns of the same conversation
+        sharing a plan is the intended reading of "the plan", not a collision.
 
         Never raises: a store that could fail on a missing/odd TraceContext would
         take the turn down with it, and the plan is advisory.
         """
         try:
-            return str(TraceContext.get().get("trace_id") or _UNTRACED)
+            ctx = TraceContext.get()
+            return str(
+                ctx.get("session_key") or ctx.get("conversation_id")
+                or ctx.get("trace_id") or _UNTRACED
+            )
         except Exception:  # noqa: BLE001 — advisory state must never cost a turn
             return _UNTRACED
 

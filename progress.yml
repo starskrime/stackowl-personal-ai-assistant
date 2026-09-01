@@ -414,6 +414,52 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  PLANSCOPE_2026_09_01_a_plan_that_dies_at_the_end_of_the_turn:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-114."
+    how_this_item_was_reached: >-
+      The previous item left three plain-red tests in never-swept directories. This is the
+      smoke one, and it turned out to be a PRODUCTION defect rather than a stale test — which
+      is why it was worth not batch-"fixing" the three by editing assertions.
+    root_cause_measured: >-
+      PlanStore._turn_key() keyed on trace_id, which is minted fresh per TURN, so a plan
+      could not outlive the turn that wrote it. Driving the real Telegram path: turn 1 writes
+      two items and BOTH render ("[>] 1. gather requirements", "[ ] 2. implement"); turn 2's
+      `todo set_status id=2` answers "No plan item with id '2'". Instrumenting both tools
+      showed the SAME PlanStore object, update_plan writing ['1','2'] under key 81c9bc461a1e
+      and todo reading under f74aaab9d90b — two turns, two trace ids, the plan still sitting
+      untouched in the first bucket.
+    the_module_docstring_already_wanted_the_other_thing: >-
+      It records closing the deferral "there is no per-session signal yet ... revisit when a
+      per-session plan slot lands" with the words "the signal exists now" — and then keyed on
+      the per-TURN identifier anyway. Its stated goal is that "one chat's plan overwrites
+      another's" must not happen, and trace_id achieved that only by making the plan so
+      short-lived nothing could collide with it.
+    two_wrong_turns_recorded: >-
+      I first keyed on conversation_id, which looked right and did NOT fix it: measured on the
+      live path, conversation_id is None there, so it fell through to trace_id and stayed
+      per-turn. Only printing the actual TraceContext — rather than reasoning about it —
+      showed session_key was the stable signal. That is the second time this session that
+      printing the real shape beat inferring it.
+    fix: >-
+      _turn_key() prefers session_key (the chat LANE — stable across a conversation's turns,
+      distinct between chats), falling back to conversation_id, then trace_id, then the shared
+      untraced bucket. It meets the docstring's stated goal AND survives the turn.
+    what_else_that_same_cause_reaches: >-
+      Any in-memory per-turn state a user is expected to build up ACROSS turns. The plan is
+      the one with a smoke test; the pattern (key advisory state on the trace and lose it
+      every turn) is the thing to watch for.
+    tests: "5 in tests/tools/planning/test_a_plan_outlives_the_turn_that_wrote_it.py, and
+      BOTH directions are asserted because the fix trades one against the other if it is wrong
+      either way: a key too narrow loses the plan, a key too wide leaks one chat's plan into
+      another. Plus a structural pin that session_key is consulted before trace_id."
+    suites: "tests/tools + tests/smoke 1940 passed, 8 skipped — the smoke test that was red
+      for this is now green."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: >-
+      CLOSED by the smoke test itself, which drives the real Telegram to registry path and
+      was the thing that failed: 1 passed. Isolation verified live alongside it — chat B sees
+      [], chat A still sees its plan.
+
   CAPLOG_2026_09_01_the_fix_restored_propagate_and_left_the_LEVEL_behind:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-113."
     how_this_item_was_reached: >-
