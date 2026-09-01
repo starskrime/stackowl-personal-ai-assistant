@@ -362,6 +362,12 @@ current:
     suites: "tests/channels 608 passed; tests/pipeline/steps + notifications 201 passed."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
     validate: "RESTART 2026-09-01T01:04:05Z."
+    validate_measured_effect: >-
+      MEASURED 2026-09-01T04:30 — the channel-shape fix's effect on reply length, which is
+      the thing he actually complained about. Heavy-round average output tokens: 2,108
+      before the fix (3,995 rounds) vs 1,504 after (55 rounds), and on TELEGRAM specifically
+      476 — a 77% reduction. Small sample (19 telegram rounds); the DIRECTION is claimed,
+      not the magnitude.
     validate_OPEN: >-
       The proof is what Bakir SEES on his phone. There is no log line for "the message
       rendered correctly" — the send already reported success while delivering broken text,
@@ -407,6 +413,55 @@ current:
       read 'telegram:72055773' where every previous one read NULL. And
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
+
+  TURNECONOMICS_2026_09_01_measured_and_NO_CHANGE_NEEDED_the_fix_already_shipped:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-105."
+    outcome: no_change_needed
+    how_this_item_was_reached: >-
+      Bakir's standing complaint about token spend ("what platfomr did for 2 million
+      token?"), and the plan in ~/.claude/plans/dreamy-launching-diffie.md. Round 0 measured
+      the whole chain before proposing anything, and every hypothesis it tested came back
+      either refuted or already-fixed — which is the finding.
+    the_numbers: >-
+      939 true tool-loop rounds since 08-31 cost 24,931,002 input tokens = 26,551 per round;
+      that is the platform's dominant cost. Classifier/judge calls are noise beside it: 1,116
+      of them total 350,987 tokens (1.4%). Bakir's own Telegram turns are the outlier — 25
+      turns, rounds p50=8 vs a fleet p50 of 3, input p50=110,887, p90=503,271, worst
+      1,053,378 over 44 rounds.
+    four_hypotheses_tested_and_recorded: >-
+      (1) PROMPT CACHE BROKEN — refuted as a defect. 129,455 calls, 695,251,978 input
+      tokens, ZERO cached, but the backend reports no cache statistics at all
+      (cache_stats_reported "not_reported"), so the zero is honest ignorance and
+      cost_tracker already says so in writing rather than guessing.
+      (2) CACHE PREFIX UNSTABLE — refuted by verifying the codebase's own claim rather than
+      trusting it: prompt-part invalidations ran 101 (08-28), 28 (08-29), 6 (08-30), then
+      NOTHING. The claim "the evidence is the invalidation count going to zero" holds.
+      (3) NO BATCHING — real but not enforceable. 1.17 tool calls per heavy round, per-turn
+      p50=0.50, only 109 of 802 turns batch. The instruction already exists in the STABLE
+      tier (_ROUND_ECONOMY, "request them together in the same round") and is ignored 86% of
+      the time. You cannot force a model to emit two calls, so there is no fix to ship here
+      beyond the guidance that is already there.
+      (4) OUTPUT UNBOUNDED — real, and ALREADY ADDRESSED tonight. 58.6% of heavy rounds emit
+      >1000 output tokens, averaging 2,108, at an input:output ratio of 15:1 — and every one
+      of those words is re-sent on every later round of the same turn, which is the quadratic
+      term. max_output_tokens is 250,000, effectively unbounded. Capping it was REJECTED
+      rather than shipped: it would contradict Bakir's recorded numeric-limits removal arc,
+      and this exact area has bitten before (output_cap full-window regression).
+    why_no_change_is_the_right_answer: >-
+      The channel-shape fix shipped at 2026-09-01T01:32 already moves the number the cap
+      would have targeted, without a magic constant. MEASURED: heavy-round average output
+      2,108 before the fix (3,995 rounds) against 1,504 after (55 rounds), and on TELEGRAM
+      specifically 476 — a 77% reduction against baseline. Telling the model where its
+      answer is going is doing the work an arbitrary cap would have done badly.
+    honest_about_the_sample: >-
+      55 heavy rounds after the fix, 19 of them telegram. That is a small sample and the
+      direction is what is claimed, not the magnitude. Closing query: re-run the same
+      before/after split over a full day of traffic on 2026-09-02.
+    what_would_change_this: >-
+      If the telegram average climbs back toward 2,000 with a larger sample, the remaining
+      lever is a per-channel output bound derived from the channel's own shape record rather
+      than a global constant — which is where CHANNEL_SHAPES already puts such facts. That
+      would be a new item with its own evidence, not a cap picked tonight.
 
   BROWSER_2026_09_01_a_host_that_never_answers_was_tried_forever:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-104."
@@ -847,11 +902,19 @@ current:
       of the time and browser_navigate 40.5%, which are real defects worth diagnosing. What
       it removes is the ~90% of RCAs that had nothing to find. Expect roughly 3-4 RCAs a day
       (~500k tokens) against 137 (19.2M) — a ~97% reduction with the self-heal loop still ON.
-    validate_OPEN: >-
-      The 24h effect. Closing query: the incident lane's share of cost_records over
-      2026-09-02 must fall from 64%; run the per-lane 24h aggregate again (recorded_at is
-      TEXT ISO — compare against an ISO string, never strftime('%s'), or SQLite type
-      ordering matches every row and reports all-time as 24h).
+    validate_CLOSED_with_a_before_and_after: >-
+      MEASURED 2026-09-01T04:20 across three regimes, incident lane only:
+        BEFORE (10h, no dedup, no gate)      5,495,425 tokens = 549,542/h over 361 calls
+        DEDUP ONLY (3.5h)                    1,961,138 tokens = 560,325/h over 107 calls
+        AFTER (dedup + denominator gate,1.8h)  447,654 tokens = 244,918/h over  29 calls
+      A 55% cut in the rate and calls down from ~36/h to ~16/h, still converging as the
+      five genuinely-anomalous signatures are each diagnosed once and then quiet for 24h.
+    the_middle_row_is_the_point: >-
+      THE DEDUP-ONLY REGIME SHOWS NO IMPROVEMENT WHATSOEVER — 560,325/h against a 549,542/h
+      baseline, i.e. slightly worse. That is measured proof that de-duplicating the
+      diagnoses was a symptom fix, and it is the numeric form of the rule Bakir made
+      mandatory the same night: the platform did not heal, so the core was not fixed. The
+      denominator was.
 
   FORMAT_2026_09_01_the_channel_owns_its_shape_not_a_user_preference:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-95."
