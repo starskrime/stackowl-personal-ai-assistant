@@ -992,7 +992,10 @@ class StartupOrchestrator:
             # core's own copy is what actually matters.
             from stackowl.tools.meta.learned_tool_loader import LearnedToolLoader
 
-            learned_count = await LearnedToolLoader().load_all(tool_registry)
+            # WITH the pool: without it the loader cannot say which learned
+            # tools have never been invoked, and an append-only tool registry
+            # accumulates dead weight silently. See load_all's docstring.
+            learned_count = await LearnedToolLoader().load_all(tool_registry, db_pool)
         log.info(
             "[startup] gateway: skills loaded",
             extra={"_fields": {"count": len(skills_components.loaded)}},

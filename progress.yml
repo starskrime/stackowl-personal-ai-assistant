@@ -414,6 +414,53 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  LEARNEDTOOLS_2026_09_01_the_platform_creates_tools_and_never_retires_them:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-118."
+    how_this_item_was_reached: >-
+      After the restart, "thin tool description" was the ONLY warning still firing on a live
+      boot (last 10:49:35). The browser_probe warning it used to sit beside is measurably
+      gone — last missing-libs line 03:55:45, twenty "all present" INFO lines since — so this
+      one had nowhere left to hide. It had been dismissed as boot noise twice before.
+    root_cause_measured: >-
+      A SKILL carries lifecycle_state, last_used_at, n_executions, enabled and pinned, and
+      can be archived, pruned and revived. A LEARNED TOOL spec carries action_severity,
+      argv_template, description, name, params, spec_version, timeout_sec — NOTHING that
+      records whether it has ever been invoked. The platform can CREATE tools, which is a
+      first-class capability here, and has no way to retire them. Recorded failure shape #4:
+      anything that only appends will poison its reader.
+      THE CONSEQUENCE IS ALREADY ON DISK: run_claude_code_demo has ZERO invocations in the
+      whole retained history, shells out to flags that do not match the CLI it names,
+      occupies a slot in the presented tool set, and trips a WARNING on every boot — 43 of
+      them. It will do that forever, because nothing ever looks.
+    why_it_matters_NOW: >-
+      The tool_build consent path was verified working earlier today — it had been 0-for-20 —
+      so the RCA loop is about to start creating tools into an append-only registry.
+    fix: >-
+      The loader now names, at INFO, every learned tool that has never been invoked, derived
+      from task_outcomes.tool_sequence — data the platform already records, so no second
+      store and no new field on the spec. Wired with the pool at the one call site; unwired
+      it would report nothing, which is the bug it exists to expose.
+    what_is_deliberately_NOT_done: >-
+      Nothing is deleted. Retiring a learned capability is the operator's call, not a
+      loader's, and this loop does not remove user-facing capability unilaterally. What was
+      missing is that the accumulation was INVISIBLE.
+    an_unknown_must_not_read_as_none: >-
+      With no pool the loader says usage is UNKNOWN rather than reporting zero never-invoked
+      tools, and a failed read reports nothing rather than a false zero. That mistake —
+      ignorance rendered as a clean bill of health — is the one this session has paid for
+      repeatedly.
+    tests: "7 in tests/tools/meta/test_a_learned_tool_is_never_retired.py, including the
+      expensive direction (a USED tool must never be named as dead — that invites deleting a
+      working capability), the unknown-vs-zero distinction, and a pin that fires if a
+      lifecycle field is ever added to the spec, so the derived query is replaced rather
+      than left as a second source."
+    suites: "tests/tools/meta + tests/startup 356 passed — the loader and its call site."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_boot
+    closing_query: >-
+      Boot-triggered, so it closes in minutes: "[tools] learned_loader: learned-tool usage"
+      with never_invoked naming run_claude_code_demo.
+
   CURATED_2026_09_01_the_permanent_tier_had_eaten_the_whole_file:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-117."
     how_this_item_was_reached: >-
