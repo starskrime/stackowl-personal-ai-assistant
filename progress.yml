@@ -408,6 +408,57 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  RETRY_2026_09_01_the_machinery_described_itself_instead_of_the_work:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-98."
+    how_this_item_was_reached: >-
+      Bakir sent back the platform's OWN verified RCA on web_fetch:stop and said "see the
+      problem where we need to fix why it is happaning". The RCA's load-bearing finding:
+      "the retry loop re-executes an unchanged webfetch-first strategy... all 5 traces are
+      retries 2-6, 4 share the identical task text, webfetch is first/primary in all 5 (125
+      webfetch vs 92 websearch), each burned 44-52 calls before flooring." Its first
+      recommended fix was to append the prior failure signal instead of re-sending identical
+      text. That verdict was correct and is the reason this item exists.
+    root_cause_measured: >-
+      The channel it asks for ALREADY EXISTED, wired end to end, carrying a tautology.
+      _augment_goal shows the next attempt whatever last_error holds. Measured on the live
+      task table: of 82 tasks with a failed attempt, 80 (98%) carried NO banned capability,
+      and every last_error but one described the MACHINERY rather than the work — 72x
+      "retired by the unreachable-owner sweep", 5x "retry did not deliver (actuator reported
+      'pending')", 4x "budget:stop:...". The floored path wrote the literal string "retry
+      attempt still floored", which is the RCA's own "four still floored markers". "It
+      failed" is not a strategy signal.
+    what_else_that_same_cause_reaches: >-
+      TWO SEAMS, one cause. The actuator described the turn in its own vocabulary and the
+      durable runner then re-described the outcome in ITS vocabulary, overwriting everything
+      below it. Both times the layer reporting the failure was the one furthest from the
+      evidence — and the turn's own record (consequential_failures/successes, the same source
+      the user-facing floor reads) was in hand at both seams and discarded. A third instance
+      of the same cause: _pick_newly_failed returned "the FIRST capability this attempt
+      touched", a positional guess that banned send_message over a tool_sequence of
+      ["search_files","search_files","read_file"] and shell over ["read_file"] — steering the
+      next attempt away from something innocent while the real dead end stayed open.
+    fix: >-
+      describe_attempt_evidence(final_state) builds the reason from the turn's own evidence
+      ("the last attempt floored: it tried web_fetch, web_search and web_fetch did not
+      resolve it"); RetryOutcome carries it; the durable runner prefers it over its own
+      wording. The machinery's text survives only as a fallback for an attempt that touched
+      nothing. failed_capabilities_for_state replaces the positional guess, minus anything a
+      substitution bridged (a recovered failure was never a give-up), falling back to the old
+      behaviour rather than banning nothing.
+    tests: "11 in tests/pipeline/test_a_retry_learns_what_the_work_hit.py, including both
+      structural pins so neither seam can silently revert to describing itself."
+    suites: "tests/pipeline 1663 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    commits: "119ff9cf"
+    validate: OPEN_awaiting_the_next_floored_retry
+    closing_query: >-
+      The retry path runs several times an hour (102 attempt_retry exits, 90 "re-driving a
+      recovered task", 47 "still floored", the last at 2026-09-01T01:46:33). Closing
+      evidence: the INFO line "retry_actuator.attempt_retry: carrying the attempt's evidence
+      forward" with a reason field naming real tools, and tasks.last_error on a retried row
+      reading the evidence sentence rather than "retry did not deliver (actuator reported
+      'pending')".
+
   INCIDENT_2026_09_01_a_failure_count_is_not_an_incident_without_a_denominator:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-97."
     how_this_item_was_reached: >-
