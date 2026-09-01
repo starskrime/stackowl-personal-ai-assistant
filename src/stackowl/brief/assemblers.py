@@ -498,10 +498,18 @@ class SystemSpendAssembler:
         log.scheduler.debug("[brief] system_spend: entry", extra={"_fields": {}})
         since = datetime.now(UTC) - timedelta(hours=_SPEND_WINDOW_HOURS)
         try:
+            # OWNER-SCOPED. cost_records is an owner-governed table (migration
+            # 0043), and tests/tenancy/test_no_owner_scope_bypass.py fails the
+            # build for any unscoped statement on one. This query shipped
+            # unscoped on 2026-09-01 and the tripwire caught it — eight hours
+            # later, because no run this loop makes had ever included
+            # tests/tenancy. The brief is one principal's report; reading every
+            # principal's spend into it would be a cross-tenant leak on a
+            # multi-user deployment.
             rows = await self._db.fetch_all(
                 "SELECT session_key, input_tokens FROM cost_records "
-                "WHERE recorded_at > ?",
-                (since.isoformat(),),
+                "WHERE recorded_at > ? AND owner_id = ?",
+                (since.isoformat(), DEFAULT_PRINCIPAL_ID),
             )
         except Exception as exc:  # B5 — answer honestly rather than raise
             # The handler would turn a raise into an error block; saying what is

@@ -88,7 +88,13 @@ _MAX_MESSAGES = 400
 #: The owl that ran the ended conversation. Read from the ROW, never parsed out of
 #: the session_key: no canonical parser for that format exists in src/, and
 #: inventing one would be a second copy of a rule whose author I could not find.
-_OWL_SQL = "SELECT owl_name FROM conversations WHERE id = ?"
+# OWNER-SCOPED (2026-09-01). conversations is owner-governed; the sibling
+# statement below already scopes by owner_id and this one did not. Every row
+# is principal-default today, so this narrows nothing now and closes the
+# cross-tenant read on a multi-user deployment.
+_OWL_SQL = (
+    "SELECT owl_name FROM conversations WHERE id = ? AND owner_id = ?"
+)
 
 _TRANSCRIPT_SQL = """
 SELECT role, content
@@ -368,7 +374,7 @@ class RolloverSummaryHandler(JobHandler):
         if not correction:
             return False
         try:
-            rows = await self._db.fetch_all(_OWL_SQL, (ended,))
+            rows = await self._db.fetch_all(_OWL_SQL, (ended, DEFAULT_PRINCIPAL_ID))
             owl = str(rows[0]["owl_name"]) if rows else ""
             if not owl:
                 log.memory.warning(

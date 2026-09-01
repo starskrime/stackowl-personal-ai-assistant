@@ -201,9 +201,25 @@ class OwlStore:
             # The evolved DNA, the authored baseline, and the checkpoints between
             # them. owl_dna_authored had NO deleter anywhere in the tree before
             # this; owl_dna and dna_checkpoints had one only in the command layer.
-            await tx.execute("DELETE FROM owl_dna WHERE owl_name = ?", (name,))
-            await tx.execute("DELETE FROM owl_dna_authored WHERE owl_name = ?", (name,))
-            await tx.execute("DELETE FROM dna_checkpoints WHERE owl_name = ?", (name,))
+            # OWNER-SCOPED (2026-09-01). The cascade moved here from
+            # owls_command.py on 2026-08-31, where its unscoped form was a
+            # TRACKED allowlist entry — moving the code silently moved it out of
+            # the allowlist's reach, and tests/tenancy would have said so if any
+            # run this loop makes had ever included it. Deleting another
+            # principal's DNA because their owl shares a name is the exact
+            # cross-tenant write the tripwire exists to stop.
+            await tx.execute(
+                "DELETE FROM owl_dna WHERE owl_name = ? AND owner_id = ?",
+                (name, self._owner_id),
+            )
+            await tx.execute(
+                "DELETE FROM owl_dna_authored WHERE owl_name = ? AND owner_id = ?",
+                (name, self._owner_id),
+            )
+            await tx.execute(
+                "DELETE FROM dna_checkpoints WHERE owl_name = ? AND owner_id = ?",
+                (name, self._owner_id),
+            )
             # Which skills this owl owned is part of WHO IT WAS, and the boot
             # hydrator re-attaches these names to owls — a dead owl's rows would
             # be re-attached forever (the same "phantom ownership" that

@@ -207,7 +207,11 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("commands/memory_helpers.py", "staged_facts"),
         # TODO(Epic 9 multi-user): owner-scope owl DNA reset in owls_command
         ("commands/owls_command.py", "owl_dna"),
-        ("commands/owls_command.py", "dna_checkpoints"),
+        # ("commands/owls_command.py", "dna_checkpoints") REMOVED 2026-09-01 —
+        # the cascade moved into OwlStore.delete on 2026-08-31, so this entry
+        # went stale and test_allowlist_has_no_stale_entries said so. The moved
+        # code is now owner-scoped rather than re-allowlisted under its new path:
+        # moving a file must not be a way to acquire an exemption.
         # --- import/export bridge (whole-DB transfer; not a Store) ---
         # TODO(Epic 9 multi-user): owner-scope import/export of committed_facts/owl_dna
         ("export/importer.py", "committed_facts"),
@@ -223,6 +227,17 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # scope here. Listed so the detector stays honest; do NOT "fix" this by
         # adding owner_id, and do not retitle it as deferred debt.
         ("pipeline/durable/store.py", "tasks"),
+        # skills/store.py's prune_fts is owner-agnostic for the SAME kind of
+        # reason, and scoping it would introduce a cross-tenant DELETE rather
+        # than prevent one. It removes skills_fts rows whose name is absent from
+        # `skills`; skills_fts has NO owner column and mirrors the table
+        # globally, so an owner-scoped subquery would prune ANOTHER principal's
+        # live index entries. Its emptiness guard ("is `skills` empty at all?")
+        # is global for the same reason: if any principal has skills, the index
+        # is not wholesale-stale. Added 2026-09-01 after prune_fts (3f82d5d5)
+        # tripped the detector; listed so the detector stays honest. Do NOT
+        # "fix" this by adding owner_id — that is the bug, not the fix.
+        ("skills/store.py", "skills"),
         # --- memory dual-bridge + workers (raw SQL bridges, not Store subclasses) ---
         # TODO(Epic 9 multi-user): owner-scope committed_facts/staged_facts access
         ("memory/budget_enforcer.py", "committed_facts"),

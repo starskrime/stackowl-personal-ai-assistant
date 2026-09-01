@@ -10,6 +10,7 @@ import numpy as np
 
 from stackowl.infra.observability import log
 from stackowl.memory.models import MemoryRecord, StagedFact
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.db.pool import DbPool
@@ -185,10 +186,10 @@ async def staged_recall(
                   '[]' AS tags, COALESCE(trust, 'untrusted') AS trust,
                   COALESCE(reinforcement_count, 0) AS reinforcement_count, scope_key
            FROM staged_facts
-           WHERE status = 'staged' AND content LIKE ? ESCAPE '\\'
+           WHERE owner_id = ? AND status = 'staged' AND content LIKE ? ESCAPE '\\'
            ORDER BY staged_at DESC
            LIMIT ?""",
-        (f"%{escaped}%", limit),
+        (DEFAULT_PRINCIPAL_ID, f"%{escaped}%", limit),
     )
     log.memory.debug(
         "[memory] sqlite_helpers.staged_recall: exit",

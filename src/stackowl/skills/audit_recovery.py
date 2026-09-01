@@ -27,11 +27,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 from stackowl.tools.verification import verify_artifact
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.db.pool import DbPool
 
+#: OWNER-SCOPED (2026-09-01): ``skills`` is owner-governed, and an unscoped
+#: subquery here would treat another principal's live skill as proof that THIS
+#: principal's deleted one still exists — suppressing a legitimate recovery.
+#: Every row is principal-default today, so this narrows nothing now.
+#:
 #: Newest snapshot per skill name, for names absent from ``skills``. Ordering is
 #: by ``ts`` so the LAST edit wins — an edited-then-deleted skill should come
 #: back as its final version, not its first.
@@ -41,7 +47,7 @@ SELECT a.skill_name AS skill_name, a.op AS op, a.ts AS ts, a.snapshot_json AS sn
  WHERE a.snapshot_json IS NOT NULL
    AND a.snapshot_json NOT IN ('', '{}')
    AND a.skill_name IS NOT NULL
-   AND a.skill_name NOT IN (SELECT name FROM skills)
+   AND a.skill_name NOT IN (SELECT name FROM skills WHERE owner_id = ?)
  ORDER BY a.ts ASC
 """
 
@@ -85,7 +91,7 @@ class SkillAuditRecovery:
         """Every deleted skill whose body survives, newest snapshot per name."""
         # 1. ENTRY
         log.skills.debug("[skills] audit_recovery.recoverable: entry")
-        rows = await self._db.fetch_all(_SELECT_SNAPSHOTS)
+        rows = await self._db.fetch_all(_SELECT_SNAPSHOTS, (DEFAULT_PRINCIPAL_ID,))
         # 2. DECISION — ascending ts means a later row simply overwrites an
         # earlier one for the same name, so the last write is the newest.
         newest: dict[str, RecoverableSkill] = {}

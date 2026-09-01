@@ -414,6 +414,60 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  TENANCY_2026_09_01_the_blind_spot_had_disabled_a_SECURITY_TRIPWIRE:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-111."
+    how_this_item_was_reached: >-
+      Answering the previous item's "what else does that same cause reach" properly. It was
+      answered narrowly (the 69 top-level files); the real answer is 53 test DIRECTORIES, of
+      which this loop had ever run about twelve. Sweeping the rest found tests/tenancy RED.
+    root_cause_measured: >-
+      tests/tenancy/test_no_owner_scope_bypass.py is a repo-wide tripwire whose own docstring
+      states its purpose: "Any violation outside the allowlist fails the build, so NEW
+      unscoped code is blocked". It was RED, so it was blocking nothing. SIX owner-scope
+      bypasses had accumulated on owner-governed tables, and every one of them was introduced
+      in the LAST THREE DAYS: memory/rollover_summary_handler.py (2026-08-30),
+      skills/audit_recovery.py (2026-08-30), owls/store.py x2 (2026-08-31), and TWO OF MINE
+      from this session — brief/assemblers.py on cost_records, and skills/store.py via
+      prune_fts (3f82d5d5). A seventh, memory/sqlite_helpers.py on staged_facts, was masked
+      behind them.
+      SO THE BLIND SPOT DID NOT MERELY HIDE RED TESTS — IT DISABLED A SECURITY CONTROL, and
+      four unscoped statements walked through the gap it left, two of them mine.
+    a_second_finding_the_tripwire_gave_free: >-
+      test_allowlist_has_no_stale_entries flagged ("commands/owls_command.py",
+      "dna_checkpoints") as stale. The cascade had MOVED into OwlStore.delete on 2026-08-31,
+      which closed the allowlisted gap in one file and opened an unlisted one in another.
+      Moving a file must not be a way to acquire an exemption; the entry was removed and the
+      moved code scoped rather than re-allowlisted under its new path.
+    fix: >-
+      Five statements owner-scoped: brief/assemblers.py (cost_records),
+      memory/rollover_summary_handler.py (conversations), skills/audit_recovery.py (skills
+      subquery), owls/store.py (owl_dna, owl_dna_authored, dna_checkpoints), and
+      memory/sqlite_helpers.py (staged_facts). Every affected table holds only
+      principal-default rows today (measured), so this narrows nothing now and closes the
+      cross-tenant path on a multi-user deployment.
+    one_was_deliberately_NOT_scoped_and_that_is_the_judgement: >-
+      skills/store.py's prune_fts is owner-AGNOSTIC on purpose and scoping it would have
+      CREATED a cross-tenant DELETE rather than prevented one: it removes skills_fts rows
+      whose name is absent from `skills`, skills_fts has no owner column and mirrors the
+      table globally, so an owner-scoped subquery would prune another principal's live index
+      entries. Its emptiness guard is global for the same reason. Allowlisted under the
+      existing "DELIBERATELY owner-agnostic" section beside pipeline/durable/store.py, with
+      the reasoning and an explicit "do NOT fix this by adding owner_id".
+    tests: "No new tests — the tripwire IS the test, and it now passes: tests/tenancy 38
+      passed (was 2 failed)."
+    suites: "tests/skills + memory + owls + brief 1361 passed. Also swept green this pass:
+      gateway 194, infra 197, commands 381, notifications 135, parliament 80, sessions 203,
+      plugins 99, interaction 231, mcp 101, media 59, objectives 91, process 32, sandbox 163,
+      setup 53, paths 28, ipc 36, authz 86, audit 15, config 113."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    still_open_and_NOT_claimed: >-
+      tests/db was TERMINATED at a 250s timeout — a hanging test is a failing test, and it is
+      recorded as unresolved rather than swept under. tests/journeys (106 files),
+      tests/providers (75), tests/tui (36), tests/smoke (29) remain unswept.
+    validate: >-
+      CLOSED for the tripwire itself: tests/tenancy 38 passed, deterministically, and the
+      assertion is the validation.
+
   REDSUITE_2026_09_01_eleven_tests_were_red_and_the_loop_could_not_see_them:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-110."
     how_this_item_was_reached: >-
