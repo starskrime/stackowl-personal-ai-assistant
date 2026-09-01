@@ -71,7 +71,18 @@ def escape_md(text: str) -> str:
 # before any single ``~``. Links last (their brackets/parens are not markup).
 _GFM_FENCE_RE = re.compile(r"```.*?```", re.DOTALL | re.UNICODE)
 _GFM_INLINE_CODE_RE = re.compile(r"`[^`]*`", re.UNICODE)
-_GFM_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL | re.UNICODE)
+# `***x***` is GFM bold+italic and MarkdownV2 spells it `*_x_*`. Matched BEFORE bold
+# so the three-asterisk form is claimed whole; without it the text was escaped to
+# `\*\*\*triple\*\*\*` and the user saw asterisks — which is the report.
+_GFM_BOLD_ITALIC_STAR_RE = re.compile(
+    r"(?<!\*)\*\*\*(?!\*)(.+?)(?<!\*)\*\*\*(?!\*)", re.DOTALL | re.UNICODE
+)
+
+# `(?!\*)` on both sides: without it `***triple***` matches the FIRST TWO of three
+# asterisks and leaves the leftovers on screen — measured through the production
+# formatter as '*\*triple*\*', which is exactly the "stuck on asterisks" Bakir
+# reported. The lookarounds make the delimiter EXACTLY two.
+_GFM_BOLD_STAR_RE = re.compile(r"(?<!\*)\*\*(?!\*)(.+?)(?<!\*)\*\*(?!\*)", re.DOTALL | re.UNICODE)
 
 # CommonMark: underscore emphasis never fires INTRAWORD (unlike asterisk,
 # which does) — "read_file" and "unachieved_effect" are snake_case
@@ -81,7 +92,13 @@ _GFM_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL | re.UNICODE)
 # capability name displaying as "readfile"). Star-based markers keep the
 # looser un-guarded match (bold/italic-by-asterisk IS allowed intraword).
 _GFM_BOLD_UNDER_RE = re.compile(r"(?<!\w)__(.+?)__(?!\w)", re.DOTALL | re.UNICODE)
-_GFM_ITALIC_STAR_RE = re.compile(r"\*(.+?)\*", re.UNICODE)
+# CommonMark left/right-flanking, minimally: an opening `*` may not be followed by
+# whitespace and a closing `*` may not be preceded by it. Without that, "2 * 3 * 4"
+# pairs two multiplication signs into italics and is delivered as "2 _ 3 _ 4" —
+# measured. Also `(?<!\*)`/`(?!\*)` so a `**` delimiter is never read as two italics.
+_GFM_ITALIC_STAR_RE = re.compile(
+    r"(?<!\*)\*(?!\s)(?!\*)(.+?)(?<!\s)(?<!\*)\*(?!\*)", re.UNICODE
+)
 _GFM_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_(.+?)_(?!\w)", re.UNICODE)
 _GFM_STRIKE_RE = re.compile(r"~~(.+?)~~", re.UNICODE)
 _GFM_LINK_RE = re.compile(r"\[([^\]]+)\]\((\S+?)\)", re.UNICODE)
@@ -158,6 +175,9 @@ def to_telegram_markdownv2(text: str) -> str:
     # 2. Headers → bold (per line), then bold/strike/italic/link → placeholders
     #    holding already-rendered, inner-escaped MarkdownV2 markup.
     work = _GFM_HEADER_RE.sub(lambda m: _stash(f"*{escape_md(m.group(1))}*"), work)
+    work = _GFM_BOLD_ITALIC_STAR_RE.sub(
+        lambda m: _stash(f"*_{escape_md(m.group(1))}_*"), work
+    )
     work = _GFM_BOLD_STAR_RE.sub(_stash_bold, work)
     work = _GFM_BOLD_UNDER_RE.sub(_stash_bold, work)
     work = _GFM_STRIKE_RE.sub(_stash_strike, work)
@@ -189,7 +209,18 @@ def to_telegram_markdownv2(text: str) -> str:
         )
         return match.group(0)
 
-    result = restore_re.sub(_restore, work)
+    # RESTORE UNTIL NOTHING IS LEFT. A stashed span can CONTAIN a placeholder — code
+    # inside bold is stashed first, then the whole `**...**` is stashed again — so a
+    # single pass leaves the inner sentinel in the delivered text. Measured:
+    # "Use **`code`** here" reached Telegram as two invisible private-use characters
+    # with the code GONE. Bounded by the number of protected spans, which is finite
+    # and strictly decreasing per pass, so this cannot spin.
+    result = work
+    for _ in range(len(protected) + 1):
+        expanded = restore_re.sub(_restore, result)
+        if expanded == result:
+            break
+        result = expanded
     log.telegram.debug(
         "[telegram] to_telegram_markdownv2: exit",
         extra={"_fields": {"result_len": len(result)}},

@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ASTERISKS_2026_09_01_the_agent_recorded_a_PREFERENCE_for_a_FORMATTER_BUG:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-96."
+    the_report_verbatim: >-
+      Bakir: "Agent stuck on asterisks. I did ask him and got stupid answer" — the assistant
+      replied "✓ done in 9s" and then "Last message had asterisks — fixed. From now on here:
+      no asterisks, no raw tables and replies kept short." His instruction was "Always format
+      output for the channel which users interacting."
+    THE_ASSISTANT_WAS_WRONG_AND_SO_WAS_THE_PLATFORM: >-
+      It treated a formatter DEFECT as a preference to remember. Three faults reproduce
+      through TelegramMarkdownFormatter.format_response — the exact method send_text calls
+      on every outbound Telegram message:
+      'Use **`code`** here' -> 'Use *<U+E000>0<U+E000>* here' (the code is GONE);
+      '***triple***' -> '*\*triple*\*' (literal asterisks — the report);
+      '2 * 3 * 4 = 24' -> '2 _ 3 _ 4 \= 24' (arithmetic rewritten as italics).
+    THE_FIRST_IS_CONTENT_LOSS: >-
+      Code spans are stashed behind a private-use sentinel; `**...**` then matches the
+      STASHED text and stashes it again, so the outer placeholder contains an inner one. The
+      restore ran `restore_re.sub` ONCE and is not recursive, so the inner sentinel was
+      delivered raw and the code never arrived. Every "**`code`**" the assistant wrote
+      reached Bakir as two invisible characters.
+    THE_OTHER_TWO_ARE_ONE_FAULT: >-
+      The emphasis patterns had no delimiter discipline. `\*\*(.+?)\*\*` matches the first
+      two of three asterisks, and `\*(.+?)\*` pairs any two bare asterisks on a line.
+    the_fix: >-
+      Restore loops until the text stops changing, bounded by the number of protected spans
+      (finite and strictly decreasing, so it cannot spin). Bold and italic gained CommonMark
+      flanking guards — an opening star not followed by space, a closing star not preceded by
+      one, and neither adjacent to another star. And `***x***` is now claimed whole as
+      MarkdownV2 bold+italic `*_x_*` rather than escaped into visible asterisks.
+    the_after: >-
+      '***triple***' -> '*_triple_*'; 'Use **`code`** here' -> 'Use *`code`* here';
+      '2 * 3 * 4 = 24' -> '2 \* 3 \* 4 \= 24'; '**bold**' -> '*bold*' unchanged;
+      'a * b' -> 'a \* b' unchanged.
+    AND_THE_DEEPER_POINT_HE_MADE: >-
+      OutputStyle defaults to markdown="full" and is resolved from PREFERENCES
+      (resolve_output_style reads a prefs map). The channel renders what it renders whatever
+      the user prefers — "format output for the channel" is a property of the channel, not a
+      remembered instruction. The formatter IS the channel-side answer; that it was broken is
+      why writing a preference looked like the fix. Recorded as ESC-97 rather than
+      re-architected tonight.
+    tests: "8 in tests/channels/test_telegram_shows_literal_asterisks.py, every case taken
+      from the production formatter's own output, including the expensive direction — real
+      bold and italic must still render, a lone asterisk must still escape (or the send
+      400s), and code spans stay verbatim."
+    suites: "tests/channels 608 passed; tests/pipeline/steps + notifications 201 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: "RESTART 2026-09-01T01:04:05Z."
+    validate_OPEN: >-
+      The proof is what Bakir SEES on his phone. There is no log line for "the message
+      rendered correctly" — the send already reported success while delivering broken text,
+      which is why this survived. Closing evidence: his next reply containing bold or code
+      arrives without visible asterisks.
+
   DESTINATION_2026_09_01_a_recovered_answer_had_nowhere_to_go:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-95."
     THE_MEASUREMENT: >-
@@ -2477,6 +2530,24 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_97_output_style_is_a_PREFERENCE_and_you_said_it_is_the_CHANNEL:
+      question: >-
+        "Always format output for the channel which users interacting." Today OutputStyle
+        defaults to markdown="full" and is resolved from a PREFERENCES map, so formatting is
+        something you have to ask for per user. Should the CHANNEL decide it instead?
+      why_evidence_cannot_settle_it: >-
+        The formatter bug is fixed and measured. Whether markdown should default OFF for
+        chat channels, or stay full-fidelity now that the converter is correct, is a taste
+        call about how your replies should look.
+      the_measurement: >-
+        OutputStyle fields default markdown=full, tables=on, emoji=on, length=normal, and
+        625 enforce passes changed the text in 307 of them. The Telegram converter now
+        renders bold/italic/code correctly, so "full" is no longer the same as "broken".
+      panel_recommendation: >-
+        Leave the default alone and see. The three faults that made markdown look wrong on
+        Telegram are gone; if replies still read badly it is a length/tables question rather
+        than a markdown one, and the spend report shipped tonight gives a place to judge it.
+      what_is_blocked: "Nothing."
     ESC_96_a_scheduled_goal_now_carries_an_ADDRESS_and_that_touches_consent:
       question: >-
         A scheduled goal's turn now carries reply_target (its job's own telegram id) so the
