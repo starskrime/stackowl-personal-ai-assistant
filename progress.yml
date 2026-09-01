@@ -408,6 +408,69 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  FORMAT_2026_09_01_the_channel_owns_its_shape_not_a_user_preference:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-95."
+    how_this_item_was_reached: >-
+      Bakir rejected the previous item as a symptom fix: "You did fix only my ask but you
+      should fix the core off issue why it is happening not what happaned." He was right.
+      The Telegram formatter was repaired and the REASON it mattered was filed as ESC-97,
+      a question for him. He then made the rule general and mandatory: "Always fixing why
+      it happaned not a what happaned... and have it must in all loops."
+    root_cause_measured: >-
+      Two searches, both empty, one on each side of the model. (1) `grep channel
+      src/stackowl/owls/base_prompt.py` returned NOTHING — the model composing a reply was
+      never told where the reply was going, so it wrote a markdown report into a phone chat.
+      (2) deliver.py opened its enforcement with `if not prefs: return state` and its own
+      docstring said "channel-agnostic" — so output shape was ENTIRELY a per-user
+      preference and a user who had never complained got no channel policy at all. Together
+      those are why the platform's only possible answer to "always format output for the
+      channel" was to store it as one person's taste and reply "done in 9s".
+    why_it_is_not_a_taste: >-
+      cli_adapter.send_text writes the string verbatim and nothing under src/stackowl/tui/
+      renders markdown (measured, zero hits for Markdown/from_markup/rich.markdown). A
+      terminal shows **bold** as four literal asterisks whatever anyone prefers.
+    fix: >-
+      ONE record per channel (channels/_format.CHANNEL_SHAPES) read by BOTH sides of the
+      model: `describe` rides the existing per-turn seam (volatile_turn_context, whose own
+      docstring says it is "the seam every future per-turn fact should use") into
+      generation; `floor` is enforced at delivery. OutputStyle.narrow composes them
+      one-directionally — a preference may make output plainer, never richer than the
+      channel can render. Telegram/Slack keep an all-default floor deliberately: their
+      adapters DO convert GFM, so the fix there is the instruction, not a transform that
+      would trade a working render for an unmeasured one. An undeclared channel gets no
+      floor and no instruction — silence, never a guess.
+    every_delivery_path_not_just_the_reported_one: >-
+      The proactive deliverer (incident alerts, morning brief) had notification.channel_name
+      in hand and never used it; /style promised "the active style for this channel" while
+      reading it without one, so a terminal user was told markdown=full while receiving
+      plain text. Both fixed. feedback.py's two readers stay channel-blind ON PURPOSE and
+      now say so: they read in order to WRITE a preference, and folding the floor into a
+      per-user record would create the second copy of a rule that now has one source.
+    tests: "17 in tests/channels/test_the_channel_owns_its_own_format.py, including the
+      expensive direction (a chat channel must KEEP its working render) and a drift test
+      asserting every declared floor is what the delivery seam actually resolves."
+    suites: "tests/channels 643, tests/pipeline 1652, tests/commands + tests/notifications
+      + base_prompt 1150 — all passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    commits: "ab468d48 (the fix), plus an INFO evidence line — the change had no closing
+      query at all until it was added, the D08.1 shape."
+    validate: >-
+      RESTART 2026-09-01T01:32:14Z, then a live turn injected down the REAL Telegram path
+      (scripts/dev_ingress.py, trace dcf096a6f5834302804ca1ad5e781891). BOTH acceptance
+      checks CLOSED with live evidence:
+      "[pipeline] execute: turn context composed {channel: telegram, shaped: True}" —
+      the model was told its destination; and
+      "[pipeline] deliver: output preference enforced {channel: telegram, style: {markdown:
+      minimal, tables: off, length: terse}}" — the seam resolved WITH the channel and the
+      stored preference correctly narrowed rather than the floor widening it.
+    escalation_closed: >-
+      ESC-97 is CLOSED BY BUILDING IT, not by asking. Deferring the diagnosis to an
+      escalation while shipping the symptom fix is the exact move he rejected.
+    rule_earned: >-
+      "Always fix WHY it happened, never WHAT happened" is now MANDATORY at project level
+      (CLAUDE.md, above every other rule) and in the item-loop skill so it is in every
+      loop. Escalate a DECISION only he can make; never escalate the DIAGNOSIS.
+
   ROUTER_2026_09_01_it_asked_for_two_lines_got_them_and_threw_the_answer_away:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-94."
     how_this_item_was_reached: >-
