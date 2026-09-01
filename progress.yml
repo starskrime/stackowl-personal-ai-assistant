@@ -315,6 +315,72 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TOOLNAME_2026_09_01_a_tool_NAME_field_was_carrying_a_1400_character_payload:
+    map_check: "No mapped item matches — evidence-led work."
+    how_it_surfaced: >-
+      The only live boot warning left was "thin tool description" naming
+      run_claude_code_demo. Chasing WHY that tool is immortal led to
+      revalidate_learned_tools — which corrected a claim I made this morning — and then to
+      the table it judges tools by.
+    A_CLAIM_OF_MINE_THAT_WAS_WRONG: >-
+      This morning's commit said the platform "has no way to retire" a learned tool. It has
+      one: ToolRevalidationHandler is registered in scheduler assembly and quarantines (not
+      deletes) any learned tool with >= min_evidence attempts and zero trustworthy successes.
+      The accurate statement is narrower and sharper — a tool with ZERO attempts can never
+      reach min_evidence, so a never-invoked tool is immortal BY CONSTRUCTION. Corrected here
+      rather than left standing.
+    THE_DEFECT_MEASURED: >-
+      Of the 83 distinct values in the live 20,062-row task_outcomes.tool_sequence, FIVE are
+      not names at all. The largest carries ~1,400 characters of delegate_task JSON. Latest
+      2026-08-26, so this is live and not residue. backends/shared.py records
+      tuple(tc.tool_name for tc in state.tool_calls) — every call the model EMITTED — and
+      nothing checked that a tool name is a name, so a mis-framed tool-call parse puts the
+      whole payload in the NAME field.
+    WHY_IT_IS_NOT_COSMETIC: >-
+      classify._gather_recent_actions builds a prompt block from those rows. It slices
+      input_text[:100] and response_text[:120] — every user-controlled field on the line
+      EXCEPT tools, because a tool name is "obviously" short. So the blob is spliced into the
+      prompt under "tools:", telling the model that ACTION: shell followed by a JSON fence is
+      a tool it used, which reinforces the very hallucination that produced it.
+    what_else_the_cause_reaches: >-
+      Five components read the column as truth: tool_usage (which ORDERS the discretionary
+      half of the presented tool set), revalidate_learned_tools (quarantine), 
+      failure_outcome_miner (capability blame), learned_tool_loader._report_unused, and
+      shadow_validator. The invariant therefore belongs to the store that owns the column,
+      not to one caller — one definition instead of five.
+    A_CAUSAL_CLAIM_THAT_DID_NOT_SURVIVE_MEASUREMENT: >-
+      I first wrote that a malformed entry makes a tool-FREE turn look tool-using and so drops
+      it from the shadow replay pool, tying this to today's "librarian eligible: 2, required:
+      5". Queried: ZERO turns have an entirely-malformed tool_sequence, so replay eligibility
+      is untouched; librarian has 5 outcomes, all clean, 2 tool-free — its cold start is
+      simply a small history. The refutation is kept in the test docstring.
+    WHAT_THE_MEASUREMENT_DID_SHOW: >-
+      The five rows are secretary (1, success), Brain (1, success) and headhunter (3, every
+      one failure_class=stop). The miner buckets a failure only if the capability's tool
+      appears in tool_sequence, so those three real failures name nothing attributable and
+      cannot form an incident.
+    the_fix: >-
+      normalize_tool_sequence in outcome_store applies the column's invariant at the store.
+      A value that leads with a real name is RECOVERED (web_fetch, run_command) because that
+      tool genuinely was called; anything else becomes a bounded marker; the raw head is
+      logged at INFO so the parser bug stays findable instead of silently repaired. The
+      classify prompt line now bounds tools[:120] like its siblings, because 20,062 existing
+      rows still hold the blobs.
+    what_is_deliberately_KEPT: >-
+      A well-formed name for a tool that does NOT exist (read_webpage, search_google, exec,
+      image_generate) is still recorded. That is the self-extension signal — what the model
+      reaches for and does not have — and removing a writer without asking what it fed is a
+      mistake this programme has already paid for. Only values that CANNOT be a name are
+      repaired. The ACTION: shape is not recovered either: its name is in the second token,
+      and teaching this function one hallucinated format would be over-fitting to three rows.
+    dedup_target: "None — one definition replaces an assumption repeated in five readers."
+    suites: "tests/memory + tests/pipeline + tests/learning + tests/owls + tests/tools/meta — 2965 passed in 16:22. All five readers of the column, run together."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_malformed_tool_call
+    closing_query: >-
+      Two halves. The write half is rare by nature (five events in three months), so it stays
+      OPEN with: "[outcomes] record: malformed tool name". The read half is deterministic and
+      is closed by the test that asserts the tools field is sliced.
   TIERFULL_2026_09_01_a_full_TIER_was_reported_as_a_full_FILE:
     map_check: "No mapped item matches — evidence-led, and the evidence is a defect I shipped six hours earlier."
     how_it_surfaced: >-

@@ -16,7 +16,7 @@ import json
 import math
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from stackowl.db.pool import DbPool
@@ -173,6 +173,70 @@ class CapabilityFailureRates:
         return (observed - p0) / math.sqrt(p0 * (1.0 - p0) / n)
 
 
+#: A tool NAME is a single short token. MEASURED 2026-09-01: five of the 83
+#: distinct values in the live ``tool_sequence`` were not names at all — the
+#: longest carried 1,400 characters of delegate_task JSON — because
+#: ``backends/shared.py`` records ``tc.tool_name`` for every call the model
+#: EMITTED and nothing checked that a name is a name. 64 sits far above every
+#: real tool name in the registry (longest: ``note_applied_lesson``, 19), so it
+#: can only ever catch a payload, never a capability.
+_MAX_TOOL_NAME_CHARS = 64
+
+#: What a value becomes when nothing recoverable is in it. Recorded rather than
+#: dropped: a malformed call HAPPENED, and erasing it would hide the parser bug.
+MALFORMED_TOOL_NAME = "malformed_tool_name"
+
+
+def normalize_tool_sequence(names: Sequence[str]) -> tuple[str, ...]:
+    """The column's invariant, owned by the store rather than by one caller.
+
+    Five components read ``tool_sequence`` as truth — ``tool_usage`` (which orders
+    the discretionary half of the PRESENTED tool set), ``revalidate_learned_tools``
+    (which quarantines a learned tool on its win record), ``failure_outcome_miner``,
+    ``learned_tool_loader`` and ``shadow_validator``. Repairing it at one writer
+    would leave the next writer free to reintroduce it, so the rule lives here.
+
+    A well-formed name for a tool that does NOT exist is KEPT. Those are the
+    self-extension signal — what the model reaches for and does not have — and
+    removing a writer without asking what it fed is a mistake this codebase has
+    already paid for. Only values that cannot be a name are repaired.
+
+    Args:
+        names: Raw tool names as emitted by the tool loop.
+
+    Returns:
+        The same names, with unusable values recovered where possible and
+        replaced by :data:`MALFORMED_TOOL_NAME` otherwise. Never raises.
+    """
+    out: list[str] = []
+    for raw in names or ():
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if len(text) <= _MAX_TOOL_NAME_CHARS and not any(ch.isspace() for ch in text):
+            out.append(text)
+            continue
+        # A mis-framed call often still LEADS with the real name
+        # (``web_fetch`` then a stray ``</parameter``); recovering it is more
+        # truthful than a marker, because that tool genuinely was called.
+        parts = text.split()
+        head = parts[0] if parts else ""
+        recovered = (
+            head if (head.isidentifier() and len(head) <= _MAX_TOOL_NAME_CHARS) else ""
+        )
+        log.memory.info(
+            "[outcomes] record: malformed tool name — a payload reached the NAME "
+            "field, so the tool-call parser mis-framed this call",
+            extra={"_fields": {
+                "recovered": recovered or None,
+                "raw_head": text[:120],
+                "raw_chars": len(text),
+            }},
+        )
+        out.append(recovered or MALFORMED_TOOL_NAME)
+    return tuple(out)
+
+
 class TaskOutcomeStore(OwnedRepository):
     """Async SQLite wrapper for the task_outcomes table (migration 0029).
 
@@ -243,7 +307,10 @@ class TaskOutcomeStore(OwnedRepository):
                 latency_ms, tool_call_count, failure_class,
                 json.dumps(step_durations, separators=(",", ":")),
                 input_text[:8000], response_text[:8000], time.time(),
-                json.dumps(list(tool_sequence), separators=(",", ":")),
+                json.dumps(
+                    list(normalize_tool_sequence(tool_sequence)),
+                    separators=(",", ":"),
+                ),
                 json.dumps(dna_snapshot or {}, separators=(",", ":")),
                 self._owner_id,
                 int(overclaim_blocked),

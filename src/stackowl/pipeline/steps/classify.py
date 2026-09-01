@@ -362,7 +362,12 @@ async def _gather_recent_actions(
     lines = ["## What You Did Recently"]
     for o in outcomes:
         glyph = "✔" if o.success else "✘"
-        tools = ", ".join(o.tool_sequence) if o.tool_sequence else "(none)"
+        # BOUNDED like every other user-controlled field on this line. The
+        # column is repaired at the writer now, but 20,062 existing rows still
+        # hold the blobs — one carries 1,400 characters of delegate_task JSON —
+        # and splicing one in here tells the model that payload is a tool it
+        # used, reinforcing the hallucination that produced it.
+        tools = (", ".join(o.tool_sequence) if o.tool_sequence else "(none)")[:120]
         tag = f" [{o.failure_class}]" if o.failure_class else ""
         lines.append(
             f"- {glyph} {o.input_text[:100]} | tools: {tools}{tag}"
