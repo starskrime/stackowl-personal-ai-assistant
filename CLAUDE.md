@@ -115,6 +115,12 @@ key is `fields`. A regex without the space returns empty against a 14MB file —
 false negatives in one session before a control on a known-present string exposed
 the instrument rather than the system.
 
+**In SQL `LIKE`, `_` is a WILDCARD.** `skill_name LIKE 'incident_%'` returned 1 row
+and the row was `incident-evidence-brief` from six weeks earlier — the underscore
+matched the hyphen. It was about to close an acceptance check that had not fired.
+Use `LIKE 'incident\_%' ESCAPE '\'`, and treat any `LIKE` over a name that CONTAINS
+`_` as wrong until proven otherwise. Same family as the `"msg": "` space.
+
 **Count incidents, not log lines.** "19 database-is-locked events" was 19 LINES; one
 contention moment emits four.
 

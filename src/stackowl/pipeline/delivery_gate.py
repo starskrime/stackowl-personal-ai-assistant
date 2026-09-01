@@ -492,10 +492,46 @@ async def surface_consequential_giveup_floor(state: PipelineState) -> PipelineSt
 # contains no URLs.
 # =============================================================================
 
-# Tools whose results contribute to the fetched-source set. Both declare
-# capability_tag="web_knowledge"; keyed by name because the parse shape differs per
-# tool. ponytail: extend this set if a new first-class retrieval tool lands.
-_RETRIEVAL_TOOLS = frozenset({"web_search", "web_fetch"})
+# RETRIEVED vs POINTED-AT — two different facts that this module conflated until
+# 2026-09-01, and the conflation is what let unverified links reach Bakir.
+#
+# MEASURED that day over 206 turns that used a retrieval tool in seven days:
+#
+#   145 (70.4%)  web_fetch present            — the gate worked
+#    53 (25.7%)  browser retrieval only       — INVISIBLE to the gate
+#     8 ( 3.9%)  web_search only, no fetch    — cited without being retrieved
+#
+# THE BIG HALF IS A FALSE POSITIVE. browser_navigate genuinely retrieves a page
+# and was not in this set, so a quarter of all retrieval was unknown to the gate
+# and its URLs were classified FABRICATED — stripped, or the answer floored. The
+# platform's own RCA on this ("links were cited in the reply without being
+# retrieved in this run... the unverified state was only acknowledged after the
+# fact") is consistent with a model whose real sources kept being removed.
+#
+# THE SMALL HALF IS A FALSE NEGATIVE, and it is the one Bakir reported. Every URL
+# in a web_search envelope was added to the fetched set, so citing a search hit
+# passed the gate — but a search result is the ENGINE'S CLAIM ABOUT a page, not
+# evidence anyone opened it. That is precisely "cited without being retrieved".
+#
+# Hence two sets. A pointer is not a retrieval, and the gate no longer pretends
+# it is: pointer-only URLs are LABELLED rather than stripped, which is the
+# platform's own recommended fix ("label the claim inline where it appears,
+# rather than disclosing unverified-ness after the links are already in the
+# reply") and costs a good answer nothing.
+#
+# ponytail: a new tool that returns page CONTENT joins the first set; one that
+# returns a list of links joins the second. Putting it in neither means its URLs
+# read as fabricated, which fails safe.
+_CONTENT_RETRIEVAL_TOOLS = frozenset({"web_fetch", "browser_navigate"})
+_POINTER_TOOLS = frozenset({"web_search"})
+
+# "Did any web tool run at all?" — the question _retrieval_ran asks, and the only
+# one this union should ever be used for.
+_RETRIEVAL_TOOLS = _CONTENT_RETRIEVAL_TOOLS | _POINTER_TOOLS
+
+#: Appended to a URL the answer cites that was only ever SEEN in a search result.
+#: Plain text, no markdown: it must survive every channel converter intact.
+UNVERIFIED_MARK = " (unverified — listed in search results, not opened)"
 
 # LOCAL AUTHORITY — the platform's own state, and the answer to "it does not have
 # capability to work with himself" (Bakir, 2026-08-29).
@@ -661,28 +697,51 @@ def _extract_urls(text: str) -> list[str]:
     return out
 
 
-def _fetched_source_set(state: PipelineState) -> set[str]:
-    """Normalized URLs the turn actually retrieved: every ``url`` field returned by a
-    ``web_search`` result + every successfully ``web_fetch``'d URL. Read from the
-    immutable per-turn tool records — the MEASURED ledger, not the answer prose."""
-    fetched: set[str] = set()
+def _retrieved_source_set(state: PipelineState) -> set[str]:
+    """Normalized URLs whose CONTENT this turn actually retrieved.
+
+    A successful ``web_fetch`` or ``browser_navigate`` — both name the URL in
+    their own args, and both are skipped when the call errored, so a failed
+    navigation never counts as a source. Read from the immutable per-turn tool
+    records: the MEASURED ledger, not the answer prose.
+    """
+    retrieved: set[str] = set()
     for call in state.tool_calls:
-        if call.tool_name not in _RETRIEVAL_TOOLS:
+        if call.tool_name not in _CONTENT_RETRIEVAL_TOOLS or call.error:
             continue
-        if call.tool_name == "web_search":
-            # Result is the JSON envelope: {"data": {"web": [{"url": ...}, ...]}}.
-            # Pull every URL textually — robust to shape drift, never raises.
-            for url in _extract_urls(call.result or ""):
-                norm = _normalize_url(url)
-                if norm:
-                    fetched.add(norm)
-        else:  # web_fetch — the fetched URL is its own source, when the fetch succeeded.
-            if call.error:
-                continue
-            norm = _normalize_url(str(call.args.get("url", "")))
+        norm = _normalize_url(str(call.args.get("url", "")))
+        if norm:
+            retrieved.add(norm)
+    return retrieved
+
+
+def _pointer_source_set(state: PipelineState) -> set[str]:
+    """Normalized URLs this turn only SAW listed — it never opened them.
+
+    A ``web_search`` envelope is ``{"data": {"web": [{"url": ...}, ...]}}``; URLs
+    are pulled textually so the set is robust to shape drift. These are real URLs
+    from a real search, which is why they are not fabricated — and nobody read
+    them, which is why they are not sources either.
+    """
+    pointers: set[str] = set()
+    for call in state.tool_calls:
+        if call.tool_name not in _POINTER_TOOLS or call.error:
+            continue
+        for url in _extract_urls(call.result or ""):
+            norm = _normalize_url(url)
             if norm:
-                fetched.add(norm)
-    return fetched
+                pointers.add(norm)
+    return pointers
+
+
+def _fetched_source_set(state: PipelineState) -> set[str]:
+    """Every URL the turn may legitimately cite — retrieved OR merely listed.
+
+    Kept as the fabrication test's denominator: a URL in neither set appeared
+    from nowhere and IS fabricated. The retrieved/pointer distinction decides how
+    a citable URL is PRESENTED, not whether it is allowed.
+    """
+    return _retrieved_source_set(state) | _pointer_source_set(state)
 
 
 def _retrieval_ran(state: PipelineState) -> bool:
@@ -693,6 +752,56 @@ def _retrieval_ran(state: PipelineState) -> bool:
 def _answer_text(state: PipelineState) -> str:
     """Concatenated text of the durable ANSWER chunks (progress chunks excluded)."""
     return "".join(c.content for c in state.responses if c.kind == "answer")
+
+
+def _mark_unopened_urls(text: str, unopened: set[str]) -> str:
+    """Append :data:`UNVERIFIED_MARK` after each URL that was only ever LISTED.
+
+    Mirrors :func:`_strip_urls` — same match shapes, same normalized membership —
+    because the two answer the same question about the same spans and a second
+    way of finding a URL is a second way to get it wrong.
+
+    IDEMPOTENT: a URL already carrying the mark is left alone, so a second gate
+    pass (or a retry that re-renders the draft) cannot stack the label.
+
+    Args:
+        text: The answer draft.
+        unopened: Normalized URLs seen in search results but never retrieved.
+
+    Returns:
+        The text with each such citation marked in place. Byte-identical when
+        ``unopened`` is empty.
+    """
+    if not unopened:
+        return text
+
+    def _already_marked(after: str) -> bool:
+        return after.startswith(UNVERIFIED_MARK)
+
+    def _md(match: re.Match[str]) -> str:
+        if _normalize_url(match.group(2)) not in unopened:
+            return match.group(0)
+        if _already_marked(text[match.end():]):
+            return match.group(0)
+        return match.group(0) + UNVERIFIED_MARK
+
+    # The SAME markdown-link pattern _strip_urls uses — a second way to find a
+    # URL is a second way to get it wrong.
+    marked = re.sub(r"\[([^\]]*)\]\((https?://[^)\s]+)\)", _md, text)
+
+    def _bare(match: re.Match[str]) -> str:
+        whole = match.group(0)
+        url = whole.rstrip(_TRAILING_PUNCT)
+        if _normalize_url(url) not in unopened:
+            return whole
+        tail = marked[match.end():]
+        if _already_marked(tail) or tail.startswith(")"):
+            return whole  # already marked, or inside a markdown link
+        # The mark belongs to the URL, so it goes BEFORE the sentence's own
+        # trailing punctuation rather than after it.
+        return url + UNVERIFIED_MARK + whole[len(url):]
+
+    return _URL_RE.sub(_bare, marked)
 
 
 def _strip_urls(text: str, fabricated: set[str]) -> str:
@@ -846,6 +955,33 @@ async def surface_grounding_gate(state: PipelineState) -> PipelineState:
             # A loopback URL is configuration, not a source — see _is_uncitable_url.
             and not _is_uncitable_url(u)
         }
+        # POINTER-ONLY CITATIONS are real URLs from a real search that nobody
+        # opened. Not fabricated — so never stripped — but not sources either, so
+        # they are marked WHERE THEY APPEAR rather than disclosed after the fact.
+        unopened = {
+            norm
+            for u in response_urls
+            if (norm := _normalize_url(u))
+            and norm in _pointer_source_set(state)
+            and norm not in _retrieved_source_set(state)
+            and norm not in user_urls
+        }
+        if unopened:
+            marked_answer = _mark_unopened_urls(answer, unopened)
+            if marked_answer != answer:
+                log.engine.info(
+                    "grounding.unopened_marked",
+                    extra={"_fields": {"trace_id": state.trace_id,
+                                       "n_unopened": len(unopened),
+                                       "urls": [str(u)[:120] for u in
+                                                list(unopened)[:5]]}},
+                )
+                state = state.evolve(responses=(
+                    state.responses[0].model_copy(update={
+                        "content": marked_answer, "chunk_index": 0,
+                    }),
+                ))
+                answer = marked_answer
         if not fabricated:
             return state  # every URL is grounded or user-supplied — back-compat
 

@@ -408,6 +408,66 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  GROUNDING_2026_09_01_a_browsed_page_is_a_source_a_search_hit_is_not:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-103."
+    how_this_item_was_reached: >-
+      Continuing from Bakir's fabricated-citations verdict. The previous item fixed the
+      LEARNING path (mined lessons now reach an owl); this is the ENFORCEMENT path — the
+      grounding gate that should have stopped the citation reaching him at all.
+    root_cause_measured: >-
+      _RETRIEVAL_TOOLS was {"web_search", "web_fetch"} and served two different questions.
+      Over 206 turns using a retrieval tool in 7 days: 145 (70.4%) had web_fetch and the
+      gate worked; 53 (25.7%) retrieved ONLY through the browser and were invisible to it;
+      8 (3.9%) cited from web_search with no fetch at all.
+      THE FALSE POSITIVE IS OBSERVED, NOT INFERRED: four traces carry browser_navigate +
+      browser_extract in their tool sequence AND both grounding.fabricated_citations and
+      grounding.stripped — including a recover-task trace running the whole browser stack.
+      The platform browsed those pages, extracted their content, cited them, and the gate
+      deleted the citations because browser_navigate was not in its vocabulary.
+      THE FALSE NEGATIVE IS THE ONE HE REPORTED: every URL in a web_search envelope was
+      added to the fetched set, so citing a search hit passed as a verified source. A search
+      result is the ENGINE'S CLAIM ABOUT a page, not evidence anyone opened it — exactly
+      "cited without being retrieved in this run".
+      ONE CAUSE: "retrieved" was a hardcoded tool-name list plus a per-tool shape guess
+      rather than a measured fact about what content came back. The code's own comment
+      admitted the drift ("ponytail: extend this set if a new first-class retrieval tool
+      lands") and it had already drifted.
+    a_hypothesis_recorded_as_REFUTED: >-
+      _FLOOR_TEXT is word-for-word what the RCA quoted as the model's own admission ("I
+      didn't actually retrieve it, so I can't stand behind those links"), so it looked like
+      the floor was firing wrongly on browser turns. It was not: all 18 floored_no_sources
+      traces that matched an outcome row used NO retrieval tool at all. Those floors were
+      correct. The harm is the STRIPPING, not the flooring.
+    fix: >-
+      Two sets. _CONTENT_RETRIEVAL_TOOLS {web_fetch, browser_navigate} — URLs whose content
+      came back, skipped when the call errored so a failed navigation is never a source.
+      _POINTER_TOOLS {web_search} — URLs merely listed. A pointer-only citation is MARKED
+      where it appears (UNVERIFIED_MARK, plain text so every channel converter passes it
+      through) rather than stripped: it is a real URL, and that is the platform's own
+      recommended fix — "label the claim inline where it appears, rather than disclosing
+      unverified-ness after the links are already in the reply". The fabrication test keeps
+      the union as its denominator, so nothing new is ever stripped.
+    pins_updated_with_evidence_not_deleted: >-
+      TWO, both escalated as ESC-100. test_grounded_url_kept asserted BYTE-IDENTICAL
+      passthrough for a search-listed URL — i.e. it pinned the exact defect Bakir reported;
+      it now asserts the half that was right (never stripped) plus the mark, and a new
+      sibling pins that a genuinely fetched URL is still byte-identical.
+      test_the_web_provenance_set_is_UNCHANGED froze the literal set; its stated REASON is
+      narrower (no local-authority tool may leak in) and is preserved verbatim as the new
+      assertion, since browser_navigate is unambiguously a web tool.
+    tests: "13 in tests/pipeline/test_the_gate_knows_a_source_from_a_pointer.py, including
+      the expensive direction (a failed navigation is not a source; a retrieved link is
+      never marked), idempotence, and a structural pin against re-merging the two sets."
+    suites: "tests/pipeline 1687 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline. Also cleared 3 pre-existing ruff
+      findings under tests/pipeline; one remains (B017 in test_react_checkpoint.py) which is
+      deliberate and documented in its own comment, and predates this work."
+    validate: OPEN_awaiting_a_live_turn_that_cites
+    closing_query: >-
+      Two INFO/WARNING lines. "grounding.unopened_marked" with a urls list is the new half.
+      And grounding.fabricated_citations must STOP appearing on traces whose tool_sequence
+      contains browser_navigate — four such traces exist today; any new one is a regression.
+
   SELFHEAL_2026_09_01_the_platform_learned_the_lesson_and_gave_it_to_nobody:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-102."
     how_this_item_was_reached: >-
@@ -450,8 +510,11 @@ current:
     closing_query: >-
       The INFO line "[incident] miner.attach: the owls that failed now own the lesson" with
       a non-empty owls list, and a skill_ownership row whose skill_name starts with
-      "incident_". Today there are ELEVEN orphaned skills and zero such rows, so any row at
-      all closes it. NOTE the eleven existing orphans are NOT retro-attached: that is a data
+      "incident_". Today there are ELEVEN orphaned skills and ZERO such rows, so any row at
+      all closes it. BEWARE THE QUERY: `LIKE 'incident_%'` matches
+      `incident-evidence-brief` (a six-week-old row) because `_` is a SQL wildcard — it
+      reported 1 and nearly closed this check falsely. Use `LIKE 'incident\_%' ESCAPE
+      '\'`, which returns 0. NOTE the eleven existing orphans are NOT retro-attached: that is a data
       change to owl behaviour and belongs to Bakir, not to this fix — see ESC-99.
 
   RCA_2026_09_01_an_analysis_killed_mid_flight_looked_like_one_that_never_ran:
@@ -556,11 +619,12 @@ current:
     suites: "tests/pipeline 1673 passed."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
     commits: "ae08b334"
-    validate: OPEN_awaiting_the_next_format_complaint
-    closing_query: >-
-      grep "[pipeline] feedback: no defect and no change — answering instead of confirming"
-      in ~/.stackowl/logs/stackowl.jsonl. Only five negative/format captures exist in the
-      whole retained history, so this closes on his next one rather than on a timer.
+    validate: >-
+      CLOSED 2026-09-01T02:50:23, live, on Bakir's next format complaint: "[pipeline]
+      feedback: no defect and no change — answering instead of confirming {owner_key:
+      72055773, style: {markdown: minimal, tables: off, length: terse}}". Nothing was
+      detected, nothing moved, and the turn was ANSWERED instead of returning the sixth
+      identical "Fixed." receipt. The loop is broken where it was measured.
 
   CONSENT_2026_09_01_the_gate_asked_what_a_tool_is_called_not_what_it_does:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-99."
@@ -2923,6 +2987,29 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_100_two_pinned_tests_were_pinning_the_defect:
+      question: >-
+        Two tests had to move for the grounding fix. One of them,
+        test_grounded_url_kept, asserted that a URL web_search merely LISTED passes through
+        BYTE-IDENTICAL — which is precisely the behaviour you reported as the defect. Do you
+        agree with the new contract: a search hit is kept but marked "(unverified — listed
+        in search results, not opened)", and only a fetched or browsed page is silent?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles that the old contract was wrong; it cannot settle how visible the
+        correction should be to you. The mark adds ~50 characters after every unopened link,
+        which is user-facing text on replies you have separately asked to keep short.
+      the_measurement: >-
+        8 of 206 retrieval turns in 7 days (3.9%) cite from search with no fetch, so the
+        mark would appear rarely. The other pin, test_the_web_provenance_set_is_UNCHANGED,
+        froze a literal set; its stated reason (no local-authority tool may leak in) is
+        preserved verbatim as the new assertion, so that one is a strictly narrower pin
+        rather than a contract change.
+      panel_recommendation: >-
+        Keep it. Marking is cheaper than the alternative you already rejected — being told
+        afterwards that the links could not be stood behind — and 3.9% is rare enough that
+        it will not crowd your replies. If the wording is too long, shorten the mark rather
+        than removing it.
+      what_is_blocked: "Nothing. Both pins are updated with their evidence and green."
     ESC_99_eleven_lessons_the_platform_already_paid_for_are_orphaned:
       question: >-
         Eleven skills the incident miner authored have no owner and never have had one, so

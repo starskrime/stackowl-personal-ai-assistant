@@ -6,8 +6,8 @@ import pytest
 
 from stackowl.authz import BoundsSpec
 from stackowl.owls.manifest import OwlAgentManifest
-from stackowl.owls.tool_presets import ROUTER_TOOLS
 from stackowl.owls.registry import OwlRegistry
+from stackowl.owls.tool_presets import ROUTER_TOOLS
 from stackowl.pipeline.authz_compose import child_floor, compute_effective_bounds
 from stackowl.pipeline.state import PipelineState
 

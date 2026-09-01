@@ -104,13 +104,30 @@ def test_an_unrelated_tool_does_NOT_ground_a_turn() -> None:
     assert _should_classify_retrieval(_turn(tools=("send_message",))) is True
 
 
-def test_the_web_provenance_set_is_UNCHANGED() -> None:
-    """The other consumer must not move.
+def test_no_local_authority_tool_leaks_into_the_web_provenance_set() -> None:
+    """PIN UPDATED 2026-09-01 — its REASON is preserved, its literal is not.
 
-    `_RETRIEVAL_TOOLS` also answers "did a WEB tool run?" for URL provenance. If
-    owls_list leaked into it, a locally-sourced answer carrying a URL would be
-    treated as web-sourced — a different bug, in the opposite direction.
+    This asserted `_RETRIEVAL_TOOLS == {"web_search", "web_fetch"}`, but the
+    reason it gives is about something narrower: `owls_list` and friends must not
+    leak in, or a LOCALLY-sourced answer carrying a URL would read as
+    web-sourced. That invariant is intact and is what is asserted now.
+
+    WHAT MOVED, AND WHY. `browser_navigate` was added, and it is unambiguously a
+    WEB tool — the opposite of the leak this pin guards against. Measured
+    2026-09-01: 53 of 206 retrieval turns (25.7%) retrieved only through the
+    browser, invisible to the gate, and FOUR turns are in the log with
+    `browser_navigate` + `browser_extract` in their tool sequence and both
+    `grounding.fabricated_citations` and `grounding.stripped` against them — the
+    platform browsed those pages, cited them, and the gate deleted the citations.
+    Freezing the literal set was what let that stand.
     """
-    from stackowl.pipeline.delivery_gate import _RETRIEVAL_TOOLS
+    from stackowl.pipeline.delivery_gate import (
+        _LOCAL_AUTHORITY_TOOLS,
+        _RETRIEVAL_TOOLS,
+    )
 
-    assert _RETRIEVAL_TOOLS == frozenset({"web_search", "web_fetch"})
+    assert not (_RETRIEVAL_TOOLS & _LOCAL_AUTHORITY_TOOLS), (
+        "a local-authority tool leaked into the web-provenance set — a locally "
+        "sourced answer with a URL would now read as web-sourced"
+    )
+    assert {"web_search", "web_fetch", "browser_navigate"} <= _RETRIEVAL_TOOLS

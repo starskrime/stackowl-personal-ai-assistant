@@ -41,8 +41,6 @@ accumulate toward a split it has no use for.
 
 from __future__ import annotations
 
-import pytest
-
 from stackowl.pipeline.durable.decompose import (
     DECOMPOSE_AFTER_ATTEMPTS,
     should_decompose,

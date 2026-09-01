@@ -14,7 +14,11 @@ import json
 
 import pytest
 
-from stackowl.pipeline.delivery_gate import _FLOOR_TEXT, surface_grounding_gate
+from stackowl.pipeline.delivery_gate import (
+    _FLOOR_TEXT,
+    UNVERIFIED_MARK,
+    surface_grounding_gate,
+)
 from stackowl.pipeline.state import PipelineState, ToolCall
 from stackowl.pipeline.streaming import ResponseChunk
 
@@ -78,15 +82,46 @@ async def test_fabricated_url_stripped() -> None:
     assert not any(c.is_floor for c in result.responses)
 
 
-# (b) cited URL that WAS in a web_search result → kept unchanged
+# (b) cited URL that was only LISTED by web_search → kept, but marked
 @pytest.mark.asyncio
-async def test_grounded_url_kept() -> None:
+async def test_a_search_hit_is_kept_but_marked_unverified() -> None:
+    """PIN UPDATED 2026-09-01, with the evidence that moved it.
+
+    This asserted byte-identical passthrough for a URL that ``web_search`` merely
+    LISTED, which is the exact behaviour Bakir reported and the platform's own
+    verified RCA named: "links were cited in the reply without being retrieved in
+    this run... the unverified state was only acknowledged after the fact."
+
+    A search result is the ENGINE'S CLAIM ABOUT a page, not evidence anyone
+    opened it. The URL is real, so it is still not fabricated and is still NOT
+    stripped — the half of the old contract that was right is kept, and asserted
+    below. What changes is that it is labelled where it appears, which is the
+    RCA's own recommended fix.
+    """
     url = "https://realsource.example/article"
     draft = _draft(f"Per [this report]({url}), models improved a lot this quarter.")
     state = _state(responses=(draft,), tool_calls=(_web_search_call(url),))
     result = await surface_grounding_gate(state)
+    text = _text(result)
+    assert url in text, "a real search hit must never be stripped"
+    assert UNVERIFIED_MARK in text, (
+        "a link nobody opened is being presented as a verified source again"
+    )
+
+
+# (b1) the same URL, actually fetched → untouched, byte-identical
+@pytest.mark.asyncio
+async def test_a_retrieved_url_is_untouched() -> None:
+    """The other half of the pin: retrieval earns silence."""
+    url = "https://realsource.example/article"
+    draft = _draft(f"Per [this report]({url}), models improved a lot this quarter.")
+    state = _state(
+        responses=(draft,),
+        tool_calls=(_web_search_call(url), _web_fetch_call(url)),
+    )
+    result = await surface_grounding_gate(state)
     assert result.responses == state.responses  # byte-identical
-    assert url in _text(result)
+    assert UNVERIFIED_MARK not in _text(result)
 
 
 # (b2) web_fetch'd URL counts as a fetched source
