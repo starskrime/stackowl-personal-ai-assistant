@@ -464,12 +464,23 @@ current:
       touches dispatch. Recorded as a known flake rather than silently re-run away; it
       deserves its own item.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    validate: OPEN_awaiting_the_next_restart
-    closing_query: >-
-      Boot-triggered, so it closes in minutes rather than on rare traffic: the INFO line
-      "[runtime] quiesce: nothing in flight — draining clean" (new wording) or "waiting for
-      in-flight work to drain" with a background field. Then over 24h: "Cannot operate on a
-      closed database" should stop being 100% boot-correlated.
+    validate: >-
+      PARTIAL. The code is LIVE — the core booted 2026-09-01T06:01:10Z, after the 06:00:16Z
+      commit — but the drain path has NOT run with it: zero lines carrying the new wording
+      across the whole log history. Two restarts since the commit produced no quiesce line
+      at all, so the probe is unexercised. NOT CLAIMED.
+    validate_OPEN: >-
+      Closing query: the INFO line "[runtime] quiesce: nothing in flight — draining clean",
+      or "waiting for in-flight work to drain" with a `background` field. quiesce runs on
+      178 of 249 restarts (71%) historically, so it should appear within a few restarts.
+      Then over 24h: "Cannot operate on a closed database" must stop being 100%
+      boot-correlated.
+    an_instrument_error_of_my_own_recorded: >-
+      I first read "3 quiesce invocations" and nearly concluded that ./start.sh bypasses the
+      graceful path entirely. That count came from a TAIL WINDOW of the current log file,
+      not the history: the real figure is 178 across 249 boots. The conclusion would have
+      been wrong and the fix mis-scoped. Same family as every other instrument error this
+      session — the denominator was not what I thought it was.
 
   JOBLANE_2026_09_01_a_contract_with_two_halves_and_no_meeting_point:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-107."
