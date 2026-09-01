@@ -315,6 +315,60 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  EXPECTFILE_2026_09_01_the_primitive_works_and_shell_could_never_use_it:
+    map_check: "No mapped item matches — evidence-led, from Bakir's shell:stop RCA verdict."
+    THE_MEASUREMENT_THAT_DECIDED_IT: >-
+      side_effect_ledger, 1,959 real committed calls. shell: 1,067 calls, artifact_path set on
+      36 (3.4%), verified None on 1,039 (97.4%). write_file: 38 of 39 verified TRUE (97%).
+      The primitive is not broken — when it fires it is decisive, and four of shell's 28
+      non-None verdicts are False, each an exit-0 command that produced nothing. It simply
+      almost never fires.
+    THE_CAUSE_IS_THE_SCHEMA_NOT_THE_CHECK: >-
+      write_file(path=...) names its effect structurally, so verification is automatic.
+      shell(command=...) names only a command string, and artifact_path is set ONLY when
+      _redirect_target recognises an unambiguous stdout redirect. A heredoc, a python -c, a
+      tee, a curl -o, or any program that writes the file itself leaves it None — so verified
+      stays None and the turn ends on an unconfirmed write. Verification was bound to one
+      SYNTACTIC FORM rather than to the effect.
+    his_verdict_corroborated_at_scale: >-
+      "the deliverable was never re-read back, and the completion message was grounded in a
+      spawn/attempt rather than a fresh observation". Of 207 'stop' turns that used tools, 152
+      wrote something and 139 of those 152 — 91% — performed NO read of any kind after their
+      last write.
+    WHY_HIS_PROPOSED_FIX_WAS_NOT_BUILT: >-
+      He proposed re-reading the artifact after any write. That step ALREADY EXISTS and works
+      (shell.verify, write_file, skill_manage, tts, image_generate all call verify_artifact).
+      Building a second re-read in the loop would have been a second copy of working
+      machinery — the duplication rule. What was missing is any way for an invocation to NAME
+      its artifact in the forms a redirect cannot express.
+    the_fix: >-
+      expect_file, a caller declaration in exactly the shape of the existing `intent` param,
+      feeding the SAME verify() seam. Nothing is inferred, so shell's stated principle —
+      "never over-claim verification for an arbitrary command" — is preserved rather than
+      weakened: the caller states the effect, or there is still no verdict.
+    it_cannot_be_used_to_fake_a_pass: >-
+      verify_artifact requires exists AND non-empty AND newer than the call start, so naming a
+      stale pre-existing file fails. Declaring an effect you did not produce yields
+      verified=False — a STRONGER failure signal than declaring nothing. Asserted directly.
+    the_tests_were_proven_to_discriminate: >-
+      Mutation: with `declared` forced empty, the four behavioural tests FAIL and the
+      back-compat, redirect and schema tests stay green. Passing was demonstrated to depend on
+      the change, not assumed.
+    the_decoration_risk_is_the_real_one_and_it_is_INSTRUMENTED: >-
+      A capability nothing sets is decoration — D03.4's result cap shipped with no tool
+      declaring one and could never fire. So expect_file is in the SCHEMA (a test asserts the
+      model is offered it, that the description says what declaring it BUYS, and that it stays
+      optional), and every use emits an INFO line. No prompt guidance was added: that is the
+      next lever if the line never fires, and adding it speculatively would be tuning the
+      global prompt to an example.
+    dedup_target: "None — this feeds the existing verify seam rather than adding a second one."
+    suites: "tests/tools/system 188 passed + tests/tools/meta 242 passed (the other consumer of the shared run_argv seam) = 430."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_a_live_shell_call_that_declares_its_artifact
+    closing_query: >-
+      "shell.execute: the command named the artifact it produces". If it has not fired after a
+      day of real traffic, the schema description is not enough and the honest conclusion is
+      that the model needs telling in the prompt — which is a measurement, not a guess.
   RCA_VERDICTS_2026_09_01_two_reports_from_Bakir_DIAGNOSED_not_yet_fixed:
     status: "DIAGNOSED. The diagnosis is done here, in writing, per the rule that a report is EVIDENCE OF A CAUSE. Nothing is escalated; these are the next items."
     VERDICT_1_shell_stop_the_artifact_was_never_read_BACK: >-

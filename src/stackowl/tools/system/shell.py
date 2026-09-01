@@ -540,6 +540,7 @@ async def run_argv(
     timeout_sec: float = _TIMEOUT_SEC,
     shell_command: str | None = None,
     intent: str = "write",
+    expect_file: str | None = None,
 ) -> ToolResult:
     """Run a command through the shared subprocess boundary.
 
@@ -715,11 +716,21 @@ async def run_argv(
     # for real shell execution — operators/redirects are inert under exec mode — and
     # only when a file is named; otherwise artifact_path stays None ⇒ verified stays
     # None (we never over-claim verification for a generic shell command).
+    # MEASURED 2026-09-01 over 1,959 committed calls in side_effect_ledger: shell
+    # set artifact_path on 36 of 1,067 calls (3.4%) and left `verified` None on
+    # 1,039, while write_file — whose SCHEMA names its effect — verified 38 of 39.
+    # The check was never the problem; naming the effect was. A caller-declared
+    # `expect_file` lets an invocation name an artifact a redirect cannot express
+    # (heredoc, tee, python -c, curl -o) and feeds the SAME verify() seam. Nothing
+    # is inferred, so "never over-claim for an arbitrary command" still holds.
     artifact_path: str | None = None
-    if shell_command is not None:
+    base = cwd or os.getcwd()
+    declared = (expect_file or "").strip()
+    if declared:
+        artifact_path = declared if os.path.isabs(declared) else os.path.join(base, declared)
+    elif shell_command is not None:
         redir = _redirect_target(argv)
         if redir is not None:
-            base = cwd or os.getcwd()
             artifact_path = redir if os.path.isabs(redir) else os.path.join(base, redir)
     log.tool.debug(
         "shell.execute: exit",
@@ -733,6 +744,19 @@ async def run_argv(
             }
         },
     )
+    if declared:
+        # INFO, deliberately: this line is the ONLY evidence that the declaration
+        # is ever used. Production runs at INFO, and a capability nothing sets is
+        # decoration — the failure D03.4 recorded when a result cap shipped with no
+        # tool declaring one. Rare by design, so it costs nothing when unused.
+        log.tool.info(
+            "shell.execute: the command named the artifact it produces — "
+            "verification can run on a write a redirect could not express",
+            extra={"_fields": {
+                "tool": tool_name, "expect_file": declared[:200],
+                "artifact_path": artifact_path, "success": success,
+            }},
+        )
     return ToolResult(
         success=success, output=output, error=error,
         duration_ms=duration_ms, artifact_path=artifact_path,
@@ -828,6 +852,21 @@ class ShellTool(Tool):
                         "to a file has no effect — that is still a write."
                     ),
                 },
+                "expect_file": {
+                    "type": "string",
+                    "description": (
+                        "The file this command PRODUCES (optional; relative names "
+                        "resolve against workdir). Set it whenever the command "
+                        "writes a deliverable any way other than a plain '> file' "
+                        "redirect — a heredoc, tee, python -c, curl -o, or a program "
+                        "that writes the file itself. The tool then reads that file "
+                        "back and reports verified=true only if it exists, is "
+                        "non-empty and was written by THIS run; naming a file the "
+                        "command did not produce reports verified=false instead of a "
+                        "silent false success. Without it a non-redirect write cannot "
+                        "be verified at all."
+                    ),
+                },
             },
             "required": ["command"],
         }
@@ -878,4 +917,5 @@ class ShellTool(Tool):
             timeout_sec=timeout_sec,
             shell_command=command,
             intent=intent,
+            expect_file=str(kwargs.get("expect_file", "")) or None,
         )
