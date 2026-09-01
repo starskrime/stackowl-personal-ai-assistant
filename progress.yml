@@ -414,6 +414,63 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  SHADOWGATE_2026_09_01_a_promotion_gate_that_could_never_pass:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-116."
+    how_this_item_was_reached: >-
+      Round 0 back on the LIVE platform after several test-side items. Two new signals:
+      "[pipeline] deliver: no registry in services — discarding responses" (65 events, all
+      on shadow-validate-* lanes) and "[dna] coordinator.promote: shadow gate REJECTED"
+      (40 ERRORs). The first is a symptom of the second.
+    root_cause_measured: >-
+      40 rejections across SIX owls — librarian, archivist, mailbutler, secretary, scout,
+      syshealth, five each — every one carrying consecutive_non_regressions: 0 against
+      n_consecutive_required: 3. Zero, always. DNA promotion, the platform's own
+      self-improvement gate, has never once passed.
+      IT IS NOT A STRICT THRESHOLD. It is a check the harness made impossible. Secretary's
+      rejection payload: pipeline_errors=["execute: ToolCallLeakError: Owl 'secretary'
+      produced a tool call where a final answer was required"]. ShadowValidator deliberately
+      wires NO tool_registry into its scratch services — the isolation seam, defended at
+      length in the module docstring because a shadow replay must never cause side effects —
+      while _eligible_for_replay selected any SUCCESSFUL past turn, and a successful past
+      turn is overwhelmingly a TOOL-USING one. Replaying it without tools makes the owl reach
+      for a tool that is not there, the pipeline raises ToolCallLeakError, that lands in
+      result_state.errors, success is False, and the streak breaks on the first replay.
+    hypotheses_refuted_on_the_way: >-
+      (1) "the eligibility pool is empty" — no: the DB holds 3,489 eligible for secretary
+      all-time and 291 inside the 14-day lookback. (2) "the read is starving it" — no:
+      driving TaskOutcomeStore.list_scored_for_owl directly returns secretary 291, scout 28,
+      librarian 2. (3) "it is the cold-start guard" — only for librarian (2 < 5, five times),
+      which is correct fail-closed behaviour. The other five owls fail in the real loop.
+    fix: >-
+      _eligible_for_replay now also requires an empty tool_sequence — the turn must be
+      REPLAYABLE in a harness that wires no tools. That restores the question the filter's
+      own docstring asks and answers only half of: "did this input previously produce a
+      clean, trustworthy result, so replaying it is a meaningful regression check?" For a
+      tool-using turn in a tool-free harness the answer is no.
+    what_it_leaves_behind_stated_honestly: >-
+      In the 14-day window this leaves hypothesis 659, verifier 544, rca_gatherer 435 and
+      secretary 56 replayable samples against a required 5 — the gate becomes passable for
+      them. It drops mailbutler (4), jobmarket (3), archivist (1) and headhunter (0) below
+      the cold-start guard, which is the RIGHT answer for an owl whose history is entirely
+      tool-driven: "insufficient held-out sample", fail-closed and legible, instead of a
+      spurious regression against an artefact of the harness.
+    what_else_that_same_cause_reaches: >-
+      Any replay/simulation harness that selects its sample by "did this succeed" rather than
+      "can this be re-run HERE". The eligibility criterion has to include the harness's own
+      constraints or the sample is guaranteed to fail.
+    tests: "6 in tests/owls/test_the_shadow_gate_can_actually_pass.py, leading with the
+      expensive direction (over-filtering would starve every owl and turn a passable gate
+      into a permanent cold start — the same wall by another route) and a structural pin that
+      the reason lives on the filter."
+    suites: "tests/owls + tests/memory 886 passed."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_promotion_cycle
+    closing_query: >-
+      "[dna] coordinator.promote: shadow gate REJECTED" must stop carrying
+      consecutive_non_regressions: 0 for secretary/scout/syshealth, and
+      "[shadow] validate: exit" should start showing a non-zero streak. The cycle ran at
+      07:02 today and around 07:01 on previous days, so this closes within a day.
+
   JOURNEYS_2026_09_01_the_last_two_red_and_a_double_that_enumerated_fields:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-115."
     outcome: >-

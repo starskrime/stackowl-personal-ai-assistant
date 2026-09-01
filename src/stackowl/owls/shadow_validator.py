@@ -98,10 +98,40 @@ def _eligible_for_replay(outcomes: list[TaskOutcome]) -> list[TaskOutcome]:
     and excludes a disliked ``approach_rating`` for DNA *attribution* purposes).
     This filter answers a narrower question: "did this input previously produce a
     clean, trustworthy result, so replaying it is a meaningful regression check?"
+    AND REPLAYABLE IN THIS HARNESS, which is the half that was missing until
+    2026-09-01. The replay deliberately wires NO tool_registry (see the module
+    docstring: the isolation seam is the whole point — a shadow replay must not
+    be able to cause side effects). Feeding it a turn that originally USED tools
+    therefore cannot succeed: the owl reaches for a tool that is not there and
+    the pipeline raises ToolCallLeakError, which lands in ``result_state.errors``
+    and counts as a REGRESSION.
+
+    MEASURED: 40 shadow-gate rejections across six owls, every one of them, with
+    ``consecutive_non_regressions: 0`` against ``n_consecutive_required: 3``. The
+    secretary sample says it plainly::
+
+        pipeline_errors=["execute: ToolCallLeakError: Owl 'secretary' produced a
+        tool call where a final answer was required"]
+
+    So DNA promotion — the platform's self-improvement gate — was structurally
+    unpassable for every owl whose real work uses tools, which is all of them.
+    Not a threshold that was too strict: a check the harness made impossible.
+
+    Requiring an empty ``tool_sequence`` restores the question this filter was
+    written to ask. In the 14-day window that leaves hypothesis 659, verifier
+    544, rca_gatherer 435 and secretary 56 replayable samples against a required
+    5 — while mailbutler, jobmarket, archivist and headhunter fall to the
+    cold-start guard, which is the HONEST answer for an owl whose history is
+    entirely tool-driven: it says "insufficient held-out sample" instead of
+    failing on an artefact of the harness.
+
     ``outcomes`` is assumed already ordered newest-first (as
     ``TaskOutcomeStore.list_scored_for_owl`` returns it) — order is preserved.
     """
-    return [o for o in outcomes if o.success and not o.failure_class]
+    return [
+        o for o in outcomes
+        if o.success and not o.failure_class and not tuple(o.tool_sequence or ())
+    ]
 
 
 class ShadowValidator:
