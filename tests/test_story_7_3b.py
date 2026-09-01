@@ -99,7 +99,13 @@ async def test_execute_emits_morning_brief_rendered_event(
     assert payload["status"] == "undeliverable"
     assert payload["per_channel"] == {}
     assert payload["undeliverable"] == []
-    assert payload["section_count"] == 2
+    # Against the handler's OWN assembler list, not a literal — the same reason
+    # test_execute_runs_every_registered_assembler gives above ("so the next
+    # section added or removed does not make this a change detector"). It was a
+    # literal 2 and went red the moment the system_spend section was added on
+    # 2026-09-01, at Bakir's request for a 24-hour token report; the file already
+    # knew the right pattern and these two call sites had not adopted it.
+    assert payload["section_count"] == len(handler._assemblers)
 
 
 @pytest.mark.asyncio
@@ -127,7 +133,7 @@ async def test_execute_returns_job_result_with_section_count(
     disable_guard(monkeypatch)
     handler = make_handler()
     result = await handler.execute(make_job())
-    assert result.metadata.get("section_count") == 2
+    assert result.metadata.get("section_count") == len(handler._assemblers)
     assert result.metadata.get("delivery_channels") == ["telegram"]
     assert isinstance(result.metadata.get("rendered_len"), int)
 

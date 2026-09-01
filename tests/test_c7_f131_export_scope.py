@@ -10,17 +10,24 @@ SecurityError BEFORE any archive is written.
 No secret value is logged — we only assert on extracted archive members.
 """
 
-# PARLIAMENT KEEPS `conversation_id`, and that is deliberate rather than an oversight.
+# THE COMMENT THAT USED TO BE HERE WAS FICTION, and it kept four tests in this
+# file red (plus four more in test_story_5_1.py, where it was copy-pasted).
 #
-# D01.7 slice 3a.1 renamed the CONVERSATION lane's conversation_id to session_key, and
-# these tests were swept along with it. Parliament's conversation_id is a different
-# concept — the id of a DEBATE, not of a conversation lane — and it kept its name
-# on purpose; round_runner.py:175 makes the distinction explicit by passing
-# `session_key=session.conversation_id` when it hands a debate into the pipeline.
+# It claimed Parliament "keeps conversation_id ... deliberate rather than an
+# oversight" and opened "Checked against production before changing anything".
+# MEASURED 2026-09-01, all four of its claims are false: the live
+# parliament_sessions table has no conversation_id column (its columns are
+# session_id, topic, owl_names, rounds, synthesis, status, started_at,
+# completed_at, interjections, owner_id); session_store.py contains ZERO
+# occurrences of conversation_id; round_runner.py passes
+# `session_key=session.session_id`, not `session.conversation_id`; and
+# `git log -S conversation_id` on parliament/models.py returns nothing, so the
+# field never existed.
 #
-# Checked against production before changing anything: the live parliament_sessions
-# table has a conversation_id column and session_store.py queries conversation_id throughout.
-# The code and schema agree; only these tests drifted.
+# The INSERT below used to name a column that has never been there, so it failed
+# with "table parliament_sessions has no column named conversation_id". Production
+# is consistent on session_id and always was — only these fixtures were wrong, and
+# the comment is what made them look intentional.
 
 
 from __future__ import annotations
@@ -66,7 +73,7 @@ async def _seed(db: Any) -> None:
     # parliament_sessions: a secret inside the rounds transcript JSON-text.
     await db.execute(
         "INSERT INTO parliament_sessions "
-        "(conversation_id, topic, owl_names, rounds, synthesis, status, started_at) "
+        "(session_id, topic, owl_names, rounds, synthesis, status, started_at) "
         "VALUES (?, ?, ?, ?, ?, 'complete', '2026-01-01T00:00:00+00:00')",
         (
             "ps1",
@@ -167,7 +174,7 @@ class TestExportFailsClosed:
         leaked = f"residual {_GITHUB} secret"
         await tmp_db.execute(
             "INSERT INTO parliament_sessions "
-            "(conversation_id, topic, owl_names, rounds, synthesis, status, started_at) "
+            "(session_id, topic, owl_names, rounds, synthesis, status, started_at) "
             "VALUES (?, ?, ?, ?, ?, 'complete', '2026-01-01T00:00:00+00:00')",
             ("psx", "t", json.dumps(["o"]), json.dumps([{"text": leaked}]), None),
         )

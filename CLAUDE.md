@@ -53,6 +53,12 @@ which is worse than useless. Use it for "where does X live in src", not for ever
 **Never a full `pytest` run** — it hangs on this box. Targeted paths with timeouts.
 A hanging test is a failing test.
 
+**`tests/<package>` NEVER runs `tests/*.py`.** 69 test files sit directly in `tests/`
+— consent, audit chains, the SSRF guard, capability profiles, migrations — and no
+package path touches one of them. Measured 2026-09-01: ELEVEN were red, two of them
+a six-hour-old regression of my own, and the targeted-path habit is why nobody saw
+it. Add `tests/*.py` to the paths you run, in chunks.
+
 **Restart with `./start.sh`, then verify via `~/.stackowl/logs/stackowl.jsonl`, never a
 PID.** A deletion is not live until the process holding the old code is gone. Check the
 core's start time against your last commit before believing anything you measure.

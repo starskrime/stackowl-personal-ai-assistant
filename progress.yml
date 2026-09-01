@@ -414,6 +414,64 @@ current:
       "stream-miss: no durable fallback available" should stop appearing for
       recover-task-* lanes.
 
+  REDSUITE_2026_09_01_eleven_tests_were_red_and_the_loop_could_not_see_them:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-110."
+    how_this_item_was_reached: >-
+      Sweeping the class the previous item exposed (concurrency asserted by wall clock, 20
+      such assertions in the suite). Running four of them together returned "4 failed, 60
+      passed" — DETERMINISTICALLY, three runs. They were not flaky. They were RED, and
+      nobody knew.
+    root_cause_measured: >-
+      ELEVEN tests were red across the TOP-LEVEL test files, and the loop's own habit is why
+      they survived: every targeted run this programme makes uses a PACKAGE path
+      (tests/pipeline, tests/tools, tests/scheduler...), and there are 69 test files sitting
+      directly in tests/ that no package path ever touches — consent, audit chains, the SSRF
+      guard, capability profiles, migrations. A full pytest run hangs on this box (recorded
+      landmine), so there is no whole-suite signal either. Red accumulates silently in the
+      gap between the two.
+    the_eleven_and_their_causes: >-
+      EIGHT from ONE false comment, copy-pasted into two files. It asserted "PARLIAMENT KEEPS
+      conversation_id ... deliberate rather than an oversight" and opened "Checked against
+      production before changing anything". All FOUR of its claims are false, measured: the
+      live parliament_sessions table has no conversation_id column; session_store.py contains
+      ZERO occurrences of it; round_runner.py passes session_key=session.session_id, not
+      session.conversation_id; and git log -S on parliament/models.py shows the field never
+      existed. Production was consistent on session_id and always had been — the comment,
+      phrased as a completed verification, is what made eight red tests look intentional.
+      TWO were MINE, six hours old: test_story_7_3b pinned section_count == 2 as a LITERAL
+      and I added the system_spend section at Bakir's request. The same file's first test
+      already asserts against len(handler._assemblers) and says why — "so the next section
+      added or removed does not make this a change detector" — so the fix was to adopt the
+      pattern the file already documented, not to bump 2 to 3.
+      ONE was a test double that stopped resembling the real thing: OwlStore.delete does its
+      cascade inside `async with self._db.transaction()`, and the fake only offered
+      db.execute, so AsyncMock returned a coroutine where an async context manager belonged.
+      Production was right; the double had never modelled the transaction API, and it also
+      turned out to need fetch_all — an AsyncMock answers every attribute, which is exactly
+      how it hid the gap.
+    what_else_that_same_cause_reaches: >-
+      Every one of the 69 top-level files, permanently, until they are part of a run someone
+      actually makes. The eleven found here are what one sweep surfaced.
+    fix: >-
+      All eleven repaired at the TEST side (production needed no change in any of the three
+      groups), and each fiction replaced with the measurement that disproved it so the next
+      reader is not misled the same way.
+    suites: "tests/*.py in three chunks: 189+3s, 296, and 393 — all green after the fix.
+      Package suites re-verified green: pipeline 1687, tools 1873, owls 334, memory 546,
+      channels 625, health 37."
+    baselines: "ruff clean on all four touched files; no src/ change."
+    validate: >-
+      Chunk 1 re-run: 189 passed, 3 skipped (was 4 failed). Chunk 2: 296 passed. The two
+      chunk-3 files verified individually — test_story_7_3b.py 9 passed (was 2 failed),
+      test_story_4_4.py::TestOwlsRemove 7 passed (was 1 failed). The full chunk-3 re-run
+      (~4 minutes) was still running at commit time and is the one piece not yet witnessed
+      end to end; it is recorded as such rather than assumed from the per-file greens.
+    what_would_make_this_not_recur: >-
+      A run that includes tests/*.py. The loop's targeted-path habit is correct for speed
+      and is the recorded way to avoid the hang, but it needs the top-level files added
+      explicitly — they are 69 files and roughly 878 tests, none of which any tests/<package>
+      invocation has ever executed.
+
   FLAKE_2026_09_01_the_concurrency_test_could_not_tell_the_bug_from_the_fix:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-109."
     how_this_item_was_reached: >-

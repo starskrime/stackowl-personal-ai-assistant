@@ -1,16 +1,29 @@
 """Story 5.1 — Parliament orchestration, fan-out, persistence, timeout, budget."""
 
-# PARLIAMENT KEEPS `conversation_id`, and that is deliberate rather than an oversight.
+# THE COMMENT THAT USED TO BE HERE WAS FICTION, and it kept four tests red.
 #
-# D01.7 slice 3a.1 renamed the CONVERSATION lane's conversation_id to session_key, and
-# these tests were swept along with it. Parliament's conversation_id is a different
-# concept — the id of a DEBATE, not of a conversation lane — and it kept its name
-# on purpose; round_runner.py:175 makes the distinction explicit by passing
-# `session_key=session.conversation_id` when it hands a debate into the pipeline.
+# It asserted that Parliament "keeps conversation_id ... deliberate rather than an
+# oversight", and opened with "Checked against production before changing
+# anything". MEASURED 2026-09-01, every one of its four factual claims is false:
 #
-# Checked against production before changing anything: the live parliament_sessions
-# table has a conversation_id column and session_store.py queries conversation_id throughout.
-# The code and schema agree; only these tests drifted.
+#   claim: the live parliament_sessions table has a conversation_id column
+#     -> PRAGMA table_info: session_id, topic, owl_names, rounds, synthesis,
+#        status, started_at, completed_at, interjections, owner_id. No such column.
+#   claim: session_store.py queries conversation_id throughout
+#     -> grep -c conversation_id session_store.py = 0
+#   claim: round_runner.py:175 passes `session_key=session.conversation_id`
+#     -> it passes `session_key=session.session_id`
+#   claim: the model keeps the field
+#     -> git log -S conversation_id on parliament/models.py returns NOTHING; the
+#        field has never existed, and the model is frozen with extra="forbid"
+#
+# So production is entirely consistent on `session_id` and ALWAYS WAS. Only these
+# tests were wrong — and the comment, stated as a completed verification, is what
+# made them look intentional. A future reader trusting it would have "fixed" the
+# model to add a field nothing wants.
+#
+# These tests now assert `session_id`, which is what the code, the schema and the
+# migration all use.
 
 
 from __future__ import annotations
@@ -103,7 +116,7 @@ class TestParliamentSession:
         assert session.rounds == []
         assert session.interjections == []
         assert session.completed_at is None
-        assert session.conversation_id  # uuid auto-generated
+        assert session.session_id  # uuid auto-generated
 
     def test_add_round_returns_new_session(self) -> None:
         session = ParliamentSession(topic="t", owl_names=["a"])
@@ -157,9 +170,9 @@ class TestSessionStore:
         store = SessionStore(parliament_db)
         original = ParliamentSession(topic="ship it", owl_names=["a", "b"])
         await store.create(original)
-        fetched = await store.get_by_id(original.conversation_id)
+        fetched = await store.get_by_id(original.session_id)
         assert fetched is not None
-        assert fetched.conversation_id == original.conversation_id
+        assert fetched.session_id == original.session_id
         assert fetched.topic == "ship it"
         assert fetched.owl_names == ["a", "b"]
         assert fetched.status == "running"
@@ -172,7 +185,7 @@ class TestSessionStore:
         round_ = ParliamentRound(round_number=1, responses={"a": "hi"}, truncated={"a": False})
         updated = session.add_round(round_)
         await store.update_rounds(updated)
-        fetched = await store.get_by_id(session.conversation_id)
+        fetched = await store.get_by_id(session.session_id)
         assert fetched is not None
         assert len(fetched.rounds) == 1
         assert fetched.rounds[0].responses == {"a": "hi"}
@@ -291,7 +304,7 @@ class TestParliamentOrchestrator:
             max_rounds=1,
         )
         result = await orch.run("topic", ["a", "b"])
-        fetched = await store.get_by_id(result.conversation_id)
+        fetched = await store.get_by_id(result.session_id)
         assert fetched is not None
         assert fetched.status == "completed"
         assert len(fetched.rounds) == 1

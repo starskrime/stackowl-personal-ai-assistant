@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 import yaml
@@ -283,14 +282,65 @@ class TestOwlsRemove:
         assert "ghost" in out.lower()
 
     async def test_owls_remove_deletes_dna_rows(self, tmp_yaml: Path) -> None:
+        """THE DOUBLE HAD STOPPED RESEMBLING THE REAL THING (2026-09-01).
+
+        OwlStore.delete does its cascade inside ``async with
+        self._db.transaction() as tx`` and issues every DELETE through ``tx``,
+        but this fake only offered ``db.execute``. ``AsyncMock().transaction()``
+        returns a coroutine, not an async context manager, so the cascade raised
+        "'coroutine' object does not support the asynchronous context manager
+        protocol" and the assertion below saw an empty SQL list.
+
+        PRODUCTION WAS ALWAYS RIGHT — store.py:204-205 deletes owl_dna and
+        owl_dna_authored, and owls_command.py records that "OwlStore.delete owns
+        the whole cascade now". The fake simply never modelled the transaction
+        API it was standing in for.
+
+        It now records what the REAL code path issues: SQL sent through the
+        transaction, which is where the cascade actually lives.
+        """
         reg = OwlRegistry.with_default_secretary()
         reg.register(_manifest("alice"))
-        mock_db = AsyncMock()
-        mock_db.execute = AsyncMock(return_value=None)
-        cmd = OwlsCommand(owl_registry=reg, db=mock_db)
+
+        called_sqls: list[str] = []
+
+        class _Tx:
+            async def execute(self, sql: str, *args: object) -> None:
+                called_sqls.append(sql)
+
+        class _Db:
+            def transaction(self) -> object:
+                return _Ctx()
+
+            async def execute(self, sql: str, *args: object) -> None:
+                called_sqls.append(sql)
+
+            async def fetch_all(self, sql: str, *args: object) -> list[dict]:
+                # The real cascade also READS (scheduled jobs owned by the owl).
+                # The old AsyncMock answered every attribute, which is exactly how
+                # it hid the transaction gap: a double that answers everything
+                # cannot tell you what the code actually needs.
+                called_sqls.append(sql)
+                return []
+
+            async def execute_returning_rowcount(
+                self, sql: str, *args: object
+            ) -> int:
+                called_sqls.append(sql)
+                return 0
+
+        class _Ctx:
+            async def __aenter__(self) -> _Tx:
+                return _Tx()
+
+            async def __aexit__(self, *exc: object) -> bool:
+                return False
+
+        cmd = OwlsCommand(owl_registry=reg, db=_Db())
         await cmd.handle("remove alice YES", _state())
-        called_sqls = [call.args[0] for call in mock_db.execute.await_args_list]
-        assert any("DELETE FROM owl_dna" in sql for sql in called_sqls)
+        assert any("DELETE FROM owl_dna" in sql for sql in called_sqls), (
+            f"the DNA cascade did not run; SQL seen: {called_sqls}"
+        )
         assert any("DELETE FROM dna_checkpoints" in sql for sql in called_sqls)
 
     async def test_owls_remove_emits_event(self, tmp_yaml: Path) -> None:
