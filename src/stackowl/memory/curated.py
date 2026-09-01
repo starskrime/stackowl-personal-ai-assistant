@@ -495,6 +495,45 @@ class CuratedMemory:
             return int(budget * (1.0 - UNTIL_CHANGED_RESERVE_SHARE))
         return budget
 
+    def over_ceiling_targets(self) -> list[tuple[str, int, int, int]]:
+        """Targets whose permanent tier is already past its ceiling.
+
+        The reserve is an ADMISSION gate: it bounds what may be ADDED and cannot
+        move a file that went over the line before it existed. Permanent never
+        decays, so nothing else will shrink one either. Measured 2026-09-01 the
+        live store had three — user 1,246 against a 1,031 ceiling, jobmarket
+        2,039/1,650, owl 2,142/1,650 — every one of them with ZERO characters of
+        anything else, which is exactly the starvation the reserve exists to end.
+
+        Nothing reported this. ``at_capacity`` fires only on a write attempt and
+        named neither the tier nor the reason, so the condition was unobservable.
+
+        Returns:
+            ``(target, permanent_chars, ceiling, other_chars)`` per over-ceiling
+            target. Never raises — an unreadable target is skipped, because a
+            report may not be able to break the store it reports on.
+        """
+        over: list[tuple[str, int, int, int]] = []
+        for target in self.known_targets():
+            try:
+                entries = self.entries(target)
+                permanent = sum(
+                    len(e.text) for e in entries if e.durability == "permanent"
+                )
+                other = sum(
+                    len(e.text) for e in entries if e.durability != "permanent"
+                )
+                ceiling = self._effective_budget(target, "permanent")
+            except Exception as exc:  # noqa: BLE001 — a report may not break the store
+                log.memory.warning(
+                    "[curated] over_ceiling_targets: target unreadable — skipped",
+                    exc_info=exc, extra={"_fields": {"target": target}},
+                )
+                continue
+            if permanent > ceiling:
+                over.append((target, permanent, ceiling, other))
+        return over
+
     def _max_entry_chars(self, target: str) -> int:
         """Ceiling for a SINGLE entry — see MAX_ENTRY_BUDGET_FRACTION."""
         return int(self.budget_for(target) * MAX_ENTRY_BUDGET_FRACTION)
@@ -687,7 +726,10 @@ class CuratedMemory:
             candidate, evicted = self._evict_to_fit(candidate, effective_budget)
             projected = len(self._render(candidate))
         if projected > effective_budget:
-            return self._at_capacity(target, text, effective_budget)
+            return self._at_capacity(
+                target, text, budget,
+                durability=durability, tier_ceiling=effective_budget,
+            )
 
         self._write(target, candidate)
         # 4. EXIT
@@ -771,8 +813,15 @@ class CuratedMemory:
         updated = [replacement if e is matched[0] else e for e in existing]
         projected = len(self._render(updated))
         budget = self.budget_for(target)
-        if projected > budget:
-            return self._at_capacity(target, new_text, budget)
+        # The reserve is a property of the FILE, not of one verb. Enforcing it
+        # in `add` only left `replace` as an open door onto the same tier — two
+        # admission points, one rule, and the rule was on one of them.
+        effective_budget = self._effective_budget(target, durability)
+        if projected > effective_budget:
+            return self._at_capacity(
+                target, new_text, budget,
+                durability=durability, tier_ceiling=effective_budget,
+            )
         self._write(target, updated)
         log.memory.info(
             "[curated] replace: stored",
@@ -862,8 +911,24 @@ class CuratedMemory:
             evicted.append(kept.pop(oldest))
         return kept, evicted
 
-    def _at_capacity(self, target: str, attempted: str, budget: int) -> MemoryResult:
+    def _at_capacity(
+        self,
+        target: str,
+        attempted: str,
+        budget: int,
+        *,
+        durability: str = "until_changed",
+        tier_ceiling: int | None = None,
+    ) -> MemoryResult:
         """The refusal that makes the budget mean something.
+
+        ``budget`` is ALWAYS the whole file's budget. This function's entire
+        vocabulary — :meth:`used_chars`, "Memory is at X/Y chars", :meth:`_usage`
+        — is about the file, and handing it a per-tier ceiling made it report a
+        971-character file as "971/1,031" when the real budget was 1,375. A model
+        reading that consolidates — merges or DELETES the operator's curated facts
+        — to make room that already exists. ``tier_ceiling`` carries the per-tier
+        number separately so it can be explained instead of substituted.
 
         Bounded: past ``MAX_CONSOLIDATION_FAILURES_PER_TURN`` consecutive
         failures the result goes TERMINAL, dropping the retry instruction, so a
@@ -889,14 +954,53 @@ class CuratedMemory:
                     "Save skipped — continue with the user's request."
                 ),
             )
+        permanent_chars = sum(
+            len(e.text) for e in entries if e.durability == "permanent"
+        )
+        # The door is only open if there is somewhere to go. On a file that is
+        # genuinely FULL, "store it as until_changed instead" is bad advice — the
+        # decaying tier has no room either and consolidation is the honest ask.
+        tier_full = (
+            tier_ceiling is not None
+            and tier_ceiling < budget
+            and durability == "permanent"
+            and used + len(attempted) <= budget
+        )
         log.memory.info(
             "[curated] at_capacity: asking for consolidation",
             extra={"_fields": {
                 "target": target, "used": used, "budget": budget,
                 "attempted_chars": len(attempted),
                 "attempt": self._consolidation_failures,
+                "durability": durability,
+                "tier_ceiling": tier_ceiling,
+                "permanent_chars": permanent_chars,
+                "other_chars": used - permanent_chars,
+                "tier_full_not_file_full": tier_full,
             }},
         )
+        if tier_full:
+            # THE NON-DESTRUCTIVE DOOR. The permanent tier is full and the FILE is
+            # not, so this fact can simply be stored at the durability that has
+            # room. Offering only 'replace'/'remove' showed the model nothing but
+            # the destructive option — which is why a 100%-permanent jobmarket
+            # asked for consolidation three times in two minutes and freed nothing.
+            return MemoryResult(
+                ok=False, done=False, target=target,
+                usage=self._usage(used, budget), entry_count=len(entries),
+                entries=self._previews(entries),
+                message=(
+                    f"Memory is at {used:,}/{budget:,} chars, but the permanent "
+                    f"tier is capped at {tier_ceiling:,} of that so facts that "
+                    f"decay always have somewhere to live — and this permanent "
+                    f"entry ({len(attempted)} chars) would cross it. Store it as "
+                    f"until_changed instead: it costs nothing and deletes "
+                    f"nothing. If it truly must be permanent, consolidate that "
+                    f"tier: 'replace' to merge overlapping permanent entries or "
+                    f"'remove' a permanent one that is stale (see "
+                    f"current_entries), then retry this turn."
+                ),
+            )
         return MemoryResult(
             ok=False, done=False, target=target,
             usage=self._usage(used, budget), entry_count=len(entries),

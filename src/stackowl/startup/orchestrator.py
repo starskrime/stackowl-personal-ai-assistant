@@ -882,6 +882,28 @@ class StartupOrchestrator:
                 )
             )
             log.info("[startup] memory: target aliases installed")
+            # THE STATE THAT PREDATES THE GATE. UNTIL_CHANGED_RESERVE_SHARE is an
+            # ADMISSION gate: it bounds what may be ADDED and cannot move a file
+            # that went over the line before it existed — and permanent never
+            # decays, so nothing else will shrink one either. Measured 2026-09-01
+            # the live store had three (user, jobmarket, owl), each with ZERO
+            # characters of anything else, and NOTHING reported it: at_capacity
+            # fires only on a write attempt and named neither the tier nor the
+            # reason. Reported at boot because the condition is otherwise
+            # unobservable, and at INFO because production runs at INFO.
+            over = shared_memory().over_ceiling_targets()
+            if over:
+                log.info(
+                    "[startup] memory: permanent tier over its ceiling — these "
+                    "targets have no room for a fact that decays",
+                    extra={"_fields": {
+                        "n_over": len(over),
+                        "targets": [
+                            {"target": t, "permanent": p, "ceiling": c, "other": o}
+                            for t, p, c, o in over
+                        ],
+                    }},
+                )
         except Exception as exc:  # never let a routing hint cost the boot
             log.warning(
                 "[startup] memory: could not install target aliases — "

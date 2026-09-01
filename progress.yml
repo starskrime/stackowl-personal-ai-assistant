@@ -315,6 +315,63 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TIERFULL_2026_09_01_a_full_TIER_was_reported_as_a_full_FILE:
+    map_check: "No mapped item matches — evidence-led, and the evidence is a defect I shipped six hours earlier."
+    how_it_surfaced: >-
+      Sweeping today's OPEN acceptance checks against the live log. Seven of my eight queries
+      returned zero; checking the instrument first showed six of those were MY patterns being
+      wrong, not the code being silent. The curated check was genuinely exercised — twelve
+      "[curated] add: stored" writes between 09:02 and 09:11 — so it could finally be read.
+    THE_DEFECT_IS_MINE_AND_IT_IS_A_UNIT_MISMATCH: >-
+      UNTIL_CHANGED_RESERVE_SHARE was right: the permanent tier had eaten 98.2% of USER.md.
+      But add() handed the RESERVED CEILING to _at_capacity, whose entire vocabulary —
+      used_chars, "Memory is at X/Y chars", _usage — is about the WHOLE FILE. A per-tier
+      number in a whole-file report. Reproduced exactly: used=971, permanent_ceiling=1031,
+      full_budget=1375, and the message read "Memory is at 971/1,031 chars ... Consolidate
+      now". The file is 71% full with 404 characters free, and the model is told to merge or
+      DELETE the operator's curated facts to make room that already exists.
+    AND_ON_THE_THREE_LIVE_TARGETS_IT_PRINTS_NONSENSE: >-
+      user 1,246 permanent against a 1,031 ceiling would report "1,246/1,031" — a used larger
+      than its own denominator, which no reader can act on. jobmarket 2,039/1,650 and owl
+      2,142/1,650 the same, each with other=0.
+    THE_MISSING_RUNG_WAS_THE_REAL_COST: >-
+      When the permanent tier is full and the FILE is not, the correct move is to store the
+      fact as until_changed. The refusal never said so — it offered only 'replace' and
+      'remove', so the only door the model was ever shown was the destructive one. That is
+      why jobmarket asked for consolidation three times inside two minutes and freed nothing.
+    A_SECOND_ADMISSION_POINT_HAD_NO_GATE: >-
+      replace() computed budget_for() and never applied the reserve at all, so a permanent
+      replace could push the tier past its ceiling unchecked. One rule, two admission points,
+      and the rule was on one of them — the recorded "two copies of one rule" shape inverted.
+    the_fix: >-
+      _at_capacity now always receives the whole-file budget and takes tier_ceiling
+      separately, so a per-tier number can be EXPLAINED instead of SUBSTITUTED; the refusal
+      names the permanent tier, quotes used against the real budget, and offers until_changed
+      as the non-destructive door. replace() applies the same reserve as add().
+      over_ceiling_targets() reports state that predates the gate, wired at the boot seam.
+    THE_EXPENSIVE_DIRECTION_CAUGHT_A_HOLE_IN_THE_FIX_ITSELF: >-
+      "Store it as until_changed instead" is only true while the file has room. On a genuinely
+      full file the decaying tier has nowhere to go either, and the softened advice would send
+      the model through a door that is also shut. The door is now conditioned on
+      used + len(attempted) <= budget, and a test asserts a full file still gets the
+      consolidation ask. Found by writing the expensive-direction test, not by review.
+    two_tests_were_vacuous_before_they_were_right: >-
+      The first draft filled the tier, then probed with a SHORTER string that simply fit — it
+      measured nothing. The helper now returns the text that was refused and re-offers it. A
+      second asserted an until_changed write gets refused; it never does, because _evict_to_fit
+      drops the oldest decaying entry, which is the decay WORKING. Both replaced.
+    dedup_target: "None — this removes a second copy of the ceiling rule rather than adding one."
+    suites: "tests/memory + tests/startup 673 passed, including the 8 new tests and the pre-existing refusal contract, which was honoured rather than weakened."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    what_is_NOT_fixed_and_why: >-
+      The three over-ceiling files stay over. The reserve is an ADMISSION gate and by
+      construction cannot repair state that predates it; unwinding means editing Bakir's
+      curated memory, which is his call. ESC-103. The DIAGNOSIS is complete and here — only
+      the decision is escalated.
+    validate: OPEN_awaiting_the_next_boot
+    closing_query: >-
+      Boot-triggered, so it closes in minutes: "[startup] memory: permanent tier over its
+      ceiling" naming user, jobmarket and owl with their permanent/ceiling/other figures.
   ASTERISKS_2026_09_01_the_agent_recorded_a_PREFERENCE_for_a_FORMATTER_BUG:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-96."
     the_report_verbatim: >-
@@ -510,7 +567,24 @@ current:
       98.2% measurement lives beside the constant."
     suites: "tests/memory 552 passed."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    validate: OPEN_awaiting_the_next_curated_write
+    validate: >-
+      PARTIAL, and the honest half is the one that matters. Twelve "[curated] add: stored"
+      writes landed between 09:02 and 09:11, eleven of them until_changed, and no "user"
+      at_capacity has fired since the 05:30:04 commit (the last was 02:50:47, before it).
+      Measured live across all 18 targets, the permanent tier is within its ceiling on 15.
+    THE_FIX_BOUNDS_THE_FUTURE_AND_CANNOT_UNWIND_THE_PAST: >-
+      Three targets were ALREADY over the ceiling when the reserve shipped and the reserve
+      cannot move them: user 1246/1031, jobmarket 2039/1650, owl 2142/1650 — and every one of
+      the three has other=0, meaning ZERO room for a decaying fact, which is precisely the
+      starvation this item exists to end. hawkeye (1596) and verifier (1644) sit within 6
+      characters of the ceiling and will hit it on their next permanent write.
+    WHY_and_what_else_it_reaches: >-
+      The reserve is enforced in add()'s capacity check — an ADMISSION gate. A file that went
+      over the line before the gate existed never passes through it, and permanent never
+      decays, so nothing will ever shrink it. Same shape as every other derived share this
+      programme has shipped, CATALOG_RESERVE_SHARE included: they bound what may be ADDED and
+      none of them reconcile state that is already past the bound. Carried forward as the
+      next item.
     closing_query: >-
       "[curated] decay: evicted the oldest until_changed entry" must stop appearing for the
       user target, and "[curated] at_capacity" should now name 1,031 rather than 1,375 as the
@@ -566,7 +640,20 @@ current:
       the reason lives on the filter."
     suites: "tests/owls + tests/memory 886 passed."
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    validate: OPEN_awaiting_the_next_promotion_cycle
+    validate: >-
+      CLOSED, and the wall is measurably broken. Seven shadow cycles ran between 07:00:31 and
+      07:02:19. mailbutler recorded "consecutive_non_regressions: 1" with n_replayed 2 — the
+      FIRST non-zero streak in the platform's history, against 40 consecutive rejections that
+      every one of them carried 0. librarian now exits "cold start, insufficient held-out
+      sample {eligible: 2, required: 5}", which is the fail-closed, legible outcome this item
+      predicted for an owl whose history is entirely tool-driven, instead of a spurious
+      regression manufactured by the harness.
+    what_is_NOT_claimed: >-
+      No owl has reached the required streak of 3. rca_gatherer, archivist, scout, secretary
+      and syshealth each replayed 1 and failed it, so their streak reset to 0. That is the
+      gate WORKING — a replay regressed and was caught — not the wall. The distinction is
+      recorded because "passed: false" looks identical in both worlds and only the streak
+      field separates them.
     closing_query: >-
       "[dna] coordinator.promote: shadow gate REJECTED" must stop carrying
       consecutive_non_regressions: 0 for secretary/scout/syshealth, and
@@ -3778,6 +3865,31 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_103_three_memory_files_are_permanently_starved_and_only_you_can_unwind_them:
+      question: >-
+        user (1,246 permanent chars against a 1,031 ceiling), jobmarket (2,039/1,650) and owl
+        (2,142/1,650) are each 100% permanent — ZERO characters available for any fact that
+        decays. May the platform consolidate the permanent entries in those three files to
+        bring them back under the ceiling?
+      why_evidence_cannot_settle_it: >-
+        Unwinding means merging or removing entries in YOUR curated memory. The measurement
+        is unambiguous and the consequence is certain — until one of these files comes back
+        under its ceiling, every until_changed fact written to it is refused or evicted
+        forever — but which durable facts survive a merge is a judgement about what matters
+        to you, and this programme does not edit your memory unilaterally.
+      the_measurement: >-
+        Live, 2026-09-01: of 18 targets, 15 are within the permanent ceiling and 3 are over.
+        hawkeye (1,596) and verifier (1,644) are within 6 characters of it and will cross on
+        their next permanent write. Four decay evictions and three jobmarket at_capacity
+        events fired between 09:02 and 09:11.
+      the_panel_recommendation: >-
+        Consolidate jobmarket and owl, which are operational config and the likeliest to
+        merge cleanly. Leave user to ESC-102, which proposes moving 730 characters of
+        jobmarket configuration out of it — that alone brings user from 1,246 to ~516 and
+        under the 1,031 ceiling without deleting a single fact about you.
+      what_is_blocked: >-
+        Nothing in code. The admission gate, the refusal message and the boot report all ship
+        now. Only the three existing files stay as they are.
     ESC_102_your_USER_md_is_54_percent_jobmarket_configuration:
       question: >-
         Two of the six permanent entries in USER.md are jobmarket config — "verify every
