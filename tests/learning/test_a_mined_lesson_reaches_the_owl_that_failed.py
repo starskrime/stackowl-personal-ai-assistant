@@ -205,3 +205,57 @@ def test_the_miner_is_wired_with_both_collaborators() -> None:
         "the incident miner is constructed without the collaborators the attach "
         "needs — it would author skills and own none of them"
     )
+
+
+def test_the_DAILY_SWEEP_is_wired_with_the_miner() -> None:
+    """The path that needs no incident. Without this the repair only runs when an
+    RCA concludes — which is self-healing that fires while the platform is failing
+    again, and is the reason this test exists rather than a comment.
+
+    MEASURED 2026-09-02: the miner's mine() is called from ONE place, on a
+    concluded RCA verdict. 8 passes on 09-01, 4 on 09-02, none in the 17 hours
+    before this was written.
+    """
+    import inspect
+
+    from stackowl.scheduler import assembly
+
+    source = inspect.getsource(assembly)
+    assert "OrphanReconciliationHandler(db, miner=incident_miner)" in source, (
+        "the daily orphan sweep is registered without the miner — the only "
+        "repair path left is a concluded RCA, and a healthy week never closes "
+        "the gap"
+    )
+
+
+def test_the_sweep_registration_is_NOT_behind_a_conditional() -> None:
+    """Moving the registration to reach `incident_miner` must not have put the
+    DELETE half — which has run daily since 2026-08-31 — inside a branch."""
+    import ast
+    import inspect
+
+    from stackowl.scheduler import assembly
+
+    tree = ast.parse(inspect.getsource(assembly))
+    target = next(
+        n.lineno for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+        and n.func.id == "OrphanReconciliationHandler"
+    )
+
+    def _enclosing(node: ast.AST, stack: list[str]) -> list[str] | None:
+        for child in ast.iter_child_nodes(node):
+            nxt = stack + [type(child).__name__] if isinstance(
+                child, (ast.If, ast.Try, ast.For, ast.While)
+            ) else stack
+            if getattr(child, "lineno", None) == target and isinstance(child, ast.Call):
+                return nxt
+            found = _enclosing(child, nxt)
+            if found is not None:
+                return found
+        return None
+
+    assert _enclosing(tree, []) == [], (
+        "the orphan sweep is now registered inside a branch — on any path that "
+        "skips it, the nightly delete half stops running too"
+    )
