@@ -17749,6 +17749,8 @@ items:
       - "ONE COUNTER, NOT TWO. The per-lane counter was inline in memory/curated.py and is now infra/nudge.TurnNudge, used by both memory and skills. A second copy is the duplication shape this codebase keeps paying for; a structural test asserts the inline copy does not return."
       - "GATED ON THE TOOL BEING PRESENTED, which is the reference platform's rule and one this project has already paid for: skills_list showed zero invocations for eight days not because the model ignored it but because on those turns it was NOT in the presented set. The nudge is silent unless skill_manage is presented, and silent when the set is unknown — fails closed, because nudging toward an absent tool would manufacture that failure deliberately."
       - "INTERVAL 10 vs the memory nudge's 4, deliberately: a durable fact appears in most conversations, a reusable procedure does not, and a nudge that fires with nothing to record trains the model to ignore it. Same value the reference platform uses."
+      - "VALIDATE = PARTIAL, and the reason is measured, not a shrug. Across the retained window — 1,941 turns with a lane, 180 shutdowns, 82 windows containing turns — the MAX turns on a single lane per restart window reaches >=4 (the memory nudge interval) in 13 of 82 windows (16%) and >=10 (this nudge) in 5 of 82 (6%). So it CAN fire and will, at roughly an eighth the memory nudge rate; the dominant limiter is restart frequency, which is this loop's own development cadence rather than production behaviour. That is exactly the effect D08.3 recorded (\"at 34 boots in a day the reset is the dominant term\") now quantified for interval 10."
+      - "NOT FORCED, DELIBERATELY. Ten turns could be driven through scripts/dev_ingress.py to make it fire, but that script delivers every answer to Bakir's real chat by design — a task is complete when its outcome reaches its DESTINATION — so forcing this validation would put ten test messages on his phone. Not a cost worth paying for a log line. CLOSING QUERY: \"[skills] nudge: due\" on the next sustained conversation."
       - "9 tests. tests/skills + tests/memory + tests/pipeline/steps 1100 passed. ruff 35, mypy 65 at baseline after fixing two I introduced with an untyped helper."
 
     notes: null
@@ -18699,7 +18701,7 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial
+      validate:   done
       document:   done
     doc: "docs/reference-mapping/designs/D10.6.md"
     doc_last_verified: "2026-09-02 against commit cf4a7842 — Verification section RUN, not trusted: step 1 = 7 passed, step 2 = 527 passed, step 3 = chars 3668 / entries_with_text 19 / present 33 of 33, step 4 = 0 exactly as the document predicts."
@@ -18922,6 +18924,17 @@ items:
           by splitting skills_len on the commit timestamp rather than assuming: BEFORE has 15
           values, AFTER is empty. The 0 is no-information, exactly as recorded.
         commits: [cf4a7842]
+      - date: 2026-09-02
+        stage: validate
+        summary: >-
+          CLOSED BY LIVE TRAFFIC. Three "[skills] injector.render: rendering summaries LEAN"
+          events at 06:04:13, 06:05:15 and 06:06:41 on 2026-09-02 — well after the
+          2026-09-01T22:31 commit — on three different owls (rca_gatherer, hypothesis,
+          verifier), each carrying summary_cost 6092 against cap 4000. The corpus does not
+          fit at full width and every entry now keeps its description instead of a few
+          keeping when_to_use while the rest become bare names. The 0-over-0 recorded
+          yesterday resolved on its own the moment real turns assembled a prompt.
+        commits: [dc19b973]
     notes: >-
       HALF THE ITEM IS BLOCKED ON TRAFFIC, and the split is clean, so the other half proceeds.
       BLOCKED — "which 16 should be visible". Answering it needs to know whether the live
