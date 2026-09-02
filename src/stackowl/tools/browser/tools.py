@@ -127,12 +127,22 @@ def _ok(payload: dict[str, Any] | list[Any] | str, t0: float, *, tool: str = "br
 
 
 def _owner_key_from_state() -> str:
-    """Derive the owner_key from the active PipelineState session_id and channel."""
-    # Note: PipelineState is per-request and tools currently can't read it
-    # (see pipeline/steps/execute.py — _dispatch only forwards LLM kwargs).
-    # For v1 we use 'local'. Multi-user Telegram isolation lands when the
-    # session_id is threaded into _dispatch (covered in the plan's Tier 8 multi-user pass).
-    return "local"
+    """The owner_key for this turn — see ``sessions.owner_key_for_turn``.
+
+    THE OLD NOTE HERE WAS TRUE AND IS NOT ANY MORE. It said tools cannot read
+    PipelineState ("_dispatch only forwards LLM kwargs. For v1 we use 'local'"),
+    so this returned "local" unconditionally while
+    ``commands/browser_command.py`` built ``telegram:{session_key}`` and believed
+    it was mirroring this function. A session created by the TOOL was therefore
+    owned by ``local`` and invisible to ``/browser sessions`` on Telegram.
+
+    ``TraceContext`` carries ``session_key`` and ``channel`` as contextvars across
+    async hops — the same mechanism ``PlanStore`` uses to key a plan to its lane —
+    so the premise is gone and both callers now ask one implementation.
+    """
+    from stackowl.tools.browser.sessions import owner_key_for_turn
+
+    return owner_key_for_turn()
 
 
 # --------------------------------------------------------------------------- atomic tools

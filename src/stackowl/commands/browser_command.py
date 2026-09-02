@@ -73,10 +73,17 @@ _BROWSER_META = CommandMeta(
 
 
 def _owner_key_for_session(state: PipelineState) -> str:
-    """Resolve the owner_key for this conversation. Mirrors tools.py logic."""
-    if state.channel == "telegram" and state.session_key:
-        return f"telegram:{state.session_key}"
-    return "local"
+    """Resolve the owner_key for this conversation.
+
+    It said "Mirrors tools.py logic" and did NOT: tools.py returned "local"
+    unconditionally, so this command looked under ``telegram:{...}`` for sessions
+    the tool had filed under ``local``. Two different rules for one user, not two
+    copies of one. Both now call ``sessions.owner_key_for_turn``; this one passes
+    the values it already holds rather than re-deriving them.
+    """
+    from stackowl.tools.browser.sessions import owner_key_for_turn
+
+    return owner_key_for_turn(channel=state.channel, session_key=state.session_key)
 
 
 def _fmt_age(seconds: float) -> str:

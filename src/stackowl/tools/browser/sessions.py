@@ -9,6 +9,21 @@ owner_key namespacing keeps Telegram users isolated from each other:
 - CLI:      owner_key = "local"
 - Telegram: owner_key = f"telegram:{chat_id}"
 - WhatsApp: owner_key = f"whatsapp:{jid}"
+
+THAT CONTRACT IS DECLARED HERE AND WAS IMPLEMENTED TWICE, DIFFERENTLY.
+``commands/browser_command.py`` built ``telegram:{session_key}`` and said it
+"mirrors tools.py logic"; ``tools/browser/tools.py`` returned ``"local"``
+unconditionally, because when it was written a tool could not reach the turn's
+channel ("_dispatch only forwards LLM kwargs. For v1 we use 'local'").
+
+So a session created by the browser TOOL was owned by ``local`` while
+``/browser sessions`` on Telegram looked under ``telegram:{...}`` and saw none of
+it. Not two copies of one rule — two DIFFERENT rules for the same user.
+
+The premise is now false: ``TraceContext`` carries ``session_key`` and ``channel``
+as contextvars propagated across async hops, which is the same mechanism
+``PlanStore`` uses to key a plan to its lane. :func:`owner_key_for_turn` is the
+one implementation; both callers ask it.
 """
 
 from __future__ import annotations
@@ -102,6 +117,40 @@ def _log_handler_failure(obs: PageObservers, kind: str, handle: str, exc: Except
             f"[browser] {kind} handler failed (suppressed — see first failure)",
             extra={"_fields": {"page_handle": handle, "kind": kind, "failure_count": count}},
         )
+
+
+def owner_key_for_turn(
+    channel: str | None = None, session_key: str | None = None
+) -> str:
+    """The owner_key for the CURRENT turn.
+
+    Explicit arguments win; anything omitted comes from the ambient trace
+    context. A caller that already holds the turn's channel and lane (a slash
+    command with a PipelineState) passes them; a tool, which does not, passes
+    nothing — and both get the SAME rule rather than two implementations of it.
+
+    ONE implementation of the contract in this module's docstring. Never raises:
+    an unresolvable context yields ``"local"``, which is the single-user default
+    and the value the whole system used before this existed — so a failure here
+    degrades to the old behaviour rather than to a wrong owner.
+    """
+    try:
+        from stackowl.infra.trace import TraceContext
+
+        ctx = TraceContext.get()
+        channel = (channel or ctx.get("channel") or "").strip()
+        session_key = (session_key or ctx.get("session_key") or "").strip()
+        if not channel or not session_key or channel == "cli":
+            return "local"
+        return f"{channel}:{session_key}"
+    except Exception as exc:  # noqa: BLE001 — an owner lookup may not cost a turn
+        log.tool.warning(
+            "[browser] owner_key_for_turn: could not read the turn context — "
+            "falling back to the single-user default",
+            exc_info=exc,
+        )
+        return "local"
+
 
 
 class BrowserSessionLimitError(Exception):

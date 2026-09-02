@@ -4400,6 +4400,28 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_107_do_you_want_a_declared_channel_capability_descriptor:
+      question: >-
+        D12.1 asks whether to adopt the reference platform's declared capability surface (seven
+        fields: MAX_MESSAGE_LENGTH, supports_draft_streaming, enforces_own_access_policy, ...).
+        Measured, only TWO of our four channel-identity branches are genuine capability tests:
+        the approach-rating tracker (only a Telegram callback can clear it) and proactive
+        address resolution (which carries its own TODO asking for a per-channel registry).
+        Build the descriptor now, or add fields as each branch appears?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles the SIZE — two real candidates, not seven — but not the appetite. A
+        descriptor built ahead of its consumers is the built-but-not-wired shape this codebase
+        pays for most; a descriptor built too late means D12.2 (channel breadth) and D12.3
+        (generic relay adapter) each grow their own branch. Both are defensible.
+      the_panel_recommendation: >-
+        Add fields to the EXISTING descriptor (channels/_format.ChannelShape, which already
+        carries describe+floor per channel) as each branch is converted — starting with the
+        two named above when D12.2 or D12.3 is taken. That gets the maintainability without
+        five fields nothing reads.
+      what_is_blocked: >-
+        Nothing today. The one real defect behind D12.1 (the browser owner_key divergence) is
+        fixed. D12.2 and D12.3 can proceed either way; this only decides whether they extend a
+        descriptor or add a branch.
     ESC_106_how_much_run_history_do_you_want_to_keep:
       question: >-
         job_runs holds 252,905 completed rows — 19% of a 342 MB database (45.1 MB of table,
@@ -19506,17 +19528,24 @@ items:
     blocks: [D12.2, D12.3]
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   partial
       document:   not_started
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 THE GAP IS MEASURED AT FOUR PLACES, not 'in places'. Exactly four sites branch on channel identity: consolidate.py:137 (the approach-rating tracker, gated to telegram because only a Telegram callback can ever CLEAR it — a genuine capability), cli/app.py:1009 (setup-wizard dispatch, not runtime behaviour), notifications/recipient.py:48 (carries its own TODO asking for a per-channel resolver registry), and commands/browser_command.py:77."
+      - "THE FOURTH ONE WAS NOT A BRANCH, IT WAS A BUG. browser_command._owner_key_for_session built telegram:{session_key} and said it 'Mirrors tools.py logic'. tools/browser/tools.py._owner_key_from_state returned 'local' UNCONDITIONALLY. Not two copies of one rule — two DIFFERENT rules for the same user, one claiming to be the other. On a Telegram turn the model opened a browser session owned by 'local' and /browser sessions looked under telegram:{...} and found none of it."
+      - "THE STALE PREMISE. tools.py explained itself: 'PipelineState is per-request and tools currently can't read it (_dispatch only forwards LLM kwargs). For v1 we use local.' That was true when written and is not now — TraceContext carries session_key and channel as contextvars across async hops, which is the same mechanism PlanStore uses to key a plan to its lane (added earlier today fixing a plan that died at the end of its turn)."
+      - "ONE IMPLEMENTATION: sessions.owner_key_for_turn, placed where the contract is already declared in that module's docstring. Explicit arguments win, so the command passes what it already holds and the tool passes nothing; both get the same answer. FAILS TOWARD 'local' on any unresolvable context — the single-user default and exactly the old behaviour — because guessing an owner would hand one user's browser session to another."
+      - "THE DESCRIPTOR WAS NOT BUILT. The reference declares seven capability fields; two of our four sites are genuine capability tests, and StackOwl already HAS a descriptor for this shape (channels/_format.CHANNEL_SHAPES, describe+floor per channel). Adding five speculative fields nothing reads is the built-but-not-wired shape. What blocks D12.2/D12.3 is recorded as ESC-107 with the two real candidates named."
+      - "5 tests. tests/tools/browser 258 passed, tests/commands green. ./scripts/tripwires.sh PASS. validate=partial: no browser session has been opened on a Telegram turn since the change."
+
     notes: null
 
   - id: D12.2
