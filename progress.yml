@@ -358,10 +358,11 @@ current:
       implementation. Both are the same shape — matching prose instead of code.
     suites: "tests/scheduler 516 passed; 6 new tests; ./scripts/tripwires.sh PASS."
     baselines: "ruff src/ 35, mypy 65 — the gate enforces both."
-    validate: OPEN_awaiting_the_next_hourly_db_reclaim_tick
-    closing_query: >-
-      "[scheduler] db_reclaim.execute: exit" carrying pruned_runs — 0 today by design, and
-      non-zero from the day the oldest rows cross 100 days.
+    validate: >-
+      CLOSED on the 10:07:46 tick: "[scheduler] db_reclaim.execute: exit {reclaimed_pages: 1,
+      pruned_runs: 0, file_mb: 358.6}". The field is live and reads ZERO — exactly what the
+      100-day window is designed to do today, with the oldest row 92 days old. The bound is
+      in place and deletes nothing until rows actually cross it.
   TRIPWIRES_2026_09_02_a_targeted_run_cannot_see_a_crosscutting_guard:
     map_check: "No mapped item matches — evidence-led, and the evidence is two of my own shipped defects."
     THE_PATTERN_NOT_THE_INCIDENT: >-
@@ -14121,17 +14122,23 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 NO CHANGE NEEDED, and the reason is architectural rather than a deferral. The reference platform SPLITS the session when it compacts and chains the halves via parent_session_id, so lineage is what stops compaction cutting recall. OUR compression (D03.2) works IN PLACE — the summary replaces the middle inside the same history — so nothing is cut and there is no chain to follow."
+      - "THE MAP LINE 'no session lineage concept' IS WRONG. sessions.parent_session_key exists and is populated on 115 of 122 rows (94%); session.resolve carries previous_conversation_id on 295 of 329 records (89%). What those links record is SPAWN lineage (owl:secretary:recovery:task-X -> goal-goal_execution-Y), not compaction lineage — a different thing, but not an absence."
+      - "THE BOUNDARY IS REAL AND FREQUENT: Bakir's Telegram lane alone holds 311 conversations, minted on restart (224), daily (6) and idle (2). So if recall depended on conversation_id the chain would break constantly."
+      - "IT DOES NOT. recent_conversation_turns filters on source_ref IN (session_key, ...) with NO conversation_id predicate, so history recall spans every one of those 311 boundaries already. That is the load-bearing fact and it was verified in the query, not assumed."
+      - "RESIDUAL, recorded rather than fixed: previous_conversation_id is computed, logged and handed to the LifecycleHook payload, but never persisted — conversations has no parent column. It survives only as long as the log, and logs rotate (everything before 2026-08-28 is already gone). That is acceptable today precisely BECAUSE nothing reads the chain; it becomes a gap the moment something does."
+
     notes: null
 
   - id: D03.4

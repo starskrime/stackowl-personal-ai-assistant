@@ -207,6 +207,13 @@ summarizer treats prior turns as source material rather than instructions.
 **Hermes.** Compression **splits the session** and chains the new one via `parent_session_id`
 (`hermes_state.py`), so lineage survives compaction and session search can dedupe across it.
 **StackOwl.** No session lineage concept.
+> **CORRECTED 2026-09-02.** `sessions.parent_session_key` exists and is populated on 115 of
+> 122 rows (94%), and `session.resolve` carries `previous_conversation_id` on 295 of 329
+> records (89%) — those are SPAWN links, not compaction links, but the concept is present.
+> **And the gap does not bite.** Their compressor SPLITS the session, so lineage is what stops
+> compaction cutting recall. Ours (D03.2) compresses IN PLACE, and `recent_conversation_turns`
+> filters on `source_ref IN (session_key, ...)` with no `conversation_id` predicate — so recall
+> already spans every boundary. Bakir's own lane holds 311 conversations; none of them cut it.
 **Ask.** Do we need lineage before compression, or can it come after?
 
 ### D03.4 · Tool-result overflow defense — `PARTIAL`
