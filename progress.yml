@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RECURRENCE_2026_09_02_his_one_interrupt_a_lesson_that_did_not_hold:
+    map_check: "No mapped item — implementing his answer to ESC-105."
+    his_decision: >-
+      "Page on repeat signatures." He rejected "page if unresolved" once the numbers were in
+      front of him (86 of 100 RCAs conclude verified=False — ~70 pages a day against ~12 today)
+      and did not take "page when the RCA gives up" either. The event worth an interrupt is the
+      SAME failure signature recurring after a fix was shipped for it, because that is the
+      self-healing loop failing.
+    MEASURED_BEFORE_BUILDING_over_2000_failed_outcomes_in_30_days: >-
+      shell/stop 10 recurrences after its fix, browser_navigate/stop 6, shell/unachieved_effect
+      5 — 21 recurrences across THREE signatures in the ~3.5 days since those skills were
+      authored. Paging per OCCURRENCE is 6 messages a day. Paging per SIGNATURE is three
+      messages, ever. That distinction is the entire difference between this and the rule he
+      rejected, and it is what the dedup exists to hold.
+    the_dedup_key_is_the_FIX_not_the_signature: >-
+      A signature still failing against the same old fix is the same fact and stays quiet. A
+      signature whose fix was REPLACED and failed again is a new fact and pages again — which is
+      precisely the event he asked about. Rides audit_log keyed on actor, the same rail
+      incident.diagnosed and capability.escalated already use. No new table.
+    the_alert_names_the_OWNER_and_that_is_not_decoration: >-
+      All three signatures belong to skills NO owl owned, so no owl was ever shown the lesson.
+      Of course it did not hold. Had this existed on 2026-08-30 it would have said so on day
+      one, instead of the orphan defect being found by hand three days later. "Recurred and
+      nobody owns it" and "recurred and its owner ignored it" are different problems and must
+      not arrive looking the same.
+    A_DRY_RUN_AGAINST_THE_LIVE_DATABASE_CAUGHT_A_REAL_BUG: >-
+      Before shipping, the detector was run against production data. It reported
+      shell/unachieved_effect as fixed by 'incident_shell_stop' — same capability, DIFFERENT
+      failure class — because every legacy sibling was a candidate and the earliest one won the
+      clock. The alert would have named the wrong lesson and dated the fix from an unrelated
+      one. Candidates are now filtered on the failure class, still by asking legacy_siblings_for
+      rather than re-spelling the rule, and a test pins it. The dry run now returns exactly the
+      three signatures the measurement predicted, each attributed to its own skill.
+    fails_toward_paging: >-
+      An unreadable ledger returns empty, so a signature pages again rather than being silently
+      suppressed by a query error. The cost of the wrong direction is one duplicate message; the
+      cost of the other is a self-healing loop that fails in silence, which is the failure mode
+      this whole arc exists to prevent.
+    suites: "tests/learning 151 passed including 11 new; tests/scheduler/handlers incident 50 passed. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_10_minute_incident_escalation_tick
+    closing_query: >-
+      "[scheduler] incident_escalation: a lesson did not hold — paging" at INFO carrying
+      signature, skill_name, recurrences and has_owner — and audit_log rows with
+      event_type='incident.lesson_recurred'. ZERO of both today. The dry run says the first tick
+      after deploy should emit exactly THREE, one per signature, and the tick after that ZERO —
+      the second half is the half that proves the dedup, and a fourth page for the same fix is a
+      regression.
   ORPHANED_LESSONS_2026_09_02_the_platform_ERASED_the_evidence_of_whose_lesson_it_was:
     map_check: "No mapped item — he rejected the escalation and named the item himself."
     what_he_said: >-
@@ -4755,12 +4802,14 @@ current:
         shipped. Only the reclaim of existing space waits on you.
     ESC_105_page_if_unresolved_would_page_you_SIX_TIMES_MORE:
       resolution: >-
-        ANSWERED 2026-09-02: "Page on repeat signatures." Not "unresolved" and not "gave up" —
+        ANSWERED 2026-09-02 and IMPLEMENTED the same day — see the RECURRENCE item.
+        "Page on repeat signatures." Not "unresolved" and not "gave up" —
         interrupt when the SAME failure signature recurs AFTER a fix was shipped for it, because
         that is the self-healing loop failing, which is the thing he most wants to know about.
         Everything else, verified or not, stays in the brief. NOT YET IMPLEMENTED — needs a
-        signature-recurrence-after-fix detector; the give-up detector already in the code is NOT
-        what he chose.
+        signature-recurrence-after-fix detector, which now exists in
+        stackowl/learning/lesson_recurrence.py and runs in the existing 10-minute sweep. The
+        give-up detector already in the code is NOT what he chose and was not used.
       premise_check: |
         grep -q 'giving up' src/stackowl/scheduler/handlers/incident_escalation.py && ! grep -rq 'page_on_unresolved' src/ && echo HOLDS || echo EXPIRED
       question: >-

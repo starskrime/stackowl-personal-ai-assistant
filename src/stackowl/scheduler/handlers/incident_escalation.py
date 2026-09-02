@@ -69,6 +69,13 @@ from stackowl.learning.failure_outcome_miner import (
     RcaVerdict,
     cluster_failures_by_capability_and_signature,
 )
+from stackowl.learning.lesson_recurrence import (
+    already_paged,
+    detect_recurrences,
+    outcome_signature,
+    record_paged,
+    unreported,
+)
 from stackowl.parliament.staged_rca import (
     RcaEvidence,
     StagedRcaSession,
@@ -590,6 +597,13 @@ class IncidentEscalationHandler(JobHandler):
                 output=None, error=str(exc), duration_ms=duration_ms,
             )
 
+        # HIS ONE INTERRUPT. Before anything else this tick does, check whether a
+        # signature has failed again SINCE ITS OWN FIX SHIPPED. Bakir chose this
+        # as the single thing worth paging for, over "unresolved" (86 of 100 RCAs
+        # conclude unverified — ~70 pages a day) and over "gave up". It runs
+        # first because it must not be skipped by any early return further down.
+        await self._page_recurring_lessons()
+
         # 2. DECISION — drop cleared incidents, then act ONLY on NEW signatures
         # (dedupe: one incident → one RCA session, never one per tick).
         for sig in list(self._open_incidents):
@@ -812,6 +826,98 @@ class IncidentEscalationHandler(JobHandler):
             },
         )
 
+    async def _page_recurring_lessons(self) -> int:
+        """Tell him when a lesson the platform wrote did not hold.
+
+        ONE PAGE PER SIGNATURE PER FIX, not one per failure. MEASURED over 2,000
+        failed outcomes across 30 days: 21 recurrences after a fix, concentrated
+        in THREE signatures. Paging per occurrence is 6 messages a day; paging
+        per signature is three messages, ever. That distinction is the whole
+        difference between this and the "page if unresolved" he rejected.
+
+        Never raises. A detector that can wedge the incident sweep would take
+        down the RCA path it sits in front of.
+        """
+        if self._db is None or self._alert is None:
+            return 0
+        try:
+            from stackowl.learning.failure_outcome_miner import (
+                legacy_siblings_for,
+                merged_skill_name,
+            )
+            from stackowl.owls.skill_ownership import read_all_skill_ownership
+
+            since = self._clock_time() - self._lookback_days * _SECONDS_PER_DAY
+            outcomes = await self._outcomes.list_failed_global(since_epoch=since)
+            clusters = cluster_failures_by_capability_and_signature(
+                outcomes, min_size=1,
+            )
+            rows = await self._db.fetch_all(  # type: ignore[attr-defined]
+                "SELECT name, loaded_at FROM skills WHERE source = 'learned'", (),
+            )
+            fixes = {
+                str(r["name"]): float(r["loaded_at"] or 0)
+                for r in rows if r["loaded_at"]
+            }
+            owned = {
+                n for names in (
+                    await read_all_skill_ownership(self._db)  # type: ignore[arg-type]
+                ).values()
+                for n in names
+            }
+
+            def _names_for(capability: str, failure: str) -> set[str]:
+                """The skill spellings that fix THIS signature — asked, not spelled.
+
+                The merged form, plus the pair form for THIS failure class only.
+                Filtering on the class is not a detail: a dry run against the live
+                database attributed shell/unachieved_effect to
+                ``incident_shell_stop`` — a sibling of the same capability but a
+                DIFFERENT failure — because every sibling was a candidate and the
+                earliest one won the clock. The message named the wrong lesson and
+                dated the fix from an unrelated one.
+                """
+                out = {merged_skill_name(capability)}
+                out |= {
+                    name for name, cls in legacy_siblings_for(
+                        capability, sorted(fixes),
+                    ).items() if cls == failure
+                }
+                return out
+
+            found = await detect_recurrences(
+                clusters, fixes, owned, skill_names_for=_names_for,
+            )
+            due = unreported(found, await already_paged(self._db))
+        except Exception as exc:  # noqa: BLE001 — must never wedge the sweep
+            log.scheduler.error(
+                "[scheduler] incident_escalation: recurrence check raised",
+                exc_info=exc,
+            )
+            return 0
+
+        for rec in due:
+            # INFO, and this line is the acceptance evidence: production runs at
+            # INFO and a DEBUG line could never close the check.
+            log.scheduler.info(
+                "[scheduler] incident_escalation: a lesson did not hold — paging",
+                extra={"_fields": {
+                    "signature": rec.signature, "skill_name": rec.skill_name,
+                    "recurrences": rec.recurrences, "has_owner": rec.has_owner,
+                    "owls": list(rec.owls),
+                }},
+            )
+            try:
+                await self._alert(f"A lesson is not holding — {rec.brief()}")
+            except Exception as exc:  # noqa: BLE001
+                log.scheduler.error(
+                    "[scheduler] incident_escalation: could not page a recurrence",
+                    exc_info=exc, extra={"_fields": {"signature": rec.signature}},
+                )
+                continue
+            await record_paged(self._db, rec, now=self._clock_time())
+        return len(due)
+
     async def _detect_incidents(self) -> dict[str, _Incident]:
         """Gather active incident signatures from BOTH durable sources."""
         incidents: dict[str, _Incident] = {}
@@ -869,7 +975,9 @@ class IncidentEscalationHandler(JobHandler):
             capability_tag_lookup=self._capability_tag_lookup,
         )
         for cluster in clusters:
-            sig = f"outcome:{cluster.capability_class}:{cluster.failure_class}"
+            sig = outcome_signature(
+                cluster.capability_class, cluster.failure_class,
+            )
             if sig in incidents:  # a health incident already owns this signature
                 continue
             # Fake-incident guard: a cluster with ZERO precisely-attributed rows
