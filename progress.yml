@@ -17435,9 +17435,9 @@ items:
       cleanup:    done
       test:       done
       validate:   done
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      document:   done
+    doc: "docs/reference-mapping/designs/D09.1.md"
+    doc_last_verified: "2026-09-02 against commit 7ba5313c — Verification RUN, not trusted: step 1 = 8 passed, step 2 = 356 passed, step 3 = the doc's own jq returned scope=learned registered=2 never=1 and scope=all registered=79 never=16, exactly as written."
     decisions: []
     changes:
       - "2026-09-01 RE-MEASURED: the MISSING verdict does not survive, and its own 2026-08-22 correction is now stale too. reflect_now has 11 invocations (not 0) since 2026-06-19; synthesize_skills lost its guaranteed slot by Bakir's ESC-46 on 2026-08-23; the prompt-cache advantage the fork exists to exploit is worth nothing here (cached_input_tokens = 0 on 129,793 of 129,793 records, all-time)."
