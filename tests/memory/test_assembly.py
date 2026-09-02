@@ -134,14 +134,6 @@ async def test_build_wires_every_advertised_component(tmp_db: DbPool) -> None:
     assert dataclasses.fields(components), "MemoryComponents must advertise something"
 
 
-async def test_build_registers_dream_worker_with_scheduler(tmp_db: DbPool) -> None:
-    settings = Settings(memory=MemorySettings())
-    await MemoryAssembly.build(
-        db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
-    )
-    handler = HandlerRegistry.instance().get("dream_worker")
-    assert handler is not None
-    assert handler.handler_name == "dream_worker"
 
 
 async def test_build_registers_rollover_summary_handler(tmp_db: DbPool) -> None:
@@ -161,42 +153,6 @@ async def test_build_registers_rollover_summary_handler(tmp_db: DbPool) -> None:
     assert handler.handler_name == "rollover_summary"
 
 
-async def test_build_registers_the_dream_worker_seat_WITHOUT_scheduling_it(
-    tmp_db: DbPool,
-) -> None:
-    """INVERTED, and deliberately so.
-
-    Two tests stood here asserting that build() SEEDS an ``every 30m``
-    dream_worker job row, and that a second build does not duplicate it. D08.1
-    unscheduled the handler (migration 0113, ``enabled = 0``) and D08.2 seam 3
-    pass 1 stripped it to a bare SEAT for N01 Dreaming — it has no phases and
-    reports ``phases_run=0``. Seeding a schedule would now dispatch an empty
-    handler every thirty minutes forever.
-
-    So the old assertions describe behaviour that was intentionally reversed, and
-    they had been failing since that reversal. Asserting the absence is what keeps
-    it reversed: the seat must be REGISTERED (so N01 inherits the name the job row
-    keys on) and UNSCHEDULED (so nothing dispatches an empty pass).
-
-    ``seed_dream_worker_schedule`` deliberately survives with no production
-    caller — it is how N01 will schedule itself once it has phases — and keeps its
-    own coverage in tests/scheduler/test_dream_worker_seed.py.
-    """
-    settings = Settings(memory=MemorySettings())
-    await MemoryAssembly.build(
-        db=tmp_db, settings=settings, provider_registry=_stub_provider_registry(),
-    )
-
-    handler = HandlerRegistry.instance().get("dream_worker")
-    assert handler is not None, "the seat must stay REGISTERED for N01 to inherit"
-
-    rows = await tmp_db.fetch_all(
-        "SELECT job_id FROM jobs WHERE handler_name = ?", ("dream_worker",)
-    )
-    assert rows == [], (
-        "build() must NOT schedule the dream worker: it is an empty seat, and a "
-        f"schedule would dispatch a no-op pass on a timer. Found: {rows!r}"
-    )
 
 
 async def test_build_bridge_uses_db_pool(tmp_db: DbPool) -> None:
@@ -238,28 +194,6 @@ async def test_build_kuzu_degrades_to_none_if_unavailable(
     )
 
 
-async def test_extractors_use_standard_tier(tmp_db: DbPool) -> None:
-    """The entity extractor must resolve 'standard', not 'powerful'.
-
-    A hybrid-routing COST guard: running these helpers on the 122b (powerful)
-    model is expensive and standard is capable enough. The fact-extractor half of
-    this guard went with the extractor itself (D08.1); the guard still matters
-    for what remains, so it is narrowed rather than deleted.
-    """
-    spy = _SpyProviderRegistry()
-    settings = Settings(memory=MemorySettings())
-    components = await MemoryAssembly.build(
-        db=tmp_db, settings=settings, provider_registry=spy,
-    )
-
-    assert "powerful" not in spy.cascade_tiers, (
-        f"No extractor should request 'powerful'; got {spy.cascade_tiers!r}"
-    )
-
-    # Entity extractor: _preferred_tier must be "standard" at the live construction site.
-    assert components.entity_extractor._preferred_tier == "standard", (  # type: ignore[union-attr]
-        f"EntityExtractor._preferred_tier is {components.entity_extractor._preferred_tier!r}, expected 'standard'"  # type: ignore[union-attr]
-    )
 # test_fact_extractor_receives_the_cascade_resolved_model REMOVED with the
 # extractor (D08.1). It guarded that assembly threaded the cascade-resolved MODEL
 # into FactExtractor rather than only the provider — a real bug once, and now a

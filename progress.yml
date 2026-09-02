@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEADCODE_2_2026_09_01_the_retired_fact_store_machinery_is_GONE:
+    map_check: "No mapped item — Bakir reaffirmed: all dead code should be removed if nothing uses it."
+    what_was_deleted: >-
+      Six modules, 1,056 lines: memory/budget_enforcer.py, memory/dream_worker.py,
+      memory/kuzu_sync_handler.py, memory/entity_extractor.py,
+      scheduler/handlers/dream_worker.py, scheduler/handlers/memory_consolidation.py. Plus
+      four test files (test_kuzu_sync_deadline, test_dream_worker_seed, test_story_6_6b,
+      tests/config/test_settings.py), the _story_6_6_helpers doubles module, eleven dead
+      tests inside five mixed files, two settings fields, and the dream_worker job row
+      (migration 0130). src/ went from 839 files to 833.
+    EACH_ONE_MEASURED_BEFORE_DELETING: >-
+      MemoryBudgetEnforcer — referenced NOWHERE outside two comments; never imported, never
+      registered, no job row. DreamWorkerJobHandler — registered, but its row dream-50fd10ab
+      has been enabled=0 since migration 0113 and last ran 2026-08-11, and all five of its
+      phases were fact work over committed_facts (retired to zero rows by 0112).
+      KuzuSyncJobHandler — constructed on every boot in memory/assembly.py and NO job row
+      exists for it at all, so it never ran. EntityExtractor — existed solely to feed it.
+      memory_consolidation — no registration anywhere and no job row; a handler that
+      delegated to an empty handler.
+    THE_WRITER_WENT_FIRST_which_is_the_whole_point: >-
+      register_dream_worker_handler, the factory memory/assembly.py called to seed the row,
+      is deleted in the SAME commit as migration 0130 deletes the row. Migration 0125 deleted
+      the retry_sweep row at 00:31:02 and scheduler assembly re-seeded it at 00:31:33 — every
+      boot, for thirty-one seconds. That cannot happen here.
+    WHAT_WAS_KEPT_AND_WHY: >-
+      The Kuzu ADAPTER stays: owls/evolution.py and pipeline/steps/classify.py query the
+      graph, which is why D08.1 kept it. objectives is NOT dead and was NOT touched — the
+      objective tool has TEN recorded invocations and objective_subgoals holds 28 rows, newest
+      2026-08-27. That was measured before assuming, because CLAUDE.md had it listed as
+      dormant and the zero-row objectives table made it look dead.
+    the_ESC_104_tension_is_RESOLVED_by_him: >-
+      The DreamWorker seat was kept on purpose for N01 Dreaming. His instruction — "all dead
+      code should be removed if nothing uses it" — answers that directly, so the seat is gone
+      and ESC-104 is closed rather than left pending. Git history holds the class; N01 builds
+      its own phases.
+    a_double_that_OUTLIVED_the_thing_it_doubled: >-
+      test_double_conformance.py checked FakeKuzu against KuzuSyncJobHandler. Deleting the
+      real class left a conformance pair pointing at nothing — precisely the failure that file
+      exists to catch, one level up. The pair and the now-orphaned FakeKuzu helper both went.
+    my_own_scripted_edit_broke_a_file_and_the_SYNTAX_GATE_caught_it: >-
+      A regex stripping the two dead settings from tests/config/test_settings.py produced an
+      IndentationError. Restored from git and done properly — and the file turned out to test
+      ONLY those two settings, so it was deleted whole. Every later removal used an AST walk
+      (including class-nested tests, which a module-level scan missed — that is how six
+      failures survived the first pass) with ast.parse over the whole tree and
+      pytest --collect-only as the gates, before any test run.
+    suites: "tests/memory + tests/config + the five story files 691 passed; tests/scheduler + tests/startup 624 passed; tests/db 102 passed (all 130 migrations replay); 11,503 tests collect clean."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline over 833 files (was 839). ruff on the eight edited test files IMPROVED 25 -> 17."
+    validate: >-
+      CLOSED by collection and replay: 11,503 tests collect with zero import errors after
+      removing six modules, and 130 migrations apply in order. The pre-existing F811s in
+      test_story_6_5.py were confirmed pre-existing (10 before the change) rather than
+      introduced.
   DEADCODE_2026_09_01_retired_means_deleted_the_standing_rule_and_a_first_sweep:
     map_check: "No mapped item — a standing rule from Bakir plus its first application."
     the_rule: >-
@@ -4159,7 +4212,10 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
-    ESC_104_the_DreamWorker_seat_is_dead_code_you_asked_to_KEEP:
+    ESC_104_RESOLVED_2026_09_01_he_answered_delete_it:
+      resolution: >-
+        ANSWERED by Bakir the same day: "All dead codes should be removed if nothing uses it."
+        The seat is deleted. No longer blocking.
       question: >-
         Your new rule says whatever is retired gets deleted. The DreamWorker is registered,
         unscheduled and deliberately empty — dead by that rule. But D08.1 kept the seat ON

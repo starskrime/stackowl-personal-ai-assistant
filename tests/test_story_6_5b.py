@@ -8,11 +8,6 @@ from typing import Any
 import pytest
 
 from stackowl.db.migrations.runner import MigrationRunner
-from stackowl.db.pool import DbPool
-from stackowl.memory.entity_extractor import EntityExtractor
-from stackowl.memory.kuzu_adapter import KuzuAdapter
-from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
-
 from tests._story_6_5_helpers import (  # noqa: F401 — re-exports
     StubProvider,
     StubRegistry,
@@ -23,44 +18,13 @@ from tests._story_6_5_helpers import (  # noqa: F401 — re-exports
     no_test_mode_guard,
 )
 
-
 # ---------------------------------------------------------------------------
 # KuzuSyncJobHandler
 # ---------------------------------------------------------------------------
 
 
-async def test_kuzu_sync_handler_syncs_facts(
-    adapter: KuzuAdapter, db: DbPool
-) -> None:
-    """T12 — handler syncs facts and writes kuzu_sync_log entries."""
-    await insert_committed(db, "f-sync-1", "Hello from Berlin")
-    response = (
-        '[{"name": "Berlin", "entity_type": "LOCATION", "mentions": ["Berlin"]}]'
-    )
-    extractor = EntityExtractor(
-        provider_registry=StubRegistry(StubProvider(response)),  # type: ignore[arg-type]
-    )
-    handler = KuzuSyncJobHandler(adapter, extractor, db, batch_size=10)
-    result = await handler.execute(make_job())
-    assert result.success is True
-    assert "synced_count=1" in (result.output or "")
-    log_rows = await db.fetch_all("SELECT fact_id, entity_count FROM kuzu_sync_log")
-    assert len(log_rows) == 1
-    assert log_rows[0]["fact_id"] == "f-sync-1"
-    assert log_rows[0]["entity_count"] == 1
 
 
-async def test_kuzu_sync_handler_empty_fact_set(
-    adapter: KuzuAdapter, db: DbPool
-) -> None:
-    """T13 — handler returns success with synced_count=0 when no facts pending."""
-    extractor = EntityExtractor(
-        provider_registry=StubRegistry(StubProvider("[]")),  # type: ignore[arg-type]
-    )
-    handler = KuzuSyncJobHandler(adapter, extractor, db)
-    result = await handler.execute(make_job())
-    assert result.success is True
-    assert "synced_count=0" in (result.output or "")
 
 
 # ---------------------------------------------------------------------------

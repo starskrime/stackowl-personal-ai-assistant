@@ -6,6 +6,11 @@ detector in D08.2 seam 3: it scanned committed_facts, empty since migration
 
 The two migration assertions below are unrelated housekeeping and survive on
 their own merits — they are why this file was trimmed rather than deleted.
+
+The helper module it re-exported went too (2026-09-01): every fixture and double
+in it (FakeBridge, FakePromoter, FakeKuzu, staged, record) served the DreamWorker
+and KuzuSync handlers, which are now deleted. Neither surviving test used any of
+them — the import was a re-export nothing consumed.
 """
 
 from __future__ import annotations
@@ -13,12 +18,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from stackowl.db.migrations.runner import MigrationRunner
-from tests._story_6_6_helpers import (  # noqa: F401 — re-exports
-    db,
-    no_test_mode_guard,
-    record,
-    staged,
-)
 
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------

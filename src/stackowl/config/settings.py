@@ -549,12 +549,6 @@ class MemorySettings(BaseModel):
     extraction_after_n_messages: int = Field(default=5, ge=1)
     per_user_ceiling_bytes: int = Field(default=52_428_800, ge=1_000_000)
     short_term_window: int = Field(default=6, ge=0)
-    # DreamWorker consolidation cadence: run every N minutes (config-driven, no
-    # hardcoded literal in the schedule seed).
-    dream_worker_interval_minutes: int = Field(default=30, ge=1)
-    # Settle window: only mine/promote staged data older than this many minutes,
-    # so in-flight conversation turns aren't consolidated prematurely.
-    dream_worker_settle_minutes: int = Field(default=15, ge=0)
     # F063 — incremental contradiction scan tuning.
     # ANN candidate count per new fact (the RIGHT side of each comparison). MUST
     # be >= 32 so the >=0.85 cross-source contradiction band isn't truncated by

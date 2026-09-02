@@ -10,10 +10,6 @@ Per the BMad v2 wiring audit (plan: gleaming-finding-puppy.md, Commit A):
 * Hard-fail policy for Kuzu — if the adapter can't initialise we abort the
   gateway phase rather than silently degrade. Operator-approved choice; see
   the plan's "Decision Protocol" vote results.
-* DreamWorker is registered via the existing
-  ``register_dream_worker_handler`` factory in
-  ``stackowl.scheduler.handlers.dream_worker`` (respects the B9 scheduler
-  boundary — handlers register via HandlerRegistry, not direct dispatch).
 * RolloverSummaryHandler is registered the same way and waits for the
   ``session.rollover`` consumer to enqueue one job per conversation boundary
   (D01.7). It replaced FactExtractionJobHandler, which was registered here, never
@@ -33,10 +29,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.health.contributors import GraphContributor
     from stackowl.learning.lessons_index import LessonsIndex
-    from stackowl.memory.dream_worker import DreamWorkerJobHandler
-    from stackowl.memory.entity_extractor import EntityExtractor
     from stackowl.memory.kuzu_adapter import KuzuAdapter
-    from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
     from stackowl.memory.preferences import PreferenceStore
     from stackowl.memory.providers import MemoryProviderRegistry
     from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
@@ -60,9 +53,6 @@ class MemoryComponents:
     # DUR-5 / F069 — None when Kuzu degraded at init (consistent with LanceDB /
     # embeddings degrade-don't-crash policy). classify + kuzu_sync tolerate None.
     kuzu_adapter: KuzuAdapter | None
-    entity_extractor: EntityExtractor
-    kuzu_sync_handler: KuzuSyncJobHandler
-    dream_worker: DreamWorkerJobHandler
     rollover_summary_handler: RolloverSummaryHandler
     lessons_index: LessonsIndex
     #: D08.2 slice C — the frozen active memory-provider set for this incarnation.
@@ -101,17 +91,12 @@ class MemoryAssembly:
 
         # Deferred imports keep this module cheap to import in tests.
         from stackowl.embeddings.registry import EmbeddingRegistry
-        from stackowl.memory.entity_extractor import EntityExtractor
         from stackowl.memory.kuzu_adapter import KuzuAdapter
-        from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
         from stackowl.memory.preferences import PreferenceStore
         from stackowl.memory.rollover_summary_handler import RolloverSummaryHandler
         from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
         from stackowl.paths import StackowlHome
         from stackowl.scheduler.base import HandlerRegistry
-        from stackowl.scheduler.handlers.dream_worker import (
-            register_dream_worker_handler,
-        )
 
         mem = settings.memory
 
@@ -205,16 +190,13 @@ class MemoryAssembly:
         # The WallClock that stood here existed ONLY to give FactPromoter its settle
         # window, and went with it in D08.2 seam 3 pass 4 — removing a writer orphans
         # whatever was feeding it.
-        entity_extractor = EntityExtractor(
-            provider_registry=provider_registry,
-            sensitive_categories=mem.sensitive_categories,
-            preferred_tier="standard",
-        )
-        kuzu_sync_handler = KuzuSyncJobHandler(
-            kuzu_adapter=kuzu_adapter,
-            entity_extractor=entity_extractor,
-            db=db,
-        )
+        # 5) Consolidation building blocks — REMOVED 2026-09-01 (Bakir: "whatever
+        # retired should be deleted"). EntityExtractor existed only to feed
+        # KuzuSyncJobHandler, and that handler joins ON committed_facts, which
+        # D08.1's migration 0112 retired to zero rows. Measured before deleting:
+        # NO job row for it at all, so it was constructed on every boot and never
+        # ran. The Kuzu ADAPTER stays — owls/evolution.py and pipeline/steps/
+        # classify.py query the graph, which is why D08.1 kept it.
 
         # 7) FactExtractor + 7a) ConversationMiner — REMOVED (D08.1).
         #
@@ -225,19 +207,14 @@ class MemoryAssembly:
         # (memory/curated.py) is the replacement — two files, a hard budget, and
         # the agent doing its own forgetting.
 
-        # 6) DreamWorker — register via existing factory (respects B9 boundary).
-        dream_worker = register_dream_worker_handler()
-        # NOT SCHEDULED (D08.1 / N01), and now EMPTY as well (D08.2 seam 3). The
-        # handler stays REGISTERED because it is the seat for N01 "Dreaming";
-        # all five of its phases were fact work and went with the extraction
-        # pipeline, so it takes no arguments any more and reports honestly that
-        # it has nothing to run. N01 gives it phases; the wiring is already here.
-        #
-        # A job waking every 30 minutes to do nothing is worse than no job: it
-        # writes successful run records that read as a healthy loop, which is the
-        # precise failure ADR-19 exists to kill. Migration 0113 disables the row
-        # that this call used to seed. Re-scheduling is one INSERT when N01 has
-        # its first real phase.
+        # 6) DreamWorker — DELETED 2026-09-01 (Bakir: "whatever retired should be
+        # deleted from code and we should never have dead code"). It was
+        # registered, unscheduled, and EMPTY: all five phases were fact work and
+        # went with the extraction pipeline in D08.2, and its job row
+        # (dream-50fd10ab) has been enabled=0 since migration 0113, last run
+        # 2026-08-11. It was kept as "the seat for N01 Dreaming" — but a seat is
+        # not a capability, and it was twice misread as live while diagnosing the
+        # conversation-memory gap. Git history holds the class; N01 builds its own.
 
         # 7b) RolloverSummaryHandler — the conversation BOUNDARY's memory work
         # (D01.7). Enqueued per boundary by the session.rollover consumer, which
@@ -305,11 +282,8 @@ class MemoryAssembly:
             preference_store=preference_store,
             embedding_registry=embedding_registry,
             kuzu_adapter=kuzu_adapter,
-            entity_extractor=entity_extractor,
             lessons_index=lessons_index,
             memory_providers=memory_providers,
-            kuzu_sync_handler=kuzu_sync_handler,
-            dream_worker=dream_worker,
             rollover_summary_handler=rollover_summary_handler,
             graph_health=graph_health,
         )

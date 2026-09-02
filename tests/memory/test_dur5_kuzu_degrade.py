@@ -140,20 +140,3 @@ async def test_open_graph_false_skips_open_without_error(
     assert health.status == "down"
 
 
-async def test_kuzu_sync_handler_noops_when_adapter_none() -> None:
-    """The kuzu_sync handler must tolerate a None adapter (graph degraded) —
-    return a successful no-op rather than raising AttributeError."""
-    from datetime import UTC, datetime
-
-    from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
-    from stackowl.scheduler.job import Job
-
-    handler = KuzuSyncJobHandler(kuzu_adapter=None, entity_extractor=None, db=None)
-    job = Job(
-        job_id="j1", handler_name="kuzu_sync", schedule="manual",
-        idempotency_key="k", last_run_at=None,
-        next_run_at=datetime.now(UTC).isoformat(), status="pending",
-    )
-    result = await handler.execute(job)
-    assert result.success is True
-    assert "degraded" in (result.output or "").lower() or "skip" in (result.output or "").lower()

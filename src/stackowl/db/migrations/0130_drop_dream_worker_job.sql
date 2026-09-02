@@ -1,0 +1,23 @@
+-- Migration 0130 — remove the dream_worker job row along with its handler.
+--
+-- Bakir, 2026-09-01: "whatever retired should be deleted from code and we should
+-- never have dead code." The DreamWorker handler, its scheduler registration,
+-- the KuzuSync handler, the EntityExtractor that fed it, the memory budget
+-- enforcer and the memory_consolidation delegator were all deleted in this
+-- change. This removes the row that outlived them.
+--
+-- MEASURED FIRST:
+--   * dream-50fd10ab, handler_name 'dream_worker', enabled = 0 since migration
+--     0113, last_run_at 2026-08-11 — three weeks before this change.
+--   * All five of its phases were fact work over `committed_facts`, retired to
+--     zero rows by 0112.
+--   * No job row ever existed for kuzu_sync, so that handler was constructed on
+--     every boot and never ran.
+--
+-- THE WRITER GOES FIRST, which is the whole point. Migration 0125 deleted the
+-- retry_sweep row at 00:31:02 and scheduler assembly re-seeded it at 00:31:33 —
+-- every boot, for thirty-one seconds. Here the seeder (`register_dream_worker_
+-- handler`, called from memory/assembly.py) is deleted in this same commit, so
+-- nothing can put the row back.
+
+DELETE FROM jobs WHERE handler_name = 'dream_worker';

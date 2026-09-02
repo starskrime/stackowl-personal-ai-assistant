@@ -7,11 +7,8 @@ from typing import Literal
 
 import pytest
 
-from stackowl.memory.entity_extractor import EntityExtractor
 from stackowl.memory.kuzu_adapter import KuzuAdapter
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
-from stackowl.providers.registry import ModelRoute, ProviderRegistry
-
 from tests._story_6_5_helpers import (  # noqa: F401 — re-exports
     RaisingConn,
     StubProvider,
@@ -19,7 +16,6 @@ from tests._story_6_5_helpers import (  # noqa: F401 — re-exports
     adapter,
     no_test_mode_guard,
 )
-
 
 # ---------------------------------------------------------------------------
 # KuzuAdapter
@@ -161,53 +157,12 @@ def test_kuzu_test_mode_guard_called(
 # ---------------------------------------------------------------------------
 
 
-async def test_entity_extractor_happy_path() -> None:
-    """T9 — extract returns parsed entities on valid LLM response."""
-    response = (
-        '[{"name": "Alice", "entity_type": "PERSON", "mentions": ["Alice met"]}, '
-        '{"name": "Acme", "entity_type": "ORG", "mentions": ["at Acme"]}]'
-    )
-    extractor = EntityExtractor(
-        provider_registry=StubRegistry(StubProvider(response)),  # type: ignore[arg-type]
-    )
-    entities = await extractor.extract("Alice met at Acme", "f1")
-    assert len(entities) == 2
-    assert entities[0].name == "Alice"
-    assert entities[0].entity_type == "PERSON"
 
 
-async def test_entity_extractor_parse_failure_returns_empty() -> None:
-    """T10 — malformed JSON degrades to []."""
-    extractor = EntityExtractor(
-        provider_registry=StubRegistry(  # type: ignore[arg-type]
-            StubProvider("not-json {oops")
-        ),
-    )
-    entities = await extractor.extract("anything", "f1")
-    assert entities == []
 
 
-async def test_entity_extractor_sensitive_short_circuits() -> None:
-    """T11 — sensitive content is skipped without an LLM call."""
-    provider = StubProvider("[]")
-    extractor = EntityExtractor(
-        provider_registry=StubRegistry(provider),  # type: ignore[arg-type]
-        sensitive_categories=[r"\bpassword\b"],
-    )
-    entities = await extractor.extract("my password is hunter2", "f1")
-    assert entities == []
-    assert provider.calls == []  # provider was never asked
 
 
-async def test_entity_extractor_handles_malformed_json() -> None:
-    """T20 — entirely broken JSON returns [] (not raise)."""
-    extractor = EntityExtractor(
-        provider_registry=StubRegistry(  # type: ignore[arg-type]
-            StubProvider("```json\nthis is not json at all```")
-        ),
-    )
-    entities = await extractor.extract("anything", "f1")
-    assert entities == []
 
 
 # ---------------------------------------------------------------------------
@@ -252,35 +207,3 @@ class _ModelCapturingEntityProvider(ModelProvider):
         yield ""  # pragma: no cover — unreachable, satisfies async generator typing
 
 
-async def test_entity_extractor_threads_resolved_second_tier_model() -> None:
-    """A provider registered with TWO models on different tiers must resolve
-    the model belonging to the tier EntityExtractor actually requests — proving
-    ``_resolve_provider()`` threads ``get_with_cascade()``'s (provider,
-    model) tuple through to ``provider.complete()`` rather than dropping the
-    model half of the tuple (the old ``get_with_cascade()`` behaviour) or always
-    reaching for the first-registered route.
-
-    Genuinely discriminating: if ``_resolve_provider()`` still called
-    ``get_with_cascade`` (provider only) and ``extract()`` kept hardcoding
-    ``model=""``, ``seen_models`` would be ``[""]`` instead of the SECOND
-    model's sentinel string.
-    """
-    capturing_provider = _ModelCapturingEntityProvider()
-    registry = ProviderRegistry()
-    registry.register_mock(
-        "dual-model",
-        capturing_provider,
-        models=(
-            ModelRoute(model="entity-fast-model", tiers=("fast",)),
-            ModelRoute(model="entity-standard-model", tiers=("standard",)),
-        ),
-    )
-    # preferred_tier="standard" is served ONLY by the second registered route —
-    # a match here can only come from resolving the SECOND model.
-    extractor = EntityExtractor(provider_registry=registry, preferred_tier="standard")
-    entities = await extractor.extract("Alice works here", "f-model-thread")
-    assert entities, "extractor must return at least one entity"
-    assert capturing_provider.seen_models == ["entity-standard-model"], (
-        f"expected the SECOND (standard-tier) model to reach provider.complete, "
-        f"got: {capturing_provider.seen_models!r}"
-    )

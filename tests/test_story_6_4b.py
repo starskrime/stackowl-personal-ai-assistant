@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 from stackowl.commands.memory_command import MemoryCommand
 from stackowl.commands.registry import CommandRegistry
 from stackowl.config.settings import MemorySettings, Settings
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
-from stackowl.memory.budget_enforcer import MemoryBudgetEnforcer
 from stackowl.memory.sqlite_bridge import SqliteMemoryBridge
-from stackowl.scheduler.job import Job
 from tests._schema_template import seed_schema
 from tests._story_6_4_helpers import (  # noqa: F401 — fixtures re-exported
     db,
@@ -180,54 +175,8 @@ async def test_memory_command_unknown_subcommand(db: DbPool) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_budget_enforcer_no_op_when_under(
-    db: DbPool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    await seed_committed_facts(db, n=2, content_size=100)
-    monkeypatch.setenv("STACKOWL_MEMORY__PER_USER_CEILING_BYTES", "10000000")
-    settings = Settings()
-    enforcer = MemoryBudgetEnforcer(db=db, settings=settings)
-    job = Job(
-        job_id="b-1",
-        handler_name=enforcer.handler_name,
-        schedule="manual",
-        idempotency_key="budget:1",
-        last_run_at=None,
-        next_run_at=datetime.now(UTC).isoformat(),
-        status="pending",
-        retry_count=0,
-    )
-    result = await enforcer.execute(job)
-    assert result.success is True
-    assert result.output is not None
-    assert "0" in result.output
-    rows = await db.fetch_all("SELECT COUNT(*) AS cnt FROM committed_facts")
-    assert rows[0]["cnt"] == 2
 
 
-async def test_budget_enforcer_prunes_when_over(
-    db: DbPool, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # 5 rows × 300_000 bytes = ~1.5MB, ceiling = 1_000_000 → prunes until under.
-    await seed_committed_facts(db, n=5, content_size=300_000, confidence=0.1)
-    monkeypatch.setenv("STACKOWL_MEMORY__PER_USER_CEILING_BYTES", "1000000")
-    settings = Settings()
-    enforcer = MemoryBudgetEnforcer(db=db, settings=settings)
-    job = Job(
-        job_id="b-2",
-        handler_name=enforcer.handler_name,
-        schedule="manual",
-        idempotency_key="budget:2",
-        last_run_at=None,
-        next_run_at=datetime.now(UTC).isoformat(),
-        status="pending",
-        retry_count=0,
-    )
-    result = await enforcer.execute(job)
-    assert result.success is True
-    rows = await db.fetch_all("SELECT SUM(length(content)) AS s FROM committed_facts")
-    total = rows[0]["s"] or 0
-    assert total <= 1_000_000
 
 
 # ---------------------------------------------------------------------------

@@ -95,14 +95,14 @@ def _real_provider_registry() -> object:
 def _pairs() -> list[tuple[str, object, object, tuple[str, ...]]]:
     """(label, double, real, methods) — imported lazily so a collection error in
     one test module cannot take the whole conformance check down with it."""
-    from stackowl.memory.kuzu_sync_handler import KuzuSyncJobHandler
     from stackowl.parliament.orchestrator import ParliamentOrchestrator
-    from tests._story_6_6_helpers import FakeKuzu
 
+    # FakeKuzu/KuzuSyncJobHandler pair REMOVED 2026-09-01: the real handler was
+    # deleted with the rest of the retired fact-store machinery, and a
+    # conformance check against a class that no longer exists is the double
+    # outliving the thing it doubled — exactly what this file exists to catch.
     real_registry = _real_provider_registry()
-    out: list[tuple[str, object, object, tuple[str, ...]]] = [
-        ("FakeKuzu", FakeKuzu, KuzuSyncJobHandler, ("execute",)),
-    ]
+    out: list[tuple[str, object, object, tuple[str, ...]]] = []
 
     # These live inside test modules; import defensively so a module-level
     # failure elsewhere surfaces as its own test failure, not as a missing check.

@@ -20,7 +20,6 @@ from stackowl.scheduler.base import HandlerRegistry, JobHandler
 from stackowl.scheduler.handlers.check_in import CheckInHandler
 from stackowl.scheduler.handlers.goal_execution import GoalExecutionHandler
 from stackowl.scheduler.handlers.knowledge_prune import KnowledgePruneHandler
-from stackowl.scheduler.handlers.memory_consolidation import MemoryConsolidationHandler
 from stackowl.scheduler.handlers.tool_pruning import ToolPruningHandler
 from stackowl.scheduler.job import Job, JobResult
 
@@ -121,9 +120,6 @@ class TestHandlerNames:
     def test_goal_execution_handler_name(self) -> None:
         assert GoalExecutionHandler().handler_name == "goal_execution"
 
-    def test_memory_consolidation_handler_name(self) -> None:
-        proxy = MemoryConsolidationHandler(dream_worker=_RecordingDream())
-        assert proxy.handler_name == "memory_consolidation"
 
     def test_tool_pruning_handler_name(self) -> None:
         assert ToolPruningHandler().handler_name == "tool_pruning"
@@ -202,15 +198,6 @@ class TestHandlerExecution:
         result = await GoalExecutionHandler().execute(_job("goal_execution"))
         assert result.success is True
 
-    async def test_memory_consolidation_proxies_to_dream(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _disable_test_mode_guard(monkeypatch)
-        dream = _RecordingDream()
-        proxy = MemoryConsolidationHandler(dream_worker=dream)
-        job = _job("memory_consolidation")
-        result = await proxy.execute(job)
-        assert dream.calls == [job.job_id]
-        assert result.success is True
-        assert result.metadata == {"facts_promoted": 7}
 
     async def test_tool_pruning_returns_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _disable_test_mode_guard(monkeypatch)

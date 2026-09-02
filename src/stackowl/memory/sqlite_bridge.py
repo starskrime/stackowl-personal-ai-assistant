@@ -39,9 +39,10 @@ if TYPE_CHECKING:  # pragma: no cover
 #: WHY THIS EXISTS AT ALL. ``staged_facts`` is no longer a fact-staging queue; it
 #: is the short-term conversation buffer, and it is the ONLY thing that survived
 #: the extraction pipeline's removal (D08.1). What used to bound it was mining
-#: consuming rows and promotion moving them into ``committed_facts``, where
-#: MemoryBudgetEnforcer could prune by byte ceiling. Both are gone, and that
-#: enforcer sums a table that is now permanently empty — so it can never fire.
+#: consuming rows and promotion moving them into ``committed_facts``, where a
+#: budget enforcer pruned by byte ceiling. All of that is gone — the enforcer
+#: summed a table that is permanently empty, so it could never fire, and it was
+#: DELETED on 2026-09-01 rather than left sitting there.
 #: Without this, every turn appends a row forever: the same no-decay disease that
 #: grew the fact store to 107,576 rows, one layer down.
 _TURN_HISTORY_MULTIPLE = 10
@@ -337,10 +338,10 @@ class SqliteMemoryBridge(MemoryBridge):
         await self.stage(fact)
         # 3. STEP — bound the buffer IN THE SAME PATH as the insert, so the limit
         # holds continuously and there is no window where the table is over-size.
-        # Deliberately not a scheduled job: MemoryBudgetEnforcer is still
-        # scheduled today and does nothing, because what it measures is always
-        # zero — an actuator that watches from elsewhere can stop working without
-        # anyone noticing, and this one cannot.
+        # Deliberately not a scheduled job. The byte-ceiling enforcer that used
+        # to watch from elsewhere measured a permanently-empty table, so it could
+        # never fire; it is now deleted. An actuator that watches from elsewhere
+        # can stop working without anyone noticing, and this one cannot.
         trimmed = await self._trim_turns(session_key)
         # 4. EXIT
         log.memory.debug(
