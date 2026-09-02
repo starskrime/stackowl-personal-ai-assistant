@@ -38,6 +38,7 @@ from stackowl.memory.conversation_compressor import (
     build_prompt,
     select,
 )
+from stackowl.parliament.token_estimate import estimate_tokens
 from stackowl.providers.base import Message
 
 
@@ -179,3 +180,51 @@ def test_it_is_actually_WIRED_into_the_history_path() -> None:
     assert "except Exception" in sig, (
         "compression can fail the turn — it must degrade to the old behaviour"
     )
+
+
+def test_a_runaway_summary_is_CLIPPED_to_its_share() -> None:
+    """A summarizer is not obliged to be brief. An unbounded summary can be
+    LARGER than the turns it replaced — a model call that saves nothing — so the
+    summary is bounded to SUMMARY_BUDGET_SHARE of the history budget.
+
+    This constant shipped DECLARED AND UNUSED an hour before this test existed;
+    writing the document is what found it. That is dead code by the standing
+    rule, and the fix was to make it load-bearing rather than to delete it,
+    because the bound it names is real."""
+    from stackowl.memory.conversation_compressor import SUMMARY_BUDGET_SHARE
+
+    # 40 turns of 200 chars each is ~2,000 tokens, comfortably over the budget —
+    # a first draft used 20-char turns and never triggered compression at all,
+    # so the assertion below was never reached.
+    msgs = _turns(40, size=200)
+    sel = select(msgs, budget_tokens=1_000)
+    assert sel.needs_compression, "the fixture does not exceed the budget"
+    runaway = "\n".join(f"RESOLVED: item {i} " + "y" * 200 for i in range(200))
+    out = apply(sel, runaway, budget_tokens=1_000)
+
+    summary = next(m for m in out if SUMMARY_MARKER in (m.content or ""))
+    assert estimate_tokens(summary.content) <= int(1_000 * SUMMARY_BUDGET_SHARE) + 20, (
+        "the summary is larger than its share of the budget — compression cost a "
+        "model call and saved nothing"
+    )
+    assert "RESOLVED: item 0" in summary.content, (
+        "clipping dropped the EARLIEST headings; RESOLVED and PENDING are what "
+        "the next turn needs"
+    )
+
+
+def test_a_short_summary_is_untouched_by_the_bound() -> None:
+    """The bound must not rewrite a summary that already fits."""
+    sel = select(_turns(40, size=200), budget_tokens=1_000)
+    assert sel.needs_compression
+    text = "RESOLVED: the earlier work finished."
+    out = apply(sel, text, budget_tokens=1_000)
+    assert any(text in (m.content or "") for m in out)
+
+
+def test_no_budget_means_no_bound() -> None:
+    """Back-compat for any caller with no budget to speak of."""
+    sel = select(_turns(40), budget_tokens=50)
+    long_text = "RESOLVED: " + "z" * 5_000
+    out = apply(sel, long_text)
+    assert any(len(m.content or "") > 5_000 for m in out)

@@ -57,7 +57,9 @@ HEAD_TURNS = 2
 TAIL_TURNS = 6
 
 #: Share of the history budget the compressed summary may occupy. The summary
-#: must be much smaller than what it replaces or compression buys nothing.
+#: must be much smaller than what it replaces or compression buys nothing — an
+#: unbounded summary can be LARGER than the turns it replaced, which would make
+#: this a cost with no benefit. Enforced in :func:`apply`.
 SUMMARY_BUDGET_SHARE = 0.25
 
 #: A filter-safe preamble. The turns being summarized are SOURCE MATERIAL, not
@@ -182,16 +184,52 @@ def as_message(summary_text: str) -> Message:
     return Message(role="user", content=f"{SUMMARY_MARKER}\n{summary_text.strip()}")
 
 
-def apply(selection: Selection, summary_text: str | None) -> list[Message]:
+def _bounded(text: str, budget_tokens: int) -> str:
+    """Clip a summary to :data:`SUMMARY_BUDGET_SHARE` of the history budget.
+
+    A summarizer is not obliged to be brief, and an unbounded summary can be
+    LARGER than the turns it replaced — compression that costs a model call and
+    saves nothing. Clipping is done on whole lines so the RESOLVED/PENDING/FACTS
+    structure survives, and the earliest headings win because RESOLVED and
+    PENDING are what the next turn needs.
+    """
+    ceiling = max(1, int(budget_tokens * SUMMARY_BUDGET_SHARE))
+    if estimate_tokens(text) <= ceiling:
+        return text
+    kept: list[str] = []
+    for line in text.splitlines():
+        if estimate_tokens("\n".join([*kept, line])) > ceiling:
+            break
+        kept.append(line)
+    clipped = "\n".join(kept).strip() or text[: ceiling * 4]
+    log.memory.info(
+        "[compressor] summary exceeded its share of the history budget — clipped",
+        extra={"_fields": {
+            "ceiling_tokens": ceiling,
+            "was_tokens": estimate_tokens(text),
+            "now_tokens": estimate_tokens(clipped),
+        }},
+    )
+    return clipped
+
+
+def apply(
+    selection: Selection, summary_text: str | None, *, budget_tokens: int = 0
+) -> list[Message]:
     """Rebuild history as head + compressed middle + tail.
 
     A failed or empty summarization returns head + tail: strictly better than
     today (which drops the middle silently and unrecorded) and never worse than
     the input, because a compression that cannot run must not cost the turn.
+
+    ``budget_tokens`` bounds the summary itself; 0 (the default) leaves it
+    unbounded, which is only correct for callers that have no budget to speak of.
     """
     out: list[Message] = list(selection.head)
     if selection.needs_compression:
         text = (summary_text or "").strip() or selection.prior_summary
+        if text and budget_tokens > 0:
+            text = _bounded(text, budget_tokens)
         if text:
             out.append(as_message(text))
         else:
@@ -201,6 +239,9 @@ def apply(selection: Selection, summary_text: str | None) -> list[Message]:
                 extra={"_fields": {"middle_turns": len(selection.middle)}},
             )
     elif selection.prior_summary:
-        out.append(as_message(selection.prior_summary))
+        prior = selection.prior_summary
+        out.append(as_message(
+            _bounded(prior, budget_tokens) if budget_tokens > 0 else prior
+        ))
     out.extend(selection.tail)
     return out

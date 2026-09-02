@@ -682,7 +682,7 @@ async def _compress_history(history: list[Message], state: PipelineState) -> lis
     try:
         selection = cc.select(history, budget_tokens=_HISTORY_BUDGET_TOKENS)
         if not selection.needs_compression:
-            return cc.apply(selection, None)
+            return cc.apply(selection, None, budget_tokens=_HISTORY_BUDGET_TOKENS)
         # 2. DECISION — a long session; pay one cheap call to keep its middle.
         log.engine.info(
             "[pipeline] classify: conversation too long for the history budget — "
@@ -696,7 +696,7 @@ async def _compress_history(history: list[Message], state: PipelineState) -> lis
             }},
         )
         summary = await _summarize_region(cc.build_prompt(selection), state)
-        out = cc.apply(selection, summary)
+        out = cc.apply(selection, summary, budget_tokens=_HISTORY_BUDGET_TOKENS)
         log.engine.info(
             "[pipeline] classify: conversation compressed",
             extra={"_fields": {
