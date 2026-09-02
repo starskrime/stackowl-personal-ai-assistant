@@ -4400,6 +4400,22 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_108_you_ship_four_chat_channels_and_use_one:
+      question: >-
+        D12.2 asks which channels matter. Measured first: across 20,112 all-time turns,
+        telegram carried 9,575 and Slack, Discord and WhatsApp carried ZERO — never configured,
+        skipped on all 44 boots in the retained logs. Do you want any of the three you already
+        have turned on, or is Telegram the whole answer?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles what IS used, not what you want. It cannot know whether Slack matters
+        to you next month or whether the three were built speculatively and can stay dark.
+      the_panel_recommendation: >-
+        Treat Telegram as the answer and stop counting adapters as breadth. If a second channel
+        is ever wanted, configure one of the three already built before adding a fourth — and
+        that configuration is a credential, not code.
+      what_is_blocked: >-
+        Nothing. D12.3 (generic relay adapter) proceeds independently; this only decides
+        whether channel BREADTH is a goal at all.
     ESC_107_do_you_want_a_declared_channel_capability_descriptor:
       question: >-
         D12.1 asks whether to adopt the reference platform's declared capability surface (seven
@@ -19562,17 +19578,23 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 THE VERDICT FRAMES THE WRONG DIRECTION. PARTIAL reads as a breadth gap — 4 adapters against the reference's 20. Measured across 20,112 all-time turns: telegram 9,575, rca 9,508 (a machine lane), cli 979, internal 50. Slack, Discord and WhatsApp have carried ZERO turns, ever. message_ledger holds telegram only, 486 rows. StackOwl ships four chat adapters and runs ONE."
+      - "THEY ARE NOT MERELY UNUSED, THEY HAVE NEVER BEEN CONFIGURED. Every boot logs a skip — 44 times each across the retained logs: 'no Slack bot_token/app_token — skipping', 'Discord not enabled or no bot_token — skipping', 'WhatsApp not enabled — skipping'. The equal counts are boot registration, not traffic; checked before drawing the conclusion, because three identical numbers is exactly what a miscount looks like."
+      - "SO BREADTH IS NOT THE GAP — it already exceeds use by four to one. Adding a fifth adapter would be adding to three that have never carried a message. The Ask ('which channels actually matter to you?') is unchanged and still his, but it now has hard evidence attached rather than a comparison to someone else's list."
+      - "NOTHING DELETED, and that is deliberate. An unconfigured adapter is an unused CAPABILITY, not dead code — the same distinction drawn for the 16 never-invoked tools — and removing a channel is user-facing, which this loop's rules make a stop-and-brief. The three skip lines are honest reporting of a credential-gated feature, not noise: they say WHY the channel is absent."
+      - "ESC-108 reframes the Ask with the measurement so it can be answered in one line."
+
     notes: null
 
   - id: D12.3

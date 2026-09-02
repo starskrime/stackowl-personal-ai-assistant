@@ -768,6 +768,11 @@ IRC, LINE, SMS, ntfy, DingTalk, WeCom, Weixin, Feishu, Google Chat, QQ, BlueBubb
 plus a generic webhook and an HTTP API server.
 **StackOwl.** 4 (Telegram, Slack, Discord, WhatsApp) + CLI + socket.
 **Ask.** Which channels actually matter to you? Breadth is cheap *after* D12.1/D12.3, expensive before.
+> **MEASURED 2026-09-02 — breadth is not the gap; it already exceeds use 4:1.** Across 20,112
+> all-time turns: telegram 9,575, rca 9,508 (a machine lane), cli 979, internal 50. Slack,
+> Discord and WhatsApp have carried **zero turns, ever**, and have never been configured —
+> every boot logs a skip, 44 times each. `message_ledger` holds telegram only (486 rows).
+> Adding a fifth adapter would be adding to three that have never carried a message. `ESC-108`.
 
 ### D12.3 · Generic relay adapter — `MISSING`
 **Hermes.** `gateway/relay/` — the endpoint of the pattern: **one** adapter that receives a
