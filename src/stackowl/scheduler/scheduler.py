@@ -46,9 +46,10 @@ _MAX_DEFER_SEC = 900.0
 # _run_job's poll iteration is sequential (`for row in rows: await
 # self._run_job(...)`) — a handler that never returns (a hung network call, a
 # deadlock) freezes EVERY subsequent job's dispatch forever, not just its own
-# (live incident: dream_worker hung, and no reminder/canary/incident job fired
-# again for 45+ minutes until process restart). 20 minutes comfortably clears
-# the slowest observed legitimate run (dream_worker: ~16 min) while still
+# (live incident, 2026-07: the `dream_worker` job — since DELETED — hung, and no
+# reminder/canary/incident job fired again for 45+ minutes until process
+# restart). 20 minutes comfortably clears the slowest run ever observed
+# (~16 min, that same job) while still
 # bounding the worst case. A timeout routes into the SAME retry/re-arm path an
 # ordinary handler exception already takes — recurring jobs self-heal (F-60),
 # one-shots retry up to _MAX_RETRIES.
@@ -195,7 +196,8 @@ class JobScheduler(SupervisedTask):
             # cycle's scan for newly-due jobs. _poll's own concurrent dispatch
             # (asyncio.gather) already made jobs WITHIN one cycle independent
             # of each other; this makes CYCLES independent of each other too —
-            # a chronically-hung dream_worker was still blocking this outer
+            # a chronically-hung heavy job (the since-deleted dream_worker) was
+            # still blocking this outer
             # loop from ever reaching its next tick while ITS gather was still
             # pending, starving telegram_canary for up to 20-40min at a
             # stretch even after the within-cycle fix. Safe: overlapping
@@ -266,10 +268,10 @@ class JobScheduler(SupervisedTask):
         if not rows:
             return
         # Concurrent dispatch — a sequential `for row: await self._run_job(...)`
-        # let one slow-but-legitimate handler (e.g. dream_worker's ~20-30min
+        # let one slow-but-legitimate handler (the since-deleted dream_worker's ~20-30min
         # cycles) block every OTHER due job's on-time firing for its full
         # duration: telegram_canary's own delivery log showed a clean 20m/20m/
-        # ~50m rhythm locked to dream_worker's 30m cadence, not a real send
+        # ~50m rhythm locked to that job's 30m cadence, not a real send
         # failure. _run_job's CAS claim (`UPDATE jobs SET status='running'
         # WHERE status='pending'`) already exists specifically so concurrent
         # dispatchers can never double-run the same job — this loop just never
@@ -628,7 +630,8 @@ class JobScheduler(SupervisedTask):
             # ONE record — retry_count, retry_at, failure_count and the reason —
             # and clearing three of four left rows claiming zero failures beside a
             # populated error string. Measured 2026-08-24: three healthy jobs
-            # (skill_synthesizer, retry_sweep, dream_worker) were reporting errors
+            # (skill_synthesizer, retry_sweep, and the since-deleted dream_worker)
+            # were reporting errors
             # from runs that had long since succeeded, and the string is read back
             # through scheduler_helpers into the TUI job list. requeue(),
             # owl_lifecycle and resume_job already clear it on recovery; this was

@@ -13,7 +13,8 @@ IT COPIES A SHAPE THAT ALREADY WORKS. ``scheduler.py`` dispatches due jobs with
 ``asyncio.gather`` behind a CAS claim, and the comment there records why: a
 sequential ``for row: await run(row)`` let one slow handler block every other job's
 on-time firing, and ``telegram_canary``'s delivery log showed a 20m/20m/50m rhythm
-locked to ``dream_worker``'s cadence rather than a real send failure. The same
+locked to the cadence of a since-deleted heavy job rather than a real send
+failure. The same
 mistake would be worse here, where a single slow task would stall every other one.
 CLAUDE.md's rule is to copy that shape rather than invent a second — so this does.
 

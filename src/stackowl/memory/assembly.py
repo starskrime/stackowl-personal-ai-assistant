@@ -51,7 +51,8 @@ class MemoryComponents:
     preference_store: PreferenceStore
     embedding_registry: EmbeddingRegistry
     # DUR-5 / F069 — None when Kuzu degraded at init (consistent with LanceDB /
-    # embeddings degrade-don't-crash policy). classify + kuzu_sync tolerate None.
+    # embeddings degrade-don't-crash policy). classify and graph_reconciliation
+    # both tolerate None.
     kuzu_adapter: KuzuAdapter | None
     rollover_summary_handler: RolloverSummaryHandler
     lessons_index: LessonsIndex
@@ -85,7 +86,7 @@ class MemoryAssembly:
         the CORE; the GATEWAY only routes, so it passes ``open_graph=False`` to avoid
         racing the core for the file lock (which made one process degrade to a None
         graph with a spurious ERROR every boot). When False the adapter is None — the
-        exact degrade state classify + kuzu_sync already tolerate.
+        exact degrade state classify and graph_reconciliation already tolerate.
         """
         log.memory.info("[memory] assembly.build: entry")
 
@@ -143,7 +144,7 @@ class MemoryAssembly:
         # policy: a missing/broken native Kuzu wheel (e.g. an ARM gap) must NOT
         # abort the whole memory assembly / startup — it degrades the graph
         # layer to a None adapter with a LOUD ERROR and a health-surfaced 'down'
-        # status. classify + kuzu_sync already tolerate a None adapter.
+        # status. classify and graph_reconciliation already tolerate a None adapter.
         from stackowl.health.contributors import GraphContributor
 
         # Via the accessor, not a second hand-built path — building it here is

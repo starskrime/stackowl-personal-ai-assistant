@@ -84,11 +84,17 @@ _MAX_QUERY_TOKENS = 12
 def _candidate_entity_ids(query: str, limit: int = _MAX_QUERY_TOKENS) -> list[str]:
     """Derive deterministic entity ids from query tokens.
 
-    Mirrors :func:`stackowl.memory.kuzu_sync_handler._entity_id_for` so the
-    traversal can look up entities mirrored from committed facts. The
-    handler writes ``entity_type|name`` digests; here we try a small set
-    of common entity types because the pipeline does not know in advance
-    which type a query token belongs to.
+    Builds ``entity_type|name`` digests and tries a small set of common
+    entity types, because the pipeline does not know in advance which type
+    a query token belongs to.
+
+    THIS IS A READER WITH NO WRITER for fact entities. The handler that
+    mirrored committed facts into the graph in this id format was deleted on
+    2026-09-02 as dead code — it joined on ``committed_facts``, which has held
+    zero rows since migration 0112. Fact-entity lookups therefore only ever hit
+    what was written before that, and nothing refreshes them. Skill and owl
+    nodes ARE still written, by ``graph_reconciliation``. Whether the fact half
+    is rebuilt or purged is ESC-78, open with the operator.
     """
     tokens = _WORD_RE.findall(query)
     if not tokens:

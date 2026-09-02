@@ -10,9 +10,9 @@ THREAD-CONFINEMENT INVARIANT (F067): a ``kuzu.Connection`` is NOT thread-safe.
 ALL Connection access is confined to ONE dedicated worker thread — a
 ``ThreadPoolExecutor(max_workers=1)``. Every blocking op is bounced through
 ``self._executor`` (NEVER ``None`` = the default multi-worker pool), so a live
-``classify`` traverse and a dream-worker ``kuzu_sync`` upsert can never drive
-the same Connection from two threads. Serialization is the cost (a long upsert
-batch delays a live traverse) — bounded by chunking the dream-worker writer.
+``classify`` traverse and a scheduled ``graph_reconciliation`` upsert can never
+drive the same Connection from two threads. Serialization is the cost (a long
+upsert batch delays a live traverse) — bounded by chunking the writer.
 The executor is shut down in :meth:`aclose`.
 
 ``F067-followup`` (NOT fixed here): node upsert is delete-then-insert and is

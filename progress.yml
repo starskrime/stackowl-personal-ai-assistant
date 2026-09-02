@@ -315,6 +315,47 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RETIREMENT_RESIDUE_2026_09_02_a_deleted_module_kept_answering_greps:
+    map_check: "No mapped item — loop hygiene that turned into a defect."
+    how_it_surfaced: >-
+      Backfilling premise_checks onto the 19 escalations that had none. Two of the new checks
+      returned numbers I could not reproduce by hand: ESC-78 said the graph's fact-entity feeder
+      had been RESTORED (it has not) and a feeder count said 7 where the tree holds 2.
+    THE_ROOT_CAUSE_and_it_is_not_the_check: >-
+      Deleting a module does not delete its compiled bytecode. 231 .pyc files across src/ and
+      tests/ had no source — including scheduler/handlers/__pycache__/dream_worker.cpython-311.pyc
+      and memory/__pycache__/kuzu_sync_handler.*.pyc, both modules deleted, one of them across an
+      interpreter version this project no longer runs. They cannot be imported, so nothing in the
+      platform was wrong. What was wrong was every MEASUREMENT: this programme reads its own tree
+      with recursive grep, and grep reads .pyc. A question asking "is this thing gone?" was
+      answered NO by the corpse of the thing.
+    what_else_the_same_cause_reaches: >-
+      Every recursive grep over src/ or tests/ this programme has ever run, and every one it will
+      run. That is most of how it measures itself. Same family as CLAUDE.md's `"msg": "` space and
+      the SQL LIKE underscore — the pattern matched something other than the thing and the number
+      still looked authoritative. It is also a direct violation of his 2026-09-01 rule: whatever
+      is retired is DELETED, and bytecode is part of what was retired.
+    the_fix_is_a_TRIPWIRE_not_a_cleanup: >-
+      The 231 files are gone, but a cleanup decays the moment the next module is deleted.
+      tests/test_a_retirement_leaves_no_bytecode_behind.py fails when any __pycache__ entry has
+      no source, runs under @pytest.mark.tripwire so ./scripts/tripwires.sh enforces it before
+      every commit, and was mutation-tested — planting one fake orphan turns it red.
+    also_repaired_the_prose_the_deletions_left: >-
+      Ten comments across nine modules still named dream_worker and kuzu_sync in the PRESENT
+      tense. Two were live behavioural lies: scheduler/base.py's defer_under_load docstring named
+      the two DELETED handlers as its examples and omitted both real overriders (critic_scorer,
+      reflection_writer), and classify.py's _candidate_entity_ids carried a Sphinx :func: link to
+      a module that no longer exists. That docstring now says what is actually true and is worth
+      reading on its own: the fact-entity half of the graph is a READER WITH NO WRITER. Genuine
+      incident history (the 20-minute handler timeout) is kept and marked as history.
+    escalations_now_all_checkable: >-
+      All 24 open escalations carry a premise_check; 0 remain unverifiable. The recorded reason
+      for leaving 19 blank — "several are genuinely unverifiable appetite questions" — was wrong,
+      and wrong in an instructive way: a premise_check does not verify the APPETITE, it verifies
+      the PREMISE, and every one of these rests on a measured fact. ESC-83 closed as EXPIRED on
+      its own check.
+    suites: "the new tripwire passes and fails when mutated; ./scripts/tripwires.sh PASS; ruff 35, mypy 65."
+    validate: done
   RETENTION7_2026_09_02_the_authorised_deletion_223266_rows:
     map_check: "No mapped item — executing an operator decision (ESC-106)."
     the_decision: >-
@@ -4521,6 +4562,8 @@ current:
         Nothing. D12.3 (generic relay adapter) proceeds independently; this only decides
         whether channel BREADTH is a goal at all.
     ESC_107_do_you_want_a_declared_channel_capability_descriptor:
+      premise_check: |
+        grep -q 'supports_draft_streaming' src/stackowl/channels/_format.py && echo EXPIRED || echo HOLDS
       question: >-
         D12.1 asks whether to adopt the reference platform's declared capability surface (seven
         fields: MAX_MESSAGE_LENGTH, supports_draft_streaming, enforces_own_access_policy, ...).
@@ -4566,6 +4609,8 @@ current:
         Nothing. The unbounded append — the actual defect — is fixed by the bound that
         shipped. Only the reclaim of existing space waits on you.
     ESC_105_page_if_unresolved_would_page_you_SIX_TIMES_MORE:
+      premise_check: |
+        grep -q 'giving up' src/stackowl/scheduler/handlers/incident_escalation.py && ! grep -rq 'page_on_unresolved' src/ && echo HOLDS || echo EXPIRED
       question: >-
         You chose "digest only, page if unresolved". The digest half is shipped. But
         unresolved is not the rare case — incident_escalation's own code records 86 of 100
@@ -4634,6 +4679,8 @@ current:
         Nothing in code. The admission gate, the refusal message and the boot report all ship
         now. Only the three existing files stay as they are.
     ESC_102_your_USER_md_is_54_percent_jobmarket_configuration:
+      premise_check: |
+        n=$(grep -c 'FULLY REMOTE\|Deliverable' "$HOME/.stackowl/memory/USER.md"); [ "$n" -gt 0 ] && echo "HOLDS $n jobmarket entries still in USER.md" || echo EXPIRED
       question: >-
         Two of the six permanent entries in USER.md are jobmarket config — "verify every
         posting LIVE ... Deliverable: deduped md list of Staff/Senior/Lead/Principal/FDE in
@@ -4655,6 +4702,8 @@ current:
         The reserve keeps your non-permanent facts safe either way, so nothing is urgent.
       what_is_blocked: "Nothing. The reserve is live; this would remove the pressure at source."
     ESC_101_how_long_may_a_deploy_wait_for_background_work:
+      premise_check: |
+        grep -q '120 seconds of a boot' src/stackowl/scheduler/scheduler_helpers.py && grep -q '4 x 240 = 960s' src/stackowl/scheduler/handlers/incident_escalation.py && echo HOLDS || echo EXPIRED
       question: >-
         A restart now waits for in-flight scheduler handlers, but only within the existing
         120-second grace. A staged RCA budgets up to 960s — eight times that — so a long one
@@ -4676,6 +4725,8 @@ current:
       what_is_blocked: >-
         Nothing. The drain waits for background work within the existing ceiling today.
     ESC_100_two_pinned_tests_were_pinning_the_defect:
+      premise_check: |
+        grep -rqF 'unverified — listed in search results' src/ && echo HOLDS || echo EXPIRED
       question: >-
         Two tests had to move for the grounding fix. One of them,
         test_grounded_url_kept, asserted that a URL web_search merely LISTED passes through
@@ -4699,6 +4750,8 @@ current:
         than removing it.
       what_is_blocked: "Nothing. Both pins are updated with their evidence and green."
     ESC_99_eleven_lessons_the_platform_already_paid_for_are_orphaned:
+      premise_check: |
+        uv run python -c "import sqlite3;n=sqlite3.connect('file:'+__import__('os').path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True).execute(r\"select count(*) from skills s where s.name like 'incident\_%' escape '\' and not exists (select 1 from skill_ownership o where o.skill_name=s.name)\").fetchone()[0];print(('HOLDS ' if n else 'EXPIRED ')+str(n)+' orphaned')" 2>/dev/null | tail -1
       question: >-
         Eleven skills the incident miner authored have no owner and never have had one, so
         no owl has ever seen them. The fix stops NEW ones being orphaned. Should the
@@ -4774,6 +4827,8 @@ current:
         than a markdown one, and the spend report shipped tonight gives a place to judge it.
       what_is_blocked: "Nothing."
     ESC_96_a_scheduled_goal_now_carries_an_ADDRESS_and_that_touches_consent:
+      premise_check: |
+        grep -q 'reply_target' src/stackowl/scheduler/handlers/goal_execution.py && echo 'HOLDS address still carried' || echo EXPIRED
       question: >-
         A scheduled goal's turn now carries reply_target (its job's own telegram id) so the
         durable task records where its answer belongs. reply_target is also what consent
@@ -4822,6 +4877,8 @@ current:
         objected to, and it uses the brief section that now exists.
       what_is_blocked: "The incidents half of tonight's request. The spend report shipped."
     ESC_94_prefetch_would_optimise_the_3_percent_not_the_97:
+      premise_check: |
+        grep -rqi 'prefetch' src/stackowl/memory/ && echo EXPIRED || echo 'HOLDS no prefetch built'
       question: >-
         The memory prefetch was recommended as the biggest token win. 96.5% of memory
         searches turn out to be the platform searching its own memory on incident/recovery
@@ -4843,6 +4900,8 @@ current:
       what_is_blocked: "Phase 5 is now fully answered or escalated: ESC-92 (breaker),
         ESC-93 (background writes), ESC-94 (prefetch). Nothing else in it is open."
     ESC_93_phase_5s_background_writes_are_already_done_or_forbidden:
+      premise_check: |
+        grep -q 'feedback_classify_task' src/stackowl/pipeline/steps/execute.py && echo 'HOLDS flush barrier already built' || echo EXPIRED
       question: >-
         The third latency mechanism is "background writes with a flush barrier". Measuring
         every detached write found no write that wants one. Do you still want something
@@ -4864,6 +4923,8 @@ current:
         cannot be slow is a barrier around nothing.
       what_is_blocked: "Nothing. Prefetch is the only phase-5 mechanism still genuinely open."
     ESC_92_you_asked_for_a_circuit_breaker_and_I_shipped_a_guard:
+      premise_check: |
+        grep -rqiE 'half_open|circuit_breaker' src/stackowl/memory/ && echo EXPIRED || echo 'HOLDS degradation only, no breaker state'
       question: >-
         Phase 5 item 1 was "a circuit breaker around memory reads". I shipped the
         degradation half — the read now returns a DEGRADED block instead of ending the turn
@@ -4886,6 +4947,8 @@ current:
         is what makes waiting safe: the turn already survives a store fault.
       what_is_blocked: "Nothing. Prefetch and the flush barrier are independent."
     ESC_90_the_stale_store_detector_needs_a_rule_only_you_can_choose:
+      premise_check: |
+        grep -rqE 'expected_cadence|STORE_CADENCE' src/ && echo EXPIRED || echo 'HOLDS no cadence registry'
       question: >-
         You asked for "any store with readers but no writes in N days". Two rules were built
         and both refuted against the live database. What separates a store that is BROKEN
@@ -4935,6 +4998,8 @@ current:
         every call site" — so dropping it buys little and costs a migration.
       what_is_blocked: "Nothing. It is residue, not a defect."
     ESC_89_I_relaxed_a_contract_three_tests_asked_you_to_decide_on:
+      premise_check: |
+        uv run python -c "import json;from stackowl.memory.reflection_prompt import parse_reflection_response as p;print('HOLDS relaxation still live' if p(json.dumps({'summary':'x'})) else 'EXPIRED reverted to strict')" 2>/dev/null | tail -1
       question: >-
         A reflection with a good summary but no suggested_strategy is now KEPT rather than
         discarded. Three tests pinned the old behaviour and asked for the relaxation to be a
@@ -5000,6 +5065,8 @@ current:
         digest the platform already has rather than adding a severity system.
       what_is_blocked: "Nothing. Both flapping detectors are fixed; this is volume, not noise."
     ESC_85_three_more_owls_have_their_memory_in_a_file_nothing_reads:
+      premise_check: |
+        f=0; for n in Friday hawkeye Collector; do [ -f "$HOME/.stackowl/memory/$n.md" ] && f=$((f+1)); done; [ "$f" -gt 0 ] && echo "HOLDS $f of 3 alias files still present" || echo EXPIRED
       question: >-
         Friday.md (secretary), hawkeye.md (verifier) and Collector.md (archivist) are the
         same defect as the falcon pair and hold real content. You authorised ONE merge. Do
@@ -5062,6 +5129,18 @@ current:
         are protected by their tag and survive untouched.
       what_is_blocked: "Nothing."
     ESC_83_your_retire_the_4_instruction_now_points_at_the_WRONG_FOUR:
+      resolution: >-
+        EXPIRED, closed 2026-09-02 by its own premise_check. The conflict this question
+        described has dissolved on its own: the three MERGED-form skills that were never-run
+        when it was written have since executed — incident_owl_build 7, incident_shell 6,
+        incident_delegate_task 4 — so "retire the never-executed incident_* skills" and
+        "keep the merged form" no longer point at the same skills and no decision is needed.
+        Two incident_* skills remain at zero executions (incident_shell_unachieved_effect,
+        incident_browser_click); they are learned artifacts rather than dead code, a few days
+        of non-use is not a retirement, and the panel's recommendation on this question was
+        already "do nothing". Nothing was deleted.
+      premise_check: |
+        uv run python -c "import sqlite3;c=sqlite3.connect('file:'+__import__('os').path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);r=dict(c.execute(\"select name,n_executions from skills where name in ('incident_shell','incident_owl_build','incident_delegate_task')\"));run=[k for k,v in r.items() if v];print(('EXPIRED merged-form have run: ' if len(run)==3 else 'HOLDS ')+str(r))" 2>/dev/null | tail -1
       question: >-
         Round 4 said "retire the never-run learned skills only — the 4 never-executed
         incident_* templates". Today there are FIVE, and three of them are the MERGED-form
@@ -5096,6 +5175,8 @@ current:
         c_mark_rather_than_delete: "Add a flag so recall can exclude them without losing the record. Preserves everything; needs a column and a reader change, and leaves the rows in every naive query."
       blocked_until_answered: "Re-pointing the graph writer at staged_facts — feeding it a 39%-machine source would rebuild the problem 0112 deleted 107,576 rows to escape."
     ESC_81_is_compaction_worth_changing_what_the_model_SEES_now_that_the_cap_holds:
+      premise_check: |
+        test -f src/stackowl/pipeline/budget/compaction.py && echo EXPIRED || echo 'HOLDS no compaction shipped'
       question: "1b was justified by a 683k runaway. That cannot recur — the cap fires and was measured firing. Compaction would now shave a p90 of ~49.5k tokens, at the price of editing the transcript the model reads. Worth it?"
       why_evidence_cannot_settle_it: "The cost side is measured and modest; the risk side is a quality change that only you can judge acceptable, and the plan's own boundary warns that a quality drop means the threshold is wrong rather than the idea."
       the_measurement: "431 traces since the cap went live: p50 17,804, p90 49,504, ONE over 500k and it stopped at 540,720. Plan baseline was p90 106,752 with 84 breaches. Per call, tool schemas are ~19,423 of 25-37k, so transcript is 22-48% — the smaller half."
@@ -5105,6 +5186,8 @@ current:
         c_full_compaction: "Dedup plus truncation of older results beyond a size threshold. The largest saving and the only option that can degrade an answer."
       blocked_until_answered: "Nothing. This was the last live entry on the turn-economics plan."
     ESC_80_a_long_tool_run_predicts_a_worse_turn_but_one_is_a_protected_fan_out:
+      premise_check: |
+        grep -qE 'longest_run|long_run_warn' src/stackowl/pipeline/tool_guardrails.py && echo EXPIRED || echo 'HOLDS no long-run detector'
       question: "Turns whose longest same-tool run is 10+ succeed 75% of the time against 98% for short ones. But the platform already measured a 46-call web_search run as a PRODUCTIVE headhunter turn and wrote a test to protect it. Should a long run warn?"
       why_evidence_cannot_settle_it: "Both sides ARE the evidence. The correlation is across 3,967 turns; the protected case is one concrete turn of exactly that shape. Nothing in the data distinguishes a productive fan-out from a loop, so the call is about which error you prefer."
       the_measurement: "longest run <=2: n=2250, 98.0% success, quality 0.691. 10-14: n=300, 75.3%, 0.365. >=20: n=55, 70.9%. repeated_exact_call cannot see any of it — it keys on args_hash, and its own comment says 46 different queries never fire."
@@ -5114,6 +5197,8 @@ current:
         c_warn_only_when_the_run_is_ALSO_not_progressing: "Combine run length with the existing no-progress signal, so a fan-out that keeps returning new information stays quiet. Most faithful to both findings; needs a definition of progress that the guardrail does not currently have."
       blocked_until_answered: "Stage 2c only. 1b compaction is independent and untouched."
     ESC_79_should_a_detected_repeat_give_a_step_BACK:
+      premise_check: |
+        grep -q 'IterationBudget' src/stackowl/pipeline/steps/execute.py && echo EXPIRED || echo 'HOLDS detector still cannot reach the budget'
       question: "You selected 2d — refund a step when the guardrail detects a repeat. Measuring it changed its shape twice. Do you still want it?"
       why_evidence_cannot_settle_it: "It is a trade between two things you have both asked for: not wasting rounds on repeats, and bounding what a turn can spend. Which wins is appetite."
       the_measurement: "IterationBudget.refund() exists and is called 3x, but only from anthropic_provider. execute.py — where the tool-loop guardrail runs — has ZERO references to IterationBudget: the budget is provider-internal, the detector is pipeline-level. And refund()'s own docstring calls it 'the one method that can make a bounded loop run longer than its nominal cap suggests', days after DEFAULT_TURN_MAX_INPUT_TOKENS=500,000 shipped to stop long loops."
@@ -5123,6 +5208,8 @@ current:
         c_thread_the_budget_into_dispatch: "Pass the iteration budget down to execute.py. Smallest conceptual change, and it leaks a provider internal into the pipeline."
       blocked_until_answered: "Nothing. 1b and 2c are independent."
     ESC_78_the_graph_measurement_is_in_and_it_is_borderline_not_damning:
+      premise_check: |
+        mb=$(du -sm "$HOME/.stackowl/kuzu" 2>/dev/null | cut -f1); if grep -rq --include='*.py' 'kuzu_sync_handler' src/stackowl/; then echo "EXPIRED ${mb}MB, feeder restored"; else echo "HOLDS ${mb}MB graph, fact-entity feeder still gone"; fi
       remeasured_2026_09_02: >-
         The 65.7% in this question is STALE. Re-measured over every retained log (1,950 classify
         exits carrying the field): graph_context_len is non-zero on 1,771 — 90% — at 54-361
@@ -5150,6 +5237,8 @@ current:
         c_process_level: "Revert to one slot. Simplest, and it re-introduces the cross-chat overwrite the docstring warns about."
       blocked_until_answered: "One smoke test stays red. Nothing else."
     ESC_76_the_platform_cannot_draw_anything_and_that_is_hardware_not_code:
+      premise_check: |
+        uv run python -c "import importlib.util as u; m=[n for n in ('matplotlib','graphviz','PIL') if u.find_spec(n)]; print('EXPIRED' if m else 'HOLDS', m or 'no plotting stack')" 2>/dev/null | tail -1
       question: "You asked for a picture and the platform cannot make one. Enabling that is a spend/egress decision only you can make. Which way?"
       why_evidence_cannot_settle_it: "Every option costs either money, data egress, or disk on your only dev box. All three are yours to weigh, and none is a defect to fix."
       the_measurement: "ImageSelector.select() returns available=False on this host: Tegra/unified-memory board, no CUDA torch wheel, CPU torch would OOM; cloud disabled with no key. matplotlib, graphviz and PIL are all absent from the venv (networkx is present). execute_code and send_file exist, so delivery works and drawing does not."

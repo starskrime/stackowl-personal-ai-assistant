@@ -1822,8 +1822,8 @@ class StartupOrchestrator:
             # PARL-7 (F084) — the host-wide governor so the nightly evolution
             # batch's concurrent fan-out shares the single in-flight budget.
             delegation_governor=delegation_governor,
-            # Phase L — heavy background jobs (dream_worker/kuzu_sync/critic/
-            # reflection) defer to live user turns so they stop starving the box.
+            # Phase L — heavy background jobs (critic_scorer, reflection_writer)
+            # defer to live user turns so they stop starving the box.
             turn_registry=turn_registry,
             # ADR-6 F-87 — the live browser runtime as a HealableResource so the
             # health loop can recycle + re-verify it (None in gateway role / when
