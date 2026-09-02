@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RUNHISTORY_2026_09_02_nothing_had_ever_bounded_the_run_history:
+    map_check: "No mapped item matches — evidence-led, found while checking whether the morning brief runs."
+    how_it_surfaced: >-
+      Checking whether the brief job actually fires (it does — daily@08:00, next 13:00Z, so
+      D09.6's pending validate is legitimate). The job listing came back with 98 completed
+      rollover_summary rows drowning 30 real ones, which led to the jobs table and then to
+      the run history behind it.
+    A_DELIBERATE_DECISION_I_ALMOST_BROKE: >-
+      The 98 completed rows LOOK like the dead seats the retired-means-deleted rule targets.
+      They are not: scheduler.py records "Terminal, not deleted: job_runs.job_id is a real FK
+      and the run history is the record of what the platform did, so the row stays inspectable
+      while dropping out of the claim query". Reading that intent before acting is what
+      stopped a wrong deletion — the claim query selects status='pending', so they cost
+      nothing at runtime.
+    THE_REAL_FINDING_IS_ONE_TABLE_DOWN: >-
+      job_runs holds 252,905 rows, every one status='completed', from 2026-06-02 to today —
+      45.1 MB of table plus 19.1 MB of idempotency index, NINETEEN PER CENT of a 342 MB
+      database. Nothing has ever deleted one. The largest contributor is objective_driver at
+      67,551 runs, firing every minute against a table with zero rows. Failure shape #4:
+      anything that only appends will poison its reader.
+    WHY_DELETING_OLD_ROWS_IS_PROVABLY_SAFE: >-
+      job_runs has exactly ONE reader — the exactly-once guard in scheduler._dispatch, which
+      looks up idempotency_key. That key is _occurrence_key: "{idempotency_key}@{next_run_at}",
+      so it EMBEDS the scheduled instant, and all 252,905 keys in the live table are distinct.
+      Once an instant has passed the key can never be queried again. There is no time window
+      in the guard for a retention to shorten.
+    THE_WINDOW_IS_LOOSE_ON_PURPOSE_and_that_is_the_operator_rule_being_honoured: >-
+      100 days deletes ZERO rows today — the oldest row is 92 days old — while capping the
+      table for ever. The DEFECT is the unbounded append and any bound fixes it. How tight the
+      bound should be is a data deletion, which this loop's own rules make a stop-and-brief
+      item, so it is escalated with numbers rather than taken: 7 days would reclaim 88% of the
+      rows and about 56 MB. ESC-106.
+    not_a_second_engine: >-
+      db_reclaim already runs hourly and already owns database maintenance. Retention runs
+      there, BEFORE the incremental vacuum, because incremental_vacuum can only hand back
+      pages something has already freed — pruning after it would leave them a full hour.
+    two_instrument_errors_of_mine_recorded: >-
+      A column scan matching "at" in the name picked `status` instead of `ran_at` and printed
+      a nonsense date range; and a structural assertion compared src.index("incremental_vacuum")
+      which matched my own explanatory COMMENT above the call and failed a correct
+      implementation. Both are the same shape — matching prose instead of code.
+    suites: "tests/scheduler 516 passed; 6 new tests; ./scripts/tripwires.sh PASS."
+    baselines: "ruff src/ 35, mypy 65 — the gate enforces both."
+    validate: OPEN_awaiting_the_next_hourly_db_reclaim_tick
+    closing_query: >-
+      "[scheduler] db_reclaim.execute: exit" carrying pruned_runs — 0 today by design, and
+      non-zero from the day the oldest rows cross 100 days.
   TRIPWIRES_2026_09_02_a_targeted_run_cannot_see_a_crosscutting_guard:
     map_check: "No mapped item matches — evidence-led, and the evidence is two of my own shipped defects."
     THE_PATTERN_NOT_THE_INCIDENT: >-
@@ -4352,6 +4399,24 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_106_how_much_run_history_do_you_want_to_keep:
+      question: >-
+        job_runs holds 252,905 completed rows — 19% of a 342 MB database (45.1 MB of table,
+        19.1 MB of index) — and nothing had ever bounded it. A 100-day retention now ships,
+        which deletes NOTHING today and caps it for ever. Tightening it reclaims real space:
+        7 days would remove 88% of the rows and about 56 MB. How long do you want kept?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles SAFETY completely: the only reader looks up an idempotency key that
+        embeds the scheduled instant, so a past row can never be read again. What evidence
+        cannot decide is how much history you want to be able to inspect, and "any data
+        deletion" is a stop-and-brief item in this loop's own rules.
+      the_panel_recommendation: >-
+        30 days. It reclaims 119,949 rows (47%) while keeping a month of run history for any
+        forensic question, and a month is far longer than any incident this programme has
+        needed to look back over.
+      what_is_blocked: >-
+        Nothing. The unbounded append — the actual defect — is fixed by the bound that
+        shipped. Only the reclaim of existing space waits on you.
     ESC_105_page_if_unresolved_would_page_you_SIX_TIMES_MORE:
       question: >-
         You chose "digest only, page if unresolved". The digest half is shipped. But

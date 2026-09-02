@@ -121,6 +121,17 @@ async def needs_one_time_vacuum(pool: DbPool) -> bool:
         return False
 
 
+#: How long a completed run stays in ``job_runs``.
+#:
+#: 100 DAYS IS CHOSEN TO DELETE NOTHING TODAY. Measured 2026-09-02 the oldest row
+#: is 2026-06-02 — 92 days — so this bounds the table for ever while removing zero
+#: rows on the first run. The DEFECT is that nothing bounded it at all; any bound
+#: fixes that. How tight the bound should be is a data-deletion decision for the
+#: operator, and the numbers are on the table: 7 days would reclaim 88% of the
+#: rows and about 56 MB of a 342 MB database.
+_RUN_HISTORY_RETENTION_DAYS = 100
+
+
 class DbReclaimHandler(JobHandler):
     """Hand freed SQLite pages back to the operating system, a chunk at a time.
 
@@ -133,6 +144,61 @@ class DbReclaimHandler(JobHandler):
     @property
     def handler_name(self) -> str:
         return "db_reclaim"
+
+    async def _prune_run_history(self) -> int:
+        """Bound ``job_runs``, which nothing has ever bounded. Never raises.
+
+        MEASURED 2026-09-02: 252,905 rows, every one ``status='completed'``,
+        spanning 2026-06-02 to today — **45.1 MB of table plus 19.1 MB of
+        idempotency index, 19% of a 342 MB database**. The largest single
+        contributor is ``objective_driver`` at 67,551 runs, firing every minute
+        against a table that has zero rows. Nothing has ever deleted one of these.
+
+        WHY DELETING OLD ROWS IS PROVABLY SAFE, and this is the whole argument.
+        ``job_runs`` has exactly ONE reader — the exactly-once guard in
+        ``scheduler._dispatch``, which looks up ``idempotency_key``. That key is
+        ``_occurrence_key``: ``{job.idempotency_key}@{job.next_run_at}``, so it
+        EMBEDS the scheduled instant, and all 252,905 keys in the live table are
+        distinct. Once an instant has passed and the job has moved on, its key can
+        never be queried again. There is no time window in the guard to shorten.
+
+        THE WINDOW IS DELIBERATELY LOOSE AND THAT IS NOT AN OVERSIGHT. At 100 days
+        this deletes ZERO rows today (the oldest is 92 days old) while capping the
+        table for ever — the defect is the UNBOUNDED append, and that is fixed by
+        any bound. Tightening it is a data-deletion decision that belongs to the
+        operator, not to this loop: 7 days would reclaim 88% of the rows and about
+        56 MB. Escalated with those numbers rather than taken.
+
+        Returns:
+            Rows deleted. 0 on any failure — maintenance may never fail a tick.
+        """
+        try:
+            before = await self._pool.fetch_all(
+                "SELECT COUNT(*) AS n FROM job_runs WHERE ran_at < "
+                f"datetime('now','-{_RUN_HISTORY_RETENTION_DAYS} days')", (),
+            )
+            n = int(before[0]["n"]) if before else 0
+            if not n:
+                return 0
+            await self._pool.execute(
+                "DELETE FROM job_runs WHERE ran_at < "
+                f"datetime('now','-{_RUN_HISTORY_RETENTION_DAYS} days')", (),
+            )
+            log.scheduler.info(
+                "[scheduler] db_reclaim: pruned job run history — nothing had "
+                "ever bounded this table",
+                extra={"_fields": {
+                    "deleted": n, "retention_days": _RUN_HISTORY_RETENTION_DAYS,
+                }},
+            )
+            return n
+        except Exception as exc:  # noqa: BLE001 — maintenance may not fail a tick
+            log.scheduler.warning(
+                "[scheduler] db_reclaim: could not prune job_runs — the table "
+                "stays unbounded until the next tick",
+                exc_info=exc,
+            )
+            return 0
 
     async def execute(self, job: Job) -> JobResult:
         # 1. ENTRY
@@ -168,6 +234,11 @@ class DbReclaimHandler(JobHandler):
                 error=None, duration_ms=duration_ms,
                 metadata={"reclaimed_pages": 0, "needs_vacuum": True},
             )
+
+        # 3. STEP — retention BEFORE reclaim, because incremental_vacuum can only
+        # hand back pages something has already freed. Pruning after vacuuming
+        # would leave the freed pages until the next hourly tick.
+        pruned = await self._prune_run_history()
 
         # 3. STEP — bounded reclaim.
         try:
@@ -210,6 +281,7 @@ class DbReclaimHandler(JobHandler):
             extra={"_fields": {
                 "job_id": job.job_id,
                 "reclaimed_pages": reclaimed,
+                "pruned_runs": pruned,
                 "reclaimed_mb": round(page_size * reclaimed / 1e6, 1),
                 "file_mb": round(page_size * pages_after / 1e6, 1),
                 "free_ratio": round(free_ratio, 3),
