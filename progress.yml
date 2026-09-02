@@ -353,12 +353,38 @@ current:
       _canonical_incident_slug and produced zero pair-form candidates — the merged and pair
       spellings collapse for failure_class 'stop' — which a test caught.
     suites: "tests/learning + tests/skills 602 passed. Both fixes mutation-tested: forcing the preserve branch false turns the provenance test red, and each new test has a control that fails a guard which fires on everything. ./scripts/tripwires.sh PASS, ruff 35, mypy 65."
-    validate: OPEN_awaiting_the_next_mining_pass
+    CORRECTION_the_first_closing_query_was_WRONG: >-
+      It said "the miner runs every ~12 minutes, so this is the first acceptance check in this
+      family that does not need an incident to occur first." Measured immediately after: the
+      incident miner's mine() is called from exactly ONE place, incident_escalation.py:1115, on
+      a CONCLUDED RCA verdict. It ran 8 times on 09-01 and 4 on 09-02, the last at 06:07 —
+      seventeen hours before I wrote that sentence. The repair was gated behind the very
+      incidents it exists to prevent, which is self-healing that only runs while the platform is
+      failing again. That is the same defect one level up, so it is fixed in this item.
+    THE_ASYMMETRY_that_was_the_real_finding: >-
+      orphan_reconciliation has swept skill_ownership -> skills since the day it was written: an
+      ownership row pointing at a DELETED skill is found and removed, daily at 04:30. The
+      INVERSE — a learned skill that NOTHING points at — was never swept at all. One side of one
+      relationship was self-healing; the other had no reader. Eleven mined lessons sat
+      unreachable while a sweep ran past them every night. That handler now does both
+      directions, which is what its name already promised, and it asks the miner rather than
+      keeping a second copy of "who owns what": it decides WHEN, never WHO.
+    the_authoring_threshold_was_the_WRONG_threshold: >-
+      Reconciliation first reused _min_evidence=3, which exists to gate AUTHORING — you do not
+      write a lesson from one failure. Attributing a lesson that is ALREADY written is a
+      different question. Measured over 179 failed outcomes in 7 days, the authoring threshold
+      reaches nine of the eleven orphans and strands incident_delegate_task and
+      incident_delegate_task_unachieved_effect for ever, because delegate_task failed once in
+      each class. Reconciliation now clusters at 1: an owl that hit the failure once is still an
+      owl that hit the failure.
+    suites_after_the_correction: "tests/scheduler + tests/learning + tests/skills 1,122 passed. ./scripts/tripwires.sh PASS, ruff 35, mypy 65."
+    validate: OPEN_awaiting_either_the_0430_sweep_or_the_next_concluded_RCA
     closing_query: >-
       "[incident] miner.reconcile: an orphaned lesson now has owners" at INFO with a non-empty
       owls list, and skill_ownership rows for names matching 'incident\_%' ESCAPE '\' — ZERO
-      today, and any row at all closes it. The miner runs every ~12 minutes, so this is the
-      first acceptance check in this family that does not need an incident to occur first.
+      today, and any row at all closes it. Also "[scheduler] orphan_reconciliation: both
+      directions swept" carrying a non-zero ownership_healed. TWO paths now reach it: the
+      04:30 daily sweep, which needs no incident at all, and the next concluded RCA.
       BEWARE: a bare LIKE 'incident_%' matches 'incident-evidence-brief' because _ is a SQL
       wildcard; it has already nearly closed a check falsely once.
   SUPERSEDED_2026_09_02_the_curator_undid_the_miner_every_single_day:

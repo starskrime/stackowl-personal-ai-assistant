@@ -36,6 +36,7 @@ copy of "what it means to remove an owl".
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace as _replace
 from typing import TYPE_CHECKING
 
 from stackowl.audit.deletions import record_deleted_rows
@@ -57,10 +58,33 @@ class SweepResult:
     deleted: int = 0
     refused: bool = False
     errors: int = 0
+    #: Skills that had NO owner and were given one. The other DIRECTION of the
+    #: same relationship — see the class docstring.
+    ownership_healed: int = 0
 
 
 class OrphanReconciliationHandler(JobHandler):
-    """Delete identity rows whose owner is gone. Records every row first."""
+    """Reconcile identity in BOTH directions: delete ownership rows whose owner
+    is gone, and give an owner to a learned skill that has none.
+
+    THE SECOND DIRECTION WAS MISSING FOR AS LONG AS THE FIRST EXISTED, and the
+    asymmetry is the whole finding. ``_RULES`` has swept
+    ``skill_ownership -> skills`` since this handler was written: an ownership row
+    pointing at a deleted skill is found and removed, daily. The inverse — a
+    skill that NOTHING points at — was never swept, so eleven mined lessons sat
+    unreachable by every owl while a sweep ran past them every night at 04:30.
+    One side of one relationship was self-healing; the other had no reader at all.
+
+    WHY IT LIVES HERE rather than in a job of its own. Bakir, 2026-08-31, on this
+    exact handler: "A self-healing sweep, not a one-off — a scheduled reconciler
+    ... running until it finds nothing. Fixes today's damage AND anything a future
+    gap creates." That is the same sentence the ownerless-skill repair needs, and
+    the platform's rule is to extend the loop that exists rather than add a second.
+
+    WHY IT IS NOT A SECOND COPY OF "WHO OWNS WHAT". The repair asks
+    ``FailureOutcomeMiner.reconcile_ownership``, which is the same code the miner
+    runs when it authors a skill. This handler decides WHEN, never WHO.
+    """
 
     @property
     def handler_name(self) -> str:
@@ -80,8 +104,12 @@ class OrphanReconciliationHandler(JobHandler):
     #: The column each owner table identifies itself by.
     _OWNER_KEY: dict[str, str] = {"owls": "name", "skills": "name"}
 
-    def __init__(self, db: DbPool) -> None:
+    def __init__(self, db: DbPool, miner: object | None = None) -> None:
         self._db = db
+        #: The incident miner, when one is wired. None on a box that has no
+        #: mining (tests, a gateway-role process) — the delete half still runs,
+        #: which is the honest degrade rather than a dead sweep.
+        self._miner = miner
 
     async def _owner_is_populated(self, owner: str) -> bool:
         rows = await self._db.fetch_all(f"SELECT COUNT(*) AS c FROM {owner}")  # noqa: S608
@@ -186,6 +214,23 @@ class OrphanReconciliationHandler(JobHandler):
         )
         return SweepResult(deleted=deleted, refused=refused, errors=errors)
 
+    async def _heal_ownerless_skills(self) -> int:
+        """Give an owner to every learned skill that has none.
+
+        Never raises, and never blocks the delete half: the two directions are
+        independent repairs and one failing must not cost the other.
+        """
+        if self._miner is None:
+            return 0
+        try:
+            return int(await self._miner.reconcile_ownership())  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — a sweep may not crash the scheduler
+            log.scheduler.error(
+                "[scheduler] orphan_reconciliation: ownership repair failed",
+                exc_info=exc,
+            )
+            return 0
+
     async def execute(self, job: Job) -> JobResult:
         """Scheduler entry point. Never fails the tick — a sweep that can crash
         the scheduler would take every other job down with it."""
@@ -193,13 +238,27 @@ class OrphanReconciliationHandler(JobHandler):
 
         t0 = _time.monotonic()
         result = await self.sweep()
+        healed = await self._heal_ownerless_skills()
+        result = _replace(result, ownership_healed=healed)
+        # INFO, and it is the acceptance evidence for the second direction: a
+        # non-zero value here is the only proof a lesson written before ownership
+        # existed has finally reached an owl.
+        log.scheduler.info(
+            "[scheduler] orphan_reconciliation: both directions swept",
+            extra={"_fields": {
+                "job_id": job.job_id, "deleted": result.deleted,
+                "refused": result.refused, "errors": result.errors,
+                "ownership_healed": healed,
+            }},
+        )
         return JobResult(
             job_id=job.job_id,
             effect_class="state_change",
             success=True,
             output=(
                 f"orphan_reconciliation: deleted={result.deleted} "
-                f"refused={result.refused} errors={result.errors}"
+                f"refused={result.refused} errors={result.errors} "
+                f"ownership_healed={result.ownership_healed}"
             ),
             error=None,
             duration_ms=(_time.monotonic() - t0) * 1000,

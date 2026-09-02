@@ -405,15 +405,6 @@ class SchedulerAssembly:
         )
         HandlerRegistry.instance().register(graph_reconciliation_handler)
 
-        # 2026-08-31 — identity rows whose OWNER no longer exists. Uncapped by
-        # Bakir's explicit decision, made acceptable by the snapshot-before-delete
-        # that shipped first: every row it removes is written to audit_log whole.
-        from stackowl.scheduler.handlers.orphan_reconciliation import (
-            OrphanReconciliationHandler,
-        )
-
-        HandlerRegistry.instance().register(OrphanReconciliationHandler(db))
-
         # FR-4 (learning-loop consolidation) — ReflectionWriterHandler now scores
         # AND reflects in one execute() call (every 15 min). The standalone
         # critic_scorer job (was every 10 min) is gone: ReflectionWriterHandler
@@ -683,6 +674,20 @@ class SchedulerAssembly:
             # persists it so the next boot's hydrator restores it.
             owl_registry=owl_registry,
             db=db,
+        )
+
+        # 2026-08-31 — identity rows whose OWNER no longer exists, uncapped by
+        # Bakir's explicit decision and made acceptable by the snapshot-before-
+        # delete that shipped first. 2026-09-02 — and the INVERSE direction, a
+        # learned skill nothing points at, which had never been swept at all.
+        # Registered HERE rather than beside the other sweeps because the second
+        # direction asks `incident_miner`, which is built just above.
+        from stackowl.scheduler.handlers.orphan_reconciliation import (
+            OrphanReconciliationHandler,
+        )
+
+        HandlerRegistry.instance().register(
+            OrphanReconciliationHandler(db, miner=incident_miner),
         )
 
         incident_escalation_handler = IncidentEscalationHandler(

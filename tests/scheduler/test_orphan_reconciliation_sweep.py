@@ -228,3 +228,83 @@ async def test_a_broken_table_does_not_stop_the_others(db: DbPool) -> None:
 
     assert await _count(db, "SELECT COUNT(*) FROM owl_dna WHERE owl_name='ghost'") == 0
     assert result.errors >= 1
+
+
+# --------------------------------------------------------------------------- #
+# The OTHER direction: a skill nothing points at.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_ALSO_gives_an_owner_to_a_skill_that_has_none(tmp_db) -> None:
+    """The asymmetry this closes.
+
+    ``_RULES`` has swept ``skill_ownership -> skills`` since this handler was
+    written: an ownership row pointing at a deleted skill is found and removed,
+    every night. The INVERSE — a learned skill that NOTHING points at — was never
+    swept at all, so eleven mined lessons sat unreachable by every owl while this
+    sweep ran past them at 04:30 daily. One side of one relationship was
+    self-healing; the other had no reader.
+    """
+    from stackowl.scheduler.handlers.orphan_reconciliation import (
+        OrphanReconciliationHandler,
+    )
+    from stackowl.scheduler.job import Job
+
+    class _Miner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def reconcile_ownership(self) -> int:
+            self.calls += 1
+            return 3
+
+    miner = _Miner()
+    handler = OrphanReconciliationHandler(tmp_db, miner=miner)
+    result = await handler.execute(Job(job_id="j", handler_name="orphan_reconciliation",
+            schedule="daily@04:30", idempotency_key="k", last_run_at=None,
+            next_run_at="2026-01-01T00:00:00+00:00", status="pending", retry_count=0))
+
+    assert miner.calls == 1
+    assert "ownership_healed=3" in (result.output or "")
+
+
+@pytest.mark.asyncio
+async def test_a_FAILING_ownership_repair_does_not_cost_the_DELETE_half(tmp_db) -> None:
+    """Two independent repairs. One raising must not take the other down, and it
+    must not fail the tick — a sweep that crashes the scheduler takes every other
+    job with it."""
+    from stackowl.scheduler.handlers.orphan_reconciliation import (
+        OrphanReconciliationHandler,
+    )
+    from stackowl.scheduler.job import Job
+
+    class _Boom:
+        async def reconcile_ownership(self) -> int:
+            raise RuntimeError("miner exploded")
+
+    handler = OrphanReconciliationHandler(tmp_db, miner=_Boom())
+    result = await handler.execute(Job(job_id="j", handler_name="orphan_reconciliation",
+            schedule="daily@04:30", idempotency_key="k", last_run_at=None,
+            next_run_at="2026-01-01T00:00:00+00:00", status="pending", retry_count=0))
+
+    assert result.success is True
+    assert "ownership_healed=0" in (result.output or "")
+
+
+@pytest.mark.asyncio
+async def test_with_no_miner_wired_the_delete_half_still_runs(tmp_db) -> None:
+    """A gateway-role process has no mining. The honest degrade is half a sweep,
+    not a dead one."""
+    from stackowl.scheduler.handlers.orphan_reconciliation import (
+        OrphanReconciliationHandler,
+    )
+    from stackowl.scheduler.job import Job
+
+    handler = OrphanReconciliationHandler(tmp_db)
+    result = await handler.execute(Job(job_id="j", handler_name="orphan_reconciliation",
+            schedule="daily@04:30", idempotency_key="k", last_run_at=None,
+            next_run_at="2026-01-01T00:00:00+00:00", status="pending", retry_count=0))
+
+    assert result.success is True
+    assert "deleted=" in (result.output or "")

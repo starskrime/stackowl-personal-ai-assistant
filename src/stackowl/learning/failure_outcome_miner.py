@@ -113,6 +113,12 @@ CapabilityTagLookup = Callable[[str], "str | None"]
 #: not a second vocabulary for the same idea.
 ADOPTED_LIFECYCLE_STATE = "archived"
 
+#: Evidence floor for ATTRIBUTING an existing lesson, deliberately NOT the
+#: authoring floor. One failure by an owl is enough to say that owl hit this
+#: failure; it is not enough to justify writing a new skill. Measured cost of
+#: conflating them: two of eleven orphans unreachable for ever.
+_RECONCILE_MIN_EVIDENCE = 1
+
 #: The manifest field that says the MINER wrote a skill. The name prefix alone is
 #: a spelling; this is provenance. A hand-authored skill that happens to share the
 #: prefix is not this module's to archive.
@@ -507,7 +513,7 @@ class FailureOutcomeMiner:
         # time only ever fixes the NEXT skill; this pass fixes the ones already
         # written. It runs on the same clusters, so it uses the same evidence the
         # miner itself would have used — no second rule about who owns what.
-        healed = await self.reconcile_ownership(clusters)
+        healed = await self.reconcile_ownership()
         # 4. EXIT
         report = MiningReport(
             n_outcomes_scanned=len(outcomes),
@@ -527,7 +533,9 @@ class FailureOutcomeMiner:
         )
         return report
 
-    async def reconcile_ownership(self, clusters: Sequence[FailureCluster]) -> int:
+    async def reconcile_ownership(
+        self, clusters: Sequence[FailureCluster] | None = None,
+    ) -> int:
         """Give every OWNERLESS mined skill to the owls its cluster names.
 
         WHY THIS EXISTS, and why it is not a one-off repair script. Attaching at
@@ -553,17 +561,49 @@ class FailureOutcomeMiner:
         same source ``_attach_to_the_owls_that_failed`` uses, recomputed from
         live outcomes on every pass.
 
+        WHY IT DOES ITS OWN CLUSTERING, AT min_size=1. ``_min_evidence`` exists to
+        gate AUTHORING — you do not write a new lesson from a single failure. It
+        has nothing to do with ATTRIBUTING a lesson that is already written, and
+        reusing it here would be a category error with a measurable cost:
+        MEASURED 2026-09-02 over 179 failed outcomes in 7 days, the authoring
+        threshold of 3 reaches nine of the eleven orphans and leaves
+        ``incident_delegate_task`` and ``incident_delegate_task_unachieved_effect``
+        stranded for ever, because delegate_task failed once in each class. An owl
+        that hit the failure ONCE is still an owl that hit the failure.
+
+        WHY IT DOES NOT WAIT FOR AN INCIDENT. ``mine()`` runs only when an RCA
+        concludes — measured, 8 passes on 09-01 and 4 on 09-02, none in the 17
+        hours before this was written. A repair that only runs while the platform
+        is failing again is not self-healing. The daily orphan sweep calls this
+        too, so a healthy week still closes the gap.
+
         IDEMPOTENT BY CONSTRUCTION: it acts only on skills with no ownership row
-        at all, so a pass every ~12 minutes cannot accumulate anything.
+        at all, so any number of passes cannot accumulate anything.
 
         Never raises: a mining pass may not die on bookkeeping.
         """
         # 1. ENTRY
         log.memory.debug(
             "[incident] miner.reconcile: entry",
-            extra={"_fields": {"n_clusters": len(clusters)}},
+            extra={"_fields": {"clusters_given": clusters is not None}},
         )
-        if self._owl_registry is None or self._db is None or not clusters:
+        if self._owl_registry is None or self._db is None:
+            return 0
+        if clusters is None:
+            try:
+                since = time.time() - self._lookback_days * _SECONDS_PER_DAY
+                outcomes = await self._outcomes.list_failed_global(since_epoch=since)
+            except Exception as exc:  # noqa: BLE001 — hygiene must never cost a pass
+                log.memory.warning(
+                    "[incident] miner.reconcile: could not read outcomes — skipping",
+                    exc_info=exc,
+                )
+                return 0
+            clusters = cluster_failures_by_capability_and_signature(
+                outcomes, min_size=_RECONCILE_MIN_EVIDENCE,
+                capability_tag_lookup=self._capability_tag_lookup,
+            )
+        if not clusters:
             return 0
         from stackowl.owls.skill_ownership import (
             attach_skill_to_owl,
