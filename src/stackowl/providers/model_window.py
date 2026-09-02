@@ -346,11 +346,35 @@ async def resolve_window(
         # vLLM gateway) — actively discover its real window instead of assuming
         # the conservative fallback (see _probe_openai_compatible above).
         probed = await _probe_openai_compatible(base_url, model, api_key)
-        w = _clamp(probed) if probed else DEFAULT_WINDOW_FALLBACK
-        log.engine.info(
-            "[model_window] resolved via openai-compatible probe",
-            extra={"_fields": {"model": model, "probed": probed, "window": w}},
-        )
+        if probed:
+            w = _clamp(probed)
+            log.engine.info(
+                "[model_window] resolved via openai-compatible probe",
+                extra={"_fields": {"model": model, "probed": probed, "window": w}},
+            )
+        else:
+            # A FAILED PROBE IS NOT A RESOLUTION, and until 2026-09-02 it said it
+            # was. Both outcomes emitted the same INFO line — "resolved via
+            # openai-compatible probe" — differing only in a `probed: null` field,
+            # so probe failure was invisible to anyone reading the log rather than
+            # parsing it. MEASURED across every retained log: 8 of 210 probes
+            # (3.8%) failed, all 8 reporting success.
+            #
+            # THAT INVISIBILITY IS WHY THE 2026-09-02 OUTAGE WAS POSSIBLE. The
+            # floor was then 1,000,000 against a real 262,144 window, so a silent
+            # failure produced a window four times too large, `_output_cap` sized
+            # max_tokens against it, and a three-character "Hey" came back as an
+            # apology. The floor is now 100,000 and a rejection self-corrects the
+            # cache — but a failure that reports success would have hidden the
+            # next cause just as well.
+            w = DEFAULT_WINDOW_FALLBACK
+            log.engine.warning(
+                "[model_window] probe FAILED — using the probe-failure floor, so "
+                "this model's real window is unknown",
+                extra={"_fields": {
+                    "model": model, "base_url": str(base_url)[:80], "window": w,
+                }},
+            )
     else:
         w = DEFAULT_WINDOW_FALLBACK
         log.engine.info("[model_window] fallback window", extra={"_fields": {"model": model, "window": w}})

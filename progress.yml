@@ -14241,17 +14241,24 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 THE ASK IS 'keep the probe; add their catalog as a fallback?' — ANSWERED NO, on his own standing rule and on measurement. CLAUDE.md records 'prefer dynamic discovery over hardcoded config — ask the live system, do not hardcode a value it can report itself', and the probe succeeds on 202 of 210 resolutions (96.2%). A static catalogue would rot; the reference needs a change-detector test specifically to stop theirs rotting. We now have something better than a catalogue for the failure case: learn_window_from_error corrects the cache from the provider's own rejection."
+      - "AND MEASURING IT FOUND A LIVE DEFECT. A FAILED probe logged as a SUCCESS. Both outcomes emitted the same INFO line — 'resolved via openai-compatible probe' — differing only in a probed:null field, so probe failure was invisible to anyone reading the log rather than parsing it. 8 of 210 probes (3.8%) failed, all eight reporting success, on 2026-08-29 (5) and 2026-09-01 (3)."
+      - "THAT COMPLETES THE OUTAGE CHAIN. probe fails ~4% -> failure reports success, so nobody could see it -> the floor was then 1,000,000 against a real 262,144 window -> _output_cap sized max_tokens against it -> a three-character 'Hey' came back as an apology. Steps 3 and 4 were fixed this morning; step 2 was still live until now."
+      - "MY OWN FIRST READING WAS WRONG and the code caught it: I counted 210 'resolved via probe' lines and reported '210 successful probes, zero failures'. The line fires on both paths. Reading the branch that emits it is what corrected the count to 202/8 — the same match-the-prose-not-the-code error this session has hit repeatedly."
+      - "The failure path now logs at WARNING with wording that says the window is UNKNOWN. A test asserts the success wording is absent on the failure path and that the level is at least WARNING, because at INFO it reads like routine success in a log that runs at INFO."
+      - "tests/providers 713 passed. ./scripts/tripwires.sh PASS. validate=partial: the WARNING cannot fire until a probe actually fails again (3.8% of resolutions). Closing query: '[model_window] probe FAILED'."
+
     notes: null
 
   - id: D04.1

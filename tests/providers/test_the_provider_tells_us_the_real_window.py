@@ -151,3 +151,47 @@ def test_the_probe_failure_floor_fails_SAFE() -> None:
         "the probe-failure floor is at or above a real model window — it can now "
         "over-estimate again, which is the failure this value exists to prevent"
     )
+
+
+async def test_a_FAILED_probe_does_not_report_success(caplog) -> None:  # noqa: ANN001
+    """D03.5. Until 2026-09-02 both outcomes emitted the same INFO line —
+    "resolved via openai-compatible probe" — differing only in a `probed: null`
+    field. So a probe failure was invisible to anyone reading the log rather than
+    parsing it.
+
+    MEASURED across every retained log: 8 of 210 probes (3.8%) FAILED, and all
+    eight reported success.
+
+    THAT INVISIBILITY IS WHY THE OUTAGE WAS POSSIBLE. The floor was then 1,000,000
+    against a real 262,144 window, so a silent failure produced a window four
+    times too large and a three-character "Hey" came back as an apology. The floor
+    is now safe and a rejection self-corrects — but a failure that reports success
+    would have hidden the next cause just as well."""
+    import logging
+
+    from stackowl.providers import model_window as mw
+
+    async def _no_probe(*a: object, **k: object) -> int | None:
+        return None
+
+    mw._WINDOW_CACHE.pop(("P", "m"), None)  # noqa: SLF001
+    original = mw._probe_openai_compatible  # noqa: SLF001
+    mw._probe_openai_compatible = _no_probe  # type: ignore[assignment]  # noqa: SLF001
+    try:
+        with caplog.at_level(logging.INFO):
+            got = await mw.resolve_window(
+                provider_name="P", model="m", protocol="openai",
+                base_url="http://localhost:9/v1", context_chars=None, api_key="",
+            )
+    finally:
+        mw._probe_openai_compatible = original  # type: ignore[assignment]  # noqa: SLF001
+
+    assert got == mw.DEFAULT_WINDOW_FALLBACK
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "probe FAILED" in msgs
+    assert "resolved via openai-compatible probe" not in msgs, (
+        "a failed probe still reports itself as resolved"
+    )
+    assert any(r.levelno >= logging.WARNING for r in caplog.records), (
+        "the failure is INFO — it reads like routine success in a log that runs at INFO"
+    )
