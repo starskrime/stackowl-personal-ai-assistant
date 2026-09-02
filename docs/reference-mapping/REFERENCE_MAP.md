@@ -481,10 +481,36 @@ standalone repos.
 > the fence primitive, on having one unguarded writer to their three, and on trust tiering.
 > See `ESC-37` and `designs/D08.4.md`.
 
-### D08.5 · Graph memory — `AHEAD`
+### D08.5 · Graph memory — `AHEAD` *(contested — see the 2026-09-02 correction)*
 **Hermes.** One optional plugin (`holographic`) does retrieval over a store; no first-class graph.
 **StackOwl.** Kuzu adapter + entity extractor + graph reconciliation job, first-class.
 **Ask.** Keep — but does it survive the D08.1 decision?
+> **CORRECTED 2026-09-02 — the 2026-08-22 answer below is WRONG, and the subsystem is not inert.**
+> Measured over every retained log (2026-08-28 to 2026-09-02, 1,950 `classify: exit` records
+> carrying the field): `graph_context_len` is **NON-ZERO on 1,771 of them — 90%** — at 54 to
+> 361 characters, and never below 75% on any single day. The graph on disk is **40.3 MB** and
+> was last written **2026-09-02T03:36:50**. It is read on nine turns in ten and is actively
+> maintained for owl/skill/trait nodes.
+>
+> WHY THE OLD ANSWER READ ZERO IS NOT ESTABLISHED. Its window predates every retained log, so
+> it cannot be re-run; recorded as unverifiable rather than reconciled away. What is certain is
+> that it is not true of any day that can still be observed.
+>
+> WHAT IS ACTUALLY TRUE TODAY is narrower: the FACT-ENTITY feeder is gone. `kuzu_sync_handler`
+> joined on `committed_facts` (zero rows since migration 0112) and was deleted on 2026-09-02 as
+> dead code — correctly, since it could sync nothing. The owl, skill and trait writers remain.
+> So the graph keeps serving fact-derived entities that nothing can refresh, on 90% of turns,
+> while `ESC-78` measures its novel-entity contribution at ~4%.
+>
+> A LIMIT ON THIS MEASUREMENT, stated rather than hidden: node counts by type could not be
+> read. Kuzu holds a single-writer lock and the live platform owns it, so an out-of-process
+> query fails. The 90% is from the pipeline's own log field, not from the graph.
+>
+> The disposition — purge, rebuild, or leave — is `ESC-78`, unchanged and still the operator's.
+>
+> *The superseded 2026-08-22 answer follows, kept because a record that quietly loses its own
+> mistakes cannot be trusted about anything else:*
+>
 > **ANSWERED 2026-08-22 — it did NOT survive, and `AHEAD` now describes an inert subsystem.**
 > `graph_context_len` on `[pipeline] classify: exit` is **non-zero on 0 of 2,321 turns** over
 > eight days, while on the same records `prefs_len` and `stable_len` are non-zero on 2,321 of

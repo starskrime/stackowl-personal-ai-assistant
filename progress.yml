@@ -17516,17 +17516,24 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 NO CODE CHANGE, and the reason is that the only decision left is his. What this item DID is correct a false measurement in the map that would have misled the next reader."
+      - "THE RECORD SAID INERT; THE PLATFORM SAYS 90%. The map's 2026-08-22 answer reads 'graph_context_len non-zero on 0 of 2,321 turns' and calls the subsystem inert. Measured over every retained log (2026-08-28..2026-09-02, 1,950 classify exits carrying the field): NON-ZERO on 1,771 — 90% — at 54-361 chars, never below 75% on any single day. The graph is 40.3 MB and was last written 2026-09-02T03:36:50."
+      - "THE OLD NUMBER CANNOT BE RE-RUN. Its window predates every retained log, so why it read zero is recorded as UNVERIFIABLE rather than reconciled away. What is certain is that it is not true of any day still observable. The superseded answer is kept in the map beneath the correction — a record that quietly loses its own mistakes cannot be trusted about anything else."
+      - "WHAT IS ACTUALLY TRUE IS NARROWER: the FACT-ENTITY feeder is gone. kuzu_sync_handler joined on committed_facts (zero rows since 0112) and I deleted it on 2026-09-02 as dead code — correctly, it could sync nothing. The owl/skill/trait writers remain. So the graph serves fact-derived entities nothing can refresh, on 90% of turns, while ESC-78 measures its novel-entity contribution at ~4%."
+      - "A LIMIT ON THE MEASUREMENT, stated rather than hidden: node counts by type could NOT be read. Kuzu holds a single-writer lock and the live platform owns it, so an out-of-process query fails with 'Could not set lock on file'. The 90% comes from the pipeline's own log field, not from the graph itself."
+      - "VERDICT AHEAD IS CONTESTED, not silently rewritten: the heading is marked and the evidence is beside it. Changing a verdict on a keep-track item is the operator's call, and the disposition question is already ESC-78."
+
     notes: null
 
   - id: D09.1
