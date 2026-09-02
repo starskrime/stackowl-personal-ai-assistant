@@ -18006,17 +18006,26 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   partial
       document:   not_started
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 THE ASK IS ANSWERED BY A RECORDED DECISION, not by me. The map asks 'is user-visible learning part of the product, or internal machinery?'. SystemSpendAssembler exists because Bakir said 'that will give visibility to user what is happening in system' — the same question, already answered for spend. So learning gets the same treatment on the same surface."
+      - "LEARNING IS HAPPENING AND NONE OF IT WAS VISIBLE. Measured live: 5,747 lessons and 586 learning artifacts all-time, with 49 lessons (43 reflection, 5 skill, 1 tool_heuristic) and 21 DNA adjustments in the last 24 hours — and note_applied_lesson invoked 791 times, so they are read back and used. The only way to see any of it was to query SQLite by hand."
+      - "COUNTS FIRST, THEN THREE TEXTS. 49 entries a day cannot be listed; a brief nobody reads reports nothing. The lesson bodies are already written for a reader ('What worked for rca_gatherer: ...') so they need no reformatting."
+      - "THE TWO HALVES FAIL DIFFERENTLY ON PURPOSE. A lessons read that fails OMITS the section, because reporting 'nothing learned' when the query broke is a false clean bill of health. A learning_artifacts read that fails KEEPS the lessons half, because dropping what already succeeded would report LESS than is known."
+      - "WHERE WE DIVERGED: the reference renders a learning GRAPH in a desktop app. StackOwl has no desktop app, so the same question is answered on the brief — the surface that actually reaches him. No graph was built for a viewer that does not exist."
+      - "THE TENANCY TRIPWIRE CAUGHT TWO OF MY OWN EARLIER MISSES, not this item's. (1) usage_report.py queried task_outcomes UNSCOPED — shipped in c80b5f85 because that item's run covered tests/tools/meta and tests/startup, not tests/tenancy. Now owner-scoped, which changes the answer deliberately: a tool used only by another principal reads as never-invoked for this one, which is the correct per-tenant view. (2) Three stale allowlist entries for budget_enforcer and kuzu_sync_handler, deleted yesterday — 'retired means deleted' should have included their allowlist rows in that commit."
+      - "SECOND TIME THE SAME GAP IN TEST SELECTION HAS LET A CROSS-CUTTING TRIPWIRE GO UNRUN (the first was tests/scheduler on ESC-98). Recorded as a pattern, not an incident."
+      - "7 tests. tests/brief + tests/scheduler + tests/tenancy + tests/tools/meta + tests/startup 955 passed. ruff 35, mypy 65 at baseline."
+
     notes: null
 
   - id: D09.7

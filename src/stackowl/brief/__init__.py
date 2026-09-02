@@ -8,6 +8,7 @@ from stackowl.brief.assemblers import (
     BriefSectionAssembler,
     ConcludedIncidentsAssembler,
     DateAndPrioritiesAssembler,
+    LearningAssembler,
     SystemSpendAssembler,
 )
 from stackowl.brief.models import BriefSection, MorningBrief
@@ -21,6 +22,7 @@ __all__ = [
     "BriefSectionAssembler",
     "ConcludedIncidentsAssembler",
     "DateAndPrioritiesAssembler",
+    "LearningAssembler",
     "SystemSpendAssembler",
     "MorningBrief",
 ]

@@ -30,6 +30,7 @@ from stackowl.brief.assemblers import (
     BriefSectionAssembler,
     ConcludedIncidentsAssembler,
     DateAndPrioritiesAssembler,
+    LearningAssembler,
     SystemSpendAssembler,
     now_iso_utc,
 )
@@ -120,6 +121,10 @@ class MorningBriefHandler(JobHandler):
             # The digest half of Bakir's 2026-09-02 decision: a concluded RCA
             # goes here instead of paging him at critical urgency.
             ConcludedIncidentsAssembler(db=db),
+            # D09.6 — 'what have I actually taught it?' answered on the surface
+            # this platform has. 49 lessons and 21 DNA adjustments in a day were
+            # only visible by querying SQLite by hand.
+            LearningAssembler(db=db),
         ]
         # ADR-19 — the platform reporting on its own autonomic loops. Optional
         # so every existing construction site (tests, legacy wiring) is

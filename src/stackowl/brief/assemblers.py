@@ -642,3 +642,110 @@ class ConcludedIncidentsAssembler:
         return BriefSection(
             key=self.key, title=self.key, items=items, omitted=not items,
         )
+
+
+#: How far back the learning section looks. Matches the brief's daily cadence for
+#: the same reason the incident section does: a wider window repeats itself, a
+#: narrower one drops days on the floor.
+_LEARNING_WINDOW_HOURS = 24
+
+#: How many lesson texts are shown. MEASURED 2026-09-02: 49 lessons were written
+#: in one 24-hour window. Listing them would be a wall nobody reads, and a brief
+#: nobody reads reports nothing — so the section leads with counts and shows a
+#: few of the most recent as evidence that the counts mean something.
+_LEARNING_SAMPLES = 3
+
+
+class LearningAssembler:
+    """What the platform actually learned since the last brief.
+
+    D09.6 asks the reference platform's question — "what have I actually taught
+    it?" — which that platform answers with a learning graph rendered in a desktop
+    app. StackOwl has no desktop app; it has this brief, which is the surface an
+    equivalent answer can reach.
+
+    LEARNING IS HAPPENING AND NONE OF IT WAS VISIBLE. Measured 2026-09-02 on the
+    live database: 5,747 lessons and 586 learning artifacts all-time, with 49
+    lessons and 21 DNA adjustments written in the last 24 hours alone — and
+    `note_applied_lesson` invoked 791 times, so they are read back and used. The
+    only way to see any of it was to query SQLite by hand.
+
+    COUNTS FIRST, THEN A FEW TEXTS. 49 entries a day cannot be listed; the counts
+    say how much was learned and the samples show that the counts are not empty
+    bookkeeping. The lesson bodies are already written for a reader — "What worked
+    for rca_gatherer: ..." — so they need no reformatting.
+
+    A SECTION, NOT A SECOND JOB, and the same reasoning as its two siblings: the
+    brief already runs daily, already guards each section, and already delivers
+    through one seam.
+    """
+
+    key = "learning"
+
+    def __init__(self, db: DbPool) -> None:
+        self._db = db
+
+    async def assemble(self, ctx: BriefContext) -> BriefSection:
+        log.scheduler.debug("[brief] learning: entry", extra={"_fields": {}})
+        since = datetime.now(UTC) - timedelta(hours=_LEARNING_WINDOW_HOURS)
+        items: list[str] = []
+        by_kind: dict[str, int] = {}
+        try:
+            # `lessons` carries no owner_id (it is not owner-governed), so there is
+            # no scope clause to add here — checked against the table, not assumed.
+            rows = await self._db.fetch_all(
+                "SELECT source_type, content FROM lessons WHERE created_at >= ? "
+                "ORDER BY created_at DESC",
+                (since.isoformat(),),
+            )
+        except Exception as exc:
+            log.scheduler.error(
+                "[brief] learning: could not read lessons — omitting the section "
+                "rather than reporting that nothing was learned",
+                exc_info=exc,
+            )
+            return BriefSection(key=self.key, title=self.key, items=[], omitted=True)
+
+        for row in rows:
+            kind = str(row["source_type"] or "other")
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+        if by_kind:
+            spread = ", ".join(
+                f"{n} from {k}" for k, n in sorted(by_kind.items(), key=lambda kv: -kv[1])
+            )
+            items.append(f"{sum(by_kind.values())} lessons learned — {spread}")
+            for row in rows[:_LEARNING_SAMPLES]:
+                text = " ".join(str(row["content"] or "").split())
+                if text:
+                    items.append(text[:220])
+
+        try:
+            # learning_artifacts IS owner-governed (it carries owner_id), and
+            # tests/tenancy fails the build for an unscoped statement on one.
+            dna = await self._db.fetch_all(
+                "SELECT artifact_type, COUNT(*) AS n FROM learning_artifacts "
+                "WHERE created_at >= ? AND owner_id = ? GROUP BY artifact_type",
+                (since.isoformat(), DEFAULT_PRINCIPAL_ID),
+            )
+            for row in dna:
+                items.append(f"{row['n']} {row['artifact_type']} adjustments")
+        except Exception as exc:
+            # Partial is better than omitted: the lessons half already succeeded,
+            # and dropping it because the second query failed would report less
+            # than is known.
+            log.scheduler.warning(
+                "[brief] learning: could not read learning_artifacts — reporting "
+                "the lessons half only",
+                exc_info=exc,
+            )
+
+        log.scheduler.info(
+            "[brief] learning: assembled",
+            extra={"_fields": {
+                "lessons": sum(by_kind.values()), "kinds": sorted(by_kind),
+                "window_hours": _LEARNING_WINDOW_HOURS,
+            }},
+        )
+        return BriefSection(
+            key=self.key, title=self.key, items=items, omitted=not items,
+        )

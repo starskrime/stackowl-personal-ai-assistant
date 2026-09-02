@@ -240,8 +240,6 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         ("skills/store.py", "skills"),
         # --- memory dual-bridge + workers (raw SQL bridges, not Store subclasses) ---
         # TODO(Epic 9 multi-user): owner-scope committed_facts/staged_facts access
-        ("memory/budget_enforcer.py", "committed_facts"),
-        ("memory/budget_enforcer.py", "staged_facts"),
         # memory/extraction_handler.py entries removed 2026-07-26: the file was
         # DELETED by D01.7 slice 3b part 5b (c2fc9d32) — it was registered at
         # boot and never enqueued by anything, so the rollover boundary took
@@ -262,7 +260,6 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # register entry is evidently the easy half to forget; this test is why it
         # cost minutes instead of months.
         ("memory/fact_reinforcer.py", "staged_facts"),
-        ("memory/kuzu_sync_handler.py", "committed_facts"),
         ("memory/sqlite_bridge.py", "committed_facts"),
         ("memory/sqlite_bridge.py", "staged_facts"),
         ("memory/sqlite_helpers.py", "committed_facts"),

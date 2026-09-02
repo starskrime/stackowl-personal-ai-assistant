@@ -32,6 +32,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
+from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from collections.abc import Iterable
@@ -40,9 +41,21 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 #: EMITTED, normalized at the store (see ``memory.outcome_store``), so a
 #: well-formed name for a tool that does not exist can appear here — harmless for
 #: this question, which only ever asks whether a REGISTERED name is absent.
+#: OWNER-SCOPED. `task_outcomes` is owner-governed (migration 0043) and
+#: tests/tenancy/test_no_owner_scope_bypass.py fails the build for an unscoped
+#: statement on one. This shipped UNSCOPED on 2026-09-02 and the tripwire caught
+#: it — a day later, because that item's test run covered tests/tools/meta and
+#: tests/startup and not tests/tenancy. Second time that same gap in test
+#: selection has let a cross-cutting tripwire go unrun.
+#:
+#: The scope changes the ANSWER, deliberately: a tool used only by another
+#: principal now reads as never-invoked for this one. That is the correct
+#: per-tenant view — reporting every principal's usage into one report is the
+#: cross-tenant leak the tripwire exists to stop.
 _USED_SQL = (
     "SELECT DISTINCT je.value AS tool FROM task_outcomes t, "
-    "json_each(t.tool_sequence) je WHERE t.tool_sequence NOT IN ('', '[]')"
+    "json_each(t.tool_sequence) je WHERE t.tool_sequence NOT IN ('', '[]') "
+    "AND t.owner_id = ?"
 )
 
 
@@ -72,7 +85,7 @@ async def report_never_invoked(
         )
         return []
     try:
-        rows = await db.fetch_all(_USED_SQL)  # type: ignore[attr-defined]
+        rows = await db.fetch_all(_USED_SQL, (DEFAULT_PRINCIPAL_ID,))  # type: ignore[attr-defined]
         used = {str(r["tool"]) for r in rows}
     except Exception as exc:  # noqa: BLE001 — a report may never cost the boot
         log.tool.warning(
