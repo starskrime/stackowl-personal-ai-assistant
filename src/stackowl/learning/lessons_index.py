@@ -226,7 +226,10 @@ class LessonsIndex:
         hits = await self._adapter.search(
             list(vectors[0]), limit=limit, source_filter=source_filter,
         )
-        # INFO, not debug, and deliberately so. `lessons.lance` is 221MB and its
+        # INFO, not debug, and deliberately so. The corpus is the SQLite `lessons`
+        # table (this adapter is SqliteLessonsStore; the LanceDB store it used to
+        # name was migrated away — see scripts/migrate_lessons_from_lancedb.py, and
+        # the only .lance directory left is inside a pre-restore snapshot). Its
         # WRITE side is visible in the log while its READ side was not — so
         # whether that index earns its size has been unanswerable, and I have
         # already once mistaken "logged below the level" for "never retrieved".

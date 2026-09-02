@@ -18163,17 +18163,23 @@ items:
     blocks: []
     dedup_target: X3
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 THE ASK IS ANSWERED AND AHEAD HOLDS. The map asks: confirm the lessons actually reach a turn (registered != reachable). Measured over every retained log: 1,494 of 1,950 classify exits (76%) carried a lessons block into the prompt; the lessons index ran 1,494 searches and returned hits on 100% of them; note_applied_lesson has 794 invocations. Registered, reachable AND applied — the loop closes."
+      - "BUT THE BLOCK IS BYTE-IDENTICAL ON 99.3% OF TURNS: 1,483 of 1,494 are exactly 1,097 chars. Checked the denominator before calling it a defect — 1,072 of those are RCA/incident lanes running the same three stage prompts, where identical retrieval is CORRECT. The sharp denominator is Bakir's own lane: 18 of 18 turns returned the identical block across visibly different questions."
+      - "ROOT CAUSE FOUND, and it is precise. lessons_store.search guards against embedder drift by DIMENSION — 'rows written under a different embedder are incomparable. A query sees only its OWN dimension'. Measured: 4,268 of 5,747 lessons carry embedding_model='' and 1,479 carry all-MiniLM-L6-v2, and BOTH GROUPS ARE 384-DIMENSIONAL. Dimension equality is not model equality, so the guard passes 74% of the corpus through as comparable when it is not — exactly the 'confident nonsense' its own comment exists to prevent."
+      - "A STALE COMMENT CORRECTED ON THE WAY: lessons_index.search says 'lessons.lance is 221MB', but the adapter is SqliteLessonsStore and there is no lance directory outside a pre-restore snapshot. LanceDB was migrated away (scripts/migrate_lessons_from_lancedb.py); the comment was nearly enough to send me measuring the wrong store."
+      - "NOT FIXED HERE, and the reason is scope not appetite: the fix is either re-embedding 4,268 rows with the current embedder or adding embedding_model to the guard, and re-embedding a corpus is a data-rewriting decision. Recorded as DEBT-97 with the measurement. What IS established is that D09.7's AHEAD verdict stands on the Ask it was given."
+
     notes: null
 
   - id: D10.1
