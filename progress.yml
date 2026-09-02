@@ -17318,7 +17318,7 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   partial
+      validate:   done
       document:   not_started
     doc: null
     doc_last_verified: null
@@ -17329,6 +17329,7 @@ items:
       - "NO FORK WAS BUILT. The reference's fork is gated at 1-in-10 turns and memory_enabled defaults to False there, its cache advantage is nil here, and reflect_now already reaches the SAME ReflectionWriterHandler in-turn. Building a second learning engine would violate the one-loop rule for no measured gain."
       - "WHAT THE MEASUREMENT DID FIND: evolve_now holds a GUARANTEED presentation slot on every turn and has been invoked ZERO times all-time; synthesize_skills likewise zero. Against note_applied_lesson's 786. The contrast is an INCENTIVE shape, not discoverability: a tool that records something as a byproduct of answering is used constantly, while tools that ask the model to stop and do meta-work instead of finishing the user's task are never chosen. Presenting them harder would not change that."
       - "PRESENTATION WAS NOT TOUCHED, because the displacement cost measured ZERO: no 'eligible tools NOT presented' events in the retained log and a steady 79 presented. Removing evolve_now's guaranteed slot would have been a change with no evidence of benefit."
+      - "VALIDATED on a boot at 2026-09-02T01:45:57Z, after the commit: two lines, distinguishable by scope. scope=learned registered=2 never=1; scope=all REGISTERED=79 NEVER=16 — twenty per cent of the presented surface has never been invoked once: browser_back, browser_console, browser_cookies_clear, browser_cookies_set, browser_dialog, browser_get_images, browser_scroll, browser_tab_open, browser_upload, evolve_now, git, pdf, run_claude_code_demo, sessions_send, synthesize_skills, undo_write. The learned-tool report alone would have shown ONE of those sixteen."
       - "SHIPPED INSTEAD: tools/_infra/usage_report.py — one definition of 'never invoked', asked at boot for the WHOLE registry, not just learned tools. The rule lived in learned_tool_loader since this morning and covered 2 tools; the same blindness covered all 79 and hid more there. The loader now ASKS it rather than carrying a second copy."
 
     notes: null
