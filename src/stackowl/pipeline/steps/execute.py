@@ -7,7 +7,7 @@ import datetime
 import functools
 import json
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from stackowl.authz.bounds import (
@@ -1195,7 +1195,37 @@ def _tool_call_from_record(rc: dict[str, Any], *, duration_ms: float = 0.0) -> T
 
 
 
-def _turn_context_prefix(state: PipelineState, now: datetime.datetime | None = None) -> str:
+def _presented_names(tool_schemas: Sequence[object] | None) -> frozenset[str] | None:
+    """Tool names out of whatever schema shape the provider was handed.
+
+    Returns ``None`` when the shape is not recognised, which the skill nudge
+    treats as "unknown" and stays silent for — a guess here would nudge toward a
+    tool that may not be present, which is the failure the gate exists to avoid.
+    """
+    try:
+        names: set[str] = set()
+        for entry in tool_schemas or ():
+            if isinstance(entry, dict):
+                fn = entry.get("function")
+                name = (fn or {}).get("name") if isinstance(fn, dict) else entry.get("name")
+                if name:
+                    names.add(str(name))
+        return frozenset(names) or None
+    except Exception as exc:  # noqa: BLE001 — a gate may never cost the turn
+        log.engine.warning(
+            "[pipeline] execute: could not read the presented tool names — the "
+            "skill nudge stays silent rather than guessing",
+            exc_info=exc,
+        )
+        return None
+
+
+def _turn_context_prefix(
+    state: PipelineState,
+    now: datetime.datetime | None = None,
+    *,
+    presented_tools: frozenset[str] | None = None,
+) -> str:
     """The VOLATILE tier, prefixed to this turn's user text (D01.1 stage 2).
 
     The system prompt is frozen per session, so anything genuinely per-turn has
@@ -1247,6 +1277,23 @@ def _turn_context_prefix(state: PipelineState, now: datetime.datetime | None = N
         nudge = None
     if nudge:
         context = f"{context}\n\n{nudge}"
+    # D09.4 — the SKILL nudge, same seam and same mechanism, different words and a
+    # longer interval. Gated on skill_manage actually being presented: `skills_list`
+    # showed zero invocations for eight days not because the model ignored it but
+    # because on those turns it was not there to call, and nudging toward an absent
+    # tool would manufacture that failure deliberately. Unknown set -> silent.
+    try:
+        from stackowl.skills.nudge import note_turn as _skill_note_turn
+
+        skill_nudge = _skill_note_turn(state.session_key, presented_tools)
+    except Exception as exc:  # no-hidden-errors: never cost the turn its text
+        log.engine.error(
+            "[pipeline] execute: skill nudge FAILED — continuing without it",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        skill_nudge = None
+    if skill_nudge:
+        context = f"{context}\n\n{skill_nudge}"
     # INFO, not debug, and deliberately so: this is the ONLY evidence that the
     # model was told where its answer is going, and production runs at INFO. A
     # DEBUG line here could never close the acceptance check it exists to close.
@@ -2694,7 +2741,11 @@ async def _run_with_tools(
 
         gateway = LLMGateway(_preg)
         return await gateway.complete_with_tools(
-            user_text=_turn_context_prefix(state),
+            # The presented names, so the skill nudge can gate on skill_manage
+            # actually being callable this turn rather than merely registered.
+            user_text=_turn_context_prefix(
+                state, presented_tools=_presented_names(tool_schemas),
+            ),
             system_text=state.system_prompt,
             tool_schemas=tool_schemas,
             tool_dispatcher=_dispatch,

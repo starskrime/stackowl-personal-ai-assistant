@@ -17734,17 +17734,23 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   partial
       document:   not_started
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 THE MEASUREMENT DECIDED IT, and it refutes the obvious reading of D09.1. Across five days of rotated logs the MEMORY nudge — the same mechanism, different words — fired 96 times and 27 of those (28%) were followed by a memory write within ten minutes. More decisively, 27 of the 35 WRITES in that window (77%) followed a nudge. D09.1 measured evolve_now and synthesize_skills at ZERO all-time and concluded meta-work is never chosen; the first half is right, the inference 'so prompting cannot help' is not. The model will not VOLUNTEER meta-work; asked at the right moment it complies about a quarter of the time, and that quarter is where nearly all the writes come from."
+      - "ONE COUNTER, NOT TWO. The per-lane counter was inline in memory/curated.py and is now infra/nudge.TurnNudge, used by both memory and skills. A second copy is the duplication shape this codebase keeps paying for; a structural test asserts the inline copy does not return."
+      - "GATED ON THE TOOL BEING PRESENTED, which is the reference platform's rule and one this project has already paid for: skills_list showed zero invocations for eight days not because the model ignored it but because on those turns it was NOT in the presented set. The nudge is silent unless skill_manage is presented, and silent when the set is unknown — fails closed, because nudging toward an absent tool would manufacture that failure deliberately."
+      - "INTERVAL 10 vs the memory nudge's 4, deliberately: a durable fact appears in most conversations, a reusable procedure does not, and a nudge that fires with nothing to record trains the model to ignore it. Same value the reference platform uses."
+      - "9 tests. tests/skills + tests/memory + tests/pipeline/steps 1100 passed. ruff 35, mypy 65 at baseline after fixing two I introduced with an untyped helper."
+
     notes: null
 
   - id: D09.5

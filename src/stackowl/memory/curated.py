@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from stackowl.infra.bounded_mru import BoundedMRU
+from stackowl.infra.nudge import TurnNudge
 from stackowl.infra.observability import log
 from stackowl.paths import StackowlHome
 
@@ -1090,13 +1091,22 @@ NUDGE_INTERVAL_TURNS = 4
 #: dominant term — the nudge fired ~1/day and on 08-15 not at all. The threshold
 #: above absorbs that; this stays in-process deliberately. See D08.3 in
 #: progress.yml for the persistence option and why it was not taken.
-_TURNS_SINCE_WRITE: dict[str, int] = {}
+#: MOVED to infra/nudge.TurnNudge on 2026-09-02. The mechanism is identical to the
+#: one D09.4 needs for skills, and two copies of a counter is the shape this
+#: codebase keeps paying for. The reasoning above is unchanged and now lives with
+#: the primitive; the module-level functions below stay as they were so no caller
+#: had to move.
 
 _NUDGE_TEXT = (
     "You have not recorded anything in memory for a while. If something durable "
     "about the user or about how to do this work has come up — a preference, a "
     "constraint, a correction — record it with the memory tool now. If nothing "
     "has, say nothing and carry on; an empty note is worse than none."
+)
+
+
+_MEMORY_NUDGE = TurnNudge(
+    interval=NUDGE_INTERVAL_TURNS, text=_NUDGE_TEXT, label="[curated] nudge",
 )
 
 
@@ -1112,23 +1122,14 @@ def note_turn(session_key: str) -> str | None:
     prompt is frozen per incarnation, so a nudge placed there would either be
     present for the entire conversation or absent from all of it.
     """
-    count = _TURNS_SINCE_WRITE.get(session_key, 0) + 1
-    if count < NUDGE_INTERVAL_TURNS:
-        _TURNS_SINCE_WRITE[session_key] = count
-        return None
-    _TURNS_SINCE_WRITE[session_key] = 0
-    log.memory.info(
-        "[curated] nudge: due",
-        extra={"_fields": {"session_key": session_key, "turns": count}},
-    )
-    return _NUDGE_TEXT
+    return _MEMORY_NUDGE.note_turn(session_key)
 
 
 def note_write(session_key: str) -> None:
     """Reset the counter — the agent just wrote something, so it needs no hint."""
-    _TURNS_SINCE_WRITE[session_key] = 0
+    _MEMORY_NUDGE.note_action(session_key)
 
 
 def reset_nudges() -> None:
     """Clear every lane's counter. For tests, and for a deliberate restart."""
-    _TURNS_SINCE_WRITE.clear()
+    _MEMORY_NUDGE.reset()
