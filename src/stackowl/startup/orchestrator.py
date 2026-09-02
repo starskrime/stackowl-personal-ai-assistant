@@ -1018,6 +1018,18 @@ class StartupOrchestrator:
             # tools have never been invoked, and an append-only tool registry
             # accumulates dead weight silently. See load_all's docstring.
             learned_count = await LearnedToolLoader().load_all(tool_registry, db_pool)
+            # THE SAME QUESTION, ASKED OF THE WHOLE REGISTRY. The learned-tool
+            # report above answers it for two tools; the same blindness covers all
+            # 79 and hides more there — evolve_now holds a GUARANTEED slot on every
+            # turn and has been invoked zero times in the platform's entire
+            # history. Placed after every registration so nothing is missed, and
+            # nothing is removed on the strength of it: a tool the presentation cap
+            # dropped was never OFFERED, which is a different fact.
+            from stackowl.tools._infra.usage_report import report_never_invoked
+
+            await report_never_invoked(
+                [t.name for t in tool_registry.all()], db_pool, scope="all",
+            )
         log.info(
             "[startup] gateway: skills loaded",
             extra={"_fields": {"count": len(skills_components.loaded)}},

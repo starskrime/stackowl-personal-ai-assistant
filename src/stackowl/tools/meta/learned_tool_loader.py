@@ -115,37 +115,12 @@ class LearnedToolLoader:
     async def _report_unused(self, names: list[str], db: object | None) -> None:
         """Name the learned tools that have never been invoked. Never raises.
 
-        INFO, because production runs at INFO and this is the only signal that an
-        append-only registry is accumulating dead weight. Without a pool it says
-        so rather than reporting a silent zero — an unknown must not read as
-        "none", which is the mistake this project keeps paying for.
+        ONE SOURCE: this asks :func:`report_never_invoked`, which answers the same
+        question for the whole registry at boot. The rule lived here first and
+        covered learned tools only — the example, not the architecture — and two
+        copies of it would have drifted exactly where it matters.
         """
-        if not names:
-            return
-        if db is None:
-            log.tool.info(
-                "[tools] learned_loader: usage UNKNOWN — no pool wired, so "
-                "never-invoked learned tools cannot be reported",
-                extra={"_fields": {"learned": sorted(names)}},
-            )
-            return
-        try:
-            rows = await db.fetch_all(  # type: ignore[attr-defined]
-                "SELECT DISTINCT je.value AS tool FROM task_outcomes t, "
-                "json_each(t.tool_sequence) je WHERE t.tool_sequence NOT IN ('', '[]')"
-            )
-            used = {str(r["tool"]) for r in rows}
-        except Exception as exc:  # noqa: BLE001 — never cost the boot
-            log.tool.warning(
-                "[tools] learned_loader: could not read tool usage — not "
-                "reporting, rather than reporting a false zero",
-                exc_info=exc,
-            )
-            return
-        never = sorted(n for n in names if n not in used)
-        log.tool.info(
-            "[tools] learned_loader: learned-tool usage",
-            extra={"_fields": {"registered": sorted(names),
-                               "never_invoked": never,
-                               "n_never_invoked": len(never)}},
-        )
+        from stackowl.tools._infra.usage_report import report_never_invoked
+
+        await report_never_invoked(names, db, scope="learned")
+

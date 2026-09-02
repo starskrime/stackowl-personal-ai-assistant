@@ -26,6 +26,12 @@ platform already records — no second store, no new field on the spec.
 AN UNKNOWN MUST NOT READ AS "NONE". With no pool the loader says usage is
 unknown rather than reporting zero never-invoked tools, because a silent zero is
 how this project has repeatedly mistaken ignorance for a clean bill of health.
+
+THE RULE MOVED OUT ON THE SAME DAY. It lived here first and answered the question
+for learned tools only — the example, not the architecture — so it now lives in
+``tools/_infra/usage_report.py`` and is asked for the WHOLE registry at boot as
+well. These tests still pin the learned-tool behaviour; they check the shared
+line and its ``scope`` field instead of a private copy of the query.
 """
 
 from __future__ import annotations
@@ -63,9 +69,13 @@ async def test_a_never_invoked_tool_is_named(caplog) -> None:  # noqa: ANN001
             ["run_claude_code_demo", "instagram_media_extractor"],
             _Db(used=("instagram_media_extractor", "shell")),
         )
-    rec = [r for r in caplog.records if "learned-tool usage" in r.getMessage()]
+    rec = [r for r in caplog.records if "capability usage" in r.getMessage()]
     assert rec, "the loader said nothing about learned-tool usage"
     fields = rec[0]._fields  # noqa: SLF001
+    assert fields["scope"] == "learned", (
+        "the learned report lost its scope — two reports in one boot are now "
+        "indistinguishable"
+    )
     assert fields["never_invoked"] == ["run_claude_code_demo"]
     assert fields["n_never_invoked"] == 1
 
@@ -77,7 +87,7 @@ async def test_a_used_tool_is_not_named(caplog) -> None:  # noqa: ANN001
         await LearnedToolLoader()._report_unused(  # noqa: SLF001
             ["instagram_media_extractor"], _Db(used=("instagram_media_extractor",)),
         )
-    rec = [r for r in caplog.records if "learned-tool usage" in r.getMessage()]
+    rec = [r for r in caplog.records if "capability usage" in r.getMessage()]
     assert rec[0]._fields["never_invoked"] == []  # noqa: SLF001
 
 
@@ -88,7 +98,7 @@ async def test_no_pool_reports_UNKNOWN_not_zero(caplog) -> None:  # noqa: ANN001
         await LearnedToolLoader()._report_unused(["x"], None)  # noqa: SLF001
     msg = " ".join(r.getMessage() for r in caplog.records)
     assert "UNKNOWN" in msg
-    assert "learned-tool usage" not in msg, (
+    assert "capability usage" not in msg, (
         "a pool-less loader reported a usage verdict it could not have"
     )
 

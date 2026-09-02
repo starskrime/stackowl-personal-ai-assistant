@@ -17314,16 +17314,23 @@ items:
     dedup_target: X3
     stages:
       brainstorm: done
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   partial
       document:   not_started
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-01 RE-MEASURED: the MISSING verdict does not survive, and its own 2026-08-22 correction is now stale too. reflect_now has 11 invocations (not 0) since 2026-06-19; synthesize_skills lost its guaranteed slot by Bakir's ESC-46 on 2026-08-23; the prompt-cache advantage the fork exists to exploit is worth nothing here (cached_input_tokens = 0 on 129,793 of 129,793 records, all-time)."
+      - "LEARNING IS NOT STARVED, measured: 6,386 reflections written by the scheduled handler, lessons injected into prompts (lessons_len 1097 on a live turn), and note_applied_lesson invoked 786 times with the most recent minutes ago. The loop produces, reads and applies."
+      - "NO FORK WAS BUILT. The reference's fork is gated at 1-in-10 turns and memory_enabled defaults to False there, its cache advantage is nil here, and reflect_now already reaches the SAME ReflectionWriterHandler in-turn. Building a second learning engine would violate the one-loop rule for no measured gain."
+      - "WHAT THE MEASUREMENT DID FIND: evolve_now holds a GUARANTEED presentation slot on every turn and has been invoked ZERO times all-time; synthesize_skills likewise zero. Against note_applied_lesson's 786. The contrast is an INCENTIVE shape, not discoverability: a tool that records something as a byproduct of answering is used constantly, while tools that ask the model to stop and do meta-work instead of finishing the user's task are never chosen. Presenting them harder would not change that."
+      - "PRESENTATION WAS NOT TOUCHED, because the displacement cost measured ZERO: no 'eligible tools NOT presented' events in the retained log and a steady 79 presented. Removing evolve_now's guaranteed slot would have been a change with no evidence of benefit."
+      - "SHIPPED INSTEAD: tools/_infra/usage_report.py — one definition of 'never invoked', asked at boot for the WHOLE registry, not just learned tools. The rule lived in learned_tool_loader since this morning and covered 2 tools; the same blindness covered all 79 and hid more there. The loader now ASKS it rather than carrying a second copy."
+
     notes: null
 
   - id: D09.2
