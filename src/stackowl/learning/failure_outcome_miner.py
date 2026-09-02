@@ -544,6 +544,17 @@ class FailureOutcomeMiner:
         that. The consolidator's docstring already names this trap; this is the
         same rule applied to the same kind of family.
 
+        WHY IT COULD NOT STICK UNTIL 2026-09-02. Adoption marked the loser
+        ``archived`` — a column ``SkillCurator`` owns and whose revival rule is
+        "idle clock is short". A skill folded seconds ago is freshly loaded, so
+        that rule fired on it every pass. MEASURED: the miner folded 4 siblings on
+        08-31 15:49, "[curator] run: exit ... revived 5" at 09-01 09:00, the miner
+        folded the SAME siblings at 09-01 23:09 — adding their runs to the survivor
+        a SECOND time — and the curator revived them again at 09-02 09:00. A daily
+        loop that inflated ``n_executions``, which is what orders the catalogue.
+        The fold is now recorded in ``superseded_by``, which has one writer, and
+        the curator reads it and never revives such a row.
+
         WHAT IT DOES NOT DO. It does not copy the legacy prose across. Every write
         to a skill body goes through ``gated_skill_write``, and this module already
         has a merge path for a new outcome (``_merge_outcome_into_body``), so the
@@ -580,10 +591,16 @@ class FailureOutcomeMiner:
             )
             for name, failure_class in sorted(siblings.items()):
                 legacy = by_name[name]
-                if str(getattr(legacy, "lifecycle_state", "active") or "active") == (
-                    ADOPTED_LIFECYCLE_STATE
-                ):
-                    continue  # already adopted — a pass every ~12 minutes must not re-count
+                if getattr(legacy, "superseded_by", None):
+                    # ALREADY FOLDED — a pass every ~12 minutes must not re-count.
+                    # This guard USED TO read lifecycle_state, and that could not
+                    # work: the curator owns that column and revives anything whose
+                    # idle clock is short, which a freshly-folded sibling always
+                    # has. MEASURED 2026-09-02 — "[curator] run: exit ... revived 5"
+                    # on two consecutive days, with this loop re-crediting the same
+                    # runs each time (incident_shell 3 -> 6, incident_web_fetch
+                    # 3 -> 6). `superseded_by` has ONE writer, so the guard holds.
+                    continue
                 manifest = getattr(legacy, "manifest_json", None) or {}
                 if str(manifest.get("category") or "") != _INCIDENT_CATEGORY:
                     continue  # the prefix is a spelling; the category is provenance
@@ -592,6 +609,12 @@ class FailureOutcomeMiner:
                 runs += int(getattr(legacy, "n_executions", 0) or 0)
                 try:
                     await self._skills.set_n_executions(survivor.skill_id, runs)
+                    # SUPERSESSION FIRST, then the state. The column is what makes
+                    # this idempotent; the state is what takes the duplicate out of
+                    # the catalogue today. If the second write fails the first still
+                    # stands, so the runs can never be credited twice — the failure
+                    # mode that matters is bounded in the safe direction.
+                    await self._skills.set_superseded_by(legacy.skill_id, survivor.name)
                     await self._skills.set_lifecycle_state(
                         legacy.skill_id, ADOPTED_LIFECYCLE_STATE, time.time(),
                     )

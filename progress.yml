@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  SUPERSEDED_2026_09_02_the_curator_undid_the_miner_every_single_day:
+    map_check: "No mapped item — found while trying to CLOSE the open validate on SELFHEAL_2026_09_01."
+    how_it_surfaced: >-
+      SELFHEAL's closing query wanted a skill_ownership row for a mined skill. Measured: still
+      ELEVEN orphans and "[incident] miner.attach" has fired ZERO times in every retained log.
+      That turned out to be innocent — the two authoring events on 09-01 (02:00, 03:06) both
+      predate the fix going live at 03:23Z, so the attach path has simply never had an authoring
+      event since it shipped. The check stays OPEN. But measuring it found something else.
+    THE_DEFECT_a_daily_loop_nobody_could_see: >-
+      FailureOutcomeMiner.adopt_legacy_siblings folds incident_<capability>_<failure> into
+      incident_<capability>, moves the run history across, and marks the loser 'archived'.
+      SkillCurator owns that same column and revives anything whose idle clock is short — and a
+      skill folded seconds ago is freshly loaded, so its clock is ALWAYS short. The revival was
+      not a race, it was certain. Measured across the logs:
+      08-31 15:49 miner folds 4 siblings; 09-01 09:00 "[curator] run: exit ... revived 5";
+      09-01 23:09 miner folds THE SAME FOUR again, re-crediting their runs to the survivor
+      (incident_shell 3->6, incident_web_fetch 3->6, incident_owl_build 4->7,
+      incident_delegate_task 2->4); 09-02 09:00 "[curator] run: exit ... revived 5".
+      Every adoption logged INFO and looked like progress. The database says all five legacy
+      skills are 'active' with state_changed_at at the curator's timestamp, to the microsecond.
+    WHY_and_what_else_it_reaches: >-
+      One column carried TWO facts written by two components with opposite rules and no way to
+      tell their intents apart: "retired by decay" (the curator's business, reversible by use)
+      and "superseded by a fold" (the miner's business, not about use at all). CLAUDE.md shape
+      3, two copies of one rule, and shape 6, changing a row while another writer changes it
+      back. n_executions is what catalogue_order_key sorts by, so the loop was inflating the
+      catalogue's ranking signal once a day, for ever.
+    the_fix_keeps_ONE_retirement_authority: >-
+      D09.3 X11 made SkillCurator the single retirement path deliberately; it was never wrong
+      here, it was under-informed. Migration 0132 adds skills.superseded_by; the curator reads
+      it and returns ARCHIVED before every other rule including recent use; adoption writes it
+      and guards on it, so a sibling's runs can be credited exactly once. Nothing is deleted,
+      so ADR-19 I3 still holds. The backfill was dry-run against a copy of the live database
+      first and marks exactly the five the log names, and nothing else.
+    the_guard_was_nearly_DECORATION: >-
+      The first cut read getattr(legacy, "superseded_by", None) against a Skill record that did
+      not carry the column and a _SELECT_FIELDS list that did not select it — so the guard would
+      have been permanently False and the loop would have continued while three new tests passed.
+      Caught by asking what the record actually holds before believing the branch.
+    residual_NOT_silently_repaired: >-
+      Four survivors still carry one extra copy of a sibling's runs: incident_shell 6 (true 3),
+      incident_web_fetch 6 (3), incident_owl_build 7 (4), incident_delegate_task 4 (2). A
+      generic migration cannot know how many times a given deployment double-credited, and a
+      hardcoded correction would be wrong on every other database, so the numbers are recorded
+      here rather than rewritten. The effect is confined to catalogue ORDERING among four
+      skills of the same family, and it stops growing today.
+    suites: "tests/skills 477 + tests/learning 131 passed. Curator branch mutation-tested — forcing it false turns the new test red. ./scripts/tripwires.sh PASS, ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_09_00_curator_pass
+    closing_query: >-
+      "[curator] run: exit" must report revived 0 where it reported revived 5 on 09-01 and 09-02,
+      and the five legacy rows must read lifecycle_state 'archived' with superseded_by set.
+      A further "miner.adopt: legacy skill folded" for any of those five pairs is a regression.
   RETIREMENT_RESIDUE_2026_09_02_a_deleted_module_kept_answering_greps:
     map_check: "No mapped item — loop hygiene that turned into a defect."
     how_it_surfaced: >-

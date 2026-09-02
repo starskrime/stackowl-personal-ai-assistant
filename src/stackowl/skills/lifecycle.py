@@ -326,6 +326,9 @@ class SkillCurator:
 
         PRIORITY ORDER — ordering is behaviour, and ordering is what regresses:
 
+        0. SUPERSEDED outranks everything below, recent use included. A folded
+           skill's runs now belong to its survivor; reviving it would resurrect a
+           duplicate the catalogue has already resolved.
         1. ``pinned`` never reaches here; the caller skips it entirely.
         2. FAILING beats everything else. A skill with enough runs to have a
            verdict and a success rate below the floor is archived even if it ran
@@ -335,6 +338,16 @@ class SkillCurator:
            stale and a very old skill is not merely marked stale forever.
         4. Recent use falls through to ACTIVE, which is the revival path.
         """
+        if row.superseded_by:
+            # SUPERSEDED BEATS EVERYTHING, INCLUDING RECENT USE. This skill was
+            # folded into another one and its run history was moved across; there
+            # is nothing left here to revive TO. Before this branch existed the
+            # revival path below fired on it every single pass — a folded sibling
+            # is freshly loaded by construction, so its idle clock is always short
+            # — and the miner then re-folded it and re-credited its runs to the
+            # survivor. MEASURED 2026-09-01 and 2026-09-02: "revived 5" on both,
+            # with incident_shell and incident_web_fetch going 3 -> 6 in between.
+            return ARCHIVED
         if failing:
             return ARCHIVED
         if idle >= self._archive_after:
@@ -372,3 +385,7 @@ class _CurationRow:
     #: Built-ins decay on the same windows as learned skills (D09.3 R2Q6), with
     #: pinning as the protection. Carried so the report can distinguish them.
     source: str = "learned"
+    #: Migration 0132 — the skill this one was FOLDED INTO. Supersession is a
+    #: property of the catalogue rather than of use, so it does not decay and
+    #: use cannot undo it. None for every skill that stands on its own.
+    superseded_by: str | None = None

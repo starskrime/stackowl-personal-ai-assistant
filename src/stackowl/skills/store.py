@@ -67,6 +67,11 @@ class Skill:
     #: Which authoring-standard version this skill was last migrated to. 0 means
     #: "predates the standard" (D10.2 R6Q24, migration 0111).
     standard_version: int = 0
+    #: The skill this one was FOLDED INTO (migration 0132). Carried on the
+    #: record because adoption reads it as its own idempotency guard — a
+    #: getattr default of None here would make that guard silently dead, and
+    #: re-crediting run history is exactly the bug it exists to stop.
+    superseded_by: str | None = None
 
 
 #: Rank for the catalogue's second term. `archived` is already excluded from
@@ -171,7 +176,7 @@ _SELECT_FIELDS = """
     success_rate, n_executions, parent_traces, embedding, embedding_model,
     manifest_json, body_text, loaded_at, updated_at,
     tool_names, lessons_published_hash,
-    lifecycle_state, standard_version
+    lifecycle_state, standard_version, superseded_by
 """
 
 # Same field list, table-prefixed for the hybrid_recall JOIN against skills_fts
@@ -688,7 +693,7 @@ class SkillIndexStore(OwnedRepository):
         log.skills.debug("[skills] store.rows_for_curation: entry")
         rows = await self._db.fetch_all(
             "SELECT skill_id, name, lifecycle_state, pinned, n_executions, "
-            "       last_used_at, loaded_at, success_rate, source "
+            "       last_used_at, loaded_at, success_rate, source, superseded_by "
             "FROM skills WHERE owner_id = ?",
             (self._owner_id,),
         )
@@ -706,6 +711,11 @@ class SkillIndexStore(OwnedRepository):
                     float(str(r["success_rate"])) if r["success_rate"] is not None else None
                 ),
                 source=str(r["source"] or "learned"),
+                # Migration 0132 — a skill folded into another is SUPERSEDED, which
+                # is a different fact from "archived" and is not reversible by use.
+                superseded_by=(
+                    str(r["superseded_by"]) if r["superseded_by"] else None
+                ),
             )
             for r in rows
         ]
@@ -714,6 +724,36 @@ class SkillIndexStore(OwnedRepository):
             extra={"_fields": {"rows": len(out)}},
         )
         return out
+
+    async def set_superseded_by(self, skill_id: int, survivor_name: str) -> None:
+        """Record that this skill was folded into ``survivor_name``.
+
+        WHY THIS IS NOT ``lifecycle_state``. Both facts used to live in that one
+        column, written by two components with opposite rules: the miner marked a
+        folded sibling 'archived', and the curator revives anything whose idle
+        clock is short. A just-folded skill is by construction freshly loaded, so
+        the revival was certain — MEASURED as a daily loop on 2026-09-01 and
+        2026-09-02, each cycle re-crediting the sibling's runs to the survivor.
+
+        Supersession is a property of the CATALOGUE, not of use, so it gets its
+        own column and the curator reads it. The curator remains the single
+        authority over ``lifecycle_state`` (D09.3 X11) — it was never wrong here,
+        only under-informed.
+        """
+        # 1. ENTRY
+        log.skills.debug(
+            "[skills] store.set_superseded_by: entry",
+            extra={"_fields": {"skill_id": skill_id, "survivor": survivor_name}},
+        )
+        await self._db.execute(
+            "UPDATE skills SET superseded_by = ? WHERE skill_id = ? AND owner_id = ?",
+            (survivor_name, skill_id, self._owner_id),
+        )
+        # 4. EXIT
+        log.skills.debug(
+            "[skills] store.set_superseded_by: exit",
+            extra={"_fields": {"skill_id": skill_id}},
+        )
 
     async def set_lifecycle_state(self, skill_id: int, state: str, now: float) -> None:
         """Move one skill's lifecycle state. NEVER deletes (ADR-19 I3)."""
@@ -1382,6 +1422,9 @@ def _row_to_skill(row: dict[str, object]) -> Skill:
         # never as current — the opposite default would declare the backlog
         # migrated by fiat and leave the migrator nothing to find.
         standard_version=int(str(row.get("standard_version") or 0)),
+        superseded_by=(
+            str(row.get("superseded_by")) if row.get("superseded_by") else None
+        ),
     )
 
 

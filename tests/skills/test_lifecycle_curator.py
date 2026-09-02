@@ -290,3 +290,49 @@ async def test_lifecycle_counts_reports_the_catalog(tmp_db):
     await _curated(store)
 
     assert await store.lifecycle_counts() == {ACTIVE: 1, STALE: 1, ARCHIVED: 1}
+
+
+# --------------------------------------------------------------------------- #
+# Supersession — the one archival that use may NOT undo.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_a_SUPERSEDED_skill_is_never_revived(tmp_db):
+    """The bug this branch exists for, reproduced from production.
+
+    ``FailureOutcomeMiner.adopt_legacy_siblings`` folds
+    ``incident_<capability>_<failure>`` into ``incident_<capability>``, moves the
+    run history across, and archives the loser. The curator owned the same column
+    and revived anything whose idle clock was short — and a skill folded seconds
+    ago is freshly loaded, so its clock is ALWAYS short. The revival was not a
+    race; it was certain. MEASURED:
+
+        2026-08-31 15:49  miner folds 4 siblings
+        2026-09-01 09:00  "[curator] run: exit ... revived 5"
+        2026-09-01 23:09  miner folds the SAME 4 again, re-crediting their runs
+        2026-09-02 09:00  "[curator] run: exit ... revived 5"
+
+    Note what the fixture does: this skill is one day old with a recent run, so
+    every ordinary rule in ``_target_state`` says ACTIVE. Only supersession keeps
+    it archived — which is what makes the assertion mean something.
+    """
+    store = SkillIndexStore(tmp_db)
+    sid = await _add(store, "incident_shell_stop", age_days=1, execs=3)
+    await store.set_superseded_by(sid, "incident_shell")
+
+    await _curated(store)
+
+    assert await _state(store, "incident_shell_stop") == ARCHIVED
+
+
+@pytest.mark.asyncio
+async def test_a_skill_that_stands_on_its_own_is_untouched_by_the_new_branch(tmp_db):
+    """The control. Without it the test above passes for a curator that archives
+    everything, which is the failure mode of a one-sided guard."""
+    store = SkillIndexStore(tmp_db)
+    await _add(store, "incident_shell", age_days=1, execs=3)
+
+    await _curated(store)
+
+    assert await _state(store, "incident_shell") == ACTIVE

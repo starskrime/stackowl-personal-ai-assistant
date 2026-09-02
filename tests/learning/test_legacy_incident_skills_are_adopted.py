@@ -130,14 +130,16 @@ async def store(tmp_path, monkeypatch):  # noqa: ANN001, ANN201
 
 
 async def _seed(pool: DbPool, owner: str, name: str, runs: int, *,
-                category: str = "incident", state: str = "active") -> None:
+                category: str = "incident", state: str = "active",
+                superseded_by: str | None = None) -> None:
     manifest = json.dumps({"name": name, "category": category})
     await pool.execute(
         "INSERT INTO skills (name, source, path, description, when_to_use,"
         " body_text, manifest_json, n_executions, lifecycle_state, owner_id,"
-        " loaded_at, updated_at) VALUES (?, 'learned', ?, 'd', 'w', 'b', ?, ?, ?, ?, ?, ?)",
+        " loaded_at, updated_at, superseded_by)"
+        " VALUES (?, 'learned', ?, 'd', 'w', 'b', ?, ?, ?, ?, ?, ?, ?)",
         (name, f"/skills/learned/{name}", manifest, runs, state, owner,
-         time.time(), time.time()),
+         time.time(), time.time(), superseded_by),
     )
 
 
@@ -151,7 +153,8 @@ def _miner(index: SkillIndexStore, tmp_path) -> FailureOutcomeMiner:  # noqa: AN
 
 async def _row(pool: DbPool, name: str) -> dict:
     rows = await pool.fetch_all(
-        "SELECT n_executions, lifecycle_state FROM skills WHERE name = ?", (name,)
+        "SELECT n_executions, lifecycle_state, superseded_by FROM skills WHERE name = ?",
+        (name,),
     )
     return dict(rows[0])
 
@@ -240,14 +243,70 @@ async def test_a_learned_skill_that_is_not_an_INCIDENT_skill_is_left_alone(store
 
 
 @pytest.mark.asyncio
-async def test_an_already_archived_sibling_is_not_re_adopted(store, tmp_path) -> None:  # noqa: ANN001
+async def test_an_already_FOLDED_sibling_is_not_re_adopted(store, tmp_path) -> None:  # noqa: ANN001
+    """The idempotency guard reads ``superseded_by``, which has ONE writer."""
     index, pool = store
     owner = index._owner_id  # noqa: SLF001
     await _seed(pool, owner, "incident_shell", 3)
-    await _seed(pool, owner, "incident_shell_stop", 3, state=ADOPTED_LIFECYCLE_STATE)
+    await _seed(pool, owner, "incident_shell_stop", 3,
+                state=ADOPTED_LIFECYCLE_STATE, superseded_by="incident_shell")
 
     assert await _miner(index, tmp_path).adopt_legacy_siblings({"shell"}) == 0
     assert (await _row(pool, "incident_shell"))["n_executions"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_REVIVED_sibling_does_not_get_its_runs_CREDITED_TWICE(  # noqa: ANN001
+    store, tmp_path,
+) -> None:
+    """The production loop, reproduced.
+
+    THIS TEST EXISTS BECAUSE THE OLD GUARD READ ``lifecycle_state``, and that
+    column is owned by ``SkillCurator``, which revives anything whose idle clock
+    is short. A sibling folded seconds ago is freshly loaded, so the revival was
+    not a race — it was certain. MEASURED on the live platform:
+
+        2026-08-31 15:49  miner folds 4 siblings, marks them archived
+        2026-09-01 09:00  "[curator] run: exit ... revived 5"
+        2026-09-01 23:09  miner folds the SAME siblings — incident_shell 3 -> 6,
+                          incident_web_fetch 3 -> 6, incident_owl_build 4 -> 7
+        2026-09-02 09:00  "[curator] run: exit ... revived 5"
+
+    ``n_executions`` is what ``catalogue_order_key`` sorts by, so the loop was
+    inflating the catalogue's ranking signal once a day, for ever.
+
+    The sibling below is back to 'active' — exactly what the curator leaves
+    behind — and must STILL not be re-credited.
+    """
+    index, pool = store
+    owner = index._owner_id  # noqa: SLF001
+    await _seed(pool, owner, "incident_shell", 6)
+    await _seed(pool, owner, "incident_shell_stop", 3,
+                state="active", superseded_by="incident_shell")
+
+    assert await _miner(index, tmp_path).adopt_legacy_siblings({"shell"}) == 0
+    assert (await _row(pool, "incident_shell"))["n_executions"] == 6
+
+
+@pytest.mark.asyncio
+async def test_folding_RECORDS_the_supersession_not_only_the_state(  # noqa: ANN001
+    store, tmp_path,
+) -> None:
+    """Both writes, or the guard above is decoration.
+
+    The state takes the duplicate out of the catalogue today; the column is what
+    makes the fold survive a curator pass. Writing only one is how this class of
+    bug is made — it is how it WAS made.
+    """
+    index, pool = store
+    owner = index._owner_id  # noqa: SLF001
+    await _seed(pool, owner, "incident_shell", 0)
+    await _seed(pool, owner, "incident_shell_stop", 3)
+
+    assert await _miner(index, tmp_path).adopt_legacy_siblings({"shell"}) == 1
+    legacy = await _row(pool, "incident_shell_stop")
+    assert legacy["superseded_by"] == "incident_shell"
+    assert legacy["lifecycle_state"] == ADOPTED_LIFECYCLE_STATE
 
 
 @pytest.mark.asyncio
