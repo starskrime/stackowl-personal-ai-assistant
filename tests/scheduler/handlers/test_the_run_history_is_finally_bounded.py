@@ -65,8 +65,8 @@ async def test_it_deletes_only_rows_past_the_window() -> None:
     n = await DbReclaimHandler(pool)._prune_run_history()  # noqa: SLF001
     assert n == 734
     deletes = [s for s in pool.executed if s.startswith("DELETE")]
-    assert len(deletes) == 1
-    assert "ran_at <" in deletes[0] and "job_runs" in deletes[0]
+    assert deletes, "nothing was deleted"
+    assert all("ran_at <" in d and "job_runs" in d for d in deletes)
 
 
 async def test_nothing_stale_means_no_DELETE_at_all() -> None:
@@ -83,14 +83,28 @@ async def test_a_failure_never_costs_the_tick() -> None:
     assert await DbReclaimHandler(_Pool(stale=5, fail=True))._prune_run_history() == 0  # noqa: SLF001
 
 
-def test_the_window_deletes_nothing_today_by_design() -> None:
-    """The bound ships ON while removing zero rows, because "any data deletion"
-    is a stop-and-brief decision in this loop's rules and the operator has not
-    made it. 100 > 92, the age of the oldest row measured 2026-09-02.
+def test_the_window_is_the_one_the_operator_chose() -> None:
+    """It shipped at 100 days first — deleting NOTHING, because "any data
+    deletion" is a stop-and-brief item in this loop's rules and he had not decided
+    it. He then chose 7 with the numbers in front of him: 223,266 of 255,363 rows
+    (87%) are older than a week, worth about 56 MB of a 342 MB database.
 
-    If a later reader tightens this, that is a deliberate act with his sign-off —
-    not something that should drift in unnoticed."""
-    assert _RUN_HISTORY_RETENTION_DAYS >= 100
+    Pinned so a later reader does not drift it back without a decision."""
+    assert _RUN_HISTORY_RETENTION_DAYS == 7
+
+
+def test_a_huge_backlog_is_deleted_in_BATCHES() -> None:
+    """A single DELETE over 223,266 rows holds SQLite's write lock for its whole
+    duration, and this repo has already paid for database-is-locked events — one
+    contention moment emits four. Each statement is bounded, so the pass takes
+    several short locks instead of one long one."""
+    import inspect
+
+    from stackowl.scheduler.handlers import db_reclaim
+
+    src = inspect.getsource(db_reclaim.DbReclaimHandler._prune_run_history)  # noqa: SLF001
+    assert "LIMIT ?" in src, "the delete is unbounded again"
+    assert "_PRUNE_MAX_PER_PASS" in src, "one pass can consume the whole backlog"
 
 
 def test_retention_runs_BEFORE_the_vacuum() -> None:

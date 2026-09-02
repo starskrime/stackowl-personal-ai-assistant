@@ -315,6 +315,39 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RETENTION7_2026_09_02_the_authorised_deletion_223266_rows:
+    map_check: "No mapped item — executing an operator decision (ESC-106)."
+    the_decision: >-
+      Asked with the numbers, answered "7 days". job_runs held 255,363 completed rows — 45.1 MB
+      of table plus a 19.1 MB idempotency index, 19% of a 342 MB database — of which 223,266
+      (87%) are older than a week.
+    WHY_IT_SHIPPED_AT_100_FIRST: >-
+      Because "any data deletion" is a stop-and-brief item in this loop's own rules and he had
+      not decided it. 100 days deleted NOTHING (the oldest row was 92 days old) while capping the
+      unbounded append, which was the actual defect. This item is that authorisation arriving —
+      not a second attempt at the same fix.
+    safe_by_construction_not_by_judgement: >-
+      job_runs has exactly ONE reader, the exactly-once guard in scheduler._dispatch, and it
+      looks up _occurrence_key = "{idempotency_key}@{next_run_at}". The key EMBEDS the scheduled
+      instant and all 255,363 in the live table are distinct, so once an instant has passed its
+      key can never be queried again. There is no time window in the guard for a retention to
+      shorten.
+    THE_DELETE_IS_BATCHED_AND_THAT_IS_NOT_COSMETIC: >-
+      A single DELETE over 223,266 rows holds SQLite's write lock for the whole statement, and
+      this database has already produced "database is locked" events — CLAUDE.md records that one
+      contention moment emits four of them, so the count reads worse than the incident. Deletes
+      run in 5,000-row batches with a 50,000-row ceiling per hourly pass: the backlog clears over
+      a handful of ticks in short locks instead of one long one, and steady state (a few hundred
+      rows an hour) never approaches the ceiling.
+    retention_runs_BEFORE_the_vacuum: >-
+      Unchanged and still load-bearing: incremental_vacuum can only hand back pages something has
+      already freed, so pruning after it would leave the space until the next hour.
+    suites: "tests/scheduler 517 passed; 7 tests on the handler including a structural pin that the delete stays bounded. ./scripts/tripwires.sh PASS."
+    baselines: "ruff src/ 35, mypy 65."
+    validate: OPEN_awaiting_the_next_hourly_db_reclaim_tick
+    closing_query: >-
+      "[scheduler] db_reclaim.execute: exit" carrying a non-zero pruned_runs — up to 50,000 on
+      the first pass — and job_runs falling from 255,363 toward ~32,000 over the following ticks.
   OPERATOR_DECISIONS_2026_09_02_round_1:
     asked: "2026-09-02, four escalations put to Bakir with their measurements."
     ESC_78_graph: >-
@@ -4509,7 +4542,10 @@ current:
         Nothing today. The one real defect behind D12.1 (the browser owner_key divergence) is
         fixed. D12.2 and D12.3 can proceed either way; this only decides whether they extend a
         descriptor or add a branch.
-    ESC_106_how_much_run_history_do_you_want_to_keep:
+    ESC_106_ANSWERED_2026_09_02_seven_days:
+      resolution: >-
+        ANSWERED: 7 days. Implemented with batched deletes (see the RETENTION7 item). Reclaims
+        223,266 of 255,363 rows and about 56 MB.
       premise_check: |
         uv run python -c "import sqlite3,os;n=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True).execute('select count(*) from job_runs').fetchone()[0];print('HOLDS' if n>100000 else 'EXPIRED', n, 'rows')"
       question: >-

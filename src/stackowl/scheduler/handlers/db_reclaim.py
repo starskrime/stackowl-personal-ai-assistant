@@ -123,13 +123,33 @@ async def needs_one_time_vacuum(pool: DbPool) -> bool:
 
 #: How long a completed run stays in ``job_runs``.
 #:
-#: 100 DAYS IS CHOSEN TO DELETE NOTHING TODAY. Measured 2026-09-02 the oldest row
-#: is 2026-06-02 — 92 days — so this bounds the table for ever while removing zero
-#: rows on the first run. The DEFECT is that nothing bounded it at all; any bound
-#: fixes that. How tight the bound should be is a data-deletion decision for the
-#: operator, and the numbers are on the table: 7 days would reclaim 88% of the
-#: rows and about 56 MB of a 342 MB database.
-_RUN_HISTORY_RETENTION_DAYS = 100
+#: 7 DAYS, chosen by Bakir on 2026-09-02 when the numbers were put to him: the
+#: table held 255,363 completed rows — 45.1 MB plus a 19.1 MB idempotency index,
+#: 19% of a 342 MB database — and 223,266 of them (87%) are older than a week.
+#:
+#: IT SHIPPED AT 100 FIRST, deliberately: 100 days deleted NOTHING (the oldest row
+#: was 92 days old) so the unbounded append was capped without this loop deleting
+#: his data unasked, which its own rules make a stop-and-brief. This is that
+#: authorisation arriving.
+#:
+#: SAFE BY CONSTRUCTION, not by judgement. ``job_runs`` has exactly ONE reader —
+#: the exactly-once guard in ``scheduler._dispatch`` — and it looks up
+#: ``_occurrence_key``: ``{job.idempotency_key}@{job.next_run_at}``. The key EMBEDS
+#: the scheduled instant and every one of the 255,363 in the live table is
+#: distinct, so once an instant has passed its key can never be queried again.
+#: There is no time window in the guard for this to shorten.
+_RUN_HISTORY_RETENTION_DAYS = 7
+
+#: Rows deleted per statement. A single DELETE over 223,266 rows holds SQLite's
+#: write lock for the whole statement, and this repo has already paid for
+#: database-is-locked events — one contention moment emits four of them. Batching
+#: keeps each lock short; the pass simply takes several.
+_PRUNE_BATCH = 5_000
+
+#: Ceiling per hourly pass. The backlog clears over a handful of ticks instead of
+#: one long one, and steady state (a few hundred rows an hour) is far below it, so
+#: this only ever engages while catching up.
+_PRUNE_MAX_PER_PASS = 50_000
 
 
 class DbReclaimHandler(JobHandler):
@@ -180,10 +200,21 @@ class DbReclaimHandler(JobHandler):
             n = int(before[0]["n"]) if before else 0
             if not n:
                 return 0
-            await self._pool.execute(
-                "DELETE FROM job_runs WHERE ran_at < "
-                f"datetime('now','-{_RUN_HISTORY_RETENTION_DAYS} days')", (),
-            )
+            # BATCHED, not one statement. See _PRUNE_BATCH: a single DELETE over
+            # the 223,266-row backlog holds the write lock for its whole duration,
+            # and a turn contending with it is exactly how this database produced
+            # "database is locked" before.
+            n = min(n, _PRUNE_MAX_PER_PASS)
+            remaining = n
+            while remaining > 0:
+                await self._pool.execute(
+                    "DELETE FROM job_runs WHERE run_id IN ("
+                    "  SELECT run_id FROM job_runs WHERE ran_at < "
+                    f"  datetime('now','-{_RUN_HISTORY_RETENTION_DAYS} days')"
+                    "  LIMIT ?)",
+                    (min(_PRUNE_BATCH, remaining),),
+                )
+                remaining -= _PRUNE_BATCH
             log.scheduler.info(
                 "[scheduler] db_reclaim: pruned job run history — nothing had "
                 "ever bounded this table",
