@@ -18736,6 +18736,59 @@ items:
         stage: brainstorm
         summary: "Round 0 instrument shipped — the reader now names what it surfaced (652f47dc)."
         commits: [652f47dc]
+      - date: 2026-09-02
+        stage: implement
+        summary: >-
+          THE UNBLOCKED HALF SHIPPED. Rendered through the real injector at the real 4,000
+          cap on the LIVE corpus: BEFORE 3,889 chars / 12 entries carrying a description /
+          33 of 33 present; AFTER 3,668 chars / 19 entries / 33 of 33 present. +58% signal,
+          221 chars SMALLER, nothing deleted. THE OLD BEHAVIOUR WAS A CLIFF — entries were
+          placed in order at full width until the budget ran out and everything after fell
+          to a bare name, so a handful got a rich blurb and the rest got no retrieval
+          signal, decided by POSITION. when_to_use is 9,045 of the corpus's 12,944 chars
+          (70%), and it is the cheapest thing to give up because skill_view still loads the
+          full text before use.
+        commits: [dc19b973]
+      - date: 2026-09-02
+        stage: implement
+        summary: >-
+          THE DECISION IS GLOBAL, NOT PER-ENTRY, measured the hard way. A first attempt
+          tried the lean form only when an entry failed to fit: it moved 11 descriptions to
+          12, because the budget is spent in order and everything after the straddling
+          entry is already out of room. Deciding once for the whole tier is also the
+          reference platform's shape — uniform short width, not a greedy mix of long and
+          absent. A structural test pins it, because reverting to a per-entry fallback
+          would restore the cliff while looking like the same feature.
+        commits: [dc19b973]
+      - date: 2026-09-02
+        stage: implement
+        summary: >-
+          CORPUS RE-MEASURED at 33 skills, not the 179 the 2026-08-29 brainstorm measured —
+          the pruning and legacy-adoption work since then shrank it, so the panel's "5 of 9
+          slots to one capability" figure no longer holds and was NOT carried forward as
+          though it did. STILL BLOCKED, unchanged: "which 16 should be visible" needs live
+          traffic. This makes degradation EVEN instead of alphabetical, which is worth
+          having whatever that answer turns out to be.
+        commits: [dc19b973]
+      - date: 2026-09-02
+        stage: validate
+        summary: >-
+          PARTIAL, and 0-over-0 is why. The boot after the commit is clean (190 INFO, 1
+          warning, ZERO errors) but the lean-render INFO line has fired ZERO times: the
+          injector only runs during prompt assembly and no conversational turn has happened
+          since the restart. No information — not a pass, not a failure. What carries this
+          item is the direct render against the live corpus, not the log line. CLOSING
+          QUERY: "[skills] injector.render: rendering summaries LEAN" on the next real turn.
+        commits: [dc19b973]
+      - date: 2026-09-02
+        stage: test
+        summary: >-
+          TWO INSTRUMENT ERRORS caught and recorded rather than quietly fixed. Counting
+          entries with f"- {name}: " reported 14 where there were 19, because an UNTRUSTED
+          entry renders as "- name (source): ...". And a structural assertion for
+          "when_to_use" matched the method's own DOCSTRING instead of its code. Both now
+          match the real shape.
+        commits: [dc19b973]
     notes: >-
       HALF THE ITEM IS BLOCKED ON TRAFFIC, and the split is clean, so the other half proceeds.
       BLOCKED — "which 16 should be visible". Answering it needs to know whether the live
