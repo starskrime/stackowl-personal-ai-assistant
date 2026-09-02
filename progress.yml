@@ -18578,9 +18578,9 @@ items:
       cleanup:    no_change_needed
       test:       done
       validate:   partial
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      document:   done
+    doc: "docs/reference-mapping/designs/D10.6.md"
+    doc_last_verified: "2026-09-02 against commit cf4a7842 — Verification section RUN, not trusted: step 1 = 7 passed, step 2 = 527 passed, step 3 = chars 3668 / entries_with_text 19 / present 33 of 33, step 4 = 0 exactly as the document predicts."
     decisions:
       - date: 2026-08-29
         stage: brainstorm
@@ -18789,6 +18789,17 @@ items:
           "when_to_use" matched the method's own DOCSTRING instead of its code. Both now
           match the real shape.
         commits: [dc19b973]
+      - date: 2026-09-02
+        stage: validate
+        summary: >-
+          PRODUCTION EVIDENCE FOR THE CLIFF, found while checking why the lean line had not
+          fired. skills_len sat at 3,875 of the 4,000 cap on THIRTEEN consecutive live turns
+          before the change — so the cap bound every real turn, and the 12-entry render was
+          production behaviour, not a synthetic worst case. All of those assembles predate
+          the commit; ZERO have happened since, which is why the lean line reads 0. Verified
+          by splitting skills_len on the commit timestamp rather than assuming: BEFORE has 15
+          values, AFTER is empty. The 0 is no-information, exactly as recorded.
+        commits: [cf4a7842]
     notes: >-
       HALF THE ITEM IS BLOCKED ON TRAFFIC, and the split is clean, so the other half proceeds.
       BLOCKED — "which 16 should be visible". Answering it needs to know whether the live
