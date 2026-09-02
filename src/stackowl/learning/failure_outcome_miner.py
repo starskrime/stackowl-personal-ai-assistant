@@ -64,7 +64,7 @@ from __future__ import annotations
 import re
 import time
 from collections import defaultdict
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -503,6 +503,11 @@ class FailureOutcomeMiner:
         adopted = await self.adopt_legacy_siblings(
             {cluster.capability_class for cluster in clusters}
         )
+        # AND THEN REPAIR WHAT EARLIER PASSES LEFT BEHIND. Attaching at authoring
+        # time only ever fixes the NEXT skill; this pass fixes the ones already
+        # written. It runs on the same clusters, so it uses the same evidence the
+        # miner itself would have used — no second rule about who owns what.
+        healed = await self.reconcile_ownership(clusters)
         # 4. EXIT
         report = MiningReport(
             n_outcomes_scanned=len(outcomes),
@@ -517,9 +522,116 @@ class FailureOutcomeMiner:
                 "n_clusters": report.n_clusters_found,
                 "n_written": report.n_skills_written,
                 "n_legacy_adopted": report.n_legacy_adopted,
+                "n_ownership_healed": healed,
             }},
         )
         return report
+
+    async def reconcile_ownership(self, clusters: Sequence[FailureCluster]) -> int:
+        """Give every OWNERLESS mined skill to the owls its cluster names.
+
+        WHY THIS EXISTS, and why it is not a one-off repair script. Attaching at
+        authoring time — shipped 2026-09-01 — can only ever fix the NEXT skill.
+        ELEVEN were already on disk with no owner, so eleven lessons the platform
+        had paid roughly 140,000 tokens each to learn were unreachable by every
+        owl, and the same defect was re-diagnosed on three consecutive days.
+
+        Bakir's answer when asked which of the eleven to attach was to refuse the
+        question: *"Need to fix why it is not attached and what self-healing is
+        not healing it."* Hand-attaching eleven rows is the symptom. The cause is
+        that ownership had no reconciler at all — it was a side effect each writer
+        had to remember, so any writer that forgot produced an orphan in silence,
+        for ever. This makes ownership a fact the platform CHECKS rather than one
+        it hopes was written.
+
+        WHY IT CANNOT USE ``parent_traces``, which is the honest answer to "why
+        was it not attached". The provenance those eleven skills were authored
+        with is GONE: no SKILL.md frontmatter carries ``parent_traces``, and the
+        loader's upsert overwrote the column with ``[]`` on the next boot. That
+        is fixed in the same change, but it cannot bring back what was already
+        erased — so this reads the owls from the CLUSTER instead, which is the
+        same source ``_attach_to_the_owls_that_failed`` uses, recomputed from
+        live outcomes on every pass.
+
+        IDEMPOTENT BY CONSTRUCTION: it acts only on skills with no ownership row
+        at all, so a pass every ~12 minutes cannot accumulate anything.
+
+        Never raises: a mining pass may not die on bookkeeping.
+        """
+        # 1. ENTRY
+        log.memory.debug(
+            "[incident] miner.reconcile: entry",
+            extra={"_fields": {"n_clusters": len(clusters)}},
+        )
+        if self._owl_registry is None or self._db is None or not clusters:
+            return 0
+        from stackowl.owls.skill_ownership import (
+            attach_skill_to_owl,
+            persist_skill_ownership,
+            read_all_skill_ownership,
+        )
+        try:
+            owned = await read_all_skill_ownership(self._db)
+            known = {sk.name for sk in await self._skills.list_for_source("learned")}
+        except Exception as exc:  # noqa: BLE001 — hygiene must never cost a pass
+            log.memory.warning(
+                "[incident] miner.reconcile: could not read ownership — skipping",
+                exc_info=exc,
+            )
+            return 0
+        has_owner = {name for names in owned.values() for name in names}
+
+        healed = 0
+        for cluster in clusters:
+            owls = sorted({
+                str(o.owl_name) for o in cluster.outcomes if getattr(o, "owl_name", None)
+            })
+            if not owls:
+                continue
+            # BOTH SPELLINGS. The merged form is what the miner writes today; the
+            # pair form is what it wrote before commit 020b4145, and those rows
+            # are most of the orphans this exists to reach. The pair form is NOT
+            # re-spelled here — `legacy_siblings_for` already owns that rule and
+            # is the function adoption uses, so asking it is the difference
+            # between one source and two copies that drift.
+            candidates = {merged_skill_name(cluster.capability_class)}
+            candidates |= set(
+                legacy_siblings_for(cluster.capability_class, sorted(known))
+            )
+            for skill_name in sorted(candidates & known):
+                if skill_name in has_owner:
+                    continue
+                attached: list[str] = []
+                for owl in owls:
+                    try:
+                        attach_skill_to_owl(self._owl_registry, owl, skill_name)
+                        await persist_skill_ownership(self._db, owl, skill_name)
+                        attached.append(owl)
+                    except Exception as exc:  # noqa: BLE001
+                        log.memory.error(
+                            "[incident] miner.reconcile: could not give an orphaned "
+                            "skill to an owl",
+                            exc_info=exc,
+                            extra={"_fields": {"skill_name": skill_name, "owl": owl}},
+                        )
+                if not attached:
+                    continue
+                has_owner.add(skill_name)
+                healed += 1
+                # 3. STEP — INFO: this line is the only evidence a lesson that was
+                # written before ownership existed has finally reached anybody.
+                log.memory.info(
+                    "[incident] miner.reconcile: an orphaned lesson now has owners",
+                    extra={"_fields": {
+                        "skill_name": skill_name, "owls": attached,
+                        "capability_class": cluster.capability_class,
+                    }},
+                )
+        # 4. EXIT
+        log.memory.debug(
+            "[incident] miner.reconcile: exit", extra={"_fields": {"healed": healed}},
+        )
+        return healed
 
     async def adopt_legacy_siblings(self, capabilities: set[str]) -> int:
         """Fold every pair-form skill for *capabilities* into that capability's

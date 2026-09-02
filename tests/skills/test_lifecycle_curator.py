@@ -336,3 +336,65 @@ async def test_a_skill_that_stands_on_its_own_is_untouched_by_the_new_branch(tmp
     await _curated(store)
 
     assert await _state(store, "incident_shell") == ACTIVE
+
+
+# --------------------------------------------------------------------------- #
+# Provenance must survive the loader.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_a_RESCAN_does_not_erase_the_traces_a_skill_was_LEARNED_from(tmp_db):
+    """``parent_traces`` is the only record of which traces produced a learned
+    skill, and it is written at authoring time from live outcomes.
+
+    NO SKILL.md FRONTMATTER CARRIES IT — measured 2026-09-02, zero of the learned
+    skills on disk have the key — so the upsert's ``parent_traces =
+    excluded.parent_traces`` overwrote it with ``[]`` on the very next boot. All
+    ELEVEN mined incident skills read ``[]`` today, which is exactly why the
+    platform could not work out which owls a lesson belonged to.
+    """
+    import json
+
+    store = SkillIndexStore(tmp_db)
+    sid = await _add(store, "incident_shell", age_days=1)
+    await tmp_db.execute(
+        "UPDATE skills SET parent_traces = ? WHERE skill_id = ?",
+        (json.dumps(["trace-a", "trace-b"]), sid),
+    )
+
+    # The loader re-scans on every boot and has nothing to say about provenance.
+    await store.upsert(_loaded("incident_shell", "learned"))
+
+    rows = await tmp_db.fetch_all(
+        "SELECT parent_traces FROM skills WHERE skill_id = ?", (sid,)
+    )
+    assert json.loads(rows[0]["parent_traces"]) == ["trace-a", "trace-b"]
+
+
+@pytest.mark.asyncio
+async def test_a_writer_with_REAL_traces_still_updates_them(tmp_db):
+    """The control. Preserving on empty must not freeze the field — a re-author
+    that genuinely knows the traces has to be able to say so."""
+    import json
+
+    import dataclasses
+
+    store = SkillIndexStore(tmp_db)
+    sid = await _add(store, "incident_shell", age_days=1)
+    await tmp_db.execute(
+        "UPDATE skills SET parent_traces = ? WHERE skill_id = ?",
+        (json.dumps(["old"]), sid),
+    )
+    base = _loaded("incident_shell", "learned")
+    fresh = dataclasses.replace(
+        base,
+        manifest=base.manifest.model_copy(update={"parent_traces": ["new-1", "new-2"]}),
+    )
+
+    await store.upsert(fresh)
+
+    rows = await tmp_db.fetch_all(
+        "SELECT parent_traces FROM skills WHERE skill_id = ?", (sid,)
+    )
+    assert json.loads(rows[0]["parent_traces"]) == ["new-1", "new-2"]

@@ -315,6 +315,52 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ORPHANED_LESSONS_2026_09_02_the_platform_ERASED_the_evidence_of_whose_lesson_it_was:
+    map_check: "No mapped item — he rejected the escalation and named the item himself."
+    what_he_said: >-
+      Asked which of eleven orphaned mined skills to attach by hand, he refused the question:
+      "Need to fix why it is not attached and what self-healing is not healing it." Attaching
+      eleven rows is the WHAT. Both causes below were live and neither had been named.
+    CAUSE_1_ownership_had_no_reconciler: >-
+      Ownership was a side effect every writer had to remember. Nothing on the platform ever
+      asked "does this learned skill belong to anyone?", so a writer that forgot produced an
+      orphan in silence, for ever — and one did, eleven times. The 2026-09-01 fix attached at
+      AUTHORING time, which can only ever fix the next skill; it has still never fired, because
+      both authoring events on 09-01 (02:00, 03:06) predate it going live at 03:23Z.
+    CAUSE_2_the_evidence_of_WHOSE_lesson_it_was_was_being_DESTROYED: >-
+      parent_traces is the only record of which traces produced a learned skill. It is written
+      at authoring time from live outcomes, NO SKILL.md frontmatter carries it — measured, zero
+      of the learned skills on disk have the key — and the loader's upsert set
+      `parent_traces = excluded.parent_traces`, so the next boot overwrote it with `[]`. All
+      eleven read `[]` today. Even a perfect reconciler could not have said whose lesson it was.
+      This is the deeper answer to "why is it not attached": the platform erased the answer.
+    what_else_that_cause_reaches: >-
+      Every field the runtime learns that no SKILL.md can carry. The upsert docstring already
+      states the principle — "ON CONFLICT preserves runtime-managed fields so a re-scan never
+      wipes the agent's learning bookkeeping" — and lists success_rate, n_executions and
+      embedding. parent_traces belonged on that list and was not on it. The rule existed; the
+      field was missed.
+    the_fix: >-
+      (1) The upsert preserves parent_traces when the incoming value is empty and still updates
+      it when a writer has something real to say. (2) FailureOutcomeMiner.reconcile_ownership
+      runs in the pass that already exists — no second job, no second queue — finds learned
+      incident skills with no ownership row, and gives them to the owls their CLUSTER names,
+      recomputed from live outcomes. That is the same source the authoring-time attach uses.
+      The eleven are repaired BY the mechanism; nothing is hand-attached.
+    one_source_not_two: >-
+      The pair-form names are not re-spelled in the reconciler. legacy_siblings_for already owns
+      that rule and is what adoption uses, so it is asked. The first cut DID re-spell it via
+      _canonical_incident_slug and produced zero pair-form candidates — the merged and pair
+      spellings collapse for failure_class 'stop' — which a test caught.
+    suites: "tests/learning + tests/skills 602 passed. Both fixes mutation-tested: forcing the preserve branch false turns the provenance test red, and each new test has a control that fails a guard which fires on everything. ./scripts/tripwires.sh PASS, ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_mining_pass
+    closing_query: >-
+      "[incident] miner.reconcile: an orphaned lesson now has owners" at INFO with a non-empty
+      owls list, and skill_ownership rows for names matching 'incident\_%' ESCAPE '\' — ZERO
+      today, and any row at all closes it. The miner runs every ~12 minutes, so this is the
+      first acceptance check in this family that does not need an incident to occur first.
+      BEWARE: a bare LIKE 'incident_%' matches 'incident-evidence-brief' because _ is a SQL
+      wildcard; it has already nearly closed a check falsely once.
   SUPERSEDED_2026_09_02_the_curator_undid_the_miner_every_single_day:
     map_check: "No mapped item — found while trying to CLOSE the open validate on SELFHEAL_2026_09_01."
     how_it_surfaced: >-
@@ -437,7 +483,14 @@ current:
       already freed, so pruning after it would leave the space until the next hour.
     suites: "tests/scheduler 517 passed; 7 tests on the handler including a structural pin that the delete stays bounded. ./scripts/tripwires.sh PASS."
     baselines: "ruff src/ 35, mypy 65."
-    validate: OPEN_awaiting_the_next_hourly_db_reclaim_tick
+    validate: >-
+      CLOSED on the 23:09:43 tick, the first after the restart: "[scheduler]
+      db_reclaim.execute: exit {reclaimed_pages: 1, pruned_runs: 50000, file_mb: 359.5,
+      free_ratio: 0.036}". pruned_runs is exactly _PRUNE_MAX_PER_PASS, so the per-pass
+      ceiling is doing its job on a 223,266-row backlog rather than one long lock.
+      job_runs 255,473 -> 205,497 and rows older than 7 days 223,266 -> 173,266 in a
+      single pass. free_ratio moved 0.0 -> 0.036, so the space is now visible to the
+      incremental vacuum that runs after retention. Four more ticks clear the backlog.
     closing_query: >-
       "[scheduler] db_reclaim.execute: exit" carrying a non-zero pruned_runs — up to 50,000 on
       the first pass — and job_runs falling from 255,363 toward ~32,000 over the following ticks.
@@ -4661,6 +4714,13 @@ current:
         Nothing. The unbounded append — the actual defect — is fixed by the bound that
         shipped. Only the reclaim of existing space waits on you.
     ESC_105_page_if_unresolved_would_page_you_SIX_TIMES_MORE:
+      resolution: >-
+        ANSWERED 2026-09-02: "Page on repeat signatures." Not "unresolved" and not "gave up" —
+        interrupt when the SAME failure signature recurs AFTER a fix was shipped for it, because
+        that is the self-healing loop failing, which is the thing he most wants to know about.
+        Everything else, verified or not, stays in the brief. NOT YET IMPLEMENTED — needs a
+        signature-recurrence-after-fix detector; the give-up detector already in the code is NOT
+        what he chose.
       premise_check: |
         grep -q 'giving up' src/stackowl/scheduler/handlers/incident_escalation.py && ! grep -rq 'page_on_unresolved' src/ && echo HOLDS || echo EXPIRED
       question: >-
@@ -4802,6 +4862,14 @@ current:
         than removing it.
       what_is_blocked: "Nothing. Both pins are updated with their evidence and green."
     ESC_99_eleven_lessons_the_platform_already_paid_for_are_orphaned:
+      resolution: >-
+        REJECTED THE QUESTION, 2026-09-02: "Need to fix why it is not attached and what
+        self-healing is not healing it." He refused to pick which of eleven skills to hand-attach,
+        because attaching them is the WHAT. The item is now: (1) why does the authoring path
+        produce an ownerless skill at all, and (2) why did nothing on this platform NOTICE eleven
+        orphaned skills for days — a fix that does not heal itself means either self-healing is
+        broken or the core is not fixed. The eleven must be repaired BY the mechanism, not by me.
+        Re-opened as an item, not an escalation.
       premise_check: |
         uv run python -c "import sqlite3;n=sqlite3.connect('file:'+__import__('os').path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True).execute(r\"select count(*) from skills s where s.name like 'incident\_%' escape '\' and not exists (select 1 from skill_ownership o where o.skill_name=s.name)\").fetchone()[0];print(('HOLDS ' if n else 'EXPIRED ')+str(n)+' orphaned')" 2>/dev/null | tail -1
       question: >-
@@ -4999,6 +5067,12 @@ current:
         is what makes waiting safe: the turn already survives a store fault.
       what_is_blocked: "Nothing. Prefetch and the flush barrier are independent."
     ESC_90_the_stale_store_detector_needs_a_rule_only_you_can_choose:
+      resolution: >-
+        ANSWERED 2026-09-02: an EXPLICIT CADENCE REGISTRY. Each store declares once what its
+        expected write cadence is, and silence past that alarms. He chose the option that costs a
+        line per store precisely because a store's PURPOSE is the missing input and no query can
+        derive it — the two data-derived rules were both refuted against the live database.
+        NOT YET IMPLEMENTED.
       premise_check: |
         grep -rqE 'expected_cadence|STORE_CADENCE' src/ && echo EXPIRED || echo 'HOLDS no cadence registry'
       question: >-
@@ -5289,6 +5363,9 @@ current:
         c_process_level: "Revert to one slot. Simplest, and it re-introduces the cross-chat overwrite the docstring warns about."
       blocked_until_answered: "One smoke test stays red. Nothing else."
     ESC_76_the_platform_cannot_draw_anything_and_that_is_hardware_not_code:
+      resolution: >-
+        ANSWERED 2026-09-02: "Forget." No plotting stack, no cloud image model. The tool's honest
+        unavailable message naming both fixes is the accepted end state. Closed, not deferred.
       premise_check: |
         uv run python -c "import importlib.util as u; m=[n for n in ('matplotlib','graphviz','PIL') if u.find_spec(n)]; print('EXPIRED' if m else 'HOLDS', m or 'no plotting stack')" 2>/dev/null | tail -1
       question: "You asked for a picture and the platform cannot make one. Enabling that is a spend/egress decision only you can make. Which way?"

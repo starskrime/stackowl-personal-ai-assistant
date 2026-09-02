@@ -164,7 +164,17 @@ ON CONFLICT(owner_id, source, name) DO UPDATE SET
     when_to_use = excluded.when_to_use,
     version = excluded.version,
     enabled = excluded.enabled,
-    parent_traces = excluded.parent_traces,
+    -- PROVENANCE SURVIVES A RE-SCAN. `parent_traces` is the only record of
+    -- WHICH TRACES produced a learned skill, and it is written at authoring
+    -- time from live outcomes. No SKILL.md frontmatter carries it — measured
+    -- 2026-09-02, zero of the learned skills on disk have the key — so a
+    -- straight `= excluded.parent_traces` overwrote it with `[]` on the very
+    -- next boot. All ELEVEN mined incident skills read `[]` today, which is why
+    -- nothing could work out which owls a lesson belonged to. An empty incoming
+    -- value now means "the loader has nothing to say", not "forget".
+    parent_traces = CASE
+        WHEN excluded.parent_traces IN ('[]', '', 'null') THEN skills.parent_traces
+        ELSE excluded.parent_traces END,
     manifest_json = excluded.manifest_json,
     body_text = excluded.body_text,
     updated_at = excluded.updated_at,
@@ -316,6 +326,14 @@ class SkillIndexStore(OwnedRepository):
         ON CONFLICT preserves runtime-managed fields (``success_rate``,
         ``n_executions``, ``embedding``) so a re-scan never wipes the agent's
         learning bookkeeping.
+
+        ``parent_traces`` BELONGED ON THAT LIST AND WAS NOT ON IT. It is written
+        at authoring time from live outcomes and appears in no SKILL.md
+        frontmatter, so every re-scan overwrote it with ``[]``. Measured
+        2026-09-02: all eleven mined incident skills carried empty provenance,
+        which is precisely why the platform could not say which owls a lesson
+        came from. It is now preserved when the incoming value is empty and
+        still updated when the writer has something real to say.
         """
         # 1. ENTRY
         m = loaded.manifest
