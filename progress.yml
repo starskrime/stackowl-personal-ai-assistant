@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TRIPWIRES_2026_09_02_a_targeted_run_cannot_see_a_crosscutting_guard:
+    map_check: "No mapped item matches — evidence-led, and the evidence is two of my own shipped defects."
+    THE_PATTERN_NOT_THE_INCIDENT: >-
+      Twice in one day a cross-cutting guard caught a defect long after it shipped, and both
+      times the reason was identical: the loop's test stage says "targeted paths", paths get
+      chosen by what the change looks RELATED to, and a guard protecting a property of the
+      whole repo looks related to nothing. It is never selected.
+    the_two_that_shipped: >-
+      c80b5f85 — usage_report.py read the owner-governed task_outcomes with NO owner_id
+      predicate, a cross-tenant read. That item ran tests/tools/meta and tests/startup; the
+      tripwire lives in tests/tenancy. 95a841c3 — deleting six modules left three of their
+      entries in the owner-scope allowlist, so the allowlist claimed gaps that no longer
+      existed; "retired means deleted" should have covered the allowlist rows in that commit.
+    why_a_rule_was_not_enough: >-
+      "Remember to run the tripwires" is the same rule that had already failed twice. The fix
+      is the executable version: scripts/tripwires.sh, ~40 seconds, run before any commit
+      whatever the change touched.
+    THE_MARKER_IS_THE_SOURCE_not_a_path_list: >-
+      Anything marked @pytest.mark.tripwire joins the gate automatically, so a new guard opts
+      in where it LIVES. A list of paths inside the script would be a second copy of "which
+      tests are cross-cutting" and would drift from the tests themselves — the duplication
+      shape this codebase keeps paying for.
+    the_gate_caught_a_defect_in_ITSELF_on_its_first_run: >-
+      `set -o pipefail` plus mypy's non-zero exit (it exits 1 whenever it reports anything)
+      made the `|| echo 0` fallback fire even though grep had already matched, so the count
+      came out "65\n0" and the comparison errored into a false failure. Fixed by capturing
+      the output before grepping. The right way round for a gate to fail first.
+    PROVEN_TO_DISCRIMINATE_not_assumed: >-
+      Mutation test: the exact bypass was reintroduced — the owner_id predicate removed from
+      usage_report.py — and the gate went from "19 passed / TRIPWIRES PASS" to "1 failed /
+      TRIPWIRES FAILED — do not commit", then back to green on restore. A gate that has never
+      been shown to fail is not known to work.
+    the_gate_guards_ITSELF: >-
+      tests/test_the_tripwires_cannot_be_missed.py is itself a tripwire and asserts the marker
+      stays registered (an unregistered marker makes -m tripwire a silent no-op that passes
+      everything), the script stays executable, it still runs the marker and both baselines,
+      the two known guards still carry the marker, and both the item-loop skill and CLAUDE.md
+      still name it. Without those the gate rots quietly and the next bypass ships as the last
+      two did.
+    what_is_NOT_in_the_gate_and_why: >-
+      The 80 top-level tests/*.py files (CLAUDE.md records 69 — it has grown) are minutes, not
+      seconds, and a gate that is slow is a gate that gets skipped. They stay a separate
+      concern; this one is deliberately ~40s so it is always run.
+    suites: "pytest -m tripwire: 19 passed, 2 skipped. Full gate green end to end."
+    baselines: "ruff src/ 35, mypy 65 — the gate now enforces both."
+    validate: >-
+      CLOSED by the mutation test, which is the only validation a gate can honestly have: it
+      fails against the defect it exists to catch and passes against the fix, both
+      demonstrated rather than asserted.
   ESC87_ANSWERED_2026_09_02_a_concluded_RCA_no_longer_pages_you:
     map_check: "No mapped item — implementing an operator decision on an escalation I raised."
     the_question_and_his_answer: >-

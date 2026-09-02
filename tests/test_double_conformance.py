@@ -40,6 +40,13 @@ from collections.abc import Callable
 
 import pytest
 
+# CROSS-CUTTING GUARD. This protects a property of the WHOLE repo, so a
+# per-item test run never selects it — which is how two real bypasses
+# shipped (an unscoped task_outcomes read, and three stale allowlist
+# entries for deleted modules). `scripts/tripwires.sh` runs everything
+# marked this way, whatever the change touched.
+pytestmark = pytest.mark.tripwire
+
 
 def _tuple_arity(annotation: object) -> int | None:
     """Arity of a ``tuple[...]`` annotation, or None if it isn't one.

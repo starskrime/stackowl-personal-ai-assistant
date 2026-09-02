@@ -103,7 +103,12 @@ Duplicate keys silently swallow whole records. This has already happened.
   how Laws 1 and 2 hold.
 - **implement** — tests first. Minimal root-cause diffs. Ships ON, not behind a flag.
 - **cleanup** — resolve the item's `dedup_target`. `ruff` and `mypy` baselines may not rise.
-- **test** — targeted paths with timeouts. **Never a full `pytest` run — it hangs on this
+- **test** — targeted paths with timeouts, **then `./scripts/tripwires.sh` before any
+  commit, whatever the item touched.** Targeted paths are chosen by what the change
+  looks related to, and a CROSS-CUTTING guard never looks related to anything — which
+  is how an unscoped `task_outcomes` read and three stale allowlist entries both
+  shipped. The gate takes ~40s and runs everything marked `@pytest.mark.tripwire`
+  plus `progress_lint` and both baselines. **Never a full `pytest` run — it hangs on this
   box.** A hanging test is a failing test. Pre-existing red is in scope: root-cause it, fix
   it, and say so.
 - **validate** — restart with `./start.sh`, then verify via `~/.stackowl/logs/stackowl.jsonl`,

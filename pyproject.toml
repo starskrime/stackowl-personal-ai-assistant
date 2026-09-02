@@ -155,4 +155,11 @@ markers = [
     "spike: marks tests as integration spike tests (deselect with '-m \"not spike\"')",
     "integration: marks slower end-to-end tests touching real DBs/filesystem",
     "tui: marks tests exercising the Textual TUI layer",
+    # A CROSS-CUTTING GUARD: a test that protects a property of the WHOLE repo
+    # rather than of the module it sits next to — owner scoping, doubles matching
+    # their real classes, an allowlist staying honest. These are exactly the tests
+    # a targeted per-item run never selects, because they do not look related to
+    # whatever the item touched. Run them with `scripts/tripwires.sh` before any
+    # commit; see that script for the two bypasses that shipped without it.
+    "tripwire: cross-cutting guard — must run before every commit, whatever the change",
 ]

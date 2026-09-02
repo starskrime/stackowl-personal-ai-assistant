@@ -91,6 +91,16 @@ is a failing test only after you have checked it is not merely slow.** `tests/db
 is 7 minutes (102 tests, each replaying all 128 migrations); I recorded it as a
 hang at a 250s timeout and was wrong.
 
+**A targeted run CANNOT see a cross-cutting guard — run `./scripts/tripwires.sh`.**
+Targeted paths are picked by what the change looks related to, and a guard that
+protects the whole repo looks related to nothing. Two defects shipped exactly that
+way: `usage_report.py` read the owner-governed `task_outcomes` with no `owner_id`
+predicate (that item ran `tests/tools/meta` and `tests/startup`; the tripwire lives in
+`tests/tenancy`), and deleting six modules left three of their entries in the
+owner-scope allowlist. The gate is ~40 seconds and runs everything marked
+`@pytest.mark.tripwire` plus `progress_lint`, `ruff` and `mypy`. Mark a new guard with
+that marker and it joins automatically — the marker is the source, not a path list.
+
 **Only the FULL run finds cross-test pollution.** Of the 6 failures above, at least
 three are in directories that pass cleanly in isolation (`tests/mcp` 101, `tests/owls`
 334, `tests/pipeline` 1687). No targeted path can ever see them.
