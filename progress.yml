@@ -17740,9 +17740,9 @@ items:
       cleanup:    done
       test:       done
       validate:   partial
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      document:   done
+    doc: "docs/reference-mapping/designs/D09.4.md"
+    doc_last_verified: "2026-09-02 against commit e782e6b4 — Verification RUN, not trusted: step 1 = 9 passed, step 2 = 640 passed, step 3 = 0 exactly as the document states it will be until a sustained conversation reaches ten turns."
     decisions: []
     changes:
       - "2026-09-02 THE MEASUREMENT DECIDED IT, and it refutes the obvious reading of D09.1. Across five days of rotated logs the MEMORY nudge — the same mechanism, different words — fired 96 times and 27 of those (28%) were followed by a memory write within ten minutes. More decisively, 27 of the 35 WRITES in that window (77%) followed a nudge. D09.1 measured evolve_now and synthesize_skills at ZERO all-time and concluded meta-work is never chosen; the first half is right, the inference 'so prompting cannot help' is not. The model will not VOLUNTEER meta-work; asked at the right moment it complies about a quarter of the time, and that quarter is where nearly all the writes come from."
