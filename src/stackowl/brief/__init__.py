@@ -6,6 +6,7 @@ from stackowl.brief.assemblers import (
     AgentStatusAssembler,
     BriefContext,
     BriefSectionAssembler,
+    ConcludedIncidentsAssembler,
     DateAndPrioritiesAssembler,
     SystemSpendAssembler,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "BriefRenderer",
     "BriefSection",
     "BriefSectionAssembler",
+    "ConcludedIncidentsAssembler",
     "DateAndPrioritiesAssembler",
     "SystemSpendAssembler",
     "MorningBrief",

@@ -28,6 +28,7 @@ from stackowl.brief.assemblers import (
     AgentStatusAssembler,
     BriefContext,
     BriefSectionAssembler,
+    ConcludedIncidentsAssembler,
     DateAndPrioritiesAssembler,
     SystemSpendAssembler,
     now_iso_utc,
@@ -116,6 +117,9 @@ class MorningBriefHandler(JobHandler):
             # — a fact the platform had no way of telling him. Not optional and not
             # behind a toggle: `_run_assembler` defaults an unlisted section to ON.
             SystemSpendAssembler(db=db),
+            # The digest half of Bakir's 2026-09-02 decision: a concluded RCA
+            # goes here instead of paging him at critical urgency.
+            ConcludedIncidentsAssembler(db=db),
         ]
         # ADR-19 — the platform reporting on its own autonomic loops. Optional
         # so every existing construction site (tests, legacy wiring) is

@@ -30,12 +30,19 @@ WHAT THE SAME CAUSE REACHES: every consumer of the job lane. ``owl_build``
 carries the identical check and the identical wording, so all of them are
 asserted here rather than the one that happened to be reported.
 
-THE DENIALS BELOW ARE DELIBERATE AND ARE ASSERTED AS SUCH. ``owl_build`` and
-``code_execution`` are refused under a job lane because they are always-ask
+THE DENIALS BELOW ARE DELIBERATE AND ARE ASSERTED AS SUCH. ``owl_build`` is
+refused under a job lane because it is always-ask
 categories and ``internal`` is not a gateway channel, so the provenance grant
 does not apply either. That is the recorded decision — the shape of the owl
 fleet must never change unattended — and pinning it here stops a later widening
 of the lane from quietly widening those too.
+
+``code_execution`` LEFT this parametrisation on 2026-09-02: Bakir relaxed it out
+of the always-ask set (ESC-98), so asserting it is still refused would pin a
+contract that no longer exists. The lane invariant is unchanged and still
+asserted through ``owl_build``, which remains always-ask. This case was missed
+when ESC-98 shipped because that run covered the consent-touching files and not
+``tests/scheduler``.
 """
 
 from __future__ import annotations
@@ -106,7 +113,7 @@ async def test_consent_actually_GRANTS_a_tool_build_on_that_lane(job_lane) -> No
     )
 
 
-@pytest.mark.parametrize("category", ["owl_build", "code_execution"])
+@pytest.mark.parametrize("category", ["owl_build"])
 async def test_an_always_ask_category_is_still_refused_unattended(
     job_lane, category: str,  # noqa: ANN001
 ) -> None:

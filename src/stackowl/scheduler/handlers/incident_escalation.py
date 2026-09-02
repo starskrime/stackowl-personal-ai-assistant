@@ -350,7 +350,7 @@ async def record_diagnosis_started(
 
 async def record_diagnosis(
     db: object, *, signature: str, incident_id: str,
-    verified: bool | None = None, now: float | None = None,
+    verified: bool | None = None, summary: str = "", now: float | None = None,
 ) -> None:
     """Record that *signature* has had an RCA. Never raises.
 
@@ -366,8 +366,13 @@ async def record_diagnosis(
         await db.execute(  # type: ignore[attr-defined]
             "INSERT INTO audit_log (event_type, actor, target, timestamp, details, "
             "integrity_hash, chain_version) VALUES (?,?,?,?,?,?,?)",
+            # `summary` (2026-09-02) carries the composed verdict text, so the
+            # morning brief can REPORT a conclusion rather than merely count one.
+            # It rides the existing details blob because the row already exists —
+            # a second table for the same event is the duplication rule.
             (DIAGNOSED_EVENT, signature, incident_id, stamp,
-             json.dumps({"verified": verified}), "", "v1"),
+             json.dumps({"verified": verified, "summary": summary[:1200]}),
+             "", "v1"),
         )
     except Exception as exc:  # noqa: BLE001 — a ledger write may not cost a tick
         log.scheduler.warning(
@@ -715,9 +720,17 @@ class IncidentEscalationHandler(JobHandler):
                 self._clear_verdict_failures(inc.signature)
                 self._open_incidents[inc.signature] = incident_id
                 if self._db is not None:
+                    _kind: Literal["fix", "alternative"] = (
+                        "fix" if ran_rca else "alternative"
+                    )
                     await record_diagnosis(
                         self._db, signature=inc.signature, incident_id=incident_id,
                         verified=bool(getattr(verdict, "verified", False)),
+                        # The SAME composer the operator alert used before this
+                        # became a brief section — so the brief reports exactly what
+                        # the page used to say, and the composer is not orphaned by
+                        # the change that removed its only caller.
+                        summary=_compose_verdict_alert(inc, verdict, _kind),
                         now=self._clock_time(),
                     )
                 self.verdicts[inc.key] = verdict
@@ -1056,14 +1069,30 @@ class IncidentEscalationHandler(JobHandler):
                     "[scheduler] incident_escalation: verdict router failed",
                     exc_info=exc, extra={"_fields": {"signature": inc.signature}},
                 )
-        if self._alert is not None and verdict.verified:
-            try:
-                await self._alert(_compose_verdict_alert(inc, verdict, kind))
-            except Exception as exc:  # alert failure must not fail the sweep itself
-                log.scheduler.error(
-                    "[scheduler] incident_escalation: alert sink raised",
-                    exc_info=exc, extra={"_fields": {"signature": inc.signature}},
-                )
+        if verdict.verified:
+            # DIGEST, NOT A PAGE — Bakir, 2026-09-02: "A finished diagnosis goes in
+            # the periodic brief. You get paged only when the RCA could NOT
+            # conclude or needs a decision."
+            #
+            # MEASURED: 12 of one day's 25 CRITICAL Telegram pages were this line.
+            # The alert sink it used is `_build_health_alert_sink`, which hardcodes
+            # urgency="critical", and the router's table delivers every critical
+            # notification immediately whatever the hour — so a concluded
+            # self-heal diagnosis interrupted him exactly as hard as a subsystem
+            # going down.
+            #
+            # NOT SILENCED, MOVED. `record_diagnosis` already writes an
+            # `incident.diagnosed` row to the audit ledger for every conclusion,
+            # verified or not, and ConcludedIncidentsAssembler reports the window's
+            # conclusions in the morning brief off that same ledger. No second
+            # store, and nothing is lost — only the interrupt.
+            log.scheduler.info(
+                "[scheduler] incident_escalation: verdict CONCLUDED — routed to the "
+                "brief instead of paging",
+                extra={"_fields": {
+                    "signature": inc.signature, "kind": kind, "verified": True,
+                }},
+            )
         elif self._alert is not None:
             # An unverified verdict (the verifier stage rejected or couldn't
             # confirm the hypothesis) is exactly the kind of noise operators

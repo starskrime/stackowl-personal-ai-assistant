@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC87_ANSWERED_2026_09_02_a_concluded_RCA_no_longer_pages_you:
+    map_check: "No mapped item — implementing an operator decision on an escalation I raised."
+    the_question_and_his_answer: >-
+      12 of one day's 25 CRITICAL Telegram pages were "incident_escalation: RCA complete" —
+      the self-heal loop reporting it had finished a diagnosis. Asked 2026-09-02, answered:
+      "Digest only, page if unresolved."
+    WHY_IT_PAGED_AT_ALL: >-
+      The incident path reuses _build_health_alert_sink, which hardcodes
+      urgency="critical", and the notification router's decision table returns "delivered"
+      for every critical message whatever the hour or focus mode. So a concluded self-heal
+      diagnosis interrupted him exactly as hard as a subsystem going down. Lowering the
+      urgency would NOT have been enough: 'normal' and 'low' still deliver immediately
+      outside quiet hours, so "digest only" needed a different destination, not a smaller number.
+    what_shipped_the_DIGEST_half: >-
+      _consume_verdict no longer calls the alert sink for a verified verdict; it logs at INFO
+      and the conclusion reaches the morning brief through ConcludedIncidentsAssembler.
+      record_diagnosis already wrote an incident.diagnosed audit row for every conclusion, so
+      the section reads a ledger that already existed — no second store.
+    NOTHING_IS_SILENCED_ONLY_MOVED: >-
+      record_diagnosis now carries the SAME text _compose_verdict_alert produced for the page,
+      so the brief reports exactly what the page used to say. That also keeps the composer
+      from being orphaned by the change that removed its only caller — checked against the
+      retired-means-deleted rule rather than assumed.
+    THE_OTHER_HALF_WAS_NOT_SHIPPED_AND_THAT_IS_THE_FINDING: >-
+      "Page if unresolved" read literally inverts both branches. But incident_escalation's own
+      code records that 86 of 100 RCAs conclude verified=False, and all three RCA completions
+      in the retained log were rejected and suppressed. Paging on unresolved would have taken
+      him from ~12 pages to ~70 — the opposite of the stated goal. Unresolved conclusions are
+      COUNTED in the brief section instead, and the question of what genuinely deserves an
+      interrupt goes back to him rather than being answered by implementing a rule whose
+      premise the data contradicts. ESC-105.
+    a_miss_from_the_PREVIOUS_item_caught_here: >-
+      ESC-98's run covered every consent-touching file but not tests/scheduler, which
+      parametrises over the always-ask categories — so test_an_always_ask_category_is_still_
+      refused_unattended[code_execution] was left red by that commit and found by this item's
+      wider run. Fixed here with the reason recorded in the file.
+    suites: "tests/brief + tests/scheduler + tests/notifications 690 passed; tests/scheduler/handlers 221."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_the_next_concluded_RCA_and_the_next_morning_brief
+    closing_query: >-
+      "[scheduler] incident_escalation: verdict CONCLUDED — routed to the brief instead of
+      paging" and "[brief] concluded_incidents: assembled" — and ZERO further critical pages
+      carrying "RCA complete", against 12 in one day.
   ESC98_ANSWERED_2026_09_02_code_execution_gated_by_NAME_is_now_gated_by_NOTHING:
     map_check: "No mapped item — implementing an operator decision on an escalation I raised."
     the_question_and_his_answer: >-
@@ -4260,6 +4303,24 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_105_page_if_unresolved_would_page_you_SIX_TIMES_MORE:
+      question: >-
+        You chose "digest only, page if unresolved". The digest half is shipped. But
+        unresolved is not the rare case — incident_escalation's own code records 86 of 100
+        RCAs concluding verified=False, and all three completions in the retained log were
+        rejected. Paging on unresolved would take you from ~12 pages a day to ~70. What
+        should actually interrupt you?
+      why_evidence_cannot_settle_it: >-
+        The measurement refutes the premise but cannot choose the replacement. Which events
+        are worth an interrupt is your appetite, not a fact about the system.
+      the_panel_recommendation: >-
+        Page when an RCA gives up on a signature after N attempts — that is genuinely
+        "unresolved", it is rare, and the code already detects it ("RCA produced no verdict
+        %d times for this signature — giving up"). Everything else, verified or not, stays in
+        the brief.
+      what_is_blocked: >-
+        Nothing. Concluded RCAs no longer page and are reported in the brief; unresolved ones
+        are counted there. Only the question of what replaces the interrupt is open.
     ESC_104_RESOLVED_2026_09_01_he_answered_delete_it:
       resolution: >-
         ANSWERED by Bakir the same day: "All dead codes should be removed if nothing uses it."
@@ -4642,7 +4703,10 @@ current:
         burst is bounded and observable, and it PROVES the fix in production — which a hand
         cleanup would deny. It is also the platform healing itself, which is the rule.
       what_is_blocked: "Nothing. The root cause is fixed and live."
-    ESC_87_every_concluded_RCA_pages_you_at_CRITICAL_urgency:
+    ESC_87_ANSWERED_2026_09_02_digest_only_shipped:
+      resolution: >-
+        ANSWERED and the digest half implemented; the page is gone and the brief reports it.
+        The 'page if unresolved' half is refuted by measurement and reopened as ESC-105.
       question: >-
         12 of today's 25 critical Telegram pages were "incident_escalation: RCA complete" —
         the self-heal loop reporting that it finished a diagnosis. Should a concluded RCA

@@ -14,6 +14,7 @@ Sections (in default render order):
 
 from __future__ import annotations
 
+import json
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -552,3 +553,92 @@ class SystemSpendAssembler:
             extra={"_fields": {"total_input_tokens": grand, "families": len(totals)}},
         )
         return BriefSection(key=self.key, title=self.key, items=items, omitted=False)
+
+
+#: How far back the brief looks for concluded diagnoses. Matches the brief's own
+#: daily cadence: a section reporting a window wider than the gap between briefs
+#: would repeat itself, and one narrower would drop conclusions on the floor.
+_INCIDENT_WINDOW_HOURS = 24
+
+
+class ConcludedIncidentsAssembler:
+    """What the self-heal loop diagnosed since the last brief.
+
+    ASKED FOR, AFTER BEING SHOWN THE COST. On one day, 12 of 25 CRITICAL Telegram
+    pages were "incident_escalation: RCA complete" — the loop telling Bakir it had
+    finished a diagnosis. The sink it used hardcodes ``urgency="critical"``, and
+    the notification router delivers every critical message immediately whatever
+    the hour, so a concluded self-heal diagnosis interrupted him exactly as hard
+    as a subsystem going down. Asked 2026-09-02, answered: "Digest only, page if
+    unresolved."
+
+    THIS IS THE DIGEST HALF, AND IT IS WHAT MAKES THE SILENCE SAFE. Removing the
+    page without reporting the verdict anywhere would not be a digest, it would be
+    deletion. ``record_diagnosis`` already writes an ``incident.diagnosed`` row for
+    every conclusion, carrying the SAME composed text the page used to send, so
+    this section reads a ledger that already exists rather than adding a store.
+
+    A SECTION, NOT A SECOND JOB — the same reasoning as
+    :class:`SystemSpendAssembler`: the brief already runs daily, already guards
+    each section, and already delivers through one seam.
+
+    SHIPS ON: ``_run_assembler`` reads ``toggles.get(key, True)``, so a section
+    absent from ``settings.brief.sections`` is enabled with no switch to find.
+    """
+
+    key = "concluded_incidents"
+
+    def __init__(self, db: DbPool) -> None:
+        self._db = db
+
+    async def assemble(self, ctx: BriefContext) -> BriefSection:
+        log.scheduler.debug("[brief] concluded_incidents: entry", extra={"_fields": {}})
+        since = time.time() - _INCIDENT_WINDOW_HOURS * 3600
+        try:
+            # audit_log is NOT owner-governed (no owner_id column, migration 0043
+            # lists it as framework runtime), so there is no scope clause to add
+            # here — checked against tests/tenancy rather than assumed.
+            rows = await self._db.fetch_all(
+                "SELECT actor, target, details, timestamp FROM audit_log "
+                "WHERE event_type = ? AND timestamp >= ? ORDER BY timestamp DESC",
+                ("incident.diagnosed", since),
+            )
+        except Exception as exc:
+            log.scheduler.warning(
+                "[brief] concluded_incidents: ledger read failed — omitting the "
+                "section rather than reporting an empty one",
+                exc_info=exc, extra={"_fields": {}},
+            )
+            return BriefSection(key=self.key, title=self.key, items=[], omitted=True)
+
+        items: list[str] = []
+        verified = unresolved = 0
+        for row in rows:
+            try:
+                detail = json.loads(str(row["details"] or "{}"))
+            except Exception:  # noqa: BLE001 — one bad row may not lose the rest
+                detail = {}
+            if detail.get("verified"):
+                verified += 1
+                summary = str(detail.get("summary") or "").strip()
+                items.append(summary or f"{row['actor']}: concluded")
+            else:
+                unresolved += 1
+        if unresolved:
+            # COUNTED, NOT LISTED. 86 of 100 RCAs conclude verified=False, so
+            # listing them would rebuild the noise this section exists to remove —
+            # but hiding them entirely would misreport how much the loop is
+            # actually resolving.
+            items.append(
+                f"{unresolved} analysed without reaching a confirmed cause"
+            )
+        log.scheduler.info(
+            "[brief] concluded_incidents: assembled",
+            extra={"_fields": {
+                "verified": verified, "unresolved": unresolved,
+                "window_hours": _INCIDENT_WINDOW_HOURS,
+            }},
+        )
+        return BriefSection(
+            key=self.key, title=self.key, items=items, omitted=not items,
+        )

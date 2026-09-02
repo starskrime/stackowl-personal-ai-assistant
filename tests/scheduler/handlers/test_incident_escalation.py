@@ -500,7 +500,22 @@ async def test_new_verdict_routed_with_kind_derived_from_ran_rca() -> None:
 
 
 @pytest.mark.asyncio
-async def test_new_verdict_alerts_with_rca_summary_not_bare_flap() -> None:
+async def test_a_concluded_verdict_does_NOT_page_the_operator() -> None:
+    """Bakir, 2026-09-02: "A finished diagnosis goes in the periodic brief."
+
+    MEASURED: 12 of one day's 25 CRITICAL Telegram pages were exactly this — the
+    self-heal loop reporting that it had finished a diagnosis. The sink it used
+    hardcodes urgency="critical", and the router delivers every critical
+    notification immediately whatever the hour, so a concluded diagnosis
+    interrupted him as hard as a subsystem going down.
+
+    This test asserted the OPPOSITE until that decision. It is inverted rather
+    than deleted, because "a concluded verdict must not page" is now the contract
+    and it needs a guard exactly as much as the old one did.
+
+    The verdict text is not lost: it goes into the `incident.diagnosed` ledger row
+    via the same composer, which the brief reads. That half is asserted in
+    test_a_concluded_verdict_reaches_the_LEDGER below."""
     alerts: list[str] = []
 
     async def _alert(message: str) -> None:
@@ -521,11 +536,43 @@ async def test_new_verdict_alerts_with_rca_summary_not_bare_flap() -> None:
 
     await handler.execute(_job())
 
-    assert len(alerts) == 1
+    assert alerts == [], (
+        "a concluded RCA paged the operator — this is the 12-of-25 noise the "
+        "decision removed"
+    )
+
+
+async def test_a_concluded_verdict_reaches_the_LEDGER() -> None:
+    """The other half, and the one that makes the silence safe. Removing the page
+    without recording the verdict somewhere readable would not be a digest — it
+    would be deletion."""
+    writes: list[tuple] = []
+
+    class _Db:
+        async def execute(self, sql: str, params: tuple) -> None:
+            writes.append((sql, params))
+
+    healthy = HealthSweepHandler(_FakeAggregator([]))  # type: ignore[arg-type]
+    outcomes = [
+        _outcome("t1", "ToolExecutionError", "web_fetch"),
+        _outcome("t2", "ToolExecutionError", "web_fetch"),
+        _outcome("t3", "ToolExecutionError", "web_fetch"),
+    ]
+    handler = IncidentEscalationHandler(
+        health_sweep=healthy,
+        outcome_store=_FakeOutcomeStore(outcomes),  # type: ignore[arg-type]
+        rca_session=_RecordingRca(),  # type: ignore[arg-type]
+        db=_Db(),  # type: ignore[arg-type]
+    )
+
+    await handler.execute(_job())
+
+    diagnosed = [w for w in writes if "audit_log" in w[0] and "diagnosed" in str(w[1])]
+    assert diagnosed, "no incident.diagnosed row was written"
+    details = str(diagnosed[-1][1])
     # The RECORDING RCA's verdict carries root_cause="rc" / fix_pattern="fx" —
-    # the alert must carry those, not a bare "down"/"degraded" status flap.
-    assert "rc" in alerts[0]
-    assert "fx" in alerts[0]
+    # the LEDGER must now carry those, exactly as the page used to.
+    assert "rc" in details and "fx" in details
 
 
 class _RecordingUnverifiedRca:
