@@ -378,13 +378,27 @@ current:
       each class. Reconciliation now clusters at 1: an owl that hit the failure once is still an
       owl that hit the failure.
     suites_after_the_correction: "tests/scheduler + tests/learning + tests/skills 1,122 passed. ./scripts/tripwires.sh PASS, ruff 35, mypy 65."
-    validate: OPEN_awaiting_either_the_0430_sweep_or_the_next_concluded_RCA
+    pre_state_recorded_for_the_comparison: >-
+      Measured on the live database at 2026-09-02T23:30Z, on a core booted 23:25Z carrying the
+      fix: ownerless learned skills 11, ownership rows matching the incident_ prefix 1 (and that
+      one is the decoy above). The daily sweep is armed and pending for 2026-09-03T09:30:00Z.
+      The registration was checked NOT to have moved inside a branch — the delete half has run
+      nightly since 2026-08-31 and must not have been made conditional by reaching for the
+      miner; an AST test now pins that.
+    validate: OPEN_awaiting_either_the_0930Z_sweep_or_the_next_concluded_RCA
     closing_query: >-
       "[incident] miner.reconcile: an orphaned lesson now has owners" at INFO with a non-empty
       owls list, and skill_ownership rows for names matching 'incident\_%' ESCAPE '\' — ZERO
-      today, and any row at all closes it. Also "[scheduler] orphan_reconciliation: both
-      directions swept" carrying a non-zero ownership_healed. TWO paths now reach it: the
-      04:30 daily sweep, which needs no incident at all, and the next concluded RCA.
+      today. CORRECTED, and this nearly went wrong the same way as the LIKE trap: that count
+      is NOT zero, it is ONE — incident_hypothesis_evidence_check, an owl-authored skill that
+      merely spells itself with the same prefix. "Any row at all closes it" would have closed
+      on a row that predates everything here. The check is: an ownership row whose skill_name
+      is one of the ELEVEN measured orphans (incident_shell, incident_shell_stop,
+      incident_shell_unachieved_effect, incident_web_fetch, incident_web_fetch_stop,
+      incident_browser_click, incident_browser_navigate_stop, incident_owl_build,
+      incident_owl_build_stop, incident_delegate_task,
+      incident_delegate_task_unachieved_effect), equivalently the ownerless-learned-skill count
+      falling below 11. Also "[scheduler] orphan_reconciliation: both
       BEWARE: a bare LIKE 'incident_%' matches 'incident-evidence-brief' because _ is a SQL
       wildcard; it has already nearly closed a check falsely once.
   SUPERSEDED_2026_09_02_the_curator_undid_the_miner_every_single_day:
