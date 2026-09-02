@@ -154,8 +154,18 @@ class SkillInstructionInjector:
     """Render owned-skill playbooks. Trusted (builtin) sources injected plainly;
     untrusted sources fenced in <skill_reference trust="untrusted"> + neutralized."""
 
-    def _entry(self, sk: _SkillLike) -> tuple[str, bool]:
+    def _entry(self, sk: _SkillLike, *, lean: bool = False) -> tuple[str, bool]:
         """Render ONE entry as (line, is_untrusted).
+
+        ``lean`` drops the ``when_to_use`` clause and keeps name + description.
+        It is the RUNG BETWEEN a full summary and a bare catalogue name, and it
+        exists because demotion had no middle: an entry that would not fit as
+        "description — when_to_use" fell straight to a name with no signal at all.
+        MEASURED 2026-09-02 on the live 33-skill corpus: 11 entries carried a
+        description and 22 were bare names, inside a render of 3,889 of the 4,000
+        cap. ``when_to_use`` is 9,045 of the corpus's 12,944 characters — 70% —
+        so it is what pushes entries off the cliff, and dropping it for the ones
+        that would otherwise fall costs the least of anything available.
 
         D10.6 Stage 1 dropped the trailing ``(skill_view <name>)`` that every
         entry carried: the section header directly above already reads "call
@@ -166,7 +176,7 @@ class SkillInstructionInjector:
         The untrusted line keeps BOTH name and source inline, so collapsing the
         per-entry fence loses no information; only the repeated attributes go.
         """
-        text = _resolve_text(sk)
+        text = sk.description if lean else _resolve_text(sk)
         if sk.source in _TRUSTED:
             return f"- {sk.name}: {text}", False
         return (
@@ -232,6 +242,20 @@ class SkillInstructionInjector:
         text_budget = max(0, cap - catalog_reserve)
         full_budget = max(0, text_budget - _SUMMARY_BUDGET_RESERVE)
         pin_demoted = False
+        # GLOBAL FIDELITY, NOT A PER-ENTRY FALLBACK. Trying the lean form only
+        # when an entry fails to fit helps exactly ONE entry — the one straddling
+        # the boundary — because the budget is spent in order and everything after
+        # it is already out of room. MEASURED on the live 33-skill corpus: the
+        # per-entry version moved 11 descriptions to 12. Deciding ONCE for the
+        # whole tier moves it to ~26, which is the reference platform's shape: it
+        # renders every skill at a uniform short width rather than a greedy mix of
+        # long and absent.
+        summary_cost = sum(
+            len(self._entry(sk)[0]) + 1
+            for sk, tier, _p in tiered
+            if tier is SkillTier.SUMMARY
+        )
+        lean_summaries = summary_cost > max(0, cap - catalog_reserve - len(_STANDING))
         fenced_sections: set[str] = set()
 
         def _fence_cost(section: str, untrusted: bool) -> int:
@@ -240,7 +264,7 @@ class SkillInstructionInjector:
 
         for sk, tier, pinned in tiered:
             placed = False
-            line, untrusted = self._entry(sk)
+            line, untrusted = self._entry(sk, lean=lean_summaries and tier is SkillTier.SUMMARY)
             if tier is SkillTier.FULL:
                 extra = _fence_cost("full", untrusted)
                 if used + len(line) + extra <= full_budget:
@@ -265,6 +289,15 @@ class SkillInstructionInjector:
                     tier = SkillTier.CATALOG
             if not placed:
                 catalog.append(self._catalog_name(sk))
+        if lean_summaries:
+            log.engine.info(
+                "[skills] injector.render: rendering summaries LEAN — the corpus "
+                "does not fit at full width, so every entry keeps its description "
+                "instead of a few keeping when_to_use and the rest becoming names",
+                extra={"_fields": {
+                    "owl": owl_name, "summary_cost": summary_cost, "cap": cap,
+                }},
+            )
         if pin_demoted:
             log.engine.warning(
                 "skill injection: pinned skills exceed budget — some demoted to summary",

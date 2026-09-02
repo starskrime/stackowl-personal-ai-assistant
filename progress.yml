@@ -18573,11 +18573,11 @@ items:
     dedup_target: null
     stages:
       brainstorm: done
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial
       document:   not_started
     doc: null
     doc_last_verified: null
