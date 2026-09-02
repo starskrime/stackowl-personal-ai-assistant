@@ -315,6 +315,34 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  OPERATOR_DECISIONS_2026_09_02_round_1:
+    asked: "2026-09-02, four escalations put to Bakir with their measurements."
+    ESC_78_graph: >-
+      ANSWERED: "Rebuild the feeder, then re-measure." Not purge, not stop-reading. Build an
+      entity writer that does NOT depend on the retired committed_facts store, repopulate, and
+      measure the hit rate on fresh data. The ~4% novel-entity figure was measured on a frozen
+      corpus and he wants it re-taken on a live one before any verdict.
+    DEBT_97_lessons: >-
+      ANSWERED: "Re-embed the 4,268 rows." One backfill pass with the current embedder, then add
+      embedding_model to the comparability key so dimension can never again stand in for model.
+      Recall keeps the whole corpus and starts discriminating.
+    ESC_106_retention: >-
+      ANSWERED: "7 days." Reclaims 223,266 of 253,600 job_runs rows (88%) and about 56 MB of a
+      342 MB database. Safe by construction: the only reader is the exactly-once guard, keyed on
+      "{idempotency_key}@{next_run_at}" which embeds the scheduled instant, so a row that old can
+      never be queried again. This is an explicit authorisation for a data deletion the loop's
+      own rules otherwise forbid taking alone.
+    ESC_102_103_memory: >-
+      ANSWERED AS A PRINCIPLE, not a menu pick: "I think you need to look this issue from
+      available memories. I am thinking having this type information should be curated memory. It
+      should be related with that owl memory only." Read as: this kind of operational content
+      DOES belong in curated memory, but on the OWL it concerns — which is his standing rule
+      ("USER.md is the person only; job config/logs go on the owl") restated. That approves
+      moving USER.md entries 4 and 5 (682 chars of jobmarket configuration) onto the jobmarket
+      owl. Recorded, not yet executed — one item at a time.
+    execution_order: >-
+      DEBT-97 first (it changes what every turn retrieves), then ESC-106 (authorised deletion,
+      56 MB), then ESC-102's move, then ESC-78's rebuild (the largest build).
   ESCQUEUE_2026_09_02_the_queue_said_31_and_six_were_already_settled:
     map_check: "No mapped item — the loop's own record-keeping."
     THE_TRIGGER: >-
@@ -5871,6 +5899,39 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-97
+    found: 2026-09-02
+    corrected: 2026-09-02
+    title: "SUPERSEDED by measurement — my diagnosis was wrong on magnitude AND on cause"
+    what_i_claimed: >-
+      That lessons_store's drift guard keys on DIMENSION while 74% of the corpus carries
+      embedding_model='' at the same 384 dimensions, so three quarters of it was ranked against a
+      query it was never comparable to — evidenced by a byte-identical 1,097-char lessons block
+      on 18 of 18 turns on Bakir's own lane.
+    wrong_on_magnitude: >-
+      I measured the LABELS and inferred the vectors. Measuring the vectors: all 1,484
+      all-MiniLM-L6-v2 rows are unit-norm exactly, and of the 4,268 unlabelled rows 4,250 are
+      ALSO unit-norm — indistinguishable from the same model, written before SqliteLessonsStore
+      was told its own name (its constructor defaults embedding_model=""). Only EIGHTEEN are
+      non-unit and therefore provably foreign, all source_type='reflection'. 0.3%, not 74%.
+    wrong_on_cause: >-
+      The identical block is the DESIGN, and his own decision. classify._gather_lessons sets
+      selector = f"lessons for the {owl_name} owl" — the channel is deliberately
+      query-INDEPENDENT so the frozen-prompt invariant I1 holds. Its comment records the
+      measurement behind it (lessons_len moving 1097 -> 765 across two turns of one conversation
+      is exactly what I1 forbids) and states: "Bakir chose query-INDEPENDENT instead." Eighteen
+      foreign rows out of 5,752 could never have produced that block.
+    what_is_still_true: >-
+      Two smaller things, both real. (1) The 18 non-unit vectors reach norms of 20.9, and under
+      squared-L2 a large norm pushes a row to the END of the ranking — so those 18 reflections
+      are effectively unreachable. (2) 4,250 rows carry a blank model label, so if the embedder
+      ever DOES change, the dimension-keyed guard cannot tell them apart. A latent hazard, not a
+      live one. One reembed_all pass fixes both; that path already exists behind
+      `stackowl db reindex-memory`.
+    the_lesson: >-
+      Check the thing, not the thing's description. One query over the vectors refuted the
+      headline number by two orders of magnitude, and reading the caller refuted the cause
+      entirely. Same shape as every other instrument error this session.
   - id: DEBT-72
     found: 2026-08-31
     title: "Retry prompts were staged as durable user facts — 39% of staged_facts is machine text"
