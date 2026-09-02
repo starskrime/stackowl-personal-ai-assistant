@@ -315,6 +315,47 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESCQUEUE_2026_09_02_the_queue_said_31_and_six_were_already_settled:
+    map_check: "No mapped item — the loop's own record-keeping."
+    THE_TRIGGER: >-
+      31 open escalations against a queue whose stated purpose is 'the operator clears these in
+      one sitting'. 31 is not one sitting, so the first question was whether 31 is even true.
+    IT_WAS_NOT: >-
+      SIX were already settled. ESC-97 (output style should be the CHANNEL) was resolved by the
+      FORMAT item on 2026-09-01 — CHANNEL_SHAPES and OutputStyle.narrow ship and were verified
+      live. ESC-77 (should a plan survive the next message) was resolved by PLANSCOPE the same
+      day. ESC-82 was answered and its migration shipped (369 -> 228 rows). ESC-84's premise
+      EXPIRED on its own — scout.md is 1,946/2,200 now, the platform's own decay did exactly
+      what the escalation predicted. ESC-88's expired too: 102 rollover rows, all
+      status='completed', terminal and unable to re-arm. ESC-95 had said RESOLVED in its own key
+      since it was written.
+    THE_ROOT_CAUSE_IS_THAT_NOTHING_RE_CHECKS_THEM: >-
+      An item gets seven stages and a closing query. An escalation gets written once, with a
+      measurement, and is never looked at again — so the measurement ages in silence. Two of the
+      six were closed by MY OWN later work and I did not close them, because closing them was
+      not part of that item. That is not forgetfulness; it is a missing step.
+    what_shipped: >-
+      A premise_check field — a one-liner printing HOLDS or EXPIRED — plus
+      scripts/escalation_check.py which runs them all and names the ones that cannot be
+      re-verified. Backfilled for the six where today's measurements already gave the query
+      (ESC-75, 86, 91, 103, 106, 108); all six re-ran and HOLD. The item-loop skill now requires
+      a premise_check on every new escalation, with the rule that a premise you cannot write a
+      check for is too vague to verify.
+    why_only_six_backfilled: >-
+      19 remain without one. Writing a check for each is prose work per escalation and several
+      are genuinely unverifiable by query (appetite questions like 'do you still want this?').
+      Rather than invent weak checks to make a number look better, they are listed by name in
+      the script's output so the gap is visible.
+    the_queue_is_now_25_not_31: >-
+      And ESC-78's numbers were CORRECTED rather than closed: its 65.7% is stale, re-measured at
+      90% over 1,950 classify exits, and its subject now has no writer at all since
+      kuzu_sync_handler was deleted. A stale question is worse than an open one because it looks
+      answered-adjacent.
+    suites: "scripts/escalation_check.py runs clean: 6 checked, 0 expired, 19 without a check. ./scripts/tripwires.sh PASS."
+    validate: >-
+      CLOSED by running the checker itself, which is the only validation this can have: it
+      re-ran six premises against the live system and all six still hold, and it named the 19 it
+      cannot verify instead of passing them silently.
   RUNHISTORY_2026_09_02_nothing_had_ever_bounded_the_run_history:
     map_check: "No mapped item matches — evidence-led, found while checking whether the morning brief runs."
     how_it_surfaced: >-
@@ -4401,6 +4442,8 @@ current:
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
     ESC_108_you_ship_four_chat_channels_and_use_one:
+      premise_check: |
+        uv run python -c "import sqlite3,os;r=dict(sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True).execute('select channel,count(*) from task_outcomes group by 1'));u=[c for c in ('slack','discord','whatsapp') if r.get(c)];print('EXPIRED' if u else 'HOLDS', u or 'still zero')"
       question: >-
         D12.2 asks which channels matter. Measured first: across 20,112 all-time turns,
         telegram carried 9,575 and Slack, Discord and WhatsApp carried ZERO — never configured,
@@ -4439,6 +4482,8 @@ current:
         fixed. D12.2 and D12.3 can proceed either way; this only decides whether they extend a
         descriptor or add a branch.
     ESC_106_how_much_run_history_do_you_want_to_keep:
+      premise_check: |
+        uv run python -c "import sqlite3,os;n=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True).execute('select count(*) from job_runs').fetchone()[0];print('HOLDS' if n>100000 else 'EXPIRED', n, 'rows')"
       question: >-
         job_runs holds 252,905 completed rows — 19% of a 342 MB database (45.1 MB of table,
         19.1 MB of index) — and nothing had ever bounded it. A 100-day retention now ships,
@@ -4498,6 +4543,8 @@ current:
         Nothing else. job_queue is deleted; committed_facts and objectives are separate items
         with their own tests.
     ESC_103_three_memory_files_are_permanently_starved_and_only_you_can_unwind_them:
+      premise_check: |
+        uv run python -c "from stackowl.memory.curated import CuratedMemory as C; o=C().over_ceiling_targets(); print('HOLDS' if o else 'EXPIRED', [x[0] for x in o])"
       question: >-
         user (1,246 permanent chars against a 1,031 ceiling), jobmarket (2,039/1,650) and owl
         (2,142/1,650) are each 100% permanent — ZERO characters available for any fact that
@@ -4643,6 +4690,8 @@ current:
         Enforcement only. The capability, its classifier and the INFO evidence line are live
         and unblocked, and the count they produce is what makes the answer informed.
     ESC_97_output_style_is_a_PREFERENCE_and_you_said_it_is_the_CHANNEL:
+      resolution: >-
+        RESOLVED BY SHIPPED WORK 2026-09-01, not by an answer. The FORMAT item made the channel own its shape: channels/_format.CHANNEL_SHAPES declares a describe+floor per channel and OutputStyle.narrow() takes the plainer of channel-floor and stored preference. Verified live on a real Telegram turn: 'execute: turn context composed {channel: telegram, shaped: True}' and 'deliver: output preference enforced'. Nothing left to decide.
       question: >-
         "Always format output for the channel which users interacting." Today OutputStyle
         defaults to markdown="full" and is resolved from a PREFERENCES map, so formatting is
@@ -4681,6 +4730,9 @@ current:
         not expect, that is the signal to look, and it is loud rather than silent.
       what_is_blocked: "Nothing."
     ESC_95_RESOLVED_the_incidents_were_deleting_themselves_see_the_item_above:
+      resolution: >-
+        RESOLVED — the key has said so since it was written; the field is added so the queue's own
+        open-count stops including it.
       question: >-
         "And i want incidents to be delivered to user." Today the platform already delivers
         every concluded RCA at CRITICAL — that was 12 of the 25 pages you objected to last
@@ -4799,6 +4851,8 @@ current:
         task: a store says what "healthy" means for it, and the sweep measures the effect.
       what_is_blocked: "Phase 6's detector. The drift report beside it is unaffected."
     ESC_91_dna_checkpoints_is_a_table_the_platform_maintains_for_nothing:
+      premise_check: |
+        uv run python -c "import sqlite3;n=sqlite3.connect('file:'+__import__('os').path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True).execute('select count(*) from dna_checkpoints').fetchone()[0];print('HOLDS' if n else 'EXPIRED', n, 'rows')"
       question: >-
         The DNACheckpointer was removed on purpose (commit 2a6c7528) and replaced by
         learning_artifacts. Its table still holds 8 rows from June and July, and still has a
@@ -4839,6 +4893,8 @@ current:
         required_keys=list(REFLECTION_REQUIRED_KEYS).
       what_is_blocked: "Nothing."
     ESC_88_92_finished_rollover_jobs_will_each_run_once_more_tomorrow_morning:
+      resolution: >-
+        PREMISE EXPIRED. They fired. Re-measured 2026-09-02: 102 rollover_summary rows, ALL status='completed' — terminal, and schedule='manual' so nothing re-arms them. They cost one final summary apiece exactly as the escalation said they would, and cannot run again.
       question: >-
         92 rollover_summary jobs are armed for ~09:0x tomorrow. The fix retires each one as
         it fires, so they cost one final summary apiece and then stop for ever. Accept that,
@@ -4900,6 +4956,8 @@ current:
         1,637 will NOT fit and that one needs a decision about what to drop, not a merge.
       what_is_blocked: "Nothing. The root fix is live; this is residue."
     ESC_86_eight_memory_files_belong_to_no_owl_at_all:
+      premise_check: |
+        uv run python -c "from stackowl.memory.curated import CuratedMemory as C; t=set(C().known_targets()); o=sorted(t&{'Brain','Fury','agent','owl','own','sysdesign','sysfup','jobmarket'}); print('HOLDS' if o else 'EXPIRED', o)"
       question: >-
         Brain.md, Fury.md, agent.md, owl.md, own.md, sysdesign.md, sysfup.md and
         jobmarket.md name no owl in the registry. Keep, merge, or delete?
@@ -4919,6 +4977,8 @@ current:
         baseline.
       what_is_blocked: "Nothing."
     ESC_84_the_merged_scout_file_is_19_characters_over_its_budget:
+      resolution: >-
+        PREMISE EXPIRED — the platform's own decay handled it, which is what the escalation predicted would happen and asked whether to pre-empt. Re-measured 2026-09-02: scout.md is 1,946 / 2,200 characters, comfortably under. No intervention was needed and none was made.
       question: >-
         scout.md is 2,219 characters against OWL_BUDGET_CHARS = 2,200. Nothing is lost
         today; on the next write to scout the platform's own decay drops the oldest
@@ -4961,6 +5021,8 @@ current:
         reason: hand-retiring pre-empts a mechanism that is working.
       what_is_blocked: "Nothing. The merge shipped; only the retirement half waits."
     ESC_82_145_machine_authored_facts_are_sitting_in_memory_right_now:
+      resolution: >-
+        ANSWERED 2026-09-02 ('Delete them also find the root issue') and DONE. Migration 0131 removed 141 rows across three provable shapes; staged_facts went 369 -> 228. Re-measured today: ONE row matches the pattern, written after the purge, which is the residue of a live turn rather than the old leak (whose writer closed 2026-08-31).
       question: "145 of 368 staged_facts are retry/RCA text filed as things you said — 'User: (Retry attempt 2. What happened last time...'. The leak is now closed. Do the existing 145 get removed?"
       why_evidence_cannot_settle_it: "It is a data deletion from your live memory, and the same judgement you already made once about 107,576 facts. The measurement can say what they are; only you decide whether they go."
       the_measurement: "368 staged facts, 145 (39%) carrying retry/RCA/diagnostic markers. Migration 0112 deleted 107,576 for the same reason at 37.1%. Lanes: recovery 99, objective 74, outcome:* 30."
@@ -4997,6 +5059,13 @@ current:
         c_thread_the_budget_into_dispatch: "Pass the iteration budget down to execute.py. Smallest conceptual change, and it leaks a provider internal into the pipeline."
       blocked_until_answered: "Nothing. 1b and 2c are independent."
     ESC_78_the_graph_measurement_is_in_and_it_is_borderline_not_damning:
+      remeasured_2026_09_02: >-
+        The 65.7% in this question is STALE. Re-measured over every retained log (1,950 classify
+        exits carrying the field): graph_context_len is non-zero on 1,771 — 90% — at 54-361
+        chars, never below 75% on any single day. The graph is 40.3 MB. And its fact-entity
+        feeder is now GONE (kuzu_sync_handler deleted 2026-09-02 as dead code, correctly — it
+        joined on committed_facts, zero rows since migration 0112). So the question is sharper
+        than when written: a 40 MB corpus, read on nine turns in ten, that nothing can refresh.
       question: "Graph context supplies a genuinely novel, non-platform entity to roughly 4% of turns, while injecting 250-322 chars into 65.7% of them from a corpus you ordered deleted. Purge without rebuilding, or rebuild and re-measure?"
       why_evidence_cannot_settle_it: "The number is close to your own 'contributes nothing' threshold rather than clearly past it, and the measurement names exactly what a rebuild would fix — 67% of the residual hits are machine-lane diagnostics your agreed refuse-at-the-writer rule would exclude. Whether that justifies the rebuild is appetite, not derivation."
       the_measurement: "594 real turn pairs. 390 contexted. 20.3% supplied an entity that reached the answer AND was absent from the question; 67% of those are platform vocabulary (traces 32, failure class 10, session 7) that a debugging answer contains anyway. Residue ~4.4% of all turns, lexical co-occurrence only."
@@ -5006,6 +5075,8 @@ current:
         c_leave_it: "Keep serving pre-08-10 context. Costs nothing to decide and leaves deleted memory shaping your answers."
       blocked_until_answered: "Phase 3 only. Everything else continues."
     ESC_77_should_a_plan_survive_the_users_next_message:
+      resolution: >-
+        RESOLVED BY SHIPPED WORK 2026-09-01. PlanStore._turn_key now prefers session_key (the chat LANE) over trace_id, so a plan survives into the next turn; the smoke test that exposed it passes, and chat isolation is asserted alongside. Nothing left to decide.
       question: "PlanStore is scoped PER TURN (keyed on trace_id). A todo list therefore vanishes the moment you send your next message. Is that right?"
       why_evidence_cannot_settle_it: "Both sides are reasoned and the evidence supports each. The store's own docstring says a process-level slot is a correctness bug because concurrent chats would overwrite each other. The smoke test says a plan that cannot outlive one turn is not a plan. Which matters more is a product call."
       the_measurement: "registry.py:775 correctly shares ONE PlanStore between todo and update_plan; store.py:126 keys it on TraceContext trace_id. tests/smoke/test_e5_s8s9_plan_telegram_smoke.py has been RED because of this, and is left red rather than rewritten to whichever answer I preferred."
@@ -5024,6 +5095,8 @@ current:
         c_accept_it: "Leave it. The tool now returns an honest, specific unavailable message naming both fixes, and by your own rule that is a legitimate completion."
       blocked_until_answered: "Nothing. The judge half of the completion contract is the next item and does not depend on this."
     ESC_75_the_graph_is_the_one_store_a_migration_backup_does_not_cover:
+      premise_check: |
+        grep -q 'snapshot deferred' src/stackowl/export/backup.py && echo HOLDS || echo EXPIRED
       question: "A pre-migration snapshot now protects SQLite. The 39MB Kuzu graph is NOT in it — BackupManager writes a kuzu/README.txt saying 'snapshot deferred — adapter snapshot() not yet implemented'. Should the graph be brought into the backup, and if so, before or after the phase-3 purge-and-rebuild?"
       why_evidence_cannot_settle_it: "It is a sequencing and appetite call. The graph is already scheduled for deletion and rebuild, so snapshotting today would preserve a corpus we have agreed is noise — but between now and then it is the only store with no recovery path."
       recommendation: "AFTER the rebuild. Backing up 20,065 facts whose ranking never existed, and which 91% of turns are being served in error, spends effort protecting the thing we decided to throw away. Revisit the moment the rebuilt graph holds facts worth losing."

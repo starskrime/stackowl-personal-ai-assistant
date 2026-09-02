@@ -84,9 +84,21 @@ decision in `progress.yml`, escalate it; do not silently reconcile.
 ### The escalation queue
 
 Append to `current.ESCALATIONS` in `progress.yml`, each entry carrying: the question, why
-evidence cannot settle it, the panel's recommendation, and what is blocked until it is
-answered. The operator clears these in one sitting. **Continue the item on everything not
-blocked.**
+evidence cannot settle it, the panel's recommendation, what is blocked until it is answered,
+and a **`premise_check`** — a one-liner printing `HOLDS` or `EXPIRED`. Run
+`uv run python scripts/escalation_check.py` at the start of a loop and close what expired.
+
+**Why the check is mandatory.** An item gets seven stages and a closing query; an escalation
+got written once and never re-read, so its premise aged silently. Measured 2026-09-02: 31
+were open and SIX were already settled — two by later work of mine that did not think to
+close them, two that expired on their own (decay took `scout.md` back under budget; the 92
+armed rollover jobs fired and went terminal), one answered and shipped, one that had said
+RESOLVED in its own key since it was written. The queue said 31 when it was 25, and a
+question that is no longer a question still costs him the time to decide it is not one.
+
+If you cannot write the check, the premise is too vague to verify — fix the premise.
+
+The operator clears these in one sitting. **Continue the item on everything not blocked.**
 
 ## Stages 2–7
 
