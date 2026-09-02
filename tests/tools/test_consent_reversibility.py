@@ -122,10 +122,17 @@ async def test_dangerous_category_tool_never_relaxed_by_reversibility() -> None:
 
 
 async def test_always_ask_tool_name_never_relaxed_by_reversibility() -> None:
-    # execute_code is on the default always-ask tool list.
+    """The INVARIANT is unchanged; only its example moved.
+
+    This used execute_code, which left the always-ask set on 2026-09-02 by
+    Bakir's decision (see consent._DEFAULT_ALWAYS_ASK_TOOLS). The rule being
+    tested — that being reversible does not relax an always-ask TOOL NAME — is
+    untouched, so the test keeps its subject and swaps to a tool that is still
+    ringfenced. Deleting it would have lost a live invariant over a change to one
+    of its inputs."""
     prompter = _RecordingPrompter(scope=ConsentScope.DENY)
     gate = ConsequentialActionGate(ConsentPolicy(prompter=prompter))
-    tool = _Consequential("execute_code", commit_coupling="transactional")
+    tool = _Consequential("computer_use", commit_coupling="transactional")
 
     allowed = await gate.check(tool, channel="cli", session_key="s1")
 

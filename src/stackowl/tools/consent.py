@@ -78,6 +78,25 @@ _INTERPRETERS = frozenset({
     "rscript", "osascript",
 })
 
+#: Tools whose whole purpose is running code the model wrote. Kept beside
+#: :data:`_INTERPRETERS` so the two halves of "this executes code" — a tool by
+#: name, a shell command by its program — have ONE home rather than drifting.
+_CODE_EXECUTION_TOOLS = frozenset({"execute_code", "claude_code"})
+
+
+def is_code_execution(tool_name: str | None, category: str | None) -> bool:
+    """Does this request run code the model wrote? Never raises.
+
+    Used to LABEL, not to gate. Since 2026-09-02 code execution is no longer
+    always-ask (Bakir's decision — see _DEFAULT_ALWAYS_ASK_TOOLS), so visibility
+    is the only compensating control left, and a control nobody can see is not
+    one.
+    """
+    try:
+        return (tool_name or "") in _CODE_EXECUTION_TOOLS or (category or "") == CODE_EXECUTION
+    except Exception:  # noqa: BLE001 — a label may never cost a decision
+        return False
+
 #: Segment separators — a command is code execution if ANY segment invokes an
 #: interpreter, so a pipeline or a `$(...)` substitution cannot hide one.
 _SEGMENT_RE = re.compile(r"[;&|]{1,2}|\n|`|\$\(")
@@ -120,8 +139,30 @@ def launches_an_interpreter(command: str) -> bool:
 # Default tools that ALWAYS re-prompt — never satisfied by batch/window/auto.
 # Per E11/E12/E13 party reviews (readiness Section 9 #7): code execution, GUI
 # control, and Home-Assistant locks/alarms are never relaxed.
+#
+# ``execute_code`` REMOVED 2026-09-02, and this CONTRADICTS the E11/E12/E13 review
+# above, which is recorded rather than quietly reconciled.
+#
+# THE ASYMMETRY IS WHY. Measured over the retained logs: ``execute_code`` was
+# refused 26 times — every one on the RCA lane, unattended — while in the SAME
+# logs ``shell`` launched a general-purpose interpreter 110 times out of 153
+# (72%), unattended, with no prompt at all. The same capability was gated by what
+# the tool is CALLED, not by what it does, so the gate stopped nothing: anything
+# blocked at ``execute_code`` could be run one line later through ``shell``.
+#
+# TWO WAYS TO CLOSE THAT, and the choice was Bakir's because it is a risk-appetite
+# question, not an evidence one. Gate the shell path too (my recommendation, and
+# the classifier for it is built and live), or relax ``execute_code`` to match.
+# Asked 2026-09-02, answered: "Relax execute_code to match shell." Implemented
+# here as decided.
+#
+# WHAT THAT COSTS, stated plainly so no future reader assumes it was an oversight:
+# code execution is now auto-grantable for an unattended caller. The compensating
+# control is VISIBILITY, not a gate — every interpreter launch is reported at INFO
+# by ``shell.execute`` and by ``code_execution_ran_unattended`` below, so the
+# thing that is no longer refused is at least never silent.
 _DEFAULT_ALWAYS_ASK_TOOLS = frozenset(
-    {"execute_code", "computer_use", "ha_call_service", "browser_dialog"}
+    {"computer_use", "ha_call_service", "browser_dialog"}
 )
 #: ``prompt_surface`` (ESC-1, 2026-08-14) — a tool that writes content which LATER
 #: BECOMES PART OF A PROMPT. It is deliberately a category rather than a tool name,
@@ -152,12 +193,15 @@ _DEFAULT_ALWAYS_ASK_TOOLS = frozenset(
 #: STRICTLY SAFER than before, when the category was absent here and such a caller had
 #: it auto-granted; it became reachable at all when `owl_build` entered ROUTER_TOOLS so
 #: that an owl could appeal its own ceiling.
-#: ``code_execution`` (2026-09-01) — see :data:`CODE_EXECUTION`. Listing it here
-#: changes NOTHING for ``execute_code``, which was already always-ask by name; it
-#: makes the rule addressable by capability so both halves of it have one source.
+#: ``code_execution`` was listed here on 2026-09-01 and REMOVED on 2026-09-02 with
+#: ``execute_code`` itself — see the block above. Leaving the CATEGORY gated while
+#: the tool is not would have re-created the very asymmetry the removal exists to
+#: end, one level down: the capability refused by name and allowed by class.
+#: :data:`CODE_EXECUTION` survives as the label the observability lines carry, which
+#: is now the only thing standing between unattended code execution and silence.
 _DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset(
     {"lock", "alarm", "destructive", "prompt_surface", "authority_widening",
-     "owl_build", CODE_EXECUTION}
+     "owl_build"}
 )
 _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 
@@ -358,6 +402,12 @@ class AutonomousPrompter:
                 "category": req.category,
                 "channel": req.channel,
                 "reversible": req.reversible,
+                # THE TRADE, MADE VISIBLE. Code execution stopped being always-ask
+                # on 2026-09-02, so this flag is what remains of that gate: it
+                # cannot refuse anything, but it means an unattended code run is
+                # never silent. Grep this line with code_execution=true to see
+                # exactly what the relaxation let through.
+                "code_execution": is_code_execution(req.tool_name, req.category),
             }},
         )
         return ConsentScope.ONCE

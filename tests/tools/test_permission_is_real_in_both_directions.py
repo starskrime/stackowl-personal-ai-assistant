@@ -61,15 +61,34 @@ pytestmark = pytest.mark.asyncio
 
 
 class TestTheRingfencedSetIsNeverGrantedWithNobodyWatching:
-    async def test_execute_code_is_not_autonomously_granted(self) -> None:
-        """MEASURED as allowed=True before this. The unattended case is exactly
-        where nobody can undo it."""
+    async def test_computer_use_is_not_autonomously_granted(self) -> None:
+        """MEASURED as allowed=True before the ringfence existed. The unattended
+        case is exactly where nobody can undo it.
+
+        This asserted `execute_code` until 2026-09-02, when Bakir decided to relax
+        it — because gating it while `shell` ran interpreters unattended 110 times
+        out of 153 was a gate that stopped nothing. The property is real and still
+        holds for the tools that nothing can reach around, so the test keeps it
+        and moves to one of those."""
+        allowed = await ConsentPolicy(prompter=RoutingPrompter()).request(
+            tool_name="computer_use", channel="cron", session_key="s1",
+            summary="", reversible=False,
+        )
+
+        assert allowed is False
+
+    async def test_execute_code_IS_now_autonomously_granted_by_decision(self) -> None:
+        """The reversal, pinned deliberately so it can never happen by accident.
+
+        If this starts failing, either the relaxation was reverted (fine — update
+        it with the reason) or something re-gated code execution silently, which
+        is the drift this file exists to catch."""
         allowed = await ConsentPolicy(prompter=RoutingPrompter()).request(
             tool_name="execute_code", channel="cron", session_key="s1",
             summary="", reversible=False,
         )
 
-        assert allowed is False
+        assert allowed is True
 
     async def test_a_destructive_category_is_not_autonomously_granted(self) -> None:
         allowed = await ConsentPolicy(prompter=RoutingPrompter()).request(

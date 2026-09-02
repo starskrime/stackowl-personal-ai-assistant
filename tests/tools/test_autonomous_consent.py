@@ -121,12 +121,25 @@ class TestTheRingfenceHolds:
     """These are policy-level, not prompter-level: ConsentPolicy applies them
     before any prompter runs, so the autonomous grant can never see them."""
 
-    async def test_the_always_ask_tools_are_unchanged(self) -> None:
+    async def test_the_always_ask_tools_are_what_the_operator_decided(self) -> None:
+        """`execute_code` LEFT this set on 2026-09-02, by Bakir's decision, and
+        this test changed with it rather than being deleted.
+
+        The ringfence existed because E11/E12/E13 said code execution is never
+        relaxed. What that review did not know: `shell` launched a general-purpose
+        interpreter 110 times out of 153 (72%) unattended with no prompt, in the
+        same logs where `execute_code` was refused 26 times. The gate stopped
+        nothing — anything refused here ran one line later through `shell`.
+
+        Asked as a risk-appetite question, because evidence cannot settle it:
+        gate the shell path too, or relax this one. He chose relax. The three
+        tools that remain are the ones nothing else can reach around."""
         from stackowl.tools.consent import _DEFAULT_ALWAYS_ASK_TOOLS
 
         assert _DEFAULT_ALWAYS_ASK_TOOLS == frozenset(
-            {"execute_code", "computer_use", "ha_call_service", "browser_dialog"}
+            {"computer_use", "ha_call_service", "browser_dialog"}
         )
+        assert "execute_code" not in _DEFAULT_ALWAYS_ASK_TOOLS
 
     async def test_the_always_ask_categories_never_shrink(self) -> None:
         """The invariant is that the ringfence never LOSES a category — not that it

@@ -117,16 +117,45 @@ def test_an_empty_or_broken_command_classifies_false() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_capability_is_on_the_always_ask_list() -> None:
-    """So the rule has an address. Without this the category is a label nothing
-    consults — the decoration shape."""
-    assert CODE_EXECUTION in _DEFAULT_ALWAYS_ASK_CATEGORIES
+def test_the_capability_is_NOT_gated_anymore_and_that_was_decided() -> None:
+    """RESOLVED 2026-09-02. This item shipped the capability classifier and put
+    the question to Bakir, because which way to close the asymmetry is a
+    risk-appetite judgement and not something evidence can settle: gate the shell
+    path too, or relax `execute_code` to match it.
+
+    He chose relax. So the category leaves the always-ask set WITH the tool —
+    leaving the category gated while the tool is not would have re-created the
+    same asymmetry one level down, refused by name and allowed by class."""
+    assert CODE_EXECUTION not in _DEFAULT_ALWAYS_ASK_CATEGORIES
+    assert "execute_code" not in _DEFAULT_ALWAYS_ASK_TOOLS
 
 
-def test_execute_code_is_unchanged() -> None:
-    """This item must not widen anything. execute_code was always-ask by name
-    and stays always-ask by name; the category is added alongside, not instead."""
-    assert "execute_code" in _DEFAULT_ALWAYS_ASK_TOOLS
+def test_the_classifier_SURVIVES_the_relaxation() -> None:
+    """The classifier is not dead code now that it gates nothing — it LABELS.
+    Visibility is the only compensating control left after the gate went, and a
+    control nobody can see is not one."""
+    from stackowl.tools.consent import is_code_execution, launches_an_interpreter
+
+    assert launches_an_interpreter("python3 -c 'import os'") is True
+    assert launches_an_interpreter("ls -la") is False
+    assert is_code_execution("execute_code", None) is True
+    assert is_code_execution("shell", CODE_EXECUTION) is True
+    assert is_code_execution("read_file", "read") is False
+
+
+def test_an_unattended_code_run_is_never_SILENT() -> None:
+    """The trade, pinned. The gate is gone; the record is not. If this field
+    disappears, unattended code execution becomes invisible and the relaxation
+    stops being a trade and becomes a hole."""
+    import inspect
+
+    from stackowl.tools import consent
+
+    src = inspect.getsource(consent)
+    assert '"code_execution": is_code_execution(' in src, (
+        "the autonomous-grant line no longer names code execution — nothing "
+        "records what the relaxation lets through"
+    )
 
 
 def test_the_shell_path_reports_the_capability_it_exercises() -> None:

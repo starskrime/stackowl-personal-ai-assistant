@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC98_ANSWERED_2026_09_02_code_execution_gated_by_NAME_is_now_gated_by_NOTHING:
+    map_check: "No mapped item — implementing an operator decision on an escalation I raised."
+    the_question_and_his_answer: >-
+      ESC-98 asked which way to close the asymmetry: execute_code was always-ask and refused
+      26 times unattended on the RCA lane, while in the SAME logs shell launched a
+      general-purpose interpreter 110 times out of 153 (72%) unattended with no prompt. The
+      gate was on the tool's NAME, not on what it does, so it stopped nothing — anything
+      refused at execute_code ran one line later through shell. Asked 2026-09-02, answered:
+      "Relax execute_code to match shell."
+    why_it_was_HIS_call_and_not_mine: >-
+      Evidence establishes the asymmetry; it cannot settle the appetite. My recommendation was
+      the opposite direction — gate the shell path too, and the classifier for it is built and
+      live. He chose relax. Recorded as his decision with my recommendation stated, not
+      averaged away.
+    IT_CONTRADICTS_A_RECORDED_DECISION_and_that_is_written_into_the_code: >-
+      E11/E12/E13 party reviews (readiness Section 9 #7) say "code execution, GUI control and
+      Home-Assistant locks/alarms are never relaxed". That comment is KEPT in consent.py above
+      the set, with the contradiction and its reason underneath, so no future reader takes the
+      removal for an oversight and puts it back on the strength of a review that did not know
+      about the shell path.
+    what_shipped: >-
+      execute_code removed from _DEFAULT_ALWAYS_ASK_TOOLS; CODE_EXECUTION removed from
+      _DEFAULT_ALWAYS_ASK_CATEGORIES with it — leaving the category gated while the tool was
+      not would have re-created the same asymmetry one level down, refused by name and allowed
+      by class.
+    THE_COMPENSATING_CONTROL_IS_VISIBILITY_because_it_is_all_that_is_left: >-
+      is_code_execution() joins the existing "[consent] autonomous grant" INFO line as a
+      code_execution field, so an unattended code run is never SILENT even though it is no
+      longer refused. Grep that line with code_execution=true to see exactly what the
+      relaxation let through. A test pins the field: if it disappears the trade stops being a
+      trade and becomes a hole.
+    the_classifier_is_NOT_dead_code: >-
+      launches_an_interpreter and _INTERPRETERS now gate nothing, but they LABEL — they are
+      what makes the shell half of the visibility work. Checked against the retired-means-
+      deleted rule rather than assumed.
+    FIVE_TESTS_PINNED_THE_OLD_CONTRACT_and_none_were_deleted: >-
+      Two asserted the ringfence contents, one asserted execute_code stays always-ask, one
+      asserted reversibility cannot relax an always-ask NAME, one asserted execute_code is not
+      autonomously granted. The first three now pin the NEW contract with the reason. The
+      reversibility one kept its invariant and swapped its EXAMPLE to computer_use — the rule
+      is untouched, only one of its inputs moved. The last became its own opposite and a new
+      test pins the reversal, so a silent re-gating is caught.
+    suites: "194 passed across every consent-touching test file in the tree."
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    validate: OPEN_awaiting_an_unattended_code_run
+    closing_query: >-
+      "[consent] autonomous grant" with code_execution=true — and ZERO further "autonomous
+      grant REFUSED" lines naming execute_code, against the 26 that motivated the escalation.
   DEADCODE_2_2026_09_01_the_retired_fact_store_machinery_is_GONE:
     map_check: "No mapped item — Bakir reaffirmed: all dead code should be removed if nothing uses it."
     what_was_deleted: >-
@@ -4349,7 +4397,11 @@ current:
         care about without a fleet-wide instruction change in one step.
       what_is_blocked: >-
         Nothing. New mined skills are attached from now on; this is only about the backlog.
-    ESC_98_code_execution_is_gated_by_NAME_and_runs_freely_under_another:
+    ESC_98_ANSWERED_2026_09_02_relax_execute_code_to_match_shell:
+      resolution: >-
+        ANSWERED by Bakir 2026-09-02: "Relax execute_code to match shell." Implemented; see the
+        item above. My recommendation was the opposite (gate the shell path too) and is
+        recorded rather than averaged away.
       question: >-
         execute_code is always-ask and was refused 26 times on the RCA lane. In the same
         logs `shell` ran a general-purpose interpreter 110 times out of 153 (72%),
