@@ -658,16 +658,19 @@ def _dedup_assistant_history(messages: list[Message]) -> list[Message]:
     return out
 
 
-#: How far back history is READ before compression decides what survives. The
-#: old behaviour read exactly `short_term_window` (6) and dropped the rest at the
-#: database, so no later stage could have compressed what it never saw.
-_DEEP_HISTORY_TURNS = 40
+# D03.1 — the read depth and the token budget MOVED to
+# `memory/conversation_compressor.py` on 2026-09-02. They are the engine's policy:
+# it owns *when* to compact as well as *how*, so a different engine changes both
+# together. Leaving them here meant a swap could change the summary and not the
+# thing that decides whether a summary is ever produced.
 
-#: Tokens history may occupy before the middle is compressed. Deliberately well
-#: below any real window: this bounds the PROMPT's history share, it is not a
-#: window guard. Measured 2026-09-01, live history was ~1,166 tokens per turn, so
-#: this only engages on genuinely long sessions.
-_HISTORY_BUDGET_TOKENS = 12_000
+
+def _deep_history_turns() -> int:
+    """The engine's read depth. Local import keeps classify's module import cheap,
+    matching how the compressor is reached everywhere else in this file."""
+    from stackowl.memory.conversation_compressor import DEEP_HISTORY_TURNS
+
+    return DEEP_HISTORY_TURNS
 
 
 async def _compress_history(history: list[Message], state: PipelineState) -> list[Message]:
@@ -680,9 +683,9 @@ async def _compress_history(history: list[Message], state: PipelineState) -> lis
     from stackowl.memory import conversation_compressor as cc
 
     try:
-        selection = cc.select(history, budget_tokens=_HISTORY_BUDGET_TOKENS)
+        selection = cc.plan(history)
         if not selection.needs_compression:
-            return cc.apply(selection, None, budget_tokens=_HISTORY_BUDGET_TOKENS)
+            return cc.apply(selection, None, budget_tokens=cc.HISTORY_BUDGET_TOKENS)
         # 2. DECISION — a long session; pay one cheap call to keep its middle.
         log.engine.info(
             "[pipeline] classify: conversation too long for the history budget — "
@@ -691,12 +694,12 @@ async def _compress_history(history: list[Message], state: PipelineState) -> lis
                 "trace_id": state.trace_id,
                 "turns": len(history),
                 "middle_turns": len(selection.middle),
-                "budget_tokens": _HISTORY_BUDGET_TOKENS,
+                "budget_tokens": cc.HISTORY_BUDGET_TOKENS,
                 "had_prior_summary": selection.prior_summary is not None,
             }},
         )
         summary = await _summarize_region(cc.build_prompt(selection), state)
-        out = cc.apply(selection, summary, budget_tokens=_HISTORY_BUDGET_TOKENS)
+        out = cc.apply(selection, summary, budget_tokens=cc.HISTORY_BUDGET_TOKENS)
         log.engine.info(
             "[pipeline] classify: conversation compressed",
             extra={"_fields": {
@@ -847,7 +850,7 @@ async def run(state: PipelineState) -> PipelineState:
     # model call — which is the overwhelming majority of turns.
     history = await _gather_history(
         owner_scope_key(state),
-        max(short_term_window, _DEEP_HISTORY_TURNS),
+        max(short_term_window, _deep_history_turns()),
         conversation_scope_keys(state),
     )
     history = await _compress_history(history, state)

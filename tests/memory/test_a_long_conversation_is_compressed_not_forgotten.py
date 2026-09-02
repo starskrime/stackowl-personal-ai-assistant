@@ -160,6 +160,26 @@ def test_empty_and_degenerate_inputs_never_raise() -> None:
     assert apply(select(_turns(3), budget_tokens=0), None) == _turns(3)
 
 
+def test_the_engine_owns_WHEN_as_well_as_HOW() -> None:
+    """D03.1. The reference platform's context engine owns *when* to compact and
+    *how*; ours owned only the how until 2026-09-02, so a second engine could have
+    changed the summary and NOT the budget or read depth that decide whether a
+    summary is ever produced. A plugin seam above a policy that lives outside the
+    plugin is a seam in the wrong place — which is why the ABC was NOT built and
+    this was moved instead."""
+    import inspect
+
+    from stackowl.pipeline.steps import classify
+
+    src = inspect.getsource(classify)
+    assert "_HISTORY_BUDGET_TOKENS = " not in src, (
+        "the budget is back in the pipeline step — the engine no longer owns when"
+    )
+    assert "cc.plan(history)" in src, (
+        "classify decides the budget itself instead of asking the engine"
+    )
+
+
 def test_it_is_actually_WIRED_into_the_history_path() -> None:
     """A FEATURE SHIPS ON. D03.4's result cap went out with no tool declaring one
     and could never fire; a compressor nothing calls is the same shape. This
@@ -172,10 +192,21 @@ def test_it_is_actually_WIRED_into_the_history_path() -> None:
 
     src = inspect.getsource(classify)
     assert "_compress_history(" in src, "the compressor is never called"
-    assert "_DEEP_HISTORY_TURNS" in src, (
+    # The read depth MOVED into the engine on 2026-09-02 (D03.1): it is the
+    # engine's policy, not the pipeline step's. The invariant is unchanged — read
+    # deep, or the middle is discarded before compression can see it — so this
+    # asserts the same property against where it now lives.
+    assert "_deep_history_turns()" in src, (
         "history is still read at short_term_window — the middle is discarded "
         "before compression can see it"
     )
+    from stackowl.memory.conversation_compressor import (
+        DEEP_HISTORY_TURNS,
+        HISTORY_BUDGET_TOKENS,
+    )
+
+    assert DEEP_HISTORY_TURNS > 6, "the deep read is no deeper than short_term_window"
+    assert HISTORY_BUDGET_TOKENS > 0
     sig = inspect.getsource(classify._compress_history)  # noqa: SLF001
     assert "except Exception" in sig, (
         "compression can fail the turn — it must degrade to the old behaviour"

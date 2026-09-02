@@ -89,6 +89,25 @@ _TEMPLATE = (
 SUMMARY_MARKER = "[earlier conversation, compressed]"
 
 
+#: How far back history is READ before this engine decides what survives, and how
+#: many tokens it may occupy once it does. BOTH LIVE HERE, WITH THE ENGINE, and
+#: that placement is the point of D03.1.
+#:
+#: They were constants in `pipeline/steps/classify.py` until 2026-09-02. The
+#: reference platform's context engine owns *when* to compact AND *how*; ours owned
+#: only the how, so a second engine could have changed the summary and NOT the
+#: budget or the read depth that decide whether it is ever called. A plugin seam
+#: above a policy that lives outside the plugin is a seam in the wrong place.
+#:
+#: 40 turns: the old path read exactly `short_term_window` (6) and dropped the rest
+#: AT THE DATABASE, so no later stage could compress what it never saw.
+#: 12,000 tokens: deliberately well below any real window — this bounds the
+#: PROMPT's history share, it is not a window guard. Measured 2026-09-01, live
+#: history ran ~1,166 tokens per turn, so it engages only on long sessions.
+DEEP_HISTORY_TURNS = 40
+HISTORY_BUDGET_TOKENS = 12_000
+
+
 @dataclass(frozen=True)
 class Selection:
     """What survives intact, and what must be compressed to fit.
@@ -155,6 +174,18 @@ def select(messages: Sequence[Message], *, budget_tokens: int) -> Selection:
     tail = tuple(msgs[-TAIL_TURNS:])
     middle = tuple(msgs[HEAD_TURNS:-TAIL_TURNS])
     return Selection(head, middle, tail, prior)
+
+
+def plan(messages: Sequence[Message]) -> Selection:
+    """Decide what survives, using THIS engine's own budget.
+
+    The caller supplies history and asks; it does not pass a budget, because the
+    budget is the engine's policy. :func:`select` still takes an explicit
+    ``budget_tokens`` — it is the pure, testable core, and every test drives it
+    directly — but production goes through here so that swapping the engine
+    swaps the policy with it.
+    """
+    return select(messages, budget_tokens=HISTORY_BUDGET_TOKENS)
 
 
 def build_prompt(selection: Selection) -> str:

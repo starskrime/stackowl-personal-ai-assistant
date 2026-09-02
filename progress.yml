@@ -14036,17 +14036,24 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
-    changes: []
+    changes:
+      - "2026-09-02 THE GAP LINE IS STALE. It reads 'no context engine, no compaction — long conversations have no strategy other than truncation'. D03.2 shipped memory/conversation_compressor.py the day before, which is exactly a compaction strategy. The item's remaining question is only whether it should sit behind a pluggable ABC."
+      - "AND THE MAP UNDERSTATES WHAT EXISTS. StackOwl has a real plugin system with EIGHT capability-gated extension points — Tool, JobHandler, SlashCommand, ChannelAdapter, OwlSource, MemoryProvider, LifecycleHook, PromptContributor — in plugins/capabilities.CAPABILITY_FOR_EXTENSION_POINT, with a test asserting both directions so a new point cannot arrive ungated. Adding a ninth would be cheap and follows an established pattern. My first read said 'no plugin loader exists' and was WRONG; checking before asserting is what caught it."
+      - "THE ABC WAS NOT BUILT, and the reason is not appetite. There is exactly ONE engine, and an extension point with one implementation and no plugin wanting it is the built-but-not-wired shape that is this codebase's most common defect. More decisively: the seam would have been in the WRONG PLACE."
+      - "THE REAL FINDING: classify owned WHEN to compact (_HISTORY_BUDGET_TOKENS = 12,000 and _DEEP_HISTORY_TURNS = 40) while the compressor owned only HOW. The reference platform's engine owns both. So a plugin engine could have changed the summary and NOT the budget or read depth that decide whether a summary is ever produced. Both constants moved into the engine, and classify now calls cc.plan(history) instead of passing a budget it chose."
+      - "That is the prerequisite for the ABC, done without building the ABC: when a second engine is actually wanted, swapping it now swaps the policy with it. A test pins that the budget does not drift back into the pipeline step."
+      - "tests/memory + tests/pipeline/steps 641 passed. ./scripts/tripwires.sh PASS. No new behaviour — a pure seam move, asserted by the existing 14 compression tests passing unchanged."
+
     notes: null
 
   - id: D03.2
