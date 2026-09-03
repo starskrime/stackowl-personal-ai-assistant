@@ -315,6 +315,45 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  NOTOOLS_2026_09_03_a_turn_that_never_got_to_act_was_told_it_had_nothing_to_say:
+    map_check: "No mapped item — found by validating an earlier fix during a live outage."
+    THE_FINDING: >-
+      With the provider unreachable a turn cannot run a single tool, so state.tool_calls is
+      empty, describe_attempt_evidence returned "", and the actuator fell back to "retry attempt
+      still floored" — while the platform knew the cause was AllProvidersUnavailableError.
+      MEASURED in the hours after the 12:56:40 restart: 16 failed turns ran ZERO tools carrying
+      a known failure_class, and the single actuator evidence line emitted in that window was
+      the tautology.
+    THE_CAUSE_WAS_MY_OWN_REASONING: >-
+      I wrote that empty return deliberately and defended it in the docstring: "an attempt that
+      ran no tool at all says nothing — two of the five measured tautologies were
+      provider-unavailable turns with zero calls, and there is genuinely nothing to describe."
+      That was wrong. A turn that never got to act has the MOST to say about why, and the error
+      was sitting on state.errors the whole time. The live outage falsified my own justification
+      within hours of shipping it.
+    THE_SAME_SHAPE_ONE_CONSUMER_FURTHER: >-
+      Identical to the floor fix shipped hours earlier the same day: the cause was measured,
+      classified, stored, and then discarded in favour of a generic sentence at the one moment
+      it would have helped. That makes three consumers of the same root cause now repaired —
+      the user-facing floor, the failure-class explanation, and the retry channel.
+    THE_FIX: >-
+      When no tool ran and no capability was attempted, the evidence sentence carries the turn's
+      first recorded error, bounded to 240 chars because _augment_goal truncates the whole
+      reason at 400. A turn with neither tools nor errors still says nothing — the genuine empty
+      case survives.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      The next actuator retry during an outage must log "carrying the attempt's evidence
+      forward" with a reason beginning "the last attempt failed before it could act:" and naming
+      the error class — NOT "retry attempt still floored". The provider is currently unreachable
+      (VPN tunnel down since 10:47 CDT), so this is directly checkable as soon as a retry fires.
   ABNOISE_2026_09_03_the_brief_reported_a_delta_without_saying_if_it_meant_anything:
     map_check: "No mapped item — evidence-led, from reading today's delivered brief."
     WHAT_TODAYS_BRIEF_TOLD_HIM: >-
@@ -398,8 +437,14 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: PARTIAL
+      validate: done
       document: done
+    validate_CLOSED_2026_09_03: >-
+      CLOSED ON A REAL OUTAGE. His VPN tunnel went down, the only enabled provider became
+      unreachable, and three telegram failures at 14:11-14:12 carried the new sentence: "I could
+      not reach my model just now, so I could not work on this. It usually comes back on its own
+      — ask me again in a moment." Not a test — the actual message he received, on his own
+      channel, for the failure class that accounts for 2,115 of his 5,739 failures.
     what_validate_ACTUALLY_evidenced: >-
       Live at 12:56:40Z on commit 1b9962bd, zero ERROR lines since boot. The rendered before/
       after was checked through the real resolver for all four classes plus an unknown one: the

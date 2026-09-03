@@ -81,6 +81,7 @@ class _State:
         self.consequential_failures = failures
         self.consequential_successes = successes
         self.recovered_consequential = recovered
+        self.errors: tuple[str, ...] = ()
         self.trace_id = "t-ceiling"
 
     @property
@@ -279,3 +280,54 @@ def test_a_real_consequential_failure_is_still_banned() -> None:
         None, _Row(), state,
     )
     assert picked == "shell"
+
+
+# --------------------------------------------------------------------------- #
+# A turn that never got to act still knows WHY                                 #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_turn_that_ran_no_tool_still_reports_its_error() -> None:
+    """MY OWN REASONING, CORRECTED. This file originally asserted that a turn
+    with zero tool calls "says nothing", on the grounds that two of the five
+    measured tautologies were provider-unavailable turns with tool_call_count=0
+    and "there is genuinely nothing to describe".
+
+    That was wrong, and the live outage on 2026-09-03 proved it. When the model
+    provider is unreachable the turn cannot run a single tool — so tool_calls is
+    empty, describe_attempt_evidence returned "", and the actuator fell back to
+    "retry attempt still floored" while the platform knew perfectly well the
+    cause was AllProvidersUnavailableError. MEASURED: 16 failed turns in the
+    first hours after that restart ran ZERO tools and carried a known
+    failure_class; the one actuator evidence line emitted in that window was the
+    tautology.
+
+    Same shape as the floor fix shipped hours earlier: the cause was measured,
+    classified, and then discarded in favour of a generic sentence. An attempt
+    that never got to act has the MOST to say about why."""
+    state = _State(budget_capped=False)
+    state.errors = (
+        "execute: AllProvidersUnavailableError: All providers unavailable: "
+        "NeraAiRaw: skipped (circuit open)",
+    )
+    evidence = describe_attempt_evidence(state)
+    assert evidence, "a turn that failed before acting reported nothing"
+    assert "AllProvidersUnavailableError" in evidence
+    assert "still floored" not in evidence
+
+
+def test_the_error_is_bounded_so_it_cannot_eat_the_reason_budget() -> None:
+    """_augment_goal truncates at _RETRY_REASON_CHARS. A provider stack trace
+    pasted whole would push everything else off the end."""
+    from stackowl.pipeline.retry_actuator import _RETRY_REASON_CHARS
+
+    state = _State(budget_capped=False)
+    state.errors = ("execute: " + "x" * 4000,)
+    assert len(describe_attempt_evidence(state)) < _RETRY_REASON_CHARS
+
+
+def test_a_turn_with_neither_tools_nor_errors_still_says_nothing() -> None:
+    """The genuine empty case survives: no tools, no error, nothing to claim."""
+    state = _State(budget_capped=False)
+    state.errors = ()
+    assert describe_attempt_evidence(state) == ""

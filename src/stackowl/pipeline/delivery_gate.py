@@ -281,6 +281,11 @@ _REPEAT_RUN_MIN = 5
 #: 400 chars and a 46-call sweep would otherwise crowd out the ceiling name.
 _EVIDENCE_TOOLS_SHOWN = 6
 
+#: How much of the turn's own error text the evidence sentence carries.
+#: ``_augment_goal`` truncates the whole reason at 400, so a provider stack trace
+#: pasted whole would push every other clause off the end.
+_ERROR_CLAUSE_CHARS = 240
+
 
 def _longest_repeat_run(names: list[str]) -> tuple[str, int]:
     """The longest run of IDENTICAL CONSECUTIVE calls, as (name, length).
@@ -369,6 +374,30 @@ def describe_attempt_evidence(state: PipelineState) -> str:
         names = [n for n in names if n]
         attempted = _attempts_for_state(state)
         if not names and not attempted:
+            # A TURN THAT NEVER GOT TO ACT HAS THE MOST TO SAY ABOUT WHY.
+            # This branch used to return "" on the reasoning that "an attempt
+            # that ran no tool at all" has nothing to describe — written when two
+            # of the five measured tautologies were provider-unavailable turns.
+            # The live outage on 2026-09-03 showed that reasoning was wrong: when
+            # the model provider is unreachable the turn CANNOT run a tool, so
+            # this branch is taken, and the actuator fell back to "retry attempt
+            # still floored" while the platform knew the cause was
+            # AllProvidersUnavailableError. MEASURED in the hours after that
+            # restart: 16 failed turns ran ZERO tools carrying a known
+            # failure_class, and the single actuator evidence line emitted was
+            # the tautology.
+            #
+            # Same shape as the floor fix shipped hours earlier: the cause was
+            # measured, classified, and then discarded for a generic sentence.
+            # Bounded, because _augment_goal truncates the whole reason at 400.
+            first_error = next(
+                (e for e in (getattr(state, "errors", ()) or ()) if e), "",
+            )
+            if first_error:
+                return (
+                    "the last attempt failed before it could act: "
+                    f"{str(first_error)[:_ERROR_CLAUSE_CHARS]}"
+                )
             return ""
 
         clauses: list[str] = []
