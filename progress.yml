@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  NARROWING_2026_09_03_the_agent_gives_up_write_BEFORE_it_reads_the_page:
+    map_check: "No mapped item — implementing his ESC-110 answer. Sits on top of D12.8's marker."
+    his_decision: >-
+      NARROW ON DEMAND. He rejected both extremes with the numbers in front of him: marker-only
+      stops a careless model but not a determined page, and a hard narrow after any fetch would
+      have split 66 real turns from the last 7 days into two turns each (web_fetch+write_file
+      35, web_search+write_file 31, browser_navigate+write_file 27, web_fetch+shell 24,
+      browser_navigate+shell 23, browser_extract+shell 13).
+    WHY_A_SELF_DECLARATION_IS_NOT_THEATRE: >-
+      The declaration is made IN THE FETCH CALL, before the content is in the context. An agent
+      choosing needs_write_after=false chooses it while still uninfluenced, and by the time the
+      page is readable the narrowing has already happened. Nothing the page says can retract it,
+      because retraction would have to arrive as a tool call and every write-severity call is
+      refused from that moment. That ordering is the entire security argument, and a test pins
+      that the dispatcher CHECKS before it OBSERVES — otherwise the narrowing fetch would be
+      refused by the declaration it had just made.
+    where_it_sits: >-
+      The presented tool set is built ONCE per turn (execute.py:1674), so narrowing cannot work
+      by changing what is offered. It is enforced at the pipeline dispatch, immediately before
+      the consent gate — the same seam, for the same kind of reason. Turn-scoped by
+      construction: the state is a local in the tool loop's closure, unreachable by the next
+      turn, so a turn that narrowed itself cannot narrow another.
+    what_it_does_NOT_defend_stated_plainly: >-
+      An agent that leaves the default (true) is exactly as exposed as before. That is the price
+      of not breaking those 66 turns, and it is why fetches_left_open is counted: the ratio of
+      declared-narrow to left-open is the only evidence of whether the default is doing harm,
+      and no such evidence existed before today.
+    A_VACUOUS_TEST_AND_A_MUTATION_I_ALMOST_SHIPPED: >-
+      "cannot be undone by a later call" PASSED with the once-narrowed-stay-narrowed guard
+      removed — narrowed_by is never cleared, so that test could not see the guard at all. Worse,
+      the restore step was `git checkout` on an UNTRACKED file, which fails silently, and `|| true`
+      hid it: the mutated file sat in the tree looking green. Caught by checking git status
+      instead of trusting the command. A second test now pins the invariant the first could not
+      see, and it goes red when the guard is removed.
+    suites: "tests/pipeline + tests/tools/io + tests/tools/browser 2,097 passed. 10 new tests. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_a_live_fetch_that_declares
+    closing_query: >-
+      "[narrowing] the turn gave up write access before reading content" at INFO with a tool
+      field — ZERO today because the parameter did not exist. And the honest SECOND half: if it
+      is still zero after a day of real traffic, the model is never using the control, which is
+      a finding about the description rather than a success. The refusal line
+      "[narrowing] refused a write after the turn narrowed itself" firing at all would mean a
+      page tried, which is the event worth knowing about.
   D04_4_2026_09_03_a_tier_ladder_whose_rungs_are_all_the_same_model:
     map_check: "D04.4 Auxiliary-model router — P1, verdict PARTIAL."
     the_gap_line_is_HALF_right: >-

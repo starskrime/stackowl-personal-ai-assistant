@@ -15,6 +15,7 @@ from typing import Any
 from stackowl.infra import untrusted
 from stackowl.infra.net.ssrf_guard import SsrfGuard, guard_playwright_navigation
 from stackowl.infra.observability import log
+from stackowl.pipeline import write_narrowing
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.browser._extraction import extract_links, extract_markdown
@@ -65,6 +66,7 @@ class WebFetchTool(Tool):
                     "default": "markdown",
                     "description": "Output format: markdown (default), plain text, or list of links.",
                 },
+                write_narrowing.PARAM: write_narrowing.PARAM_SCHEMA,
             },
             "required": ["url"],
         }

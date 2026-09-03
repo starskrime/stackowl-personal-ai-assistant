@@ -22,6 +22,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeout
 
 from stackowl.infra import untrusted
 from stackowl.infra.observability import log
+from stackowl.pipeline import write_narrowing
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.browser._extraction import extract_links, extract_markdown
@@ -216,6 +217,7 @@ class BrowserNavigateTool(_BrowserTool):
                     "enum": ["domcontentloaded", "load", "networkidle"],
                     "default": "domcontentloaded",
                 },
+                write_narrowing.PARAM: write_narrowing.PARAM_SCHEMA,
             },
             "required": ["url"],
         }
@@ -317,6 +319,7 @@ class BrowserExtractTool(_BrowserTool):
                 "page_handle": {"type": "string"},
                 "mode": {"type": "string", "enum": ["markdown", "text", "links", "html"], "default": "markdown"},
                 "selector": {"type": "string", "description": "Optional CSS selector to scope extraction."},
+                write_narrowing.PARAM: write_narrowing.PARAM_SCHEMA,
             },
             "required": ["session_id"],
         }

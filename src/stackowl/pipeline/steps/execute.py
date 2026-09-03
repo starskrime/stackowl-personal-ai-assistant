@@ -70,6 +70,7 @@ from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState, StepError,
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
+from stackowl.pipeline.write_narrowing import TurnWriteNarrowing
 from stackowl.providers._react import looks_like_tool_call
 from stackowl.providers.base import Message, ModelProvider
 from stackowl.providers.escalation_signal import clear_escalation, request_escalation
@@ -1788,6 +1789,11 @@ async def _run_with_tools(
             no_progress_tools=progress.opened_tools,
         )
 
+    # ONE PER TURN, and unreachable outside this closure. A turn that gave up
+    # write access must never narrow the next one, and the cheapest guarantee of
+    # that is state the next turn cannot see.
+    narrowing = TurnWriteNarrowing()
+
     async def _dispatch(name: str, args: dict[str, object]) -> str:
         # F3.1 / E2-S1 loop-stop — a tool already denied this run (by consent OR by
         # bounds) short-circuits HERE before any re-check, so a model that
@@ -2102,6 +2108,22 @@ async def _run_with_tools(
                 "if this capability is missing, build it with tool_build (or author a "
                 "skill) and use the new tool, or use a different existing capability."
             )
+        # HIS DECLARATION, CHECKED BEFORE HIS CONSENT. A turn that gave up write
+        # access did so in a fetch call made BEFORE the page existed in context,
+        # so nothing the page says can retract it. Read severity is untouched:
+        # the point is to stop a page causing an EFFECT, not to end the turn.
+        _refusal = narrowing.refuses(name, str(t.manifest.action_severity))
+        if _refusal is not None:
+            tool_outcome_ledger.record_tool_outcome(
+                name=name, action_severity=str(t.manifest.action_severity),
+                success=False, side_effect_committed=False,
+            )
+            progress.record_no_progress(name)
+            return f"{TOOL_FAILED_MARKER}{_refusal}"
+        # OBSERVED AFTER THE REFUSAL CHECK, so a fetch cannot narrow and then be
+        # refused by its own declaration in the same call.
+        narrowing.observe(name, args)
+
         # E0-S1 — consent gate runs BEFORE execution for consequential tools.
         # The category is derived inside gate.check() from the TRUSTED manifest,
         # never from LLM-supplied args. Fail closed: a gate error, OR a missing
