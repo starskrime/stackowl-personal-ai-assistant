@@ -117,3 +117,35 @@ async def test_an_unreadable_store_omits_the_section_not_the_BRIEF(tmp_db) -> No
 
     sec = await GrowthAssembler(_Boom()).assemble(None)
     assert sec.omitted
+
+
+async def test_a_capability_that_STUMBLED_but_RECOVERED_is_not_a_failure(tmp_db) -> None:
+    """The correctness of the whole per-capability number.
+
+    A row can name a failed_capability on a turn that SUCCEEDED — the capability
+    stumbled and the recovery ladder got there anyway. Counting those reports a
+    regression the user never experienced.
+
+    MEASURED 2026-09-03, hours after this section first shipped counting every
+    row: web_fetch read 27 -> 48, of which 22 and 37 were on turns that
+    SUCCEEDED; the honest figures are 5 -> 11. browser_navigate read 60 -> 18
+    against a true 12 -> 3, and `memory` and `read_file` appeared as improvements
+    on 2 and 1 real failures. The direction survived for every capability; the
+    magnitudes did not.
+    """
+    # Prior week: 6 genuine failures. This week: 1 genuine failure and 20 turns
+    # where web_fetch stumbled and the turn STILL SUCCEEDED.
+    for _ in range(6):
+        await _outcome(tmp_db, days_ago=10, success=0, cap="web_fetch")
+    await _outcome(tmp_db, days_ago=1, success=0, cap="web_fetch")
+    for _ in range(20):
+        await _outcome(tmp_db, days_ago=1, success=1, cap="web_fetch")
+
+    sec = await GrowthAssembler(tmp_db).assemble(None)
+    body = " ".join(sec.items)
+
+    assert "I got WORSE at" not in body, (
+        "recovered stumbles were counted as failures — the section reports a "
+        "regression the user never experienced"
+    )
+    assert "web_fetch (6→1)" in body, body

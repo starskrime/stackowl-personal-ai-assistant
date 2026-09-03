@@ -726,9 +726,20 @@ class GrowthAssembler:
     ) -> dict[str, int]:
         now = time.time()
         rows = await self._db.fetch_all(
+            # `success = 0` IS THE WHOLE CORRECTNESS OF THIS NUMBER. A row can
+            # name a failed_capability on a turn that SUCCEEDED — the capability
+            # stumbled and the recovery ladder got there anyway — and counting
+            # those reports a regression that the user never experienced.
+            # MEASURED 2026-09-03, hours after this section first shipped
+            # counting every row: web_fetch read 27 -> 48, of which 22 and 37
+            # were on turns that SUCCEEDED; the honest figures are 5 -> 11.
+            # browser_navigate read 60 -> 18 against a true 12 -> 3, and `memory`
+            # and `read_file` appeared as improvements on 2 and 1 real failures.
+            # The direction survived for every capability; the magnitudes did not.
             "SELECT failed_capability AS cap, COUNT(*) AS n FROM task_outcomes "
             "WHERE owner_id = ? AND captured_at > ? AND captured_at <= ? "
             "AND failed_capability IS NOT NULL AND failed_capability <> '' "
+            "AND success = 0 "
             "GROUP BY failed_capability",
             (
                 DEFAULT_PRINCIPAL_ID,

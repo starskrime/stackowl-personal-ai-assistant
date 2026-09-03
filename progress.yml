@@ -315,6 +315,48 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  GROWTH_FIX_2026_09_03_I_counted_recovered_stumbles_as_failures:
+    map_check: "No mapped item — correcting the N01 section I shipped hours earlier."
+    how_it_surfaced: >-
+      The growth section reported "I got WORSE at: shell (20->35), web_fetch (27->48)". Rather
+      than take my own new instrument at its word I asked what those rows were made of.
+    THE_DEFECT_in_my_own_work: >-
+      task_outcomes rows carry failed_capability on turns that SUCCEEDED — the capability
+      stumbled and the recovery ladder got there anyway. The section counted every row. MEASURED:
+      of web_fetch's 48 last week, 37 were on turns that SUCCEEDED (prior week 22 of 27), so the
+      honest figures are 5 -> 11. browser_navigate read 60 -> 18 against a true 12 -> 3.
+      `memory` (2 real failures) and `read_file` (1) were being reported as improvements at all.
+    what_survived_the_correction_and_what_did_not: >-
+      Every DIRECTION held — browser_navigate and delegate_task still improved, shell and
+      web_fetch still regressed — so the report was not lying about the trend. The MAGNITUDES
+      were inflated up to 5x, and two capabilities appeared that should never have passed the
+      noise floor. A number that is right about the sign and wrong about the size is exactly the
+      kind he cannot check, which is what makes it worth correcting on the day it shipped.
+    the_root_cause_and_what_else_it_reaches: >-
+      "check what a denominator is MADE OF, not just that it is non-zero" — CLAUDE.md's own rule,
+      broken by me in the feature built to tell him the truth about itself. failed_capability
+      answers "which capability stumbled", not "why the turn failed"; anything reading it as a
+      failure count without `success = 0` inherits the same error. Checked the other readers:
+      failure_outcome_miner clusters on it but only over list_failed_global, which is already
+      failed-only, so the miner is sound.
+    ALSO_CHECKED_AND_NOT_A_DEFECT: >-
+      Two events emit with no subscriber — pipeline_step_changed (30) and morning_brief_rendered
+      (4). Neither is dead: the TUI subscribes to the first when it is running, and the second's
+      emitter documents it as TELEMETRY ONLY with the bus explicitly not the delivery path. A
+      grep for subscribers would have shown zero in a headless process; reading the code showed
+      why that is correct.
+    the_honest_report_now: >-
+      "I finished 90% of what you asked this week, against 68% the week before — I am better at
+      my job (1660 turns, 2612 before). I stopped failing so often at: browser_navigate (12->3),
+      delegate_task (6->2). I got WORSE at: shell (15->21), web_fetch (5->11). I learned 22 new
+      skill(s) this week."
+    suites: "tests/brief 58 passed; 1 new test, mutation-tested — removing the success=0 clause turns it red. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_morning_brief
+    closing_query: >-
+      "[brief] growth: assembled" on the 13:00Z brief with improved=2 and regressed=2 — not the
+      four-and-two the unfiltered version produced. And the standing check: shell and web_fetch
+      are genuinely regressing (15->21, 5->11) and are the next thing worth investigating on
+      their own merits.
   N01_2026_09_03_the_agent_finally_says_how_it_is_CHANGING:
     map_check: "N01 Dreaming — P1, verdict NATIVE, his own idea outside the reference map."
     his_words_2026_08_10: >-
