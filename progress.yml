@@ -454,7 +454,20 @@ current:
       The registration was checked NOT to have moved inside a branch — the delete half has run
       nightly since 2026-08-31 and must not have been made conditional by reaching for the
       miner; an AST test now pins that.
-    validate: OPEN_awaiting_either_the_0930Z_sweep_or_the_next_concluded_RCA
+    validate: >-
+      CLOSED ON LIVE EVIDENCE, 2026-09-03T00:10:07Z. Ownerless learned skills went 11 -> ZERO in
+      one pass. Six "[incident] miner.reconcile: an orphaned lesson now has owners" lines at
+      INFO, and 45 skill_ownership rows written in that second — every one of the eleven now
+      owned by the owls that actually failed that capability. incident_shell to mailbutler,
+      rca_gatherer, scout and secretary; incident_delegate_task to Brain, headhunter, jobmarket,
+      mailbutler and secretary; and so on. The repair came from the mine() path (an RCA
+      concluded at 00:10), not the 09:30 sweep — either path was acceptable and the sweep
+      remains the one that needs no incident.
+    WHY_THIS_PARTICULAR_CLOSURE_MATTERS: >-
+      His standing rule is that self-healing PROVES the root-cause fix: if the platform does not
+      heal itself after a fix, either self-healing is broken or the core is not fixed. Nothing
+      was hand-attached here. The eleven were repaired by the mechanism, on the platform's own
+      schedule, which is exactly what he asked for when he refused to pick which ones to attach.
     closing_query: >-
       "[incident] miner.reconcile: an orphaned lesson now has owners" at INFO with a non-empty
       owls list, and skill_ownership rows for names matching 'incident\_%' ESCAPE '\' — ZERO
