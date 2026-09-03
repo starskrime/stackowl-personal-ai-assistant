@@ -133,7 +133,6 @@ async def test_a_correction_retry_stays_in_the_conversation_it_corrects() -> Non
     actuator = RetryActuator(
         backend=backend,
         channel_registry=MagicMock(),
-        retry_store=AsyncMock(),
     )
     original = PipelineState(
         trace_id="t-orig",

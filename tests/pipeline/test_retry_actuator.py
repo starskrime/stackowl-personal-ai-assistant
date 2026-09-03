@@ -5,7 +5,10 @@ from telegram.error import RetryAfter
 
 from stackowl.infra import retry_ledger
 from stackowl.memory.retry_queue_store import RetryQueueRow
-from stackowl.pipeline.retry_actuator import RetryActuator
+from stackowl.pipeline.retry_actuator import (
+    RetryActuator,
+    _delivery_retry_delay_seconds,
+)
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import ResponseChunk
 
@@ -44,15 +47,13 @@ async def test_attempt_retry_success_edits_message():
     channel_registry = MagicMock()
     channel_registry.get = MagicMock(return_value=adapter)
 
-    retry_store = MagicMock()
-    retry_store.mark_completed = AsyncMock()
 
-    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry)
     outcome = await actuator.attempt_retry(row)
 
     assert outcome.status == "completed"
     adapter.edit_message.assert_awaited_once()
-    retry_store.mark_completed.assert_awaited_once_with("retry-1")
+    assert outcome.status == "completed"
 
     # banned capability must have been injected into the re-run prompt
     call_state = backend.run.await_args.args[0]
@@ -85,10 +86,8 @@ async def test_attempt_retry_shares_one_retry_lineage_id_across_attempts():
     channel_registry = MagicMock()
     channel_registry.get = MagicMock(return_value=adapter)
 
-    retry_store = MagicMock()
-    retry_store.mark_completed = AsyncMock()
 
-    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry)
     await actuator.attempt_retry(row)
     await actuator.attempt_retry(row)
 
@@ -127,10 +126,8 @@ async def test_attempt_retry_success_joins_streamed_chunks_without_newlines():
     channel_registry = MagicMock()
     channel_registry.get = MagicMock(return_value=adapter)
 
-    retry_store = MagicMock()
-    retry_store.mark_completed = AsyncMock()
 
-    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry)
     await actuator.attempt_retry(row)
 
     delivered_text = adapter.edit_message.await_args.args[2]
@@ -156,9 +153,6 @@ async def test_attempt_retry_failure_marks_attempt(monkeypatch: pytest.MonkeyPat
     backend.run = AsyncMock(return_value=floored_state)
 
     channel_registry = MagicMock()
-    retry_store = MagicMock()
-    updated_row = _row(attempt_count=1, status="pending")
-    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
 
     # Workstream B — spy on retry_ledger.record_retry rather than binding a
     # context: _handle_failure runs outside any backend-bound ledger scope in
@@ -172,11 +166,11 @@ async def test_attempt_retry_failure_marks_attempt(monkeypatch: pytest.MonkeyPat
         lambda **kwargs: recorded.append(kwargs),
     )
 
-    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry)
     outcome = await actuator.attempt_retry(row)
 
     assert outcome.status == "pending"
-    retry_store.mark_attempt_failed.assert_awaited_once()
+    assert outcome.status == "pending"
     assert len(recorded) == 1
     assert recorded[0]["kind"] == "goal_retry_attempt"
     assert recorded[0]["provider"] == row.id
@@ -207,17 +201,14 @@ async def test_attempt_retry_pins_newly_failed_capability_not_already_banned():
     backend.run = AsyncMock(return_value=floored_state)
 
     channel_registry = MagicMock()
-    retry_store = MagicMock()
-    updated_row = _row(attempt_count=1, status="pending")
-    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
 
-    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry)
     outcome = await actuator.attempt_retry(row)
 
     assert outcome.status == "pending"
-    retry_store.mark_attempt_failed.assert_awaited_once()
+    assert outcome.status == "pending"
     assert (
-        retry_store.mark_attempt_failed.await_args.kwargs["newly_failed_capability"]
+        outcome.banned[0]
         == "web_search"
     )
 
@@ -253,17 +244,13 @@ async def test_attempt_retry_budget_capped_partial_is_not_success():
     channel_registry = MagicMock()
     channel_registry.get = MagicMock(return_value=adapter)
 
-    retry_store = MagicMock()
-    retry_store.mark_completed = AsyncMock()
-    updated_row = _row(attempt_count=1, status="pending")
-    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
 
-    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry)
     outcome = await actuator.attempt_retry(row)
 
     assert outcome.status == "pending"
-    retry_store.mark_attempt_failed.assert_awaited_once()
-    retry_store.mark_completed.assert_not_awaited()
+    assert outcome.status == "pending"
+    assert outcome.status != "completed"
     adapter.edit_message.assert_not_awaited()
     adapter.send_text.assert_not_called()
 
@@ -297,17 +284,13 @@ async def test_attempt_retry_overclaim_blocked_is_not_success():
     channel_registry = MagicMock()
     channel_registry.get = MagicMock(return_value=adapter)
 
-    retry_store = MagicMock()
-    retry_store.mark_completed = AsyncMock()
-    updated_row = _row(attempt_count=1, status="pending")
-    retry_store.mark_attempt_failed = AsyncMock(return_value=updated_row)
 
-    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry)
     outcome = await actuator.attempt_retry(row)
 
     assert outcome.status == "pending"
-    retry_store.mark_attempt_failed.assert_awaited_once()
-    retry_store.mark_completed.assert_not_awaited()
+    assert outcome.status == "pending"
+    assert outcome.status != "completed"
     adapter.edit_message.assert_not_awaited()
 
 
@@ -341,12 +324,17 @@ async def test_attempt_retry_reschedules_by_telegram_retry_after_on_flood_contro
     channel_registry = MagicMock()
     channel_registry.get = MagicMock(return_value=adapter)
 
-    retry_store = MagicMock()
-    retry_store.reschedule = AsyncMock()
-
-    actuator = RetryActuator(backend=backend, channel_registry=channel_registry, retry_store=retry_store)
+    actuator = RetryActuator(backend=backend, channel_registry=channel_registry)
     outcome = await actuator.attempt_retry(row)
 
+    # NOT DELIVERED, so the loop must try again rather than mark it done. This
+    # used to be asserted through a reschedule() write into retry_queue; that
+    # table has had no writer since 2026-08-28 and the ONE loop owns pacing for
+    # a `tasks` row now, so the contract is the OUTCOME.
     assert outcome.status == "pending"
-    retry_store.reschedule.assert_awaited_once()
-    assert retry_store.reschedule.await_args.kwargs["delay_seconds"] == pytest.approx(2703.0)
+
+    # THE FLOOD-CONTROL ARITHMETIC IS THE HALF WORTH KEEPING. A ~10h Telegram
+    # ban is on this record because every send path hammered a flood-controlled
+    # channel with no backoff; honouring RetryAfter plus a small buffer is what
+    # stopped it, and it is still computed here.
+    assert _delivery_retry_delay_seconds(RetryAfter(2698)) == pytest.approx(2703.0)

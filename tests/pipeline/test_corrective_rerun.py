@@ -70,8 +70,7 @@ class _FakeBackend:
 def _actuator(backend: _FakeBackend) -> RetryActuator:
     return RetryActuator(
         backend=backend,  # type: ignore[arg-type]
-        channel_registry=None,  # type: ignore[arg-type]
-        retry_store=None,  # type: ignore[arg-type]
+        channel_registry=None,  # type: ignore[arg-type],  # type: ignore[arg-type]
     )
 
 

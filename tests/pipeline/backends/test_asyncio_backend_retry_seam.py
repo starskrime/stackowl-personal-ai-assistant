@@ -66,7 +66,7 @@ async def test_manual_retry_seam_single_delivery_no_recursion(monkeypatch) -> No
     # dispatch through — matching startup/orchestrator.py's production wiring
     # (RetryActuator(backend=backend, ...), then injected back onto services).
     services.retry_actuator = RetryActuator(
-        backend=backend, channel_registry=channel_registry, retry_store=retry_store,
+        backend=backend, channel_registry=channel_registry,
     )
 
     # Only the real triage step is exercised — sufficient to prove the seam:

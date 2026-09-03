@@ -48,12 +48,12 @@ async def test_a_floored_retry_REPORTS_the_capability_it_burned() -> None:
     from stackowl.memory.retry_queue_store import RetryQueueRow
     from stackowl.pipeline.retry_actuator import RetryActuator
 
-    store = AsyncMock()
-    # The dead table's own behaviour: the row does not exist, so this raises.
-    store.mark_attempt_failed.side_effect = ValueError("no matching row")
-    actuator = RetryActuator(
-        backend=MagicMock(), channel_registry=MagicMock(), retry_store=store,
-    )
+    # NO STORE TO SIMULATE ANY MORE. This used to hand in an AsyncMock whose
+    # mark_attempt_failed raised ValueError("no matching row") — the dead table's
+    # real behaviour, since retry_queue lost its writer on 2026-08-28. That call
+    # is deleted (2026-09-03), so the capability now travels on the return value
+    # by construction rather than out of an except branch.
+    actuator = RetryActuator(backend=MagicMock(), channel_registry=MagicMock())
     row = RetryQueueRow(id="retry-x", trace_id="retry-x", session_key="s", goal="g")
 
     outcome = await actuator._handle_failure(

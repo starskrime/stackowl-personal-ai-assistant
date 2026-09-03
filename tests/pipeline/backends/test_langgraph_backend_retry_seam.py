@@ -64,7 +64,7 @@ async def test_manual_retry_seam_single_delivery_no_recursion(
     monkeypatch.setattr(mod, "PIPELINE_STEPS", [("triage", triage.run)])
     backend = LangGraphBackend(services=services, use_memory_checkpoint=True)
     services.retry_actuator = RetryActuator(
-        backend=backend, channel_registry=channel_registry, retry_store=retry_store,
+        backend=backend, channel_registry=channel_registry,
     )
 
     deliver_calls: list[str] = []

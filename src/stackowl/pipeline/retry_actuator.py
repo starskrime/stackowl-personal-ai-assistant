@@ -26,7 +26,7 @@ from telegram.error import RetryAfter
 
 from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
-from stackowl.memory.retry_queue_store import RetryQueueRow, RetryQueueStore
+from stackowl.memory.retry_queue_store import RetryQueueRow
 from stackowl.notifications.deliverer import _TargetedSender
 from stackowl.pipeline.delivery_gate import (
     _attempts_for_state,
@@ -109,11 +109,19 @@ class RetryActuator:
         *,
         backend: OrchestratorBackend,
         channel_registry: ChannelRegistry,
-        retry_store: RetryQueueStore,
     ) -> None:
+        # NO STORE. This used to take a RetryQueueStore and write three
+        # bookkeeping calls into `retry_queue` — a table whose only writer was
+        # removed on 2026-08-28 (commit 49601f50, "a floored turn retries on the
+        # ONE loop"). Every row this actuator now sees is a SYNTHETIC one built
+        # by task_loop_runner from a `tasks` row, so none of those writes could
+        # ever match: MEASURED across three days of logs, 14 ERROR lines from
+        # mark_attempt_failed, 11 "no matching row — wrong id" warnings from
+        # mark_completed, and 47 "no matching pending row" from reschedule.
+        # The bookkeeping that IS real lives on `tasks` and is done by the runner
+        # from this method's return value.
         self._backend = backend
         self._channel_registry = channel_registry
-        self._retry_store = retry_store
 
     async def run_corrective(
         self, *, original: PipelineState, correction: str
@@ -329,47 +337,25 @@ class RetryActuator:
         # outcome reached its DESTINATION". Once the answer has landed the
         # achievement is met, whatever the bookkeeping did afterwards. Re-sending
         # is not a smaller error than failing to record.
-        delivered = False
         try:
-            # 3. STEP — deliver, then record completion; mirrors deliverer.py's
-            # _transport contract: this must never raise into the caller.
+            # 3. STEP — deliver. Recording completion is the CALLER's job: the
+            # runner marks the `tasks` row from this method's return value, and
+            # that is the only bookkeeping that exists now.
             await self._deliver_success(row, answer_text)
-            delivered = True
-            await self._retry_store.mark_completed(row.id)
         except Exception as exc:  # never raise into the scheduler loop
-            if delivered:
-                # The user HAS the answer; only the record failed. Reporting
-                # anything but success here buys a duplicate message.
-                log.scheduler.error(
-                    "retry_actuator.attempt_retry: DELIVERED but could not record "
-                    "it — reporting completed so the answer is not sent twice",
-                    exc_info=exc, extra={"_fields": {"retry_id": row.id}},
-                )
-                return RetryOutcome(status="completed")
             delay_seconds = _delivery_retry_delay_seconds(exc)
             log.scheduler.error(
                 "retry_actuator.attempt_retry: success-path delivery/store failed",
                 exc_info=exc, extra={"_fields": {"retry_id": row.id, "delay_seconds": delay_seconds}},
             )
-            # Without this, the row's next_retry_at is unchanged (still due),
-            # so the NEXT 1-minute sweep tick retries immediately — hammering
-            # an already flood-controlled channel and extending the ban
-            # instead of waiting it out. Reschedule failure is best-effort:
-            # worst case is the old behavior (immediate re-try), never a
-            # crash into the scheduler loop.
-            try:
-                await self._retry_store.reschedule(
-                    row.id, delay_seconds=delay_seconds, error=str(exc),
-                )
-            except Exception as store_exc:
-                log.scheduler.error(
-                    "retry_actuator.attempt_retry: reschedule after delivery "
-                    "failure also failed",
-                    exc_info=store_exc, extra={"_fields": {"retry_id": row.id}},
-                )
-            # The row's DB status is unchanged by a failed delivery/mark_completed
-            # (still "pending"), so reporting "pending" here matches DB truth and
-            # lets a future sweep retry rather than silently losing the answer.
+            # The reschedule that used to happen here wrote `next_retry_at` on a
+            # retry_queue row, and it paced the deleted 1-minute sweep. Both are
+            # gone; the ONE loop owns pacing for a `tasks` row. `delay_seconds`
+            # is kept because it is the reported reason, not a timer.
+            #
+            # "pending" means the answer was produced but not delivered, so the
+            # loop must try again rather than mark it done — the same contract as
+            # before, now reported rather than written.
             outcome = RetryOutcome(status="pending")
             log.scheduler.info(
                 "retry_actuator.attempt_retry: exit",
@@ -483,52 +469,35 @@ class RetryActuator:
     async def _handle_failure(
         self, row: RetryQueueRow, error: str, *, newly_failed_capability: str,
     ) -> RetryOutcome:
-        try:
-            # 3. STEP — mark_attempt_failed raises ValueError when the row was
-            # raced (already moved off "pending" by a concurrent sweep/manual-
-            # retry call) or re-raises on transaction failure — this must
-            # never raise into the scheduler loop.
-            updated = await self._retry_store.mark_attempt_failed(
-                retry_id=row.id, newly_failed_capability=newly_failed_capability, error=error,
-            )
-        except Exception as exc:  # never raise into the scheduler loop
-            log.scheduler.error(
-                "retry_actuator._handle_failure: mark_attempt_failed failed",
-                exc_info=exc, extra={"_fields": {"retry_id": row.id}},
-            )
-            # Unknown terminal state (another caller may already own this row) —
-            # "pending" is the conservative, non-data-losing report: worst case
-            # is a harmless extra retry, never a silently dropped failure.
-            #
-            # THE LEARNING STILL TRAVELS. This branch is the LIVE one: the store
-            # above is `retry_queue`, which the ONE-loop migration stopped writing,
-            # so mark_attempt_failed raises on every call (19 occurrences in the
-            # retained logs). Returning the capability here is what stops the
-            # dead table from also costing us the lesson.
-            return RetryOutcome(
-                status="pending",
-                banned=(newly_failed_capability,) if newly_failed_capability else (),
-                reason=error,
-            )
-        # Workstream B — the real attempt_number mark_attempt_failed just
-        # persisted (not the pre-attempt count captured at attempt_retry's
-        # entry), so a later reader (task_outcomes, Phase 5) can tell "attempt
-        # 1 of many" from "attempt 40 and still failing". provider=row.id
-        # matches this row's retry_lineage_id, so both are the same key.
-        # NOTE: attempt_retry runs outside any backend-bound retry_ledger
-        # scope (backend.run() binds/resets its OWN per-turn context and
-        # returns before _handle_failure is ever called) — this call is a
+        # THE STORE ROUND-TRIP IS GONE, AND ITS EXCEPT BRANCH WAS ALREADY THE
+        # IMPLEMENTATION. mark_attempt_failed raised on every call — the row is
+        # synthetic and retry_queue has had no writer since 2026-08-28 — so this
+        # method's real behaviour was the handler for a failure that was
+        # guaranteed. A call kept for its exception is not a call; it was 14
+        # ERROR lines in three days about a by-design condition, which is how an
+        # error log stops meaning anything.
+        attempt_number = int(getattr(row, "attempt_count", 0) or 0) + 1
+
+        # Workstream B — the attempt number a later reader (task_outcomes) needs
+        # to tell "attempt 1 of many" from "attempt 40 and still failing".
+        # provider=row.id matches this row's retry_lineage_id, so both are the
+        # same key. NOTE: attempt_retry runs outside any backend-bound
+        # retry_ledger scope (backend.run() binds/resets its OWN per-turn context
+        # and returns before _handle_failure is ever called) — this call is a
         # graceful no-op until a caller binds a ledger scope spanning the
-        # goal-retry lifecycle, which Phase 5 adds alongside the durable
-        # persistence read.
+        # goal-retry lifecycle.
         retry_ledger.record_retry(
             kind="goal_retry_attempt", provider=row.id,
-            detail=error[:120], attempt_number=updated.attempt_count,
+            detail=error[:120], attempt_number=attempt_number,
         )
-        # No terminal "failed" status anymore (owner decision 2026-07-22) —
-        # mark_attempt_failed always re-arms, so there is no give-up
-        # notification to send here; updated.status is always "pending".
+        # ALWAYS "pending", never a terminal "failed" (owner decision
+        # 2026-07-22): a goal re-arms and is never abandoned, so there is no
+        # give-up notification to send here. THE LEARNING TRAVELS WITH IT — the
+        # capability that just failed is returned so the next attempt is
+        # constrained rather than blind, which is what the ONE loop reads off
+        # this outcome and writes onto the `tasks` row.
         return RetryOutcome(
-            status=updated.status,
+            status="pending",
             banned=(newly_failed_capability,) if newly_failed_capability else (),
+            reason=error,
         )

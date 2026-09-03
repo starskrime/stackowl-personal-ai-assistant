@@ -1706,7 +1706,6 @@ class StartupOrchestrator:
         retry_actuator = RetryActuator(
             backend=backend,
             channel_registry=ChannelRegistry.instance(),
-            retry_store=retry_queue_store,
         )
         # RetrySweepHandler was registered here and is GONE (2026-09-03). Commit
         # 49601f50 removed the only writer of `retry_queue` on 2026-08-28 — "a

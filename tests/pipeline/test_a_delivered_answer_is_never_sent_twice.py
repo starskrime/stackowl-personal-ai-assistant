@@ -110,18 +110,45 @@ class TestAnAnswerThatLandedCountsAsLanded:
 
 
 class TestTheRealActuatorKeepsThisShape:
-    async def test_delivery_is_recorded_before_the_bookkeeping_call(self) -> None:
-        """Guards the ORDER, which is the whole fix: `delivered = True` must sit
-        between the send and mark_completed. If a later edit merges them back into
-        one statement, the duplicate-message bug returns silently."""
+    async def test_NOTHING_but_the_delivery_runs_inside_that_try(self) -> None:
+        """The invariant got STRONGER, so this asserts the stronger thing.
+
+        The original fix threaded a `delivered = True` flag between the send and
+        `mark_completed` so a failed write could not be reported as a failed
+        send. On 2026-09-03 the bookkeeping call was deleted outright — it wrote
+        to `retry_queue`, whose only writer was removed on 2026-08-28, so it
+        could never match the synthetic `task-` row the ONE loop hands in.
+
+        With nothing else inside the try, the window this incident happened in
+        does not exist: the only statement that can raise is the send itself, so
+        an exception means the answer did NOT land. A flag is no longer needed to
+        tell those apart, and asserting the flag would now be asserting a
+        workaround for a hazard that is gone. Asserting the ABSENCE of a second
+        awaited statement is what keeps it gone.
+        """
+        import ast
         import inspect
+        import textwrap
 
         from stackowl.pipeline.retry_actuator import RetryActuator
 
-        src = inspect.getsource(RetryActuator.attempt_retry)
-        deliver_at = src.index("await self._deliver_success(")
-        flag_at = src.index("delivered = True")
-        mark_at = src.index("await self._retry_store.mark_completed(")
+        src = textwrap.dedent(inspect.getsource(RetryActuator.attempt_retry))
+        tree = ast.parse(src)
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Try):
+                continue
+            body_src = "\n".join(ast.unparse(stmt) for stmt in node.body)
+            if "_deliver_success" not in body_src:
+                continue
+            awaits = [n for n in ast.walk(ast.Module(body=node.body, type_ignores=[]))
+                      if isinstance(n, ast.Await)]
+            if len(awaits) != 1:
+                offenders.append(body_src)
 
-        assert deliver_at < flag_at < mark_at
-        assert "if delivered:" in src
+        assert not offenders, (
+            "something other than the send now runs inside the delivery try — a "
+            "failure there is indistinguishable from a failed send, which is "
+            "exactly how the same answer reached him three times on 2026-08-19:\n"
+            + "\n".join(offenders)
+        )

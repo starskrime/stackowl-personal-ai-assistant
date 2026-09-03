@@ -315,6 +315,56 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ACTUATOR_2026_09_03_a_call_kept_for_its_EXCEPTION_is_not_a_call:
+    map_check: "No mapped item — the piece I named as next when the retry sweep went."
+    the_shape: >-
+      RetryActuator wrote three bookkeeping calls into retry_queue: mark_completed, reschedule
+      and mark_attempt_failed. Every row it sees is a SYNTHETIC one built by task_loop_runner
+      from a `tasks` row, and retry_queue has had no writer since 2026-08-28, so none of those
+      writes could ever match. MEASURED across three days of logs: 14 ERROR lines from
+      mark_attempt_failed, 11 "no matching row — wrong id" warnings from mark_completed, 47
+      "no matching pending row" from reschedule.
+    THE_CODE_ALREADY_KNEW: >-
+      The comment on the except branch said it outright — "This branch is the LIVE one: the
+      store above is retry_queue, which the ONE-loop migration stopped writing, so
+      mark_attempt_failed raises on every call (19 occurrences in the retained logs)". Someone
+      diagnosed it, wrote it down, and left the call. A call kept for its exception is not a
+      call: the handler was the implementation and the try was a guaranteed-failing round trip
+      that emitted an ERROR each time. An ERROR that always fires is how an error log stops
+      meaning anything, which is a cost paid by every future reader, not by this path.
+    what_else_that_cause_reaches: >-
+      Anywhere a migration moves the source of truth and leaves the old write in place "for
+      safety". The tell is an except branch that carries the real logic and a comment
+      explaining why the try always fails.
+    an_invariant_got_STRONGER_not_weaker: >-
+      tests/pipeline/test_a_delivered_answer_is_never_sent_twice.py guards a real incident — the
+      same recovered answer delivered to him three times on 2026-08-19 because a successful send
+      followed by failed bookkeeping reported "pending". That fix threaded a `delivered = True`
+      flag between the two. With the bookkeeping call gone, the send is the ONLY statement
+      inside that try, so an exception can only mean the answer did not land — the window does
+      not exist. The test now parses the AST and asserts exactly ONE await inside that try,
+      which is a stronger claim than the flag ordering it replaced. Mutation-tested.
+    tests_that_asserted_the_CALL_now_assert_the_OUTCOME: >-
+      Eight actuator tests asserted on a mock store — that the actuator CALLED mark_completed /
+      mark_attempt_failed — which is "trust the call, never measure the effect" written as a
+      test. They now assert the RetryOutcome the ONE loop actually reads. The flood-control test
+      kept its valuable half: the RetryAfter+buffer arithmetic that ended a ~10h Telegram ban is
+      still pinned, via the function that computes it rather than via a write that no longer
+      happens.
+    A_CARELESS_REGEX_and_I_caught_it_by_running_the_test: >-
+      Stripping `retry_store=` from test constructors with a regex also deleted a standalone
+      `retry_store = MagicMock()` in the manual-retry seam test, leaving its usages dangling.
+      Restored from git and redone with a pattern anchored to the constructor call. Same family
+      as the unguarded str.replace earlier today: a scripted edit needs a gate, and here the
+      gate was the suite.
+    suites: "tests/pipeline 1,695 passed — was 10 failed after the first cut. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_floored_task_re_drive
+    closing_query: >-
+      ZERO new "mark_attempt_failed failed", "no matching row — wrong id" and "reschedule: no
+      matching pending row" lines after this boot, against 14 / 11 / 47 in the retained logs —
+      while "[loop] re-driving a recovered task through the retry actuator" keeps appearing at
+      its usual 13-21 a day. Both halves matter: the first alone would also be satisfied by an
+      actuator that stopped running.
   RETRYSWEEP_2026_09_03_a_sweep_that_swept_a_table_nothing_can_write:
     map_check: "No mapped item — found by the cadence registry's own question, a day before it would have alarmed."
     how_it_surfaced: >-
