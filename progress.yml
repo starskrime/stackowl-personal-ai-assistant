@@ -354,6 +354,17 @@ current:
       cost of the other is a self-healing loop that fails in silence, which is the failure mode
       this whole arc exists to prevent.
     suites: "tests/learning 151 passed including 11 new; tests/scheduler/handlers incident 50 passed. Baselines held at ruff 35, mypy 65."
+    I_COMMITTED_AGAINST_A_FAILING_GATE_and_that_is_the_process_defect: >-
+      The tenancy tripwire caught a genuine multi-tenancy bug in my own new code — a
+      "SELECT name, loaded_at FROM skills WHERE source='learned'" with NO owner_id predicate,
+      on a table migration 0043 made owner-governed. That is the third time this programme has
+      shipped exactly that shape, and the tripwire exists because of the first two. It did its
+      job and printed "TRIPWIRES FAILED — do not commit". THE COMMIT WENT OUT ANYWAY, because I
+      ran the gate and the commit as two independent commands in one step: git commit was
+      chained to git add, not to the gate. A verdict nothing depends on is not a gate. Fixed
+      forward (history is pushed and may not be rewritten), the read is now scoped to the same
+      principal the ownership read uses so the two halves cannot disagree about whose catalogue
+      they mean, and the item-loop skill now requires the gate and the commit to be CHAINED.
     validate: OPEN_awaiting_the_next_10_minute_incident_escalation_tick
     closing_query: >-
       "[scheduler] incident_escalation: a lesson did not hold — paging" at INFO carrying

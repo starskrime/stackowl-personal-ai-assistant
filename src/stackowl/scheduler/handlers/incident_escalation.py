@@ -852,8 +852,17 @@ class IncidentEscalationHandler(JobHandler):
             clusters = cluster_failures_by_capability_and_signature(
                 outcomes, min_size=1,
             )
+            # OWNER-SCOPED, and the tenancy tripwire caught this being missing.
+            # `skills` is owner-governed (migration 0043); an unscoped read here
+            # would let one principal's catalogue decide another's alerts. The
+            # same principal the ownership read above uses, so the two halves of
+            # this check can never disagree about whose catalogue they mean.
+            from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
+
             rows = await self._db.fetch_all(  # type: ignore[attr-defined]
-                "SELECT name, loaded_at FROM skills WHERE source = 'learned'", (),
+                "SELECT name, loaded_at FROM skills "
+                "WHERE source = 'learned' AND owner_id = ?",
+                (DEFAULT_PRINCIPAL_ID,),
             )
             fixes = {
                 str(r["name"]): float(r["loaded_at"] or 0)
