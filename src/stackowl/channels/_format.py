@@ -453,10 +453,22 @@ def channel_shape(channel: str | None) -> ChannelShape | None:
 # Emphasis pairs, double-delimiter before single so ``**`` is not read as two
 # italics; mirrors the formatter's GFM regexes but STRIPS instead of converting.
 _EMPH_BOLD_STAR_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL | re.UNICODE)
-_EMPH_BOLD_UNDER_RE = re.compile(r"__(.+?)__", re.DOTALL | re.UNICODE)
+#: UNDERSCORE EMPHASIS IS NOT INTRAWORD, and forgetting that corrupted every
+#: snake_case identifier the platform ever sent. `_(.+?)_` with no flanking rule
+#: matched `_unachieved_` inside `shell_unachieved_effect` and delivered
+#: "shellunachievedeffect" to the operator; worse, it spanned words —
+#: "web_fetch and browser_navigate" arrived as "webfetch and browsernavigate",
+#: two different capability names merged into one sentence. MEASURED on the live
+#: alert: before_len 262 -> after_len 258, exactly the four underscores.
+#:
+#: CommonMark already has the rule and it is the rule this needed: `_` opens or
+#: closes emphasis only when it is NOT flanked by word characters. `*` is
+#: deliberately left alone — CommonMark DOES allow intraword `*`, and asterisks
+#: do not appear inside identifiers, which is why only underscores broke.
+_EMPH_BOLD_UNDER_RE = re.compile(r"(?<!\w)__(.+?)__(?!\w)", re.DOTALL | re.UNICODE)
 _EMPH_STRIKE_RE = re.compile(r"~~(.+?)~~", re.DOTALL | re.UNICODE)
 _EMPH_ITALIC_STAR_RE = re.compile(r"\*(.+?)\*", re.UNICODE)
-_EMPH_ITALIC_UNDER_RE = re.compile(r"_(.+?)_", re.UNICODE)
+_EMPH_ITALIC_UNDER_RE = re.compile(r"(?<!\w)_(.+?)_(?!\w)", re.UNICODE)
 _ATX_HEADER_RE = re.compile(r"(?m)^[ \t]{0,3}#{1,6}[ \t]+")
 
 # Code spans/fences are protected from emphasis/link transforms so e.g. ``2 ** 8``

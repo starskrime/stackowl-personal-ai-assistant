@@ -315,6 +315,51 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  UNDERSCORE_2026_09_03_the_delivery_seam_ATE_every_identifier_it_sent:
+    map_check: "No mapped item — he reported the symptom from a delivered message."
+    what_he_reported: >-
+      "shell/unachievedeffect has failed 5 more time(s) ... The lesson
+      'incidentshellunachievedeffect' is owned by NOBODY". Every underscore gone.
+    the_alert_was_CORRECT_when_composed: >-
+      The recurrence detector produced the right text; the DELIVERY seam removed the
+      underscores. Proved from the live log without guessing: "[notifications] deliverer: output
+      style applied to a proactive message {before_len: 262, after_len: 258}" — exactly four
+      characters for exactly the four underscores in that sentence.
+    THE_CAUSE: >-
+      _EMPH_ITALIC_UNDER_RE in channels/_format.py was `_(.+?)_` with no flanking rule. In
+      "shell_unachieved_effect" it matched "_unachieved_" and stripped both delimiters. Worse,
+      it spanned words: "web_fetch and browser_navigate" arrives as "webfetch and
+      browsernavigate" — two different capability names welded into one that names nothing.
+    what_else_the_same_cause_reaches_MEASURED: >-
+      Every proactive message carrying a snake_case name — capability and tool names, owl names
+      like rca_gatherer, skill names, table names, file paths. Across the retained logs ELEVEN
+      proactive messages were altered by this styler, back to 2026-08-28, including two MORNING
+      BRIEFS (-16 and -24 characters) and three earlier operator_health alerts. It failed
+      SILENTLY: the sentence still reads like prose, so nothing looked wrong until a name was
+      needed and no longer existed.
+    the_fix_is_the_rule_markdown_ALREADY_HAS: >-
+      CommonMark disallows intraword underscore emphasis; the regex simply did not implement it.
+      Both underscore patterns now require the delimiter not be flanked by word characters. `*`
+      is deliberately untouched — CommonMark DOES allow intraword `*`, and asterisks do not
+      appear inside identifiers, which is exactly why only underscores broke.
+    the_control_matters_here: >-
+      A guard that keeps identifiers by giving up on emphasis would have silently undone the
+      thing he asked for when he complained about asterisks in his replies. A test asserts
+      "**bold** and _italic_ and __also bold__" still strips to "bold and italic and also bold",
+      and another asserts the transform stays a FIXED POINT, because OutputStyle.verify re-runs
+      every enforcer and a non-idempotent one logs "spec drift repaired" for ever.
+    NOT_a_defect_and_recorded_so: >-
+      The dedup held. Each of the three signatures paged exactly ONCE (00:06:18) and the ledger
+      holds exactly three rows; the "bunch" was three distinct signatures arriving together, not
+      one repeating. And "owned by NOBODY" was TRUE when sent at 00:06:18 — the reconciler
+      attached all eleven at 00:10:07, four minutes later — so a future page recomputes and will
+      say "is owned and still did not hold".
+    suites: "tests/channels 638 passed, including 13 new. Baselines held."
+    validate: OPEN_awaiting_the_next_proactive_message_carrying_an_identifier
+    closing_query: >-
+      "[notifications] deliverer: output style applied to a proactive message" must stop showing
+      a before/after delta that equals the underscore count of the message. The next morning
+      brief is the strongest test — the last two lost 16 and 24 characters to this.
   CADENCE_2026_09_03_every_store_declares_what_silence_means_for_it:
     map_check: "No mapped item — implementing his answer to ESC-90."
     his_decision: >-
