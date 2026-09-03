@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CLARIFY_2026_09_03_reversibility_was_answering_TWO_different_questions:
+    map_check: "No mapped item — the third and last strand of his 2026-09-03 report."
+    two_things_I_told_him_were_wrong_and_MEASURED_are_NOT: >-
+      I said the exchange was split across three conversations and implied broken continuity.
+      Measured: conversation history is read by SESSION_KEY, not conversation_id
+      (classify._deep_history_turns -> bridge.recent_conversation_turns(session_key=...)), so
+      continuity held. And messages whose conversation_id has no conversations row: ZERO of
+      3,700. Both concerns dissolve; recording that rather than fixing something that is not
+      broken. Every Telegram turn does mint its own conversation_id — 14 in two days for his DM,
+      almost all msgs=2 — which is a data shape worth knowing and not a defect.
+    what_WAS_wrong: >-
+      Consent logged "decision: allow, reason: reversible_auto" for owl_build — an owl can be
+      retired, so F-27/ADR-3 auto-allows. That classification is deliberate and stays. But the
+      CLARIFY tool's description reused the same property as its own test: "ONLY when the action
+      it gates is irreversible or expensive". One fact about undo-ability was silently answering
+      two different questions — "may I run this without permission?" (reversibility is the right
+      test) and "should I confirm the spec with the human?" (it is not).
+    the_description_CONTRADICTED_ITSELF: >-
+      Sentence one: ask "when the task is genuinely ambiguous or you are missing information
+      only the user can provide". His request — "Optimize my promt and wish to create good
+      agent" — was exactly that, and reversible. Sentence one said ask; the LANE clause said do
+      not. The model followed the narrower one, which is the correct reading of a contradiction.
+    MEASURED: >-
+      13 clarify calls in 20,144 turns carrying a tool sequence — 0.065% — while the tool sits
+      in the guaranteed-presented set (presentation.py:167) and is therefore offered on EVERY
+      turn. Offered always, chosen never, is what an instruction not to use it looks like. Also
+      measured: ~4,100 clarify log lines over five days, every one of them infrastructure
+      (handler registered, sweep entry/exit, callbacks wired) and not one an actual question.
+    the_fix_removes_the_contradiction_without_setting_his_friction: >-
+      DURABLE is named alongside irreversible and expensive — anything that keeps running or
+      acting after the turn ends — and "REVERSIBILITY IS NOT THE TEST" is stated outright,
+      because a thing you can undo later can still be wrong in a way only the user can settle,
+      and asking costs one message where getting it wrong costs every run until he notices. Both
+      guard rails are pinned by tests: the ANTI-LANE (do not ask what you can find yourself) and
+      the instruction to just ACT on a one-off cheap action. Widening this into an interrogation
+      would be worse than the defect.
+    what_is_NOT_decided_here: >-
+      How much the platform should interrupt him. That is friction appetite and it is ESC-112,
+      not a default I get to pick.
+    suites: "tests/tools/interaction + tests/tools/meta 282 passed; 4 new. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_durable_build_request
+    closing_query: >-
+      A clarify invocation on a turn that creates a scheduled owl — today the rate is 13 in
+      20,144 turns. The HONEST second half: if it is still ~0 after a week of real traffic, the
+      description is not what was stopping it and the next place to look is the model, not the
+      text. And if clarify starts appearing on ordinary one-off turns, the ANTI-LANE lost and
+      this made things worse.
   OVERCLAIM_2026_09_03_the_guard_called_a_finished_job_a_lie_for_the_FOURTH_time:
     map_check: "No mapped item — the defect behind the floor I named but did not fix last item."
     the_symptom_he_lived: >-
@@ -5362,6 +5409,37 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_112_how_much_should_the_platform_interrupt_you:
+      premise_check: |
+        uv run python -c "from stackowl.tools.interaction.clarify import ClarifyTool; d=ClarifyTool().description; print('HOLDS durable-but-reversible now asks' if 'REVERSIBILITY IS NOT THE TEST' in d else 'EXPIRED')" 2>/dev/null | tail -1
+      question: >-
+        You said it acted "without asking". It was following its instructions: clarify was told
+        to ask ONLY when the action is irreversible or expensive, and building an owl is
+        reversible, so it built one. I have removed that contradiction and named DURABLE things
+        as worth a question. What I have NOT set is how far that goes. Where do you want the
+        line?
+      why_evidence_cannot_settle_it: >-
+        The measurement says the capability is offered on every turn and used on 0.065% of them,
+        and that the guidance told it not to. It cannot say whether being asked to confirm a
+        spec is help or friction FOR YOU. You have previously said "give a spec once, forget,
+        come back verified-done" — which argues for fewer questions — and here you wanted one.
+        Both are you.
+      the_measurement: >-
+        13 clarify calls in 20,144 turns. owl_build consent: reversible_auto then
+        official_channel — allowed twice, no prompt. The agent was built correctly and you were
+        never shown the prompt it would run on until the (mis-routed) recovery answered.
+      options: >-
+        (a) AS SHIPPED — ask before creating anything DURABLE (scheduled agent, recurring job,
+        standing rule) when the spec is under-specified; act silently on one-off work.
+        RECOMMENDED, because it is one question at the only moment the cost is recurring.
+        (b) NARROWER — ask only when the durable thing will ACT unattended (send messages, write
+        files), not merely run.
+        (c) WIDER — confirm the spec for any consequential action, reversible or not. Closest to
+        "ask before you act", and the most interruptive.
+        (d) REVERT — go back to reversibility as the test and accept that a reversible build
+        never asks.
+      blocked_until_answered: >-
+        Nothing. (a) is live. This decides whether it stays, narrows or widens.
     ESC_111_do_you_want_a_genuinely_cheaper_model_wired:
       resolution: >-
         ANSWERED 2026-09-03: LEAVE IT. D04.4 closes as no_change_needed on the capability — the
