@@ -60,6 +60,11 @@ class Cadence(Enum):
     #: than skipped, because a store quietly outside the check is exactly the
     #: blind spot this registry exists to remove.
     UNMEASURABLE = (None, "no timestamp column; cannot be measured")
+    #: The WRITER was removed. Silence is not a fault to chase but a leftover to
+    #: delete, and saying so is the point: filing these as "cannot be measured"
+    #: is what kept three tables with ZERO references anywhere in `src/` outside
+    #: the one check built to find exactly that.
+    RETIRED = (None, "the writer was removed; this store should be deleted")
 
     @property
     def max_silence_days(self) -> float | None:
@@ -102,6 +107,13 @@ def _seed(table: str, clock: str | None = None) -> StoreDeclaration:
 
 def _unmeasurable(table: str, note: str = "") -> StoreDeclaration:
     return StoreDeclaration(table, Cadence.UNMEASURABLE, None, note)
+
+
+def _retired(table: str, clock: str, note: str) -> StoreDeclaration:
+    """A store whose writer is gone. The clock is still declared — the watermark
+    is the EVIDENCE of when the writer died, and throwing it away is how this
+    went unnoticed for 24 days."""
+    return StoreDeclaration(table, Cadence.RETIRED, clock, note)
 
 
 #: THE REGISTRY. Adding a table to the schema without adding it here fails a test.
@@ -161,22 +173,35 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     _seed("stackowl_meta"),
     _seed("schema_migrations"),
 
-    # --- UNMEASURABLE: no clock column, declared so the gap is visible --------
-    _unmeasurable("job_results", "read by the morning brief; has no timestamp column"),
-    _unmeasurable("callback_log", "created outside the migrations by the channel"),
-    _unmeasurable("staged_facts"),
-    _unmeasurable("committed_facts", "zero rows since migration 0112"),
-    _unmeasurable("reindex_queue"),
-    _unmeasurable("notification_queue"),
-    _unmeasurable("webhook_events_log"),
-    _unmeasurable("langgraph_checkpoints"),
-    _unmeasurable("parliament_sessions"),
-    _unmeasurable("contradiction_scan_state"),
-    _unmeasurable("command_sequence_edges"),
-    _unmeasurable("command_sequence_last"),
-    _unmeasurable("channel_liveness"),
-    _unmeasurable("cache_breakpoint_probes"),
-    _unmeasurable("dna_checkpoints", "writer removed on purpose; see ESC-91"),
+    # --- RETIRED: the writer is gone; these are leftovers to delete -----------
+    # MEASURED 2026-09-03. All four were filed UNMEASURABLE ("no timestamp
+    # column") and all four have one. Three have ZERO references anywhere in
+    # `src/` — the same standard by which `job_queue` was deleted.
+    _retired("reindex_queue", "queued_at",
+             "zero references anywhere in src/; 0 rows"),
+    _retired("langgraph_checkpoints", "created_at",
+             "zero references anywhere in src/; 0 rows"),
+    _retired("contradiction_scan_state", "last_contradiction_scan_at",
+             "zero references in src/; watermark frozen at 2026-08-10T19:15:12, "
+             "the last memory.contradiction row, when migration 0112 retired the "
+             "fact store its scanner read"),
+    _retired("committed_facts", "committed_at",
+             "0 rows since migration 0112; 68 readers remain, no writer"),
+    _retired("dna_checkpoints", "created_at",
+             "writer removed on purpose; see ESC-91"),
+
+    # --- Moved OUT of the hatch: these are written and can now be measured -----
+    _periodic("job_results", "run_at", "one row per scheduled job run"),
+    _hot("staged_facts", "staged_at"),
+    _hot("channel_liveness", "last_receive_at"),
+    _on_demand("callback_log", "processed_at",
+               "written when a person presses a channel button"),
+    _on_demand("webhook_events_log", "received_at", "written by an inbound webhook"),
+    _on_demand("parliament_sessions", "started_at", "written when a session is convened"),
+    _on_demand("command_sequence_edges", "updated_at", "written when a person runs commands"),
+    _on_demand("command_sequence_last", "updated_at", "written when a person runs commands"),
+    _periodic("notification_queue", "created_at", "written by the proactive delivery path"),
+    _periodic("cache_breakpoint_probes", "last_confirmed_at", "written by the cache probe"),
 )
 
 _BY_TABLE = {d.table: d for d in DECLARATIONS}

@@ -315,6 +315,70 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CADENCE_2026_09_03_the_hatch_built_so_nothing_could_hide_was_where_three_tables_hid:
+    map_check: "No mapped item — found by asking what audit_log's 9,134 memory.contradiction rows are."
+    HOW_IT_SURFACED: >-
+      memory.contradiction is the largest event type in audit_log by an order of magnitude
+      (9,134 rows) and its newest row is 2026-08-10 — 24 days ago. No code in src/ writes it.
+      Its watermark table, contradiction_scan_state, holds one row reading
+      2026-08-10T19:15:12 — the exact timestamp of that last event, frozen when migration
+      0112 retired the fact store its scanner read.
+    THE_FINDING: >-
+      store_cadence exists because "a store quietly outside the check is exactly the blind
+      spot this registry exists to remove" — its own words. It then built one category that
+      puts a store outside the check, UNMEASURABLE, defined as "no timestamp column; cannot
+      be measured". MEASURED against the live schema: FIFTEEN stores declared it and ALL
+      FIFTEEN have an _at column. The hatch did not mean "cannot be measured"; it meant
+      "not measured", on a premise nobody checked.
+    WHAT_WAS_HIDING_IN_IT: >-
+      Three of the fifteen have ZERO references anywhere in src/ — reindex_queue,
+      langgraph_checkpoints, contradiction_scan_state. That is the same standard by which
+      job_queue was deleted, and it is the exact class of finding this module was BUILT to
+      produce: its docstring reports that its first run found dreamworker_runs and
+      kuzu_sync_log with zero references, "two tables outliving the features that wrote them
+      by weeks". Two more (committed_facts, dna_checkpoints) have readers but no writer.
+    THE_CAUSE_one_half_executable_one_half_remembered: >-
+      test_every_store_declares_its_cadence already fails when the schema holds a table the
+      registry does not name — the module says out loud that "a hand-maintained list rots the
+      first time someone adds a table and forgets" and made THAT half a test. Nothing checked
+      that a declaration is TRUE. So the completeness half could not rot and the correctness
+      half rotted silently, which is why an escape hatch is the one place that most needs the
+      guard and was the one place without it.
+    WHAT_CHANGED_and_the_part_that_is_a_gain_not_a_tidy_up: >-
+      UNMEASURABLE must now earn itself: a tripwire asserts against the migrations that a
+      table declaring "no clock column" has none. A writer-less store gets the new RETIRED
+      cadence, which names the state instead of pretending the store cannot be read, and
+      keeps the watermark because that timestamp is the EVIDENCE of when the writer died.
+      FOUR stores move out of the hatch into real measurement — job_results, staged_facts,
+      channel_liveness, callback_log — so staged_facts and channel_liveness can now alarm
+      within a DAY if their loops stop, which they could not do at all before.
+    NO_NEW_ALARMS_and_that_is_measured: >-
+      RETIRED and ON_DEMAND never alarm; the four newly-HOT/PERIODIC stores were all written
+      today; every other re-declared store has 0 rows and silent_stores already skips an
+      empty table ("a QUESTION, not an answer"). So this adds capability without adding a
+      single cry-wolf.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      6 new tests (one @pytest.mark.tripwire, so it joins the cross-cutting gate); 4
+      mutations each caught (a clock-bearing store back under UNMEASURABLE; RETIRED made
+      alarming; an orphan filed as merely on-demand; a declared clock the schema lacks),
+      restored from a FILE COPY and re-verified green. tests/health 58 pass. LIVE validation
+      PARTIAL — the cadence sweep runs on the health job; closing query: after the next
+      health_sweep, no store may be reported silent that this change moved to HOT/PERIODIC.
+    A_ROUND_0_no_change_needed: >-
+      The unknown-tool signal (the model asking for a capability that does not exist) fires
+      ONCE in 7 days — edit_file, jobmarket owl. I had inferred ~20 ghost names from
+      arithmetic on the usage report (used 84 vs registered 79) and was wrong about
+      CURRENCY: those 84 span months while the log spans a week. Building an escalation path
+      for a signal that fires weekly would be building for noise. Its sibling — denied
+      capability — is properly wired: 93 audit rows, 10 escalated.
   UNUSED_2026_09_03_the_report_that_names_unused_tools_had_no_denominator:
     map_check: "No mapped item — found by asking what the boot line 'never_invoked: [15 names]' is MADE of."
     THE_SETTLED_CAVEAT_first_because_it_unblocks_a_decision: >-
@@ -7036,6 +7100,34 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_121_three_tables_have_zero_references_anywhere_in_src:
+      premise_check: |
+        uv run python -c "
+        import pathlib,subprocess
+        t=['reindex_queue','langgraph_checkpoints','contradiction_scan_state']
+        live=[x for x in t if subprocess.run(['grep','-rq',x,'src/stackowl/','--include=*.py','--exclude=store_cadence.py'],capture_output=True).returncode==0]
+        print('EXPIRED' if live else 'HOLDS all three still unreferenced')
+        " 2>/dev/null | tail -1
+      question: >-
+        reindex_queue, langgraph_checkpoints and contradiction_scan_state have ZERO
+        references anywhere in src/ — the same measure by which job_queue was deleted.
+        reindex_queue and langgraph_checkpoints hold 0 rows; contradiction_scan_state
+        holds one watermark row frozen at 2026-08-10, when migration 0112 retired the
+        fact store its scanner read. May I drop all three in a migration?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles that nothing reads or writes them — that is measured. It cannot
+        settle whether you want the watermark kept as a record of when the contradiction
+        scanner died, and dropping a table is a destructive migration, which this loop
+        stops for by rule regardless of how safe the measurement looks.
+      panel_recommendation: >-
+        Drop all three. RETIRED MEANS DELETED is your standing rule and these are exactly
+        its case; the evidence of when the scanner stopped is already permanent in
+        audit_log's 9,134 memory.contradiction rows, so nothing is lost with the
+        watermark. committed_facts and dna_checkpoints are NOT in this ask — the first has
+        68 readers still to unwind and the second is already ESC-91.
+      what_is_blocked: >-
+        Nothing. They are now declared RETIRED, so they are named rather than hidden, and
+        the check is honest either way.
     ESC_120_fifteen_tools_were_offered_three_turns_in_four_and_never_once_chosen:
       premise_check: |
         uv run python -c "
