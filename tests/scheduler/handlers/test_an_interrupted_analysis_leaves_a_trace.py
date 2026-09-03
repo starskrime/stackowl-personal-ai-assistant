@@ -183,16 +183,20 @@ def test_the_loss_metric_is_not_gated_on_there_being_NEW_work() -> None:
     """THE MEASUREMENT WENT BLIND EXACTLY WHEN IT MATTERED.
 
     ``interrupted_diagnoses`` exists to answer "how much analysis work are we
-    losing" — and its INFO line had NEVER appeared in any log file, across 7,321
-    ``incident_escalation`` lines, while the query returned two live signatures
-    (``outcome:owl_build:stop``, ``outcome:shell:stop``) when run by hand.
+    losing", and the call sat behind ``if self._db is not None and
+    new_incidents:``. Counting the gate's ACTUAL input — ticks that had incidents
+    before suppression — 403 of 618 ticks had it OPEN and ~215 (35%) had it
+    CLOSED. Those 215 are the QUIETEST ticks: no active incidents to detect, so
+    nothing else would surface an unfinished analysis either. A loss counter that
+    only runs while new work arrives is blind exactly when the losses sit.
 
-    The reason was the guard: the call sat behind ``if self._db is not None and
-    new_incidents:``. MEASURED over every recorded exit line, 532 of 618 ticks
-    (86%) had ``new == 0``, so the metric was skipped on 86% of ticks — and an
-    idle loop is precisely when interrupted analyses sit and accumulate. A loss
-    counter that only runs while new work arrives cannot report a loop that has
-    gone quiet holding four unfinished diagnoses, which is the state it was in.
+    TWO NUMBERS IN AN EARLIER VERSION OF THIS DOCSTRING WERE WRONG, and are kept
+    here because the mistakes are the more useful lesson. "The line had NEVER
+    appeared" — it had appeared 250 times; the control grepped for the word
+    "interrupted", which the message does not contain. And "86% of ticks had
+    new == 0" — the exit line logs ``new`` AFTER suppression reassigns
+    ``new_incidents``, so that field is not the gate's input. One field, two
+    meanings, read the wrong way.
 
     Asserted structurally rather than by string match: the guard EXPRESSION must
     not mention ``new_incidents``. A future edit that reintroduces the coupling

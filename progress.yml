@@ -326,17 +326,26 @@ current:
     THE_FINDING: >-
       Four RCA diagnoses had STARTED and never reached any terminal state, the oldest 46 hours
       old, each with exactly one audit row: incident.diagnosis_started, {"completed": false},
-      nothing after. The instrument that reports this — interrupted_diagnoses() — exists, is
-      wired, is at INFO, and its line had NEVER appeared in any log file: 7,321
-      incident_escalation lines and not one of these. Running the query by hand returned TWO
-      live signatures (outcome:owl_build:stop, outcome:shell:stop).
-    THE_CAUSE: >-
-      The call sat behind `if self._db is not None and new_incidents:`. MEASURED over every
-      recorded exit line, 532 of 618 ticks (86%) had new==0, so the metric was skipped on 86%
-      of ticks. And an IDLE loop is exactly when interrupted analyses accumulate — the work was
-      killed mid-flight, so no new incident is minted to announce it. Gating a LOSS counter on
-      the ARRIVAL OF NEW WORK makes it blind to the quiet failure it exists to report. The fix
-      is one line; the shape is the item.
+      nothing after. Two are still inside the 24h window and interrupted_diagnoses() returns
+      them live: outcome:owl_build:stop and outcome:shell:stop.
+    I_GOT_THE_HEADLINE_WRONG_TWICE_AND_CORRECTED_IT_AFTER_COMMITTING: >-
+      This item shipped with two false claims in its commit message and here, both caught by
+      checking the fix's own closing query rather than trusting it. (1) "the INFO line had NEVER
+      appeared in any log file" — it has appeared 250 TIMES. My control grepped for the word
+      "interrupted" in the message; the message reads "analyses started and never finished",
+      which does not contain it. The exact trap CLAUDE.md names: a grep returning zero proves
+      the pattern did not match, not that the thing is absent. (2) "532 of 618 ticks (86%) had
+      new==0, so the metric was skipped on 86% of ticks" — the exit line logs `new` AFTER
+      suppression REASSIGNS new_incidents, so `new: 0` does not mean the gate was closed. One
+      field, two meanings, and I read the wrong one.
+    THE_CAUSE_RESTATED_HONESTLY: >-
+      The call sat behind `if self._db is not None and new_incidents:`. Counting the gate's
+      ACTUAL input — ticks that had incidents before suppression, via the suppression line's own
+      counts — 403 of 618 ticks had the gate OPEN and ~215 (35%, not 86%) had it CLOSED. On
+      those 215 the loss metric was skipped, and they are the QUIETEST ticks: no active
+      incidents to detect, so nothing else would have surfaced an unfinished analysis either.
+      Gating a LOSS counter on the ARRIVAL OF NEW WORK still makes it blind exactly when the
+      losses sit unnoticed — the fix is right, my numbers for it were inflated.
     THE_SCOPING_THAT_CAME_WITH_IT: >-
       recently_diagnosed() stays gated on new_incidents, deliberately: it exists only to decide
       whether a NEW incident's RCA should be suppressed, so with nothing new it has nothing to
@@ -361,9 +370,10 @@ current:
     validate_closing_query: >-
       The next incident_escalation tick (every 10 minutes) must emit "[scheduler]
       incident_escalation: analyses started and never finished" at INFO naming count=2 and the
-      signatures outcome:owl_build:stop and outcome:shell:stop. The control that makes it mean
-      something: that line has appeared ZERO times across every log file to date, against 7,321
-      incident_escalation lines — so a single occurrence closes it.
+      signatures outcome:owl_build:stop and outcome:shell:stop. NOTE the control I first wrote
+      here was wrong — the line had appeared 250 times, not zero. The honest closing evidence is
+      narrower: the metric must fire on a tick whose gate WOULD have been closed, i.e. one with
+      no incidents at all pre-suppression.
   RECLAIM_2026_09_03_a_reclaimer_asked_for_2000_pages_got_1_and_reported_success:
     map_check: "No mapped item — evidence-led, from a database growth check."
     THE_MEASUREMENT: >-
