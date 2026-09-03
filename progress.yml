@@ -359,8 +359,15 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: done
       document: done
+    validate_CLOSED_2026_09_03: >-
+      CLOSED on the first sweep after the restart, against the still-live outage. Live at
+      16:57:12Z on commit 752e8d82, zero ERROR lines since boot, and the sweep now logs
+      {"down": ["provider:NeraAiRaw"], "degraded": []} — the exact inverse of the
+      {"down": [], "degraded": ["provider:NeraAiRaw"]} it reported all afternoon while the
+      assistant could not answer a single message. No traffic needed: the outage itself was
+      the test.
     validate_closing_query: >-
       The provider is unreachable right now (VPN tunnel down since 10:47 CDT), so the next
       health sweep after the restart must log "[scheduler] health_sweep.execute: UNHEALTHY
