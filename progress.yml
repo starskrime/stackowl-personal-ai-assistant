@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  EPHEMERAL_2026_09_03_the_same_degradation_loud_in_one_branch_and_silent_in_the_next:
+    map_check: "No mapped item — found by asking what canary's 4,078 telegram notifications are."
+    HOW_IT_SURFACED_and_what_it_was_NOT: >-
+      canary is the largest notification category by far — 4,078 telegram rows, more than
+      every other category combined, 64 today. That looked like a message every 20 minutes.
+      It is not: TelegramCanaryHandler sends through send_ephemeral (muted, silent) and the
+      probe self-deletes once delivery is confirmed, precisely so nothing accumulates in his
+      chat. No "adapter cannot send ephemeral" warning appears in seven days of logs and the
+      target resolves, so the live canary is behaving as designed. Recorded because the
+      volume looks alarming and is not.
+    THE_ACTUAL_FINDING: >-
+      deliverer._transport has four branches and the SAME degradation is loud in one and
+      silent in another. "ephemeral and chat_id is not None" with a non-ephemeral adapter
+      WARNS and sends a visible message. The final else — reached when ephemeral was
+      requested and no recipient resolved — sends the visible message and says NOTHING.
+    WHY_THAT_MATTERS_rather_than_being_tidy: >-
+      An ephemeral send is muted and self-deleting. If a canary quietly stopped being
+      ephemeral because its recipient stopped resolving, it would post a visible
+      "canary — ignore" into his chat every 20 MINUTES, and the only evidence anywhere would
+      be the messages themselves. Degrading to a visible send is the RIGHT call — an alert
+      that arrives and stays beats one that is lost, which is exactly why the sibling branch
+      warns — but doing it silently breaks the standing no-hidden-errors rule: recover
+      loudly or propagate, never silently.
+    THE_CAUSE: >-
+      A four-branch conditional where the guard clause ("ephemeral") appears in two branches
+      and the fall-through catches the third case by accident. Nobody wrote "and if there is
+      no recipient, degrade quietly" — the else simply inherited it. Same rule, one case
+      short: the shape found in the A/B delta guard, the UNMEASURABLE hatch and the ON_DEMAND
+      cadence earlier today.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    A_THIRD_VACUITY_CAUGHT_BY_MUTATION_TODAY: >-
+      Making the warning UNCONDITIONAL survived the first suite. That fall-through is the
+      ORDINARY path for every text-only adapter (cli, slack, discord, whatsapp) whose
+      send_text takes no chat_id, so an unconditional warning would fire on essentially every
+      proactive send — the cry-wolf failure this codebase pays for elsewhere. A test now pins
+      that an ordinary send stays quiet. Third time today mutation testing caught a guard of
+      mine that proved less than it claimed.
+    validate_evidence: >-
+      3 new tests on the existing suite; 3 mutations (silent again; warn unconditionally;
+      warn but do not send, losing the message) each caught after the quiet-path test was
+      added, restored from a FILE COPY and re-verified green. tests/notifications +
+      tests/channels 769 pass; ruff at its 35 baseline. LIVE validation PARTIAL by nature:
+      the new warning fires only when an ephemeral request finds no recipient, which is not
+      happening today (the canary resolves its target and self-deletes). Closing query:
+      "[notifications] deliverer._transport: ephemeral requested but no recipient resolved"
+      must be ABSENT while the canary is healthy, and must appear if it ever is not.
   REPAGE_2026_09_03_a_restart_reset_the_hour_and_repaged_him:
     map_check: "No mapped item — found by measuring the alert volume the cadence work exposed."
     THE_FINDING: >-

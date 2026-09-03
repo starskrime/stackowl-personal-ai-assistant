@@ -614,6 +614,31 @@ class ProactiveDeliverer:
                         message, chat_id=chat_id
                     )
                 else:
+                    if ephemeral:
+                        # SAME DEGRADATION AS THE BRANCH ABOVE, AND IT WAS SILENT.
+                        # An ephemeral send is muted and self-deleting; the health
+                        # canary relies on that so a probe every 20 minutes leaves
+                        # nothing for the operator to notice and dismiss. Here the
+                        # request cannot be honoured because no recipient resolved,
+                        # so the message ARRIVES AND STAYS — the right call (an
+                        # alert that stays beats one that is lost), which is
+                        # precisely why its sibling two branches up warns.
+                        #
+                        # This one said nothing, so a canary that quietly stopped
+                        # being ephemeral would post a visible "canary — ignore"
+                        # into his chat every 20 minutes with no evidence anywhere
+                        # but the messages themselves. Recover loudly or propagate,
+                        # never silently.
+                        log.notifications.warning(
+                            "[notifications] deliverer._transport: ephemeral "
+                            "requested but no recipient resolved — delivering as "
+                            "a normal, VISIBLE message instead",
+                            extra={"_fields": {
+                                "channel": channel,
+                                "adapter": type(adapter).__name__,
+                                "category": None,
+                            }},
+                        )
                     await adapter.send_text(message)
                 log.notifications.debug(
                     "[notifications] deliverer._transport: sent",

@@ -383,3 +383,105 @@ async def test_transport_ephemeral_false_or_no_chat_id_falls_through() -> None:
     assert status == "delivered"
     assert adapter.sent == ["normal body"]
     assert adapter.ephemeral_sent == []
+
+
+# --------------------------------------------------------------------------- #
+# An ephemeral request that cannot be honoured must SAY SO                     #
+# --------------------------------------------------------------------------- #
+
+
+async def test_an_unhonourable_ephemeral_request_degrades_LOUDLY(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """THE GAP. ``_transport`` has four branches and the same degradation is loud
+    in one and silent in another::
+
+        if   ephemeral and chat_id is not None and isinstance(adapter, _EphemeralSender):
+        elif ephemeral and chat_id is not None:   # WARNS, sends a visible message
+        elif chat_id is not None:
+        else: await adapter.send_text(message)    # <- ephemeral=True lands here, silently
+
+    An ephemeral send is silent, muted and self-deleting — the health canary uses
+    it so a probe every 20 minutes leaves nothing for the operator to notice and
+    dismiss. When the request cannot be honoured the message ARRIVES AND STAYS,
+    which is the right call (an alert that stays beats one that is lost) and is
+    exactly why the sibling branch warns.
+
+    The fall-through says nothing at all. So a canary that quietly stopped being
+    ephemeral — because its recipient stopped resolving — would post a visible
+    "🔎 canary — ignore" into his chat every 20 minutes, and the only evidence
+    would be the messages themselves. That is the standing no-hidden-errors rule:
+    recover loudly or propagate, never silently.
+    """
+    import logging
+
+    dlv, _router, registry = _deliverer("delivered", default_channel="cli")
+    adapter = _RecordingAdapter("cli")          # no send_ephemeral, and no chat_id
+    registry.register(adapter)  # type: ignore[arg-type]
+
+    note = Notification(
+        message="🔎 canary — ignore", urgency="low", category="canary",
+        channel_name="cli", ephemeral=True,
+    )
+    with caplog.at_level(logging.WARNING, logger="stackowl.notifications"):
+        status = await dlv.deliver(note)
+
+    assert status == "delivered"
+    assert adapter.sent == ["🔎 canary — ignore"], (
+        "the message must still arrive — degrading is correct, silence is not"
+    )
+    assert "ephemeral" in caplog.text.lower(), (
+        "an ephemeral request was silently downgraded to a visible message; the "
+        f"operator has no way to learn that: {caplog.text!r}"
+    )
+
+
+async def test_an_honourable_ephemeral_request_stays_quiet(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The other direction: when the request IS honoured there is nothing to warn
+    about, and a warning on every canary tick would be its own noise — 72 lines a
+    day for a probe working exactly as designed."""
+    import logging
+
+    dlv, _router, registry = _deliverer("delivered", default_channel="telegram")
+    adapter = _EphemeralRecordingAdapter("telegram")
+    registry.register(adapter)  # type: ignore[arg-type]
+
+    note = Notification(
+        message="🔎 canary — ignore", urgency="low", category="canary",
+        channel_name="telegram", target=4242, ephemeral=True,
+    )
+    with caplog.at_level(logging.WARNING, logger="stackowl.notifications"):
+        await dlv.deliver(note)
+
+    assert adapter.ephemeral_sent == [(4242, "🔎 canary — ignore")]
+    assert adapter.deleted == [(4242, 100)], "the probe must clean itself up"
+    assert "ephemeral" not in caplog.text.lower(), caplog.text
+
+
+async def test_an_ORDINARY_send_through_the_same_branch_stays_quiet(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """CAUGHT BY MUTATION. Making the warning unconditional passes every test
+    above — and that fall-through is the ORDINARY path for every text-only
+    adapter (cli, slack, discord, whatsapp) whose ``send_text`` takes no
+    ``chat_id``. Warning there would fire on essentially every proactive send,
+    which is the cry-wolf failure this codebase already pays for elsewhere.
+
+    The warning is about an ephemeral request that could not be honoured, not
+    about the branch it happens to share."""
+    import logging
+
+    dlv, _router, registry = _deliverer("delivered", default_channel="cli")
+    adapter = _RecordingAdapter("cli")
+    registry.register(adapter)  # type: ignore[arg-type]
+
+    with caplog.at_level(logging.WARNING, logger="stackowl.notifications"):
+        await dlv.deliver(_note("cli"))
+
+    assert adapter.sent == ["hello body"]
+    assert "ephemeral" not in caplog.text.lower(), (
+        "an ordinary send warned about ephemeral delivery — that branch carries "
+        f"every text-only adapter's normal traffic: {caplog.text!r}"
+    )
