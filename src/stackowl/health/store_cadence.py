@@ -190,6 +190,49 @@ class SilentStore:
     why: str
 
 
+@dataclass(frozen=True)
+class CadenceReport:
+    """What one pass looked at, not just what it found.
+
+    THE COUNT IS PART OF THE ANSWER. "No store is silent" is worthless without
+    "out of how many" — the first live run of this check returned a clean zero
+    while a date-format bug had silently skipped almost every store it claimed to
+    cover. A result that carries its own denominator cannot lie that way twice.
+    """
+
+    silent: tuple[SilentStore, ...]
+    measured: int
+    empty: int
+    unreadable: int
+
+
+async def cadence_report(db: object, *, now: float | None = None) -> CadenceReport:
+    """One pass, with the denominator attached."""
+    stamp = time.time() if now is None else now
+    silent = await silent_stores(db, now=stamp)
+    measured = empty = unreadable = 0
+    for decl in DECLARATIONS:
+        if decl.cadence.max_silence_days is None or decl.clock is None:
+            continue
+        try:
+            rows = await db.fetch_all(  # type: ignore[attr-defined]
+                f"SELECT MAX({decl.clock}) AS t FROM {decl.table}", (),  # noqa: S608
+            )
+        except Exception:  # noqa: BLE001 — silent_stores already logged it
+            unreadable += 1
+            continue
+        raw = rows[0]["t"] if rows else None
+        if raw is None:
+            empty += 1
+        elif _as_epoch(raw) is None:
+            unreadable += 1
+        else:
+            measured += 1
+    return CadenceReport(
+        silent=tuple(silent), measured=measured, empty=empty, unreadable=unreadable,
+    )
+
+
 async def silent_stores(db: object, *, now: float | None = None) -> list[SilentStore]:
     """Every declared store whose silence exceeds what it declared.
 

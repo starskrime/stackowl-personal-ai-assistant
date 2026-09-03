@@ -195,3 +195,26 @@ async def test_an_unreadable_store_does_not_hide_the_others() -> None:
 
     db = _Partial({"tasks": now - 30 * 86400})
     assert [s.table for s in await silent_stores(db, now=now)] == ["tasks"]
+
+
+@pytest.mark.asyncio
+async def test_a_HEALTHY_report_says_what_it_actually_LOOKED_AT() -> None:
+    """"No store is silent" is worthless without "out of how many".
+
+    This check's own first live run returned a clean zero while a date-format bug
+    had silently skipped almost every store it claimed to cover. A healthy report
+    that cannot state its denominator is that same trap with a tick beside it.
+    """
+    from stackowl.health.store_cadence import cadence_report
+
+    now = 1_800_000_000.0
+    db = _Db({"tasks": now - 3600, "task_outcomes": now - 3600})
+
+    report = await cadence_report(db, now=now)
+
+    assert report.silent == ()
+    assert report.measured == 2
+    assert report.empty > 0, (
+        "every other declared store returned None here, so a zero `empty` would "
+        "mean the counter is not counting"
+    )

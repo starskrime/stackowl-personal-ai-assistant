@@ -354,7 +354,22 @@ current:
       lesson already on this record. An instrument failure also reports degraded, never down:
       "I could not measure it" and "it has stopped" are different claims.
     suites: "tests/health 46 passed, including 2 new tripwires. Baselines held at ruff 35, mypy 65."
-    validate: OPEN_awaiting_the_next_5_minute_health_sweep
+    validate: >-
+      PARTIAL, and the halves are stated separately because one of them is a count rather than a
+      name. THE CONTRIBUTOR IS LIVE: "[health] aggregator.collect: exit — ok=12 total=12" at
+      00:36:50 on a core booted 00:31:30 carrying the fix, against ok=11 total=11 recorded on
+      every previous sweep in this file. Exactly one contributor was added and the total rose by
+      exactly one. THE HONEST LIMIT: that line does not NAME its contributors, and `stackowl
+      health` builds a DIFFERENT aggregator (the CLI set deliberately excludes live-runtime
+      refs), so the operator's own command does not list store_cadence yet. The count is the
+      evidence I actually have.
+    the_ok_case_now_carries_its_own_denominator: >-
+      Added after the first validate attempt, because "no store is silent" with no "out of how
+      many" is exactly the fake zero this check already produced once. A healthy report now
+      states "N stores measured, none past their declared cadence (E empty, U unreadable)", and
+      a test asserts the empty counter is non-zero on a fixture where it must be — a denominator
+      that always reads zero is not a denominator.
+    validate_alarm_half: OPEN_predicting_retry_queue_crosses_7_days_around_2026_09_04
     closing_query: >-
       "[health] store_cadence" must appear in a sweep. TODAY IT MUST REPORT ok, because 0 of 26
       measured stores are past their declaration — so the honest closing evidence is the

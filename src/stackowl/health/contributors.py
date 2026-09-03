@@ -189,12 +189,13 @@ class StoreCadenceContributor:
         return "store_cadence"
 
     async def health_check(self) -> HealthStatus:
-        from stackowl.health.store_cadence import silent_stores
+        from stackowl.health.store_cadence import cadence_report
 
         log.debug("[health] store_cadence: entry")
         t0 = time.monotonic()
         try:
-            silent = await silent_stores(self._db)
+            report = await cadence_report(self._db)
+            silent = list(report.silent)
         except Exception as exc:
             latency_ms = (time.monotonic() - t0) * 1000
             # NEVER "down" ON AN INSTRUMENT FAILURE. "I could not measure it" and
@@ -207,9 +208,20 @@ class StoreCadenceContributor:
             )
         latency_ms = (time.monotonic() - t0) * 1000
         if not silent:
+            # THE OK CASE CARRIES ITS DENOMINATOR. "No store is silent" is
+            # worthless without "out of how many": this check's own first live
+            # run returned a clean zero while a date-format bug had skipped
+            # almost every store it claimed to cover. A healthy report that
+            # cannot say what it looked at is the same trap with a tick next to
+            # it.
             log.debug("[health] store_cadence: exit — ok (%.0fms)", latency_ms)
             return HealthStatus(
-                name="store_cadence", status="ok", message=None,
+                name="store_cadence", status="ok",
+                message=(
+                    f"{report.measured} stores measured, none past their "
+                    f"declared cadence ({report.empty} empty, "
+                    f"{report.unreadable} unreadable)"
+                ),
                 latency_ms=latency_ms,
             )
         detail = "; ".join(
