@@ -365,7 +365,18 @@ current:
       forward (history is pushed and may not be rewritten), the read is now scoped to the same
       principal the ownership read uses so the two halves cannot disagree about whose catalogue
       they mean, and the item-loop skill now requires the gate and the commit to be CHAINED.
-    validate: OPEN_awaiting_the_next_10_minute_incident_escalation_tick
+    validate: >-
+      CLOSED, BOTH HALVES, on a core booted 2026-09-03T00:01:29Z carrying the fix. FIRST TICK
+      00:06:18 emitted EXACTLY THREE pages, one per signature, matching the pre-deploy dry run
+      line for line: browser_navigate/stop 6 recurrences (incident_browser_navigate_stop),
+      shell/stop 10 (incident_shell_stop), shell/unachieved_effect 5
+      (incident_shell_unachieved_effect) — each attributed to the skill for ITS OWN failure
+      class, which is the cross-class bug the dry run caught. audit_log holds 3 rows of
+      event_type 'incident.lesson_recurred'. SECOND TICK 00:10:07 emitted ZERO, which is the
+      half that actually proves the dedup: a detector that pages correctly once and then every
+      ten minutes for ever is the rule he rejected wearing a better message.
+      All three report has_owner FALSE — the platform is now telling him, unprompted, that three
+      lessons it wrote reached nobody.
     closing_query: >-
       "[scheduler] incident_escalation: a lesson did not hold — paging" at INFO carrying
       signature, skill_name, recurrences and has_owner — and audit_log rows with
