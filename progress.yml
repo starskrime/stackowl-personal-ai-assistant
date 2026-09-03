@@ -363,8 +363,15 @@ current:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: done
+    LIVE_CLOSED: >-
+      Boot 21:37:50 UTC (commit 21:37:05) then health_sweep at 21:38:37 logged, at INFO:
+      "[health] store_cadence: ok — no store past its declared cadence"
+      {"measured": 28, "empty": 3, "unreadable": 0, "latency_ms": 401.2}. Both halves close
+      on that one line: 28 stores are now actually measured with 0 unreadable, and NO store
+      is past its cadence — so the four moved out of the hatch added capability without
+      adding a single alarm, which is what the record predicted before the restart.
     validate_evidence: >-
       7 new tests (one @pytest.mark.tripwire, so it joins the cross-cutting gate); 5
       mutations each caught (a clock-bearing store back under UNMEASURABLE; RETIRED made
