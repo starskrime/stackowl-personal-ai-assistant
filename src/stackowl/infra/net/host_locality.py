@@ -28,9 +28,14 @@ ALREADY classified local, so private-network targets have always counted. All
 this does is make a hostname that resolves there classify the same as the
 literal. It does not widen what "local" means.
 
-Resolution is lazy (first use, never at import or config build), cached per host
-for the process lifetime, and never raises — an unresolvable host fails safe to
-``False`` (cloud), which is the conservative answer for the egress consumer.
+Resolution is lazy (first use, never at import or config build) and never raises.
+A DETERMINED answer — local or cloud — is cached per host for the process
+lifetime, because it is a fact about the network that does not move. A FAILURE to
+resolve is not cached: an unresolvable host fails safe to ``False`` (cloud) for
+that call, which is the conservative answer for the egress consumer, but the next
+call asks again. Caching the failure made a transient outage permanent for the
+life of the process, which is the pricing defect above re-created from the other
+direction.
 """
 
 from __future__ import annotations
@@ -76,12 +81,28 @@ def _resolve_is_local(host: str) -> bool:
     except Exception as exc:  # noqa: BLE001 — B5: classification must never raise
         # Fail safe to CLOUD. A DNS failure is not evidence of locality, and for
         # the egress consumer guessing "local" is the harmful direction.
+        #
+        # NOT CACHED, and that is the whole asymmetry. This line used to write
+        # `_RESOLVED[host] = False`, storing the ABSENCE of an answer in the same
+        # cache as an answer — and the cache is consulted BEFORE the lookup, so
+        # the entry could never be corrected by a later success. A transient DNS
+        # outage therefore became a permanent misclassification for the life of
+        # the process, and this module's own docstring records what that costs:
+        # ~$2,328 of imaginary spend across 82,016 rows, from exactly this host
+        # reading as cloud. MEASURED 2026-09-03, that host was NXDOMAIN for
+        # hours while the platform ran, so every process had cached it.
+        #
+        # A determined answer (local OR cloud) is a fact about the network that
+        # does not move while the process runs, and still caches below. A failure
+        # is retried on the next call: during an outage the caller's own request
+        # is failing anyway, so one extra lookup costs nothing it was not already
+        # paying.
         log.engine.warning(
-            "[host_locality] could not resolve host — treating as cloud",
+            "[host_locality] could not resolve host — treating as cloud for "
+            "this call, and NOT caching the failure",
             exc_info=exc,
             extra={"_fields": {"host": host}},
         )
-        _RESOLVED[host] = False
         return False
     _RESOLVED[host] = local
     log.engine.info(

@@ -315,6 +315,61 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DNSCACHE_2026_09_03_a_failure_to_determine_was_cached_as_a_determination:
+    map_check: "No mapped item — found by asking why '[host_locality] could not resolve host' fires 17 times."
+    THE_FINDING: >-
+      host_locality classifies a provider base_url as self-hosted or cloud by resolving its
+      hostname. On a resolution failure it correctly fails safe to cloud, and says why in its
+      own comment — "A DNS failure is not evidence of locality" — and then writes
+      _RESOLVED[host] = False, storing that non-evidence in the same cache as a
+      determination. The cache is consulted BEFORE the lookup, so the entry can never be
+      corrected by a later success.
+    WHY_IT_IS_LIVE_RIGHT_NOW: >-
+      MEASURED 2026-09-03: llm-gateway.dev.nera.gov is NXDOMAIN — the VPN tunnel is up and
+      the corporate resolvers have no nera.gov zone at all — and the warning appears 17 times
+      in a two-hour window. Every running process has cached that host as cloud. The moment
+      DNS returns, the process keeps the wrong answer until somebody restarts it, silently,
+      because the warning only fires on the first lookup per host per process.
+    THE_COST_IS_THE_ONE_THIS_MODULE_EXISTS_TO_PREVENT: >-
+      Its own docstring records the 2026-08-07 fix: this exact host resolved to 172.30.104.100
+      (RFC1918) but classified CLOUD because the hostname is not an IP literal, and every call
+      billed at the unknown-cloud fallback rate — "~$2,328 of imaginary spend in 10 days,
+      82,016 rows". Caching the failure re-creates that defect from the other direction: same
+      host, same wrong verdict, same invented money, reached by a transient outage instead of
+      a syntactic gap.
+    THE_CAUSE_IS_ONE_CACHE_HOLDING_TWO_KINDS_OF_ANSWER: >-
+      A DETERMINED answer — local or cloud — is a fact about the network that does not move
+      while the process runs, and caching it for the process lifetime is right. A FAILURE is
+      the absence of an answer. One dict held both, which is one field carrying two meanings —
+      the same shape as the tri-state collapse and the floor's goal field earlier today. The
+      fix is the asymmetry, not a shorter TTL: determinations cache, failures retry.
+    WHAT_IS_DELIBERATELY_UNCHANGED: >-
+      Failing SAFE to cloud stays. For the egress consumer (vision/selector) guessing "local"
+      would send an image off-network while telling the user it stayed, so an unresolvable
+      host must still answer cloud on the call that failed — it just stops being the answer
+      forever. A mutation that fails OPEN to local is caught.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      5 new tests; 3 mutations each caught (cache the failure again; stop caching the SUCCESS
+      too, an over-correction that would put a blocking lookup on the pricing and egress
+      paths; fail OPEN to local), restored from a FILE COPY and re-verified green.
+      tests/infra + tests/providers 926 pass; ruff at its 35 baseline. LIVE validation
+      PARTIAL — the host is still NXDOMAIN, so the positive half cannot be shown. Closing
+      query, in two halves: (1) NOW — the warning must read "NOT caching the failure" and
+      must recur for the SAME host within one process, which the old code made impossible;
+      (2) WHEN DNS RETURNS — "[host_locality] resolved host locality" with local=true must
+      appear WITHOUT a restart.
+    A_ROUND_0_already_escalated: >-
+      db_reclaim asks for 2,000 pages and reclaims 1, hourly: freelist 19,080 pages, 78.2 MB
+      trapped, free_ratio 0.217, remedy "a one-time full VACUUM". That is ESC-118 and its
+      premise still HOLDS; the instrument added earlier today is working exactly as intended.
   CADENCE_2026_09_03_the_hatch_built_so_nothing_could_hide_was_where_three_tables_hid:
     map_check: "No mapped item — found by asking what audit_log's 9,134 memory.contradiction rows are."
     HOW_IT_SURFACED: >-
