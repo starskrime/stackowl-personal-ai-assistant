@@ -209,7 +209,22 @@ async def staged_recall(
 #: ~0 with standard deviation 1/sqrt(384) = 0.051, so 0.25 is roughly five
 #: standard deviations above chance: comfortably "not noise" without demanding
 #: near-paraphrase.
-_MIN_SEMANTIC_SIMILARITY = 0.25
+#: The score a staged row must reach to count as related to the question.
+#:
+#: MEASURED 2026-09-03 against the live 202-row archive. Three gibberish probes
+#: ("zzzz qqqq xyzzy…", "blorp fnord snorgle…", "aaaa bbbb cccc…") reached 0.284,
+#: 0.230 and 0.209 — so 0.284 is this corpus's NOISE CEILING, the best score
+#: meaningless text can achieve. This floor shipped at 0.25, BELOW it.
+#:
+#: A cosine has no meaning without that band. Queries the archive can answer top
+#: out near 0.50; queries it cannot top out near 0.35 — and 0.25 admitted both,
+#: so every incident diagnosis was handed its top rows as though they were
+#: relevant. Measured on the live lanes, roughly HALF of what was injected into a
+#: machine turn scored below what gibberish scores.
+#:
+#: 0.35 chosen from the same measurement: 0.40 cuts his own questions from 18
+#: hits to 4 and 7, and 0.30 still leaves four noise hits on every machine turn.
+_MIN_SEMANTIC_SIMILARITY = 0.35
 
 
 async def staged_semantic_recall(
@@ -329,15 +344,28 @@ async def staged_semantic_recall(
     # THE FLOOR. Squared L2 relates to cosine as d = 2(1 - cos) for unit vectors,
     # so cos = 1 - d/2. Applied AFTER the sort so the cut is on the best
     # candidates rather than on an arbitrary prefix.
+    similarities = [1.0 - float(distances[i]) / 2.0 for i in top]
     hits = [
         row_to_record(usable[i])
-        for i in top
-        if (1.0 - float(distances[i]) / 2.0) >= min_similarity
+        for i, sim in zip(top, similarities, strict=True)
+        if sim >= min_similarity
     ]
-    # 4. EXIT
-    log.memory.debug(
+    # 4. EXIT — at INFO, carrying the best score SEEN and the floor it was judged
+    # against. Both are required to tell a miscalibrated floor from an archive
+    # that genuinely holds nothing: the shipped floor sat inside this corpus's
+    # noise band for days, and every line that could have shown it was at DEBUG
+    # while production runs at INFO, so no volume of traffic could have revealed
+    # it. Logged on the empty result too — a floor set too high is silent
+    # precisely when it is wrong.
+    log.memory.info(
         "[memory] sqlite_helpers.staged_semantic_recall: exit",
-        extra={"_fields": {"n_hits": len(hits), "scanned": len(usable), "dim": dim}},
+        extra={"_fields": {
+            "n_hits": len(hits),
+            "scanned": len(usable),
+            "dim": dim,
+            "top_similarity": round(max(similarities), 4) if similarities else None,
+            "floor": min_similarity,
+        }},
     )
     return hits
 

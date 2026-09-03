@@ -315,6 +315,88 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RECALL_FLOOR_2026_09_03_a_relevance_threshold_that_sat_inside_the_noise_band:
+    map_check: "No mapped item — found by measuring the effect of my OWN change from earlier today."
+    THE_FINDING: >-
+      The semantic recall shipped this morning saturated its budget on every single turn:
+      all 22 live recalls returned semantic=18 of 18. Scored against the live 202-row
+      archive, three gibberish probes ("zzzz qqqq xyzzy...", "blorp fnord snorgle...",
+      "aaaa bbbb cccc...") reached 0.284, 0.230 and 0.209 — so 0.284 is this corpus's NOISE
+      CEILING, the best score meaningless text can achieve. The floor shipped at 0.25, BELOW
+      it. Measured on the real query shapes, HALF of what was injected into a machine-lane
+      turn scored below what gibberish scores: incident/db-lock 7 of 13, goal/execution
+      5 of 11, incident/RCA 4 of 18.
+    HIS_OWN_RECALL_WAS_NEVER_BROKEN: >-
+      0 of 18 for both of his own question shapes (top 0.518 and 0.485). The archive is HIS
+      conversations, so it genuinely answers them. The defect was entirely on the machine
+      lanes, which is also where all 22 live recalls came from during the outage — his
+      questions were not being answered at all because the provider was down.
+    THE_CAUSE_IS_AN_ABSOLUTE_THRESHOLD_ON_A_RELATIVE_QUANTITY: >-
+      A cosine score has no meaning without knowing what the corpus scores for unrelated
+      text. The floor was picked to be safely permissive without ever measuring that band,
+      so it could not distinguish "the best match in a corpus holding nothing relevant"
+      (top ~0.35) from "a genuinely relevant match" (top ~0.50) — and 0.25 admitted both.
+      The number was not merely too small; it was chosen against no baseline at all.
+    WHY_0_35_AND_NOT_MORE: >-
+      MEASURED across the same queries. floor 0.25: nonsense 1, his questions 18/18,
+      machine 13/11/12. floor 0.30: nonsense 0, his 18/18, machine 4/4/4. floor 0.35:
+      nonsense 0, his 11/12, machine 1/0/2. floor 0.40: his own recall breaks to 4 and 7.
+      0.35 is the only value clearing the noise ceiling with margin while leaving his
+      questions answerable.
+    THE_HONEST_RESIDUE: >-
+      One constant cannot fully separate the two populations — the best hit of a query the
+      archive CANNOT answer (0.384) outranks the 12th hit of one it can. 0.35 collapses the
+      machine lanes' noise by 85% (36 hits to 3) and leaves a handful of weak hits on
+      unanswerable queries. Recorded rather than papered over, and now measurable.
+    NOTHING_COULD_HAVE_TOLD_US_AND_THAT_IS_ALSO_FIXED: >-
+      Every line that would have shown the miscalibration ran at log.memory.debug while
+      production runs at INFO, and none carried a score — the only way to find this was the
+      offline script that did. The exit line is now INFO carrying top_similarity AND the
+      floor it was judged against, logged on the EMPTY result too, because a floor set too
+      HIGH is silent precisely when it is wrong.
+    RAISING_IT_STRANDS_NOTHING: >-
+      recall() runs the semantic pass first and hands the leftover budget to the substring
+      scan, so a row the floor now rejects is left to the path that requires a literal
+      phrase and is therefore precise. Asserted in the suite, because it is the whole
+      reason this change is safe rather than the "made it unreachable and called it a
+      cleanup" mistake.
+    WHAT_ELSE_THE_SAME_CAUSE_REACHES_checked: >-
+      Every fixed similarity threshold in src/ was examined. The dedup gates (0.75, 0.85,
+      0.90) sit far above any noise band and are safe. skills.store.semantic_recall takes
+      min_similarity=0.0 with no caller overriding it, which LOOKS like the same defect and
+      is NOT: it RANKS a small curated catalogue to pick the best available skills for a
+      turn, where the weakest match beats offering none. Sharing one constant between a
+      ranker and a relevance filter would have been a second bug wearing this one's clothes.
+      Deliberately not widened.
+    PRE_EXISTING_RED_FOUND_AND_FIXED: >-
+      tests/memory/test_outcome_capture.py asserted the exact phase set and had been red
+      since my own latency item added delivery_gate as a timed phase earlier today — my
+      targeted paths for that item did not include tests/memory. Exactly the cross-cutting
+      blindness CLAUDE.md warns about. Fixed with the intended set, not loosened to a
+      superset.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      Unit + mutation evidence complete: 9 new tests, 4 mutations (floor reverted to 0.25;
+      filter removed; exit line back to DEBUG; score reported only when hits exist) each
+      caught, restore re-verified green. tests/memory 555, tests/pipeline+tests/skills 2274,
+      tripwires 43 pass. LIVE validation is PARTIAL and stays OPEN: the provider has been
+      unreachable for ~8h so no interactive turn has run against the new floor. Closing
+      query, to run once the VPN is back:
+      grep '"msg": "\[memory\] sqlite_helpers.staged_semantic_recall: exit"'
+      ~/.stackowl/logs/stackowl.jsonl — machine-lane turns must show n_hits 0-2 with
+      top_similarity below 0.40, and one of his own Telegram turns must show n_hits >= 5.
+    files:
+      - src/stackowl/memory/sqlite_helpers.py
+      - tests/memory/test_a_recall_floor_that_sits_inside_the_noise.py
+      - tests/memory/test_outcome_capture.py
+
   ABANDONED_2026_09_03_a_failed_analysis_bought_24h_of_silence_it_had_not_earned:
     map_check: "No mapped item — found by watching the RCA loop during the live outage."
     THE_FINDING: >-

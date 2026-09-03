@@ -415,9 +415,17 @@ async def test_backend_run_populates_step_durations_on_state(tmp_db: DbPool) -> 
         reg_module.PIPELINE_STEPS[:] = orig_steps
         deliver_module.run = orig_deliver  # type: ignore[assignment]
 
+    # ``delivery_gate`` joined the breakdown on 2026-09-03: it runs OUTSIDE the
+    # step loop and can hand the turn to a second owl, and leaving it untimed was
+    # part of why two thirds of a slow turn had no name. An exact-set assertion
+    # is the right shape here — it is what caught the addition — so it moves with
+    # the intended change rather than being loosened to a superset.
+    expected = {"triage", "execute", "deliver", "delivery_gate"}
     step_names = {name for name, _ in final.step_durations}
-    assert step_names == {"triage", "execute", "deliver"}
+    assert step_names == expected
+    # No ``unaccounted`` bucket: the residual here is under the 1ms floor that
+    # exists so a fully-accounted turn gets no noise in its breakdown.
     # And the backend persisted an outcome row.
     out = await TaskOutcomeStore(tmp_db).get_by_trace_id("t-dur")
     assert out is not None
-    assert out.step_durations.keys() == {"triage", "execute", "deliver"}
+    assert out.step_durations.keys() == expected
