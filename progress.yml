@@ -315,6 +315,36 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  PROVIDER_2026_09_03_the_model_was_never_down_only_its_NAME_was:
+    map_check: "No item — an operational measurement that re-frames every PARTIAL validate recorded today."
+    THE_MEASUREMENT: >-
+      Probed 2026-09-03 21:56 UTC with the VPN tunnel up and the config's own file-backed key
+      resolved the way SecretResolver does it:
+      http://172.30.104.100:4000/v1/models -> HTTP 200 in 0.42s, serving
+      {neraai-v1, neraai-v1-raw, nera-v1-embedding}. neraai-v1-raw is the configured
+      default_model. The gateway has been HEALTHY throughout.
+    WHAT_IS_ACTUALLY_BROKEN: >-
+      Only the name. llm-gateway.dev.nera.gov is NXDOMAIN on both corporate resolvers
+      (172.30.4.12/.13), and so is the entire nera.gov zone — not just the host. The IP is
+      reachable over the tunnel (ping 192ms, 0% loss) and is RFC1918, so host_locality
+      classifies it LOCAL and the cloud-pricing defect does not apply.
+    WHY_THIS_MATTERS_TO_THE_RECORD: >-
+      Every PARTIAL validate written today says "the provider is unreachable". That framing
+      was wrong in a way worth correcting: the SERVICE was reachable the whole time and the
+      RESOLVER was not. A closing query blocked on "wait for the provider to come back" is
+      really blocked on a DNS zone, which is a different wait and a different owner.
+    OPERATOR_DECISION_2026_09_03: >-
+      Offered three routes — point base_url at the IP, add a hosts entry, or fix DNS
+      upstream. Bakir chose to fix DNS himself, so NO config was changed. Recorded so the
+      next loop does not re-open a settled question.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
   DNSCACHE_2026_09_03_a_failure_to_determine_was_cached_as_a_determination:
     map_check: "No mapped item — found by asking why '[host_locality] could not resolve host' fires 17 times."
     THE_FINDING: >-
