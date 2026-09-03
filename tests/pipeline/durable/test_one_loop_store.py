@@ -746,3 +746,64 @@ class TestASubTaskDiesWithItsParent:
         ids = {t.task_id for t in await store.claimable(limit=50)}
 
         assert "root-1" in ids
+
+
+@pytest.mark.asyncio
+async def test_latest_abandoned_for_session_finds_only_what_the_loop_GAVE_UP_on(tmp_db):
+    """The query behind manual "try again" (ESC-109).
+
+    MEASURED 2026-09-03 before building: `tasks` holds real chat turns —
+    `owl:secretary:telegram:dm:72055773` rows written on 09-02 — so the ONE loop
+    is the right substrate. The earlier note that "a Telegram turn is not a task"
+    had gone out of date.
+    """
+    import time
+
+    from stackowl.pipeline.durable.store import DurableTaskStore
+    from stackowl.pipeline.durable.task import DurableTask
+
+    store = DurableTaskStore(tmp_db)
+    sess = "owl:secretary:telegram:dm:72055773"
+
+    async def _add(task_id: str, status: str, session_key: str = sess) -> None:
+        await store.enqueue(DurableTask(
+            task_id=task_id, goal=f"goal for {task_id}", status="pending",
+            session_key=session_key, channel="telegram",
+            destination="telegram:72055773",
+        ))
+        await tmp_db.execute(
+            "UPDATE tasks SET status = ?, created_at = ? WHERE task_id = ?",
+            (status, f"2026-09-03T00:00:{int(task_id[-2:]):02d}+00:00", task_id),
+        )
+        time.sleep(0)
+
+    await _add("task-01", "completed")
+    await _add("task-02", "pending")
+    await _add("task-03", "failed")
+    await _add("task-04", "dead_letter")
+    await _add("task-05", "failed", session_key="another-session")
+
+    found = await store.latest_abandoned_for_session(sess)
+
+    assert found is not None
+    assert found.task_id == "task-04", (
+        "the newest ABANDONED row for this session was not chosen — a completed "
+        "or pending row, or another session's, leaked in"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_session_with_nothing_abandoned_returns_None(tmp_db):
+    """The ordinary case, and it must stay silent: this runs on EVERY interactive
+    turn, so a chatty or raising miss would cost every conversation."""
+    from stackowl.pipeline.durable.store import DurableTaskStore
+    from stackowl.pipeline.durable.task import DurableTask
+
+    store = DurableTaskStore(tmp_db)
+    await store.enqueue(DurableTask(
+        task_id="task-ok", goal="g", status="pending", session_key="s",
+        channel="telegram",
+    ))
+
+    assert await store.latest_abandoned_for_session("s") is None
+    assert await store.latest_abandoned_for_session("") is None

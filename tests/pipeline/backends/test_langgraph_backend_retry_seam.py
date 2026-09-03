@@ -21,13 +21,21 @@ from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.steps import triage
 
 
-def _row() -> RetryQueueRow:
-    return RetryQueueRow(
-        id="retry-1", trace_id="trace-orig", session_key="sess-1",
+def _row():
+    """A task the loop has ABANDONED — what "try again" acts on since 2026-09-03.
+
+    This used to be a RetryQueueRow, because the hook read the retry_queue table.
+    That table lost its only writer on 2026-08-28 and the hook now asks the ONE
+    loop, so the fixture is a `tasks` row: the seam under test is the same, the
+    substrate is not."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        task_id="retry-1", session_key="sess-1",
         goal="prepare me for the interview", banned_capabilities=[],
-        attempt_count=0, status="pending", next_retry_at="", last_error=None,
-        channel="telegram", channel_chat_id="555", channel_message_id="999",
-        created_at="", updated_at="",
+        attempt_count=0, status="failed", last_error=None,
+        channel="telegram", destination="telegram:555",
+        created_at="2026-09-03T00:00:00+00:00",
     )
 
 
@@ -39,7 +47,7 @@ async def test_manual_retry_seam_single_delivery_no_recursion(
     row = _row()
 
     retry_store = MagicMock()
-    retry_store.get_latest_pending_for_session = AsyncMock(return_value=row)
+    retry_store.latest_abandoned_for_session = AsyncMock(return_value=row)
     retry_store.insert_pending = AsyncMock()
     retry_store.mark_completed = AsyncMock()
     retry_store.mark_attempt_failed = AsyncMock()
@@ -49,11 +57,12 @@ async def test_manual_retry_seam_single_delivery_no_recursion(
 
     adapter = MagicMock()
     adapter.edit_message = AsyncMock()
+    adapter.send_text = AsyncMock()
     channel_registry = MagicMock()
     channel_registry.get = MagicMock(return_value=adapter)
 
     services = StepServices(
-        retry_queue_store=retry_store,
+        durable_task_store=retry_store,
         retry_intent_classifier=classifier,
     )
 
@@ -92,10 +101,19 @@ async def test_manual_retry_seam_single_delivery_no_recursion(
     assert "outer-1" not in deliver_calls
 
     # C1 — the actuator delivered the real answer exactly once.
-    adapter.edit_message.assert_awaited_once()
-    adapter.send_text.assert_not_called()
+    # DELIVERED EXACTLY ONCE — that is what "single delivery, no recursion" means
+    # and it still holds. WHAT CHANGED, and it is a real behaviour difference
+    # rather than a test detail: this used to assert edit_message, because a
+    # retry_queue row carried the original `channel_message_id` (backfilled by
+    # the Telegram adapter) and the retry EDITED the message it was retrying. A
+    # `tasks` row has a destination and no message id, so a manual retry now
+    # SENDS A NEW MESSAGE instead. Defensible — the original stays in the
+    # history — but it is a change the operator will see, so it is asserted
+    # explicitly rather than left to drift.
+    adapter.send_text.assert_awaited_once()
+    adapter.edit_message.assert_not_called()
 
     # C2 — the nested backend.run() inside attempt_retry (interactive=False)
     # never re-entered the retry-intent hook.
-    retry_store.get_latest_pending_for_session.assert_awaited_once()
+    retry_store.latest_abandoned_for_session.assert_awaited_once()
     classifier.classify.assert_awaited_once()

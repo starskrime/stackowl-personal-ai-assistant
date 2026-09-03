@@ -35,9 +35,30 @@ def _row() -> RetryQueueRow:
     )
 
 
+def _task(status: str = "failed"):
+    """A task the loop has GIVEN UP on — the only kind "try again" acts on.
+
+    A floored turn is requeued `pending` and the loop re-drives it itself; a
+    manual retry of that row would be a second engine racing the first."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        task_id="task-r1",
+        session_key="s1",
+        goal="prepare me for the interview",
+        banned_capabilities=[],
+        attempt_count=3,
+        last_error="the turn delivered an honest floor instead of the work",
+        channel="telegram",
+        destination="telegram:1",
+        status=status,
+        created_at="2026-09-03T00:00:00+00:00",
+    )
+
+
 def _services(*, retry_store, classifier, actuator) -> StepServices:
     return StepServices(
-        retry_queue_store=retry_store,
+        durable_task_store=retry_store,
         retry_intent_classifier=classifier,
         retry_actuator=actuator,
     )
@@ -48,7 +69,7 @@ async def test_triage_triggers_manual_retry():
     from stackowl.pipeline.steps import triage
 
     retry_store = MagicMock()
-    retry_store.get_latest_pending_for_session = AsyncMock(return_value=_row())
+    retry_store.latest_abandoned_for_session = AsyncMock(return_value=_task())
 
     classifier = MagicMock()
     classifier.classify = AsyncMock(return_value=True)
@@ -81,7 +102,7 @@ async def test_triage_no_pending_row_falls_through_to_normal_routing():
     from stackowl.pipeline.steps import triage
 
     retry_store = MagicMock()
-    retry_store.get_latest_pending_for_session = AsyncMock(return_value=None)
+    retry_store.latest_abandoned_for_session = AsyncMock(return_value=None)
 
     classifier = MagicMock()
     classifier.classify = AsyncMock(return_value=True)
@@ -114,7 +135,7 @@ async def test_triage_pending_row_but_not_retry_intent_falls_through():
     from stackowl.pipeline.steps import triage
 
     retry_store = MagicMock()
-    retry_store.get_latest_pending_for_session = AsyncMock(return_value=_row())
+    retry_store.latest_abandoned_for_session = AsyncMock(return_value=_task())
 
     classifier = MagicMock()
     classifier.classify = AsyncMock(return_value=False)
@@ -156,3 +177,38 @@ async def test_triage_no_retry_store_is_noop():
         reset_services(token)
 
     assert result.retry_dispatched is False
+
+
+@pytest.mark.asyncio
+async def test_a_PENDING_task_is_not_offered_for_manual_retry():
+    """The loop owns `pending`; the operator owns give-up.
+
+    A floored turn is requeued as `pending` by ``complete_turn_task`` and the loop
+    re-drives it on its own while it still has attempts. Dispatching a manual
+    retry of that same row would be a SECOND engine running the same work and
+    racing the first — the thing Bakir's 2026-08-17 rule forbids. The store query
+    is what enforces it, so this asserts on the statuses that query accepts."""
+    from stackowl.pipeline.durable.store import DurableTaskStore
+
+    assert "pending" not in DurableTaskStore.ABANDONED_STATUSES
+    assert "running" not in DurableTaskStore.ABANDONED_STATUSES
+    assert set(DurableTaskStore.ABANDONED_STATUSES) == {"failed", "dead_letter"}
+
+
+@pytest.mark.asyncio
+async def test_the_retry_carries_the_learning_the_loop_PAID_FOR():
+    """`banned_capabilities` is what the loop bought with its failed attempts.
+    Dropping it sends the manual retry back down a route already proven dead —
+    which is why triage and the loop share ONE row builder rather than each
+    writing their own."""
+    from stackowl.pipeline.durable.task_loop_runner import actuator_row_for
+
+    task = _task()
+    task.banned_capabilities = ["web_fetch", "shell"]
+
+    row = actuator_row_for(task)
+
+    assert list(row.banned_capabilities) == ["web_fetch", "shell"]
+    assert row.attempt_count == 3, "the attempt history was reset to zero"
+    assert row.goal == "prepare me for the interview"
+    assert row.channel_chat_id == "1", "the destination was lost, so the answer has nowhere to go"

@@ -34,6 +34,32 @@ if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.pipeline.durable.task import DurableTask
 
 
+def actuator_row_for(task: Any) -> Any:
+    """The shape RetryActuator re-drives, built from a `tasks` row.
+
+    ONE BUILDER, TWO CALLERS. The loop uses it to re-drive a task it recovered;
+    triage uses it when the OPERATOR says "try again" about a task the loop has
+    stopped trying. Two spellings of "a task as something the actuator can run"
+    would drift, and the field that would drift first is
+    ``banned_capabilities`` — the learning the loop paid attempts to acquire,
+    whose loss sends the retry back down a route already proven dead.
+    """
+    from stackowl.memory.retry_queue_store import RetryQueueRow
+
+    return RetryQueueRow(
+        id=task.task_id,
+        trace_id=task.task_id,
+        session_key=task.session_key or "",
+        goal=(task.goal or "").strip(),
+        banned_capabilities=list(task.banned_capabilities),
+        attempt_count=task.attempt_count,
+        status="pending",
+        last_error=task.last_error,
+        channel=task.channel or "telegram",
+        channel_chat_id=_chat_id_of(task.destination),
+    )
+
+
 def _chat_id_of(destination: str | None) -> str | None:
     """``telegram:72055773`` -> ``72055773``. None for a channel-only destination
     such as ``cli``, which addresses its single terminal implicitly."""
@@ -62,22 +88,7 @@ def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
         if not goal:
             raise RuntimeError(f"task {task.task_id} has no goal to re-drive")
 
-        from stackowl.memory.retry_queue_store import RetryQueueRow
-
-        row = RetryQueueRow(
-            id=task.task_id,
-            trace_id=task.task_id,
-            session_key=task.session_key or "",
-            goal=goal,
-            # The learning the loop paid attempts to acquire. Dropping it here
-            # would send the retry back down a route already proven dead.
-            banned_capabilities=list(task.banned_capabilities),
-            attempt_count=task.attempt_count,
-            status="pending",
-            last_error=task.last_error,
-            channel=task.channel or "telegram",
-            channel_chat_id=_chat_id_of(task.destination),
-        )
+        row = actuator_row_for(task)
         log.tasks.info(
             "[loop] re-driving a recovered task through the retry actuator",
             extra={"_fields": {"task_id": task.task_id, "attempt": task.attempt_count,

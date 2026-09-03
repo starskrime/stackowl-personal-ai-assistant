@@ -301,6 +301,56 @@ class DurableTaskStore(OwnedRepository):
         )
         return tasks
 
+    #: What the loop has STOPPED trying. `pending` and `running` are the loop's
+    #: business and must never appear here — see latest_abandoned_for_session.
+    ABANDONED_STATUSES: tuple[str, ...] = ("failed", "dead_letter")
+
+    async def latest_abandoned_for_session(self, session_key: str) -> DurableTask | None:
+        """The newest task in this session that the loop has GIVEN UP on.
+
+        WHY GIVEN-UP AND NOT MERELY FLOORED. A floored turn goes back on the loop
+        as `pending` (turn_task.complete_turn_task requeues it) and the loop
+        re-drives it by itself while it still has attempts. Offering the operator
+        a manual retry of a row the loop is already retrying would be a SECOND
+        engine for the same work — the thing his 2026-08-17 rule forbids — and
+        would race it. What nothing covers is the row the loop has abandoned:
+        `failed` or `dead_letter`, where the platform has stopped and only a
+        person can decide it is worth another go.
+
+        Returns None when there is nothing to retry, which is the ordinary case
+        and must stay silent: this runs on EVERY interactive turn.
+        """
+        # 1. ENTRY
+        log.tasks.debug(
+            "[tasks] store.latest_abandoned_for_session: entry",
+            extra={"_fields": {"session_key": session_key}},
+        )
+        if not session_key:
+            return None
+        placeholders = ",".join("?" for _ in self.ABANDONED_STATUSES)
+        rows = await self._fetch_owned(
+            self._table,
+            f"session_key = ? AND superseded = 0 AND status IN ({placeholders})",
+            (session_key, *self.ABANDONED_STATUSES),
+        )
+        if not rows:
+            log.tasks.debug("[tasks] store.latest_abandoned_for_session: exit — none")
+            return None
+        # NEWEST BY created_at, resolved in Python rather than SQL: created_at is
+        # an ISO-8601 STRING in this table, and lexicographic order is only the
+        # same as chronological while every row carries the same offset. Sorting
+        # on the parsed value cannot be wrong when one does not.
+        tasks = sorted(
+            (_row_to_task(r) for r in rows),
+            key=lambda t: str(t.created_at or ""),
+        )
+        # 4. EXIT
+        log.tasks.debug(
+            "[tasks] store.latest_abandoned_for_session: exit",
+            extra={"_fields": {"session_key": session_key, "task_id": tasks[-1].task_id}},
+        )
+        return tasks[-1]
+
     async def _owes_delivery(self, task_id: str) -> bool:
         """True when this task has a DESTINATION and no proof it ever arrived.
 

@@ -131,27 +131,44 @@ async def run(state: PipelineState) -> PipelineState:
     # SECOND attempt_retry on the same row, whose nested backend.run() hits
     # triage again, unboundedly. Gating on interactive stops a non-interactive
     # (synthetic/scheduled/delegated) turn from ever re-entering this hook.
-    retry_store = services.retry_queue_store
+    # "TRY AGAIN" NOW ASKS THE ONE LOOP, not the retired retry_queue.
+    #
+    # This hook read retry_queue.get_latest_pending_for_session until 2026-09-03.
+    # That table lost its only writer on 2026-08-28 when retries moved to the ONE
+    # loop, so the read could only ever return None and the whole capability had
+    # been silently dead for six days — ZERO "manual retry-intent detected" lines
+    # in five days of logs. Bakir's decision (ESC-109): rebuild it against `tasks`.
+    #
+    # AND IT ASKS FOR THE ABANDONED ROW, NOT THE PENDING ONE. A floored turn is
+    # requeued as `pending` and the loop re-drives it on its own; offering a
+    # manual retry of that row would be a second engine racing the first. What
+    # nothing covers is `failed`/`dead_letter` — the loop has stopped, and only a
+    # person can say it is worth another go.
+    task_store = services.durable_task_store
     if (
         state.interactive
-        and retry_store is not None
+        and task_store is not None
         and services.retry_intent_classifier is not None
         and services.retry_actuator is not None
     ):
-        pending = await retry_store.get_latest_pending_for_session(state.session_key)
-        if pending is not None:
+        abandoned = await task_store.latest_abandoned_for_session(  # type: ignore[attr-defined]
+            state.session_key,
+        )
+        if abandoned is not None:
             is_retry = await services.retry_intent_classifier.classify(
-                user_message=state.input_text, prior_goal=pending.goal,
+                user_message=state.input_text, prior_goal=abandoned.goal,
             )
             if is_retry:
+                from stackowl.pipeline.durable.task_loop_runner import actuator_row_for
+
                 log.engine.info(
                     "[pipeline] triage: manual retry-intent detected — dispatching now",
                     extra={"_fields": {
                         "trace_id": state.trace_id, "session_key": state.session_key,
-                        "retry_id": pending.id,
+                        "retry_id": abandoned.task_id, "task_status": abandoned.status,
                     }},
                 )
-                await services.retry_actuator.attempt_retry(pending)
+                await services.retry_actuator.attempt_retry(actuator_row_for(abandoned))
                 return state.evolve(retry_dispatched=True)
 
     owl_registry = services.owl_registry

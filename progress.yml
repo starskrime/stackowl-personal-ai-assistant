@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TRYAGAIN_2026_09_03_manual_retry_now_asks_the_ONE_loop:
+    map_check: "No mapped item — implementing his ESC-109 answer."
+    his_decision: "REBUILD IT AGAINST `tasks`. The capability comes back; the 181-line classifier is reused, not deleted."
+    I_ALMOST_TOLD_HIM_HIS_SUBSTRATE_WAS_WRONG: >-
+      First measurement of `tasks` showed every session_key was either NULL (595) or a `goal-*`
+      scheduler lane, which reads as "chat turns are not tasks" — and a note in this programme's
+      own memory says exactly that. Looking at the ELEVEN non-goal rows instead of the
+      aggregate showed eight real Telegram turns from 2026-09-02:
+      owl:secretary:telegram:dm:72055773, goals "Any plans ?", "How are you?", "Trash all".
+      Chat turns DO become tasks now; the recorded note had gone stale. His choice was right and
+      the aggregate would have talked me out of it.
+    THE_DESIGN_QUESTION_THE_DATA_ANSWERED: >-
+      All eight are `completed`, so a naive "newest floored task" would find nothing — and
+      chasing why exposed the real boundary. complete_turn_task REQUEUES a floored turn as
+      `pending`, and the loop re-drives it by itself while it still has attempts. Offering a
+      manual retry of that row would be a SECOND engine running the same work and racing the
+      first, which his 2026-08-17 rule forbids. What nothing covers is `failed`/`dead_letter`:
+      the loop has stopped, and only a person can say it is worth another go. So the query is
+      latest_abandoned_for_session, and ABANDONED_STATUSES deliberately excludes pending and
+      running. Mutation-tested: adding "pending" turns two tests red.
+    one_builder_two_callers: >-
+      task_loop_runner already built a RetryQueueRow from a task; that is now actuator_row_for()
+      and triage asks it. Two spellings of "a task as something the actuator can run" would
+      drift, and the field that would drift first is banned_capabilities — the learning the loop
+      paid attempts to acquire, whose loss sends the retry back down a route already proven dead.
+      A test asserts it survives the conversion, along with attempt_count and the destination.
+    A_REAL_BEHAVIOUR_CHANGE_stated_not_hidden: >-
+      A retry_queue row carried the original channel_message_id (backfilled by the Telegram
+      adapter) so a manual retry EDITED the message it was retrying. A `tasks` row has a
+      destination and no message id, so the retry now SENDS A NEW MESSAGE. Defensible — the
+      original stays in the history — but he will see it, so both seam tests assert the new
+      shape explicitly rather than letting it drift.
+    WHAT_I_DELIBERATELY_BACKED_OUT_OF: >-
+      With the hook re-pointed, get_latest_pending_for_session had no callers and I deleted it
+      under retired-means-deleted. That broke 7 tests of the retry store and pulled this item
+      into the store retirement I had explicitly scoped OUT as "a refactor, not a deletion, with
+      its own item". Reverted. Deleting one method while leaving the store, the table and seven
+      red tests is the mess the rule exists to prevent, not the rule being followed.
+    suites: "tests/pipeline 1,737 passed; tests/memory retry store 28 passed. 4 new tests. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_a_floored_chat_turn_the_loop_gives_up_on
+    closing_query: >-
+      "[pipeline] triage: manual retry-intent detected — dispatching now" at INFO carrying
+      task_status — ZERO in five days of logs because the read could only return None. It needs
+      TWO things to line up: a chat turn the loop abandons (`failed`/`dead_letter`), and him
+      saying "try again" after it. If the line never appears, check first whether any chat task
+      has reached a terminal status at all — today ALL EIGHT are completed, so a silent check is
+      0-over-0, not a failure.
   NARROWING_2026_09_03_the_agent_gives_up_write_BEFORE_it_reads_the_page:
     map_check: "No mapped item — implementing his ESC-110 answer. Sits on top of D12.8's marker."
     his_decision: >-
