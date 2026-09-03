@@ -45,7 +45,7 @@ async def test_a_floored_retry_REPORTS_the_capability_it_burned() -> None:
     """The actuator knows it — `_pick_newly_failed` computes it. It must say so."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from stackowl.memory.retry_queue_store import RetryQueueRow
+    from stackowl.pipeline.retry_attempt import RetryAttempt
     from stackowl.pipeline.retry_actuator import RetryActuator
 
     # NO STORE TO SIMULATE ANY MORE. This used to hand in an AsyncMock whose
@@ -54,7 +54,7 @@ async def test_a_floored_retry_REPORTS_the_capability_it_burned() -> None:
     # is deleted (2026-09-03), so the capability now travels on the return value
     # by construction rather than out of an except branch.
     actuator = RetryActuator(backend=MagicMock(), channel_registry=MagicMock())
-    row = RetryQueueRow(id="retry-x", trace_id="retry-x", session_key="s", goal="g")
+    row = RetryAttempt(id="retry-x", trace_id="retry-x", session_key="s", goal="g")
 
     outcome = await actuator._handle_failure(
         row, "still floored", newly_failed_capability="web_fetch",

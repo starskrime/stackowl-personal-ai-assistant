@@ -9,7 +9,7 @@ real backend and delivers the answer to the channel it came from. CLAUDE.md's ru
 merely tidy.
 
 WHAT THE RUNNER ADDS is translation and nothing else: a ``DurableTask`` becomes the
-``RetryQueueRow`` the actuator expects, and the actuator's outcome becomes the
+``RetryAttempt`` the actuator expects, and the actuator's outcome becomes the
 loop's contract (return the delivered result, or raise so the loop records the
 failure and requeues with what broke).
 

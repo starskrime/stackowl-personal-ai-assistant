@@ -20,7 +20,8 @@ repurposing of it: ``retry_queue`` only ever gets a row for a floored turn
 and its bookkeeping (attempt_count, banned_capabilities, next_retry_at) is
 an unrelated concern from "did this message get a reply." Two single-purpose
 stores, same convention as ``TaskOutcomeStore``/``DeliveryLedger``/
-``RetryQueueStore`` already being separate tables for separate concerns.
+the since-retired ``RetryQueueStore`` already being separate tables for
+separate concerns.
 """
 
 from __future__ import annotations
@@ -85,7 +86,7 @@ _SELECT_COLUMNS = (
 class MessageLedgerStore(OwnedRepository):
     """Async SQLite wrapper for the message_ledger table (migration 0089).
 
-    Mirrors the established Store shape (:class:`~stackowl.memory.retry_queue_store.RetryQueueStore`):
+    Mirrors the established Store shape (the since-retired ``RetryQueueStore``):
     hand-rolled SQL via ``self._db.execute``/``fetch_all`` with an explicit
     ``owner_id = ?`` bind on every query.
     """

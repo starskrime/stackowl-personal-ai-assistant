@@ -315,6 +315,61 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RETRYQUEUE_2026_09_03_the_last_of_the_four_engines_is_gone:
+    map_check: "No mapped item — the piece I named as its own item when the sweep went."
+    the_shape: >-
+      CLAUDE.md records FOUR overlapping engines for "work to do": tasks (live), retry_queue,
+      objectives/objective_subgoals, and job_queue. His 2026-08-17 rule is that there is ONE
+      loop. His own commit 49601f50 removed retry_queue's only writer on 2026-08-28 and left
+      everything else standing — the store, the 1-minute sweep, the table, the classifier, the
+      telegram backfill.
+    MEASURED_immediately_before_the_drop: >-
+      5,766 rows (4,854 completed, 912 failed), newest 2026-08-28T03:31:27, ZERO pending. SEVEN
+      of the store's EIGHT methods had no live caller at all; the eighth,
+      backfill_channel_message, updated a PENDING row in a table that could never gain one.
+    why_it_took_three_items_not_one: >-
+      The sweep was a clean deletion. The actuator was a REFACTOR of live code — it wrote
+      bookkeeping into the dead table for rows the ONE loop had synthesised — and the triage
+      hook was a CAPABILITY only he could decide about (ESC-109). Doing all three as one change
+      would have mixed a deletion, a behaviour change to the retry path and a product decision
+      into a single diff. They shipped in that order and each validated on its own.
+    what_survived_and_why_it_is_not_residue: >-
+      RetryActuator, because task_loop_runner re-drives every recovered task through it and
+      triage dispatches it for a manual "try again" — a sweep of "delete everything named retry"
+      would have taken the platform's retry path. The row SHAPE moved to
+      pipeline/retry_attempt.py as RetryAttempt: every instance is synthesised from a `tasks`
+      row now, and leaving it in a module named after a retired table is how the next reader
+      concludes the table is live. RetryIntentClassifier, because his ESC-109 answer was rebuild,
+      not delete.
+    I_ALMOST_LEFT_A_DEAD_SEAT: >-
+      The moved dataclass initially kept `RetryQueueRow = RetryAttempt` as an alias "for the
+      duration of this commit's edits". That is exactly the seat his rule forbids. Removed, and
+      all ten importers updated in the same change.
+    GIT_CHECKOUT_UNDID_MY_WORK_FOR_THE_SECOND_TIME_TODAY: >-
+      Restoring after a mutation test with `git checkout src/stackowl/pipeline/services.py`
+      reverted a real edit from earlier in the same item — the store field came back and the
+      tripwire caught it. Earlier today the same command failed SILENTLY on an untracked file
+      and left a mutated module in the tree. The rule that comes out of both: a mutation test
+      restores from a FILE COPY taken immediately before, never from git, because git does not
+      know which of the file's changes were the experiment.
+    the_tripwire_had_to_be_TIGHTENED_not_loosened: >-
+      Its first cut flagged any line containing the name and fired on five DOCSTRINGS that
+      record why the thing is gone. Prose naming a retired module is how the next reader learns
+      it was retired; an IMPORT is how they conclude it is alive. It now matches constructions
+      and imports only, and is mutation-tested.
+    suites: "tests/pipeline + tests/channels/telegram + tests/scheduler 2,458 passed. Baselines held at ruff 35, mypy 65."
+    MY_OWN_CADENCE_TRIPWIRE_CAUGHT_ME: >-
+      The commit gate failed on test_no_declaration_outlives_its_table — I dropped retry_queue
+      and left its entry in the cadence registry, which is precisely the residue that check was
+      written for ("a declaration for a table that no longer exists"). Written hours earlier,
+      fired on its author, and stopped an incomplete retirement from shipping. That is the
+      second gate today to block a commit of mine rather than decorate one.
+    validate: OPEN_awaiting_a_boot_with_migration_0135
+    closing_query: >-
+      `SELECT name FROM sqlite_master WHERE name='retry_queue'` returns nothing after the next
+      boot, and "[loop] re-driving a recovered task through the retry actuator" keeps appearing
+      at its usual 13-21 a day. BOTH halves: the first alone is also satisfied by a platform
+      that has stopped retrying anything.
   TRYAGAIN_2026_09_03_manual_retry_now_asks_the_ONE_loop:
     map_check: "No mapped item — implementing his ESC-109 answer."
     his_decision: "REBUILD IT AGAINST `tasks`. The capability comes back; the 181-line classifier is reused, not deleted."

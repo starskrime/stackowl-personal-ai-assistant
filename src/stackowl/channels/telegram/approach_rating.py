@@ -17,7 +17,7 @@ original implementation) meant gateway and core each held their OWN separate
 map, so a tapped vote recorded correctly in ``task_outcomes`` but the gateway
 side never saw the pending entry — the message was never edited. Both
 processes share the same SQLite DB file, so a DB-backed store (mirroring
-:class:`~stackowl.memory.retry_queue_store.RetryQueueStore`) is correct where
+the since-retired ``RetryQueueStore``) is correct where
 the in-memory dict was not.
 """
 
@@ -75,7 +75,7 @@ class ApproachRatingTracker(OwnedRepository):
     """DB-backed trace_id -> pending-vote store (migration 0084's
     ``approach_rating_pending`` table).
 
-    Mirrors the established Store shape (:class:`~stackowl.memory.retry_queue_store.RetryQueueStore`):
+    Mirrors the established Store shape (the since-retired ``RetryQueueStore``):
     hand-rolled SQL via ``self._db.execute``/``fetch_all`` with an explicit
     ``owner_id = ?`` bind on every query.
 

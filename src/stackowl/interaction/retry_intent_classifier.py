@@ -2,7 +2,8 @@
 the prior failed ask?
 
 Manual "do it again" path (Task 7): when a session has an open pending
-``retry_queue`` row (Task 2's :class:`~stackowl.memory.retry_queue_store.RetryQueueStore`),
+``retry_queue`` row. THAT TABLE AND ITS STORE WERE RETIRED 2026-09-03; this
+classifier now decides about a `tasks` row the ONE loop has abandoned,
 a new user message MIGHT be asking to redo that same failed request right
 now, instead of waiting for the 1-minute cron sweep
 (:mod:`stackowl.scheduler.handlers.retry_sweep`, Task 6) to pick it up. This

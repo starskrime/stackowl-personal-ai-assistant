@@ -19,7 +19,7 @@ loop" — and left the sweep scheduled at ``every 1m``:
 1,440 dispatches a day, for six days, against a table that can never gain a row.
 
 WHAT DELIBERATELY STAYS: ``RetryActuator``. ``task_loop_runner`` builds a
-``RetryQueueRow`` from a ``tasks`` row and calls ``attempt_retry`` — that IS
+``RetryAttempt`` from a ``tasks`` row and calls ``attempt_retry`` — that IS
 "retries on the ONE loop", and it ran 13-21 times a day throughout. A test that
 asserted the whole retry vocabulary was gone would be asserting the opposite of
 what the platform needs.

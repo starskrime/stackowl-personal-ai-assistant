@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from stackowl.memory.retry_queue_store import RetryQueueRow
+from stackowl.pipeline.retry_attempt import RetryAttempt
 from stackowl.pipeline.backends import asyncio_backend as backend_mod
 from stackowl.pipeline.backends.asyncio_backend import AsyncioBackend
 from stackowl.pipeline.retry_actuator import RetryActuator
@@ -32,7 +32,7 @@ from stackowl.pipeline.steps import triage
 def _row():
     """A task the loop has ABANDONED — what "try again" acts on since 2026-09-03.
 
-    This used to be a RetryQueueRow, because the hook read the retry_queue table.
+    This used to be a RetryAttempt, because the hook read the retry_queue table.
     That table lost its only writer on 2026-08-28 and the hook now asks the ONE
     loop, so the fixture is a `tasks` row: the seam under test is the same, the
     substrate is not."""

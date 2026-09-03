@@ -12,7 +12,7 @@ Writing a second re-drive path here would be the duplication the platform rule
 exists to prevent — the tree already accumulated four overlapping work engines by
 doing exactly that.
 
-So this module is a translator: ``DurableTask`` in, ``RetryQueueRow`` out, the
+So this module is a translator: ``DurableTask`` in, ``RetryAttempt`` out, the
 actuator's outcome mapped onto the loop's contract (return the delivered result, or
 RAISE so the loop classifies the failure and requeues the row carrying what broke).
 
@@ -44,9 +44,9 @@ def actuator_row_for(task: Any) -> Any:
     ``banned_capabilities`` — the learning the loop paid attempts to acquire,
     whose loss sends the retry back down a route already proven dead.
     """
-    from stackowl.memory.retry_queue_store import RetryQueueRow
+    from stackowl.pipeline.retry_attempt import RetryAttempt
 
-    return RetryQueueRow(
+    return RetryAttempt(
         id=task.task_id,
         trace_id=task.task_id,
         session_key=task.session_key or "",

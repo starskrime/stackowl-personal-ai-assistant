@@ -161,6 +161,21 @@ and move to work that is not blocked:
 Commit at sub-story granularity when green. Merge to main and push when the item is green.
 Never push `do_not_push_to_git_research_only/`.
 
+## Mutation-testing restores from a FILE COPY, never from git
+
+**Measured twice on 2026-09-03, in one session.** `git checkout <file>` after a
+mutation reverted a real edit made earlier in the same item — git does not know
+which of the file's changes were the experiment. On an UNTRACKED file the same
+command fails SILENTLY, and with `|| true` after it, a mutated module sat in the
+tree looking green.
+
+    cp <file> $SCRATCH/f.bak   # before mutating
+    <mutate, run the test, confirm it goes red>
+    cp $SCRATCH/f.bak <file>   # restore
+    <re-run: it must go green again>
+
+The final re-run is not optional; it is the only proof the restore happened.
+
 ## Landmines
 
 - **Never run `graphify update` or `graphify hook install`.** The hook actively suggests

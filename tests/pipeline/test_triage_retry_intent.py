@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from stackowl.memory.retry_queue_store import RetryQueueRow
+from stackowl.pipeline.retry_attempt import RetryAttempt
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.pipeline.state import PipelineState
 
 
-def _row() -> RetryQueueRow:
-    return RetryQueueRow(
+def _row() -> RetryAttempt:
+    return RetryAttempt(
         id="r1",
         trace_id="t1",
         session_key="s1",

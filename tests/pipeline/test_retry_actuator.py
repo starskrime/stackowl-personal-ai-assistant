@@ -4,7 +4,7 @@ import pytest
 from telegram.error import RetryAfter
 
 from stackowl.infra import retry_ledger
-from stackowl.memory.retry_queue_store import RetryQueueRow
+from stackowl.pipeline.retry_attempt import RetryAttempt
 from stackowl.pipeline.retry_actuator import (
     RetryActuator,
     _delivery_retry_delay_seconds,
@@ -22,7 +22,7 @@ def _row(**overrides):
         created_at="", updated_at="",
     )
     defaults.update(overrides)
-    return RetryQueueRow(**defaults)
+    return RetryAttempt(**defaults)
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,38 @@
+-- The last of the four engines. retry_queue is gone.
+--
+-- Bakir, 2026-08-17: "everything the platform does is a TASK on ONE loop, and no
+-- implementation may duplicate logic or code that already runs work." His own
+-- commit 49601f50 (2026-08-28) removed this table's ONLY writer — "a floored turn
+-- retries on the ONE loop — retry_queue is no longer written" — and the rest of
+-- the engine was left standing. This finishes it.
+--
+-- MEASURED 2026-09-03, immediately before the drop:
+--
+--   rows                        5,766 (4,854 completed, 912 failed)
+--   newest row                  2026-08-28T03:31:27  (six days old)
+--   pending rows                0
+--   live callers of the store   7 of its 8 methods had ZERO; the eighth
+--                               (backfill_channel_message) updated a PENDING row
+--                               in a table that can never gain one
+--
+-- WHAT WENT WITH IT, in this same change, because retiring means deleting:
+--   * memory/retry_queue_store.py            the store
+--   * the telegram adapter's backfill        and the `any_floor` accumulator that
+--                                            existed only to trigger it
+--   * services.retry_queue_store             the field and its orchestrator wiring
+--   * tests/memory/test_retry_queue_store.py and two more suites of the retired path
+--
+-- WHAT DELIBERATELY SURVIVED, and why it is not residue:
+--   * RetryActuator — the ONE loop's task_loop_runner re-drives recovered tasks
+--     through it, and triage dispatches it for a manual "try again".
+--   * The row SHAPE, moved to pipeline/retry_attempt.py as `RetryAttempt`. Every
+--     instance is now synthesised from a `tasks` row; leaving it in a module named
+--     after a retired table is how the next reader concludes the table is live.
+--   * RetryIntentClassifier — Bakir's ESC-109 answer was to REBUILD manual "try
+--     again", not to delete it, and it now classifies against a `tasks` row.
+--
+-- RECOVERY: MigrationRunner snapshots the WHOLE database (VACUUMed) before
+-- applying anything pending, so the last pre-drop state of these 5,766 rows is on
+-- disk, and the schema is in git history.
+
+DROP TABLE IF EXISTS retry_queue;

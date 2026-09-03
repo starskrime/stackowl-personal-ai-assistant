@@ -1600,12 +1600,6 @@ class StartupOrchestrator:
         sticky_route_cache = StickyRouteCache()
 
         # Retry-queue bookkeeping — persist_turn reads THIS off services to
-        # enqueue a pending row on a floored turn. Same DbPool instance, same
-        # OwnedRepository construction pattern as TaskOutcomeStore(db) elsewhere.
-        from stackowl.memory.retry_queue_store import RetryQueueStore
-
-        retry_queue_store = RetryQueueStore(db_pool)
-
         # Universal per-message status lifecycle (pending/completed/failed/
         # absorbed) — migration 0089. _handle_ingress inserts the pending row
         # at intake (before the message touches any in-memory-only gateway
@@ -1622,7 +1616,7 @@ class StartupOrchestrator:
         # record_pending (core process) and the Telegram backfill + "apr" callback
         # handler (gateway process) would never see each other's writes. Both
         # processes share the same SQLite DB file, so DbPool-backed storage (same
-        # construction convention as RetryQueueStore(db_pool) above) is what
+        # construction convention the retired RetryQueueStore used) is what
         # actually lets both processes observe the same pending-vote state.
         from stackowl.channels.telegram.approach_rating import ApproachRatingTracker
 
@@ -1646,7 +1640,6 @@ class StartupOrchestrator:
             browser_sessions=browser_sessions,
             audit_logger=audit_logger,
             preference_store=preference_store,
-            retry_queue_store=retry_queue_store,
             message_ledger_store=message_ledger_store,
             # D01.7 — so proactive delivery can turn a lane back into a recipient.
             session_store=session_store,
@@ -1711,11 +1704,11 @@ class StartupOrchestrator:
         set_services(services)
         backend = create_backend(self._settings.orchestrator.backend, services=services)
 
-        # Task 6 — cron retry sweep. RetryActuator is the SHARED retry function
-        # (Task 5): both this 1m cron sweep and any manual retry path call the
-        # same instance. Reuses the SAME retry_queue_store built above (line
-        # ~1249, already threaded onto services) rather than a second store —
-        # one durable view of retry_queue, not two divergent ones.
+        # RetryActuator is the SHARED retry function: the ONE loop's
+        # task_loop_runner re-drives a recovered task through it, and triage
+        # dispatches it when the operator says "try again" about a task the loop
+        # has abandoned. The 1-minute cron sweep that used to be the third caller
+        # is gone (2026-09-03) along with retry_queue itself.
         from stackowl.channels.registry import ChannelRegistry
         from stackowl.pipeline.retry_actuator import RetryActuator
 
@@ -1732,7 +1725,7 @@ class StartupOrchestrator:
         # and retry_queue's newest row still dated 2026-08-28T03:31.
         #
         # The ACTUATOR stays and is load-bearing: task_loop_runner builds a
-        # RetryQueueRow from a `tasks` row and calls attempt_retry, which is what
+        # RetryAttempt from a `tasks` row and calls attempt_retry, which is what
         # "retries on the ONE loop" means. Only the dead sweep is removed.
 
         # THE ONE LOOP (Bakir, 2026-08-17). Started HERE because this is the first

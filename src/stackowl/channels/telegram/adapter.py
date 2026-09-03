@@ -484,7 +484,6 @@ class TelegramChannelAdapter(ChannelAdapter):
         # Tracked across the chunk stream to backfill the retry_queue row for a
         # floored turn once the message is actually sent (below) — every chunk
         # in one turn shares the same trace_id, so any chunk's is enough.
-        any_floor = False
         trace_id: str | None = None
         try:
             async for chunk in chunks:
@@ -516,7 +515,6 @@ class TelegramChannelAdapter(ChannelAdapter):
                     continue
 
                 buffer += chunk.content
-                any_floor = any_floor or getattr(chunk, "is_floor", False)
                 chunk_actions = getattr(chunk, "actions", ())
                 if chunk_actions:
                     actions = chunk_actions
@@ -558,8 +556,6 @@ class TelegramChannelAdapter(ChannelAdapter):
             if view is not None:
                 await view.settle()  # collapse the status to a "✓ done in Ns" footer
             settled = True
-            if any_floor and message is not None and trace_id is not None and target is not None:
-                await self._backfill_floor_retry_row(trace_id, target, message.message_id)
             if raw_keyboard is not None and message is not None and trace_id is not None and target is not None:
                 await self._backfill_approach_rating(trace_id, target, message.message_id)
         finally:
@@ -577,44 +573,6 @@ class TelegramChannelAdapter(ChannelAdapter):
             "[telegram] adapter.send: exit",
             extra={"_fields": {"total_len": len(buffer), "explicit_target": target is not None,
                                "live_progress": view is not None}},
-        )
-
-    async def _backfill_floor_retry_row(
-        self, trace_id: str, chat_id: int, message_id: int
-    ) -> None:
-        """Stamp the just-sent message ref onto the pending retry_queue row for a
-        floored turn, so a later retry can edit THIS message instead of sending
-        a duplicate. Best-effort: a backfill failure must never break delivery
-        (the answer already landed) — log loudly and move on.
-        """
-        log.telegram.debug(
-            "[telegram] adapter._backfill_floor_retry_row: entry",
-            extra={"_fields": {
-                "trace_id": trace_id, "chat_id": chat_id, "message_id": message_id,
-            }},
-        )
-        from stackowl.pipeline.services import get_services
-
-        retry_store = get_services().retry_queue_store
-        if retry_store is None:
-            log.telegram.debug(
-                "[telegram] adapter._backfill_floor_retry_row: decision no_retry_store — no-op",
-            )
-            return
-        try:
-            await retry_store.backfill_channel_message(
-                trace_id=trace_id, channel_chat_id=chat_id, channel_message_id=message_id,
-            )
-        except Exception as exc:  # backfill must never break delivery
-            log.telegram.error(
-                "[telegram] adapter._backfill_floor_retry_row: backfill failed",
-                exc_info=exc,
-                extra={"_fields": {"trace_id": trace_id}},
-            )
-            return
-        log.telegram.debug(
-            "[telegram] adapter._backfill_floor_retry_row: exit",
-            extra={"_fields": {"trace_id": trace_id}},
         )
 
     async def _backfill_approach_rating(

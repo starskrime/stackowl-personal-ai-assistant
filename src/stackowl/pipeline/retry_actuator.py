@@ -26,13 +26,13 @@ from telegram.error import RetryAfter
 
 from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
-from stackowl.memory.retry_queue_store import RetryQueueRow
 from stackowl.notifications.deliverer import _TargetedSender
 from stackowl.pipeline.delivery_gate import (
     _attempts_for_state,
     describe_attempt_evidence,
     failed_capabilities_for_state,
 )
+from stackowl.pipeline.retry_attempt import RetryAttempt
 from stackowl.pipeline.state import PipelineState
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
@@ -213,7 +213,7 @@ class RetryActuator:
         )
         return None if floored else final_state
 
-    async def attempt_retry(self, row: RetryQueueRow) -> RetryOutcome:
+    async def attempt_retry(self, row: RetryAttempt) -> RetryOutcome:
         # 1. ENTRY
         log.scheduler.info(
             "retry_actuator.attempt_retry: entry",
@@ -368,7 +368,7 @@ class RetryActuator:
         )
         return RetryOutcome(status="completed")
 
-    def _augment_goal(self, row: RetryQueueRow) -> str:
+    def _augment_goal(self, row: RetryAttempt) -> str:
         """Tell the retry WHAT burned and WHY, so it is constrained, not blind.
 
         MEASURED 2026-08-20 on task 86de5841. The loop saw the turn was blocked on
@@ -405,7 +405,7 @@ class RetryActuator:
         parts.append(")\n\n")
         return "".join(parts) + row.goal
 
-    def _pick_newly_failed(self, row: RetryQueueRow, final_state: PipelineState) -> str:
+    def _pick_newly_failed(self, row: RetryAttempt, final_state: PipelineState) -> str:
         """Name the FIRST capability this retry attempt touched that wasn't
         already banned — the real "newly failed" signal for
         ``mark_attempt_failed``. Reuses the same tool-attempt lookup the
@@ -431,7 +431,7 @@ class RetryActuator:
                 return name
         return ""
 
-    async def _deliver_success(self, row: RetryQueueRow, answer_text: str) -> None:
+    async def _deliver_success(self, row: RetryAttempt, answer_text: str) -> None:
         adapter = self._channel_registry.get(row.channel)
         if row.channel_chat_id and row.channel_message_id and hasattr(adapter, "edit_message"):
             try:
@@ -467,7 +467,7 @@ class RetryActuator:
             await adapter.send_text(answer_text)
 
     async def _handle_failure(
-        self, row: RetryQueueRow, error: str, *, newly_failed_capability: str,
+        self, row: RetryAttempt, error: str, *, newly_failed_capability: str,
     ) -> RetryOutcome:
         # THE STORE ROUND-TRIP IS GONE, AND ITS EXCEPT BRANCH WAS ALREADY THE
         # IMPLEMENTATION. mark_attempt_failed raised on every call — the row is
