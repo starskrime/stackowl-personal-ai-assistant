@@ -612,7 +612,11 @@ class FailureOutcomeMiner:
         )
         try:
             owned = await read_all_skill_ownership(self._db)
-            known = {sk.name for sk in await self._skills.list_for_source("learned")}
+            learned = await self._skills.list_for_source("learned")
+            known = {sk.name for sk in learned}
+            superseded = {
+                sk.name for sk in learned if getattr(sk, "superseded_by", None)
+            }
         except Exception as exc:  # noqa: BLE001 — hygiene must never cost a pass
             log.memory.warning(
                 "[incident] miner.reconcile: could not read ownership — skipping",
@@ -640,6 +644,20 @@ class FailureOutcomeMiner:
             )
             for skill_name in sorted(candidates & known):
                 if skill_name in has_owner:
+                    continue
+                if skill_name in superseded:
+                    # NEVER HAND OUT A DUPLICATE THE CATALOGUE HAS ALREADY
+                    # RESOLVED. Supersession is recorded (migration 0132) and
+                    # this loop did not ask, so its first live run attached five
+                    # folded siblings ALONGSIDE their survivors: 17 of 46
+                    # ownership rows, every one of them an owl being handed the
+                    # same lesson twice under two names, and all five due to be
+                    # archived on the next curator pass. One rule, two
+                    # components, and only one of them was consulting it.
+                    log.memory.debug(
+                        "[incident] miner.reconcile: skipping a superseded skill",
+                        extra={"_fields": {"skill_name": skill_name}},
+                    )
                     continue
                 attached: list[str] = []
                 for owl in owls:

@@ -184,3 +184,34 @@ async def test_without_a_registry_or_db_it_does_nothing_rather_than_half_of_it()
     assert await miner.reconcile_ownership([_cluster("shell", "stop", "scout")]) == 0
     miner = _miner(_Registry(), None, _Skills("incident_shell"))
     assert await miner.reconcile_ownership([_cluster("shell", "stop", "scout")]) == 0
+
+
+async def test_a_SUPERSEDED_skill_is_never_handed_to_an_owl(_attach) -> None:  # noqa: ANN001
+    """The reconciler's own first live run created 17 duplicate ownership rows.
+
+    It asked "does this skill have an owner?" and never "is this skill still the
+    one that carries the lesson?". Supersession is recorded (migration 0132) and
+    this loop did not consult it, so it attached five folded siblings ALONGSIDE
+    their survivors — MEASURED 2026-09-03: 17 of 46 rows, every one an owl being
+    handed the same lesson twice under two names, and all five due to be archived
+    on the next curator pass. One rule, two components, one of them not asking.
+    """
+    registry, db = _Registry(), _Db()
+
+    class _WithSupersession(_Skills):
+        async def list_for_source(self, source: str) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(name="incident_shell", superseded_by=None),
+                SimpleNamespace(
+                    name="incident_shell_stop", superseded_by="incident_shell",
+                ),
+            ]
+
+    miner = _miner(registry, db, _WithSupersession())
+    healed = await miner.reconcile_ownership([_cluster("shell", "stop", "secretary")])
+
+    assert healed == 1, "the survivor still has to be attached"
+    assert registry.attached == [("secretary", "incident_shell")], (
+        "a folded duplicate was handed to an owl that is also getting the "
+        "survivor — the same lesson twice under two names"
+    )

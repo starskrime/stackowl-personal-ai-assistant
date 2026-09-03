@@ -61,6 +61,9 @@ class SweepResult:
     #: Skills that had NO owner and were given one. The other DIRECTION of the
     #: same relationship — see the class docstring.
     ownership_healed: int = 0
+    #: Ownership rows pointing at a skill that was FOLDED INTO another one, where
+    #: the owl already owns the survivor. A duplicate, never a loss.
+    superseded_dropped: int = 0
 
 
 class OrphanReconciliationHandler(JobHandler):
@@ -214,6 +217,73 @@ class OrphanReconciliationHandler(JobHandler):
         )
         return SweepResult(deleted=deleted, refused=refused, errors=errors)
 
+    async def _drop_superseded_ownership(self) -> int:
+        """Remove ownership of a skill that was folded into one the owl ALSO owns.
+
+        WHY THERE ARE ANY. The ownerless-skill repair asked "does this skill have
+        an owner?" and never "is this skill still the one that carries the
+        lesson?". Supersession is recorded (migration 0132) and that loop did not
+        consult it, so its first live run attached five folded siblings ALONGSIDE
+        their survivors — MEASURED 2026-09-03: 17 of 46 ownership rows, every one
+        an owl being handed the same lesson twice under two names. The reconciler
+        no longer creates them; this clears the ones it already did, and anything
+        a future gap creates, which is the standing shape the operator asked for.
+
+        THE SAFETY CONDITION IS THE WHOLE DESIGN: a row is removed ONLY when the
+        same owl also owns the survivor. Without that clause an owl whose only
+        copy of a lesson is the folded one would silently lose it, turning a
+        de-duplication into a capability deletion.
+
+        Records every row before removing it, like every other deletion here.
+        Never raises.
+        """
+        try:
+            rows = await self._db.fetch_all(
+                "SELECT o.owner_id, o.owl_name, o.skill_name, o.attached_at "
+                "FROM skill_ownership o "
+                "JOIN skills s ON s.name = o.skill_name AND s.owner_id = o.owner_id "
+                "WHERE s.superseded_by IS NOT NULL AND EXISTS ("
+                "  SELECT 1 FROM skill_ownership k WHERE k.owl_name = o.owl_name "
+                "  AND k.owner_id = o.owner_id AND k.skill_name = s.superseded_by)",
+            )
+        except Exception as exc:  # noqa: BLE001 — a sweep may not crash the scheduler
+            log.scheduler.warning(
+                "[scheduler] orphan_reconciliation: could not read superseded "
+                "ownership — skipping that half",
+                exc_info=exc,
+            )
+            return 0
+        if not rows:
+            return 0
+        payload = [dict(r) for r in rows]
+        await record_deleted_rows(
+            self._db, table="skill_ownership", rows=payload,
+            reason="skill superseded and the owl already owns the survivor",
+            actor=_ACTOR,
+        )
+        dropped = 0
+        for row in payload:
+            try:
+                await self._db.execute(
+                    "DELETE FROM skill_ownership WHERE owner_id = ? AND owl_name = ? "
+                    "AND skill_name = ?",
+                    (row["owner_id"], row["owl_name"], row["skill_name"]),
+                )
+                dropped += 1
+            except Exception as exc:  # noqa: BLE001
+                log.scheduler.error(
+                    "[scheduler] orphan_reconciliation: could not drop a superseded "
+                    "ownership row",
+                    exc_info=exc, extra={"_fields": {"row": row}},
+                )
+        if dropped:
+            log.scheduler.info(
+                "[scheduler] orphan_reconciliation: dropped duplicate ownership of "
+                "superseded skills",
+                extra={"_fields": {"dropped": dropped}},
+            )
+        return dropped
+
     async def _heal_ownerless_skills(self) -> int:
         """Give an owner to every learned skill that has none.
 
@@ -239,7 +309,12 @@ class OrphanReconciliationHandler(JobHandler):
         t0 = _time.monotonic()
         result = await self.sweep()
         healed = await self._heal_ownerless_skills()
-        result = _replace(result, ownership_healed=healed)
+        # AFTER the heal, not before: the heal is what can create a duplicate, so
+        # cleaning first would leave one behind for a whole day.
+        dropped = await self._drop_superseded_ownership()
+        result = _replace(
+            result, ownership_healed=healed, superseded_dropped=dropped,
+        )
         # INFO, and it is the acceptance evidence for the second direction: a
         # non-zero value here is the only proof a lesson written before ownership
         # existed has finally reached an owl.
@@ -249,6 +324,7 @@ class OrphanReconciliationHandler(JobHandler):
                 "job_id": job.job_id, "deleted": result.deleted,
                 "refused": result.refused, "errors": result.errors,
                 "ownership_healed": healed,
+                "superseded_dropped": dropped,
             }},
         )
         return JobResult(
@@ -258,7 +334,8 @@ class OrphanReconciliationHandler(JobHandler):
             output=(
                 f"orphan_reconciliation: deleted={result.deleted} "
                 f"refused={result.refused} errors={result.errors} "
-                f"ownership_healed={result.ownership_healed}"
+                f"ownership_healed={result.ownership_healed} "
+                f"superseded_dropped={result.superseded_dropped}"
             ),
             error=None,
             duration_ms=(_time.monotonic() - t0) * 1000,

@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RETIREMENT_2026_09_03_archival_was_bypassed_by_OWNERSHIP:
+    map_check: "No mapped item — found by measuring what yesterday's reconciler actually wrote."
+    how_it_surfaced: >-
+      Loop-start measurement, not a report. The orphan reconciler healed all eleven lessons at
+      00:10:07 — and 17 of the 46 ownership rows it left behind point at a SUPERSEDED duplicate,
+      with the same owl already owning the survivor in every single case. Five skills, seventeen
+      rows, each an owl handed the same lesson twice under two names.
+    MY_OWN_DEFECT_first: >-
+      reconcile_ownership asked "does this skill have an owner?" and never "is this skill still
+      the one that carries the lesson?". Supersession is recorded — I added the column myself
+      the day before — and the new loop did not consult it. One rule, two components, only one
+      asking: CLAUDE.md shape 3, committed by the person who had just written the rule down.
+    THE_BIGGER_ONE_it_led_to: >-
+      _NOT_ARCHIVED calls itself "the single place that decision is expressed, so a new
+      retrieval path cannot forget it". Measured: it appears in TWO of the three retrieval
+      paths. get_many_by_name — the one that serves an owl's OWN skills — did not have it, so a
+      skill the curator had retired stayed fully presented to every owl that owned it, tool pins
+      included. Retirement is this platform's single terminal state; if it does not hold on
+      every read, the curator is advisory. The comment claiming a single source is what made the
+      gap invisible.
+    latent_then_imminent_and_both_halves_stated: >-
+      ZERO archived skills were owned when this was fixed, so nothing was misbehaving yet — a
+      claim of live harm would have been false. It was HOURS from mattering: the five superseded
+      duplicates were owned by those 17 rows and were due to be archived by the 09:00 curator
+      pass, at which point archival would have been silently ineffective for all of them.
+    the_17_rows_are_healed_not_hand_deleted: >-
+      The daily sweep now drops an ownership row whose skill was folded into one THE SAME OWL
+      ALSO OWNS — the safety clause is the design, because without it an owl whose only copy is
+      the folded one would lose the lesson entirely, turning de-duplication into capability
+      deletion. Rows are recorded before removal like every other deletion in that handler, and
+      it runs AFTER the heal, since the heal is what could create a duplicate.
+    tests: >-
+      Retirement filter mutation-tested — removing _NOT_ARCHIVED turns the new test red while
+      its control stays green. The control exists because a filter that returns NOTHING passes
+      the archived test while silently taking away every skill an owl has.
+    A_MISTAKE_I_REPEATED: >-
+      One fixture edit was a str.replace with no assert, and it silently no-op'd — the exact
+      guarded-insert failure already recorded twice in this file. The import landed, the value
+      did not, and both tests failed for a reason unrelated to what they assert. Found by
+      printing the real rows instead of re-reading the code.
+    suites: "tests/learning + tests/skills + tests/scheduler/handlers 846 passed. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_0900Z_curator_pass_and_the_0930Z_sweep
+    closing_query: >-
+      Two lines, and they must arrive in this order. 09:00 "[curator] run: exit" archives the
+      five superseded rows and reports revived 0 (it reported revived 5 on 09-01 and 09-02).
+      09:30 "[scheduler] orphan_reconciliation: dropped duplicate ownership of superseded
+      skills" with dropped=17, taking skill_ownership from 46 to 29. If the curator archives
+      them and the ownership rows survive, the sweep half did not fire.
   UNDERSCORE_2026_09_03_the_delivery_seam_ATE_every_identifier_it_sent:
     map_check: "No mapped item — he reported the symptom from a delivered message."
     what_he_reported: >-

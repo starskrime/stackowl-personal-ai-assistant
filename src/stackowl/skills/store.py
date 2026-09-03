@@ -1094,6 +1094,20 @@ class SkillIndexStore(OwnedRepository):
         When a name exists under multiple sources, pick by _SOURCE_PRIORITY
         (lower = higher priority). Request order preserved; unknown names
         dropped. Reused by assemble (summaries) + execute (tool_names) in T9/T11.
+
+        ARCHIVAL WAS BYPASSED BY OWNERSHIP UNTIL 2026-09-03. ``_NOT_ARCHIVED``
+        calls itself "the single place that decision is expressed, so a new
+        retrieval path cannot forget it" — and this path, the one that serves an
+        OWL'S OWN skills, forgot it. Two of three retrieval paths filtered;
+        this one did not, so a skill the curator had retired stayed fully
+        presented to every owl that owned it, tool pins included. Retirement is
+        the platform's single terminal state and it has to hold on every read,
+        or the curator is advisory.
+
+        LATENT, THEN IMMINENT — recorded honestly: ZERO archived skills were
+        owned when this was fixed, so nothing was misbehaving yet. It was hours
+        from mattering: five superseded duplicates were owned by 17 rows and were
+        due to be archived on the next curator pass.
         """
         # 1. ENTRY
         log.skills.debug(
@@ -1106,7 +1120,8 @@ class SkillIndexStore(OwnedRepository):
         placeholders = ",".join("?" for _ in names)
         # 3. STEP — fetch all matching rows across sources in one query
         rows = await self._db.fetch_all(
-            f"SELECT {_SELECT_FIELDS} FROM skills WHERE owner_id = ? AND name IN ({placeholders})",
+            f"SELECT {_SELECT_FIELDS} FROM skills "
+            f"WHERE owner_id = ? AND name IN ({placeholders}) {_NOT_ARCHIVED}",
             (self._owner_id, *names),
         )
         by_name: dict[str, Skill] = {}
