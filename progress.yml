@@ -315,6 +315,91 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RETRYEVIDENCE_2026_09_03_the_retry_channel_read_a_snapshot_built_for_a_different_question:
+    map_check: "No mapped item — evidence-led, from the ceiling item's own closing thread."
+    THE_SYMPTOM: >-
+      The 2026-08-31 fix that replaced "retry attempt still floored" with the turn's own
+      evidence WORKED — useful retry feedback went 19% -> 67%. But 5 of the 15 post-fix
+      retries still carried the tautology, and three of those five had run 26, 23 and 15
+      tool calls. A richly-evidenced turn was being described as "still floored".
+    THE_ROOT_CAUSE: >-
+      describe_attempt_evidence read the CONSEQUENTIAL SNAPSHOT, which tool_outcome_ledger
+      filters to _EFFECTFUL = {"write","consequential"}. That filter is correct for the
+      snapshot's own job — "did an effect the user was promised actually land?" — but the
+      retry asks the opposite question, "what did this turn burn itself on?", and on the
+      dominant failure shape the answer is entirely READ-severity work. So the snapshot is
+      empty BY CONSTRUCTION, has_consequential_snapshot is still True (execute stamps the
+      flag), the live-ledger fallback is never taken, and the function returns "". The
+      channel was fixed once and went quiet again one layer down.
+    WHAT_ELSE_THE_SAME_CAUSE_REACHES: >-
+      Three other consumers ask "what went wrong" of a snapshot built to answer "did the
+      effect land". (1) _pick_newly_failed, the ENFORCED ban — structurally blind to read
+      spirals, which is why 80 of 82 tasks carried no banned capability. (2) The DB column
+      task_outcomes.failed_capability, written at backends/shared.py:525-527 by ONE
+      expression with TWO branches — a severity-filtered consequential failure OR the first
+      errored tool_call of any severity — so the column silently carries two different
+      meanings and nothing downstream can tell which branch produced it. MEASURED: 18 of 63
+      stop outcomes name a read-severity tool that the other branch's rule would not call a
+      failure, and the failure miner clusters on that column. (3) The user-facing floor's
+      {attempts} slot, which renders BLANK on a read-only sweep. Only (1) is fixed here;
+      (2) and (3) are recorded in known_debt, not repaired.
+    THE_MEASUREMENT: >-
+      failure_class='stop' over 14 days: 60 of 79 turns carried a run of >=5 IDENTICAL
+      CONSECUTIVE calls. Worst: 46 consecutive web_fetch out of 48 calls. Retry attempts run
+      to 30 (DEFAULT_MAX_ATTEMPTS). Across the whole retry history, 236 of 322 carried-forward
+      reasons (73%) were content-free — 117 with no feedback at all, 90 "retry did not deliver
+      (actuator reported 'pending')", 29 "retry attempt still floored".
+    THE_PANEL_DISAGREED_AND_THAT_IS_THE_FINDING: >-
+      Improvement said the enforced ban channel is empty for read spirals and should be FED.
+      Stability said the ban fallback should be DELETED, because a ban is a hard exclusion
+      from the presented tool array and banning web_fetch on a research task blinds it of the
+      tool the task exists to use. Stability wins on evidence: the fallback iterated
+      _attempts_for_state, which unions failures with SUCCESSES, so it could ban a capability
+      that WORKED — the same positional-guess shape whose earlier incident is memorialised in
+      delivery_gate's own docstring. The right answer for a read spiral is not a tool ban; it
+      is naming the repetition, which the prose channel now does. Improvement's underlying
+      point survives as ESC-115.
+    THE_FIX: >-
+      (a) PipelineState.budget_cap — typed, stamped with BudgetBreach.cap at all four breach
+      exits, because the same fact existed only as a free-form marker string in errors and
+      StepError exists precisely so honesty surfaces stop re-parsing those. (b)
+      describe_attempt_evidence now reads state.tool_calls — ordered, severity-blind, one
+      entry per call with its own error — and emits CAUSE FIRST, because _augment_goal
+      truncates at 400 chars and a 46-call sweep would push the ceiling name off the end.
+      (c) The _attempts_for_state fallback in _pick_newly_failed is DELETED, not guarded,
+      along with its now-dead import. The snapshot itself is untouched — six readers depend
+      on its write-only filter (outcome capture's failure_class, the objectives park's
+      irreversibility test, the overclaim gate's culprit, the give-up tally, the ban).
+    THE_SENTENCE_ON_THE_REAL_MEASURED_SHAPE: >-
+      Was "retry attempt still floored". Is now, for retry-aeb8805d: "the last attempt ran
+      out of tokens after 48 tool calls; 46 of those calls were web_fetch back to back and it
+      still did not finish — that path is exhausted, use a different one; these returned
+      errors: web_fetch; it tried web_fetch x46, web_search, read_file" — 256 chars, inside
+      the 400 budget.
+    MY_OWN_TESTS_WERE_VACUOUS_AND_MUTATION_CAUGHT_IT: >-
+      Both load-bearing assertions SURVIVED mutation on the first pass. "39" in evidence was
+      satisfied by the "it tried web_fetch x39" tally clause, so raising the repeat threshold
+      to 9999 left it green; and "tokens" in evidence[:400] could not fail on a 256-char
+      sentence, so reordering the clauses left it green too. Both rewritten to assert the
+      whole clause and the ordering directly, and the wider fixture exposed that the errors
+      clause was unbounded — now capped like the tally. Re-mutated: both go red, restore
+      proven green.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      On the next floored retry, "[scheduler] retry_actuator.attempt_retry: carrying the
+      attempt's evidence forward" must carry a reason beginning "the last attempt ran out of"
+      and naming a cap, NOT "retry attempt still floored". And the ban baseline must hold:
+      "[pipeline] execute: banned capabilities excluded from the presented set" has fired 15
+      times across every log file, every name write or consequential severity, zero read
+      tools. A read-severity name appearing there means the evidence widening leaked into
+      the ban channel.
   CEILING_2026_09_03_the_ceiling_that_fires_MOVED_from_steps_to_tokens:
     map_check: "No mapped item — chasing the step-cap rise I named at the end of the last item."
     THE_RATE_IS_REAL_and_correctly_denominated_this_time: >-
@@ -5641,6 +5726,38 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_115_should_a_read_only_spiral_ever_narrow_the_next_attempt:
+      premise_check: |
+        uv run python -c "import sqlite3,os,json,itertools;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);r=[json.loads(s or '[]') for s, in c.execute(\"SELECT tool_sequence FROM task_outcomes WHERE failure_class='stop' AND captured_at > strftime('%s','now')-7*86400\")];f=lambda t: max([sum(1 for _ in g) for _,g in itertools.groupby(t)] or [0]);n=sum(1 for t in r if f(t)>=5);print(('HOLDS ' if n else 'EXPIRED ')+str(n)+' of '+str(len(r))+' stop turns still spiral')" 2>/dev/null | tail -1
+      question: >-
+        When a turn burns its whole budget calling ONE tool 46 times in a row, the next attempt
+        is now TOLD that, in prose. Should the platform also DO something about it — bound the
+        repetition itself, so 30 attempts narrow instead of repeating? I did not build that,
+        and I deliberately did not make the ban channel able to remove a read tool.
+      why_evidence_cannot_settle_it: >-
+        The measurement is unambiguous that the spiral happens (60 of 79 stop turns carry a run
+        of >=5; worst is 46 of 48) and that the prose channel is weak — the code already
+        records "soft steering proving unreliable — 27 retries against 3 substitutions over 7
+        days". So prose alone probably will not stop it. But every enforcing option trades
+        capability for thrift, and which trade is acceptable is yours: banning web_fetch on a
+        research task blinds it of the tool the task exists to use, and capping consecutive
+        repeats could cut a legitimate 40-page sweep off at 5.
+      the_panel_split: >-
+        Improvement lens: the enforced channel is empty for exactly the failure mode being
+        reported; feed it. Stability lens: a ban is a hard exclusion and nothing raises when it
+        is wrong — the turn just quietly has fewer tools. Both are right about different halves.
+      the_options: >-
+        (a) Leave it — prose only, and accept that some sweeps spiral to 30 attempts.
+        (b) Bound the REPETITION rather than the tool: after N identical consecutive calls,
+        make the turn either batch or report what it has. The loop guard already fires — 171
+        tool-loop warnings and 205 collapsed-repeat events measured — but refunds nothing and
+        stops nothing, so this extends a live detector rather than adding an engine.
+        (c) Let the ban channel remove read tools too. NOT recommended — it is the option that
+        blinds a research task, and its own incident is already memorialised in the code.
+      recommendation: "(b) — the only one that attacks the spiral without removing a capability."
+      blocked_until_answered: >-
+        Nothing. The prose fix shipped and is independent; this decides whether anything
+        ENFORCES what the prose now says.
     ESC_114_which_ceiling_should_bind_on_a_long_research_sweep:
       premise_check: |
         uv run python -c "import json,pathlib,collections;fs=sorted((pathlib.Path.home()/'.stackowl'/'logs').glob('stackowl*.jsonl'))[-3:];c=collections.Counter();[c.update([(json.loads(l).get('fields') or {}).get('cap')]) for f in fs for l in f.open() if 'budget cap reached' in l];print('HOLDS tokens dominant' if c.get('tokens',0)>=c.get('steps',0) else 'EXPIRED steps dominant again', dict(c))" 2>/dev/null | tail -1
@@ -7352,6 +7469,52 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-98
+    found: 2026-09-03
+    title: "task_outcomes.failed_capability carries TWO meanings from ONE expression"
+    where: "src/stackowl/pipeline/backends/shared.py:525-527"
+    what: >-
+      The column is written by a single expression with two branches: the first unrecovered
+      CONSEQUENTIAL failure (severity-filtered to write+consequential), OR the first tool_call
+      that recorded an error (any severity, including read). Nothing downstream records which
+      branch produced the value, so "the capability that failed" means "an effect the user was
+      promised did not land" on some rows and "some read call returned an error" on others.
+    measured: >-
+      18 of 63 failure_class='stop' outcomes over 14 days name a read-severity tool
+      (web_fetch, browser_navigate, browser_extract) on turns where no effectful tool ran at
+      all. The named tool IS always present in tool_sequence — it is not fabricated — but the
+      two branches answer different questions. failure_outcome_miner clusters on this column
+      and mints incident_<capability> skills from it, and 4 of the 12 learned skills are the
+      _stop family whose lessons the recurrence detector has already measured as not holding.
+    what_i_knew_and_chose: >-
+      Found while fixing the retry evidence channel, which shares the root cause (consumers
+      asking "what went wrong" of a snapshot built to answer "did the effect land"). Not
+      repaired in the same item because the two branches each have a defensible local rule and
+      picking one CHANGES what the user is told on the floor — naming web_fetch is honest and
+      useful there. Reconciling them is a design decision about what the column means, not a
+      bug fix, and it wants its own item rather than being smuggled into this one.
+  - id: DEBT-99
+    found: 2026-09-03
+    title: "the honest floor's {attempts} slot renders BLANK on a read-only sweep"
+    where: "src/stackowl/pipeline/delivery_gate.py:373 (_floor_chunk -> _attempts_for_state)"
+    what: >-
+      Same root cause as DEBT-98 and as the retry-evidence item: _attempts_for_state reads the
+      write-filtered snapshot, so on a read-only sweep it returns [] and the user-facing
+      template renders literally "What I tried: . ". This is the same blank-slot defect that
+      supervisor.py's own comments record as fixed for the CAPABILITY slot on 2026-08-15,
+      still live one slot over.
+    also: >-
+      A latent trap sits beside it: synthesize_floor derives the accused capability from
+      attempts[0] when failed_capability is None, which would tell the user a tool that
+      SUCCEEDED was the one that failed. It cannot fire today — all three _floor_chunk call
+      sites pass a non-None name — but _floor_chunk's signature accepts str | None and the
+      guard lives nowhere.
+    what_i_knew_and_chose: >-
+      Deliberately not fixed here. This item changed only the RETRY channel's source and left
+      the user-facing floor byte-identical, because widening _attempts_for_state would also
+      widen the enforced ban that reads it — the regression the panel's stability lens caught.
+      Fixing the floor safely means giving it its own source too, which is the same shape of
+      change again and belongs in its own item.
   - id: DEBT-97
     found: 2026-09-02
     corrected: 2026-09-02

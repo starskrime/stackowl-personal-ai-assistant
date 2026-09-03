@@ -28,7 +28,6 @@ from stackowl.infra import retry_ledger
 from stackowl.infra.observability import log
 from stackowl.notifications.deliverer import _TargetedSender
 from stackowl.pipeline.delivery_gate import (
-    _attempts_for_state,
     describe_attempt_evidence,
     failed_capabilities_for_state,
 )
@@ -419,27 +418,37 @@ class RetryActuator:
         return "".join(parts) + row.goal
 
     def _pick_newly_failed(self, row: RetryAttempt, final_state: PipelineState) -> str:
-        """Name the FIRST capability this retry attempt touched that wasn't
-        already banned — the real "newly failed" signal for
-        ``mark_attempt_failed``. Reuses the same tool-attempt lookup the
-        original floor used (``_attempts_for_state``, shared with
-        ``turn_persist.py``'s own ``insert_pending`` call) instead of a second
-        way to enumerate what a turn tried. Returns "" when nothing new was
-        attempted (e.g. the retry floored before touching any tool) — the
-        store treats an empty string as "nothing to add" (no bogus re-ban of
-        an already-banned capability).
+        """Name the capability that actually FAILED and is not already banned.
+
+        A BAN IS NOT ADVICE. The returned name is removed from the presented tool
+        array for the next attempt (``execute._restrict_to_for_turn``) — the
+        capability becomes genuinely unavailable, not merely discouraged. So the
+        only acceptable source is the turn's record of what FAILED.
+
+        WHAT FAILED, not what was touched. The original positional guess banned
+        ``send_message`` on a turn whose tool_sequence was
+        ``["search_files","search_files","read_file"]``, steering the next attempt
+        away from something innocent while the real dead end stayed open.
+
+        THE FALLBACK IS DELETED, NOT GUARDED. That fix left a second rung reaching
+        for ``_attempts_for_state``, which unions ``consequential_failures`` with
+        ``consequential_successes`` — so it could ban a capability that WORKED. It
+        was harmless only by accident (both sources happen to be write-filtered
+        today) and would have become the primary path the moment either was
+        widened, which is exactly what the sibling change to
+        ``describe_attempt_evidence`` does to the evidence sentence. Measured
+        baseline across every log file: 15 ban events, every one write or
+        consequential severity, zero read tools. Banning ``web_fetch`` on a
+        research task blinds it of the tool the task exists to use, and nothing
+        raises when it happens — the turn just quietly has fewer tools.
+
+        Returns "" when nothing new failed (e.g. a read-only sweep that hit a
+        budget ceiling) — the store treats an empty string as "nothing to add".
+        That turn is not silently unlearned: its evidence rides the prose channel
+        via ``describe_attempt_evidence``, which names the ceiling and the repeat
+        run instead of removing a tool.
         """
-        # WHAT FAILED, not what was touched first. The positional guess banned
-        # `send_message` on a turn whose tool_sequence was
-        # ["search_files","search_files","read_file"] — steering the next attempt
-        # away from something innocent while the real dead end stayed open.
-        # Falls back to the attempted list only when the turn recorded no
-        # consequential failure at all, which keeps the previous behaviour rather
-        # than silently learning nothing.
         for name in failed_capabilities_for_state(final_state):
-            if name not in row.banned_capabilities:
-                return name
-        for name in _attempts_for_state(final_state):
             if name not in row.banned_capabilities:
                 return name
         return ""

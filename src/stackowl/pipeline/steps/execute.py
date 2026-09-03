@@ -3029,6 +3029,7 @@ async def _run_with_tools(
                     tool_calls=(*state.tool_calls, *_breach_tool_records),
                     errors=(*state.errors, marker),
                     budget_capped=True,
+                    budget_cap=exc.cap,
                 ))
             # Empty partial under the default backstop. This is the case Bakir
             # reported on trace f33c9fa0: 16 rounds, 683,728 input tokens, and the
@@ -3054,6 +3055,7 @@ async def _run_with_tools(
                     tool_calls=(*state.tool_calls, *_breach_tool_records),
                     errors=(*state.errors, marker),
                     budget_capped=True,
+                    budget_cap=exc.cap,
                 ))
             # Salvage found nothing to summarise (or the provider failed) → graceful
             # slot-free floor (no raw budget error / blank capability fields surfaced
@@ -3078,6 +3080,7 @@ async def _run_with_tools(
                 tool_calls=(*state.tool_calls, *_breach_tool_records),
                 errors=(*state.errors, marker),
                 budget_capped=True,
+                budget_cap=exc.cap,
             ))
         # Explicit cap: deliver partial with a human-visible budget note.
         note = f"\n\n[stopped: budget cap '{exc.cap}' reached (limit {exc.limit}, used {exc.actual})]"
@@ -3099,6 +3102,7 @@ async def _run_with_tools(
             tool_calls=(*state.tool_calls, *_breach_tool_records),
             errors=(*state.errors, marker),
             budget_capped=True,
+            budget_cap=exc.cap,
         ))
     except Exception as exc:
         log.engine.error(

@@ -357,6 +357,20 @@ class PipelineState(BaseModel, frozen=True):
     # Empty/False = no change to today's paths.
     delivered_successes: tuple[str, ...] = ()
     budget_capped: bool = False
+    # WHICH ceiling stopped the turn — one of BudgetBreach.cap ("steps", "time",
+    # "tokens", "cost"), "" when the turn was not budget-capped. Typed, because
+    # the same fact is already in ``errors`` as the free-form marker
+    # ``budget:stop:<cap>:limit=...:actual=...`` and StepError exists precisely so
+    # honesty surfaces read fields instead of re-parsing a string whose format can
+    # drift between writer and reader.
+    #
+    # The retry channel needs the cap NAME because the remedy differs per cap and
+    # the model cannot infer which applies: steps -> fewer, larger calls; time ->
+    # avoid slow actuators; tokens -> read less. MEASURED 2026-09-02: the cap that
+    # actually fires MOVED from steps to tokens (steps 30/5/4/2/0 against tokens
+    # 0/0/8/8/7 across 08-28..09-02), so any wording that names a cap without
+    # reading this field is a confident false statement waiting to happen.
+    budget_cap: str = ""
     # ADR-T2 / TS3 — MEASURED overclaim veto input. Names of tools that declared a
     # durable ``effect_class`` (creates_persistent_entity / sends_message / schedules)
     # whose result this turn was NOT verified==True. DEFAULT-DENY: a ``verified`` of

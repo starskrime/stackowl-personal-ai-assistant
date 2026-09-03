@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections import Counter
 from urllib.parse import urlsplit, urlunsplit
 
 from stackowl.infra import recovery_context, tool_outcome_ledger
@@ -269,6 +270,35 @@ def _attempts_for_state(state: PipelineState) -> list[str]:
         return []
 
 
+#: A run of identical consecutive calls at or above this length is a spiral, not
+#: a strategy. MEASURED over 14 days of ``failure_class='stop'`` outcomes: 60 of 79
+#: carried a run this long or longer; the worst was 46 consecutive ``web_fetch``
+#: calls out of 48 in a single turn.
+_REPEAT_RUN_MIN = 5
+
+#: How many DISTINCT tool names the evidence sentence lists before collapsing the
+#: rest to a count. Bounded because ``_augment_goal`` truncates the whole reason at
+#: 400 chars and a 46-call sweep would otherwise crowd out the ceiling name.
+_EVIDENCE_TOOLS_SHOWN = 6
+
+
+def _longest_repeat_run(names: list[str]) -> tuple[str, int]:
+    """The longest run of IDENTICAL CONSECUTIVE calls, as (name, length).
+
+    Consecutive, not total: a turn that alternates two tools is exploring, while
+    one that calls the same tool 39 times in a row has stopped learning from the
+    results. Returns ``("", 0)`` for an empty sequence.
+    """
+    best_name, best = "", 0
+    current, run = "", 0
+    for n in names:
+        run = run + 1 if n == current else 1
+        current = n
+        if run > best:
+            best, best_name = run, n
+    return best_name, best
+
+
 def describe_attempt_evidence(state: PipelineState) -> str:
     """What this attempt actually DID, in the turn's own evidence.
 
@@ -288,29 +318,130 @@ def describe_attempt_evidence(state: PipelineState) -> str:
     before flooring, five times over. An attempt cannot change strategy when the
     only thing it is told about the last one is that it failed.
 
-    READS THE SAME SOURCE AS :func:`_attempts_for_state` so the floor the USER
-    sees and the signal the NEXT ATTEMPT gets can never tell different stories.
+    IT READS ``state.tool_calls``, NOT THE CONSEQUENTIAL SNAPSHOT — and that is a
+    deliberate reversal of this function's first design. The original shared
+    :func:`_attempts_for_state` with the user-facing floor, on the reasoning that
+    "the floor the USER sees and the signal the NEXT ATTEMPT gets can never tell
+    different stories". That coupling was the defect. The two surfaces ask
+    OPPOSITE questions:
+
+    * the honest floor asks *"did an effect the user was promised actually land?"*
+      — so its snapshot is filtered to ``_EFFECTFUL = {"write","consequential"}``,
+      correctly;
+    * a retry asks *"what did this turn burn itself on?"* — which on the dominant
+      failure shape is entirely READ-severity work.
+
+    So on a read sweep the snapshot is empty BY CONSTRUCTION,
+    ``has_consequential_snapshot`` is still True (execute stamps the flag), the
+    live-ledger fallback is never taken, and this returned ``""`` — handing the
+    next attempt the tautology it exists to prevent. MEASURED 2026-09-03: the
+    2026-08-31 fix took useful retry feedback from 19% to 67%, but 5 of the 15
+    post-fix retries still carried ``"retry attempt still floored"`` and three of
+    those had run 26, 23 and 15 tool calls.
+
+    ``state.tool_calls`` is the complete record — ordered, severity-blind, one
+    entry per call with its own error — and is stamped on the budget-breach
+    branches themselves. Widening the SNAPSHOT instead would have been the wrong
+    repair: six other readers depend on its write-only filter (outcome capture's
+    ``failure_class``, the objectives park's irreversibility test, the overclaim
+    gate's culprit, the give-up tally, and the retry BAN).
+
+    ORDER IS LOAD-BEARING. ``_augment_goal`` truncates at
+    ``_RETRY_REASON_CHARS`` (400), so the cause clause is emitted FIRST: a
+    60-call sweep would otherwise push the ceiling name off the end and leave
+    only a tool list. Priority is (1) which ceiling fired — the remedy differs
+    per cap and the model cannot infer it — then (2) that it repeated itself,
+    with the count, then (3) what errored.
 
     Args:
         state: The floored attempt's final state.
 
     Returns:
-        One evidence sentence, or ``""`` when the turn touched nothing (the
-        caller then keeps its own generic reason). Never raises — a retry must
-        survive a missing ledger.
+        One evidence sentence, or ``""`` when the turn ran no tool at all (the
+        caller then keeps its own generic reason — two of the five measured
+        tautologies were provider-unavailable turns with zero calls, and there
+        is genuinely nothing to describe). Never raises — a retry must survive a
+        missing ledger.
     """
     try:
+        calls = tuple(getattr(state, "tool_calls", ()) or ())
+        names = [str(getattr(c, "tool_name", "") or "") for c in calls]
+        names = [n for n in names if n]
         attempted = _attempts_for_state(state)
-        if not attempted:
+        if not names and not attempted:
             return ""
-        recovered = set(state.recovered_consequential)
-        failed = [n for n in state.consequential_failures if n not in recovered]
-        parts = [f"it tried {', '.join(attempted)}"]
-        if failed:
-            parts.append(
-                f"and {', '.join(dict.fromkeys(failed))} did not resolve it"
+
+        clauses: list[str] = []
+        # 1. THE CAUSE. Named from the typed field, never hardcoded — the cap that
+        #    fires moved from steps to tokens on 2026-09-02.
+        cap = str(getattr(state, "budget_cap", "") or "")
+        if getattr(state, "budget_capped", False):
+            ran = f" after {len(names)} tool calls" if names else ""
+            clauses.append(
+                f"the last attempt ran out of {cap or 'budget'}{ran}"
             )
-        return "the last attempt floored: " + " ".join(parts)
+        else:
+            clauses.append("the last attempt floored")
+
+        # 2. THE SHAPE. "it tried web_fetch" is equally true of a turn that
+        #    SUCCEEDED; the consecutive count is what says the path is exhausted.
+        #    MEASURED: 60 of 79 stop turns carried a run of >=_REPEAT_RUN_MIN, the
+        #    worst being 46 consecutive web_fetch calls out of 48.
+        run_name, run_len = _longest_repeat_run(names)
+        if run_len >= _REPEAT_RUN_MIN:
+            clauses.append(
+                f"{run_len} of those calls were {run_name} back to back and it "
+                f"still did not finish — that path is exhausted, use a different one"
+            )
+
+        # 3. WHAT ERRORED, severity-blind. A failing read tool is the thing the
+        #    next attempt most needs to route around, and the snapshot cannot see it.
+        #    Bounded like the tally below: a turn where forty distinct tools each
+        #    errored would otherwise emit an unbounded clause.
+        errored = list(dict.fromkeys(
+            str(getattr(c, "tool_name", "") or "")
+            for c in calls if getattr(c, "error", None)
+        ))
+        if errored:
+            head = ", ".join(errored[:_EVIDENCE_TOOLS_SHOWN])
+            rest = len(errored) - _EVIDENCE_TOOLS_SHOWN
+            clauses.append(
+                f"these returned errors: {head}"
+                + (f" and {rest} more" if rest > 0 else "")
+            )
+
+        # 4. WHAT IT SPENT ITSELF ON, with counts. Distinct names rather than the
+        #    raw 46-entry sequence, so a varied sweep (which has no repeat run to
+        #    report) still tells the next attempt which ground is already covered.
+        #    Falls back to the snapshot's attempted list when no tool_calls rode
+        #    on state, which keeps the pre-2026-09-03 sentence byte-for-byte on
+        #    that path rather than silently saying less.
+        if names:
+            tally = Counter(names)
+            shown = ", ".join(
+                n if c == 1 else f"{n} x{c}"
+                for n, c in tally.most_common(_EVIDENCE_TOOLS_SHOWN)
+            )
+            more = len(tally) - _EVIDENCE_TOOLS_SHOWN
+            clauses.append(
+                f"it tried {shown}" + (f" and {more} other tools" if more > 0 else "")
+            )
+        elif attempted:
+            clauses.append(f"it tried {', '.join(attempted)}")
+
+        # 5. The unrecovered EFFECTS, kept — this is the one thing the snapshot
+        #    knows that tool_calls does not (a write that claimed success and was
+        #    never verified is a failure here, not a success).
+        recovered = set(getattr(state, "recovered_consequential", ()) or ())
+        failed = [
+            n for n in getattr(state, "consequential_failures", ()) or ()
+            if n not in recovered
+        ]
+        if failed:
+            clauses.append(
+                f"{', '.join(dict.fromkeys(failed))} did not resolve it"
+            )
+        return "; ".join(clauses)
     except Exception as exc:  # noqa: BLE001 — never cost a retry its attempt
         log.engine.warning(
             "[giveup_floor] describe_attempt_evidence: could not summarise the "
