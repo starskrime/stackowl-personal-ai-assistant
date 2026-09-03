@@ -656,6 +656,156 @@ _LEARNING_WINDOW_HOURS = 24
 _LEARNING_SAMPLES = 3
 
 
+#: The window each half of the growth comparison covers. SEVEN DAYS, because the
+#: measured signal moves on that scale — success rate went 28.9% -> 66.9% -> 89.5%
+#: across three consecutive weeks — while a 24-hour window is mostly noise from
+#: whatever he happened to ask that day.
+_GROWTH_WINDOW_DAYS = 7
+
+#: A capability needs this many failures in a week before its change is reported.
+#: Below it, "2 failures became 1" reads as a 50% improvement and means nothing.
+_GROWTH_MIN_FAILURES = 5
+
+
+class GrowthAssembler:
+    """What the platform got BETTER and WORSE at, week over week, in its own voice.
+
+    N01 — his own idea, outside the reference map, 2026-08-10 verbatim:
+    "i am not going to create a next chatbot which does no interaction. thats why
+    i am thinking to build jarvis which will dream and rethink about his life, his
+    abilities, his growing, learning, improving and etc things."
+
+    NOTHING SAID ANY OF IT. The platform reflects on every TURN — 6,419 reflections
+    promoted to 5,769 lessons — and evolves its own DNA (586 artifacts). What no
+    surface did was compare itself to itself. AutonomicHealth reports current
+    counts, Learning reports the last 24 hours, SystemSpend reports tokens; not one
+    of them can say "I am better at this than I was".
+
+    IT IS DETERMINISTIC ON PURPOSE. The obvious way to build "dreaming" is to hand
+    a model its own history and let it narrate. That would produce a paragraph
+    about growth whether or not any growth happened, which is the overclaim this
+    platform has spent weeks learning not to make. The numbers below are measured
+    and the sentence is assembled from them, so the brief cannot report improvement
+    on a week that got worse.
+
+    WHAT THE FIRST RUN HAD TO SAY, measured 2026-09-03: turn success 66.9% ->
+    89.5%; browser_navigate failures 60 -> 18; web_fetch 27 -> 48 and shell 20 ->
+    35, both worse; 22 skills learned against 0 the week before. A real
+    self-assessment, including the two capabilities that regressed — which a
+    narrated version would have been free to omit.
+
+    A SECTION, NOT A NIGHTLY JOB. The old DreamWorker seat was deleted on
+    2026-09-01 under "retired means deleted", so there is nothing to fill and
+    nothing should be re-created: the brief already runs daily, guards each
+    section, and delivers through one seam that is measured reaching him.
+    """
+
+    key = "growth"
+
+    def __init__(self, db: DbPool) -> None:
+        self._db = db
+
+    async def _window(self, days_ago_start: int, days_ago_end: int) -> tuple[int, int]:
+        """(turns, successes) in a window, owner-scoped."""
+        now = time.time()
+        rows = await self._db.fetch_all(
+            "SELECT COUNT(*) AS tot, COALESCE(SUM(success), 0) AS ok FROM task_outcomes "
+            "WHERE owner_id = ? AND captured_at > ? AND captured_at <= ?",
+            (
+                DEFAULT_PRINCIPAL_ID,
+                now - days_ago_end * 86400.0,
+                now - days_ago_start * 86400.0,
+            ),
+        )
+        if not rows:
+            return (0, 0)
+        return (int(rows[0]["tot"] or 0), int(rows[0]["ok"] or 0))
+
+    async def _failures_by_capability(
+        self, days_ago_start: int, days_ago_end: int,
+    ) -> dict[str, int]:
+        now = time.time()
+        rows = await self._db.fetch_all(
+            "SELECT failed_capability AS cap, COUNT(*) AS n FROM task_outcomes "
+            "WHERE owner_id = ? AND captured_at > ? AND captured_at <= ? "
+            "AND failed_capability IS NOT NULL AND failed_capability <> '' "
+            "GROUP BY failed_capability",
+            (
+                DEFAULT_PRINCIPAL_ID,
+                now - days_ago_end * 86400.0,
+                now - days_ago_start * 86400.0,
+            ),
+        )
+        return {str(r["cap"]): int(r["n"] or 0) for r in rows}
+
+    async def assemble(self, ctx: BriefContext) -> BriefSection:
+        log.scheduler.debug("[brief] growth: entry", extra={"_fields": {}})
+        w = _GROWTH_WINDOW_DAYS
+        try:
+            this_tot, this_ok = await self._window(0, w)
+            prior_tot, prior_ok = await self._window(w, 2 * w)
+            this_f = await self._failures_by_capability(0, w)
+            prior_f = await self._failures_by_capability(w, 2 * w)
+            skills = await self._db.fetch_all(
+                "SELECT COUNT(*) AS n FROM skills WHERE owner_id = ? AND loaded_at > ?",
+                (DEFAULT_PRINCIPAL_ID, time.time() - w * 86400.0),
+            )
+            learned = int(skills[0]["n"] or 0) if skills else 0
+        except Exception as exc:  # noqa: BLE001 — one section may not kill the brief
+            log.scheduler.warning("[brief] growth: could not read — omitting", exc_info=exc)
+            return BriefSection(key=self.key, title=self.key, items=[], omitted=True)
+
+        # NO PRIOR WEEK, NO COMPARISON. A first week has nothing to be better than,
+        # and inventing a baseline of zero would report spectacular growth forever.
+        if prior_tot == 0 or this_tot == 0:
+            log.scheduler.info(
+                "[brief] growth: not enough history to compare — omitting",
+                extra={"_fields": {"this_turns": this_tot, "prior_turns": prior_tot}},
+            )
+            return BriefSection(key=self.key, title=self.key, items=[], omitted=True)
+
+        now_rate = this_ok / this_tot
+        was_rate = prior_ok / prior_tot
+        delta = now_rate - was_rate
+        verb = "better" if delta > 0.01 else ("worse" if delta < -0.01 else "about the same")
+        items = [
+            f"I finished {now_rate:.0%} of what you asked this week, against "
+            f"{was_rate:.0%} the week before — I am {verb} at my job "
+            f"({this_tot} turns, {prior_tot} before).",
+        ]
+
+        improved, regressed = [], []
+        for cap in sorted(set(this_f) | set(prior_f)):
+            now_n, was_n = this_f.get(cap, 0), prior_f.get(cap, 0)
+            if max(now_n, was_n) < _GROWTH_MIN_FAILURES:
+                continue
+            if now_n < was_n:
+                improved.append(f"{cap} ({was_n}→{now_n})")
+            elif now_n > was_n:
+                regressed.append(f"{cap} ({was_n}→{now_n})")
+        if improved:
+            items.append("I stopped failing so often at: " + ", ".join(improved) + ".")
+        # ALWAYS REPORTED WHEN PRESENT. A self-assessment that only lists progress
+        # is the overclaim shape wearing a friendly voice.
+        if regressed:
+            items.append("I got WORSE at: " + ", ".join(regressed) + ".")
+        items.append(
+            f"I learned {learned} new skill(s) this week."
+            if learned
+            else "I learned no new skills this week."
+        )
+
+        log.scheduler.info(
+            "[brief] growth: assembled",
+            extra={"_fields": {
+                "success_now": round(now_rate, 3), "success_prior": round(was_rate, 3),
+                "improved": len(improved), "regressed": len(regressed),
+                "skills_learned": learned,
+            }},
+        )
+        return BriefSection(key=self.key, title=self.key, items=items, omitted=False)
+
+
 class LearningAssembler:
     """What the platform actually learned since the last brief.
 

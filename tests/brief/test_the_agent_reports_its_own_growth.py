@@ -1,0 +1,119 @@
+"""N01 — the agent says how it is changing, and cannot flatter itself.
+
+BAKIR, 2026-08-10, verbatim and outside the reference map: "i am not going to
+create a next chatbot which does no interaction. thats why i am thinking to build
+jarvis which will dream and rethink about his life, his abilities, his growing,
+learning, improving and etc things."
+
+NOTHING SAID ANY OF IT. The platform reflects on every TURN — 6,419 reflections
+promoted to 5,769 lessons — and evolves its own DNA (586 artifacts). What no
+surface did was compare the platform to ITSELF. AutonomicHealth reports current
+counts, Learning reports the last 24 hours, SystemSpend reports tokens; not one
+could say "I am better at this than I was".
+
+MEASURED BEFORE BUILDING, which is what made it worth building: turn success went
+28.9% -> 66.9% -> 89.5% across three consecutive weeks, browser_navigate failures
+60 -> 18, web_fetch 27 -> 48 and shell 20 -> 35 (both worse), and 22 skills
+learned against 0 the week before. Real movement in both directions.
+
+DETERMINISTIC ON PURPOSE. The obvious build is to hand a model its own history and
+let it narrate. That produces a paragraph about growth whether or not any growth
+happened — the overclaim shape this platform has spent weeks learning not to make.
+The sentence is assembled FROM the measurements, so a bad week reads as a bad
+week. The tests below exist mostly to hold that property.
+"""
+
+from __future__ import annotations
+
+import time
+
+import pytest
+
+from stackowl.brief.assemblers import GrowthAssembler
+from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
+
+pytestmark = pytest.mark.asyncio
+
+
+async def _outcome(db, *, days_ago: float, success: int, cap: str = "") -> None:
+    await db.execute(
+        "INSERT INTO task_outcomes (trace_id, session_key, owl_name, channel, success,"
+        " latency_ms, tool_call_count, captured_at, owner_id, failed_capability)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (f"t{time.time_ns()}", "s", "secretary", "telegram", success,
+         1.0, 0, time.time() - days_ago * 86400.0, DEFAULT_PRINCIPAL_ID, cap),
+    )
+
+
+async def test_a_week_that_got_BETTER_says_so(tmp_db) -> None:
+    for _ in range(10):
+        await _outcome(tmp_db, days_ago=10, success=0)
+    for _ in range(10):
+        await _outcome(tmp_db, days_ago=1, success=1)
+
+    sec = await GrowthAssembler(tmp_db).assemble(None)
+
+    assert not sec.omitted
+    assert "better at my job" in sec.items[0]
+    assert "100%" in sec.items[0] and "0%" in sec.items[0]
+
+
+async def test_a_week_that_got_WORSE_is_not_dressed_up(tmp_db) -> None:
+    """The property the whole design exists to hold. A narrated version would be
+    free to find something encouraging to say; this one cannot."""
+    for _ in range(10):
+        await _outcome(tmp_db, days_ago=10, success=1)
+    for _ in range(10):
+        await _outcome(tmp_db, days_ago=1, success=0)
+
+    sec = await GrowthAssembler(tmp_db).assemble(None)
+
+    assert "worse at my job" in sec.items[0]
+
+
+async def test_a_capability_that_REGRESSED_is_always_named(tmp_db) -> None:
+    """A self-assessment that only lists progress is the overclaim shape wearing a
+    friendly voice."""
+    for _ in range(6):
+        await _outcome(tmp_db, days_ago=10, success=0, cap="browser_navigate")
+    for _ in range(6):
+        await _outcome(tmp_db, days_ago=1, success=0, cap="shell")
+
+    sec = await GrowthAssembler(tmp_db).assemble(None)
+    body = " ".join(sec.items)
+
+    assert "I got WORSE at: shell" in body
+    assert "browser_navigate" in body, "an improvement disappeared from the report"
+
+
+async def test_a_TINY_capability_change_is_not_reported_as_progress(tmp_db) -> None:
+    """"2 failures became 1" is a 50% improvement and means nothing. Without the
+    floor this section would fill up with noise and stop being read."""
+    for _ in range(2):
+        await _outcome(tmp_db, days_ago=10, success=0, cap="tts")
+    await _outcome(tmp_db, days_ago=1, success=0, cap="tts")
+
+    sec = await GrowthAssembler(tmp_db).assemble(None)
+
+    assert "tts" not in " ".join(sec.items)
+
+
+async def test_with_NO_PRIOR_WEEK_it_says_nothing_rather_than_everything(tmp_db) -> None:
+    """A first week has nothing to be better than. Treating an absent baseline as
+    zero would report spectacular growth for ever — the 0-over-0 trap."""
+    for _ in range(5):
+        await _outcome(tmp_db, days_ago=1, success=1)
+
+    sec = await GrowthAssembler(tmp_db).assemble(None)
+
+    assert sec.omitted
+
+
+async def test_an_unreadable_store_omits_the_section_not_the_BRIEF(tmp_db) -> None:
+    """One section may never take the whole brief down with it."""
+    class _Boom:
+        async def fetch_all(self, *a: object, **k: object) -> list:
+            raise RuntimeError("db gone")
+
+    sec = await GrowthAssembler(_Boom()).assemble(None)
+    assert sec.omitted

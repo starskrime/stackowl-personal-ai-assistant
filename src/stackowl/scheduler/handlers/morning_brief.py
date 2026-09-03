@@ -30,6 +30,7 @@ from stackowl.brief.assemblers import (
     BriefSectionAssembler,
     ConcludedIncidentsAssembler,
     DateAndPrioritiesAssembler,
+    GrowthAssembler,
     LearningAssembler,
     SystemSpendAssembler,
     now_iso_utc,
@@ -125,6 +126,9 @@ class MorningBriefHandler(JobHandler):
             # this platform has. 49 lessons and 21 DNA adjustments in a day were
             # only visible by querying SQLite by hand.
             LearningAssembler(db=db),
+            # N01 — his own idea: the agent's view of its own growth, week over
+            # week. Last, because it reads as the closing thought.
+            GrowthAssembler(db=db),
         ]
         # ADR-19 — the platform reporting on its own autonomic loops. Optional
         # so every existing construction site (tests, legacy wiring) is

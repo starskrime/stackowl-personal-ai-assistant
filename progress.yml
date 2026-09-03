@@ -315,6 +315,60 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  N01_2026_09_03_the_agent_finally_says_how_it_is_CHANGING:
+    map_check: "N01 Dreaming — P1, verdict NATIVE, his own idea outside the reference map."
+    his_words_2026_08_10: >-
+      "DreamWorker should be in platform. because i am not going to create a next chatbot which
+      does no interaction. thats why i am thinking to build jarvis which will dream and rethink
+      about his life, his abilities, his growing, learning, improving and etc things."
+    THE_SEAT_HE_WAS_LEFT_IS_GONE_and_that_is_correct: >-
+      DreamWorker survived D08.1 as a deliberately EMPTY registered handler whose own docstring
+      said "the seat is the point ... deleting it to tidy up would remove the foundation of a
+      feature that was kept on purpose". It was deleted on 2026-09-01 (commit 5f1abbe0) under
+      his newer rule — retired means deleted, never scaffolding for later — and I dropped its
+      table on 09-02. So N01 had to be built as a real feature rather than by filling a seat,
+      which is the better outcome: nothing was inherited, so nothing shaped it.
+    what_already_existed_and_why_it_was_not_this: >-
+      The platform reflects on every TURN — 6,419 reflections promoted to 5,769 lessons — and
+      evolves its own DNA (586 artifacts). AutonomicHealth reports current counts, Learning
+      reports the last 24 hours, SystemSpend reports tokens. Not one of them compares the
+      platform to ITSELF. "How am I changing?" had no reader anywhere.
+    MEASURED_BEFORE_BUILDING_which_is_what_made_it_worth_building: >-
+      Turn success across three consecutive weeks: 28.9% -> 66.9% -> 89.5%. Per capability, week
+      over week: browser_navigate failures 60 -> 18, delegate_task 6 -> 2, and — the half that
+      matters — web_fetch 27 -> 48 and shell 20 -> 35, both WORSE. Skills learned: 22 this week
+      against 0 the week before. Real movement, in both directions, that nothing was saying.
+    DETERMINISTIC_ON_PURPOSE: >-
+      The obvious build is to hand a model its own history and let it narrate. That produces a
+      paragraph about growth whether or not any growth happened — the overclaim shape this
+      programme has spent weeks learning not to make. The sentence is assembled FROM the
+      measurements, so a bad week reads as a bad week, and a regressed capability is ALWAYS
+      named. Mutation-tested: suppressing the "I got WORSE at" line turns a test red.
+    the_guards_that_keep_it_honest: >-
+      A capability needs 5+ failures in a week before its change is reported, because "2 became
+      1" is a 50% improvement that means nothing. And with no prior week the section OMITS
+      itself rather than treating an absent baseline as zero — the 0-over-0 trap, which here
+      would have reported spectacular growth for ever.
+    a_section_not_a_nightly_job: >-
+      The brief already runs daily, guards each section and delivers through one seam. I checked
+      that seam rather than assuming it: "[notifications] router.deliver: delivered {channel:
+      telegram, category: morning_brief}", 3,524 chars to his chat on 09-02 at 13:00. I had
+      begun to write that the brief was never delivered, on the strength of an
+      "event_bus.emit: 'morning_brief_rendered' has no subscriber" line — which is a real but
+      SEPARATE stray emit, not the delivery path.
+    the_first_run_on_live_data: >-
+      "I finished 90% of what you asked this week, against 67% the week before — I am better at
+      my job (1660 turns, 2660 before). I stopped failing so often at: browser_navigate (60->18),
+      delegate_task (6->2), memory (13->11), read_file (11->10). I got WORSE at: shell (20->35),
+      web_fetch (27->48). I learned 22 new skill(s) this week."
+    suites: "tests/brief + tests/scheduler/handlers 285 passed; 6 new. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_morning_brief
+    closing_query: >-
+      "[brief] growth: assembled" at INFO carrying success_now, success_prior, improved,
+      regressed and skills_learned — ZERO today because it did not exist — on the 13:00Z brief,
+      followed by the same "router.deliver: delivered {category: morning_brief}" that already
+      fires. The honest second half: if the section reports improvement on a week the success
+      rate FELL, the determinism has been lost and the whole point with it.
   D06_4_2026_09_03_undo_the_whole_turn_and_nobody_has_undone_ONE_write:
     map_check: "D06.4 Filesystem checkpoints — P1, verdict MISSING, gap: No 'undo the whole turn'."
     outcome: "no_change_needed on building it — measured, not assumed."
