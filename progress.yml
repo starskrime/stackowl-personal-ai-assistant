@@ -371,8 +371,19 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: PARTIAL
       document: done
+    what_validate_ACTUALLY_evidenced: >-
+      Live at 12:01:19Z on commit c8ed10d4, zero ERROR lines since boot. The strongest evidence
+      is not a unit test: the whole path was run END TO END against the LIVE archive with the
+      real all-MiniLM-L6-v2 embedder and the real 230 staged rows, through
+      SqliteMemoryBridge.recall() — "what agents do I have" 0 -> 3 hits, "when does my job scout
+      run" 0 -> 3 with the correct fact FIRST, and two unrelated questions -> 0 hits, so the
+      floor genuinely holds. 544 memory tests pass and both mutations (compare across embedding
+      dimensions; drop the owner-scope predicate) go red.
+      NOT YET EVIDENCED: that measurement ran in MY process, not the gateway's. No turn has
+      happened since the restart, so "[memory] recall: archive searched" has appeared 0 times in
+      production. The 13:00Z morning brief should produce turns and close it.
     validate_closing_query: >-
       After the restart, "[memory] recall: archive searched" must appear at INFO on real turns
       with embedding_model=all-MiniLM-L6-v2 (NOT hash-v1-384d, which would mean the embedder
