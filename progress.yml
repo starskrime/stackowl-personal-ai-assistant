@@ -349,8 +349,18 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: PARTIAL
       document: done
+    what_validate_ACTUALLY_evidenced: >-
+      Live at 12:56:40Z on commit 1b9962bd, zero ERROR lines since boot. The rendered before/
+      after was checked through the real resolver for all four classes plus an unknown one: the
+      four now explain themselves and the unknown keeps the generic prose. 1,858 pipeline+setup
+      tests pass and both mutations (never explain; render the raw key for an unknown class)
+      go red.
+      NOT YET EVIDENCED: the three failures visible after the change are all from 12:41 —
+      BEFORE the restart — so they correctly still show the old text. No post-12:56:40 failure
+      has occurred. A watcher is running; the provider is flapping (30 DNS events today), so
+      one is expected shortly.
     validate_closing_query: >-
       The next telegram failure with a known class must carry the plain sentence rather than
       "the technical detail is in the logs". Query task_outcomes for channel='telegram',
