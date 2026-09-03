@@ -165,6 +165,73 @@ class DbContributor:
 # for Kuzu. Both it and the adapter went in D08.2: a health surface for a subsystem
 # that no longer exists reports on nothing.
 
+class StoreCadenceContributor:
+    """Health contributor: a store that has gone quiet past its own declaration.
+
+    WHY IT IS A HEALTH CONTRIBUTOR rather than a job of its own. The health sweep
+    already runs every five minutes, already aggregates subsystem status, and
+    already dedupes its alerts through ``_alert_state`` — the platform's rule is
+    to extend the loop that exists rather than add a second. A stopped writer IS
+    a subsystem being down; it just had no voice here until now.
+
+    DEGRADED, NOT DOWN. A store past its cadence means a writer has probably
+    stopped, which is serious — but the platform is demonstrably still serving
+    turns while it is true, and reporting "down" for something that does not stop
+    the platform is how an operator learns to ignore the health surface. That
+    lesson is already recorded here: 25 pages in one day, and it was never down.
+    """
+
+    def __init__(self, db: object) -> None:
+        self._db = db
+
+    @property
+    def contributor_name(self) -> str:
+        return "store_cadence"
+
+    async def health_check(self) -> HealthStatus:
+        from stackowl.health.store_cadence import silent_stores
+
+        log.debug("[health] store_cadence: entry")
+        t0 = time.monotonic()
+        try:
+            silent = await silent_stores(self._db)
+        except Exception as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            # NEVER "down" ON AN INSTRUMENT FAILURE. "I could not measure it" and
+            # "it has stopped" are different claims; reporting the first as the
+            # second is the instrument lying, which this repo has paid for.
+            log.warning("[health] store_cadence: check failed: %s", exc)
+            return HealthStatus(
+                name="store_cadence", status="degraded",
+                message=f"cadence check failed: {exc}", latency_ms=latency_ms,
+            )
+        latency_ms = (time.monotonic() - t0) * 1000
+        if not silent:
+            log.debug("[health] store_cadence: exit — ok (%.0fms)", latency_ms)
+            return HealthStatus(
+                name="store_cadence", status="ok", message=None,
+                latency_ms=latency_ms,
+            )
+        detail = "; ".join(
+            f"{s.table} silent {s.idle_days:.1f}d (declared max {s.allowed_days:.0f}d — "
+            f"{s.why})"
+            for s in sorted(silent, key=lambda x: -x.idle_days)
+        )
+        # INFO, and named per store: production runs at INFO, and "3 stores are
+        # quiet" without naming them cannot be acted on at 2am.
+        log.info(
+            "[health] store_cadence: a store is past its declared cadence",
+            extra={"_fields": {
+                "n_silent": len(silent),
+                "tables": [s.table for s in silent],
+            }},
+        )
+        return HealthStatus(
+            name="store_cadence", status="degraded", message=detail,
+            latency_ms=latency_ms,
+        )
+
+
 class FilesystemContributor:
     """Health contributor: data and log directory writability."""
 

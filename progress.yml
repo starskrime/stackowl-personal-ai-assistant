@@ -315,6 +315,51 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CADENCE_2026_09_03_every_store_declares_what_silence_means_for_it:
+    map_check: "No mapped item — implementing his answer to ESC-90."
+    his_decision: >-
+      An EXPLICIT CADENCE REGISTRY. He asked for "any store with readers but no writes in N
+      days"; two data-derived rules were built and BOTH refuted against the live database.
+      `owls` at 11.8 days idle is CORRECT (he has not created an owl). `retry_queue` at 5.9 days
+      is a STOPPED ENGINE. The data is identical; only what the store is FOR tells them apart,
+      and no query can derive purpose. He chose to declare it.
+    the_registry_cannot_fall_behind_the_schema: >-
+      A hand-maintained list rots the first time someone adds a table and forgets — and then the
+      one undeclared store is invisible to the check built to find exactly that. Two tripwire
+      tests compare DECLARATIONS against the real migrated schema in BOTH directions: an
+      undeclared table is an unmonitored store, and a declaration for a table that no longer
+      exists is residue of a deletion, which this repo has paid for twice in three days.
+    IT_FOUND_TWO_DEAD_TABLES_ON_ITS_FIRST_RUN: >-
+      The completeness test named dreamworker_runs (762 rows, last written 22.9 days ago) and
+      kuzu_sync_log (20,065 rows, no clock at all) and would not let them be declared, because
+      no honest cadence class exists for a table with no writer. Measured: ZERO references to
+      either anywhere in src/. DreamWorker was deleted as an empty seat; kuzu_sync_handler was
+      deleted 2026-09-02 as dead code. Their tables were left behind both times — the same shape
+      as the 231 orphaned .pyc files. Migration 0133 drops them; MigrationRunner's VACUUMed
+      pre-migration snapshot is the recovery path.
+    THE_FIRST_LIVE_RESULT_WAS_A_FAKE_ZERO_and_checking_the_denominator_caught_it: >-
+      The first dry run reported no silent stores. It was not measuring them. This database
+      stores timestamps in TWO formats — task_outcomes.captured_at is an epoch float,
+      tasks.created_at is an ISO-8601 string — and a bare float() raises on the second, which
+      the code caught and skipped SILENTLY. A clean zero built from almost nothing, and a bare
+      except-continue against this repo's own every-except-logs rule. Both fixed: two formats
+      parsed, an unreadable clock logged at WARNING. The honest reading is now 26 stores
+      measured, 1 empty, 0 unparseable, 0 silent — with retry_queue at 5.87d, objective_events
+      5.93d and objective_subgoals 6.05d against a 7-day limit, about a day from alarming.
+    no_second_engine: >-
+      Registered as a health CONTRIBUTOR on the 5-minute sweep that already aggregates subsystem
+      status and already dedupes its alerts. A stopped writer IS a subsystem being down; it just
+      had no voice there. Reports DEGRADED, never DOWN — the platform is demonstrably still
+      serving turns while it is true, and 25 pages in one day for something never down is a
+      lesson already on this record. An instrument failure also reports degraded, never down:
+      "I could not measure it" and "it has stopped" are different claims.
+    suites: "tests/health 46 passed, including 2 new tripwires. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_5_minute_health_sweep
+    closing_query: >-
+      "[health] store_cadence" must appear in a sweep. TODAY IT MUST REPORT ok, because 0 of 26
+      measured stores are past their declaration — so the honest closing evidence is the
+      CONTRIBUTOR being present in the aggregate, not an alarm. The alarm half closes when
+      retry_queue crosses 7 days, roughly 2026-09-04, and that is the prediction to check.
   RECURRENCE_2026_09_02_his_one_interrupt_a_lesson_that_did_not_hold:
     map_check: "No mapped item — implementing his answer to ESC-105."
     his_decision: >-
@@ -5196,7 +5241,9 @@ current:
         expected write cadence is, and silence past that alarms. He chose the option that costs a
         line per store precisely because a store's PURPOSE is the missing input and no query can
         derive it — the two data-derived rules were both refuted against the live database.
-        NOT YET IMPLEMENTED.
+        IMPLEMENTED 2026-09-03 — see the CADENCE item. health/store_cadence.py, two
+        tripwires that keep it level with the schema, and a health contributor on the
+        existing 5-minute sweep.
       premise_check: |
         grep -rqE 'expected_cadence|STORE_CADENCE' src/ && echo EXPIRED || echo 'HOLDS no cadence registry'
       question: >-

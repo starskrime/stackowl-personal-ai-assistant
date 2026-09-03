@@ -1,0 +1,36 @@
+-- Two tables outlived the features that wrote them. Retired means deleted.
+--
+-- FOUND BY THE CADENCE REGISTRY ON ITS FIRST RUN, which is the point of it:
+-- declaring an expected write cadence forces the question "who writes this?" for
+-- every store, and for these two the answer is nobody. The registry's
+-- completeness test named them and would not let them be declared, because no
+-- honest cadence class exists for a table with no writer.
+--
+-- MEASURED 2026-09-03 on the live database:
+--
+--   dreamworker_runs    762 rows   last written 22.9 days ago
+--   kuzu_sync_log    20,065 rows   no timestamp column at all
+--
+-- and in the tree:
+--
+--   grep -rn 'dreamworker_runs' src/ --include=*.py  ->  0
+--   grep -rn 'kuzu_sync_log'    src/ --include=*.py  ->  0
+--
+-- ZERO references each. No writer, no reader, no registration. `DreamWorker` was
+-- deleted as a deliberately empty seat and `kuzu_sync_handler` was deleted on
+-- 2026-09-02 as dead code (it joined on `committed_facts`, zero rows since
+-- migration 0112). Their tables were left behind both times — the same shape as
+-- the 231 orphaned .pyc files found the same day: the writer went, the residue
+-- stayed, and it went on looking like a live store.
+--
+-- WHY THIS IS SAFE TO DROP RATHER THAN EMPTY. Deleting the rows and keeping the
+-- table is precisely the "dead seat for later" the standing rule forbids, and it
+-- would leave the cadence registry with a table it still cannot honestly classify.
+-- Recovery is covered: MigrationRunner takes a VACUUMed snapshot of the WHOLE
+-- database before applying anything pending, so the last pre-migration state of
+-- both tables is on disk, and the schema itself is in git history.
+--
+-- IF EITHER FEATURE RETURNS it brings its own migration, as any new feature does.
+
+DROP TABLE IF EXISTS dreamworker_runs;
+DROP TABLE IF EXISTS kuzu_sync_log;

@@ -501,6 +501,7 @@ class SchedulerAssembly:
             provider_registry,
             owl_registry,
             TaskOutcomeStore(db),
+            db=db,
         )
         health_alert = _build_health_alert_sink(proactive_deliverer, settings)
         # A CONCLUDED RCA IS DURABLE CONTENT, not a flap. Same builder — the address
@@ -1023,6 +1024,7 @@ def _build_health_aggregator(
     provider_registry: ProviderRegistry | None = None,
     owl_registry: OwlRegistry | None = None,
     outcome_store: TaskOutcomeStore | None = None,
+    db: object | None = None,
 ) -> HealthAggregator:
     """Build an in-process HealthAggregator from the LOCAL contributors (F-87).
 
@@ -1091,6 +1093,16 @@ def _build_health_aggregator(
 
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
+    if db is not None:
+        # A STOPPED WRITER IS A SUBSYSTEM BEING DOWN, and until now it had no
+        # voice here. Each store declares its expected write cadence
+        # (health/store_cadence.py) because the two data-derived rules for
+        # detecting one were both refuted: `owls` quiet for 11.8 days is correct,
+        # `retry_queue` quiet for 5.9 is a stopped engine, and only PURPOSE tells
+        # them apart. Rides the 5-minute sweep that already exists.
+        from stackowl.health.contributors import StoreCadenceContributor
+
+        agg.register(StoreCadenceContributor(db))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
     agg.register(graph_contributor if graph_contributor is not None else GraphContributor.probe())
     if embedding_registry is not None:
