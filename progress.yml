@@ -315,6 +315,84 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  TRISTATE_2026_09_03_a_step_nobody_checked_was_reported_to_him_as_REFUTED:
+    map_check: "No mapped item — found by asking why [acceptance] abstained 874 times and judged 3."
+    THE_FINDING: >-
+      MEASURED on objective_subgoals: 28 rows, 4 carrying an acceptance criterion (14%),
+      stored verified values {0: 26, 1: 2}, and ZERO NULLs. The column is documented
+      tri-state (_loads_verified: "NULL => None (not evaluated)"), the schema is nullable,
+      the INSERT writes NULL, update_subgoal skips the write when handed None, and
+      aggregate_verdicts has an `unconfirmed` branch for exactly this. Every layer carries
+      three states. The single writer wrote two: `verified = verdict.accepted is True`.
+    THE_USER_VISIBLE_COST: >-
+      aggregate_verdicts turns ANY single False into the whole objective's verdict —
+      "{refuted_count}/{total} step(s) refuted" — and the driver puts that reason straight
+      into the completion notification. An objective whose 24 steps simply had no criterion
+      told him "(0/28 steps independently verified — 28/28 step(s) refuted)". Refuted means
+      reality was observed and contradicted the claim. Nobody had looked.
+    THE_CAUSE_and_the_intention_that_produced_it: >-
+      The flattening's own comment says it exists so a clean run is "NOT proof of effect ...
+      rather than over-claiming a verified success". The intention is right and the
+      implementation inverts it: it avoids over-claiming SUCCESS by manufacturing a claim of
+      FAILURE — the same overclaim pointed the other way. None claims nothing, which is what
+      the comment was reaching for. One field carrying two meanings, on the concept this
+      programme calls its deepest root: success ASSERTED or GUESSED, never MEASURED.
+    THE_TELL_a_carefully_built_branch_that_could_never_run: >-
+      `unconfirmed = total - verified_count - refuted_count` is positive only when some
+      verdict is None, and no None was ever stored — so aggregate_verdicts' "N verified;
+      K unconfirmed" path has never executed in production. A dead branch that was clearly
+      designed on purpose is evidence that something upstream is collapsing its input.
+    A_PINNED_TEST_CORRECTED_NOT_DELETED: >-
+      test_completed_subgoal_without_criteria_is_unverified asserted `verified is False`
+      with the docstring "completion is honest, not over-claimed". Its INTENT was right and
+      only its value was wrong, so it was corrected with the reasoning written into it. F-42
+      is a code label, not a decision in this file — checked before overriding it. ESC-100
+      is the precedent for the pattern, and it is a different subject (its escalation was
+      about ADDING user-facing text; this removes a false claim).
+    NO_BACKFILL_NEEDED_measured_not_assumed: >-
+      The 26 flattened rows are all terminal (27 done, 1 failed) and the objectives table
+      holds 0 rows, so nothing will ever re-aggregate them. Their stale value has no future
+      effect, which is why no data was touched — measured rather than justified.
+    WHAT_ELSE_THE_SAME_CAUSE_REACHES_checked: >-
+      [acceptance] abstained fires 874 times against 3 verdicts (99.7%) in the retained log
+      — correct, because the checker is goal-scoped by design (one writer of
+      expected_outcome: objectives/driver.py; one reader: backends/shared.py). Recorded as
+      no_change_needed. Its abstention field `declared` is always False in that branch
+      (computed before derivation, and a non-None value never reaches it) — noted, not
+      changed, because it is one dead field rather than a wrong answer.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      8 new tests; 4 mutations each caught (driver flattens again; store coerces None to 0;
+      deserializer turns NULL into False; aggregator counts None as refuted), restored from
+      FILE COPIES and re-verified green — the rule I broke last item. tests/objectives +
+      acceptance 119 pass; tests/scheduler + tests/pipeline 2,371 pass; ruff at its 35
+      baseline, mypy clean. LIVE validation PARTIAL: no objective can complete while the
+      provider is unreachable. Closing query — the next objective completion notification
+      must read "... unconfirmed" and must NOT contain "refuted" unless a declared criterion
+      was actually observed absent.
+  ROUND_0_no_change_needed_findings_this_loop:
+    incident_escalation_recurrence_gate: >-
+      3,138 "too few precisely-attributed rows" skips in 7 days, precise_count maxing at 2
+      against a threshold of 3 — the gate has never once passed. NOT a defect: 10,255 of the
+      10,473 unattributed failures are infrastructure classes (AllProvidersUnavailable,
+      OwlTimeout, CircuitOpen, ProviderError) which genuinely have no capability to blame.
+      The gate is correctly quiet. Checked before concluding, because 1.6% attribution looks
+      broken until you ask what the denominator is made of.
+    owl_timeout_class: >-
+      1,800 OwlTimeoutError turns looked like the second-largest live failure class. It is
+      historical: the newest is 2026-08-07 and recent days show 1-6. Not live.
+    files:
+      - src/stackowl/objectives/driver.py
+      - tests/objectives/test_a_step_nobody_checked_is_not_a_refuted_step.py
+      - tests/objectives/test_driver.py
+
   FLOOR_CAUSE_2026_09_03_two_floors_explained_one_outage_two_different_ways:
     map_check: "No mapped item — found by reading the first live turns after 9h of outage."
     THE_FINDING: >-

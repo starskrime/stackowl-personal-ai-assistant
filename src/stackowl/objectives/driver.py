@@ -364,12 +364,25 @@ class ObjectiveDriverHandler(JobHandler):
             )
             return True
 
-        # Done. Stamp the HONEST verification disposition (F-42): when a criterion
-        # was declared/derived and observed, verified=True; when NONE was available
-        # (the default — no declared criterion AND the LLM deriver off), the clean
-        # run is NOT proof of effect, so the sub-goal completes UNVERIFIED
-        # (verified=False) rather than over-claiming a verified success.
-        verified = verdict.accepted is True
+        # Done. Stamp the HONEST verification disposition (F-42) — as a TRI-STATE,
+        # which is what every layer under this line already carries: the model
+        # field, the nullable column, `_loads_verified` ("NULL => None (not
+        # evaluated)"), `update_subgoal`'s "omit to leave as-is", and
+        # `aggregate_verdicts`, whose `unconfirmed` branch exists for exactly this.
+        #
+        # This read three states and wrote two (`verdict.accepted is True`), so a
+        # step NOBODY CHECKED was stored as False — identical to one whose declared
+        # post-condition was observed ABSENT. MEASURED 2026-09-03: 26 of 28 live
+        # rows held 0 and not one held NULL, and `aggregate_verdicts` turns any
+        # single False into the whole objective's verdict, so his completion
+        # notification read "(0/28 steps independently verified — 28/28 step(s)
+        # refuted)". Refuted means reality contradicted it. Nobody looked.
+        #
+        # The flattening was written to avoid over-claiming a verified SUCCESS. It
+        # did that by manufacturing a claim of FAILURE — the same overclaim pointed
+        # the other way. None claims nothing, which is the honest answer, and the
+        # store leaves the column NULL when handed it.
+        verified = verdict.accepted
         await store.update_subgoal(
             nxt.subgoal_id, "done", result=response_text, task_id=task_id,
             verified=verified,

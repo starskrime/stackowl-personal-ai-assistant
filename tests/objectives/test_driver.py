@@ -335,8 +335,26 @@ async def test_blocks_objective_after_retry_budget_exhausted(pool: DbPool) -> No
 
 async def test_completed_subgoal_without_criteria_is_unverified(pool: DbPool) -> None:
     """F-42: with NO declared acceptance criterion (and the LLM deriver off), a clean
-    run completes the sub-goal but records verified=False — completion is honest, not
-    over-claimed as a verified success."""
+    run completes the sub-goal UNVERIFIED — completion is honest, not over-claimed as
+    a verified success.
+
+    THIS TEST PINNED THE DEFECT and is corrected rather than deleted, because its
+    INTENT was right and only its value was wrong. "Not over-claimed" is correct;
+    ``False`` is the wrong way to say it. The column is tri-state and every layer
+    beneath the driver carries three states — ``_loads_verified`` documents "NULL
+    => None (not evaluated)", the schema is nullable, ``update_subgoal`` leaves an
+    omitted value alone, and ``aggregate_verdicts`` has an ``unconfirmed`` branch
+    written for exactly this case.
+
+    Storing ``False`` made that branch unreachable and had a user-visible cost:
+    ``aggregate_verdicts`` turns any single ``False`` into the whole objective's
+    verdict, so the completion notification read "(0/28 steps independently
+    verified — 28/28 step(s) refuted)". Refuted means reality was observed and
+    contradicted the claim; nobody had looked. Avoiding an over-claim of SUCCESS by
+    manufacturing a claim of FAILURE is the same overclaim pointed the other way.
+
+    ``None`` claims nothing, which is the honest answer this test was always after.
+    """
     store = ObjectiveStore(pool, "principal-default")
     await _make_objective(store, ["just answer"])
     backend = _FakeBackend(text="here you go")
@@ -346,7 +364,7 @@ async def test_completed_subgoal_without_criteria_is_unverified(pool: DbPool) ->
 
     subs = await store.list_subgoals("obj-1")
     assert subs[0].status == "done"
-    assert subs[0].verified is False  # completed but UNVERIFIED — no criterion to check
+    assert subs[0].verified is None  # completed but NEVER CHECKED — not "refuted"
 
 
 async def test_retry_feeds_prior_failure_into_subgoal_context(pool: DbPool) -> None:
