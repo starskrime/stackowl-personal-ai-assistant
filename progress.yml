@@ -366,12 +366,25 @@ current:
       validate: partial
       document: done
     validate_evidence: >-
-      6 new tests (one @pytest.mark.tripwire, so it joins the cross-cutting gate); 4
+      7 new tests (one @pytest.mark.tripwire, so it joins the cross-cutting gate); 5
       mutations each caught (a clock-bearing store back under UNMEASURABLE; RETIRED made
-      alarming; an orphan filed as merely on-demand; a declared clock the schema lacks),
-      restored from a FILE COPY and re-verified green. tests/health 58 pass. LIVE validation
-      PARTIAL — the cadence sweep runs on the health job; closing query: after the next
-      health_sweep, no store may be reported silent that this change moved to HOT/PERIODIC.
+      alarming; an orphan filed as merely on-demand; a declared clock the schema lacks; the
+      healthy verdict back to DEBUG), restored from FILE COPIES and re-verified green.
+      tests/health 59 pass.
+    THE_VALIDATE_COULD_NOT_RUN_AND_THAT_WAS_ITSELF_THE_NEXT_DEFECT: >-
+      The closing query returned ZERO lines against a health_sweep that had just executed at
+      21:33:27 on the new code. The cadence contributor IS registered (scheduler assembly)
+      and DOES run — it logs the SILENT case at INFO with the comment "production runs at
+      INFO", and the healthy case at log.debug. So a check running every five minutes says
+      nothing whenever all is well, and a clean run is indistinguishable from a check that
+      never ran. The healthy message is the one carrying the denominator, and its own comment
+      argues exactly why that matters: "'No store is silent' is worthless without 'out of how
+      many': this check's own first live run returned a clean zero while a date-format bug
+      had skipped almost every store it claimed to cover." That argument was won and then
+      emitted where nobody could read it. Promoted to INFO with measured/empty/unreadable as
+      fields — the same rule the sibling branch five lines below already followed.
+      Closing query, now runnable: "[health] store_cadence: ok" must appear after a
+      health_sweep, carrying measured > 0.
     A_ROUND_0_no_change_needed: >-
       The unknown-tool signal (the model asking for a capability that does not exist) fires
       ONCE in 7 days — edit_file, jobmarket owl. I had inferred ~20 ghost names from

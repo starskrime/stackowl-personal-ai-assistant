@@ -155,3 +155,58 @@ def test_no_declaration_names_a_clock_the_schema_does_not_have() -> None:
         if cols and decl.clock.lower() not in cols:
             wrong.append(f"{decl.table}.{decl.clock} is not in the schema")
     assert not wrong, "\n  ".join(wrong)
+
+
+# --------------------------------------------------------------------------- #
+# The verdict has to be readable, or the registry cannot be checked at all      #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_the_healthy_cadence_verdict_is_visible_in_production() -> None:
+    """FOUND WHILE VALIDATING THIS ITEM, and it blocked the validation.
+
+    The contributor logs the SILENT case at INFO with the comment "production
+    runs at INFO", and the healthy case at ``log.debug``. So the check runs every
+    five minutes and, when all is well, says nothing at all — the closing query
+    for this very change returned zero lines against a sweep that had just run.
+
+    The healthy message is the one that carries the denominator, and its own
+    comment argues why that matters: "'No store is silent' is worthless without
+    'out of how many': this check's own first live run returned a clean zero
+    while a date-format bug had skipped almost every store it claimed to cover."
+    That argument was won and then emitted where nobody can read it. A healthy
+    report at DEBUG is indistinguishable from a check that never ran.
+    """
+    import logging
+
+    from stackowl.health.contributors import StoreCadenceContributor
+
+    class _Db:
+        async def fetch_all(self, _sql: str, *_a: object) -> list[dict]:
+            return [{"t": None}]  # every store empty -> nothing silent
+
+    import _pytest.logging  # noqa: F401  (caplog fixture is function-scoped)
+    records: list[logging.LogRecord] = []
+
+    class _Catch(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("stackowl")
+    handler = _Catch()
+    logger.addHandler(handler)
+    prior = logger.level
+    logger.setLevel(logging.INFO)
+    try:
+        status = await StoreCadenceContributor(_Db()).health_check()
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(prior)
+
+    assert status.status == "ok"
+    healthy = [r for r in records if "store_cadence" in r.getMessage()]
+    assert healthy, (
+        "the healthy cadence verdict is invisible at INFO — a clean run and a "
+        "check that never ran look identical in production"
+    )

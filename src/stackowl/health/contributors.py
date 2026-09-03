@@ -214,7 +214,24 @@ class StoreCadenceContributor:
             # almost every store it claimed to cover. A healthy report that
             # cannot say what it looked at is the same trap with a tick next to
             # it.
-            log.debug("[health] store_cadence: exit — ok (%.0fms)", latency_ms)
+            # INFO, for the same reason the SILENT branch below is INFO:
+            # production runs at INFO. This was DEBUG, so a check running every
+            # five minutes said nothing whenever all was well — and a clean run
+            # then looks exactly like a check that never ran. That is not a
+            # theoretical hazard here: the closing query for the 2026-09-03
+            # cadence re-declaration returned ZERO lines against a sweep that had
+            # just executed, which is how this was found. The message already
+            # carries the denominator its own comment argues for; it just had to
+            # be somewhere readable.
+            log.info(
+                "[health] store_cadence: ok — no store past its declared cadence",
+                extra={"_fields": {
+                    "measured": report.measured,
+                    "empty": report.empty,
+                    "unreadable": report.unreadable,
+                    "latency_ms": round(latency_ms, 1),
+                }},
+            )
             return HealthStatus(
                 name="store_cadence", status="ok",
                 message=(
