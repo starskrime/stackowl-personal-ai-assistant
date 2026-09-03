@@ -1,0 +1,28 @@
+-- The retry sweep has swept a table that can never gain a row since 2026-08-28.
+--
+-- Commit 49601f50 removed the ONLY writer of `retry_queue` — "a floored turn
+-- retries on the ONE loop — retry_queue is no longer written" — and left the
+-- sweep scheduled at `every 1m`. MEASURED 2026-09-03 before deleting:
+--
+--   retry_queue newest row      2026-08-28T03:31:27   (six days old)
+--   retry_queue pending rows    0
+--   retry_sweep.execute exits   989 / 888 / 902 / 934 / 946 on the five days
+--                               after the writer went, every one of them
+--                               calling get_due() and receiving nothing
+--
+-- 1,440 dispatches a day for six days, doing nothing. This is the shape
+-- CLAUDE.md already lists as earned — "objectives/objective_subgoals with a
+-- driver firing every 60s against an empty table" — repeated for a fourth time,
+-- and it is why the retirement had to be finished rather than noted.
+--
+-- REMOVE THE ROW *AND* THE WRITER, in the same change. Migration 0125 deleted a
+-- job row while its seeder lived and the scheduler re-seeded it thirty-one
+-- seconds later, every boot. The handler module, its registration in
+-- orchestrator.py and its test are deleted in this commit, so nothing can
+-- re-seed this row.
+--
+-- WHAT STAYS, and it is load-bearing: `RetryActuator`. task_loop_runner builds a
+-- RetryQueueRow from a `tasks` row and calls attempt_retry — that IS "retries on
+-- the ONE loop", and it ran 13-21 times a day through the period above.
+
+DELETE FROM jobs WHERE handler_name = 'retry_sweep';

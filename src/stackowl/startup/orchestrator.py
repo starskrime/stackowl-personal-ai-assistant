@@ -1702,14 +1702,23 @@ class StartupOrchestrator:
         # one durable view of retry_queue, not two divergent ones.
         from stackowl.channels.registry import ChannelRegistry
         from stackowl.pipeline.retry_actuator import RetryActuator
-        from stackowl.scheduler.handlers.retry_sweep import register_retry_sweep_handler
 
         retry_actuator = RetryActuator(
             backend=backend,
             channel_registry=ChannelRegistry.instance(),
             retry_store=retry_queue_store,
         )
-        register_retry_sweep_handler(actuator=retry_actuator, retry_store=retry_queue_store)
+        # RetrySweepHandler was registered here and is GONE (2026-09-03). Commit
+        # 49601f50 removed the only writer of `retry_queue` on 2026-08-28 — "a
+        # floored turn retries on the ONE loop" — and left the sweep running:
+        # get_due() every 60 seconds, 1,440 dispatches a day, against a table that
+        # can never gain a row again. MEASURED before deleting: 989/888/902/934/946
+        # sweep exits on the five days after the writer went, ZERO rows returned,
+        # and retry_queue's newest row still dated 2026-08-28T03:31.
+        #
+        # The ACTUATOR stays and is load-bearing: task_loop_runner builds a
+        # RetryQueueRow from a `tasks` row and calls attempt_retry, which is what
+        # "retries on the ONE loop" means. Only the dead sweep is removed.
 
         # THE ONE LOOP (Bakir, 2026-08-17). Started HERE because this is the first
         # point where its runner's dependency — the retry actuator, which already

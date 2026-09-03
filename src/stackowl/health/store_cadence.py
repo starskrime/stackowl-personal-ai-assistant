@@ -132,10 +132,16 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     _periodic("skill_ownership", "attached_at"),
     _periodic("tool_heuristics", "created_at"),
     _periodic("undelivered_outbox", "created_at"),
-    _periodic(
-        "retry_queue", "created_at",
-        "writes only when work FAILS. A week of total silence at this platform's "
-        "failure rate means the engine stopped, not that nothing failed.",
+    # RETIRED, NOT QUIET — and my own declaration was wrong. This said "a week of
+    # total silence means the engine stopped", which would have alarmed on
+    # 2026-09-04 about a store whose writer was removed ON PURPOSE by commit
+    # 49601f50 on 2026-08-28 ("a floored turn retries on the ONE loop"). The
+    # registry's whole point is to force the question "who writes this?" for every
+    # store, and I answered it carelessly for this row: I declared a cadence
+    # without checking the writer still existed. The table itself is next.
+    StoreDeclaration(
+        "retry_queue", Cadence.UNMEASURABLE, None,
+        "writer removed 2026-08-28 by commit 49601f50; retirement in progress",
     ),
     _periodic("objective_events", "created_at"),
     _periodic("objective_subgoals", "created_at"),

@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RETRYSWEEP_2026_09_03_a_sweep_that_swept_a_table_nothing_can_write:
+    map_check: "No mapped item — found by the cadence registry's own question, a day before it would have alarmed."
+    how_it_surfaced: >-
+      retry_queue showed 5.9 days idle in the cadence survey, inside the 7-day limit I had
+      declared for it. Rather than wait for the alarm I asked what the silence MEANT, which is
+      the question the registry exists to force.
+    THE_ANSWER_the_retirement_was_half_done: >-
+      Commit 49601f50, 2026-08-28: "a floored turn retries on the ONE loop — retry_queue is no
+      longer written". The writer was removed ON PURPOSE, to collapse four engines into one, on
+      his standing 2026-08-17 rule. The sweep was left scheduled at every 1m. MEASURED: 989,
+      888, 902, 934 and 946 retry_sweep exits on the five days after the writer went, every one
+      calling get_due() and receiving nothing, against a table whose newest row is still
+      2026-08-28T03:31 and whose pending count is 0. 1,440 dispatches a day, for six days.
+    what_else_that_cause_reaches: >-
+      This is the FOURTH time this tree has carried a driver firing against a store nothing
+      writes — CLAUDE.md already lists job_queue, objectives/objective_subgoals and the
+      dream_worker job. The cause is the same each time: a retirement removes the WRITER and
+      stops there, because the writer is what the change was about and everything downstream
+      still looks alive. Deleting the row without the seeder is the sibling mistake, and
+      migration 0125 already paid for it — 31 seconds between deletion and re-seed, every boot.
+    the_row_AND_the_writer: >-
+      Migration 0134 deletes the job row; the handler module, its registration in
+      orchestrator.py, its unit test and the end-to-end test of the retired path are deleted in
+      the same commit; and a tripwire asserts nothing registers or seeds it again.
+    WHAT_I_NEARLY_DELETED_and_why_measuring_stopped_me: >-
+      attempt_retry fired 13-21 times a DAY after the writer was removed, which reads as "the
+      engine is alive". Printing one line settled it: retry_id 'task-48fd7d8ec79a' — a tasks id,
+      not a retry_queue id. task_loop_runner builds a synthetic RetryQueueRow from a tasks row
+      and calls the actuator. RetryActuator IS "retries on the ONE loop" and is load-bearing; a
+      grep-led deletion would have taken 534 lines of live retry path with it. A test now pins
+      that the actuator survives this retirement.
+    I_ALSO_CORRECTED_MY_OWN_DECLARATION: >-
+      The cadence registry I shipped hours earlier declared retry_queue PERIODIC/7d with the
+      reason "a week of total silence means the engine stopped". That would have paged him on
+      2026-09-04 about a store that is correctly dead. The registry's purpose is to force "who
+      writes this?" for every store and I answered it carelessly for that row. Now declared
+      UNMEASURABLE with the commit that retired it named in the entry.
+    WHAT_REMAINS_and_it_is_a_REFACTOR_not_a_deletion: >-
+      The retry_queue TABLE (5,766 rows), RetryQueueStore (608 lines), the manual retry-intent
+      classifier (181 lines) and the triage hook that reads get_latest_pending_for_session are
+      all still present and cannot fire. They are NOT deleted here for one honest reason: the
+      LIVE actuator still calls mark_completed / reschedule / mark_attempt_failed on that store
+      with synthetic task- ids, which already log "no matching row — wrong id" (7 times on
+      09-01, 1 on 09-02). Removing the store means re-pointing live bookkeeping in the ONE
+      loop's retry path, which is a behaviour change to the mechanism that re-drives failed
+      turns — its own item, its own validate, not a tail on this one.
+    suites: "tests/db migration 0125 + affected tests/scheduler 20 passed; tests/health 47 passed; 3 new tripwires. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_a_boot_with_migration_0134
+    closing_query: >-
+      ZERO "[scheduler] retry_sweep" lines after the next boot, against 946 on 2026-09-02, and
+      no jobs row with handler_name='retry_sweep'. The re-seed check is the one that matters:
+      migration 0125 deleted a job row at 00:31:02 and the scheduler put it back at 00:31:33, so
+      the row must still be absent SEVERAL boots later, not just the first.
   RETIREMENT_2026_09_03_archival_was_bypassed_by_OWNERSHIP:
     map_check: "No mapped item — found by measuring what yesterday's reconciler actually wrote."
     how_it_surfaced: >-
@@ -4923,6 +4976,31 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_109_do_you_want_manual_try_again_rebuilt_on_the_ONE_loop:
+      premise_check: |
+        grep -rq 'get_latest_pending_for_session' src/stackowl/pipeline/steps/triage.py && echo "HOLDS hook still reads the dead store" || echo EXPIRED
+      question: >-
+        Saying "try again" used to re-drive your last floored turn: triage classified the intent
+        and dispatched the actuator against the newest pending retry_queue row. That row can no
+        longer exist — the writer went on 2026-08-28 when retries moved to the ONE loop — so the
+        hook has been dead for six days and the intent classifier (181 lines) is unreachable.
+        Do you want manual "try again" rebuilt against tasks, or is it gone?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles that it is dead and that nobody has hit it — ZERO "manual retry-intent
+        detected" lines in five days of logs. It cannot settle whether you MISS it. That is a
+        capability you either want back or do not.
+      the_measurement: >-
+        retry_queue 0 pending, newest row 2026-08-28T03:31. triage's hook reads
+        get_latest_pending_for_session, which can only return None. RetryIntentClassifier is 181
+        lines reachable from exactly one call site, behind that None.
+      panel_recommendation: >-
+        Rebuild it cheaply IF you want it: the ONE loop already holds the same fields on tasks,
+        so the hook becomes "newest floored task for this session" and the classifier is reused
+        unchanged. If you do not want it, the classifier and the hook are deleted with the rest
+        of the retry_queue retirement.
+      blocked_until_answered: >-
+        Nothing today — the capability is already dead. It decides whether 181 lines are rebuilt
+        or deleted when the retry_queue table goes.
     ESC_108_you_ship_four_chat_channels_and_use_one:
       premise_check: |
         uv run python -c "import sqlite3,os;r=dict(sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True).execute('select channel,count(*) from task_outcomes group by 1'));u=[c for c in ('slack','discord','whatsapp') if r.get(c)];print('EXPIRED' if u else 'HOLDS', u or 'still zero')"
