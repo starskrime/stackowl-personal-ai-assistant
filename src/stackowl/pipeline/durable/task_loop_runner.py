@@ -52,6 +52,7 @@ def actuator_row_for(task: Any) -> Any:
         session_key=task.session_key or "",
         goal=(task.goal or "").strip(),
         banned_capabilities=list(task.banned_capabilities),
+        owl_name=str(getattr(task, "owl_name", "") or ""),
         attempt_count=task.attempt_count,
         status="pending",
         last_error=task.last_error,

@@ -33,6 +33,13 @@ class RetryAttempt:
     #: What already failed for this goal. The whole reason a retry is better than
     #: a re-ask: the next attempt is constrained rather than blind.
     banned_capabilities: list[str] = field(default_factory=list)
+    #: THE OWL THAT RAN THE TURN, carried so the retry RESUMES rather than
+    #: re-routes. MEASURED 2026-09-03: a turn that built the `jobmarket` owl
+    #: floored after doing the work; the loop recovered it, triage re-routed the
+    #: goal through the router, and by then the owl the turn had just CREATED
+    #: matched "job market" and answered its own recovery — reporting "that agent
+    #: already exists, I'm it" to a user who had asked for it to be built.
+    owl_name: str = ""
     attempt_count: int = 0
     status: str = "pending"
     next_retry_at: str = ""

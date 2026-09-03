@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  REROUTE_2026_09_03_the_owl_the_turn_CREATED_answered_its_own_recovery:
+    map_check: "No mapped item — he reported the symptom from a live Telegram turn."
+    what_he_reported: >-
+      "i did ask him on task he did just responde done not on jarvis style and without asking."
+      He asked for an agent to be built and was told "that agent already exists — I'm it."
+    THE_WORK_WAS_DONE_and_that_is_the_first_thing_he_needs_to_know: >-
+      owls.jobmarket was CREATED at 04:29:52.445 by that very turn — role "Senior/Lead/Staff/
+      Principal+ IC engineering, zip 75025, $200K+, once per day at 2 PM", scheduled daily@14:00
+      as owl_lifecycle-jobmarket, next run 19:00Z = 2 PM CDT. Exactly his spec. Only the ANSWER
+      was wrong, which is worse than it sounds: he now believes nothing happened.
+    the_sequence_measured_from_logs_and_db: >-
+      04:28:06 routed to secretary. 04:29:52 owl_build.execute -> persist_owl: stored. 04:30:14
+      a second owl_build widened authority. 04:30:20 persist_turn: FLOORED TURN — the answer
+      never reached him. 04:30:21 "floor HELD — the loop owns this turn". 04:31:11 the loop
+      recovers it as recover-6ba15e00ac1c. 04:31:13 "[router] selected JOBMARKET". 04:31:23
+      owls_list, then "that agent already exists — I'm it". His "So?" at 04:31:25 routed to
+      jobmarket too and got the same answer again.
+    THE_ROOT_CAUSE: >-
+      RetryActuator built its synthetic state with a HARDCODED owl_name="secretary" — which is
+      exactly triage._FALLBACK_OWL. triage skips routing only when the owl was PINNED or is not
+      the fallback, so naming secretary without pinning satisfies neither and the goal is routed
+      afresh. By then the owl the turn had CREATED matched the words in the goal and captured
+      its own recovery. It had no idea the turn had built it, so it reported the world as it now
+      found it. A recovered turn was being RE-ROUTED when it should be RESUMED.
+    what_else_that_cause_reaches: >-
+      Every turn that creates or renames anything routable and then floors. The recovery is
+      routed against a world the turn itself changed, so the MORE successful the turn was, the
+      more likely its recovery goes to the wrong owl. It also reaches any recovery where the
+      conversation moved on — the router sees fresh context, not the context that was live when
+      the work started.
+    the_fix: >-
+      RetryAttempt carries owl_name; actuator_row_for passes task.owl_name (the tasks row has
+      carried it all along — the loop knew and never used it); the actuator resumes with that
+      owl and PINS it. A retry is a resumption, not a new question: the owl is a decision
+      already made, and re-deciding it lets the world the turn changed pick who explains the
+      change. A task with no owl still falls back to secretary UNPINNED so older rows and
+      scheduler lanes route normally.
+    NOT_FIXED_HERE_and_named_so_it_is_not_lost: >-
+      (1) The turn FLOORED after doing the work — the answer was lost even though owl_build
+      succeeded twice. That is a separate defect and the reason he waited 89 seconds in silence.
+      (2) The recovery ran in a NEW conversation_id (20260902_233111 vs _232805) and re-filed
+      his user message under it, so the exchange is split across three conversations.
+      (3) He asked for Jarvis-style and to be ASKED before acting; that is persona and clarify
+      behaviour, not this bug.
+    suites: "tests/pipeline 1,713 passed; 4 new, mutation-tested with a file-copy restore. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_recovered_turn
+    closing_query: >-
+      On the next "[loop] re-driving a recovered task through the retry actuator", the following
+      "[router] selected" line must NOT appear for that trace — a pinned owl skips routing
+      entirely. Compare against 04:31:13, where it selected jobmarket for a turn secretary had
+      run. If a "[router] selected" still appears for a recover-* trace, the pin is not reaching
+      triage.
   RETRYQUEUE_2026_09_03_the_last_of_the_four_engines_is_gone:
     map_check: "No mapped item — the piece I named as its own item when the sweep went."
     the_shape: >-

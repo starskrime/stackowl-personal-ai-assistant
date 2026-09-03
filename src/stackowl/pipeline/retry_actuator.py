@@ -235,7 +235,20 @@ class RetryActuator:
             conversation_id=trace_id,
             input_text=augmented_goal,
             channel=row.channel,
-            owl_name="secretary",
+            # RESUME WITH THE OWL THAT RAN IT, and PIN it. This was hardcoded
+            # to "secretary" — which is `_FALLBACK_OWL`, so triage read it as
+            # "nobody chose an owl" and routed the goal afresh. MEASURED
+            # 2026-09-03: a turn routed to secretary built the `jobmarket` owl,
+            # floored after the work was done, and its recovery was routed to
+            # jobmarket — the owl the turn had just created. It answered "that
+            # agent already exists — I'm it" to the person who had asked for it
+            # to be built, because it had no idea the turn had built it.
+            #
+            # A RETRY IS A RESUMPTION, NOT A NEW QUESTION. The owl is a decision
+            # already made, so it is pinned; re-deciding it lets the world the
+            # turn CHANGED pick who explains the change.
+            owl_name=row.owl_name or "secretary",
+            owl_pinned=bool(row.owl_name),
             pipeline_step="",
             interactive=False,
             # Same reason as the correction path above: `augmented_goal` is
