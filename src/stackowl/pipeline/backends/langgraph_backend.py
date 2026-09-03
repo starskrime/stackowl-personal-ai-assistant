@@ -29,7 +29,7 @@ from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
 from stackowl.pipeline.backends.shared import bind_turn_context, run_delivery_gate, unbind_turn_context
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
 from stackowl.pipeline.services import StepServices, get_services
-from stackowl.pipeline.state import PipelineState, StepError
+from stackowl.pipeline.state import PipelineState, StepError, user_goal
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
 from stackowl.pipeline.streaming import ResponseChunk
@@ -210,7 +210,7 @@ class LangGraphBackend(OrchestratorBackend):
         )
         floor_chunk = ResponseChunk(
             content=synthesize_floor(
-                goal=state.input_text,
+                goal=user_goal(state),
                 error=f"turn cancelled after {deadline_s:.0f}s deadline",
                 attempts=[],
                 partial="",

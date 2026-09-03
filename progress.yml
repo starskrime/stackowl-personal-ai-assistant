@@ -315,6 +315,80 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  FLOOR_GOAL_2026_09_03_the_giveup_message_quoted_OUR_prompt_back_at_him:
+    map_check: "No mapped item — found by printing the real shape of 1,426 replies that mentioned a circuit."
+    THE_FINDING: >-
+      MEASURED over every Telegram turn whose reply opens "I couldn't fully complete this:"
+      — 1,547 of them. What follows that colon was OUR OWN TEXT in 1,378 cases (89%):
+      scheduled job prompt 1,287 (83%), retry scaffolding 54 (3%), owl role prompt 37 (2%).
+      Only 169 (11%) quoted words he actually wrote. He was told "I couldn't fully complete
+      this: Today's date is 2026-09-03. This is a recurring scheduled check running right
+      now — fetch current, up-to-date information..." and "...You are the VERIFIER owl in a
+      fixed-stage incident root-cause analysis."
+    THE_CAUSE_IS_ONE_FIELD_CARRYING_TWO_MEANINGS: >-
+      Six floor call sites passed goal=state.input_text. input_text is not "what the user
+      asked" — it is "the prompt this turn ran", whoever composed it. For an interactive
+      turn those coincide; for a scheduled job, a retry replay or a machine lane they do
+      not, and nothing at the floor distinguished them. Every new prompt builder therefore
+      added a new leak.
+    THE_JUDGEMENT_ALREADY_EXISTED_ONE_LAYER_OVER: >-
+      turn_persist faced the identical question — may this text be stored as something
+      Bakir said? — and answered it structurally with input_is_synthetic or
+      is_machine_lane(session_key), after 4,480 of 5,212 staged rows turned out to be the
+      platform's own prompts. That predicate was PRIVATE to the persistence module, so the
+      floor re-derived nothing. One rule whose second copy was missing rather than wrong.
+      Promoted to state.py as is_not_a_user_utterance; turn_persist now ASKS it.
+    BOTH_SIGNALS_ARE_LOad_BEARING_measured: >-
+      The owl-role rows carry input_is_synthetic=False on an incident- lane; the scheduled
+      rows carry the flag on a lane the prefix check does not recognise. Dropping either
+      signal leaves one live population leaking — asserted, and both mutations caught it.
+    NOT_ESC_14_AND_DELIBERATELY_NOT_A_SECOND_ATTEMPT_AT_IT: >-
+      ESC-14 (the volatile turn context is CONCATENATED onto the user's message) was
+      decided by Bakir 2026-08-15 and absorbed into D04.1, with strip_turn_context kept as
+      a net until then. That fault pollutes text the user DID write. These 1,378 turns have
+      no user text to pollute — the whole input is ours — so no strip could help. His
+      decision is untouched; user_goal still applies that strip to the words that are his.
+    COVERAGE_IS_92_PERCENT_AND_THE_REMAINDER_IS_NAMED: >-
+      95% of the leaking rows carry a provider-level failure_class (CircuitOpenError 1,211,
+      ProviderError 13, AllProvidersUnavailableError 5 for the scheduled population; 37 of
+      37 for owl roles), meaning the floor came from the exception handlers now wired. The
+      residue is the providers' own empty-wrap-up path, which receives user_text with no
+      state by design — that is the layer D04.1 restructures, and adding a second mechanism
+      there is what the loop rule forbids. Named, measured, not escalated as a new question.
+    A_BRITTLE_TEST_FIXED_RATHER_THAN_SATISFIED: >-
+      test_turn_context_does_not_leak_to_the_user asserted the literal SOURCE STRING
+      "goal=strip_turn_context(state.input_text)". It went red on a change that made the
+      guarantee strictly stronger. Rewritten to assert the behaviour — a test that fails on
+      a correct refactor is reporting the code's shape, not its promise.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      9 new tests; 4 mutations each caught (authorship ignored; machine-lane signal
+      dropped; synthetic signal dropped; a 7th call site regressed to the raw prompt),
+      restore re-verified green. tests/pipeline + tests/memory 2,384 pass. Two dead imports
+      deleted (strip_turn_context in delivery_gate, is_machine_lane in turn_persist); ruff
+      clean on src/stackowl/pipeline, mypy clean on both touched modules. A tripwire
+      asserts by AST that no synthesize_floor caller passes the raw input as goal, so a
+      seventh site cannot reopen this silently. LIVE validation is PARTIAL: the provider
+      has been unreachable ~9h so no floor has been rendered since the change. Closing
+      query: after the VPN returns, the next scheduled-job failure delivered to Telegram
+      must read "I couldn't fully complete that." with no prompt text following it.
+    files:
+      - src/stackowl/pipeline/state.py
+      - src/stackowl/pipeline/turn_persist.py
+      - src/stackowl/pipeline/delivery_gate.py
+      - src/stackowl/pipeline/steps/execute.py
+      - src/stackowl/pipeline/backends/asyncio_backend.py
+      - src/stackowl/pipeline/backends/langgraph_backend.py
+      - tests/pipeline/test_the_floor_never_quotes_our_own_prompt_back.py
+      - tests/pipeline/test_turn_context_does_not_leak_to_the_user.py
+
   RECALL_FLOOR_2026_09_03_a_relevance_threshold_that_sat_inside_the_noise_band:
     map_check: "No mapped item — found by measuring the effect of my OWN change from earlier today."
     THE_FINDING: >-

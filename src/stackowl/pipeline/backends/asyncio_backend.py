@@ -22,7 +22,7 @@ from stackowl.pipeline.progress.emitter import make_progress_callback
 from stackowl.pipeline.progress.emitter import reset_turn_callback as reset_progress_callback
 from stackowl.pipeline.registry import PIPELINE_STEPS
 from stackowl.pipeline.services import StepServices
-from stackowl.pipeline.state import PipelineState, StepError
+from stackowl.pipeline.state import PipelineState, StepError, user_goal
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.steps import deliver
 from stackowl.pipeline.streaming import ResponseChunk
@@ -153,7 +153,7 @@ class AsyncioBackend(OrchestratorBackend):
                     # failure (classify_failure → "TimeoutError").
                     floor_chunk = ResponseChunk(
                         content=synthesize_floor(
-                            goal=state.input_text,
+                            goal=user_goal(state),
                             error=f"turn cancelled after {deadline_s:.0f}s deadline",
                             attempts=[],
                             partial="",

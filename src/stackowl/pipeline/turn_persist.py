@@ -30,7 +30,9 @@ from stackowl.pipeline.delivery_gate import (
 )
 from stackowl.pipeline.services import get_services, owner_scope_key
 from stackowl.pipeline.state import PipelineState
-from stackowl.sessions.models import is_machine_lane
+from stackowl.pipeline.state import (
+    is_not_a_user_utterance as state_is_not_a_user_utterance,
+)
 
 
 def _turn_floored(state: PipelineState) -> bool:
@@ -76,7 +78,10 @@ def _is_not_a_user_utterance(state: PipelineState) -> bool:
     `identity_key or session_key`, so the store cannot tell a machine lane from a
     person once an identity resolves.
     """
-    return bool(state.input_is_synthetic) or is_machine_lane(state.session_key)
+    # ONE SOURCE. Lifted to state.py on 2026-09-03 when the give-up floor turned
+    # out to need the identical judgement and, lacking it, quoted the platform's
+    # own prompts back at the user. This asks rather than repeating it.
+    return state_is_not_a_user_utterance(state)
 
 
 def _floor_reason(state: PipelineState) -> str:

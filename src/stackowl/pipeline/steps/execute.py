@@ -66,7 +66,7 @@ from stackowl.pipeline.provider_select import (
     select_tool_provider_plan,
 )
 from stackowl.pipeline.services import get_services
-from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState, StepError, ToolCall
+from stackowl.pipeline.state import TOOL_FREE_CLASSES, PipelineState, StepError, ToolCall, user_goal
 from stackowl.pipeline.step_error import format_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
@@ -3062,7 +3062,7 @@ async def _run_with_tools(
             # to the user). `attempts` now carries the tool NAMES that were tried, so
             # even this fallback says what the turn did instead of nothing at all.
             floor = synthesize_floor(
-                goal=state.input_text,
+                goal=user_goal(state),
                 error=None,
                 attempts=[tc.tool_name for tc in _breach_tool_records if tc.tool_name],
                 partial=None,
@@ -3120,7 +3120,7 @@ async def _run_with_tools(
         # honest from goal + error + the last partial response only.
         _prior = state.responses[-1].content if state.responses else ""
         floor = synthesize_floor(
-            goal=state.input_text,
+            goal=user_goal(state),
             error=str(exc),
             attempts=[],
             partial=_prior,
@@ -3156,7 +3156,7 @@ async def _run_with_tools(
         # never hand the user zero chunks. Floor a non-empty honest chunk. This is
         # the NORMAL (no-error) exit — responses-only, errors stay untouched.
         floor = synthesize_floor(
-            goal=state.input_text,
+            goal=user_goal(state),
             error="",
             attempts=[],
             partial=state.responses[-1].content if state.responses else "",

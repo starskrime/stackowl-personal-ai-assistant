@@ -38,13 +38,13 @@ from urllib.parse import urlsplit, urlunsplit
 from stackowl.infra import recovery_context, tool_outcome_ledger
 from stackowl.infra.observability import log
 from stackowl.interaction.classifier_base import resolve_cascade_tier, safe_complete
-from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD, strip_turn_context
+from stackowl.owls.base_prompt import LEAN_WINDOW_THRESHOLD
 from stackowl.owls.skill_ownership import read_all_skill_ownership
 from stackowl.pipeline.authz_compose import child_floor
 from stackowl.pipeline.delivery_decision import DeliveryDecision
 from stackowl.pipeline.persistence import is_unachieved_consequential_giveup
 from stackowl.pipeline.services import StepServices, get_services
-from stackowl.pipeline.state import PipelineState
+from stackowl.pipeline.state import PipelineState, user_goal
 from stackowl.pipeline.step_error import parse_step_error
 from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
@@ -525,10 +525,12 @@ def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk
         and state.model_window <= LEAN_WINDOW_THRESHOLD
     )
     floor_text = synthesize_floor(
-        # Strip our own scaffolding before quoting the user back at themselves:
-        # a model can copy the volatile turn context into a tool argument, and
-        # the delegated child's input_text then carries it (live 2026-08-15).
-        goal=strip_turn_context(state.input_text),
+        # Only the USER's own words may be named as the goal. `user_goal`
+        # returns None for a scheduled job, a retry replay or a machine lane —
+        # 1,378 of 1,547 live Telegram floors quoted our own prompt back at him
+        # — and still applies ESC-14's turn-context strip to the words that ARE
+        # his.
+        goal=user_goal(state),
         error=_error_for_failed_capability(state, failed_name),
         attempts=_attempts_for_state(state) or None,
         partial=None,

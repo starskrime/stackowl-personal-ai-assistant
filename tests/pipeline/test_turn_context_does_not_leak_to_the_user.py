@@ -26,6 +26,7 @@ escalated rather than done in a hotfix.
 
 from __future__ import annotations
 
+from stackowl.pipeline.state import PipelineState
 from stackowl.owls.base_prompt import strip_turn_context, volatile_turn_context
 
 _PREFIX = "Right now it is Saturday, August 15, 2026 at 04:10 PM CDT."
@@ -96,14 +97,32 @@ class TestItTracksTheRealBuilder:
 
 class TestTheSurfacesAreWired:
     def test_the_giveup_floor_strips_before_quoting_the_user(self) -> None:
-        import inspect
+        """The guarantee, asserted on BEHAVIOUR rather than on source text.
 
-        from stackowl.pipeline import delivery_gate
+        This used to assert the literal string
+        ``goal=strip_turn_context(state.input_text)`` appeared in delivery_gate.
+        That pinned one spelling of the fix rather than the fix: on 2026-09-03 the
+        strip moved inside ``user_goal`` — which also refuses to quote a prompt the
+        USER never wrote — and this went red while the guarantee it protects was
+        strictly stronger than before. A test that fails on a correct refactor is
+        reporting on the code's shape, not on its promise.
+        """
+        import datetime
 
-        source = inspect.getsource(delivery_gate)
-        assert "goal=strip_turn_context(state.input_text)" in source, (
-            "the floor message quotes state.input_text raw again"
+        from stackowl.pipeline.state import user_goal
+
+        context = volatile_turn_context(
+            datetime.datetime(2026, 8, 15, 16, 10, tzinfo=datetime.UTC),
         )
+        state = PipelineState(
+            trace_id="t", session_key="tg-1", input_text=f"{context}\n\n{USER_TEXT}",
+            channel="telegram", owl_name="secretary", pipeline_step="start",
+        )
+
+        goal = user_goal(state)
+
+        assert goal == USER_TEXT, f"our own scaffolding reached the floor's goal: {goal!r}"
+        assert "Right now it is" not in (goal or "")
 
     def test_a_delegated_child_receives_clean_input(self) -> None:
         import inspect

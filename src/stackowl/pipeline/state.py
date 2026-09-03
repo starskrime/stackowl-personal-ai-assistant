@@ -492,3 +492,55 @@ class PipelineState(BaseModel, frozen=True):
     def evolve(self, **kwargs: Any) -> PipelineState:
         """Return a new PipelineState with the given fields updated."""
         return self.model_copy(update=kwargs)
+
+
+def is_not_a_user_utterance(state: PipelineState) -> bool:
+    """True when this turn's input was authored by the PLATFORM, not the person.
+
+    Two independent signals, and both are needed — neither covers the other:
+
+    * MACHINE LANE — a prefix check on ``session_key`` (``goal-``, ``incident-``).
+      Blind to synthetic input, which arrives on ordinary lanes.
+    * SYNTHETIC INPUT — ``input_is_synthetic``, set structurally from
+      ``_prompt_depth > 0`` where a command authors the turn text. Blind to
+      machine lanes, which set no flag.
+
+    MEASURED 2026-09-03, the owl-role rows carry ``input_is_synthetic=False`` on
+    an ``incident-`` lane while the scheduled-job rows carry the flag on a lane
+    the prefix check does not recognise — so dropping either signal leaves one of
+    the two live populations leaking.
+
+    Lifted here from ``turn_persist``, where it was private, when a SECOND caller
+    needed the identical judgement: the give-up floor, which was quoting the
+    platform's own prompts back at the user as his goal. One rule with one home;
+    ``turn_persist`` now asks this rather than keeping a copy that could drift.
+    """
+    from stackowl.sessions.models import is_machine_lane
+
+    return bool(state.input_is_synthetic) or is_machine_lane(state.session_key)
+
+
+def user_goal(state: PipelineState) -> str | None:
+    """The user's OWN words for this turn, or None when there are none.
+
+    The give-up floor names the goal it could not complete. It may only name
+    something the PERSON asked for: ``input_text`` is "the prompt this turn ran",
+    which for an interactive turn is his words and for a scheduled job, a retry
+    replay or a machine lane is ours. MEASURED 2026-09-03, 1,378 of 1,547
+    Telegram floors quoted our own text back at him.
+
+    Returns None rather than a placeholder so the floor falls to
+    ``self_heal_floor_s_nogoal`` ("I couldn't fully complete that."), the
+    sentence that already exists for exactly this case.
+
+    ``strip_turn_context`` stays applied to the words that ARE his: ESC-14 (the
+    volatile clock sentence is concatenated onto the user's message) is Bakir's
+    recorded decision, absorbed into D04.1, with that strip kept as a net until
+    then. This does not touch it.
+    """
+    from stackowl.owls.base_prompt import strip_turn_context
+
+    if is_not_a_user_utterance(state):
+        return None
+    goal = strip_turn_context(state.input_text)
+    return goal if goal.strip() else None
