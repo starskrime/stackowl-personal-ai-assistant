@@ -1785,11 +1785,43 @@ class DurableTaskStore(OwnedRepository):
         ``task_outcomes``, a separate table this never touches, so pruning a
         delivered task costs no experience.
         """
-        affected = await self._db.execute_returning_rowcount(
-            f"DELETE FROM {self._table} WHERE owner_id=? AND status='completed' "  # noqa: S608
-            f"AND updated_at < datetime('now', ?)",
-            (self._owner_id, f"-{int(older_than_days)} day"),
+        # THE LEDGER GOES WITH THE TASK, in one transaction and in this order.
+        # `side_effect_ledger` is the exactly-once record for a durable task —
+        # "step K of task T already committed, here is what it returned" — so a
+        # row outlives its meaning the moment the task is gone. Nothing cascaded:
+        # `task_id` is NOT NULL but carries no FOREIGN KEY, and this prune deleted
+        # the parent and left the children.
+        #
+        # MEASURED 2026-09-03 on the live database: side_effect_ledger held 36.1 MB
+        # across 1,968 rows (10% of a 343 MB file), and 1,284 of them — 65% —
+        # referenced a task_id absent from `tasks`. Unreachable by construction: a
+        # replay needs the task that no longer exists. This is the programme's own
+        # "remove the WRITER, not just the rows" pointing the other way — the
+        # parent removed while the children live, and only appending.
+        #
+        # SCOPE IS INHERITED, NOT WIDENED. The predicate is the SAME one the task
+        # delete uses, so only tasks being deleted anyway lose their rows. 849
+        # failed tasks still hold retry budget and a retry reuses the task_id,
+        # which is precisely when the ledger must still answer; those are
+        # untouched, and a test asserts it.
+        selector = (
+            f"SELECT task_id FROM {self._table} "  # noqa: S608 — table from class
+            "WHERE owner_id=? AND status='completed' AND updated_at < datetime('now', ?)"
         )
+        window = f"-{int(older_than_days)} day"
+        async with self._db.transaction() as conn:
+            # Ledger FIRST: while the tasks it is scoped to still exist to name.
+            await conn.execute(
+                "DELETE FROM side_effect_ledger WHERE owner_id=? "
+                f"AND task_id IN ({selector})",  # noqa: S608 — selector is literal above
+                (self._owner_id, self._owner_id, window),
+            )
+            cursor = await conn.execute(
+                f"DELETE FROM {self._table} WHERE owner_id=? AND status='completed' "  # noqa: S608
+                "AND updated_at < datetime('now', ?)",
+                (self._owner_id, window),
+            )
+            affected = int(cursor.rowcount or 0)
         if affected:
             log.tasks.info(
                 "[loop] pruned delivered tasks",

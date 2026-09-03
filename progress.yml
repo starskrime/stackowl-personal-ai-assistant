@@ -315,6 +315,108 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  LEDGER_2026_09_03_the_prune_deleted_the_parent_and_left_the_children:
+    map_check: "No mapped item — found by asking what occupies a 343 MB database."
+    THE_FINDING: >-
+      side_effect_ledger holds 36.1 MB across 1,968 rows — 10% of the file, ~18 KB a row
+      against 3.4 KB for task_outcomes. tool='shell' is 34.2 of those MB across 1,076 rows,
+      largest single row 3.4 MB. Joined against the tasks they belong to: 1,284 rows (65%)
+      reference a task_id that is NOT IN tasks at all, 672 belong to failed tasks, 9 to
+      dead_letter, 3 to completed. NOT ONE belongs to a live task.
+    WHY_THE_ORPHANS_CAN_NEVER_BE_READ: >-
+      A ledger row means "step K of task T already committed, here is what it returned", and
+      it is consulted only by react_runner while that task runs. With the task gone there is
+      nothing to resume, so those 9 MB are unreachable by construction — not stale, not
+      low-value, unreachable.
+    THE_WRITER_IS_prune_completed_and_it_says_what_it_spares: >-
+      It deletes completed, delivered tasks past a one-day window — Bakir asked for it
+      explicitly — and its docstring carefully names what it does NOT touch ("the per-turn
+      learning corpus lives in task_outcomes, a separate table this never touches"). It does
+      not mention the ledger and does not delete from it. The schema cannot help either:
+      task_id is NOT NULL but carries NO FOREIGN KEY, so nothing cascades.
+    THE_CAUSE_IS_THE_PROGRAMMES_OWN_RULE_POINTING_THE_OTHER_WAY: >-
+      The recorded shape is "remove the WRITER, not just the rows" — a row deleted while its
+      writer lives is re-seeded on the next boot. Here the PARENT is deleted while the
+      children live: never re-read, never re-written, never removed, and only appending.
+      Same missing link, opposite direction, and it is the "no decay" failure this file
+      already lists as one of the six shapes that account for nearly every real defect here.
+    SCOPE_IS_INHERITED_NOT_WIDENED_and_that_is_load_bearing: >-
+      849 failed tasks still hold retry budget (attempt_count 0 against max_attempts 30), and
+      a retry reuses the SAME task_id — which is exactly when the ledger must still answer.
+      Deleting those rows would break the exactly-once guarantee this table exists to
+      provide. The cascade therefore reuses the prune's own predicate verbatim, so only tasks
+      being deleted anyway lose their rows; a mutation widening it to failed tasks is caught.
+    ORDER_AND_ATOMICITY: >-
+      One BEGIN IMMEDIATE transaction, ledger first — while the tasks it is scoped to still
+      exist to name. Ledger-first is also the benign failure order: a half-applied delete
+      removes rows for tasks that are completed, delivered and over a day old, which are
+      never replayed. Task-first half-applied would reproduce exactly today's bug.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      4 new tests reusing the existing suite's store fixture and _pending helper rather than
+      a second copy; 3 mutations each caught (drop the ledger delete; make it unscoped, which
+      would destroy every exactly-once guarantee at once; widen the scope to failed tasks),
+      restored from a FILE COPY and re-verified green. tests/pipeline/durable + tests/tenancy
+      447 pass — tenancy included deliberately, because this adds an owner-scoped DELETE on an
+      owner-governed table and that tripwire lives nowhere near the code. ruff at its 35
+      baseline. LIVE validation PARTIAL: prune_completed only acts on tasks completed AND
+      delivered over a day ago, and nothing has completed since 06:18 UTC. Closing query:
+      after the next successful turn ages out, "[loop] pruned delivered tasks" must appear
+      and side_effect_ledger must hold no row whose task_id is absent from tasks.
+  VALIDATES_CLOSED_2026_09_03_2213_on_the_first_traffic_after_the_fixes:
+    map_check: "No item — three PARTIAL validates closing on live evidence, plus a prediction of mine corrected."
+    THE_TRAFFIC: >-
+      Eleven turns between 22:00 and 22:14 UTC — scheduled goal_execution retries and one
+      RCA. All failed (the provider name is still NXDOMAIN), which is exactly the shape three
+      open acceptance checks needed.
+    FLOOR_CAUSE_CLOSED: >-
+      ProviderError turns now read "I couldn't fully complete that. MY MODEL RETURNED AN
+      ERROR ON THIS ONE, SO I COULD NOT FINISH IT. Technical detail: Provider 'NeraAiRaw'
+      error: Connection error." The plain cause sentence LEADS and the technical detail
+      follows — the composed floor and the neutral fallback now explain the same class the
+      same way, which is what the item was for. Before the fix this read "I couldn't fully
+      complete that. Technical detail: ..." with no explanation.
+    FLOOR_GOAL_RECONFIRMED_including_the_owl_role_case: >-
+      Inputs "Today's date is 2026-09-03. This is a recurring sc..." and "You are the
+      EVIDENCE-GATHERER in a fixed-stage inc..." both produced floors that quote NEITHER back.
+      The owl-role population (37 rows historically) is now confirmed live, not just the
+      scheduled-job one.
+    RECALL_FLOOR_CLOSED_and_my_prediction_corrected_a_SECOND_time: >-
+      goal_execution recalls: n_hits 16-18, top 0.6541-0.7290. The incident lane:
+      n_hits 7-8, top 0.4920-0.5648. The floor now VARIES with how well the archive covers
+      the subject, which is the behaviour change the item was for — before it, all 22
+      recalls returned exactly 18 of 18. My recorded closing query predicted machine lanes
+      would show "n_hits 0-2 with top below 0.40" and that was wrong AGAIN: the archive does
+      hold some material on the platform's own incidents, so 7-8 hits at top 0.49 is the
+      honest answer, not zero. Recorded rather than quietly restated, because I got the same
+      prediction wrong twice from the same mistake — treating the LANE as the discriminator
+      when subject-matter coverage is.
+    ABANDONED_ANALYSIS_CLOSED: >-
+      incident.diagnosis_started at 22:13:35 and incident.diagnosis_abandoned at 22:13:47
+      with {"produced_verdict": false} — the FIRST abandonment row ever written. The three
+      earlier starts today (12:41, 14:05, 16:53) carry no abandonment: they are the orphaned
+      starts the item described, which suppressed their signature for 24h despite execute()
+      deliberately withholding a verdict so the next tick would retry.
+    A_QUERY_OF_MINE_THAT_MEASURED_NOTHING: >-
+      I first queried incident.diagnosis_complete and reported "0 rows, ever" as if it were a
+      finding. That event type does not exist — the completion event is incident.diagnosed,
+      which has 18 rows. A grep returning zero proves the pattern did not match; it proves
+      nothing about the system. Caught by checking the handler's own event constants.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
   PROVIDER_2026_09_03_the_model_was_never_down_only_its_NAME_was:
     map_check: "No item — an operational measurement that re-frames every PARTIAL validate recorded today."
     THE_MEASUREMENT: >-
@@ -7205,6 +7307,33 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_122_nine_megabytes_of_ledger_rows_belong_to_tasks_that_no_longer_exist:
+      premise_check: |
+        uv run python -c "
+        import sqlite3,os
+        c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True)
+        n=c.execute('SELECT COUNT(*) FROM side_effect_ledger s LEFT JOIN tasks t ON t.task_id=s.task_id WHERE t.task_id IS NULL').fetchone()[0]
+        print('HOLDS', n, 'orphaned ledger rows') if n else print('EXPIRED')
+        " 2>/dev/null | tail -1
+      question: >-
+        1,284 side_effect_ledger rows (9 MB) reference a task_id that is not in `tasks`.
+        They are unreachable by construction — a replay needs the task, and the task is
+        gone. The leak is now closed at its source, so no NEW orphans will appear. May I
+        delete the existing ones in a one-time sweep?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles that they cannot be read: the ledger is consulted only by
+        react_runner for a running task, and these have no task. It cannot settle whether you
+        want them kept as a forensic record of what side effects the platform committed —
+        they are the only surviving trace of 1,284 shell results — and this loop stops for
+        any data deletion by rule regardless of how safe the measurement is.
+      panel_recommendation: >-
+        Delete them. They are 9 MB of a database already carrying 78 MB of trapped free
+        space (ESC-118), the audit trail of what RAN lives in task_outcomes and audit_log,
+        and a blob nothing can read is not a record. Do it in the same maintenance window as
+        the ESC-118 VACUUM so the space is actually returned rather than moved to the
+        freelist.
+      what_is_blocked: >-
+        Nothing. The source of new orphans is fixed; this is only the backlog.
     ESC_121_three_tables_have_zero_references_anywhere_in_src:
       premise_check: |
         uv run python -c "
