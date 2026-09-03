@@ -50,7 +50,7 @@ from stackowl.pipeline.streaming import ResponseChunk
 from stackowl.pipeline.supervisor import synthesize_floor
 from stackowl.providers.base import Message
 from stackowl.providers.registry import _TIER_ORDER
-from stackowl.setup.localize import localize
+from stackowl.setup.localize import explain_failure_class, localize
 from stackowl.tools.agents.results import provenance_footer
 
 # =============================================================================
@@ -535,6 +535,10 @@ def _floor_chunk(state: PipelineState, failed_name: str | None) -> ResponseChunk
         attempts=_attempts_for_state(state) or None,
         partial=None,
         failed_capability=failed_name,
+        # The same class `_neutral_fallback` explains, so the two floors in this
+        # module cannot disagree about one outage — which is the defect this
+        # came from: two renderers, one catalogue, wired to one of them.
+        failure_class=next(iter(_critical_failure_classes(state)), None),
         lang=state.language,  # F089/F098 — localize the provider-down floor
         lean=_lean,
     )
@@ -1803,49 +1807,6 @@ async def _generate_localized_apology(
     return None
 
 
-#: Prefix of the localization key carrying a plain-language cause per failure
-#: class. A class with no entry is genuinely unexplained and keeps the generic
-#: prose — see :func:`explain_failure_class`.
-_CAUSE_KEY_PREFIX = "floor_cause_"
-
-
-def explain_failure_class(failure_class: str | None, lang: str) -> str | None:
-    """A plain sentence for a failure we can actually name, else ``None``.
-
-    WHY THIS EXISTS. :func:`_neutral_fallback` already read the failure class —
-    and spent it on a debug bracket while rendering ``self_heal_floor_minimal``,
-    the last-resort "we know nothing" prose, for EVERY case. MEASURED 2026-09-03
-    across every failed turn on his Telegram channel: 3,856 of 5,739 (67%) told
-    him "the technical detail is in the logs", which he cannot read from
-    Telegram, and handed him a Python exception class in brackets. Four classes
-    are 5,384 of those — AllProvidersUnavailableError 2,115, OwlTimeoutError
-    1,800, CircuitOpenError 1,258, ProviderError 211 — and every one is an
-    infrastructure condition with a one-sentence explanation.
-
-    The cause was measured, classified, stored on the outcome row, used to
-    cluster incidents and mine lessons, and then discarded at the one moment it
-    would have helped the person waiting.
-
-    RETURNS None RATHER THAN INVENTING. A class with no catalogue entry keeps the
-    generic prose: manufacturing a cause for an unknown failure is exactly the
-    overclaim the honest floor exists to prevent, and this codebase has already
-    paid for a floor that named a capability it had not verified.
-
-    Args:
-        failure_class: The classified failure, e.g. ``"CircuitOpenError"``.
-        lang: The turn's language; the catalogue carries all four.
-
-    Returns:
-        A localized sentence, or None when the class is not one we can explain.
-        Never raises.
-    """
-    if not failure_class:
-        return None
-    key = f"{_CAUSE_KEY_PREFIX}{failure_class}"
-    prose = localize(key, lang)
-    # ``localize`` returns the KEY ITSELF when nothing is catalogued, which is
-    # how an unexplained class is detected — and why it must never be rendered.
-    return None if prose == key else prose
 
 
 def _neutral_fallback(state: PipelineState) -> str:

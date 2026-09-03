@@ -8,7 +8,11 @@ from stackowl.pipeline.persistence import (
     PERSISTENCE_DIRECTIVE,
     is_structural_giveup,
 )
-from stackowl.setup.localize import localize, localize_format
+from stackowl.setup.localize import (
+    explain_failure_class,
+    localize,
+    localize_format,
+)
 
 _ERROR_MAX_LEN = 500
 
@@ -152,6 +156,7 @@ def synthesize_floor(
     partial: str | None,
     *,
     failed_capability: str | None = None,
+    failure_class: str | None = None,
     lang: str = "en",
     lean: bool = False,
 ) -> str:
@@ -227,6 +232,16 @@ def synthesize_floor(
         if partial and partial.strip():
             detail.append(partial.strip() + " ")
         if error:
+            # SAY WHAT HAPPENED BEFORE SAYING WHAT BROKE. The class-to-prose
+            # catalogue was reached only from delivery_gate's neutral fallback,
+            # so this renderer handed him the raw exception text instead: on
+            # 2026-09-03 the same outage produced "Technical detail: Provider
+            # 'NeraAiRaw' error: Connection error." on two attempts and a plain
+            # explanation on the third, thirty seconds apart. The detail is KEPT
+            # — he is the engineer here — it just stops being the whole answer.
+            cause = explain_failure_class(failure_class, lang)
+            if cause:
+                detail.append(cause + " ")
             detail.append(localize_format("self_heal_floor_s_error", lang, error=error))
         elif attempts_list and not derived_capability:
             # Tried things, nothing reported a failure. Saying so is the honest

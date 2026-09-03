@@ -325,3 +325,56 @@ def localize_format(key: str, lang: str = "en", **slots: object) -> str:
             extra={"_fields": {"key": key, "lang": lang}},
         )
         return template
+
+
+#: Prefix of the localization key carrying a plain-language cause per failure
+#: class. A class with no entry is genuinely unexplained and keeps the generic
+#: prose — see :func:`explain_failure_class`.
+_CAUSE_KEY_PREFIX = "floor_cause_"
+
+
+def explain_failure_class(failure_class: str | None, lang: str) -> str | None:
+    """A plain sentence for a failure we can actually name, else ``None``.
+
+    WHY IT LIVES HERE. It reads the ``floor_cause_*`` entries in this file, and
+    it used to live inside ``delivery_gate`` — one of its TWO consumers. The
+    other, ``supervisor.synthesize_floor``, therefore never got it and rendered
+    the raw exception text instead: measured 2026-09-03, 1,791 replies said
+    "Technical detail: ..." and 1,529 of the top rows carried a class this
+    catalogue can name in a sentence. The module that owns the data owns the
+    accessor, so a second consumer cannot silently miss it.
+
+    WHY IT WAS BUILT. :func:`_neutral_fallback` already read the failure class —
+    and spent it on a debug bracket while rendering ``self_heal_floor_minimal``,
+    the last-resort "we know nothing" prose, for EVERY case. MEASURED 2026-09-03
+    across every failed turn on his Telegram channel: 3,856 of 5,739 (67%) told
+    him "the technical detail is in the logs", which he cannot read from
+    Telegram, and handed him a Python exception class in brackets. Four classes
+    are 5,384 of those — AllProvidersUnavailableError 2,115, OwlTimeoutError
+    1,800, CircuitOpenError 1,258, ProviderError 211 — and every one is an
+    infrastructure condition with a one-sentence explanation.
+
+    The cause was measured, classified, stored on the outcome row, used to
+    cluster incidents and mine lessons, and then discarded at the one moment it
+    would have helped the person waiting.
+
+    RETURNS None RATHER THAN INVENTING. A class with no catalogue entry keeps the
+    generic prose: manufacturing a cause for an unknown failure is exactly the
+    overclaim the honest floor exists to prevent, and this codebase has already
+    paid for a floor that named a capability it had not verified.
+
+    Args:
+        failure_class: The classified failure, e.g. ``"CircuitOpenError"``.
+        lang: The turn's language; the catalogue carries all four.
+
+    Returns:
+        A localized sentence, or None when the class is not one we can explain.
+        Never raises.
+    """
+    if not failure_class:
+        return None
+    key = f"{_CAUSE_KEY_PREFIX}{failure_class}"
+    prose = localize(key, lang)
+    # ``localize`` returns the KEY ITSELF when nothing is catalogued, which is
+    # how an unexplained class is detected — and why it must never be rendered.
+    return None if prose == key else prose

@@ -315,6 +315,89 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  FLOOR_CAUSE_2026_09_03_two_floors_explained_one_outage_two_different_ways:
+    map_check: "No mapped item — found by reading the first live turns after 9h of outage."
+    THE_FINDING: >-
+      Three attempts at the same scheduled job, 19:00:25 to 19:00:55, all defeated by the
+      same unreachable provider. Attempts 1 and 2: "I couldn't fully complete that.
+      Technical detail: Provider 'NeraAiRaw' error: Connection error." Attempt 3: "I could
+      not reach my model just now, so I could not work on this. It usually comes back on its
+      own — ask me again in a moment." Same outage, same minute, same job, two qualities of
+      answer thirty seconds apart.
+    THE_CAUSE_IS_TWO_RENDERERS_AND_ONE_CATALOGUE_WIRED_TO_ONE: >-
+      delivery_gate._neutral_fallback consults explain_failure_class;
+      supervisor.synthesize_floor composes its own sentences and renders the raw exception
+      text. The plain-language catalogue was added THIS MORNING to the path where the
+      symptom had been reported, without asking which other paths render a failure to him —
+      fixing the example instead of the architecture, in my own change, on the same day.
+    THE_SCALE_measured: >-
+      1,791 replies render "Technical detail:". Of the top rows, 1,529 of 1,782 (86%) carry
+      a class the catalogue can already name in a sentence: CircuitOpenError/telegram 1,259,
+      ProviderError/rca 133, CircuitOpenError/rca 46, and 51 more across telegram. So 86% of
+      these were failures the platform could explain, delivered as a stack-trace fragment.
+    THE_STRUCTURAL_FIX_one_owner: >-
+      explain_failure_class moved to setup.localize, beside the floor_cause_* strings it
+      reads. A lookup living inside ONE of its two consumers is exactly how the other
+      consumer came to not have it — the same lesson as the event-name constants earlier
+      today: the module that owns the data owns the accessor. Both renderers now resolve to
+      the SAME function object, asserted by identity so an equal-looking copy cannot drift.
+    NOTHING_IS_TAKEN_AWAY: >-
+      The explanation LEADS and the raw technical detail still follows. He is the engineer
+      on this system and "Provider 'NeraAiRaw' error" is genuinely useful; the change stops
+      it being the whole answer. A mutation that made the prose REPLACE the detail is caught.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      15 new tests; 4 mutations each caught (composed floor ignores the class; explanation
+      replaces rather than leads the detail; an unknown class gets an invented explanation;
+      a second COPY of the accessor instead of one owner). tests/pipeline + tests/setup
+      1,885 pass; ruff back at the 35 baseline, mypy clean on both touched modules.
+      PROCESS FAILURE OF MINE, recorded because the skill warns about it in as many words: I
+      restored the fourth mutation with `git checkout -- delivery_gate.py`, which reverted
+      this item's real edits to that file along with the experiment. Detected by grepping
+      for the edits rather than trusting the restore, re-applied, re-verified green. The
+      rule is a FILE COPY, and I broke it.
+      LIVE validation PARTIAL: the closing evidence needs a floor rendered by
+      synthesize_floor with a known class after this commit. Closing query — the next
+      provider failure must read the plain cause sentence BEFORE "Technical detail:".
+  CLOSED_TONIGHT_two_validates_that_had_been_open_since_the_outage:
+    RECALL_FLOOR_validate: >-
+      The 19:00 goal_execution fired and produced 9 recall lines, the first live traffic in
+      9 hours. The instrument works exactly as built: every line carries top_similarity and
+      floor=0.35 at INFO. MY CLOSING-QUERY PREDICTION WAS WRONG AND IS CORRECTED HERE. I
+      predicted machine lanes would show n_hits 0-2 with top below 0.40; they show n_hits=18
+      with top 0.6232-0.6621. They are RIGHT to: the lane is the jobmarket scout and the
+      archive is full of his job-market conversations, so the archive genuinely can answer
+      it. My offline probes were about database locks and RCA — subjects the archive holds
+      nothing on. "Machine lane" was the wrong discriminator; subject-matter coverage is the
+      right one, which is what the floor actually keys on. Two of three checks close: the
+      INFO instrument fires with the score, and a query the archive CAN answer still returns
+      a full set (so his own recall is not cut). STILL OPEN: a query the archive cannot
+      answer returning ~0, which needs an incident/RCA turn.
+    FLOOR_GOAL_validate_CLOSED: >-
+      Nine turns since that fix went live. Input "Today's date is 2026-09-03. This is a
+      recurring scheduled check running right now..." now produces "I couldn't fully
+      complete that. Technical detail: ..." — the no-goal sentence, with the prompt NO
+      LONGER quoted back. Before the fix this read "I couldn't fully complete this: Today's
+      date is 2026-09-03...". Closed on live evidence, not on tests.
+    FAILURE_CLASS_PROSE_also_confirmed_live: >-
+      "I could not reach my model just now, so I could not work on this. It usually comes
+      back on its own — ask me again in a moment. [AllProvidersUnavailableError]" — the
+      morning's explain_failure_class item, working in production. It is that message
+      standing beside the raw one that exposed today's item.
+    files:
+      - src/stackowl/setup/localize.py
+      - src/stackowl/pipeline/supervisor.py
+      - src/stackowl/pipeline/delivery_gate.py
+      - src/stackowl/pipeline/steps/execute.py
+      - tests/pipeline/test_both_floors_explain_a_failure_the_same_way.py
+
   EVENT_CONTRACT_2026_09_03_the_wiring_audit_held_a_hand_maintained_half_edge:
     map_check: "No mapped item — found by asking what the boot log's '0 dangling events' is MADE of."
     THE_FINDING: >-

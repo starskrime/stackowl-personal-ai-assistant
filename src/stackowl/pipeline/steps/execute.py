@@ -3124,6 +3124,11 @@ async def _run_with_tools(
             error=str(exc),
             attempts=[],
             partial=_prior,
+            # The exception is in hand here, so the floor can name the CAUSE
+            # rather than only quoting the message. This is the site behind the
+            # "Technical detail: Provider 'NeraAiRaw' error: Connection error."
+            # replies measured on 2026-09-03.
+            failure_class=type(exc).__name__,
         )
         floor_chunk = ResponseChunk(
             content=floor,
