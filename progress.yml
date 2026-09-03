@@ -315,6 +315,77 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  FLOOR_2026_09_03_the_honest_floor_was_handing_him_punctuation:
+    map_check: "No mapped item — evidence-led, found while measuring the task table."
+    WHAT_HE_ACTUALLY_RECEIVED: >-
+      "I couldn't fully complete this: how many west world sessason exists ? it is a series.
+      The capability that failed: . What I tried: .  Technical detail: " — three empty slots.
+      He asked a question and was told, at length, nothing.
+    THE_ROOT_CAUSE_IS_COMBINATORIAL: >-
+      synthesize_floor chose ONE of three PRE-BAKED whole-message templates. But the data has
+      2**3 = 8 shapes (capability present? attempts present? error present?) and only three
+      had a template, so the other five fell through to the five-slot one, which renders every
+      sentence whether or not its slot has anything in it. MEASURED by running all eight
+      through the real function: 001, 011, 100, 101 and 110 each rendered a blank. The
+      2026-08-15 repairs ADDED two templates — that is what produced this; an eighth template
+      would not have fixed the ninth case. The fix is to stop choosing a shape: the message is
+      COMPOSED from the sentences whose data is present, so there is no combination to miss.
+    THE_MEASUREMENT: >-
+      1,644 of the 1,794 floor messages ever recorded contain an empty slot. Restricting to
+      AFTER the 2026-08-15 repairs, 81 of 133 (61%) still render at least one blank, the most
+      recent on 2026-09-01.
+    A_SECOND_INSTANCE_OF_THE_SAME_SHAPE_THE_PANEL_FOUND: >-
+      The graceful "nothing survived" message was an EARLY RETURN, which is the very shape
+      being fixed — a branch that hands back a finished message skips whatever the later
+      stages would have added. It had already caused an unnoticed defect: the lean-window
+      suffix is appended AFTER that return, so a graceful floor on a small model never carried
+      the note explaining why the turn struggled, and no test noticed because the only lean
+      test asserts the suffix is ABSENT. Graceful is now a sentence chosen by the same
+      emit-if-present rule, with ONE exit path carrying the lean suffix and the never-empty
+      check. This is why the panel is worth running: I would have shipped the narrow fix.
+    TWO_DEFECTS_MY_OWN_FIX_INTRODUCED_OR_MISSED: >-
+      (1) delivery_gate passes strip_turn_context(input_text), which CAN strip to "" — and my
+      goal-bearing lead then rendered "I couldn't fully complete this: .", a blank slot
+      introduced by the fix meant to remove them. A goal-less lead sentence now covers it.
+      (2) My first test set always supplied a goal and never exercised lean, so it passed
+      while both were live. The tripwire is now the full cross-product: goal x capability x
+      attempts x error x partial x 4 languages x lean = 512 renders.
+    RETIRED_MEANS_DELETED: >-
+      self_heal_floor and self_heal_floor_unattributed are unreferenced in src/ once the
+      composition lands, so all EIGHT catalog entries are deleted in this change, and the
+      three tests that named them retargeted onto the per-sentence keys — which is strictly
+      better coverage, because parametrising over sentences is what catches ONE untranslated
+      clause. Two copies of one sentence had already drifted: French said "terminer ceci" in
+      one template and "terminer complètement ceci" in the other.
+    THE_SILENT_FAILURE_THIS_OPENED_AND_HOW_IT_IS_GUARDED: >-
+      localize falls back to English and then, if a key is missing everywhere, RETURNS THE KEY
+      ITSELF. So a typo'd or untranslated sentence key would print the literal string
+      "self_heal_floor_s_capability" into a user's message, non-empty, past every guard. Two
+      tripwires cover it: every sentence key must exist in all four languages, and no rendered
+      floor may contain the substring "self_heal_floor" or a raw brace. A third asserts no
+      non-English floor contains an English clause.
+    PRE_EXISTING_RED_FIXED_IN_SCOPE: >-
+      tests/journeys/test_memory_fix_guards.py was red before this item and unrelated to it.
+      TWO stale doubles, both CLAUDE.md shape #2. MemoryComponents lost entity_extractor,
+      kuzu_sync_handler and dream_worker to an earlier retirement that did not update this
+      call (eleven fields to eight); and _fake_learned_load still had the two-argument
+      signature load_all had before it gained its db parameter. The first was found by the
+      test's own design — it constructs the REAL type precisely so a field change fails there,
+      naming it — so that guard has now paid for itself once.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      No floor rendered after this commit may contain an empty slot. Query task_outcomes for
+      response_text LIKE '%: .%' or '%What I tried: .%' with captured_at after the restart —
+      the pre-fix rate was 61% of floors, so a single post-restart floor is enough to falsify
+      it. Cross-check that "supervisor.synthesize_floor: composed" appears (DEBUG, so only in
+      a debug run) and that no delivered message contains the substring "self_heal_floor".
   RETRYEVIDENCE_2026_09_03_the_retry_channel_read_a_snapshot_built_for_a_different_question:
     map_check: "No mapped item — evidence-led, from the ceiling item's own closing thread."
     THE_SYMPTOM: >-

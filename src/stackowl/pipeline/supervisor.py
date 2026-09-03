@@ -193,43 +193,68 @@ def synthesize_floor(
         derived_capability = failed_capability
         if derived_capability is None:
             derived_capability = attempts_list[0] if attempts_list else ""
-        # No real capability data AND no technical error (e.g. a bare time/step
-        # backstop timeout, where the caller deliberately passes error=None) → a
-        # warm, honest, slot-free message instead of the blank capability template.
-        # A genuine failure WITH an error still renders the error-bearing floor so
-        # an honest technical detail (e.g. "provider down") is never swallowed.
-        if not derived_capability and not attempts_list and not partial and not error:
-            graceful = localize("self_heal_floor_graceful", lang)
-            if graceful:
-                log.engine.debug(
-                    "supervisor.synthesize_floor: graceful (no capability data)",
-                    extra={"_fields": {"lang": lang}},
-                )
-                return graceful
-        # No capability could be attributed, but the turn DID try things. Render
-        # the variant without the capability and technical-detail sentences
-        # rather than leaving two blanks in the message (live 2026-08-15).
-        template_key = "self_heal_floor"
-        if (
-            not derived_capability
-            and not error
-            and attempts_list
-            and localize("self_heal_floor_unattributed", lang)
-        ):
-            template_key = "self_heal_floor_unattributed"
-            log.engine.debug(
-                "supervisor.synthesize_floor: unattributed (no failing step)",
-                extra={"_fields": {"lang": lang, "n_attempts": len(attempts_list)}},
+        # COMPOSED PER SENTENCE, NOT CHOSEN AS A SHAPE. The floor used to pick one
+        # of three whole-message templates, but (capability?, attempts?, error?)
+        # has EIGHT shapes and only three had a template — so the other five fell
+        # through to the five-slot one and rendered its missing sentences as bare
+        # punctuation. What Bakir received: "The capability that failed: . What I
+        # tried: .  Technical detail: ". MEASURED 2026-09-03 by running all eight
+        # through this function: 001, 011, 100, 101 and 110 were all broken, and
+        # 81 of the 133 floors sent since the 2026-08-15 repairs still carried a
+        # blank. Those repairs ADDED two templates; the eighth would not have
+        # fixed the ninth case. Emitting only the sentences that have data leaves
+        # no combination to miss.
+        # AND THERE IS EXACTLY ONE EXIT. The graceful "nothing survived" message
+        # used to be an EARLY RETURN, which is the very shape this fix exists to
+        # remove — a branch that hands back a finished message skips whatever the
+        # later stages would have added. It had already caused a second, unnoticed
+        # defect: the lean-window suffix is appended AFTER that return, so a
+        # graceful floor on a small model never carried it, and no test noticed
+        # because the only lean test asserts the suffix is ABSENT. Graceful is now
+        # a sentence chosen by the same emit-if-present rule, and the lean suffix
+        # and the never-empty check both live on the single path below.
+        detail: list[str] = []
+        if derived_capability:
+            detail.append(localize_format(
+                "self_heal_floor_s_capability", lang,
+                failed_capability=derived_capability,
+            ))
+        if attempts_list:
+            detail.append(localize_format(
+                "self_heal_floor_s_attempts", lang,
+                attempts=", ".join(attempts_list),
+            ))
+        if partial and partial.strip():
+            detail.append(partial.strip() + " ")
+        if error:
+            detail.append(localize_format("self_heal_floor_s_error", lang, error=error))
+        elif attempts_list and not derived_capability:
+            # Tried things, nothing reported a failure. Saying so is the honest
+            # answer; naming attempts[0] would accuse a tool that may have worked.
+            detail.append(localize("self_heal_floor_s_no_attribution", lang))
+
+        if detail:
+            # The lead sentence carries the goal, or stands alone when the goal did
+            # not survive strip_turn_context.
+            lead = (
+                localize_format("self_heal_floor_s_goal", lang, goal=goal)
+                if goal and goal.strip()
+                else localize("self_heal_floor_s_nogoal", lang)
             )
-        result = localize_format(
-            template_key,
-            lang,
-            goal=goal or "",
-            failed_capability=derived_capability or "",
-            attempts=", ".join(attempts_list) if attempts_list else "",
-            partial=partial or "",
-            error=error or "",
+            pieces = [lead, *detail]
+        else:
+            # Nothing survived at all — the warm, slot-free message.
+            pieces = [localize("self_heal_floor_graceful", lang)]
+        log.engine.debug(
+            "supervisor.synthesize_floor: composed",
+            extra={"_fields": {
+                "lang": lang, "sentences": len(pieces), "graceful": not detail,
+                "has_goal": bool(goal and goal.strip()),
+                "has_capability": bool(derived_capability),
+                "n_attempts": len(attempts_list), "has_error": bool(error),
+            }},
         )
+        result = "".join(pieces).strip()
         if not result:
             raise ValueError("empty floor result")
         # Lean-window capability-honest suffix: appended only when lean=True so

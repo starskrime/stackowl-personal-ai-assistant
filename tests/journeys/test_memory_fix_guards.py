@@ -594,6 +594,13 @@ async def test_guard_memory_command_registered_via_orchestrator(
     # Constructing the real type is the fix for the CLASS, not the field: a new
     # required field now fails HERE, immediately, with a TypeError that names it,
     # instead of surfacing as a stale-double AttributeError somewhere downstream.
+    #
+    # AND IT DID EXACTLY THAT, on 2026-09-03: entity_extractor, kuzu_sync_handler
+    # and dream_worker were REMOVED from MemoryComponents by a later retirement that
+    # did not update this call. The failure was a TypeError naming entity_extractor
+    # HERE, not six frames away. The real field list is now EIGHT, not eleven.
+    # Constructing the real type is what made the retirement's leftover visible, so
+    # this guard has now paid for itself once.
     # SimpleNamespace() stands in for the collaborators this test never touches —
     # it raises _SentinelStop immediately after registration.
     memory_components = MemoryComponents(
@@ -601,9 +608,6 @@ async def test_guard_memory_command_registered_via_orchestrator(
         preference_store=SimpleNamespace(),  # type: ignore[arg-type]
         embedding_registry=None,  # type: ignore[arg-type]
         kuzu_adapter=SimpleNamespace(),  # type: ignore[arg-type]
-        entity_extractor=SimpleNamespace(),  # type: ignore[arg-type]
-        kuzu_sync_handler=SimpleNamespace(),  # type: ignore[arg-type]
-        dream_worker=SimpleNamespace(),  # type: ignore[arg-type]
         rollover_summary_handler=SimpleNamespace(),  # type: ignore[arg-type]
         lessons_index=SimpleNamespace(),  # type: ignore[arg-type]
         memory_providers=None,  # type: ignore[arg-type]
@@ -654,7 +658,17 @@ async def test_guard_memory_command_registered_via_orchestrator(
         raise _SentinelStop  # reached only AFTER real registration ran
         return result  # pragma: no cover
 
-    async def _fake_learned_load(_self: object, _reg: object) -> int:
+    async def _fake_learned_load(
+        _self: object, _reg: object, _db: object | None = None,
+    ) -> int:
+        """Mirrors LearnedToolLoader.load_all(self, registry, db=None).
+
+        The db parameter is not optional decoration: the loader gained it so it
+        could say which learned tools have never been invoked, and this double was
+        left at the old two-argument shape. It then failed with "takes 2 positional
+        arguments but 3 were given" — the same stale-double class as the
+        MemoryComponents fields above, found in the same run.
+        """
         return 0
 
     def _fake_skill_register(*_a: object, **_k: object) -> None:

@@ -36,34 +36,6 @@ _STRINGS: dict[tuple[str, str], str] = {
         "Run: stackowl serve --provider mock"
     ),
     # Self-heal turn supervisor floor — 5 slots: {goal} {failed_capability} {attempts} {partial} {error}
-    ("self_heal_floor", "en"): (
-        "I couldn't fully complete this: {goal}. "
-        "The capability that failed: {failed_capability}. "
-        "What I tried: {attempts}. "
-        "{partial} "
-        "Technical detail: {error}"
-    ),
-    ("self_heal_floor", "de"): (
-        "Ich konnte dies nicht vollständig erledigen: {goal}. "
-        "Die fehlgeschlagene Fähigkeit: {failed_capability}. "
-        "Was ich versucht habe: {attempts}. "
-        "{partial} "
-        "Technisches Detail: {error}"
-    ),
-    ("self_heal_floor", "fr"): (
-        "Je n'ai pas pu terminer complètement ceci : {goal}. "
-        "La capacité qui a échoué : {failed_capability}. "
-        "Ce que j'ai essayé : {attempts}. "
-        "{partial} "
-        "Détail technique : {error}"
-    ),
-    ("self_heal_floor", "es"): (
-        "No pude completar esto del todo: {goal}. "
-        "La capacidad que falló: {failed_capability}. "
-        "Lo que intenté: {attempts}. "
-        "{partial} "
-        "Detalle técnico: {error}"
-    ),
     # Self-heal substitution note (W3.T14) — prepended to a substituted observation
     # so the model knows an ALTERNATIVE capability produced this result. 2 slots:
     # {failed} (the tool that failed) {sibling} (the in-bounds non-consequential
@@ -160,30 +132,58 @@ _STRINGS: dict[tuple[str, str], str] = {
     # claim a capability failed when it may have succeeded, so the capability and
     # technical-detail sentences are omitted rather than rendered blank (live
     # 2026-08-15: "The capability that failed: . ... Technical detail: ").
-    ("self_heal_floor_unattributed", "en"): (
-        "I couldn't fully complete this: {goal}. "
-        "What I tried: {attempts}. "
-        "{partial}"
+    # ---------------------------------------------------------------- #
+    # PER-SENTENCE floor keys. The floor used to pick one of three whole-message
+    # templates, but the data has 2**3 = 8 shapes (capability? attempts? error?)
+    # and only 3 had a template — so the other five fell through to the five-slot
+    # one and rendered its missing sentences as bare punctuation. MEASURED
+    # 2026-09-03: 81 of the 133 floors sent since the 2026-08-15 repairs still
+    # carried a blank slot. Adding an eighth template is what produced that; these
+    # keys let the message be COMPOSED from the sentences that have data, so there
+    # is no combination left to miss.
+    #
+    # Each ends with its own trailing space so they concatenate directly. The
+    # goal sentence is taken from ``self_heal_floor`` rather than
+    # ``self_heal_floor_unattributed`` — the two had already drifted in French
+    # ("terminer ceci" vs "terminer complètement ceci"), which is what two copies
+    # of one sentence always does.
+    ("self_heal_floor_s_goal", "en"): "I couldn't fully complete this: {goal}. ",
+    ("self_heal_floor_s_goal", "de"): "Ich konnte dies nicht vollständig erledigen: {goal}. ",
+    ("self_heal_floor_s_goal", "fr"): "Je n'ai pas pu terminer complètement ceci : {goal}. ",
+    ("self_heal_floor_s_goal", "es"): "No pude completar esto del todo: {goal}. ",
+    # The lead sentence when the goal did not survive. delivery_gate passes
+    # strip_turn_context(state.input_text), which CAN strip to "" — and the
+    # goal-bearing sentence would then render "I couldn't fully complete this: ."
+    ("self_heal_floor_s_nogoal", "en"): "I couldn't fully complete that. ",
+    ("self_heal_floor_s_nogoal", "de"): "Ich konnte das nicht vollständig erledigen. ",
+    ("self_heal_floor_s_nogoal", "fr"): "Je n'ai pas pu terminer complètement cela. ",
+    ("self_heal_floor_s_nogoal", "es"): "No pude completar eso del todo. ",
+    ("self_heal_floor_s_capability", "en"): "The capability that failed: {failed_capability}. ",
+    ("self_heal_floor_s_capability", "de"): "Die fehlgeschlagene Fähigkeit: {failed_capability}. ",
+    ("self_heal_floor_s_capability", "fr"): "La capacité qui a échoué : {failed_capability}. ",
+    ("self_heal_floor_s_capability", "es"): "La capacidad que falló: {failed_capability}. ",
+    ("self_heal_floor_s_attempts", "en"): "What I tried: {attempts}. ",
+    ("self_heal_floor_s_attempts", "de"): "Was ich versucht habe: {attempts}. ",
+    ("self_heal_floor_s_attempts", "fr"): "Ce que j'ai essayé : {attempts}. ",
+    ("self_heal_floor_s_attempts", "es"): "Lo que intenté: {attempts}. ",
+    ("self_heal_floor_s_error", "en"): "Technical detail: {error}",
+    ("self_heal_floor_s_error", "de"): "Technisches Detail: {error}",
+    ("self_heal_floor_s_error", "fr"): "Détail technique : {error}",
+    ("self_heal_floor_s_error", "es"): "Detalle técnico : {error}",
+    # The closer for a turn that tried things but could attribute no failure.
+    # Naming attempts[0] would accuse a capability that may have SUCCEEDED.
+    ("self_heal_floor_s_no_attribution", "en"): (
         "No single step reported a failure, so I can't say which one went wrong."
     ),
-    ("self_heal_floor_unattributed", "de"): (
-        "Ich konnte dies nicht vollständig erledigen: {goal}. "
-        "Was ich versucht habe: {attempts}. "
-        "{partial}"
+    ("self_heal_floor_s_no_attribution", "de"): (
         "Kein einzelner Schritt meldete einen Fehler, daher kann ich nicht sagen, "
         "welcher schiefging."
     ),
-    ("self_heal_floor_unattributed", "fr"): (
-        "Je n'ai pas pu terminer ceci : {goal}. "
-        "Ce que j'ai essayé : {attempts}. "
-        "{partial}"
+    ("self_heal_floor_s_no_attribution", "fr"): (
         "Aucune étape n'a signalé d'échec, je ne peux donc pas dire laquelle a "
         "posé problème."
     ),
-    ("self_heal_floor_unattributed", "es"): (
-        "No pude completar esto del todo: {goal}. "
-        "Lo que intenté: {attempts}. "
-        "{partial}"
+    ("self_heal_floor_s_no_attribution", "es"): (
         "Ningún paso informó de un fallo, así que no puedo decir cuál salió mal."
     ),
     ("self_heal_floor_graceful", "en"): (

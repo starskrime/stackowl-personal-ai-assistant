@@ -95,7 +95,20 @@ def test_floor_default_is_english_byte_identical() -> None:
 
 
 @pytest.mark.parametrize("lang", ["fr", "es"])
-@pytest.mark.parametrize("key", ["self_heal_floor", "self_heal_floor_minimal"])
+@pytest.mark.parametrize("key", [
+    # Every sentence the composed floor can emit. The old whole-message
+    # ``self_heal_floor`` was deleted on 2026-09-03; parametrising over the
+    # sentences is what actually catches ONE untranslated clause, which
+    # ``localize`` would otherwise silently serve in English inside a
+    # non-English message.
+    "self_heal_floor_s_goal",
+    "self_heal_floor_s_nogoal",
+    "self_heal_floor_s_capability",
+    "self_heal_floor_s_attempts",
+    "self_heal_floor_s_error",
+    "self_heal_floor_s_no_attribution",
+    "self_heal_floor_minimal",
+])
 def test_floor_catalog_has_fr_es(key: str, lang: str) -> None:
     text = localize(key, lang)
     # localize falls back to en if missing — assert we got a DISTINCT non-en string.
