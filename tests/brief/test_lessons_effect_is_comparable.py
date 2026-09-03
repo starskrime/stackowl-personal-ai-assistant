@@ -58,7 +58,13 @@ def test_the_success_query_is_not_filtered_on_quality_score() -> None:
     """The whole point: it must count ALL arm-carrying turns, not just scored
     ones. Filtering on quality_score would reproduce the confound exactly."""
     src = _source()
-    start = src.index("lessons_success")
+    # Anchored on the f-string that EMITS the line, not on the first textual
+    # occurrence of "lessons_success". A docstring above the code quoting a real
+    # brief line (added 2026-09-03, showing why the delta needed a significance
+    # verdict) made `index` find the prose instead of the code and this raised
+    # ValueError — the test was anchored on where the token first APPEARS rather
+    # than on where it is BUILT.
+    start = src.index('f"lessons_success[{lane}] "')
     window = src[max(0, start - 2500):start]
     seg = window[window.rindex("SELECT lessons_arm"):]
     assert "quality_score IS NOT NULL" not in seg, (

@@ -15,6 +15,7 @@ Sections (in default render order):
 from __future__ import annotations
 
 import json
+import math
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -71,6 +72,66 @@ class BriefSectionAssembler(Protocol):
     key: str
 
     async def assemble(self, ctx: BriefContext) -> BriefSection: ...
+
+
+#: Below this many standard errors, a difference is sampling wobble and must not
+#: be printed as if it were a result.
+#:
+#: TWO SIGMA, the conventional bar, stated rather than tuned: MEASURED 2026-09-03
+#: on the live arms, telegram sits at 2.1 sigma (real) while rca is at -1.0 and
+#: the aggregate at -0.5 (noise). Any threshold between roughly 1.1 and 2.1
+#: separates them identically here, so taking the conventional one keeps this from
+#: being fitted to today's numbers.
+_AB_SIGMA_FOR_REAL = 2.0
+
+
+def ab_delta_phrase(i_ok: int, i_n: int, h_ok: int, h_n: int) -> str:
+    """The A/B difference with a verdict on whether it can support a conclusion.
+
+    WHY THIS EXISTS. Today's brief told him::
+
+        lessons_success[machine] injected:39.8%(n=7145) held_out:42.4%(n=1463)
+
+    which reads as "injecting lessons makes machine turns worse". It does not:
+    that gap is -1.0 standard errors. Meanwhile the interactive line beside it,
+    printed in the same shape and with the same authority, is +2.1 sigma and IS a
+    finding — lessons genuinely help his own conversations.
+
+    THE HAZARD WAS NAMED ONE GUARD SHORT. The code already guarded the DEGENERATE
+    case — an arm with no rows, "one side is not a comparison, and printing it
+    invites a conclusion from noise" — and nothing guarded the general one, where
+    both arms are large and the difference is smaller than its own sampling
+    error. This is the programme's denominator rule a level up: publishing the
+    numerator and the denominator is not enough if the reader cannot separate
+    signal from sampling.
+
+    A two-proportion z on the pooled rate: no new dependency, four lines of
+    arithmetic rather than a library.
+
+    Args:
+        i_ok: Successes in the injected arm.
+        i_n: Turns in the injected arm.
+        h_ok: Successes in the held-out arm.
+        h_n: Turns in the held-out arm.
+
+    Returns:
+        e.g. ``"+5.6pp (2.1 sigma)"`` or ``"-2.6pp (within noise)"``. Empty when
+        either arm is empty — one side is not a comparison. Never raises.
+    """
+    if i_n <= 0 or h_n <= 0:
+        return ""
+    p1, p2 = i_ok / i_n, h_ok / h_n
+    pooled = (i_ok + h_ok) / (i_n + h_n)
+    var = pooled * (1.0 - pooled) * (1.0 / i_n + 1.0 / h_n)
+    delta_pp = (p1 - p2) * 100.0
+    if var <= 0.0:
+        # Both arms all-success or all-failure: no variance to test against, so
+        # there is nothing to distinguish a difference from.
+        return f"{delta_pp:+.1f}pp (within noise)"
+    sigma = (p1 - p2) / math.sqrt(var)
+    if abs(sigma) >= _AB_SIGMA_FOR_REAL:
+        return f"{delta_pp:+.1f}pp ({abs(sigma):.1f} sigma)"
+    return f"{delta_pp:+.1f}pp (within noise)"
 
 
 def _resolve_zone(settings: Settings) -> ZoneInfo:
@@ -350,10 +411,17 @@ class AutonomicHealthAssembler:
                 i_n, i_ok = succ["injected"]
                 h_n, h_ok = succ["held_out"]
                 if i_n and h_n:
+                    # THE VERDICT, not just the two rates. Printed bare, a
+                    # -2.6pp gap at 1 sigma reads exactly like the +10pp one
+                    # beside it that is real — and he would have to recompute
+                    # the standard error by hand to know which to act on, which
+                    # is the work this brief exists to have already done.
+                    verdict = ab_delta_phrase(i_ok, i_n, h_ok, h_n)
                     items.append(
                         f"lessons_success[{lane}] "
                         f"injected:{100 * i_ok / i_n:.1f}%(n={i_n}) "
                         f"held_out:{100 * h_ok / h_n:.1f}%(n={h_n})"
+                        + (f" -> {verdict}" if verdict else "")
                     )
             scored = by_lane.get(lane, {})
             # Only once BOTH arms have scored turns: one side is not a

@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ABNOISE_2026_09_03_the_brief_reported_a_delta_without_saying_if_it_meant_anything:
+    map_check: "No mapped item — evidence-led, from reading today's delivered brief."
+    WHAT_TODAYS_BRIEF_TOLD_HIM: >-
+      lessons_success[interactive] injected:79.7%(n=836) held_out:69.2%(n=133) and
+      lessons_success[machine] injected:39.8%(n=7145) held_out:42.4%(n=1463). Read plainly the
+      second says injecting lessons makes machine turns WORSE. It does not.
+    THE_MEASUREMENT: >-
+      Two-proportion standard error on the same live rows: telegram +5.6pp se 2.66pp = 2.1
+      sigma (distinguishable), rca -1.6pp se 1.59pp = -1.0 sigma (noise), aggregate -0.7pp se
+      1.36pp = -0.5 sigma (noise). The one real effect — lessons genuinely help his own
+      conversations — was printed in the same shape and with the same authority as two that are
+      wobble. The arms are also unbalanced by channel (held_out 77% rca vs injected 62%), so the
+      aggregate hides a direction flip: Simpson's paradox in a line he is meant to act on.
+    THE_CAUSE_WAS_NAMED_ONE_GUARD_SHORT: >-
+      The code comment above the arm check already reads "one side is not a comparison, and
+      printing it invites a conclusion from noise" — and guards only the DEGENERATE case, an arm
+      with no rows. Nothing guarded the general one, where both arms are large and the
+      difference is smaller than its own sampling error. The quality line beside it carries an
+      explicit caveat, so the author knew caveats mattered; the success line carried none. This
+      is the programme's denominator rule one level up: publishing the numerator and the
+      denominator is not enough if the reader cannot separate signal from sampling.
+    THE_FIX: >-
+      ab_delta_phrase() appends a verdict — "+10.5pp (2.7 sigma)" or "-2.6pp (within noise)" —
+      computed as a two-proportion z on the pooled rate, no new dependency. The magnitude is
+      always shown; only the confidence is added. Threshold is the conventional 2 sigma, stated
+      rather than tuned: any value between roughly 1.1 and 2.1 separates today's arms
+      identically, so taking the convention keeps it from being fitted to today's numbers.
+    MY_EDIT_BROKE_A_TEST_AND_THE_TEST_WAS_RIGHT_TO_BREAK: >-
+      test_the_success_query_is_not_filtered_on_quality_score does src.index("lessons_success")
+      — the FIRST occurrence — and my new docstring quotes that literal above the code, so the
+      window no longer contained the query and it raised ValueError. My fault. Re-anchored on
+      the f-string that EMITS the line, which is unambiguous and in code: the test was anchored
+      on where the token first APPEARS rather than where it is BUILT.
+      Separately, my first scripted insertion anchored on "class " and matched the word "class"
+      inside a comment, splitting a line and producing invalid Python. Caught by adding
+      ast.parse as the FIRST gate before writing — the cheap-syntax-gate rule, applied after
+      being reminded by it.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      Tomorrow's 13:00Z brief must render "lessons_success[machine] ... -> -X.Xpp (within
+      noise)" and "lessons_success[interactive] ... -> +X.Xpp (N.N sigma)". Today's brief is in
+      staged_facts at 13:00:11.714447 with neither verdict, so the diff is directly comparable.
   KNOWNFAILURE_2026_09_03_it_told_him_to_check_the_logs_for_a_failure_it_had_already_named:
     map_check: "No mapped item — evidence-led, from a live provider outage during this loop."
     WHAT_HE_RECEIVES: >-
