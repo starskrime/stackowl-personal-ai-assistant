@@ -627,9 +627,18 @@ class SchedulerAssembly:
             )
             healers["browser"] = browser_runtime
 
+        # The re-alert backoff is one hour and its state must OUTLIVE the process:
+        # measured 2026-09-03, a 13-hour outage produced 37 critical pages where
+        # the heartbeat intends 13, because every restart emptied the in-memory
+        # dedup map. audit_log already carries consent.decision and
+        # capability.escalated — no new store, no new engine.
+        from stackowl.audit.alert_record import AuditAlertRecord
+        from stackowl.audit.logger import AuditLogger as _HealthAuditLogger
+
         health_sweep_handler = HealthSweepHandler(
             health_aggregator,
             alert=health_alert,
+            alert_record=AuditAlertRecord(db, _HealthAuditLogger(_default_db_path())),
             # Wrapped so a channel adapter is resolved WHEN THE SWEEP LOOKS, not
             # when this assembly runs — the adapters have not started yet.
             healers=ChannelHealers(healers),

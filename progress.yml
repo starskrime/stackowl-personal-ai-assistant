@@ -315,6 +315,68 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  REPAGE_2026_09_03_a_restart_reset_the_hour_and_repaged_him:
+    map_check: "No mapped item — found by measuring the alert volume the cadence work exposed."
+    THE_FINDING: >-
+      HealthSweepHandler re-alerts on an hour-long heartbeat while an incident is ongoing
+      (realert_backoff_s = 3600.0). MEASURED over one continuous 13-hour provider outage:
+      37 CRITICAL Telegram pages where the heartbeat intends 13, with 11 (29%) landing within
+      three minutes of a process boot. Observed gaps, most recent first: 5.5, 5.5, 27.3, 10.6,
+      16.5, 5.5, 5.4 minutes.
+    THE_CAUSE_IS_AN_ASSUMPTION_STATED_AS_A_DECISION: >-
+      The dedup state carried this comment: "Plain in-memory dict — no new store/table; it
+      doesn't need to survive a restart (a fresh process re-alerts once on the next unhealthy
+      tick, which is fine)." A restart empties the dict AND resets the monotonic clock it
+      stores, so the next sweep sees prior is None, calls it a new incident and pages at once.
+      CodeWatcher exec-replaces the core on every code change, so "once per restart" was the
+      DOMINANT source, not a rare extra. The parenthesis was an assumption about restart
+      frequency that was never measured.
+    PER_PROCESS_STATE_DOING_A_DURABLE_JOB: >-
+      That is the sibling handler's own phrase about its own first version —
+      capability_gap_escalation records "a ContextVar that reset() clears when the turn ends
+      ... Per-turn state doing a durable job — this codebase's first shape, one scope too
+      narrow rather than absent." This is the same shape one scope up and takes the same cure:
+      audit_log, already home to consent.decision and capability.escalated. No new store, no
+      new engine.
+    NOTHING_IS_WEAKENED_and_that_is_the_load_bearing_part: >-
+      The standing rule is FAILS TOWARD PAGING. A subsystem with no prior record still pages
+      immediately; a LEVEL CHANGE (degraded -> down) still bypasses the backoff; only an
+      identical, already-reported, still-ongoing incident is held inside its own declared
+      hour — exactly what the in-memory version already did within one process. Surviving a
+      restart suppresses nothing the design did not already intend to suppress; it stops an
+      unrelated event from resetting the clock. Unwired, the handler is byte-identical to
+      before, and a test asserts that too.
+    I_ALMOST_REPEATED_A_MISTAKE_I_MADE_TODAY: >-
+      ESC-117 carries my own CORRECTION_2026_09_03 withdrawing an operator_health claim, with
+      the note "I counted hashes without reading the emitter". Round 0 here looked identical —
+      36 critical pages, ~5.5 minute gaps — and the honest reading is that ESC-117's
+      correction was RIGHT: the repeats are a designed heartbeat. What it did not examine is
+      that the heartbeat is HOURLY and was firing every 5.5 minutes. Reading the emitter
+      first is what separated the two.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    A_SECOND_VACUITY_CAUGHT_BY_MUTATION: >-
+      A mutation that seeds the state with "now" instead of "now - age" SURVIVED the first
+      suite: a level change still bypassed, a new subsystem still paged, and every test
+      passed — while silently restarting the hour for an incident already 59 minutes into it.
+      That is the OPPOSITE error and the more dangerous direction under fail-toward-paging: it
+      would DELAY the heartbeat rather than duplicate it. A test now pins the recorded age.
+      Second time today mutation testing caught a guard of mine that proved nothing.
+    validate_evidence: >-
+      8 new tests (one @pytest.mark.tripwire asserting the assembly WIRING, because the suite
+      passes just as happily unwired — the "built but not wired" shape this codebase lists
+      first); 4 mutations (never seed; stop recording; seeding overrides a level change;
+      unwire it in assembly) with the age mutation added after it survived, all restored from
+      FILE COPIES and re-verified green. LIVE validation PARTIAL: the closing query needs a
+      restart DURING an ongoing incident — "[scheduler] health_sweep: alert history restored"
+      must appear at INFO on the next boot, and no operator_health notification may follow it
+      within the hour.
   CADENCE2_2026_09_03_the_exemption_reached_through_a_different_door:
     map_check: "No mapped item — found by asking why session_prompts is 15.7 MB and never pruned."
     THE_FINDING: >-

@@ -19,12 +19,31 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
+
+
+class AlertRecord(Protocol):
+    """The durable record of what the operator has already been paged about.
+
+    Two halves, and both are needed: a backoff that READS a record nothing
+    writes suppresses nothing, and a record nothing reads is a write with no
+    reader. Kept as a Protocol so the handler owns the RULE and the storage stays
+    where storage belongs.
+    """
+
+    async def load_recent_alerts(self, within_s: float) -> dict[str, tuple[str, float]]:
+        """``name -> (status, seconds since it was last alerted)``, within the window."""
+        ...
+
+    def record_alert(self, name: str, status: str) -> None:
+        """Note that the operator was just paged about ``name`` at ``status``."""
+        ...
+
 
 if TYPE_CHECKING:
     from stackowl.health.aggregator import HealthAggregator
@@ -68,6 +87,7 @@ class HealthSweepHandler(JobHandler):
         recovery: RecoveryActuator | None = None,
         clock: Clock | None = None,
         realert_backoff_s: float = 3600.0,
+        alert_record: AlertRecord | None = None,
     ) -> None:
         self._aggregator = aggregator
         self._alert = alert
@@ -76,10 +96,26 @@ class HealthSweepHandler(JobHandler):
         self._clock = clock or WallClock()
         self._realert_backoff_s = realert_backoff_s
         # Live-alert dedup state (F-88-ish): subsystem name -> (last-alerted
-        # status, monotonic() at that alert). Plain in-memory dict — no new
-        # store/table; it doesn't need to survive a restart (a fresh process
-        # re-alerts once on the next unhealthy tick, which is fine).
+        # status, monotonic() at that alert).
+        #
+        # IT DOES NEED TO SURVIVE A RESTART, and the comment that used to stand
+        # here said otherwise: "a fresh process re-alerts once on the next
+        # unhealthy tick, which is fine". That was an assumption about how often
+        # this process restarts, and it was never measured. MEASURED 2026-09-03
+        # over one continuous 13-hour provider outage: 37 critical Telegram pages
+        # where the one-hour heartbeat intends 13, with 11 of them landing within
+        # three minutes of a boot. CodeWatcher exec-replaces the core on every
+        # code change, so "once per restart" was the DOMINANT source, not a rare
+        # extra.
+        #
+        # Per-process state doing a durable job — the sibling handler's own words
+        # about its own first version (capability_gap_escalation, one scope
+        # narrower), and it takes the same cure: an existing store, no new engine.
+        # `alert_record` is that store when wired; unwired, this is byte-identical
+        # to the previous behaviour.
         self._alert_state: dict[str, tuple[str, float]] = {}
+        self._alert_record = alert_record
+        self._state_loaded = False
 
     @property
     def handler_name(self) -> str:
@@ -165,6 +201,7 @@ class HealthSweepHandler(JobHandler):
                               "total": len(statuses)},
                 )
 
+        await self._seed_alert_state()
         to_alert, resolved = self._dedupe_and_update(down, degraded)
         await self._maybe_send_resolved(resolved)
 
@@ -281,12 +318,45 @@ class HealthSweepHandler(JobHandler):
                 # Same ongoing incident, backoff elapsed — heartbeat re-alert.
                 to_alert.append(s)
                 self._alert_state[name] = (s.status, self._clock.monotonic())
-            # else: within backoff — suppressed, state left untouched.
+            else:
+                continue
+            if self._alert_record is not None:
+                self._alert_record.record_alert(name, s.status)
 
         resolved = [name for name in self._alert_state if name not in current]
         for name in resolved:
             del self._alert_state[name]
         return to_alert, resolved
+
+    async def _seed_alert_state(self) -> None:
+        """Load what the operator was already paged about, once per process.
+
+        Seeds the in-memory dedup map so a restart does not read as a new
+        incident. Ages are converted onto the monotonic basis the map already
+        uses, so the comparison below is unchanged. Never raises: a health sweep
+        that cannot read its own history must still run, and failing to seed only
+        restores the previous (noisier) behaviour rather than silencing anything.
+        """
+        if self._state_loaded or self._alert_record is None:
+            return
+        self._state_loaded = True
+        try:
+            recent = await self._alert_record.load_recent_alerts(self._realert_backoff_s)
+        except Exception as exc:  # noqa: BLE001 — never cost the sweep its run
+            log.scheduler.warning(
+                "[scheduler] health_sweep: could not read the alert history — "
+                "falling back to per-process dedup for this process",
+                exc_info=exc,
+            )
+            return
+        now = self._clock.monotonic()
+        for name, (status, age_s) in recent.items():
+            self._alert_state.setdefault(name, (status, now - float(age_s)))
+        if recent:
+            log.scheduler.info(
+                "[scheduler] health_sweep: alert history restored",
+                extra={"_fields": {"subsystems": sorted(recent), "n": len(recent)}},
+            )
 
     @staticmethod
     def _compose_resolved(names: list[str]) -> str:
