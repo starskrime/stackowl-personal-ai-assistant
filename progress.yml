@@ -5112,6 +5112,13 @@ current:
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
     ESC_111_do_you_want_a_genuinely_cheaper_model_wired:
+      resolution: >-
+        ANSWERED 2026-09-03: LEAVE IT. D04.4 closes as no_change_needed on the capability — the
+        seam exists, the ladder is degenerate, and it is degenerate for a good reason. The lane
+        a cheap model would serve is 1.7% of tokens; conversation is 98.3% and is the work he
+        would least want on weaker weights. He did NOT take the latency option, so no latency
+        measurement is owed. The boot line that reports the degeneracy stays and is the
+        deliverable.
       premise_check: |
         uv run python -c "from stackowl.config.settings import Settings; from stackowl.providers.registry import ProviderRegistry; r=ProviderRegistry.from_settings(Settings()); print('HOLDS one model on every rung' if r.tier_ladder_is_degenerate() else 'EXPIRED')" 2>/dev/null | tail -1
       question: >-
@@ -5141,6 +5148,11 @@ current:
         Nothing. The condition is now reported at boot. This decides whether D04.4 closes as
         no_change_needed or gets a real second provider.
     ESC_110_may_a_fetched_page_take_shell_away_for_the_rest_of_the_turn:
+      resolution: >-
+        ANSWERED 2026-09-03: NARROW ON DEMAND. The fetching tool declares whether the turn still
+        needs write access, defaulting to yes — the agent's own declaration, not a blanket rule.
+        He took the option that does not choose between the risk and the work, and it rests on
+        trusting that declaration, which is the thing to watch once it ships. NOT YET BUILT.
       premise_check: |
         grep -rq 'untrusted.wrap(' src/stackowl/tools/io/web_fetch.py && ! grep -rq 'untrusted_toolset\|narrow_after_untrusted' src/ && echo "HOLDS marker only, no control" || echo EXPIRED
       question: >-
@@ -5171,6 +5183,10 @@ current:
         Nothing. The marker is live and independent. This decides whether D12.8 gets a control
         on top of it or closes as marker-only.
     ESC_109_do_you_want_manual_try_again_rebuilt_on_the_ONE_loop:
+      resolution: >-
+        ANSWERED 2026-09-03: REBUILD IT AGAINST `tasks`. Manual "try again" comes back — the
+        hook becomes "newest floored task for this session" and RetryIntentClassifier is reused
+        unchanged rather than deleted. The 181 lines stay. NOT YET BUILT.
       premise_check: |
         grep -rq 'get_latest_pending_for_session' src/stackowl/pipeline/steps/triage.py && echo "HOLDS hook still reads the dead store" || echo EXPIRED
       question: >-
@@ -5592,6 +5608,11 @@ current:
         cannot be slow is a barrier around nothing.
       what_is_blocked: "Nothing. Prefetch is the only phase-5 mechanism still genuinely open."
     ESC_92_you_asked_for_a_circuit_breaker_and_I_shipped_a_guard:
+      resolution: >-
+        CLOSED 2026-09-03 by his explicit choice: DROP for now. ZERO memory-read failures in
+        four days; a breaker tuned against a backend that cannot fail is tuned against nothing.
+        Build it WITH the first memory plugin, which is when the failure mode it guards starts
+        to exist.
       premise_check: |
         grep -rqiE 'half_open|circuit_breaker' src/stackowl/memory/ && echo EXPIRED || echo 'HOLDS degradation only, no breaker state'
       question: >-
@@ -5852,6 +5873,10 @@ current:
         c_mark_rather_than_delete: "Add a flag so recall can exclude them without losing the record. Preserves everything; needs a column and a reader change, and leaves the rows in every naive query."
       blocked_until_answered: "Re-pointing the graph writer at staged_facts — feeding it a 39%-machine source would rebuild the problem 0112 deleted 107,576 rows to escape."
     ESC_81_is_compaction_worth_changing_what_the_model_SEES_now_that_the_cap_holds:
+      resolution: >-
+        CLOSED 2026-09-03 by his explicit choice: DROP. The safety case was closed by the token
+        cap, which was measured firing; p90 has already halved to ~49.5k, and compaction is the
+        one change that would alter what the model reads for a modest saving.
       premise_check: |
         test -f src/stackowl/pipeline/budget/compaction.py && echo EXPIRED || echo 'HOLDS no compaction shipped'
       question: "1b was justified by a 683k runaway. That cannot recur — the cap fires and was measured firing. Compaction would now shave a p90 of ~49.5k tokens, at the price of editing the transcript the model reads. Worth it?"
@@ -5863,6 +5888,11 @@ current:
         c_full_compaction: "Dedup plus truncation of older results beyond a size threshold. The largest saving and the only option that can degrade an answer."
       blocked_until_answered: "Nothing. This was the last live entry on the turn-economics plan."
     ESC_80_a_long_tool_run_predicts_a_worse_turn_but_one_is_a_protected_fan_out:
+      resolution: >-
+        CLOSED 2026-09-03 by his explicit choice: DROP. A correlation across 3,967 turns does
+        not overturn a concrete counter-example — the 46-call web_search run measured as
+        PRODUCTIVE, with a test naming it. Warn-only would still cost prompt space on every
+        productive fan-out.
       premise_check: |
         grep -qE 'longest_run|long_run_warn' src/stackowl/pipeline/tool_guardrails.py && echo EXPIRED || echo 'HOLDS no long-run detector'
       question: "Turns whose longest same-tool run is 10+ succeed 75% of the time against 98% for short ones. But the platform already measured a 46-call web_search run as a PRODUCTIVE headhunter turn and wrote a test to protect it. Should a long run warn?"
@@ -5874,6 +5904,12 @@ current:
         c_warn_only_when_the_run_is_ALSO_not_progressing: "Combine run length with the existing no-progress signal, so a fan-out that keeps returning new information stays quiet. Most faithful to both findings; needs a definition of progress that the guardrail does not currently have."
       blocked_until_answered: "Stage 2c only. 1b compaction is independent and untouched."
     ESC_79_should_a_detected_repeat_give_a_step_BACK:
+      HE_DECLINED_TO_DROP_THIS_2026_09_03: >-
+        Offered alongside ESC-80, ESC-81 and ESC-92 as a batch the panel recommended dropping.
+        He closed the other THREE and left this one open. That is a signal, not an oversight:
+        he still wants a detected repeat to give a step back, against the panel's advice that
+        the token bound now does that job. Stays open, and the recommendation should be re-read
+        as contested rather than pending.
       premise_check: |
         grep -q 'IterationBudget' src/stackowl/pipeline/steps/execute.py && echo EXPIRED || echo 'HOLDS detector still cannot reach the budget'
       question: "You selected 2d — refund a step when the guardrail detects a repeat. Measuring it changed its shape twice. Do you still want it?"
