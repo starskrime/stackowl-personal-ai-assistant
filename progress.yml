@@ -315,6 +315,69 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  EVENT_CONTRACT_2026_09_03_the_wiring_audit_held_a_hand_maintained_half_edge:
+    map_check: "No mapped item — found by asking what the boot log's '0 dangling events' is MADE of."
+    THE_FINDING: >-
+      Every boot logs "wiring audit: 38 handlers — 29 seeded, 9 on_demand, 0 event; 0
+      dangling" with dangling_events: []. That verdict was produced by comparing one
+      hand-written list of three string literals (event_bridge._ALLOWED_EVENTS) against
+      another hand-written list of the same three (orchestrator.declared_event_publishers),
+      while the publisher (cost_tracker) spelled two of them a third time at its emit calls.
+      Nothing checked that the three spellings agreed.
+    THE_CAUSE_IS_TWO_COPIES_OF_ONE_RULE_and_it_already_cost_once: >-
+      An event name is a CONTRACT between the module that emits and the module that
+      subscribes, and it was expressed as an independent literal in each participant plus a
+      fourth in the auditor. The code documents the first failure in its own comment
+      (DEBT-7): declared_publishers was frozenset(), so the check compared subscribers
+      against NOTHING and "could only ever answer dangling ... which also means it could
+      never have caught a genuinely NEW dangling subscription." That was the loud direction.
+      The silent direction was still open: rename or delete an emit and the auditor's stale
+      copy of the string keeps reporting the subscription as healthy forever — the guard
+      whose whole purpose is finding dangling half-edges holding one of its own.
+    THE_CODEBASE_ALREADY_DID_IT_RIGHT_ONCE: >-
+      conversation_cost_report exports COST_REPORT_EVENT and the orchestrator imported it,
+      so deleting THAT publisher breaks the import loudly at boot. The two budget events
+      were bare literals. This makes the working pattern the rule: every subscribed event is
+      named by exactly one constant, owned by the module that emits it, and both the
+      subscriber and the auditor import it.
+    MEASURED_CONTEXT_deliberately_NOT_claimed_as_the_defect: >-
+      130,285 of 130,288 cost rows are $0.00 and total spend ever is $0.019 — this
+      deployment's model is unpriced, so budget_exceeded and budget_80pct_alert have
+      publishers that will not fire here. That is a deployment fact, not a code fault. It is
+      recorded because it means "0 dangling" reads more reassuring than it is, and because a
+      static declaration check cannot see the difference either way. Whether a USD budget is
+      the right meter when 704M input tokens cost $0.019 is ESC-114's territory, already
+      open and already his.
+    WHAT_ELSE_THE_SAME_CAUSE_REACHES_checked: >-
+      tui/coordinator._EVENT_NAMES holds a FOURTH copy of budget_80pct_alert among twelve
+      literal event names. Deliberately not changed: it is a display-subscription list, not
+      part of the audit contract, and converting one of its twelve entries to a constant
+      would leave it less uniform than it is now. Named here so it is not rediscovered as a
+      surprise.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      5 new tests; 4 mutations each caught (subscriber back to literals; publisher exporting
+      a constant but emitting a literal; the audit unable to report ANY dangling event;
+      the bridge subscribing to a name no publisher owns), restore re-verified green.
+      tests/startup + tests/notifications + tests/providers 976 pass. The suite includes a
+      VACUITY CONTROL — the audit is exercised against a subscription that genuinely has no
+      publisher and must still report it — because DEBT-7 shows this check can fail in
+      either direction while the boot log looks clean. LIVE: verified after restart that the
+      audit still reports 0 dangling with the derived sets, which also proves the new
+      imports resolve at boot (a cycle would have failed the phase).
+    files:
+      - src/stackowl/providers/cost_tracker.py
+      - src/stackowl/notifications/event_bridge.py
+      - src/stackowl/startup/orchestrator.py
+      - tests/startup/test_an_event_contract_is_not_four_string_literals.py
+
   FLOOR_GOAL_2026_09_03_the_giveup_message_quoted_OUR_prompt_back_at_him:
     map_check: "No mapped item — found by printing the real shape of 1,426 replies that mentioned a circuit."
     THE_FINDING: >-

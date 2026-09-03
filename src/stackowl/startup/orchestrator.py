@@ -4186,6 +4186,10 @@ class StartupOrchestrator:
         try:
             from stackowl.notifications.event_bridge import _ALLOWED_EVENTS
             from stackowl.providers.conversation_cost_report import COST_REPORT_EVENT
+            from stackowl.providers.cost_tracker import (
+                BUDGET_EXCEEDED_EVENT,
+                BUDGET_WARNING_EVENT,
+            )
             from stackowl.scheduler.base import HandlerRegistry
             from stackowl.startup.wiring_audit import audit_scheduler_wiring
 
@@ -4198,9 +4202,15 @@ class StartupOrchestrator:
             # providers/cost_tracker.py; the cost report by
             # providers/conversation_cost_report.py. Anything added to
             # event_bridge._ALLOWED_EVENTS needs its publisher declared here.
+            # Each entry is the PUBLISHER's own exported constant, so this set
+            # cannot drift from what is actually emitted: delete an emitter and
+            # this import fails at boot rather than the audit quietly reporting a
+            # dead subscription as wired. Two of these were bare literals, which
+            # is the same hand-maintained mirror DEBT-7 already paid for once in
+            # the opposite direction.
             declared_event_publishers: frozenset[str] = frozenset({
-                "budget_exceeded",
-                "budget_80pct_alert",
+                BUDGET_EXCEEDED_EVENT,
+                BUDGET_WARNING_EVENT,
                 COST_REPORT_EVENT,
             })
             wiring_report = await audit_scheduler_wiring(

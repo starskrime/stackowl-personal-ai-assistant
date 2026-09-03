@@ -24,6 +24,11 @@ from typing import TYPE_CHECKING, Any
 
 from stackowl.infra.observability import log
 from stackowl.notifications.router import Notification
+from stackowl.providers.conversation_cost_report import COST_REPORT_EVENT
+from stackowl.providers.cost_tracker import (
+    BUDGET_EXCEEDED_EVENT,
+    BUDGET_WARNING_EVENT,
+)
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.events.bus import EventBus
@@ -51,8 +56,13 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # still drops it when no channel/target resolves, and the producer emits
 # nothing at all for a boundary that spent nothing — so this makes delivery
 # POSSIBLE without making it unconditional.
+# Built from the PUBLISHERS' own constants, never from literals repeated here.
+# A subscription is a contract with the module that emits, and this file used to
+# hold an independent second spelling of it — so a rename or deletion over there
+# would have left this subscribing to a name nobody sends, with the wiring audit
+# (holding a third copy) still reporting it healthy.
 _ALLOWED_EVENTS: frozenset[str] = frozenset(
-    {"budget_exceeded", "budget_80pct_alert", "conversation_cost_report"}
+    {BUDGET_EXCEEDED_EVENT, BUDGET_WARNING_EVENT, COST_REPORT_EVENT}
 )
 # ``parliament.completed`` (orchestrator) stays DEFERRED — its payload is a bare
 # ``session_key`` (not a dict; _build_notification would drop it as malformed),

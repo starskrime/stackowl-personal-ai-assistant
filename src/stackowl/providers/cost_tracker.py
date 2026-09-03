@@ -13,6 +13,16 @@ from stackowl.providers.cost_tracker_helpers import _MAX_TRACKED_TURNS, TurnCost
 from stackowl.providers.pricing.loader import PricingLoader
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
+#: The two budget events this module emits, named ONCE here because the module
+#: that emits an event owns its name. ``event_bridge`` subscribes by importing
+#: these and ``startup.orchestrator`` declares the publisher the same way, so
+#: deleting an emit below breaks their imports LOUDLY at boot instead of leaving
+#: the wiring audit comparing its own stale copy of the string and reporting the
+#: subscription as healthy. ``conversation_cost_report.COST_REPORT_EVENT``
+#: already worked this way; this makes it the rule.
+BUDGET_EXCEEDED_EVENT = "budget_exceeded"
+BUDGET_WARNING_EVENT = "budget_80pct_alert"
+
 # Re-exported (the bound lives on TurnCostLedger now, B2 split) so callers/tests
 # that import ``_MAX_TRACKED_TURNS`` from this module keep working.
 __all__ = ["CostRecord", "CostTracker", "DailySummary", "_MAX_TRACKED_TURNS"]
@@ -331,7 +341,7 @@ class CostTracker(OwnedRepository):
                     }
                 },
             )
-            self._bus.emit("budget_exceeded", {
+            self._bus.emit(BUDGET_EXCEEDED_EVENT, {
                 **payload,
                 "message": f"Daily LLM budget exceeded: ${summary.total_usd:.2f} / ${limit:.2f}",
             })
@@ -349,7 +359,7 @@ class CostTracker(OwnedRepository):
                     }
                 },
             )
-            self._bus.emit("budget_80pct_alert", {
+            self._bus.emit(BUDGET_WARNING_EVENT, {
                 **payload,
                 "message": (
                     f"Daily LLM budget at {ratio * 100:.0f}%: "
