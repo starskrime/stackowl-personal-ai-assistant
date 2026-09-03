@@ -390,8 +390,22 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: PARTIAL
       document: done
+    what_validate_ACTUALLY_evidenced: >-
+      Live at 08:38:49Z on commit 8f5e3315 (committed 03:37:59 -0500), zero ERROR lines on
+      boot, the ONE loop running. PROVEN: the new field exists on the REAL frozen
+      PipelineState and evolve() carries it (budget_cap='tokens'), and
+      describe_attempt_evidence against a real PipelineState — not the duck-typed test
+      double — returns the full sentence for the measured 46-of-48 web_fetch shape. The
+      evidence log line is log.scheduler.info, so the closing query CAN close; a DEBUG-only
+      line could never have. The ban baseline still reads 15 events across every log file,
+      every one write or consequential severity, zero read tools.
+      NOT YET EVIDENCED: no floored retry has run since the restart, because the task table
+      holds ZERO pending rows (849 failed, 243 completed, 76 dead_letter). I did not
+      manufacture one — inserting a task into the live loop would put real work on his
+      platform and could message him. So the end-to-end actuator link rests on 40 passing
+      unit tests plus the in-process proof above, and stays PARTIAL until a real retry fires.
     validate_closing_query: >-
       On the next floored retry, "[scheduler] retry_actuator.attempt_retry: carrying the
       attempt's evidence forward" must carry a reason beginning "the last attempt ran out of"
