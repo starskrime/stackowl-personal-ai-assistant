@@ -315,6 +315,47 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D04_4_2026_09_03_a_tier_ladder_whose_rungs_are_all_the_same_model:
+    map_check: "D04.4 Auxiliary-model router — P1, verdict PARTIAL."
+    the_gap_line_is_HALF_right: >-
+      It says "No single seam for cheap model work, so cost/latency of side tasks is unmanaged."
+      The SEAM EXISTS — get_by_tier, get_with_cascade, resolve_tier_with_fallback, and call
+      sites all over the tree asking for floor="fast" (the classify summariser, the critic,
+      owl_build inference, inner browse). What does not exist is anything cheaper to route TO.
+    MEASURED_on_the_live_configuration: >-
+      Four providers. THREE are enabled:false — qwen36, ollama-standard, ollama-powerful — all
+      pointing at the same unreachable host 172.30.60.31 and all naming THE SAME MODEL,
+      qwen3.6:35b, differing only in name and tier label. That is one model wearing three hats,
+      not a ladder. The one enabled provider, NeraAiRaw, declares fast AND standard AND
+      powerful, so every rung resolves to it. Seven days of cost_records agree: 15,358 calls,
+      173,992,514 input tokens, ONE model. Spend by lane: owl 52.9%, chat 45.3%, job 1.7%.
+    THE_ROOT_CAUSE_is_not_a_missing_router: >-
+      It is that tier routing is a NO-OP and nothing said so. Every caller asking for something
+      cheap is handed the flagship, silently, and the only way to discover it was to read seven
+      days of cost records. A seam with nothing behind it is CLAUDE.md shape 5 — the capability
+      exists, works, and nothing it can reach makes a difference.
+    what_shipped: >-
+      ProviderRegistry.describe_tier_ladder() and tier_ladder_is_degenerate(), and an INFO line
+      at boot — "[providers] tier ladder resolved" carrying the resolved model per tier and a
+      degenerate flag. The condition is now visible in the place production actually looks.
+    MY_OWN_CHECK_WAS_WRONG_and_its_control_caught_it: >-
+      The first cut compared "provider_name/model" strings, so three providers with different
+      NAMES running one model read as a healthy three-rung ladder — which is exactly the live
+      config's shape if those three were ever enabled. The test written to prove the check is
+      not vacuous is the one that failed. It now compares MODELS: different names do not make a
+      ladder, different models do.
+    what_is_NOT_built_and_why: >-
+      No router, because there is nothing to route to. Building one now would be decoration —
+      the flag-with-nobody-to-set-it shape. Whether to wire a genuinely cheaper model is a
+      hardware, host and cost decision (the reachable second model lives on a host the sandbox
+      cannot see), so it is ESC-111 with the numbers rather than a default chosen here.
+    suites: "tests/providers 717 passed, 4 new including the control that caught the name-vs-model bug. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_boot
+    closing_query: >-
+      "[providers] tier ladder resolved" at INFO with degenerate=true and all three rungs
+      reading NeraAiRaw/neraai-v1-raw. ZERO such lines today because it did not exist. The
+      SECOND half is the one that matters later: on the day a real second model is wired, the
+      same line must report degenerate=false without anyone editing the check.
   D12_8_2026_09_03_the_untrusted_marker_reached_exactly_ONE_tool:
     map_check: "D12.8 Untrusted-input toolset — P1, wave 6, the highest-priority unblocked mapped item."
     the_gap_line_was_already_falsified: >-
@@ -5062,6 +5103,35 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_111_do_you_want_a_genuinely_cheaper_model_wired:
+      premise_check: |
+        uv run python -c "from stackowl.config.settings import Settings; from stackowl.providers.registry import ProviderRegistry; r=ProviderRegistry.from_settings(Settings()); print('HOLDS one model on every rung' if r.tier_ladder_is_degenerate() else 'EXPIRED')" 2>/dev/null | tail -1
+      question: >-
+        Every tier — fast, standard, powerful — resolves to the same flagship model, so the
+        platform's tier routing does nothing. The three cheap providers in your config are
+        disabled, point at a host this box cannot reach, and all name the same 35b model anyway.
+        Do you want a genuinely cheaper model wired, and where would it run?
+      why_evidence_cannot_settle_it: >-
+        The measurement is unambiguous — 15,358 calls, 174M input tokens, one model, seven days.
+        What it cannot settle is whether a second model is worth the hardware. Your standing
+        rules say never pull a model onto the Jetson, and the weak model you have lives at
+        192.168.1.81 which this sandbox cannot reach. That is a host and cost question.
+      the_measurement: >-
+        Spend by lane over 7 days: owl 92.0M input tokens (52.9%), chat 78.9M (45.3%), job 3.0M
+        (1.7%). The job lane — critic, reflection, summarisation, owl_build inference — is the
+        work that asks for "fast" and is the natural target for a cheap model, and it is only
+        1.7% of spend. The 98.3% is conversation, which is the work you would least want moved
+        to weaker weights.
+      panel_recommendation: >-
+        NOT worth it for cost. The lane that would use a cheap model is 1.7% of the tokens, so
+        even a free second model saves almost nothing, and routing conversation to weaker
+        weights is the change you would notice most. The honest close for D04.4 is "the seam
+        exists, the ladder is degenerate, and it is degenerate for a good reason" — unless you
+        want it for LATENCY rather than cost, which is a different measurement and one I have
+        not made.
+      blocked_until_answered: >-
+        Nothing. The condition is now reported at boot. This decides whether D04.4 closes as
+        no_change_needed or gets a real second provider.
     ESC_110_may_a_fetched_page_take_shell_away_for_the_rest_of_the_turn:
       premise_check: |
         grep -rq 'untrusted.wrap(' src/stackowl/tools/io/web_fetch.py && ! grep -rq 'untrusted_toolset\|narrow_after_untrusted' src/ && echo "HOLDS marker only, no control" || echo EXPIRED

@@ -471,6 +471,55 @@ class ProviderRegistry(RegistryAccessorsMixin):
             raise ProviderNotFoundError(name)
         return providers[name]
 
+    #: The rungs the platform believes it has. Every caller that asks for cheap
+    #: work names one of these.
+    TIER_LADDER: tuple[str, ...] = ("fast", "standard", "powerful")
+
+    def describe_tier_ladder(self) -> dict[str, str]:
+        """Which MODEL each tier actually resolves to, right now.
+
+        Never raises: a tier that cannot resolve reports "" rather than taking
+        down the caller, because this exists to be called from a health path.
+        """
+        out: dict[str, str] = {}
+        for tier in self.TIER_LADDER:
+            try:
+                provider, model = self.get_by_tier(tier)
+                out[tier] = f"{getattr(provider, 'name', '?')}/{model}"
+            except Exception:  # noqa: BLE001 — a report may not crash its caller
+                out[tier] = ""
+        return out
+
+    def tier_ladder_is_degenerate(self) -> bool:
+        """True when every tier resolves to the SAME model — routing by tier is
+        then a no-op, whatever the call sites believe.
+
+        MEASURED 2026-09-03 on this box: four providers are configured and three
+        are `enabled: false`, all three pointing at the same unreachable host AND
+        the same model. The one enabled provider declares fast, standard and
+        powerful, so all three rungs resolve to it — confirmed by 7 days of
+        cost_records: 15,358 calls, 174M input tokens, ONE model. Every
+        `floor="fast"` in this codebase — the classify summariser, the critic,
+        owl_build inference, inner browse — asks for something cheap and is
+        handed the flagship.
+
+        COMPARES MODELS, NOT PROVIDER NAMES, and that distinction is the live
+        trap rather than a nicety: the three disabled providers above have three
+        different NAMES and three different tier labels while naming ONE model on
+        ONE host. Were they enabled, a name-based check would report a healthy
+        three-rung ladder that routes every rung to the same weights. Different
+        names do not make a ladder; different models do.
+        """
+        models = set()
+        for tier in self.TIER_LADDER:
+            try:
+                _, model = self.get_by_tier(tier)
+            except Exception:  # noqa: BLE001 — a report may not crash its caller
+                continue
+            if model:
+                models.add(model)
+        return len(models) == 1
+
     def get_by_tier(self, tier: str) -> tuple[ModelProvider, str]:
         """Return (provider, model) for the first match matching the given
         tier (config order). Falls back to the first available provider's

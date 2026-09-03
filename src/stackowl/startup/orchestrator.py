@@ -817,6 +817,22 @@ class StartupOrchestrator:
         # 1. ENTRY — build services
         log.info("[startup] gateway: building services")
         provider_registry = ProviderRegistry.from_settings(self._settings)
+        # SAY WHAT THE TIERS ACTUALLY RESOLVE TO. Every `floor="fast"` in this
+        # codebase — the classify summariser, the critic, owl_build inference,
+        # inner browse — believes it is asking for something cheap. On this box
+        # all three rungs resolve to the same flagship model, so tier routing is
+        # a no-op, and until now nothing said so: D04.4 is filed as "no single
+        # seam for cheap model work" when the seam exists and has nowhere to
+        # route. INFO, because production runs at INFO and this is the line that
+        # makes the condition visible instead of inferred from cost records.
+        _ladder = provider_registry.describe_tier_ladder()
+        log.info(
+            "[providers] tier ladder resolved",
+            extra={"_fields": {
+                "ladder": _ladder,
+                "degenerate": provider_registry.tier_ladder_is_degenerate(),
+            }},
+        )
         stream_registry = (
             SocketStreamRegistry(core_conn)
             if self._role == "core" and core_conn is not None
