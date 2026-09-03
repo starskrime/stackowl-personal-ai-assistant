@@ -740,6 +740,16 @@ class GrowthAssembler:
             "WHERE owner_id = ? AND captured_at > ? AND captured_at <= ? "
             "AND failed_capability IS NOT NULL AND failed_capability <> '' "
             "AND success = 0 "
+            # AND NOT THE STEP CAP. `failure_class='stop'` means the turn RAN OUT
+            # OF STEPS; the capability named is whatever was in flight, not one
+            # that failed. MEASURED 2026-09-03: excluding it, web_fetch goes
+            # 5 -> 11 to 0 -> 0 (it never failed as a capability at all),
+            # browser_navigate's 12 -> 3 "improvement" goes to 0 -> 0, and shell's
+            # 15 -> 21 regression flattens to 11 -> 10. Every per-capability
+            # movement this section reported last night was step exhaustion
+            # wearing a tool's name. The real regression is reported on its own
+            # line below, because that is what it is: 31 -> 48 turns platform-wide.
+            "AND COALESCE(failure_class, '') <> 'stop' "
             "GROUP BY failed_capability",
             (
                 DEFAULT_PRINCIPAL_ID,
@@ -748,6 +758,21 @@ class GrowthAssembler:
             ),
         )
         return {str(r["cap"]): int(r["n"] or 0) for r in rows}
+
+    async def _step_cap_hits(self, days_ago_start: int, days_ago_end: int) -> int:
+        """Turns that ran out of steps. Not a capability failure — a ceiling."""
+        now = time.time()
+        rows = await self._db.fetch_all(
+            "SELECT COUNT(*) AS n FROM task_outcomes WHERE owner_id = ? "
+            "AND success = 0 AND failure_class = 'stop' "
+            "AND captured_at > ? AND captured_at <= ?",
+            (
+                DEFAULT_PRINCIPAL_ID,
+                now - days_ago_end * 86400.0,
+                now - days_ago_start * 86400.0,
+            ),
+        )
+        return int(rows[0]["n"] or 0) if rows else 0
 
     async def assemble(self, ctx: BriefContext) -> BriefSection:
         log.scheduler.debug("[brief] growth: entry", extra={"_fields": {}})
@@ -762,6 +787,8 @@ class GrowthAssembler:
                 (DEFAULT_PRINCIPAL_ID, time.time() - w * 86400.0),
             )
             learned = int(skills[0]["n"] or 0) if skills else 0
+            stopped_now = await self._step_cap_hits(0, w)
+            stopped_prior = await self._step_cap_hits(w, 2 * w)
         except Exception as exc:  # noqa: BLE001 — one section may not kill the brief
             log.scheduler.warning("[brief] growth: could not read — omitting", exc_info=exc)
             return BriefSection(key=self.key, title=self.key, items=[], omitted=True)
@@ -800,6 +827,21 @@ class GrowthAssembler:
         # is the overclaim shape wearing a friendly voice.
         if regressed:
             items.append("I got WORSE at: " + ", ".join(regressed) + ".")
+        # THE STEP CAP GETS ITS OWN LINE because it is not a capability failing —
+        # it is me running out of room to think, and it is the one number that
+        # actually moved: 31 -> 48 turns week over week when this was written.
+        if stopped_now or stopped_prior:
+            if stopped_now > stopped_prior:
+                items.append(
+                    f"I ran out of steps mid-task {stopped_now} times, up from "
+                    f"{stopped_prior} — that is me hitting my own ceiling, not a "
+                    "tool letting me down."
+                )
+            elif stopped_now < stopped_prior:
+                items.append(
+                    f"I ran out of steps mid-task {stopped_now} times, down from "
+                    f"{stopped_prior}."
+                )
         items.append(
             f"I learned {learned} new skill(s) this week."
             if learned
@@ -812,6 +854,7 @@ class GrowthAssembler:
                 "success_now": round(now_rate, 3), "success_prior": round(was_rate, 3),
                 "improved": len(improved), "regressed": len(regressed),
                 "skills_learned": learned,
+                "step_cap_now": stopped_now, "step_cap_prior": stopped_prior,
             }},
         )
         return BriefSection(key=self.key, title=self.key, items=items, omitted=False)

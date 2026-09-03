@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  STEPCAP_2026_09_03_every_capability_regression_was_the_step_cap_wearing_a_tools_name:
+    map_check: "No mapped item — following the signal the platform reported about itself."
+    how_it_surfaced: >-
+      The growth section said shell and web_fetch were regressing. I had already corrected it
+      once (recovered stumbles counted as failures) and still did not believe the remaining
+      number, so I asked what those failures WERE.
+    THE_ANSWER: >-
+      Both regressions are entirely failure_class='stop', and `stop` means THE TURN RAN OUT OF
+      STEPS. The capability named on such a row is whatever was in flight when the budget ran
+      out, not one that failed. Excluding it, MEASURED week over week: web_fetch 5->11 becomes
+      0->0 — it never failed as a capability at ALL; browser_navigate's 12->3 "improvement"
+      becomes 0->0; shell's 15->21 regression flattens to 11->10. Every per-capability movement
+      the section reported on its first night was step exhaustion wearing a tool's name.
+    THE_REAL_REGRESSION_and_nothing_was_naming_it: >-
+      Step-cap exhaustion went 31 -> 48 turns week over week, platform-wide, across every
+      capability. That is the one number that actually moved, and no surface said it because
+      every reader of failed_capability attributes it to a tool.
+    what_else_that_cause_reaches_and_it_explains_a_standing_puzzle: >-
+      The failure miner clusters on (capability, failure_class) and authored
+      incident_web_fetch_stop, incident_shell_stop, incident_browser_navigate_stop,
+      incident_owl_build_stop — four of the eleven mined skills. Those lessons teach an owl to
+      be careful with a tool that, in the web_fetch case, never failed once. The recurrence
+      detector then paged him that shell/stop and web_fetch/stop "did not hold". Of course they
+      did not: a lesson about a tool cannot fix running out of steps. The orphaned-ownership bug
+      fixed at 00:10 was real, but it was not the whole reason those lessons failed to work.
+    what_shipped: >-
+      Per-capability lines exclude stop; step exhaustion gets its own line in the platform's own
+      voice — "I ran out of steps mid-task 48 times, up from 31 — that is me hitting my own
+      ceiling, not a tool letting me down." Dropping stop WITHOUT reporting it would have traded
+      a wrong answer for silence, so a test pins both halves. Mutation-tested.
+    an_earlier_RCA_verdict_is_REFUTED_in_passing: >-
+      A staged RCA concluded these stops hit "an identical 20-call ceiling" across all traces.
+      Measured over 14 days: 20 calls is the single most common value (10 turns) but failures
+      run from 17 to 48, and SUCCESSFUL turns reach 42 calls with 49 successes at 19+. There is
+      no uniform ceiling; that verdict generalised from three traces.
+    the_report_now: >-
+      "I finished 90% of what you asked this week, against 69% the week before — I am better at
+      my job (1660 turns, 2564 before). I stopped failing so often at: delegate_task (6->1),
+      shell (11->10). I ran out of steps mid-task 48 times, up from 31 — that is me hitting my
+      own ceiling, not a tool letting me down. I learned 22 new skill(s) this week."
+    suites: "tests/brief 60 passed; 2 new. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_morning_brief
+    closing_query: >-
+      "[brief] growth: assembled" carrying step_cap_now and step_cap_prior — fields that did not
+      exist before — and NO capability line naming web_fetch or browser_navigate, which is what
+      the unfiltered version produced. The standing question this leaves: step exhaustion rose
+      55% in a week and nothing yet explains WHY, which is its own item.
   GROWTH_FIX_2026_09_03_I_counted_recovered_stumbles_as_failures:
     map_check: "No mapped item — correcting the N01 section I shipped hours earlier."
     how_it_surfaced: >-

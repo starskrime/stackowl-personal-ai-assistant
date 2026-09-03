@@ -35,13 +35,16 @@ from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
 pytestmark = pytest.mark.asyncio
 
 
-async def _outcome(db, *, days_ago: float, success: int, cap: str = "") -> None:
+async def _outcome(
+    db, *, days_ago: float, success: int, cap: str = "", failure_class: str = "",
+) -> None:
     await db.execute(
         "INSERT INTO task_outcomes (trace_id, session_key, owl_name, channel, success,"
-        " latency_ms, tool_call_count, captured_at, owner_id, failed_capability)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        " latency_ms, tool_call_count, captured_at, owner_id, failed_capability,"
+        " failure_class) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         (f"t{time.time_ns()}", "s", "secretary", "telegram", success,
-         1.0, 0, time.time() - days_ago * 86400.0, DEFAULT_PRINCIPAL_ID, cap),
+         1.0, 0, time.time() - days_ago * 86400.0, DEFAULT_PRINCIPAL_ID, cap,
+         failure_class),
     )
 
 
@@ -149,3 +152,53 @@ async def test_a_capability_that_STUMBLED_but_RECOVERED_is_not_a_failure(tmp_db)
         "regression the user never experienced"
     )
     assert "web_fetch (6→1)" in body, body
+
+
+async def test_running_out_of_STEPS_is_not_blamed_on_a_capability(tmp_db) -> None:
+    """The biggest correction this section needed, and the reason it is separate.
+
+    `failure_class='stop'` means the turn RAN OUT OF STEPS. The capability named
+    on such a row is whatever was in flight, not one that failed. MEASURED
+    2026-09-03 on live data, excluding it:
+
+        web_fetch          5 -> 11  became  0 -> 0   (never failed at all)
+        browser_navigate  12 ->  3  became  0 -> 0   ("improvement" was not real)
+        shell             15 -> 21  became 11 -> 10  (flat, not a regression)
+
+    Every per-capability movement the section reported on its first night was
+    step exhaustion wearing a tool's name. A lesson telling an owl to be careful
+    with web_fetch cannot fix running out of steps — which is exactly why the
+    mined `incident_web_fetch_stop` lesson was one the recurrence detector
+    reported as "not holding".
+    """
+    for _ in range(8):
+        await _outcome(tmp_db, days_ago=1, success=0, cap="web_fetch", failure_class="stop")
+    for _ in range(6):
+        await _outcome(tmp_db, days_ago=10, success=0, cap="web_fetch", failure_class="stop")
+    # one genuine capability failure each week, so the section still has turns
+    await _outcome(tmp_db, days_ago=1, success=1)
+    await _outcome(tmp_db, days_ago=10, success=1)
+
+    sec = await GrowthAssembler(tmp_db).assemble(None)
+    body = " ".join(sec.items)
+
+    assert "web_fetch" not in body, (
+        "a step-cap exhaustion was blamed on the tool that happened to be running"
+    )
+
+
+async def test_the_step_CEILING_is_reported_as_its_own_thing(tmp_db) -> None:
+    """It is the number that actually moved (31 -> 48 live), and it is about the
+    platform rather than any tool. Dropping `stop` without reporting it would
+    have traded a wrong answer for silence."""
+    for _ in range(8):
+        await _outcome(tmp_db, days_ago=1, success=0, cap="shell", failure_class="stop")
+    for _ in range(3):
+        await _outcome(tmp_db, days_ago=10, success=0, cap="shell", failure_class="stop")
+    await _outcome(tmp_db, days_ago=1, success=1)
+    await _outcome(tmp_db, days_ago=10, success=1)
+
+    body = " ".join((await GrowthAssembler(tmp_db).assemble(None)).items)
+
+    assert "ran out of steps mid-task 8 times, up from 3" in body
+    assert "my own ceiling" in body
