@@ -210,3 +210,78 @@ async def test_the_healthy_cadence_verdict_is_visible_in_production() -> None:
         "the healthy cadence verdict is invisible at INFO — a clean run and a "
         "check that never ran look identical in production"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The sibling escape: a cadence that never alarms, on a store that is not quiet #
+# --------------------------------------------------------------------------- #
+
+#: Declared ON_DEMAND — "only a person's action writes this" — and written by the
+#: turn pipeline. MEASURED 2026-09-03: 25 of its 1,192 rows were written after
+#: 10:00 UTC that day, every one on an ``incident-*`` session, with no human input
+#: since 06:18. Its writer is ``pipeline/steps/assemble.py``.
+MISDECLARED_AS_PERSON_DRIVEN = "session_prompts"
+
+
+def test_a_store_the_loop_writes_is_not_declared_person_driven() -> None:
+    """THE SIBLING OF THE HATCH, and it escapes the guard above because it makes
+    no claim about the SCHEMA.
+
+    ``ON_DEMAND`` says "Writes only when a PERSON acts. Silence is the operator's
+    choice and can never be a defect", and carries no silence limit at all. So a
+    store filed there is exempt from the check just as completely as one filed
+    UNMEASURABLE — without ever asserting anything a schema could contradict.
+
+    ``session_prompts`` is written by ``assemble`` on every turn that has a
+    conversation_id, including machine lanes during a total provider outage. If
+    the prompt cache stopped being written the registry would call that silence
+    correct, by declaration."""
+    decl = next(d for d in DECLARATIONS if d.table == MISDECLARED_AS_PERSON_DRIVEN)
+    assert decl.cadence is not Cadence.ON_DEMAND, (
+        "a store the turn pipeline writes is declared person-driven, which makes "
+        "its silence 'never a defect' — the exemption this registry exists to "
+        "remove, reached through a different door"
+    )
+    assert decl.cadence is Cadence.HOT
+    assert decl.clock == "built_at"
+
+
+@pytest.mark.tripwire
+def test_every_store_with_a_clock_declares_it() -> None:
+    """THE STRUCTURAL HALF, made executable like the one above it.
+
+    A declaration may legitimately not ALARM — ON_DEMAND and SEED never do. What
+    it may not do is discard the one fact that could contradict it. With
+    ``clock=None`` nothing reads the store's timestamp, so a wrong cadence can
+    never be seen to be wrong: that is exactly how ``session_prompts`` sat filed
+    as person-driven while the loop wrote it every turn.
+
+    Declaring the clock does not make a non-alarming store alarm. It makes the
+    declaration falsifiable, which is the property the whole registry rests on."""
+    sql = _schema_sql()
+    # A TABLE THE PARSER CANNOT SEE MUST NOT READ AS A PASS. `schema_migrations`
+    # is created by the migration RUNNER, not by a migration file, so it has no
+    # CREATE TABLE in this corpus. Found by mutating its declaration to drop the
+    # clock and watching the guard stay green — the vacuity this suite exists to
+    # refuse, in the suite itself. It is named here with its reason rather than
+    # skipped silently, and any OTHER invisible table fails below.
+    RUNNER_CREATED = {"schema_migrations"}
+    invisible = [
+        d.table for d in DECLARATIONS
+        if not _columns_for(d.table, sql) and d.table not in RUNNER_CREATED
+    ]
+    assert not invisible, (
+        "this guard cannot resolve the columns of a declared store, so it would "
+        f"pass it whatever the declaration says: {invisible}"
+    )
+    missing = []
+    for decl in DECLARATIONS:
+        if decl.clock or decl.table in RUNNER_CREATED:
+            continue
+        clocks = sorted(c for c in _columns_for(decl.table, sql) if c.endswith("_at"))
+        if clocks:
+            missing.append(f"{decl.table} ({decl.cadence.name}) has {clocks} and declares none")
+    assert not missing, (
+        "a store keeps a timestamp its declaration throws away, so nothing can "
+        "contradict the cadence it claims:\n  " + "\n  ".join(missing)
+    )

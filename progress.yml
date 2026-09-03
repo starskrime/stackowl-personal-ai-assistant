@@ -315,6 +315,66 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CADENCE2_2026_09_03_the_exemption_reached_through_a_different_door:
+    map_check: "No mapped item — found by asking why session_prompts is 15.7 MB and never pruned."
+    THE_FINDING: >-
+      session_prompts is declared ON_DEMAND — "Writes only when a PERSON acts. Silence is the
+      operator's choice and can never be a defect" — and it is written by the TURN PIPELINE.
+      MEASURED 2026-09-03: 25 of its 1,192 rows landed after 10:00 UTC that day, every one on
+      an incident-* session, with no human input since 06:18. Its writer is
+      pipeline/steps/assemble.py, on every turn carrying a conversation_id.
+    WHY_THE_LAST_ITEMS_GUARD_DID_NOT_CATCH_IT: >-
+      Yesterday's guard asserts that UNMEASURABLE means what it says — no clock column — and
+      that is correctly scoped. ON_DEMAND makes no claim a schema could contradict; it simply
+      carries no silence limit. So a store filed there is exempt from the check just as
+      completely, without ever asserting anything checkable. Same exemption, different door.
+    THE_STRUCTURAL_HALF_made_executable: >-
+      A declaration may legitimately not ALARM. What it may not do is discard the one fact
+      that could contradict it. With clock=None nothing reads the store's timestamp, so a
+      wrong cadence can never be SEEN to be wrong — which is exactly how session_prompts sat
+      filed as person-driven while the loop wrote it every turn. A tripwire now requires
+      every declaration whose table keeps an _at column to declare it. Eight failed it; all
+      eight now declare their clock. Non-alarming cadences still never alarm — the timestamp
+      only makes the claim falsifiable, which is the property the whole registry rests on.
+    A_TRUE_POSITIVE_APPEARED_AND_IT_IS_NOT_MINE: >-
+      The live report now reads measured=29 empty=3 unreadable=0 silent=1, and the silent one
+      is side_effect_ledger at 1.0d against its HOT declaration. That is ACCURATE: the ledger
+      is written when a durable task commits a side effect, no tool has executed during the
+      13-hour provider outage, and it crossed the one-day threshold between 21:38 and 22:50.
+      Pre-existing declaration, correct alarm, benign cause — and the first end-to-end proof
+      that this machinery catches a live-loop store going quiet.
+    WHAT_IS_DELIBERATELY_NOT_DONE: >-
+      session_prompts holds 15.7 MB of prompt_text across 1,192 rows over 17 days (~0.9 MB a
+      day) and its only DELETEs are invalidation by owl_name or a full wipe — no age-based
+      retention. That is the same no-decay shape as yesterday's ledger fix, but the rows are
+      a CACHE keyed by conversation, not a record scoped to a task, so the cascade that fixed
+      the ledger does not transfer. Named here rather than guessed at.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    MY_OWN_GUARD_WAS_VACUOUS_AND_MUTATION_TESTING_CAUGHT_IT: >-
+      The first cut of the clock tripwire SURVIVED a mutation that dropped
+      schema_migrations' clock. Cause: it reads columns from the migration SQL, and
+      schema_migrations is created by the migration RUNNER, not by a migration file — so the
+      parser saw no columns, found no _at, and passed. A table the guard cannot SEE was
+      reading as a table that passed: the same "an unknown must not read as a pass" rule the
+      usage_report item fixed this afternoon, reproduced inside the guard written to enforce
+      it. The guard now fails on any declared store whose columns it cannot resolve, with
+      that one runner-created table named and justified; a mutation on a non-runner table is
+      caught.
+    validate_evidence: >-
+      3 new tests on the existing suite (one @pytest.mark.tripwire, so it joins the
+      cross-cutting gate); 3 mutations (session_prompts back to person-driven; a runner
+      created table dropping its clock, which exposed the vacuity; a normal table dropping
+      its clock) — the middle one SURVIVED until the guard was fixed. tests/health 61 pass. LIVE, run against the real database before
+      committing: cadence_report went from measured=28 to measured=29 with session_prompts
+      joining and NOT alarming (written 22:45 today, idle ~0), which is the two-sided check —
+      the misdeclared store is now measured, and correcting it added no false alarm.
   LEDGER_2026_09_03_the_prune_deleted_the_parent_and_left_the_children:
     map_check: "No mapped item — found by asking what occupies a 343 MB database."
     THE_FINDING: >-

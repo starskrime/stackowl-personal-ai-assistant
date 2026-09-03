@@ -157,21 +157,27 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
 
     # --- ON_DEMAND: only a person's action writes these -----------------------
     _on_demand("owls", "created_at", "11.8 days idle and CORRECT — no owl created."),
-    _on_demand("owl_dna"),
-    _on_demand("owl_dna_authored"),
+    _on_demand("owl_dna", "updated_at"),
+    _on_demand("owl_dna_authored", "updated_at"),
     _on_demand("owl_profiles", "created_at"),
-    _on_demand("user_preferences"),
-    _on_demand("session_prompts"),
+    _on_demand("user_preferences", "updated_at"),
+    # NOT person-driven, measured. `assemble` writes this on every turn that
+    # carries a conversation_id: 25 of its 1,192 rows landed after 10:00 UTC on
+    # 2026-09-03, every one on an `incident-*` session, with no human input since
+    # 06:18. Filed ON_DEMAND it was exempt from the silence check — "silence is
+    # the operator's choice and can never be a defect" — so a prompt cache that
+    # stopped being written would have read as correct.
+    _hot("session_prompts", "built_at"),
     _on_demand("notification_overrides", "created_at"),
-    _on_demand("plugins"),
+    _on_demand("plugins", "installed_at"),
     _on_demand("thread_registry", "created_at"),
 
     # --- SEED: written once ---------------------------------------------------
     _seed("principals", "created_at"),
     _seed("onboarding_events", "recorded_at"),
-    _seed("onboarding"),
-    _seed("stackowl_meta"),
-    _seed("schema_migrations"),
+    _seed("onboarding", "shown_at"),
+    _seed("stackowl_meta", "updated_at"),
+    _seed("schema_migrations", "applied_at"),
 
     # --- RETIRED: the writer is gone; these are leftovers to delete -----------
     # MEASURED 2026-09-03. All four were filed UNMEASURABLE ("no timestamp
