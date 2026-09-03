@@ -378,8 +378,21 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: PARTIAL
       document: done
+    what_validate_ACTUALLY_evidenced: >-
+      Live at 09:09:44Z on commit 3ff2e052 (04:08:55 -0500), zero ERROR lines on boot. PROVEN
+      in-process against the real function: all 8 data shapes x 4 languages x lean render
+      without a blank slot, a leaked key or a raw brace — 512 renders in the tripwire — and
+      the exact message he received now renders as the warm graceful sentence instead of
+      three empty slots. Also evidenced, from the same restart: "[loop] undelivered-failure
+      sweep complete" reports examined=0 revived=0, which is the RETIREMENT item's open
+      curator check.
+      NOT YET EVIDENCED, and deliberately NOT counted as a pass: zero floors have rendered
+      since the restart, so the production query is 0 over 0 — which is not a pass any more
+      than it is a failure. The rate is 54 floors in 7 days (1 in the last 24h), so roughly a
+      day of traffic is needed before the query means anything. The pre-fix rate was 61% of
+      floors, so a SINGLE post-restart floor with a blank slot falsifies it.
     validate_closing_query: >-
       No floor rendered after this commit may contain an empty slot. Query task_outcomes for
       response_text LIKE '%: .%' or '%What I tried: .%' with captured_at after the restart —
