@@ -20,6 +20,7 @@ from stackowl.memory.sqlite_helpers import (
     parse_iso,
     row_to_staged,
     staged_recall,
+    staged_semantic_recall,
 )
 from stackowl.memory.trust import Trust, trust_for_source
 
@@ -47,6 +48,15 @@ if TYPE_CHECKING:  # pragma: no cover
 #: grew the fact store to 107,576 rows, one layer down.
 _TURN_HISTORY_MULTIPLE = 10
 _TURN_HISTORY_FLOOR = 50
+
+#: Slots the substring scan always keeps in the candidate pool.
+#:
+#: 205 of the 230 staged rows carry a vector and 25 do not. Semantic recall will
+#: always fill whatever budget it is given, so without a reservation the
+#: substring path receives zero and those 25 rows become permanently
+#: unreachable — which is the failure ESC-69 was opened to fix, reintroduced by
+#: its own successor.
+_SUBSTRING_RESERVE = 2
 
 
 def _turns_to_keep() -> int:
@@ -536,8 +546,59 @@ class SqliteMemoryBridge(MemoryBridge):
         records = await fts_recall(self._db, query, limit)
         if len(records) < limit:
             seen = {r.fact_id for r in records}
-            staged = await staged_recall(self._db, query, limit - len(records))
-            records = records + [r for r in staged if r.fact_id not in seen]
+            # SEMANTIC FIRST, SUBSTRING TO TOP UP. The substring scan matches the
+            # ENTIRE query as one literal phrase, so it answers a keyword and not
+            # a question. MEASURED 2026-09-03 on the live archive: "jobmarket" ->
+            # 5 hits, "jobmarket agent" -> 0, "agents" -> 5, "what agents do I
+            # have" -> 0, while a fact reading "The jobmarket scout is the
+            # existing daily 2 PM CT agent" sat invisible to the last of those.
+            # With committed_facts at 0 rows, that scan was the whole archive.
+            #
+            # The interim's premise had expired: it was written when staged_facts
+            # carried no vectors, and the 2026-08-25 fix started writing them —
+            # 205 of 230 rows (89%) now hold one. BOTH paths run, because 25 rows
+            # still have no vector and semantic-only would make exactly those
+            # unreachable.
+            vector, model = await self._embed_content(query)
+            n_semantic = 0
+            # GUARD ON THE MODEL, NOT THE DIMENSION. EmbeddingRegistry degrades to
+            # HashEmbeddingProvider on any load failure, and that fallback is ALSO
+            # 384-dimension ("hash-v1-384d") — so a dimension check cannot see it,
+            # and cosine between a standard-normal random vector and MiniLM rows
+            # is noise. Without this, a silent degrade would put five random
+            # "memories" into every prompt and nothing would notice.
+            if vector and model:
+                # Reserve slots for the substring scan BEFORE spending the budget:
+                # semantic will always fill the pool from 205 embedded rows, so
+                # `limit - len(records)` would leave the scan a budget of zero and
+                # make the 25 rows that have NO vector permanently unreachable —
+                # the exact "made it unreachable and called it a cleanup" mistake
+                # ESC-69 exists to correct.
+                budget = max(1, (limit - len(records)) - _SUBSTRING_RESERVE)
+                semantic = await staged_semantic_recall(
+                    self._db, vector, budget, embedding_model=model,
+                )
+                n_semantic = len(semantic)
+                records = records + [r for r in semantic if r.fact_id not in seen]
+                seen |= {r.fact_id for r in semantic}
+            if len(records) < limit:
+                staged = await staged_recall(self._db, query, limit - len(records))
+                records = records + [r for r in staged if r.fact_id not in seen]
+            # INFO, because until now NOTHING in production said whether recall
+            # ever returned anything: both this method and staged_recall exited at
+            # DEBUG only. This one line makes all four failure modes visible — a
+            # zero-result turn, a silent hash fallback (embedding_model is not the
+            # semantic one), the substring path starved to nothing, and latency.
+            log.memory.info(
+                "[memory] recall: archive searched",
+                extra={"_fields": {
+                    "query_len": len(query or ""),
+                    "fts_hits": 0,
+                    "semantic_hits": n_semantic,
+                    "total_hits": len(records),
+                    "embedding_model": model or "<none>",
+                }},
+            )
         records = filter_by_scope(records, scope_key)
         # 4. EXIT
         log.memory.debug(

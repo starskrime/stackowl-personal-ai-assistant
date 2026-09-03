@@ -198,6 +198,150 @@ async def staged_recall(
     return [row_to_record(row) for row in rows]
 
 
+#: Cosine below which a semantic hit is not a hit.
+#:
+#: DERIVED, NOT PICKED. The substring scan returned ZERO when nothing matched,
+#: which was — by accident — the only relevance threshold in the whole recall
+#: path. Cosine top-k always returns k, so without a floor every turn would carry
+#: five "memories" however unrelated, and the caller cannot tell a 0.95 from a
+#: 0.05 because MemoryRecord is frozen with extra="forbid" and has nowhere to
+#: hold a score. For 384-dimension unit vectors two random directions have cosine
+#: ~0 with standard deviation 1/sqrt(384) = 0.051, so 0.25 is roughly five
+#: standard deviations above chance: comfortably "not noise" without demanding
+#: near-paraphrase.
+_MIN_SEMANTIC_SIMILARITY = 0.25
+
+
+async def staged_semantic_recall(
+    db: DbPool,
+    query_embedding: list[float] | None,
+    limit: int,
+    *,
+    embedding_model: str | None = None,
+    min_similarity: float = _MIN_SEMANTIC_SIMILARITY,
+) -> list[MemoryRecord]:
+    """Semantic recall over ``staged_facts`` embeddings.
+
+    WHY THIS EXISTS. :func:`staged_recall` matches ``content LIKE '%<the ENTIRE
+    query>%'`` — the whole question as one literal phrase. MEASURED 2026-09-03
+    against the live archive: "jobmarket" returned 5 rows, "jobmarket agent"
+    returned 0, "agents" returned 5, and "what agents do I have" returned 0. A
+    single keyword works and ANY natural question returns nothing, while a fact
+    reading "The jobmarket scout is the existing daily 2 PM CT agent" sat
+    invisible to the last of those. Since ``committed_facts`` has held 0 rows
+    since migration 0112, that scan IS the whole archive path.
+
+    THE INTERIM'S PREMISE EXPIRED. The substring scan was ESC-69's stopgap,
+    written when ``staged_facts`` carried no vectors at all. A separate fix on
+    2026-08-25 started writing them — "this bridge held an embedding registry and
+    never used it" — and recall was never switched over. MEASURED: 205 of 230
+    staged rows (89%) now hold a 384-dimension all-MiniLM-L6-v2 vector.
+
+    IT DOES NOT REPLACE THE SCAN. 25 rows carry no vector, and dropping the
+    substring path would make exactly those unreachable — the "made it
+    unreachable and called it a cleanup" mistake ESC-69 exists to correct. The
+    caller runs this first and tops up with the scan.
+
+    Copies :mod:`stackowl.learning.lessons_store`'s proven shape, which
+    ``recall``'s own docstring names as the replacement pattern, including its two
+    safety properties: a query only ever sees rows of its OWN embedding dimension
+    (a different dimension is a different space, not a near miss), and a failed
+    embedder yields no hits rather than an exception on the turn path.
+
+    NO CACHE, deliberately. lessons_store caches because it scans thousands of
+    rows; this table is 230 and is WRITTEN DURING A TURN, so a cache would need an
+    invalidation story across the gateway/core split to avoid serving a memory the
+    user just created. At this size the scan is free and correctness is free with
+    it.
+
+    Args:
+        db: The pool.
+        query_embedding: The question's vector, or None when embedding failed.
+        limit: Maximum hits.
+
+    Returns:
+        Records ordered most-similar first; empty on a missing vector, an empty
+        corpus, or an embedder-dimension mismatch. Never raises.
+    """
+    # 1. ENTRY
+    log.memory.debug(
+        "[memory] sqlite_helpers.staged_semantic_recall: entry",
+        extra={"_fields": {"dims": len(query_embedding or []), "limit": limit}},
+    )
+    # 2. DECISION — an embedder that failed hands back None/[]; searching on it
+    # must not be a crash on the turn path.
+    if not query_embedding:
+        return []
+    query = np.asarray(query_embedding, dtype=np.float32)
+    dim = int(query.shape[0])
+    try:
+        rows = await db.fetch_all(
+            """SELECT fact_id, content, embedding,
+                      COALESCE(embedding_model, '') AS embedding_model,
+                      staged_at AS committed_at, source_type, source_ref,
+                      '[]' AS tags, COALESCE(trust, 'untrusted') AS trust,
+                      COALESCE(reinforcement_count, 0) AS reinforcement_count,
+                      scope_key
+               FROM staged_facts
+               WHERE owner_id = ? AND status = 'staged'
+                 AND embedding IS NOT NULL AND length(embedding) > 0
+                 AND (? = '' OR embedding_model = ?)""",
+            (DEFAULT_PRINCIPAL_ID, embedding_model or "", embedding_model or ""),
+        )
+    except Exception as exc:  # noqa: BLE001 — recall may never cost the turn
+        log.memory.warning(
+            "[memory] sqlite_helpers.staged_semantic_recall: corpus read failed "
+            "— falling back to the substring scan alone",
+            exc_info=exc,
+        )
+        return []
+
+    usable: list[dict[str, Any]] = []
+    vectors: list[np.ndarray] = []
+    for row in rows:
+        vec = np.frombuffer(row["embedding"], dtype="<f4")
+        # A DIFFERENT DIMENSION IS A DIFFERENT SPACE. Comparing across would
+        # return confident nonsense; skipping returns an honest miss.
+        if int(vec.shape[0]) != dim:
+            continue
+        usable.append(row)
+        vectors.append(vec)
+    if not usable:
+        if rows:
+            log.memory.warning(
+                "[memory] sqlite_helpers.staged_semantic_recall: no staged row "
+                "shares the query's embedding dimension — embedder drift, "
+                "returning no hits rather than wrong ones",
+                extra={"_fields": {"query_dim": dim, "rows_scanned": len(rows)}},
+            )
+        return []
+
+    matrix = np.stack(vectors)
+    # Squared L2 in full: ||q||^2 + ||e||^2 - 2 q.e. The identity with cosine
+    # holds only for unit-norm vectors, which is a property of today's embedder
+    # rather than of this schema — so the full form, as lessons_store uses.
+    distances = (
+        float(query @ query) + np.einsum("ij,ij->i", matrix, matrix)
+        - 2.0 * (matrix @ query)
+    )
+    np.maximum(distances, 0.0, out=distances)
+    top = np.argsort(distances)[:limit]
+    # THE FLOOR. Squared L2 relates to cosine as d = 2(1 - cos) for unit vectors,
+    # so cos = 1 - d/2. Applied AFTER the sort so the cut is on the best
+    # candidates rather than on an arbitrary prefix.
+    hits = [
+        row_to_record(usable[i])
+        for i in top
+        if (1.0 - float(distances[i]) / 2.0) >= min_similarity
+    ]
+    # 4. EXIT
+    log.memory.debug(
+        "[memory] sqlite_helpers.staged_semantic_recall: exit",
+        extra={"_fields": {"n_hits": len(hits), "scanned": len(usable), "dim": dim}},
+    )
+    return hits
+
+
 async def fetch_committed_by_ids(
     db: DbPool, fact_ids: list[str]
 ) -> list[MemoryRecord]:

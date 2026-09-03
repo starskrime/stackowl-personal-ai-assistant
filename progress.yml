@@ -315,6 +315,69 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RECALL_2026_09_03_his_memory_could_not_be_asked_a_question:
+    map_check: "No mapped item — evidence-led, from auditing the memory subsystem."
+    THE_MEASUREMENT: >-
+      Through the real recall path against the live archive: "jobmarket" -> 5 hits, "jobmarket
+      agent" -> 0, "agents" -> 5, "what agents do I have" -> 0. staged_recall matches
+      content LIKE '%<THE ENTIRE QUERY>%' — the whole question as ONE literal phrase — so a
+      single keyword works and ANY natural question returns nothing. A fact reading "The
+      jobmarket scout is the existing daily 2 PM CT agent" was invisible to "what agents do I
+      have". With committed_facts at 0 rows since migration 0112, that scan WAS the entire
+      archive path.
+    THE_CAUSE_IS_AN_INTERIM_WHOSE_PREMISE_EXPIRED: >-
+      The substring scan was ESC-69's stopgap, written when staged_facts carried NO embeddings.
+      A separate fix on 2026-08-25 started writing them — "this bridge held an embedding
+      registry and never used it" — and recall was never switched over. MEASURED: 205 of 230
+      staged rows (89%) now hold a 384-dimension all-MiniLM-L6-v2 vector. The store was
+      vectorised and searched by literal phrase. The shape is a fix that populates the data and
+      leaves the reader on the old path.
+    THE_PATTERN_WAS_ALREADY_NAMED: >-
+      recall()'s own docstring points at learning/lessons_store.py — "embeddings as SQLite BLOBs
+      plus a cached numpy scan" — so this copies a proven implementation rather than inventing
+      one, including its refuse-to-compare-across-embedders rule. The cache is deliberately NOT
+      copied: lessons_store caches because it scans thousands of rows, while staged_facts is 230
+      rows and is WRITTEN DURING A TURN, so a cache would need an invalidation story across the
+      gateway/core split to avoid hiding a memory the user just created.
+    THE_PANEL_CAUGHT_THREE_REGRESSIONS_IN_MY_OWN_FIX: >-
+      (1) NO FLOOR. The substring scan returning zero was, by accident, the only relevance
+      threshold in the system; cosine top-k always returns k, so every turn would have carried
+      five "memories" however unrelated, at up to 1,000 chars each, with no way to say "I do not
+      know" — MemoryRecord is frozen with extra="forbid" and has nowhere to carry a score. Added
+      a floor derived rather than picked: for 384-dimension unit vectors two random directions
+      have cosine ~0 with sd 1/sqrt(384) = 0.051, so 0.25 is about five sd above chance.
+      (2) THE DIMENSION GUARD IS BLIND TO THE REAL HAZARD. EmbeddingRegistry degrades to
+      HashEmbeddingProvider on any load failure and that fallback is ALSO 384-dimension
+      ("hash-v1-384d"), so cosine against MiniLM rows is noise that the dimension check cannot
+      see. Now guarded on embedding_model — the same rule the bridge's dedup gate already
+      applies, and its docstring already warns about this exact pair.
+      (3) THE SUBSTRING PATH WOULD HAVE BEEN STARVED TO ZERO. Semantic always fills its budget
+      from 205 embedded rows, so the top-up would have received `limit - len(records)` = 0 and
+      the 25 rows with no vector would have become permanently unreachable — the exact failure
+      ESC-69 exists to correct, reintroduced by its own successor. Two slots are now reserved.
+    AND_ONE_MORE_THING_NOTHING_COULD_SEE: >-
+      recall() and staged_recall both exited at DEBUG only, so production had NO evidence that
+      memory recall ever returned anything. One INFO line now carries query_len, semantic_hits,
+      total_hits and embedding_model — which makes all four failure modes visible at once: a
+      zero-result turn, a silent hash fallback, a starved substring path, and latency.
+    THE_EFFECT_MEASURED_END_TO_END: >-
+      Against the live archive with the floor and model guard in place: "what agents do I have"
+      0 -> 3 hits, "when does my job scout run" 0 -> 3 with the correct fact ranked FIRST, and
+      "the boiling point of tungsten" / "recipe for sourdough starter" -> 0 hits. It answers
+      questions and still knows when it does not know.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      After the restart, "[memory] recall: archive searched" must appear at INFO on real turns
+      with embedding_model=all-MiniLM-L6-v2 (NOT hash-v1-384d, which would mean the embedder
+      degraded silently) and total_hits > 0 on at least some turns. That line has never existed
+      before, so its first appearance is itself the evidence the path runs in production.
   LOSSMETRIC_2026_09_03_the_loss_counter_only_ran_when_there_was_new_work:
     map_check: "No mapped item — evidence-led, from tracing a 96% collapse in platform activity."
     HOW_I_GOT_HERE: >-
