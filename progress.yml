@@ -483,6 +483,13 @@ current:
       src/, while the live cap is NotificationSettings.max_notifications_per_hour read at
       router._apply_frequency_cap. Two copies of one rule, one of them dead; a dead knob is
       worse than none because setting it looks like it does something.
+    A_FOURTH_THING_CORRECTED_LATER_THE_SAME_DAY: >-
+      The operator_health half of the measurement above is WITHDRAWN. Its 43% repeat rate is
+      largely BY DESIGN: HealthSweepHandler dedupes via _dedupe_and_update and re-alerts on a
+      backoff heartbeat while an incident is ongoing, and its messages already name the
+      subsystem ("x {name}: down - {detail}"), so they carry the identity job_failed lacked. I
+      counted hashes without reading the emitter. job_failed remains correct and is the half
+      that was fixed the following item.
     THREE_THINGS_I_CHECKED_AND_FOUND_HEALTHY: >-
       Measuring first stopped three items I was about to open. DEBT-99 (the floor hiding what it
       tried) has ZERO production instances — prefix-anchored, no real floor ever ran tools
@@ -6146,9 +6153,16 @@ current:
     ESC_117_should_an_identical_alert_be_held_back_when_the_code_says_fail_toward_paging:
       premise_check: |
         uv run python -c "import sqlite3,os;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);t=c.execute(\"SELECT COUNT(*) FROM notification_log WHERE category='job_failed'\").fetchone()[0];d=c.execute(\"SELECT COUNT(DISTINCT message_hash) FROM notification_log WHERE category='job_failed'\").fetchone()[0];print(('HOLDS ' if t and (t-d)*100//t>=50 else 'EXPIRED ')+str(t)+' sent, '+str(d)+' distinct')" 2>/dev/null | tail -1
+      CORRECTION_2026_09_03: >-
+        This escalation originally leaned on operator_health's 43% repeat rate as well. That
+        part is WRONG and is withdrawn: HealthSweepHandler already dedupes via
+        _dedupe_and_update and deliberately re-alerts on a BACKOFF HEARTBEAT while an incident
+        is ongoing, so most of those repeats are by design and mean "still down" — which is
+        exactly the fail-toward-paging behaviour this question exists to protect. The question
+        below stands on job_failed alone. I counted hashes without reading the emitter.
       question: >-
         88% of the job-failure alerts you received were repeats of a message you had already
-        been sent, and one health alert reached you 71 times. I can hold identical alerts back
+        been sent. I can hold identical alerts back
         for a window. I did NOT, because this codebase already decided the opposite in code —
         "FAILS TOWARD PAGING ... the cost of the wrong direction here is one duplicate message;
         the cost of the other is a self-healing loop that fails in silence." Which cost do you
