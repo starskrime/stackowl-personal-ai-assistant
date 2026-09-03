@@ -363,8 +363,18 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: PARTIAL
       document: done
+    what_validate_ACTUALLY_evidenced: >-
+      Live at 10:25:26Z on commit a75379b7, zero ERROR and zero WARNING lines since boot. The
+      RUNNING process composes the new text — verified by reading _notify_failure's source out
+      of the live module, not the file: it names ({job.job_id}), gates the counter on
+      `if exhausted:`, and no longer carries "after exhausting retries" in the template. 661
+      scheduler+notifications tests pass, and both mutations (drop the job identity; put the
+      counter back on the transient path) go red.
+      NOT YET EVIDENCED: no job has failed since the restart, so no live job_failed alert has
+      been composed. The rate is 262 over the recorded history, and every one of the 138 jobs
+      is currently healthy — so this may take days, and it is 0-over-0 until then, not a pass.
     validate_closing_query: >-
       The next job_failed notification must carry its job_id and, on an exhaustion path, a
       "Failure #N for this job." No transient-retry alert may contain "exhausting retries" or
