@@ -1,4 +1,14 @@
-"""Tests for Learning Commit 4 — DnaAttributor + EvolutionCoordinator rewiring."""
+"""Tests for Learning Commit 4 — DnaAttributor + EvolutionCoordinator rewiring.
+
+FIXTURE NOTE (2026-09-03). The band clusters below carry a small ``+ i * 0.002``
+jitter so each band holds DISTINCT trait SETTINGS rather than N copies of one.
+That is not cosmetic: the attributor now requires
+``_MIN_BAND_DISTINCT_VALUES`` distinct values per band, because the independent
+unit of "did changing this trait change quality" is the configuration, not the
+turn. Ten outcomes at exactly 0.85 are ONE experiment run ten times, and a gap
+measured against them is the difference between two eras. These fixtures
+previously encoded the assumption that repetition was evidence.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +22,7 @@ from stackowl.owls.dna import OwlDNA
 from stackowl.owls.dna_attribution import (
     MIN_SAMPLES_FOR_ATTRIBUTION,
     DnaAttributor,
+    _band_edges,
     _band_for,
 )
 
@@ -65,7 +76,7 @@ def test_attributor_ignores_failed_outcomes_positive_only() -> None:
     for i in range(15):  # high band "wins" — but these are FAILURES
         outcomes.append(_failed_o(
             quality=0.95,
-            dna_snapshot={"challenge_level": 0.85, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.85 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"fail-hi-{i}",
@@ -73,7 +84,7 @@ def test_attributor_ignores_failed_outcomes_positive_only() -> None:
     for i in range(15):
         outcomes.append(_failed_o(
             quality=0.15,
-            dna_snapshot={"challenge_level": 0.15, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.15 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"fail-lo-{i}",
@@ -88,14 +99,32 @@ def test_attributor_ignores_failed_outcomes_positive_only() -> None:
 # ---------- band classifier -------------------------------------------------
 
 
-def test_band_for_low_mid_high() -> None:
-    assert _band_for(0.0) == "low"
-    assert _band_for(0.29999) == "low"
-    assert _band_for(0.3) == "mid"
-    assert _band_for(0.5) == "mid"
-    assert _band_for(0.69999) == "mid"
-    assert _band_for(0.7) == "high"
-    assert _band_for(1.0) == "high"
+def test_band_for_splits_on_the_supplied_edges() -> None:
+    """Bands are relative to the OBSERVED values now.
+
+    This test used to assert the absolute thirds — _band_for(0.0) == "low",
+    _band_for(0.7) == "high" — which was the defect itself: no trait has ever
+    held a value below 0.45 or above 0.64, so "low" and "high" were unreachable
+    labels and every sample landed in "mid".
+    """
+    edges = (0.48, 0.58)
+    assert _band_for(0.46, edges) == "low"
+    assert _band_for(0.479, edges) == "low"
+    assert _band_for(0.48, edges) == "mid"
+    assert _band_for(0.55, edges) == "mid"
+    assert _band_for(0.579, edges) == "mid"
+    assert _band_for(0.58, edges) == "high"
+    assert _band_for(0.63, edges) == "high"
+
+
+def test_band_edges_refuse_a_trait_that_never_varied() -> None:
+    """The guard that makes distribution-relative banding safe: without it, a
+    trait pinned at one value would still be split into groups whose quality
+    difference is pure noise."""
+    assert _band_edges([0.5] * 40) is None
+    assert _band_edges([0.5, 0.501, 0.502]) is None      # below _MIN_TRAIT_SPREAD
+    assert _band_edges([]) is None
+    assert _band_edges([0.46 + 0.17 * i / 39 for i in range(40)]) is not None
 
 
 # ---------- AttributionReport sample-size gating ----------------------------
@@ -138,7 +167,7 @@ def test_attributor_proposes_delta_toward_winning_band() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.45 + (i % 2) * 0.1,
-            dna_snapshot={"challenge_level": 0.15,
+            dna_snapshot={"challenge_level": 0.15 + i * 0.002,
                           "verbosity": 0.5, "curiosity": 0.5,
                           "formality": 0.5, "creativity": 0.5,
                           "precision": 0.5},
@@ -148,7 +177,7 @@ def test_attributor_proposes_delta_toward_winning_band() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.85 + (i % 2) * 0.1,
-            dna_snapshot={"challenge_level": 0.85,
+            dna_snapshot={"challenge_level": 0.85 + i * 0.002,
                           "verbosity": 0.5, "curiosity": 0.5,
                           "formality": 0.5, "creativity": 0.5,
                           "precision": 0.5},
@@ -168,7 +197,7 @@ def test_attributor_proposes_negative_delta_when_low_band_wins() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.9,
-            dna_snapshot={"challenge_level": 0.5, "verbosity": 0.15,
+            dna_snapshot={"challenge_level": 0.5, "verbosity": 0.15 + i * 0.002,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"vlow-{i}",
@@ -176,7 +205,7 @@ def test_attributor_proposes_negative_delta_when_low_band_wins() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.5,
-            dna_snapshot={"challenge_level": 0.5, "verbosity": 0.85,
+            dna_snapshot={"challenge_level": 0.5, "verbosity": 0.85 + i * 0.002,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"vhigh-{i}",
@@ -190,12 +219,16 @@ def test_attributor_proposes_negative_delta_when_low_band_wins() -> None:
 
 def test_attributor_holds_when_already_in_winning_band() -> None:
     attr = DnaAttributor(rng=random.Random(0), explore_epsilon=0.0)
-    current = OwlDNA(challenge_level=0.85)  # already in high band
+    # Inside the winning cluster, not at its lower lip: the jittered high band
+    # spans 0.850-0.868 and the tercile edge falls within it, so 0.85 itself now
+    # classifies one band down. Picking the cluster's midpoint keeps this test
+    # about the HOLD rule rather than about where an edge happens to land.
+    current = OwlDNA(challenge_level=0.86)  # already in the winning band
     outcomes: list[TaskOutcome] = []
     for i in range(10):
         outcomes.append(_o(
             quality=0.4,
-            dna_snapshot={"challenge_level": 0.15, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.15 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"l-{i}",
@@ -203,7 +236,7 @@ def test_attributor_holds_when_already_in_winning_band() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.9,
-            dna_snapshot={"challenge_level": 0.85, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.85 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"h-{i}",
@@ -225,7 +258,7 @@ def test_attributor_holds_when_band_gap_below_threshold() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.75,
-            dna_snapshot={"challenge_level": 0.15, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.15 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"l-{i}",
@@ -233,7 +266,7 @@ def test_attributor_holds_when_band_gap_below_threshold() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.78,
-            dna_snapshot={"challenge_level": 0.85, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.85 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"h-{i}",
@@ -329,7 +362,7 @@ def _band_gap_outcomes() -> tuple[OwlDNA, list[TaskOutcome]]:
     for i in range(10):
         outcomes.append(_o(
             quality=0.45 + (i % 2) * 0.1,
-            dna_snapshot={"challenge_level": 0.15, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.15 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"low-{i}",
@@ -337,7 +370,7 @@ def _band_gap_outcomes() -> tuple[OwlDNA, list[TaskOutcome]]:
     for i in range(10):
         outcomes.append(_o(
             quality=0.85 + (i % 2) * 0.1,
-            dna_snapshot={"challenge_level": 0.85, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.85 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"high-{i}",
@@ -398,7 +431,7 @@ def test_skill_success_rate_cannot_manufacture_signal_from_zero_delta() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.75,
-            dna_snapshot={"challenge_level": 0.15, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.15 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"l-{i}",
@@ -406,7 +439,7 @@ def test_skill_success_rate_cannot_manufacture_signal_from_zero_delta() -> None:
     for i in range(10):
         outcomes.append(_o(
             quality=0.78,
-            dna_snapshot={"challenge_level": 0.85, "verbosity": 0.5,
+            dna_snapshot={"challenge_level": 0.85 + i * 0.002, "verbosity": 0.5,
                           "curiosity": 0.5, "formality": 0.5,
                           "creativity": 0.5, "precision": 0.5},
             trace_id=f"h-{i}",

@@ -35,14 +35,16 @@ def test_sql_column_order_matches_canonical():
 
 def test_residual_sites_repointed():
     """Guard: all residual dup sites from DRY-cleanup C now reference DnaDefaults."""
-    from stackowl.owls.dna_attribution import _BAND_CENTERS
-
-    # owls/dna_attribution.py — _MUTABLE_TRAITS and _BAND_CENTERS["mid"]
+    # owls/dna_attribution.py — _MUTABLE_TRAITS, and BandStats.mean_value which
+    # took over from the deleted _BAND_CENTERS constant on 2026-09-03. Bands are
+    # now derived from the observed distribution, so there is no fixed "mid"
+    # centre to point at; the default for an unmeasured band is still NEUTRAL.
     from stackowl.owls.dna_attribution import _MUTABLE_TRAITS as ATTR_TRAITS
+    from stackowl.owls.dna_attribution import BandStats
     from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
 
     assert tuple(ATTR_TRAITS) == TRAIT_NAMES
-    assert _BAND_CENTERS["mid"] == NEUTRAL
+    assert BandStats(band="mid", n_samples=0, mean_quality=0.0).mean_value == NEUTRAL
 
     # commands/owls_helpers.py — _DNA_TRAITS
     from stackowl.commands.owls_helpers import _DNA_TRAITS

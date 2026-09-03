@@ -315,6 +315,87 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DNA_2026_09_03_every_stage_was_calibrated_on_a_scale_its_values_never_occupy:
+    map_check: "No mapped item — evidence-led, from a live ERROR/WARNING sweep after the restart."
+    THE_ROOT_CAUSE: >-
+      Three stages of the DNA self-improvement loop each set a threshold, and none of them
+      checked whether the mechanism that had to reach it COULD. Attribution bands traits into
+      absolute thirds of [0,1]; the injector only acts outside [0.3,0.7]; the shadow gate needs
+      5 eligible replays. Trait values live in [0.45,0.63]. So all three stages are unreachable
+      by construction, and each one logs an honest-sounding reason that reads like a healthy
+      system declining to act.
+    THE_MEASUREMENTS: >-
+      (1) Across all 9,586 outcomes carrying both a quality_score and a dna_snapshot, for ALL
+      SEVEN traits, EVERY sample falls in the single mid band; widest observed range of any
+      trait is [0.450,0.632]. A gap needs two qualifying bands, so the evidence-backed path
+      could never fire — and never has: 54 of 60 attributor runs returned nothing, the 6 that
+      proposed came from the random explore margin, and every hypothesis ever logged carries
+      src=llm_fallback. (2) ZERO of 20,146 outcomes have any trait outside the injector's
+      [0.3,0.7] deadband — DNA has never modulated a single owl's behaviour. (3) The shadow
+      gate rejected 54 of 56 promotions, and its field signature (failures=[] with
+      consecutive_non_regressions=0) is only producible by the cold-start branch, so the replay
+      loop never ran and its acceptance condition was evaluated about twice.
+    WHY_IT_CANNOT_SELF_CORRECT: >-
+      Reaching a band edge from the 0.5 start needs a 0.2 move; one step is 0.05, behind a gate
+      that has passed twice ever. Attribution needs trait spread to make a signal; spread needs
+      promotions; promotions need a signal. The loop holds itself shut and reports contentment.
+    THE_PANEL_STOPPED_ME_SHIPPING_A_WORSE_BUG: >-
+      My first fix was quantile banding alone. I prototyped it on live data and got, for
+      secretary, two traits with a 0.196 gap — nearly double the threshold — and read it as
+      vindication. It was not. formality and precision returned IDENTICAL gaps, which is the
+      tell. Measuring the INDEPENDENT unit rather than the row count: five of six owls have
+      exactly ONE distinct dna_snapshot in their entire history, and secretary has two. So
+      "500 samples" is 500 observations of one configuration, and the gap between two such
+      groups is the difference between two ERAS, confounded with every model change, prompt
+      change and unrelated fix in the window. Shipping the banding alone would have converted
+      "0 attributions, honest" into "a confident attribution from 2 points at VERIFIED
+      strength", which the governor multiplies by 1.0 where the LLM fallback gets 0.3. The
+      stability lens also caught a ratchet: re-banding the samples while steering at the fixed
+      _BAND_CENTERS constant would disable the "already in the winning band" brake and aim
+      every proposal at 0.85, outside the envelope — +0.05 in the same direction forever,
+      logging exactly like healthy learning.
+    THE_FIX: >-
+      Bands, steering target and the hold-check now come from ONE policy derived from the
+      observed values (_band_edges). Two floors guard it: _MIN_TRAIT_SPREAD (the trait must
+      have varied by at least one evolution step) and _MIN_BAND_DISTINCT_VALUES (a band needs
+      distinct SETTINGS, not just distinct turns). The dead _BAND_CENTERS and _BAND_NAMES
+      constants are deleted. The existing shadow-gate reachability test was NOT marked
+      @pytest.mark.tripwire, so the one guard asserting DNA promotion is possible could go red
+      without blocking a commit — now marked.
+    WHAT_I_DID_NOT_DO_AND_WHY: >-
+      Attribution STILL declines on today's data — correctly, because one configuration cannot
+      support a causal claim. I did not manufacture a signal to make the subsystem look alive.
+      What changed is that it now declines for the true reason and says so, instead of "no band
+      gap exceeded threshold across 500 samples", which implied 500 independent observations.
+      I did not touch the injector deadband: making DNA actually modulate behaviour changes
+      every owl's system prompt, which is his call (ESC-116).
+    MUTATION_CAUGHT_TWO_VACUOUS_GUARDS: >-
+      Of three mutations, TWO survived the first pass. Removing the distinct-settings floor
+      changed nothing, because fixing the fixtures to sweep distinct values had removed the
+      very case that guard exists to catch; and removing the spread floor changed nothing,
+      because the all-identical sample collapses to one band by a different route. Both now
+      have tests that target them directly, and both mutations go red.
+    PRE_EXISTING_TESTS_UPDATED_NOT_DELETED: >-
+      Eight tests in test_dna_attribution.py encoded the assumption that repetition is
+      evidence — ten outcomes at exactly 0.85. Their intent (direction, hold, gap threshold,
+      skill nudge) is still right, so the fixtures gained a per-sample jitter and the reason is
+      recorded in the module docstring. test_band_for_low_mid_high asserted the absolute thirds
+      that WERE the defect; it now tests the edge-parameterised helper plus the spread guard.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      After the restart, "[dna] attributor.attribute: exit" must carry a fallback_reason naming
+      the SPREAD or the DISTINCT SETTINGS, not "no trait band gap exceeded threshold across N
+      samples". The nightly evolution runs roughly hourly, so this is checkable within a day.
+      And the invariant that must NOT change yet: zero outcomes with a trait outside [0.3,0.7]
+      — if one appears without ESC-116 being answered, something started moving DNA that
+      should not have.
   FLOOR_2026_09_03_the_honest_floor_was_handing_him_punctuation:
     map_check: "No mapped item — evidence-led, found while measuring the task table."
     WHAT_HE_ACTUALLY_RECEIVED: >-
@@ -5824,6 +5905,40 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_116_dna_has_never_changed_how_an_owl_behaves_should_it:
+      premise_check: |
+        uv run python -c "import sqlite3,os,json;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);n=0;t=0;[ (globals().__setitem__('t',t+1)) for _ in []];rows=c.execute('SELECT dna_snapshot FROM task_outcomes WHERE dna_snapshot IS NOT NULL').fetchall();out=sum(1 for (d,) in rows if any(float(v)>=0.7 or float(v)<0.3 for v in json.loads(d).values()));print(('HOLDS ' if out==0 else 'EXPIRED ')+str(out)+' of '+str(len(rows))+' outcomes outside the injector deadband')" 2>/dev/null | tail -1
+      question: >-
+        The DNA subsystem — traits, evolution, attribution, the shadow gate, the nightly
+        coordinator — has never once changed how an owl behaves. The injector only appends a
+        behavioural directive when a trait goes above 0.7 or below 0.3, and ZERO of 20,146
+        recorded turns have ever had a trait outside that band. Should DNA actually modulate
+        behaviour, or is it decoration we should stop paying for?
+      why_evidence_cannot_settle_it: >-
+        The measurement is unambiguous that DNA does nothing today and that it cannot reach the
+        thresholds that would make it do something. It cannot tell you whether you WANT your
+        owls' personalities to drift on the evidence of their own outcome scores. That is a
+        product decision about your assistant's character, and every option changes text that
+        goes into every system prompt.
+      the_options: >-
+        (a) Narrow the injector's deadband to the range traits actually occupy, so DNA
+        modulates within the distribution it has. Same principle as the attribution fix —
+        calibrate to the data, not the imagined scale — and it does not loosen the safety
+        envelope.
+        (b) Widen the movement instead: bigger steps or a wider envelope so traits can genuinely
+        reach 0.7. Slower, and it spends the safety margin that the envelope exists to hold.
+        (c) Retire the subsystem. Under RETIRED MEANS DELETED that is a real option: it is
+        several thousand lines, a nightly coordinator, a shadow validator and an attributor,
+        and in its entire life it has changed nothing about how the platform behaves.
+      recommendation: >-
+        (a). It is the smallest change that makes the thing do what it was built to do, and it
+        is the same class of fix as the one shipped in this item. But (c) deserves a real
+        hearing — the honest summary of this subsystem is that it has cost more to diagnose
+        than it has ever produced.
+      blocked_until_answered: >-
+        Nothing is blocked. Attribution is now correct and will decline honestly until trait
+        diversity exists; that diversity cannot appear until this is answered, so the loop
+        stays shut but no longer misreports why.
     ESC_115_should_a_read_only_spiral_ever_narrow_the_next_attempt:
       premise_check: |
         uv run python -c "import sqlite3,os,json,itertools;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);r=[json.loads(s or '[]') for s, in c.execute(\"SELECT tool_sequence FROM task_outcomes WHERE failure_class='stop' AND captured_at > strftime('%s','now')-7*86400\")];f=lambda t: max([sum(1 for _ in g) for _,g in itertools.groupby(t)] or [0]);n=sum(1 for t in r if f(t)>=5);print(('HOLDS ' if n else 'EXPIRED ')+str(n)+' of '+str(len(r))+' stop turns still spiral')" 2>/dev/null | tail -1

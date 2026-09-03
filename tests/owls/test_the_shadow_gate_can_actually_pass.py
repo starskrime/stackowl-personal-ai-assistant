@@ -38,9 +38,17 @@ artefact of the harness.
 
 from __future__ import annotations
 
+import pytest
+
 from types import SimpleNamespace
 
 from stackowl.owls.shadow_validator import _eligible_for_replay
+
+#: THE GATE'S REACHABILITY IS ITSELF A CROSS-CUTTING GUARD, so it joins
+#: ./scripts/tripwires.sh by marker. It was not marked, which meant the one test
+#: asserting that DNA promotion is POSSIBLE could go red without blocking a
+#: commit — precisely the class of failure it exists to catch, one level up.
+pytestmark = pytest.mark.tripwire
 
 
 def _outcome(*, success: bool = True, failure_class=None, tools=()):  # noqa: ANN001, ANN202

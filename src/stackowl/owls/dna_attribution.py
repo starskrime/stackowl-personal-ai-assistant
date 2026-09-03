@@ -8,10 +8,13 @@ band that historically wins.
 Algorithm (per trait, per owl):
 
 1. For each scored outcome with a captured ``dna_snapshot``, classify its
-   trait value into one of three bands: low [0.0, 0.3), mid [0.3, 0.7),
-   high [0.7, 1.0].
-2. For each band with ≥ :data:`_MIN_BAND_SAMPLES` outcomes, compute the
-   mean ``quality_score``.
+   trait value into one of three bands whose edges are the TERCILES OF THE
+   OBSERVED VALUES (:func:`_band_edges`) — not absolute thirds of [0,1], which
+   no trait has ever spanned (see the note on the constants below).
+2. For each band with ≥ :data:`_MIN_BAND_SAMPLES` outcomes AND ≥
+   :data:`_MIN_BAND_DISTINCT_VALUES` distinct trait settings, compute the mean
+   ``quality_score``. The second condition is what keeps 500 turns at ONE
+   setting from being mistaken for 500 experiments.
 3. If at least two bands qualify AND the gap between best and worst band
    exceeds :data:`_MIN_BAND_GAP`, propose a delta of :data:`_STEP_SIZE`
    toward the best band (sign points from current band toward winner).
@@ -40,13 +43,39 @@ from stackowl.owls.dna_defaults import NEUTRAL, TRAIT_NAMES
 
 _MUTABLE_TRAITS: tuple[str, ...] = TRAIT_NAMES
 
-_BAND_EDGES: tuple[float, float] = (0.3, 0.7)  # < .3 = low, [.3,.7) = mid, ≥.7 = high
-_BAND_NAMES: tuple[str, str, str] = ("low", "mid", "high")
-_BAND_CENTERS: dict[str, float] = {"low": 0.15, "mid": NEUTRAL, "high": 0.85}
-
+# BANDS ARE DERIVED FROM THE OBSERVED VALUES, NOT FROM THE THEORETICAL SCALE.
+# They used to be absolute thirds of [0,1] — low < 0.3, high >= 0.7 — with fixed
+# centres at 0.15/0.5/0.85. MEASURED 2026-09-03 across all 9,586 outcomes in the
+# live database carrying both a quality_score and a dna_snapshot: for ALL SEVEN
+# traits, EVERY sample fell in the single "mid" band. Widest observed range of
+# any trait: [0.450, 0.632]. Since a gap needs two qualifying bands, the
+# evidence-backed path could never propose anything, and never did — 54 of 60
+# runs returned nothing, and every hypothesis ever logged carries
+# src=llm_fallback.
+#
+# It could not self-correct either: reaching an edge from the 0.5 start needs a
+# 0.2 move, one step is _STEP_SIZE (0.05) behind a shadow gate demanding three
+# consecutive non-regressions, which has passed twice ever. Attribution needed
+# spread to make a signal; spread needed promotions; promotions needed a signal.
 _MIN_BAND_SAMPLES = 3        # need ≥3 outcomes in a band for that mean to count
 _MIN_BAND_GAP = 0.10         # winning-band quality must beat losing-band by 0.10
 _STEP_SIZE = 0.05            # one evolution step nudges this much
+#: A trait must vary by at least one evolution step before its spread counts as
+#: signal. Below that the differences are smaller than the smallest change the
+#: system can make, so splitting them into bands is manufacturing structure from
+#: noise — the failure mode that deriving bands from data would otherwise invite.
+_MIN_TRAIT_SPREAD = _STEP_SIZE
+#: DISTINCT SETTINGS, not observations. The independent unit for "did changing
+#: this trait change quality" is the number of distinct VALUES the trait has
+#: held, not the number of turns run at them. MEASURED 2026-09-03: five of six
+#: owls have exactly ONE distinct dna_snapshot across their whole history and
+#: secretary has two — so "scanned 7 traits over 500 samples" was 500
+#: observations of one configuration, and any band gap computed from it is the
+#: difference between two ERAS, confounded with every model change, prompt change
+#: and unrelated fix in the window. Attributing that to the trait would be
+#: confident nonsense at VERIFIED signal strength, which the governor multiplies
+#: by 1.0 where the LLM fallback gets 0.3.
+_MIN_BAND_DISTINCT_VALUES = 2
 _MAX_DELTA_PER_EPOCH = 0.10  # outer cap — matches DeltaValidator's range
 _EXPLORE_EPSILON = 0.10      # 10% chance of a random nudge (per operator vote)
 _EXPLORE_DELTA_BOUND = 0.05  # exploration nudges are ±0.05
@@ -63,6 +92,12 @@ class BandStats:
     band: str            # low / mid / high
     n_samples: int
     mean_quality: float
+    # The observed mean TRAIT value in this band. Direction used to point at a
+    # fixed _BAND_CENTERS constant (0.15/0.5/0.85) — values no trait has ever
+    # held — so it aimed at a target the scale could not reach. Steering toward
+    # where the winning samples actually sit keeps the target inside the
+    # distribution that produced the evidence.
+    mean_value: float = NEUTRAL
 
 
 @dataclass(frozen=True)
@@ -88,10 +123,28 @@ class AttributionReport:
     fallback_reason: str | None = None       # populated when caller should LLM-fallback
 
 
-def _band_for(value: float) -> str:
-    if value < _BAND_EDGES[0]:
+def _band_edges(values: list[float]) -> tuple[float, float] | None:
+    """Tercile edges of the OBSERVED trait values, or None when there is no spread.
+
+    Returns ``None`` — meaning "this trait has not varied enough to attribute
+    anything to it" — when the observed range is under :data:`_MIN_TRAIT_SPREAD`.
+    That guard is the price of deriving bands from data: without it, a trait
+    pinned at a single value would still be split into groups whose quality
+    difference is pure sampling noise.
+    """
+    if len(values) < 2:
+        return None
+    if max(values) - min(values) < _MIN_TRAIT_SPREAD:
+        return None
+    ordered = sorted(values)
+    return ordered[len(ordered) // 3], ordered[2 * len(ordered) // 3]
+
+
+def _band_for(value: float, edges: tuple[float, float]) -> str:
+    lo, hi = edges
+    if value < lo:
         return "low"
-    if value < _BAND_EDGES[1]:
+    if value < hi:
         return "mid"
     return "high"
 
@@ -270,21 +323,63 @@ class DnaAttributor:
             "[dna] attributor._attribute_one_trait: entry",
             extra={"_fields": {"trait": trait, "n_scored": len(scored)}},
         )
-        # 3. STEP — bucket by band
+        # 3. STEP — bucket by band. ONE POLICY: the edges computed here also
+        # supply the steering target and the hold-check below. Splitting them
+        # (re-banding the samples while steering at a fixed constant) would
+        # disable the "already in the winning band" brake and aim every proposal
+        # at a value the envelope cannot reach — a monotone ratchet that logs
+        # like healthy learning, one +_STEP_SIZE per epoch, forever.
+        pairs = [
+            (float(v), float(o.quality_score or 0.0))
+            for o in scored
+            if (v := o.dna_snapshot.get(trait)) is not None
+        ]
+        edges = _band_edges([v for v, _ in pairs])
+        if edges is None:
+            observed = (
+                f"{max(v for v, _ in pairs) - min(v for v, _ in pairs):.3f}"
+                if pairs else "0.000"
+            )
+            log.engine.debug(
+                "[dna] attributor._attribute_one_trait: exit — trait never varied",
+                extra={"_fields": {"trait": trait, "observed_spread": observed}},
+            )
+            return TraitAttribution(
+                trait=trait, bands=(), proposed_delta=0.0,
+                rationale=(
+                    f"trait varied by only {observed} across {len(pairs)} samples "
+                    f"(need ≥{_MIN_TRAIT_SPREAD}) — nothing to attribute"
+                ),
+            )
         band_qualities: dict[str, list[float]] = defaultdict(list)
-        for o in scored:
-            v = o.dna_snapshot.get(trait)
-            if v is None:
-                continue
-            band_qualities[_band_for(float(v))].append(float(o.quality_score or 0.0))
-        # Compute per-band stats only where we have enough samples
+        band_values: dict[str, list[float]] = defaultdict(list)
+        for v, q in pairs:
+            b = _band_for(v, edges)
+            band_qualities[b].append(q)
+            band_values[b].append(v)
+        # Compute per-band stats only where we have enough samples AND enough
+        # DISTINCT SETTINGS. The second condition is the one that matters: 500
+        # turns at a single trait value are 500 observations of ONE experiment,
+        # and a "gap" between two such groups is the difference between eras.
         bands: list[BandStats] = []
         for band, qualities in band_qualities.items():
+            values = band_values[band]
             if len(qualities) < _MIN_BAND_SAMPLES:
+                continue
+            if len(set(values)) < _MIN_BAND_DISTINCT_VALUES:
+                log.engine.debug(
+                    "[dna] attributor._attribute_one_trait: band has too few "
+                    "distinct settings — not an independent sample",
+                    extra={"_fields": {
+                        "trait": trait, "band": band, "n_samples": len(qualities),
+                        "n_distinct_values": len(set(values)),
+                    }},
+                )
                 continue
             bands.append(BandStats(
                 band=band, n_samples=len(qualities),
                 mean_quality=sum(qualities) / len(qualities),
+                mean_value=sum(values) / len(values),
             ))
         bands.sort(key=lambda b: b.mean_quality, reverse=True)
         # 2. DECISION — need at least two qualifying bands
@@ -314,13 +409,19 @@ class DnaAttributor:
                     f"gap {gap:.2f} < {_MIN_BAND_GAP}"
                 ),
             )
-        # 3. STEP — direction from current value toward best-band center
+        # 3. STEP — direction from current value toward where the winning samples
+        # ACTUALLY SIT. This used to aim at _BAND_CENTERS[best.band] — a constant
+        # 0.15/0.5/0.85 — and 0.85 is outside the governor's anchor ± 0.30
+        # envelope, so "steer toward the winner" meant "steer at an unreachable
+        # point", which is a direction that never stops pointing the same way.
         current_value = float(getattr(current_dna, trait))
-        target = _BAND_CENTERS[best.band]
+        target = best.mean_value
         direction = 1.0 if target > current_value else -1.0
         delta = direction * _STEP_SIZE
-        # If current is already in the winning band, propose 0 (don't drift)
-        if _band_for(current_value) == best.band:
+        # If current is already in the winning band, propose 0 (don't drift).
+        # Uses the SAME edges the bands were built from — the brake and the
+        # bucketing must never disagree about what "the winning band" means.
+        if _band_for(current_value, edges) == best.band:
             log.engine.debug(
                 "[dna] attributor._attribute_one_trait: exit — already in best band",
                 extra={"_fields": {
