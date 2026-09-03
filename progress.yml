@@ -315,6 +315,61 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RECLAIM_2026_09_03_a_reclaimer_asked_for_2000_pages_got_1_and_reported_success:
+    map_check: "No mapped item — evidence-led, from a database growth check."
+    THE_MEASUREMENT: >-
+      146 consecutive hourly ticks of db_reclaim, each identical: reclaimed_pages 1,
+      free_ratio 0.22, file_mb 359.4 unchanged for 8+ hours. 19,285 of 87,749 pages — 79 MB,
+      22% of the file — sat on the freelist while the handler asked for 2,000 a pass and got
+      one. Reproduced on a COPY of the live database: PRAGMA incremental_vacuum(N) returns
+      exactly ONE page per call whatever N is, whatever the argument form, stepped or not. A
+      full VACUUM of that copy took it 359.4 MB -> 277.3 MB, freelist 19,277 -> 0.
+    THE_ROOT_CAUSE_IS_THE_SELF_CHECK_NOT_THE_VACUUM: >-
+      The handler has two self-checks and BOTH ask about CONFIGURATION rather than EFFECT.
+      needs_one_time_vacuum() reads PRAGMA auto_vacuum == 0; the live database reports 2, so it
+      answered "fine". The "falling behind" alarm fires on free_ratio > 0.25; the stuck value
+      is 0.22, three points below, so it never fired in 146 ticks. And the handler ALREADY
+      COMPUTED the proof — reclaimed = pages_before - pages_after, logged at INFO every tick —
+      and nothing compared it to what was asked for. Its own docstring says "a reclaimer that
+      silently falls behind looks exactly like one that is working", and then it watched a
+      ratio instead of its own result. This is the programme's core rule — measure the EFFECT,
+      never trust the CALL — unapplied to the reclaimer itself.
+    TWO_HYPOTHESES_I_TESTED_AND_KILLED: >-
+      (1) "incremental_vacuum is a statement that must be STEPPED, and execute() without
+      fetching runs one step" — this would have explained 1 page exactly. Tested on a copy:
+      fetchall() reclaims 1 page too. Wrong. (2) "the database was never converted from
+      auto_vacuum=NONE, so its freelist predates the pointer map" — the handler's own docstring
+      records the live file being converted by hand on 2026-08-22 (922 MB -> 273 MB), and the
+      file header confirms auto_vacuum is genuinely enabled. Wrong. WHY incremental reclaim is
+      ineffective on this database is NOT established, and the fix deliberately does not depend
+      on knowing: reclaim_stalled asks whether the pass got what it asked for when the freelist
+      could have supplied it, which stays true however SQLite's reasons change.
+    WHAT_SHIPPED: >-
+      reclaim_stalled(asked, reclaimed, free_after) — a pure predicate with no magic ratio,
+      wired into the pass, logging a WARNING that names asked vs got vs freelist and states the
+      remedy. asked_pages, stalled and freelist_after now ride the exit INFO line and the
+      JobResult metadata: "reclaimed_pages: 1" looked fine for 146 ticks precisely because
+      nothing on that line said 2,000 had been requested. The module docstring records the new
+      finding and downgrades needs_one_time_vacuum to necessary-but-not-sufficient.
+    WHAT_I_DID_NOT_DO: >-
+      I did not run VACUUM on his live database. It rewrites 359 MB under an exclusive lock,
+      which is the exact reason this handler does bounded incremental work instead — its own
+      docstring says a full VACUUM "could never have been a background job". That is a
+      maintenance window on a live system and it is his call: ESC-118.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      The next db_reclaim tick (hourly) must emit "[scheduler] db_reclaim: the pass reclaimed
+      far less than it asked for" at WARNING with asked_pages=2000, reclaimed_pages=1,
+      freelist_after≈19285 — the condition has been true for 146 ticks and silent, so the very
+      first tick after this commit closes it. If it does NOT fire, the predicate is wrong or
+      the freelist drained on its own, and both are worth knowing.
   ALERTIDENTITY_2026_09_03_the_alert_never_said_which_job_it_was_about:
     map_check: "No mapped item — ESC-117's option (c), the half that needs no decision."
     THE_MEASUREMENT: >-
@@ -6057,6 +6112,37 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_118_may_the_platform_take_a_maintenance_lock_to_recover_82MB:
+      premise_check: |
+        uv run python -c "import sqlite3,os;p=os.path.expanduser('~/.stackowl/workspace/stackowl.db');c=sqlite3.connect('file:'+p+'?mode=ro',uri=True);pc=c.execute('PRAGMA page_count').fetchone()[0];fl=c.execute('PRAGMA freelist_count').fetchone()[0];ps=c.execute('PRAGMA page_size').fetchone()[0];print(('HOLDS ' if fl*10>pc else 'EXPIRED ')+str(round(ps*fl/1e6,1))+' MB free, '+str(fl*100//max(pc,1))+'% of the file')" 2>/dev/null | tail -1
+      question: >-
+        79 MB of your database — 22% of the file — is free space the hourly reclaimer cannot
+        reach. I proved on a COPY that a full VACUUM recovers 82 MB (359.4 MB -> 277.3 MB) in
+        one pass. I did not run it on the live file: VACUUM rewrites the whole database under
+        an exclusive lock, which is precisely why this reclaimer does bounded incremental work
+        instead. May the platform take that lock, and when?
+      why_evidence_cannot_settle_it: >-
+        The measurement is unambiguous about the size, the cause of the stall being unreachable
+        incrementally, and the recovery being real — I ran it on a copy. It cannot tell you
+        whether a maintenance window on your live assistant is acceptable, or when. The last
+        one was done BY HAND on 2026-08-22 (922 MB -> 273 MB in 35 seconds), so there is
+        precedent, but it was your hand and not the platform's.
+      the_measurement: >-
+        file 359.4 MB, 87,749 pages, 19,285 free (22%). Root filesystem has 19 GB free, so this
+        is not urgent — the earlier incident was 643 MB wasted on a disk at 99%. 35 seconds of
+        exclusive lock at the previous, larger size.
+      the_options: >-
+        (a) Leave it. 79 MB on 19 GB of headroom, and the file has been flat at 359.4 MB rather
+        than growing. The new WARNING now tells you if that changes.
+        (b) Let the platform run a full VACUUM when it detects the stall AND the machine is
+        idle — bounded to a maintenance window you name.
+        (c) Do it by hand again, as on 2026-08-22, at a moment you pick.
+      recommendation: >-
+        (a) for now, with the alarm shipped — the file is flat and the disk is not tight, and
+        the real defect was that nothing SAID it was stuck, which is fixed. Revisit if the
+        WARNING shows the freelist growing.
+      blocked_until_answered: >-
+        Nothing. The detection shipped; only the recovery of the existing 79 MB waits.
     ESC_117_should_an_identical_alert_be_held_back_when_the_code_says_fail_toward_paging:
       premise_check: |
         uv run python -c "import sqlite3,os;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);t=c.execute(\"SELECT COUNT(*) FROM notification_log WHERE category='job_failed'\").fetchone()[0];d=c.execute(\"SELECT COUNT(DISTINCT message_hash) FROM notification_log WHERE category='job_failed'\").fetchone()[0];print(('HOLDS ' if t and (t-d)*100//t>=50 else 'EXPIRED ')+str(t)+' sent, '+str(d)+' distinct')" 2>/dev/null | tail -1

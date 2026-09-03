@@ -47,13 +47,34 @@ after a pass, the handler logs a WARNING naming the ratio — because a reclaime
 that silently falls behind looks exactly like one that is working, and that is
 the failure mode the original ``auto_vacuum=NONE`` had for months.
 
+AND THAT REPORT WAS NOT ENOUGH — MEASURED 2026-09-03. Both self-checks above ask
+about CONFIGURATION, and the live database defeated both at once::
+
+    reclaimed_pages: 1      every tick, 146 consecutive hourly ticks
+    free_ratio:      0.22   against a 0.25 threshold, so no warning
+    auto_vacuum:     2      so needs_one_time_vacuum() answered "fine"
+    file_mb:         359.4  unchanged for 8+ hours
+
+``PRAGMA incremental_vacuum(N)`` returned exactly ONE page per call — whatever N
+was, whatever the argument form, stepped or not — reproduced on a copy of the
+live file, while 19,285 pages (79 MB, 22%) sat on the freelist. A full ``VACUUM``
+of that copy recovered 82 MB (359.4 -> 277.3 MB). Note this database HAD already
+been converted (the hand VACUUM below), so conversion is not the explanation; the
+incremental path is simply ineffective here, and the cause of THAT is not yet
+established.
+
+:func:`reclaim_stalled` is the check that does not care why. It asks whether the
+pass got what it asked for when the freelist could have supplied it — a question
+about the RESULT, which stays true however SQLite's reasons change.
+
 ONE THING IT CANNOT DO, stated so nobody is surprised: switching a database from
 ``auto_vacuum=NONE`` to ``INCREMENTAL`` requires one full ``VACUUM`` to take
 effect. A database created before this shipped reclaims NOTHING until that
 happens once. ``pool.py`` sets the pragma so every NEW database is born correct;
 the live one was converted by hand on 2026-08-22 (922 MB -> 273 MB in 35s).
 :func:`needs_one_time_vacuum` exists so the condition is detectable rather than
-folklore.
+folklore — but it detects only the MODE, and 2026-09-03 showed a database in the
+right mode that still reclaims nothing, so it is necessary and not sufficient.
 
 Mirrors ``downloads_janitor`` exactly: same 4-point logging, same ``register_*``
 factory, same never-raise contract. A maintenance sweep that can take the
@@ -101,6 +122,33 @@ async def _page_stats(pool: DbPool) -> tuple[int, int, int]:
             exc_info=exc,
         )
         return (0, 0, 0)
+
+
+def reclaim_stalled(*, asked: int, reclaimed: int, free_after: int) -> bool:
+    """True when a pass could have reclaimed far more than it did.
+
+    ASKS ABOUT THE RESULT, NOT THE CONFIGURATION — which is the whole point.
+    This handler's other two self-checks both ask about configuration:
+    :func:`needs_one_time_vacuum` reads ``PRAGMA auto_vacuum``, and the
+    "falling behind" alarm reads a free RATIO. MEASURED 2026-09-03, the live
+    database defeated both: ``auto_vacuum`` reported 2 (INCREMENTAL) so the first
+    said "fine", and the free ratio sat at 0.22 against a 0.25 threshold so the
+    second never fired — while 146 consecutive hourly ticks each asked for 2,000
+    pages and reclaimed exactly ONE, leaving 19,285 pages (79 MB, 22% of the
+    file) parked. A full VACUUM of a copy recovered 82 MB the incremental path
+    could not reach.
+
+    The handler already computed the proof — ``reclaimed = pages_before -
+    pages_after``, logged at INFO every tick — and nothing ever compared it to
+    what was asked for.
+
+    NO MAGIC NUMBER. If the freelist held at least as many pages as the pass
+    requested and the pass did not get them, reclaim is not working — true
+    whatever the cause, so this keeps holding if the reason changes.
+    """
+    if asked <= 0:
+        return False
+    return free_after >= asked and reclaimed < asked
 
 
 async def needs_one_time_vacuum(pool: DbPool) -> bool:
@@ -292,6 +340,34 @@ class DbReclaimHandler(JobHandler):
         free_ratio = (free_after / pages_after) if pages_after else 0.0
         duration_ms = (time.monotonic() - t0) * 1000
 
+        # THE PASS DID NOT DO WHAT IT ASKED FOR, and that is knowable here without
+        # any threshold. MEASURED 2026-09-03: 146 consecutive hourly ticks each
+        # asked for 2,000 pages and reclaimed exactly ONE, while 19,285 pages
+        # (79 MB, 22% of the file) sat free — and neither self-check below noticed,
+        # because both ask about CONFIGURATION. `needs_one_time_vacuum` reads the
+        # auto_vacuum MODE (2, so "fine") and the ratio alarm reads 0.25 against a
+        # stuck 0.22. The number that proves it was already computed one line up.
+        stalled = reclaim_stalled(
+            asked=max_pages, reclaimed=reclaimed, free_after=free_after,
+        )
+        if stalled:
+            log.scheduler.warning(
+                "[scheduler] db_reclaim: the pass reclaimed far less than it asked "
+                "for — incremental reclaim is not working on this database",
+                extra={"_fields": {
+                    "job_id": job.job_id,
+                    "asked_pages": max_pages,
+                    "reclaimed_pages": reclaimed,
+                    "freelist_after": free_after,
+                    "free_mb": round(page_size * free_after / 1e6, 1),
+                    # The remedy this condition implies. A full VACUUM rewrites the
+                    # database under an exclusive lock, which is exactly why this
+                    # handler does bounded incremental work instead — so it is
+                    # named here, not performed.
+                    "remedy": "a one-time full VACUUM is required to reclaim this space",
+                }},
+            )
+
         # A reclaimer that silently falls behind looks exactly like one that
         # works. This is the line that would have caught the original defect.
         if free_ratio > _ALERT_FREE_RATIO:
@@ -312,6 +388,13 @@ class DbReclaimHandler(JobHandler):
             extra={"_fields": {
                 "job_id": job.job_id,
                 "reclaimed_pages": reclaimed,
+                # ASKED, alongside GOT. Without this pair on the same line the
+                # exit log said "reclaimed_pages: 1" for 146 consecutive ticks and
+                # nothing about it looked wrong — 1 is a fine number when you do
+                # not know 2,000 was requested.
+                "asked_pages": max_pages,
+                "stalled": stalled,
+                "freelist_after": free_after,
                 "pruned_runs": pruned,
                 "reclaimed_mb": round(page_size * reclaimed / 1e6, 1),
                 "file_mb": round(page_size * pages_after / 1e6, 1),
@@ -327,6 +410,8 @@ class DbReclaimHandler(JobHandler):
                 "reclaimed_pages": reclaimed,
                 "reclaimed_bytes": page_size * reclaimed,
                 "free_ratio": free_ratio,
+                "asked_pages": max_pages,
+                "stalled": stalled,
             },
         )
 
