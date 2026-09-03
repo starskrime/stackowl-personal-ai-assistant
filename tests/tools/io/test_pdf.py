@@ -15,6 +15,7 @@ from typing import Literal
 
 import pytest
 
+from stackowl.infra import untrusted
 from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import StepServices, reset_services, set_services
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
@@ -138,8 +139,8 @@ class TestModeAText:
         _make_pdf(workspace)
         _install_reader(monkeypatch, texts=["Plenty of genuine extracted prose right here on the page."])
         result = await PdfTool().execute(path="doc.pdf")
-        assert pdf_mod._UNTRUSTED_OPEN in result.output
-        assert pdf_mod._UNTRUSTED_CLOSE in result.output
+        assert untrusted.OPEN_MARK in result.output
+        assert untrusted.CLOSE_MARK in result.output
 
     async def test_max_pages_caps_extraction(self, workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _make_pdf(workspace)
@@ -260,7 +261,7 @@ class TestModeB:
             result = await PdfTool().execute(path="doc.pdf")
         finally:
             reset_services(token)
-        assert pdf_mod._UNTRUSTED_OPEN in result.output
+        assert untrusted.OPEN_MARK in result.output
 
     async def test_no_capable_provider_returns_guidance(
         self, workspace: Path, monkeypatch: pytest.MonkeyPatch

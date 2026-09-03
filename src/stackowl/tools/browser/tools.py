@@ -20,6 +20,7 @@ from typing import Any, Literal
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeout
 
+from stackowl.infra import untrusted
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -360,7 +361,11 @@ class BrowserExtractTool(_BrowserTool):
             "browser_extract.execute: exit",
             extra={"_fields": {"session_id": session_id, "output_len": len(output)}},
         )
-        return _ok(output, t0)
+        # FENCED AS DATA. Whatever the page says, it is not an instruction to this
+        # agent. MEASURED 2026-09-03: browser_extract shared a turn with shell 13
+        # times and with write_file 7 times in 7 days, and the marker that pdf.py
+        # has always applied reached none of those turns.
+        return _ok(untrusted.wrap(output, source=f"browser_extract:{page.url}"), t0)
 
 
 class BrowserClickTool(_BrowserTool):

@@ -12,6 +12,7 @@ import contextlib
 import time
 from typing import Any
 
+from stackowl.infra import untrusted
 from stackowl.infra.net.ssrf_guard import SsrfGuard, guard_playwright_navigation
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
@@ -220,7 +221,15 @@ class WebFetchTool(Tool):
                 "output_len": len(output), "duration_ms": duration_ms,
             }},
         )
-        return ToolResult(success=True, output=output, duration_ms=duration_ms)
+        # FENCED AS DATA. A fetched page is the largest untrusted surface this
+        # platform has: MEASURED 2026-09-03, web_fetch shared a turn with shell 24
+        # times and with write_file 35 times in 7 days. pdf.py has fenced its
+        # extracted text since it was written; this path never did.
+        return ToolResult(
+            success=True,
+            output=untrusted.wrap(output, source=f"web_fetch:{log_url}"),
+            duration_ms=duration_ms,
+        )
 
     # `_stage_in_memory` REMOVED (D08.1). It staged every fetched page as a
     # "low-confidence webpage fact" into a store that no longer has a reader
