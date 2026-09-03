@@ -315,6 +315,48 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  KNOWNFAILURE_2026_09_03_it_told_him_to_check_the_logs_for_a_failure_it_had_already_named:
+    map_check: "No mapped item — evidence-led, from a live provider outage during this loop."
+    WHAT_HE_RECEIVES: >-
+      "⚠ I hit a problem completing this and couldn't finish; the technical detail is in the
+      logs. [AllProvidersUnavailableError]" — logs he cannot read from Telegram, plus a Python
+      exception class in brackets.
+    THE_MEASUREMENT: >-
+      Across every failed turn on his own Telegram channel: 5,739 failures, of which 3,856 (67%)
+      told him to check the logs. Four classes are 5,384 of them (94%):
+      AllProvidersUnavailableError 2,115, OwlTimeoutError 1,800, CircuitOpenError 1,258,
+      ProviderError 211. Every one is an infrastructure condition with a one-sentence
+      explanation.
+    THE_CAUSE_IS_ONE_FUNCTION_THAT_ALREADY_HAD_THE_ANSWER: >-
+      delivery_gate._neutral_fallback read the failure class into `marker`, spent it on a debug
+      bracket, and rendered self_heal_floor_minimal — the last-resort "we know nothing" prose —
+      for EVERY case. So the last-resort message was used for failures that are not a last
+      resort. The cause was measured, classified, stored on the outcome row, used to cluster
+      incidents and mine lessons, then discarded at the one moment it would have helped the
+      person waiting.
+    WHAT_I_DELIBERATELY_DID_NOT_TOUCH: >-
+      The trigger was a live outage: NeraAiRaw is his ONLY enabled provider (the other three are
+      enabled:false) and its base_url is a HOSTNAME that intermittently fails DNS — 682 events
+      on 08-29, 335 on 09-01, 30 today. That is his network and his config, not a code defect,
+      and "all providers unavailable" is honest. I also found that
+      reachability_enforcement="block" is configured while the census probes five WIRING checks
+      and no model provider, so it passes green while the platform cannot answer anything —
+      recorded as ESC-119 rather than fixed, because registering that probe would REFUSE HIS
+      BOOT whenever DNS blips, and taking his platform down is his call.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      The next telegram failure with a known class must carry the plain sentence rather than
+      "the technical detail is in the logs". Query task_outcomes for channel='telegram',
+      failure_class IN the four classes, captured_at after this commit: response_text must NOT
+      contain "in the logs". The pre-change rate was 67% of 5,739, so a single new failure
+      closes it — and the provider is currently flapping, so one will arrive.
   LATENCY_2026_09_03_two_thirds_of_a_slow_turn_had_no_name:
     map_check: "No mapped item — evidence-led, from measuring his own turn latency."
     WHAT_HE_EXPERIENCES: >-
@@ -357,8 +399,13 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: PARTIAL
+      validate: done
       document: done
+    validate_CLOSED_2026_09_03: >-
+      A real turn ran. task_outcomes.step_durations now carries eleven keys including
+      delivery_gate AND unaccounted, and sum(values) equals latency_ms to a delta of 0.000 ms on
+      both new turns (506.0 and 584.9 ms). The p90 shortfall of 63.9% is arithmetically closed:
+      the breakdown accounts for the whole turn or names what it cannot.
     what_validate_ACTUALLY_evidenced: >-
       Live at 12:26:58Z on commit 0323d628, zero ERROR lines since boot. Verified by reading the
       RUNNING module rather than the file: AsyncioBackend.run carries both the delivery_gate
@@ -430,8 +477,13 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: PARTIAL
+      validate: done
       document: done
+    validate_CLOSED_2026_09_03: >-
+      The line fired in PRODUCTION: "[memory] recall: archive searched" with semantic_hits 18,
+      total_hits 18, embedding_model all-MiniLM-L6-v2. The semantic path ran on a real turn, the
+      embedder did NOT silently degrade to hash-v1-384d, and recall returned 18 memories where
+      the substring scan would have returned zero for a 597-character query.
     what_validate_ACTUALLY_evidenced: >-
       Live at 12:01:19Z on commit c8ed10d4, zero ERROR lines since boot. The strongest evidence
       is not a unit test: the whole path was run END TO END against the LIVE archive with the
@@ -6321,6 +6373,39 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_119_should_a_dead_model_provider_refuse_the_boot:
+      premise_check: |
+        uv run python -c "import stackowl.health.reachability.probes; from stackowl.health.reachability import registered_probes; p=registered_probes(); print(('HOLDS no provider probe among ' if not any('provider' in k for k in p) else 'EXPIRED provider probed in ')+str(sorted(p)))" 2>/dev/null | tail -1
+      question: >-
+        Your config says reachability_enforcement="block" — refuse READY when a registered
+        capability is unreachable. But the census probes five WIRING checks (skills discovery,
+        catalogue default, telegram table formatting, output preference, budget counting) and NO
+        model provider. So it logged "census: ok — 5 subsystems reachable" in the same boot,
+        seconds after logging "provider NeraAiRaw: unreachable". Should a dead provider refuse
+        the boot?
+      why_evidence_cannot_settle_it: >-
+        The measurement is unambiguous: the only enabled provider was unreachable, the census
+        passed, the platform served, and 2,115 of his Telegram failures are
+        AllProvidersUnavailableError. It cannot tell you whether you would rather have the
+        platform DOWN and obviously broken, or UP and failing turns with an honest message. That
+        is a preference about how you want to be told, and census_passes is all-or-nothing with
+        no severity tier, so adding the probe blocks the boot — there is no half measure without
+        inventing a second class of probe, which this module's own comments argue against.
+      the_options: >-
+        (a) Leave the census as is. The platform stays up and now explains itself honestly when
+        the model is unreachable (shipped this item).
+        (b) Register a provider probe. Your configured "block" then refuses the boot whenever
+        DNS for llm-gateway.dev.nera.gov fails — 682 such events on 08-29 alone, so expect real
+        outages to become refused boots.
+        (c) Register the probe AND set reachability_enforcement="warn", so the census reports
+        the truth without taking the platform down.
+      recommendation: >-
+        (c). It closes the honest gap — the census currently claims a health it never checked —
+        without converting an intermittent DNS failure into a dead assistant. (b) is defensible
+        only if you would rather the platform refuse to start than answer badly.
+      blocked_until_answered: >-
+        Nothing. The user-facing half shipped: a known failure now explains itself instead of
+        pointing at logs.
     ESC_118_may_the_platform_take_a_maintenance_lock_to_recover_82MB:
       premise_check: |
         uv run python -c "import sqlite3,os;p=os.path.expanduser('~/.stackowl/workspace/stackowl.db');c=sqlite3.connect('file:'+p+'?mode=ro',uri=True);pc=c.execute('PRAGMA page_count').fetchone()[0];fl=c.execute('PRAGMA freelist_count').fetchone()[0];ps=c.execute('PRAGMA page_size').fetchone()[0];print(('HOLDS ' if fl*10>pc else 'EXPIRED ')+str(round(ps*fl/1e6,1))+' MB free, '+str(fl*100//max(pc,1))+'% of the file')" 2>/dev/null | tail -1

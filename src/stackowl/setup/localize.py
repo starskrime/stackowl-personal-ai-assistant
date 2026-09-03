@@ -186,6 +186,82 @@ _STRINGS: dict[tuple[str, str], str] = {
     ("self_heal_floor_s_no_attribution", "es"): (
         "Ningún paso informó de un fallo, así que no puedo decir cuál salió mal."
     ),
+    # ---------------------------------------------------------------- #
+    # PLAIN-LANGUAGE CAUSES for the failures he actually receives.
+    #
+    # MEASURED 2026-09-03 over every failed turn on his Telegram channel: 3,856
+    # of 5,739 (67%) told him "the technical detail is in the logs" — logs he
+    # cannot reach from Telegram — with a Python exception class in brackets.
+    # These four classes are 5,384 of those failures (94%):
+    # AllProvidersUnavailableError 2,115, OwlTimeoutError 1,800,
+    # CircuitOpenError 1,258, ProviderError 211. Each is an infrastructure
+    # condition with a one-sentence explanation the platform already knew.
+    #
+    # DERIVED FROM THE DATA, not from a guess about what might go wrong: the
+    # list is exactly the classes measured as reaching him. A class that is not
+    # here gets the generic prose, because inventing a cause for an unknown
+    # failure is the overclaim the honest floor exists to prevent.
+    ("floor_cause_AllProvidersUnavailableError", "en"): (
+        "I could not reach my model just now, so I could not work on this. "
+        "It usually comes back on its own — ask me again in a moment."
+    ),
+    ("floor_cause_AllProvidersUnavailableError", "de"): (
+        "Ich konnte mein Modell gerade nicht erreichen und daher nicht daran "
+        "arbeiten. Das behebt sich meist von selbst — frag mich gleich noch einmal."
+    ),
+    ("floor_cause_AllProvidersUnavailableError", "fr"): (
+        "Je n'ai pas pu joindre mon modèle à l'instant, donc je n'ai pas pu "
+        "traiter cela. Cela se rétablit généralement seul — redemande-moi dans un moment."
+    ),
+    ("floor_cause_AllProvidersUnavailableError", "es"): (
+        "No pude conectar con mi modelo en este momento, así que no pude "
+        "trabajar en esto. Suele restablecerse solo — pregúntame de nuevo en un momento."
+    ),
+    ("floor_cause_OwlTimeoutError", "en"): (
+        "This took longer than I am allowed to spend on one turn, so I stopped "
+        "rather than leave you waiting."
+    ),
+    ("floor_cause_OwlTimeoutError", "de"): (
+        "Das hat länger gedauert, als ich für einen Zug aufwenden darf, also habe "
+        "ich abgebrochen, statt dich warten zu lassen."
+    ),
+    ("floor_cause_OwlTimeoutError", "fr"): (
+        "Cela a pris plus de temps que ce que je peux consacrer à un tour, donc "
+        "je me suis arrêté plutôt que de te faire attendre."
+    ),
+    ("floor_cause_OwlTimeoutError", "es"): (
+        "Esto tardó más de lo que puedo dedicar a un turno, así que me detuve en "
+        "lugar de dejarte esperando."
+    ),
+    ("floor_cause_CircuitOpenError", "en"): (
+        "I have paused calls to my model after several failures in a row, so this "
+        "one was not attempted. It retries automatically."
+    ),
+    ("floor_cause_CircuitOpenError", "de"): (
+        "Ich habe die Aufrufe an mein Modell nach mehreren Fehlern in Folge "
+        "pausiert, daher wurde dies nicht versucht. Es wird automatisch erneut versucht."
+    ),
+    ("floor_cause_CircuitOpenError", "fr"): (
+        "J'ai suspendu les appels à mon modèle après plusieurs échecs consécutifs, "
+        "donc celui-ci n'a pas été tenté. Il réessaiera automatiquement."
+    ),
+    ("floor_cause_CircuitOpenError", "es"): (
+        "He pausado las llamadas a mi modelo tras varios fallos seguidos, así que "
+        "esto no se intentó. Se reintenta automáticamente."
+    ),
+    ("floor_cause_ProviderError", "en"): (
+        "My model returned an error on this one, so I could not finish it."
+    ),
+    ("floor_cause_ProviderError", "de"): (
+        "Mein Modell hat hierbei einen Fehler zurückgegeben, daher konnte ich es "
+        "nicht abschließen."
+    ),
+    ("floor_cause_ProviderError", "fr"): (
+        "Mon modèle a renvoyé une erreur sur celui-ci, je n'ai donc pas pu le terminer."
+    ),
+    ("floor_cause_ProviderError", "es"): (
+        "Mi modelo devolvió un error en este caso, así que no pude terminarlo."
+    ),
     ("self_heal_floor_graceful", "en"): (
         "Sorry — I got tangled up working on that and didn't finish cleanly. "
         "Could you tell me a bit more, or say it another way?"
