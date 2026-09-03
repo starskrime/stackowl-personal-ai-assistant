@@ -315,6 +315,60 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  OVERCLAIM_2026_09_03_the_guard_called_a_finished_job_a_lie_for_the_FOURTH_time:
+    map_check: "No mapped item — the defect behind the floor I named but did not fix last item."
+    the_symptom_he_lived: >-
+      He asked for a job-market agent. It was BUILT — owls.jobmarket at 04:29:52.445, then
+      `grant` widened its authority at 04:30:14, both exiting success=True. At 04:30:20 the turn
+      FLOORED with "overclaim.detected {failed_capability: owl_build}", the answer was thrown
+      away, the loop recovered the turn 89 seconds later and (last item's bug) routed it to the
+      owl the turn had just created, which told him it already existed.
+    THE_ROOT_CAUSE: >-
+      OwlBuildTool._verify_by_action enumerates the actions it can observe — retire, rename,
+      edit — and ends with `else: return None`, whose comment says it is about pause/resume.
+      `grant` was added to _VALID_ACTIONS later and fell into that else. None means UNKNOWN, and
+      unknown DEFAULT-DENIES at the overclaim gate, so a durable effect the platform could not
+      confirm was treated as a lie and the turn was floored.
+    THE_FOURTH_TIME_and_that_is_the_actual_finding: >-
+      owl_build.py already carries THREE comments about this exact shape: rename 2026-08-16 ("a
+      rename that WORKED reported as failed"), the authority clamp 2026-08-19 ("19 overclaims
+      across 50 runs; nothing was broken"), edit 2026-08-22 ("a successful edit became
+      overclaim.detected"). Each fix added ONE action to the verifier. Not one of them changed
+      the fact that the NEXT action added to the tool would fall into the same silent default.
+      Three fixes to the WHAT; the WHY survived all three and cost him an agent.
+    the_fix_inverts_the_default: >-
+      (1) `grant` is now verified by its EFFECT — the owl may now USE the tools — by re-reading
+      the live creation_ceiling and requiring the requested tools to be inside it. A clamp is
+      not a failure, for the same reason it is not one in `edit`. (2) UNVERIFIABLE_ACTIONS
+      declares pause/resume as having nothing observable, and a TRIPWIRE fails when any action
+      in _VALID_ACTIONS is neither verified nor declared. Adding an action without deciding how
+      it is observed is now a red test, not a floored turn six weeks later.
+    the_control_that_matters: >-
+      A test asserts `grant` is VERIFIED and not merely declared unverifiable — because
+      "fixing" 2026-09-03 by adding grant to the declared list would stop the floor and give up
+      on ever knowing whether a grant landed. Mutation-tested: adding a new action to
+      _VALID_ACTIONS turns the tripwire red.
+    verified_against_the_REAL_incident: >-
+      The live jobmarket manifest's creation_ceiling.tools contains all seven tools that grant
+      added (browser_click, browser_extract, browser_navigate, browser_snapshot, search_files,
+      send_message, write_file), so the new verifier returns True for that exact call and the
+      turn would not have floored. HONEST LIMIT: read from the stored manifest, because an
+      out-of-process OwlRegistry does not hydrate owls from the database — the check itself runs
+      inside the process, where the registry is live.
+    suites: "tests/tools/meta + tests/owls 585 passed; 3 new. Baselines held at ruff 35, mypy 65."
+    THE_GATE_BLOCKED_MY_FIRST_ATTEMPT: >-
+      mypy rose 65 -> 68 and ./scripts/tripwires.sh refused the commit. The grant branch reused
+      the name `wanted`, which the `rename` branch above types as a str, and read
+      args.get("explicit_tools") as an untyped object — so `.issubset` was being called on a
+      str. Three type errors in a branch whose tests all passed, caught by the chained gate
+      rather than by a green suite. That is the third commit today this gate has stopped.
+    validate: OPEN_awaiting_the_next_owl_build_grant
+    closing_query: >-
+      A turn that calls owl_build with action=grant must NOT produce
+      "overclaim.detected {failed_capability: owl_build}" — that pairing is the defect and it
+      appeared at 04:30:20.864. The positive half: "owl_build.verify: claimed but NOT observed"
+      must stay ABSENT for grants that landed, and present only when a requested tool is genuinely
+      missing from the ceiling.
   REROUTE_2026_09_03_the_owl_the_turn_CREATED_answered_its_own_recovery:
     map_check: "No mapped item — he reported the symptom from a live Telegram turn."
     what_he_reported: >-

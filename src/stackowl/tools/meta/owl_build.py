@@ -77,6 +77,26 @@ _SOURCE_NAME = "agent_owls"
 _AUDIT_SOURCE: SkillSource = "learned"
 _ACTOR = "agent_self:owl_build"
 
+#: Actions with NOTHING OBSERVABLE TO VERIFY, declared rather than defaulted.
+#:
+#: WHY THIS EXISTS AS A LIST. `_verify_by_action` enumerates the actions it can
+#: check and returns None for the rest — and None default-denies at the overclaim
+#: gate, so an unverifiable action FLOORS a turn that succeeded. That has now
+#: happened FOUR times: rename (2026-08-16), the authority clamp (2026-08-19),
+#: edit (2026-08-22) and grant (2026-09-03, which cost Bakir a job-market agent he
+#: was told already existed). Each fix added one action to the verifier. None of
+#: them stopped the NEXT action from falling into the same silent default.
+#:
+#: So the default is inverted: every action in `_VALID_ACTIONS` must either be
+#: verified or be named here, and a test fails when one is neither. Adding an
+#: action to the tool without deciding how it is observed is now a red test rather
+#: than a floored turn six weeks later.
+UNVERIFIABLE_ACTIONS: frozenset[str] = frozenset({
+    # A pause/resume changes a scheduler projection, not anything the registry
+    # re-reads; there is no live field whose value proves the call landed.
+    "pause", "resume",
+})
+
 _VALID_ACTIONS: tuple[str, ...] = (
     "create", "edit", "retire", "rename", "pause", "resume", "grant",
 )
@@ -1738,6 +1758,38 @@ class OwlBuildTool(Tool):
             if landed is None:
                 return None
             confirmed = landed
+        elif action == "grant":
+            # THE FOURTH TIME THIS SHAPE HAS FLOORED A SUCCESSFUL TURN, and the
+            # first three are documented above (edit 2026-08-22, the authority
+            # clamp 2026-08-19, rename 2026-08-16). MEASURED 2026-09-03: he asked
+            # for a job-market agent, `create` and then `grant` both exited
+            # success=True, owls.jobmarket landed at 04:29:52.445 — and `grant`
+            # fell into the `else` below, which returns None. Unknown
+            # default-denies at the overclaim gate, so the turn FLOORED, the loop
+            # recovered it, and he was told the agent already existed.
+            #
+            # THE EFFECT OF A GRANT is that the owl may now USE the tools. So read
+            # the live ceiling back: every requested tool must be inside it. A
+            # clamp is not a failure here for the same reason it is not one in
+            # `edit` — the tool reports the drop honestly — so only tools the
+            # ceiling PERMITS are required to have landed.
+            # NAMED APART FROM `rename`'s `wanted`, which is a str in the branch
+            # above — the collision was caught by mypy, not by a passing test.
+            asked_raw = args.get("explicit_tools")
+            asked = asked_raw if isinstance(asked_raw, (list, tuple, set)) else ()
+            wanted_tools = {str(t).strip() for t in asked if str(t).strip()}
+            if not wanted_tools or current is None:
+                return None  # nothing was asked for, or the owl is unreadable
+            ceiling = getattr(current, "creation_ceiling", None)
+            ceiling_raw = getattr(ceiling, "tools", None)
+            live_tools = {
+                str(t) for t in (
+                    ceiling_raw if isinstance(ceiling_raw, (list, tuple, set)) else ()
+                )
+            }
+            if not live_tools:
+                return None  # no observable ceiling — no opinion, never a guess
+            confirmed = wanted_tools.issubset(live_tools)
         else:
             return None  # pause / resume — see the docstring.
 
