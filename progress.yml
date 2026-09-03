@@ -362,8 +362,18 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: PARTIAL
       document: done
+    what_validate_ACTUALLY_evidenced: >-
+      Live at 17:33:22Z on commit bae6ee48, zero ERROR lines since boot, and the RUNNING module
+      carries it — read out of the live module rather than the file: execute() calls
+      record_diagnosis_abandoned on the verdictless path and ABANDONED_EVENT resolves to
+      incident.diagnosis_abandoned. 240 scheduler-handler tests pass; the wiring mutation goes
+      red.
+      NOT YET EVIDENCED: no RCA has been attempted since the restart (active=6, new=0 every
+      tick), so the INFO line has not fired in production. The provider is still unreachable, so
+      the next new incident closes it — but the loop is currently quiet, which is itself the
+      correct behaviour.
     validate_closing_query: >-
       The provider is still unreachable, so the next RCA attempt must log "[scheduler]
       incident_escalation: the analysis returned no verdict — clearing its start so the next
