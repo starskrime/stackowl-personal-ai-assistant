@@ -315,6 +315,60 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ABANDONED_2026_09_03_a_failed_analysis_bought_24h_of_silence_it_had_not_earned:
+    map_check: "No mapped item — found by watching the RCA loop during the live outage."
+    THE_FINDING: >-
+      At 16:53, seven hours into a total provider outage, the loop started an RCA for the
+      signature health:provider:NeraAiRaw:down — using the model to investigate why the model
+      was unreachable. It could not succeed. It left an incident.diagnosis_started row with no
+      completion, and interrupted_diagnoses then listed THREE variants of the same outage
+      (:down, :degraded, provider_registry:degraded).
+    THE_CAUSE_IS_TWO_MECHANISMS_WITH_OPPOSITE_INTENTIONS: >-
+      execute() deliberately does NOT call record_diagnosis when the RCA yields no verdict, and
+      says why in its own comment: "so the NEXT tick retries the RCA for this same persistent
+      incident instead of silently giving up on it forever after one failed attempt — a provider
+      outage during the incident is precisely when the RCA call itself is most likely to also
+      fail." But record_diagnosis_started is written BEFORE the attempt and recently_diagnosed
+      counts started events too, so the signature that branch leaves deliberately unregistered
+      was suppressed for 24 hours regardless. A later fix silently defeated an earlier one's
+      stated purpose, and the earlier one's comment describes this exact scenario.
+    THE_DISCRIMINATOR_NEEDS_NO_PROVIDER_REGISTRY: >-
+      The start marker exists to survive an analysis that NEVER RETURNS — a process replacement
+      mid-flight, which spent ~140,000 tokens and must not be repeated every ten minutes. If the
+      code reaches the verdict check at all, the attempt RETURNED: not interrupted, and it
+      consumed nothing worth protecting. So no availability check and no new wiring is required;
+      the information was already in the control flow.
+    APPENDED_NOT_DELETED: >-
+      My first implementation DELETED the start row. audit_log is append-only and enforces it
+      with a trigger (audit_log_no_delete: "audit_log is append-only") — the DELETE was aborted
+      and my own except swallowed it into a warning, so the test failed while the code "worked".
+      Deleting was also wrong in principle: the attempt DID happen and erasing it would make the
+      ledger lie. A compensating incident.diagnosis_abandoned event says both true things — the
+      analysis ran, and it produced nothing — and the two readers now ignore a start that was
+      abandoned. An abandonment cancels a START, never a VERDICT.
+    MUTATION_CAUGHT_AN_UNTESTED_WIRING: >-
+      Disabling the call in execute() left all fifteen tests green: they drive the helper
+      directly and never through the handler — a helper that works and is never called, the
+      shape this codebase keeps paying for. A structural test now asserts the call sits inside a
+      verdict-guarded branch, and that mutation goes red. The second mutation (letting an
+      abandonment cancel a real verdict) timed out on the migration fixture when repeated, but
+      its invariant is demonstrably load-bearing: test_a_completed_analysis_is_untouched_by_
+      clearing failed for exactly that reason before the cancellation was scoped to starts.
+      Both mutation runs also left the module mutated when the command timed out — restored from
+      the file copy and re-verified, which is the whole reason that rule exists.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      The provider is still unreachable, so the next RCA attempt must log "[scheduler]
+      incident_escalation: the analysis returned no verdict — clearing its start so the next
+      tick can retry" at INFO, and interrupted_diagnoses must stop listing the three provider
+      signatures. That line has never existed before, so its first appearance is the evidence.
   PROVIDERDOWN_2026_09_03_the_platform_could_not_say_its_model_was_down:
     map_check: "No mapped item — found during the live VPN outage."
     THE_MEASUREMENT: >-

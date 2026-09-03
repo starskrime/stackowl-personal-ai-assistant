@@ -322,6 +322,14 @@ _DIAGNOSIS_GOOD_FOR_HOURS = 24.0
 #: itself is still DETECTED every tick — only the expensive re-analysis is held.
 STARTED_EVENT = "incident.diagnosis_started"
 
+#: An analysis that RETURNED without a verdict. The compensating half of
+#: STARTED_EVENT: the start marker suppresses re-analysis for 24h because an
+#: interrupted RCA spent ~140,000 tokens, but an attempt that returned empty
+#: spent nothing and the verdict-is-None branch already intends it to retry next
+#: tick. Appended rather than deleting the start, because audit_log is
+#: append-only by trigger and the attempt genuinely happened.
+ABANDONED_EVENT = "incident.diagnosis_abandoned"
+
 
 async def record_diagnosis_started(
     db: object, *, signature: str, incident_id: str, now: float | None = None,
@@ -351,6 +359,67 @@ async def record_diagnosis_started(
         log.scheduler.warning(
             "[scheduler] incident_escalation: could not record the analysis start "
             "— an interruption here will look like it never ran",
+            exc_info=exc, extra={"_fields": {"signature": signature}},
+        )
+
+
+async def record_diagnosis_abandoned(
+    db: object, *, signature: str, incident_id: str, now: float | None = None,
+) -> None:
+    """Record that an analysis RETURNED without producing a verdict. Never raises.
+
+    APPENDED, NOT DELETED. ``audit_log`` is append-only and enforces it with a
+    trigger (``audit_log_no_delete``: "audit_log is append-only"), which is
+    correct — the attempt DID happen and erasing it would make the ledger lie. A
+    compensating event says both true things: the analysis ran, and it produced
+    nothing. The readers below then stop treating that start as a reason to
+    suppress.
+
+    TWO MECHANISMS WITH OPPOSITE INTENTIONS, and the later one was winning
+    silently. :meth:`IncidentEscalationHandler.execute` deliberately does NOT call
+    :func:`record_diagnosis` when the RCA yields no verdict, and says why: "so the
+    NEXT tick retries the RCA for this same persistent incident instead of
+    silently giving up on it forever after one failed attempt — a provider outage
+    during the incident is precisely when the RCA call itself is most likely to
+    also fail." But :func:`record_diagnosis_started` is written BEFORE the attempt
+    and :func:`recently_diagnosed` counts started events too, so the signature
+    that branch leaves deliberately unregistered was suppressed for 24 hours
+    anyway and the stated intent never took effect.
+
+    MEASURED 2026-09-03 during a seven-hour provider outage: the loop started an
+    RCA for the signature ``health:provider:NeraAiRaw:down`` — using the model to
+    investigate why the model was unreachable. It could not succeed, left a
+    started row with no completion, and burned that signature's re-analysis
+    window; :func:`interrupted_diagnoses` then listed THREE variants of the same
+    outage.
+
+    THE DISCRIMINATOR NEEDS NO PROVIDER REGISTRY. The start marker exists to
+    survive an analysis that NEVER RETURNS — a process replacement mid-flight,
+    which spent ~140,000 tokens and must not be repeated every ten minutes. If the
+    caller reached the verdict check at all, the attempt RETURNED: it was not
+    interrupted, and it consumed nothing worth protecting. Keyed on the
+    ``incident_id`` as well as the signature so a DIFFERENT attempt's marker —
+    one that may genuinely still be in flight — is never cleared.
+
+    Args:
+        db: The pool. A ledger write may never fail a sweep.
+        signature: The incident signature this analysis was for.
+        incident_id: The specific attempt to clear.
+        now: Accepted for symmetry with the writers; unused.
+    """
+    stamp = time.time() if now is None else now
+    try:
+        await db.execute(  # type: ignore[attr-defined]
+            "INSERT INTO audit_log (event_type, actor, target, timestamp, details, "
+            "integrity_hash, chain_version) VALUES (?,?,?,?,?,?,?)",
+            (ABANDONED_EVENT, signature, incident_id, stamp,
+             json.dumps({"produced_verdict": False}), "", "v1"),
+        )
+    except Exception as exc:  # noqa: BLE001 — a ledger write may not cost a tick
+        log.scheduler.warning(
+            "[scheduler] incident_escalation: could not record the abandoned "
+            "analysis — this signature stays suppressed for the full window "
+            "despite producing no verdict",
             exc_info=exc, extra={"_fields": {"signature": signature}},
         )
 
@@ -412,8 +481,13 @@ async def interrupted_diagnoses(db: object, *, now: float | None = None) -> list
             "SELECT DISTINCT s.actor AS actor FROM audit_log s "
             "WHERE s.event_type = ? AND s.timestamp >= ? AND s.actor IS NOT NULL "
             "AND NOT EXISTS (SELECT 1 FROM audit_log d WHERE d.event_type = ? "
-            "AND d.actor = s.actor AND d.timestamp >= s.timestamp)",
-            (STARTED_EVENT, since, DIAGNOSED_EVENT),
+            "AND d.actor = s.actor AND d.timestamp >= s.timestamp) "
+            # Nor is an attempt that returned empty "lost mid-flight" — it
+            # returned, and it is already queued to retry.
+            "AND NOT EXISTS (SELECT 1 FROM audit_log a WHERE a.event_type = ? "
+            "AND a.actor = s.actor AND a.target = s.target "
+            "AND a.timestamp >= s.timestamp)",
+            (STARTED_EVENT, since, DIAGNOSED_EVENT, ABANDONED_EVENT),
         )
     except Exception as exc:  # noqa: BLE001 — a metric may never cost a tick
         log.scheduler.warning(
@@ -442,9 +516,19 @@ async def recently_diagnosed(db: object, *, now: float | None = None) -> set[str
     since = stamp - _DIAGNOSIS_GOOD_FOR_HOURS * 3600.0
     try:
         rows = await db.fetch_all(  # type: ignore[attr-defined]
-            "SELECT DISTINCT actor FROM audit_log WHERE event_type IN (?, ?) "
-            "AND timestamp >= ? AND actor IS NOT NULL",
-            (DIAGNOSED_EVENT, STARTED_EVENT, since),
+            # A start that was later ABANDONED does not suppress: it returned
+            # without a verdict and spent nothing, so the next tick must retry.
+            "SELECT DISTINCT s.actor AS actor FROM audit_log s "
+            "WHERE s.event_type IN (?, ?) AND s.timestamp >= ? AND s.actor IS NOT NULL "
+            # An abandonment cancels a START, never a VERDICT. A diagnosis that
+            # actually concluded is exactly what the window is legitimately for,
+            # and a later abandoned attempt on the same signature must not
+            # re-open it.
+            "AND (s.event_type = ? OR NOT EXISTS ("
+            "SELECT 1 FROM audit_log a WHERE a.event_type = ? "
+            "AND a.actor = s.actor AND a.target = s.target "
+            "AND a.timestamp >= s.timestamp))",
+            (DIAGNOSED_EVENT, STARTED_EVENT, since, DIAGNOSED_EVENT, ABANDONED_EVENT),
         )
     except Exception as exc:  # noqa: BLE001
         log.scheduler.warning(
@@ -749,6 +833,23 @@ class IncidentEscalationHandler(JobHandler):
             # (the exact "silent fail, no retry" antipattern this arc exists to
             # kill — a provider outage during the incident is precisely when the
             # RCA call itself is most likely to also fail).
+            if verdict is None and self._db is not None:
+                # RETURNED WITHOUT A VERDICT, so it was not interrupted and it
+                # consumed nothing. Clearing the start marker is what actually
+                # delivers the retry the branch below has always intended: the
+                # marker suppresses re-analysis for 24h, which silently defeated
+                # it. See clear_diagnosis_started.
+                await record_diagnosis_abandoned(
+                    self._db, signature=inc.signature, incident_id=incident_id,
+                )
+                log.scheduler.info(
+                    "[scheduler] incident_escalation: the analysis returned no "
+                    "verdict — clearing its start so the next tick can retry "
+                    "instead of suppressing this signature for the full window",
+                    extra={"_fields": {
+                        "signature": inc.signature, "incident_id": incident_id,
+                    }},
+                )
             if verdict is not None:
                 self._clear_verdict_failures(inc.signature)
                 self._open_incidents[inc.signature] = incident_id

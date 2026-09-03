@@ -45,6 +45,7 @@ from stackowl.db.pool import DbPool
 from stackowl.scheduler.handlers.incident_escalation import (
     DIAGNOSED_EVENT,
     STARTED_EVENT,
+    record_diagnosis_abandoned,
     interrupted_diagnoses,
     recently_diagnosed,
     record_diagnosis,
@@ -234,4 +235,128 @@ def test_the_loss_metric_is_not_gated_on_there_being_NEW_work() -> None:
         "the interrupted-analysis metric is gated on new_incidents again — it "
         "will go silent on the 86% of ticks that have no new work, which is "
         "exactly when unfinished analyses accumulate unnoticed"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# An analysis that RETURNED without a verdict is not an interrupted one        #
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_failed_analysis_does_not_buy_24h_of_suppression(pool) -> None:  # noqa: ANN001
+    """TWO MECHANISMS WITH OPPOSITE INTENTIONS, and the later one won silently.
+
+    ``incident_escalation`` deliberately does NOT call ``record_diagnosis`` when
+    the RCA returns no verdict, and says why: "so the NEXT tick retries the RCA
+    for this same persistent incident instead of silently giving up on it forever
+    after one failed attempt — a provider outage during the incident is precisely
+    when the RCA call itself is most likely to also fail."
+
+    But ``record_diagnosis_started`` is written BEFORE the attempt, and
+    ``recently_diagnosed`` counts STARTED events as well as finished ones. So the
+    signature that branch deliberately leaves unregistered is suppressed for 24
+    hours regardless, and the stated intent never takes effect.
+
+    MEASURED 2026-09-03 during a seven-hour provider outage: at 16:53 the loop
+    started an RCA for the signature ``health:provider:NeraAiRaw:down`` — using
+    the model to investigate why the model was unreachable. It could not succeed,
+    left a started row with no completion, and burned that signature's re-analysis
+    window. ``interrupted_diagnoses`` then listed THREE variants of the same
+    outage.
+
+    THE DISCRIMINATOR IS EXACT, and needs no provider registry. The started
+    marker exists to survive an analysis that NEVER RETURNS — a process
+    replacement mid-flight, which consumed ~140,000 tokens and must not be
+    repeated every ten minutes. If the code reaches the verdict check at all, the
+    attempt RETURNED: it was not interrupted, and it consumed nothing worth
+    protecting. Clearing the marker there restores the retry the other branch
+    already intended."""
+    await record_diagnosis_started(
+        pool, signature=_SIG, incident_id="incident-x", now=_NOW,
+    )
+    assert await recently_diagnosed(pool, now=_NOW + 60.0) == {_SIG}
+
+    await record_diagnosis_abandoned(pool, signature=_SIG, incident_id="incident-x")
+
+    assert await recently_diagnosed(pool, now=_NOW + 60.0) == set(), (
+        "a returned-but-verdictless analysis still suppresses the signature for "
+        "24h, defeating the retry the verdict-is-None branch exists to allow"
+    )
+    assert await interrupted_diagnoses(pool, now=_NOW + 60.0) == [], (
+        "it is also still counted as work lost mid-flight, which it was not"
+    )
+
+
+async def test_clearing_only_removes_THIS_attempt(pool) -> None:  # noqa: ANN001
+    """A different incident's start for the same signature must survive — two
+    analyses can be in flight across a restart boundary, and clearing the wrong
+    one would re-open a signature that IS legitimately suppressed."""
+    await record_diagnosis_started(
+        pool, signature=_SIG, incident_id="incident-a", now=_NOW,
+    )
+    await record_diagnosis_started(
+        pool, signature=_SIG, incident_id="incident-b", now=_NOW + 1.0,
+    )
+    await record_diagnosis_abandoned(pool, signature=_SIG, incident_id="incident-a")
+    assert await recently_diagnosed(pool, now=_NOW + 60.0) == {_SIG}
+
+
+async def test_a_completed_analysis_is_untouched_by_clearing(pool) -> None:  # noqa: ANN001
+    """Clearing the start must never remove the RESULT. A verdict that shipped is
+    the thing the 24h window is legitimately for."""
+    await record_diagnosis_started(
+        pool, signature=_SIG, incident_id="incident-c", now=_NOW,
+    )
+    await record_diagnosis(
+        pool, signature=_SIG, incident_id="incident-c", verified=True, now=_NOW + 5.0,
+    )
+    await record_diagnosis_abandoned(pool, signature=_SIG, incident_id="incident-c")
+    assert await recently_diagnosed(pool, now=_NOW + 60.0) == {_SIG}
+
+
+async def test_clearing_a_row_that_is_not_there_is_harmless(pool) -> None:  # noqa: ANN001
+    """Never raises: a ledger write may not cost a sweep, and the caller runs
+    this on a failure path where something has already gone wrong."""
+    await record_diagnosis_abandoned(pool, signature="nope", incident_id="nope")
+
+
+def test_the_abandonment_is_recorded_on_the_verdictless_PATH() -> None:
+    """THE WIRING, which the helper tests above cannot see.
+
+    Caught by mutation: disabling the call in ``execute`` left all fifteen other
+    tests green, because they drive ``record_diagnosis_abandoned`` directly and
+    never through the handler. A helper that works and is never called is the
+    shape this codebase keeps paying for.
+
+    Asserted structurally: the call must sit inside a branch guarded on the
+    verdict being None. A call moved outside that guard would abandon analyses
+    that DID produce a verdict, re-opening signatures the window legitimately
+    suppresses."""
+    import ast
+    import inspect
+    import textwrap
+
+    from stackowl.scheduler.handlers import incident_escalation
+
+    src = textwrap.dedent(
+        inspect.getsource(incident_escalation.IncidentEscalationHandler.execute)
+    )
+    tree = ast.parse(src)
+
+    guarded = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Name)
+            and c.func.id == "record_diagnosis_abandoned"
+            for c in ast.walk(node)
+        )
+        and "verdict" in ast.dump(node.test)
+    ]
+    assert guarded, (
+        "record_diagnosis_abandoned is not called from a verdict-guarded branch "
+        "in execute() — a returned-but-verdictless analysis will suppress its "
+        "signature for the full 24h window again"
     )
