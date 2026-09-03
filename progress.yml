@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  LOSSMETRIC_2026_09_03_the_loss_counter_only_ran_when_there_was_new_work:
+    map_check: "No mapped item — evidence-led, from tracing a 96% collapse in platform activity."
+    HOW_I_GOT_HERE: >-
+      cost_records rows fell from 3,713/day on 08-28 to 143 today, a 96% drop. Not a broken
+      writer: the ratio of cost records to turns held steady at 7-12 throughout, so the platform
+      was simply doing far less. By lane, the collapse is the incident-* RCA machinery — 354/day
+      on 08-31 down to 14 — which is the self-healing loop, the guide star. That is either the
+      platform getting healthier or the loop going dark, and the difference matters.
+    THE_FINDING: >-
+      Four RCA diagnoses had STARTED and never reached any terminal state, the oldest 46 hours
+      old, each with exactly one audit row: incident.diagnosis_started, {"completed": false},
+      nothing after. The instrument that reports this — interrupted_diagnoses() — exists, is
+      wired, is at INFO, and its line had NEVER appeared in any log file: 7,321
+      incident_escalation lines and not one of these. Running the query by hand returned TWO
+      live signatures (outcome:owl_build:stop, outcome:shell:stop).
+    THE_CAUSE: >-
+      The call sat behind `if self._db is not None and new_incidents:`. MEASURED over every
+      recorded exit line, 532 of 618 ticks (86%) had new==0, so the metric was skipped on 86%
+      of ticks. And an IDLE loop is exactly when interrupted analyses accumulate — the work was
+      killed mid-flight, so no new incident is minted to announce it. Gating a LOSS counter on
+      the ARRIVAL OF NEW WORK makes it blind to the quiet failure it exists to report. The fix
+      is one line; the shape is the item.
+    THE_SCOPING_THAT_CAME_WITH_IT: >-
+      recently_diagnosed() stays gated on new_incidents, deliberately: it exists only to decide
+      whether a NEW incident's RCA should be suppressed, so with nothing new it has nothing to
+      answer. The two calls sat under one guard and wanted opposite ones — one reports work
+      already lost, the other decides about work arriving.
+    THREE_HYPOTHESES_I_TESTED_AND_KILLED: >-
+      (1) "cost_usd=0.0 with priced=1 is a lie" — cost_backfill.py deliberately sets exactly
+      that, and $0.00 IS the honest price for a free self-hosted model. (2) "the cost_records
+      writer broke" — the records-per-turn ratio held steady, so the drop is real activity.
+      (3) "the 24h diagnosis expiry never expires because audit_log.timestamp is TEXT compared
+      against a REAL" — the same class of bug I hit twice today on tasks.created_at and
+      notification_log.created_at, so I expected it. typeof(timestamp) is REAL for all 11,150
+      rows, and the query returns identical results with and without a CAST. The expiry works.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      The next incident_escalation tick (every 10 minutes) must emit "[scheduler]
+      incident_escalation: analyses started and never finished" at INFO naming count=2 and the
+      signatures outcome:owl_build:stop and outcome:shell:stop. The control that makes it mean
+      something: that line has appeared ZERO times across every log file to date, against 7,321
+      incident_escalation lines — so a single occurrence closes it.
   RECLAIM_2026_09_03_a_reclaimer_asked_for_2000_pages_got_1_and_reported_success:
     map_check: "No mapped item — evidence-led, from a database growth check."
     THE_MEASUREMENT: >-

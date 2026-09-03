@@ -177,3 +177,57 @@ def test_the_start_is_recorded_BEFORE_the_analysis_runs() -> None:
     assert source.index("record_diagnosis_started(") < source.index(
         "await self._resolve_incident("
     ), "the marker must be written BEFORE the analysis, or it cannot survive it"
+
+
+def test_the_loss_metric_is_not_gated_on_there_being_NEW_work() -> None:
+    """THE MEASUREMENT WENT BLIND EXACTLY WHEN IT MATTERED.
+
+    ``interrupted_diagnoses`` exists to answer "how much analysis work are we
+    losing" — and its INFO line had NEVER appeared in any log file, across 7,321
+    ``incident_escalation`` lines, while the query returned two live signatures
+    (``outcome:owl_build:stop``, ``outcome:shell:stop``) when run by hand.
+
+    The reason was the guard: the call sat behind ``if self._db is not None and
+    new_incidents:``. MEASURED over every recorded exit line, 532 of 618 ticks
+    (86%) had ``new == 0``, so the metric was skipped on 86% of ticks — and an
+    idle loop is precisely when interrupted analyses sit and accumulate. A loss
+    counter that only runs while new work arrives cannot report a loop that has
+    gone quiet holding four unfinished diagnoses, which is the state it was in.
+
+    Asserted structurally rather than by string match: the guard EXPRESSION must
+    not mention ``new_incidents``. A future edit that reintroduces the coupling
+    fails here rather than going silent for another 7,000 log lines.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from stackowl.scheduler.handlers import incident_escalation
+
+    src = textwrap.dedent(
+        inspect.getsource(incident_escalation.IncidentEscalationHandler.execute)
+    )
+    tree = ast.parse(src)
+
+    def _mentions(node: ast.AST, name: str) -> bool:
+        return any(
+            isinstance(n, ast.Name) and n.id == name for n in ast.walk(node)
+        )
+
+    guarded_by_new_work = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and any(
+            isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Name)
+            and c.func.id == "interrupted_diagnoses"
+            for c in ast.walk(node)
+        )
+        and _mentions(node.test, "new_incidents")
+    ]
+    assert not guarded_by_new_work, (
+        "the interrupted-analysis metric is gated on new_incidents again — it "
+        "will go silent on the 86% of ticks that have no new work, which is "
+        "exactly when unfinished analyses accumulate unnoticed"
+    )

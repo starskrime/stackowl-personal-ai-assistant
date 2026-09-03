@@ -617,7 +617,20 @@ class IncidentEscalationHandler(JobHandler):
         # tokens, 72.3% of ALL spend, 86 of 100 completions concluding
         # verified=False. Reading the ledger here means a diagnosis survives the
         # thing that was erasing it.
-        if self._db is not None and new_incidents:
+        if self._db is not None:
+            # NOT GATED ON new_incidents, and that gate is why this never spoke.
+            # MEASURED 2026-09-03: this INFO line had never appeared in ANY log
+            # file — 7,321 incident_escalation lines and not one of these — while
+            # running the query by hand returned two live signatures
+            # (outcome:owl_build:stop, outcome:shell:stop). It sat behind
+            # `and new_incidents`, and 532 of 618 recorded ticks (86%) had new==0.
+            #
+            # An idle loop is EXACTLY when interrupted analyses accumulate: the
+            # work was killed mid-flight, so no new incident is minted to
+            # announce it. Gating a loss counter on the arrival of new work makes
+            # it blind to the quiet failure it exists to report. It is one cheap
+            # query per ten-minute tick.
+            #
             # INFO, because this is the ONLY evidence that an analysis was killed
             # mid-flight — there is no exit line for a process that was replaced,
             # and production runs at INFO.
@@ -631,6 +644,12 @@ class IncidentEscalationHandler(JobHandler):
                     extra={"_fields": {"count": len(interrupted),
                                        "signatures": interrupted[:8]}},
                 )
+        # Still gated on new work, and deliberately so: this one exists ONLY to
+        # decide whether a NEW incident's RCA should be suppressed, so with
+        # nothing new there is nothing for it to answer. The metric above is the
+        # opposite case — it reports work already lost, which is why it must run
+        # whether or not anything new arrived.
+        if self._db is not None and new_incidents:
             already = await recently_diagnosed(self._db, now=self._clock_time())
             if already:
                 suppressed = [i for i in new_incidents if i.signature in already]
