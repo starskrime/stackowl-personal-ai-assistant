@@ -200,5 +200,11 @@ async def test_the_step_CEILING_is_reported_as_its_own_thing(tmp_db) -> None:
 
     body = " ".join((await GrowthAssembler(tmp_db).assemble(None)).items)
 
-    assert "ran out of steps mid-task 8 times, up from 3" in body
-    assert "my own ceiling" in body
+    assert "stopped before finishing 8 times, up from 3" in body
+    assert "my own limits" in body
+    assert "steps" not in body, (
+        "failure_class='stop' is a step-cap breach, a TOKEN-cap breach and other "
+        "early stops under one label — measured 2026-09-03, recent breaches are "
+        "the 500,000-token cap, not the 20-step one. Naming a ceiling the data "
+        "cannot identify is the overclaim this section exists to avoid."
+    )

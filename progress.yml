@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CEILING_2026_09_03_the_ceiling_that_fires_MOVED_from_steps_to_tokens:
+    map_check: "No mapped item — chasing the step-cap rise I named at the end of the last item."
+    THE_RATE_IS_REAL_and_correctly_denominated_this_time: >-
+      Turns ending in failure_class='stop': 0.54% -> 1.23% -> 2.89% across three weeks. Per lane
+      last week, with the denominator that matters: goal-* scheduled runs 10 of 45 (22.2%),
+      owl:* sub-turns 35 of 284 (12.3%), incident-* 1 of 1,316 (0.08%). It is owl work — his
+      jobmarket and headhunter agents doing live verification sweeps — not the chat lane.
+    A_DENOMINATOR_ERROR_I_CAUGHT_MID_ITEM: >-
+      I measured "only 0.6% of turns become tasks" and was about to report that the ONE loop
+      holds almost none of the work. Wrong: 79% of those 1,660 turns are incident-* lanes, the
+      RCA machinery talking to itself. His actual chat turns were ~14 in the week and 13 became
+      tasks. The chat lane IS covered. Third denominator error today and the third caught by
+      asking what the rows were made of.
+    WHAT_THE_CEILING_ACTUALLY_IS: >-
+      Four different limits — steps, time, cost, input tokens — all raise BudgetBreach, all set
+      budget_capped=True and all land as failure_class='stop'. The breach site already logs the
+      attribution at INFO ("[pipeline] execute: budget cap reached" with cap/limit/actual); I
+      missed it with a bad grep and nearly built an instrument that already existed. Reading it:
+      steps 30/5/4/2/0 across 08-28..09-02, tokens 0/0/8/8/7. THE CEILING THAT FIRES HAS MOVED
+      FROM STEPS TO TOKENS — recent breaches are the 500,000-token input cap, not the 20-step
+      one, and nothing was reporting that.
+    the_correction_to_my_own_line: >-
+      The growth section said "I ran out of steps mid-task 48 times". Unsupported twice over:
+      failure_class='stop' is several endings under one label, and the ceiling that recently
+      fires is tokens. It now says "I stopped before finishing N times", and a test asserts the
+      word "steps" does NOT appear — naming a ceiling the data cannot identify is exactly the
+      overclaim this section exists to avoid.
+    what_else_that_cause_reaches: >-
+      Every reader of failure_class='stop' — the failure miner clusters on it and authored four
+      incident_*_stop skills, and the recurrence detector pages about them. Those lessons are
+      about tools, for turns that hit a global token ceiling. That is why they "did not hold".
+    MY_OWN_PREMISE_CHECK_WAS_WRONG_AND_SAID_SO: >-
+      The first version of ESC-114's check compared ALL-TIME breach totals and reported EXPIRED,
+      "steps dominant again" — because 08-28 alone contributed 30 step breaches and swamps the
+      recent window the premise is actually about. The check now looks at the last three log
+      files. It caught its own author within a minute of being written, which is the entire
+      argument for making these executable.
+    what_I_did_NOT_change: >-
+      The caps themselves. Which limit should bind, and at what value, is appetite: 500k tokens
+      was set deliberately after a 683k runaway, and raising it to finish longer sweeps trades
+      that protection back. ESC-114.
+    suites: "tests/brief 60 passed. Baselines held at ruff 35, mypy 65."
+    validate: OPEN_awaiting_the_next_morning_brief
+    closing_query: >-
+      "[brief] growth: assembled" with step_cap_now/step_cap_prior, and the rendered line
+      containing "stopped before finishing" and NOT "steps". Separately, "[pipeline] execute:
+      budget cap reached" carrying cap=tokens should keep outnumbering cap=steps — if steps
+      returns as the dominant cap, the shift reversed and the wording needs revisiting again.
   STEPCAP_2026_09_03_every_capability_regression_was_the_step_cap_wearing_a_tools_name:
     map_check: "No mapped item — following the signal the platform reported about itself."
     how_it_surfaced: >-
@@ -5593,6 +5641,32 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_114_which_ceiling_should_bind_on_a_long_research_sweep:
+      premise_check: |
+        uv run python -c "import json,pathlib,collections;fs=sorted((pathlib.Path.home()/'.stackowl'/'logs').glob('stackowl*.jsonl'))[-3:];c=collections.Counter();[c.update([(json.loads(l).get('fields') or {}).get('cap')]) for f in fs for l in f.open() if 'budget cap reached' in l];print('HOLDS tokens dominant' if c.get('tokens',0)>=c.get('steps',0) else 'EXPIRED steps dominant again', dict(c))" 2>/dev/null | tail -1
+      question: >-
+        22% of your scheduled owl runs stop before finishing — jobmarket and headhunter, mid-way
+        through verifying listings live. The ceiling doing it has moved from the 20-step cap to
+        the 500,000-token input cap. Raising it lets a sweep finish; it also gives back the
+        protection you got after the 683k-token runaway. Where should the line be for a
+        long research sweep?
+      why_evidence_cannot_settle_it: >-
+        The measurement says which ceiling fires and how often, and that the work legitimately
+        grew — mean tool calls 1.3 -> 2.9, p99 20 -> 37, while success went 69% -> 90%. It
+        cannot say whether an unfinished sweep costs you more than an expensive one. That is
+        your money and your patience.
+      the_measurement: >-
+        goal-* scheduled runs: 10 of 45 stopped early (22.2%). owl:* sub-turns: 35 of 284
+        (12.3%). Budget breaches by cap: steps 30/5/4/2/0 across 08-28..09-02, tokens 0/0/8/8/7.
+        Capped turns DO deliver their partial findings — real tables of confirmed listings, not
+        just a stop note — so the cost is an unfinished sweep, not a lost one.
+      options: >-
+        (a) LEAVE IT — a sweep that stops early still delivers what it verified, and he can ask
+        for the rest. (b) RAISE the token cap for DEFERRED turns only, the way max_steps is
+        already 45 for them versus 20 interactive — the asymmetry already exists and this
+        extends it to the ceiling that now actually binds. RECOMMENDED. (c) RAISE it globally,
+        which gives back the runaway protection on live chat too.
+      blocked_until_answered: "Nothing. The reporting is honest either way; this decides whether long sweeps get to finish."
     ESC_113_is_undo_the_whole_turn_worth_building_before_anyone_has_undone_one_write:
       premise_check: |
         uv run python -c "import sqlite3,os;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);n=sum(1 for (s,) in c.execute('SELECT tool_sequence FROM task_outcomes WHERE tool_sequence IS NOT NULL') if 'undo_write' in (s or ''));print(('EXPIRED a write was undone: %d' % n) if n else 'HOLDS undo_write never invoked')" 2>/dev/null | tail -1

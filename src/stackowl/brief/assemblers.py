@@ -831,15 +831,22 @@ class GrowthAssembler:
         # it is me running out of room to think, and it is the one number that
         # actually moved: 31 -> 48 turns week over week when this was written.
         if stopped_now or stopped_prior:
+            # "STOPPED EARLY", NOT "RAN OUT OF STEPS". failure_class='stop' is
+            # several different endings wearing one label: a step-cap breach, a
+            # token-cap breach, and other early stops. MEASURED 2026-09-03 from
+            # the budget log, which DOES attribute the cap: the ceiling that
+            # fires has MOVED — steps 30/5/4/2/0 across 08-28..09-02 while tokens
+            # went 0/0/8/8/7. Recent breaches are the 500,000-token input cap,
+            # not the 20-step one. Saying "steps" would name the wrong ceiling.
             if stopped_now > stopped_prior:
                 items.append(
-                    f"I ran out of steps mid-task {stopped_now} times, up from "
-                    f"{stopped_prior} — that is me hitting my own ceiling, not a "
-                    "tool letting me down."
+                    f"I stopped before finishing {stopped_now} times, up from "
+                    f"{stopped_prior} — I am hitting my own limits more often, "
+                    "not being let down by a tool."
                 )
             elif stopped_now < stopped_prior:
                 items.append(
-                    f"I ran out of steps mid-task {stopped_now} times, down from "
+                    f"I stopped before finishing {stopped_now} times, down from "
                     f"{stopped_prior}."
                 )
         items.append(
