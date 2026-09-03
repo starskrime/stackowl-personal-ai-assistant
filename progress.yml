@@ -387,8 +387,27 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: PARTIAL
       document: done
+    what_validate_ACTUALLY_evidenced: >-
+      Live at 09:34:37Z on commit b8767b35 (04:33:47 -0500). ZERO ERROR lines since that boot.
+      The ESC-116 invariant still HOLDS live: 0 of 20,146 outcomes outside the injector
+      deadband, so nothing started moving DNA that should not have. 352 owls tests pass, and
+      all three mutations (drop the distinct-settings floor, steer at a fixed constant, drop
+      the spread floor) now go red.
+      NOT YET EVIDENCED: the DNA coordinator has not run since the restart, so no live
+      "[dna] attributor.attribute: exit" line carries the new fallback_reason yet. The
+      evolution pass runs roughly hourly, so this is checkable within a day.
+    I_TOOK_THE_GATEWAY_DOWN_WHILE_EDITING: >-
+      71 ERROR lines between 09:26 and 09:33 — 31 "[loop] tick failed", 31 db connect failures,
+      a phase-6 gateway FAILURE — all from CodeWatcher hot-reloading the core into an
+      INTERMEDIATE state of my edit, where _MIN_TRAIT_SPREAD referenced _STEP_SIZE before it
+      was defined. It self-cleared the moment the file was consistent, and there are zero
+      errors after the restart. Worth recording as a working hazard: a multi-step edit to a
+      live module is not atomic, and the running platform executes every intermediate save.
+      It also nearly cost me a wrong conclusion — the first ERROR count I read (71) was
+      dominated by that window, and only splitting the log BY BOOT showed the current process
+      is clean.
     validate_closing_query: >-
       After the restart, "[dna] attributor.attribute: exit" must carry a fallback_reason naming
       the SPREAD or the DISTINCT SETTINGS, not "no trait band gap exceeded threshold across N
