@@ -441,10 +441,17 @@ class ProviderContributor:
 
         log.debug("[health] provider_contributor: entry name=%s", self._provider.name)
         result = await probe_provider(self._provider)
-        status = "ok" if result.status == "ok" else "degraded"
+        # PASS THE VERDICT THROUGH. This collapsed every non-ok result to
+        # "degraded", so even once the probe could say "down" the distinction
+        # would have been swallowed one layer up. The sibling MCP contributor in
+        # this file already distinguishes the two.
+        status = result.status
         return HealthStatus(
             name=f"provider:{result.name}",
-            status=status,  # type: ignore[arg-type]
+            # The ignore that stood here is GONE, not silenced: it existed
+            # because the collapse produced a bare str. Passing the probe's own
+            # verdict through makes the types line up, and mypy said so.
+            status=status,
             message=result.reason,
             latency_ms=result.latency_ms,
         )

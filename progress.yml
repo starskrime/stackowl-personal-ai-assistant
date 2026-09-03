@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  PROVIDERDOWN_2026_09_03_the_platform_could_not_say_its_model_was_down:
+    map_check: "No mapped item — found during the live VPN outage."
+    THE_MEASUREMENT: >-
+      During the outage the health sweep reported {"down": [], "degraded":
+      ["provider:NeraAiRaw"]} — "degraded", while the assistant could not answer a single
+      message for six hours and 2,115 of his recorded failures are AllProvidersUnavailableError.
+    THE_CONTRADICTION_IS_INSIDE_ONE_FUNCTION: >-
+      provider_probe has three failure branches and every one returned "degraded", including the
+      branch whose own log line calls it unreachable: it logs "[startup] provider X: unreachable"
+      and returns status="degraded" three lines later. ProviderResult could not express anything
+      else — its status was Literal["ok","degraded"], so "down" was not in the vocabulary. The
+      contributor then faithfully collapsed it ("ok" if result.status == "ok" else "degraded"),
+      so the information was never PRODUCED rather than thrown away downstream.
+    WHAT_IT_COST: >-
+      HealthAggregator derives the whole system verdict from the down list and the CLI renders
+      it, so the SYSTEM could never be reported down for a provider outage however completely it
+      had stopped working. The sibling MCP contributor in the same file already distinguishes
+      the two ("down if any server is dead, degraded if all alive but we saw failures"); the one
+      dependency whose loss makes the assistant useless was the one that could not say it.
+    THE_DANGEROUS_PART_I_CHECKED_FIRST: >-
+      aggregator.is_live() is False on ANY down subsystem, and watchdog stops pinging systemd
+      when liveness fails — so this change could have turned every VPN blip into a systemd
+      restart loop, which is far worse than an understated label. It does not: the watchdog is
+      wired to _build_liveness_aggregator(), which registers ONLY DbContributor and
+      FilesystemContributor, and the orchestrator states the reason outright — "Network provider
+      health is deliberately EXCLUDED: a provider outage is not a reason to kill this process."
+      Two aggregators, separated for exactly this, and only the reporting one sees providers. A
+      tripwire now asserts that wiring rather than the comment.
+    THE_RULE_SO_THE_NEXT_BRANCH_INHERITS_IT: >-
+      Can this provider serve? Cannot be reached, or has no usable credential — DOWN. Reachable
+      but returning 5xx — DEGRADED, because it answered and may recover on the next call. A test
+      pins the 5xx direction, or "failures are down" would make the distinction useless again
+      the other way.
+    A_TEST_THAT_ENCODED_THE_OLD_COLLAPSE: >-
+      test_gemini_probe_failure_reason_never_leaks_key asserted status == "degraded" after
+      raising ConnectError. That assertion was incidental scaffolding — the test exists for the
+      two lines below it, that the failure reason never leaks the API key — so it now asserts
+      "down" and says why.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      The provider is unreachable right now (VPN tunnel down since 10:47 CDT), so the next
+      health sweep after the restart must log "[scheduler] health_sweep.execute: UNHEALTHY
+      subsystems detected" with down containing "provider:NeraAiRaw" and degraded EMPTY — the
+      exact inverse of what it reported all afternoon. That is directly checkable within one
+      sweep interval and needs no traffic.
   NOTOOLS_2026_09_03_a_turn_that_never_got_to_act_was_told_it_had_nothing_to_say:
     map_check: "No mapped item — found by validating an earlier fix during a live outage."
     THE_FINDING: >-

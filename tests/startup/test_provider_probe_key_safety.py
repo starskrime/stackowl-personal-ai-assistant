@@ -38,6 +38,10 @@ async def test_gemini_probe_failure_reason_never_leaks_key(monkeypatch) -> None:
 
     monkeypatch.setattr(httpx.AsyncClient, "get", _boom)
     result = await probe_provider(cfg)
-    assert result.status == "degraded"
+    # "down", not "degraded", since 2026-09-03: this raises ConnectError, and a
+    # provider that cannot be connected to cannot serve. The status here is
+    # incidental scaffolding — this test exists for the two assertions below,
+    # that the failure reason never leaks the API key.
+    assert result.status == "down"
     assert result.reason is not None
     assert _SECRET not in result.reason

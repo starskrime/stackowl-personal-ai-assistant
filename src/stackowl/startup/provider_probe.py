@@ -28,7 +28,16 @@ _DEFAULT_BACKOFF_BASE_S = 1.0
 class ProviderResult:
     name: str
     protocol: str
-    status: Literal["ok", "degraded"]
+    #: CAN THIS PROVIDER SERVE? "down" was missing from this vocabulary, so the
+    #: branch below whose own log line says "unreachable" had no way to report it
+    #: and returned "degraded" instead — three lines apart. HealthAggregator
+    #: derives the whole system verdict from the down list, so a total provider
+    #: outage could only ever be reported as degraded.
+    #:
+    #: The rule, so the next branch inherits it: cannot be reached, or has no
+    #: usable credential, means it cannot serve — DOWN. Reachable but returning
+    #: 5xx means it answered and may recover on the next call — DEGRADED.
+    status: Literal["ok", "degraded", "down"]
     latency_ms: float
     reason: str | None
 
@@ -53,7 +62,8 @@ async def probe_provider(provider: ProviderConfig) -> ProviderResult:
             return ProviderResult(
                 name=provider.name,
                 protocol=provider.protocol,
-                status="degraded",
+                # No usable credential: every call would fail. Not degraded.
+                status="down",
                 latency_ms=latency_ms,
                 reason=f"secret unavailable: {exc}",
             )
@@ -93,7 +103,10 @@ async def probe_provider(provider: ProviderConfig) -> ProviderResult:
         return ProviderResult(
             name=provider.name,
             protocol=provider.protocol,
-            status="degraded",
+            # DOWN, matching the word this branch has always logged. Measured
+            # 2026-09-03: a VPN drop made this the live state for six hours while
+            # the sweep reported {"down": [], "degraded": ["provider:NeraAiRaw"]}.
+            status="down",
             latency_ms=latency_ms,
             reason=reason,
         )
