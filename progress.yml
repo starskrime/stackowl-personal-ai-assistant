@@ -362,8 +362,18 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: done
       document: done
+    validate_EVIDENCE_OBTAINED: >-
+      CLOSED on the first tick after the change. 2026-09-03T11:13:42Z, live on commit 13ba1583,
+      WARNING "[scheduler] db_reclaim: the pass reclaimed far less than it asked for —
+      incremental reclaim is not working on this database" with asked_pages 2000,
+      reclaimed_pages 1, freelist_after 19,270, free_mb 78.9, and the remedy named. The exit
+      INFO line now carries {"reclaimed_pages": 1, "asked_pages": 2000, "stalled": true,
+      "freelist_after": 19270} on one line, so "1" can never look reasonable again.
+      THE CONTROL: 147 db_reclaim exit lines across every log file, and exactly ONE of these
+      warnings — the one emitted after this fix. The condition had been continuously true and
+      continuously silent for the whole recorded history, which is the claim the item makes.
     validate_closing_query: >-
       The next db_reclaim tick (hourly) must emit "[scheduler] db_reclaim: the pass reclaimed
       far less than it asked for" at WARNING with asked_pages=2000, reclaimed_pages=1,
