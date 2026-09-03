@@ -12,6 +12,7 @@ from stackowl.pipeline.backends.shared import (
     _capture_outcome,
     _verify_turn_acceptance,
     bind_turn_context,
+    close_step_accounting,
     run_delivery_gate,
     unbind_turn_context,
 )
@@ -184,7 +185,17 @@ class AsyncioBackend(OrchestratorBackend):
                 # critical_failure → command_hint) + F088 persist_turn ordering, now
                 # owned by pipeline/backends/shared.py so both backends call the same
                 # sequence instead of each carrying its own copy.
+                # TIMED, because it was the largest untimed phase on the turn.
+                # run_delivery_gate is seven honesty surfacers, one of which hands
+                # the turn to a different owl and runs a SECOND pipeline, and every
+                # line it logs is DEBUG while production runs at INFO — so its cost
+                # was neither timed nor loggable. The residual below still closes
+                # whatever remains unnamed.
+                gate_t0 = time.monotonic()
                 current = await run_delivery_gate(current, self._services)
+                step_durations.append(
+                    ("delivery_gate", (time.monotonic() - gate_t0) * 1000)
+                )
 
                 current = current.evolve(pipeline_step="deliver")
                 deliver_t0 = time.monotonic()
@@ -219,9 +230,16 @@ class AsyncioBackend(OrchestratorBackend):
 
         # Persist the measured step durations onto the final state for the
         # outcome-capture helper to read.
-        current = current.evolve(step_durations=tuple(step_durations))
-
         total_ms = (time.monotonic() - bindings.t0) * 1000
+        # CLOSE THE ARITHMETIC. total_ms spans bindings.t0 to here; step_durations
+        # covers only what _run_steps wraps. Measured over his own chat turns, the
+        # steps fell short of the turn by a median of 6.8% and a p90 of 63.9% —
+        # worst case 252s unaccounted of a 360s turn. Naming the remainder means a
+        # future phase added outside _run_steps shows up as a number rather than as
+        # absence, which is exactly how this gap arrived unnoticed.
+        current = current.evolve(
+            step_durations=tuple(close_step_accounting(step_durations, total_ms))
+        )
         log.engine.info(
             "[asyncio_backend] run: exit",
             extra={"_fields": {"trace_id": state.trace_id, "total_ms": total_ms, "error_count": len(current.errors)}},

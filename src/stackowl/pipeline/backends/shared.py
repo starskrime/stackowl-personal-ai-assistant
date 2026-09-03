@@ -278,6 +278,70 @@ async def _update_skill_success_rates(
         )
 
 
+#: Below this, a residual is rounding rather than a finding. Step timers and the
+#: turn timer are separate monotonic reads, so a sub-millisecond gap is arithmetic
+#: noise; naming it would put an "unaccounted" bucket in every healthy breakdown
+#: and teach the reader to ignore the field.
+_RESIDUAL_FLOOR_MS = 1.0
+
+
+def close_step_accounting(
+    step_durations: list[tuple[str, float]], total_ms: float
+) -> list[tuple[str, float]]:
+    """Append the unnamed remainder so the breakdown sums to the whole turn.
+
+    WHY THIS EXISTS. ``total_ms`` runs from ``bindings.t0`` to after the backend's
+    ``finally``; ``step_durations`` covers only what ``_run_steps`` wraps. The work
+    BETWEEN them has never been timed: bind_turn_context, the progress-callback
+    setup, :func:`run_delivery_gate` (seven honesty surfacers, one of which hands
+    the turn to another owl and runs a second pipeline), turn-acceptance
+    verification, unbind, and outcome capture.
+
+    MEASURED 2026-09-03 across his own chat turns: the sum of the nine recorded
+    steps fell short of the turn by a median of 6.8% and a p90 of 63.9%, worst
+    case 252,357 ms unaccounted of a 359,675 ms turn. His median turn is 89
+    seconds and his p90 is 7.2 minutes, so the gap is not academic — it is most of
+    the wait on exactly the turns that hurt. Every line that would have reported
+    it is ``log.engine.debug`` and production runs at INFO: control-checked, the
+    string "giveup_floor" appears ZERO times in every log file on the box.
+
+    A RESIDUAL RATHER THAN ONLY MORE TIMERS. Timing today's post-step phases fixes
+    today's gap; the next phase added outside ``_run_steps`` reopens it silently,
+    which is precisely how this one arrived. Closing the arithmetic means an
+    unnamed cost can never again present as absence.
+
+    Computed from the LIST, before the storage layer's ``dict()`` collapses
+    duplicate step names — otherwise a re-run step's time would be double-counted
+    into the residual.
+
+    Args:
+        step_durations: The timed steps, in order, duplicates preserved.
+        total_ms: The whole turn, as the backend measured it.
+
+    Returns:
+        The input with an ``unaccounted`` entry appended when the gap is real.
+        Never raises.
+    """
+    accounted = sum(v for _, v in step_durations)
+    residual = total_ms - accounted
+    if residual > _RESIDUAL_FLOOR_MS:
+        return [*step_durations, ("unaccounted", residual)]
+    if residual < -_RESIDUAL_FLOOR_MS:
+        # The steps claim more time than the turn. Both are monotonic reads of the
+        # same span, so this means a step is being timed OUTSIDE it — report it
+        # rather than clamping, because a clamp would hide the drift it proves.
+        log.engine.warning(
+            "[pipeline] step accounting: the steps sum EXCEEDS the turn — a step "
+            "is being timed outside the turn's own span",
+            extra={"_fields": {
+                "total_ms": round(total_ms, 1),
+                "accounted_ms": round(accounted, 1),
+                "excess_ms": round(-residual, 1),
+            }},
+        )
+    return list(step_durations)
+
+
 async def run_delivery_gate(current: PipelineState, services: StepServices) -> PipelineState:
     """The single post-execute gate cascade + persist_turn sequence shared by both
     backends (FR-11/FR-12). Same 8 calls, same order, as each backend ran inline

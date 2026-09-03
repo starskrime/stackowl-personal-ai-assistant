@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  LATENCY_2026_09_03_two_thirds_of_a_slow_turn_had_no_name:
+    map_check: "No mapped item — evidence-led, from measuring his own turn latency."
+    WHAT_HE_EXPERIENCES: >-
+      Over 14 days of HIS chat turns (telegram, machine lanes excluded): 32 turns, 87% success,
+      median latency 89 SECONDS, p90 430 seconds (7.2 minutes), max 692 seconds.
+    THE_MEASUREMENT: >-
+      Comparing each turn's latency_ms against the sum of its nine recorded step_durations:
+      unaccounted median 6.8%, p90 63.9%, worst 252,357 ms of a 359,675 ms turn. On the turns
+      that actually hurt, two thirds of the wait is outside every measured step. execute is 75%
+      of the MEDIAN turn, but the correlation inverts on the slow ones — a 542-second turn with
+      9 tool calls was accounted to within 515 ms, while a 360-second turn with 2 tool calls had
+      252 seconds unnamed.
+    THE_CAUSE_IS_TWO_CLOCKS_NOBODY_RECONCILED: >-
+      total_ms runs from bindings.t0 to after the backend's finally; step_durations covers only
+      what _run_steps wraps. Everything between is invisible by construction: bind_turn_context,
+      the progress-callback setup, run_delivery_gate — SEVEN honesty surfacers, one of which
+      hands the turn to a different owl and runs a whole second pipeline — turn-acceptance
+      verification, unbind, and outcome capture. And it cannot be inspected either: every line
+      delivery_gate.py logs is log.engine.debug while production runs at INFO. CONTROL-CHECKED
+      against every log file on the box: the string "giveup_floor" appears ZERO times.
+    A_HYPOTHESIS_I_KILLED_BEFORE_BUILDING_ON_IT: >-
+      dict(state.step_durations) collapses duplicate step names, so a re-run step could have had
+      its time overwritten — a tidy explanation that would have produced a real-looking fix.
+      Measured: every turn carries exactly NINE keys, fast and slow alike. Nothing is collapsing;
+      the time is genuinely spent outside the steps.
+    THE_FIX: >-
+      close_step_accounting() appends the unnamed remainder so the breakdown ALWAYS sums to the
+      turn, and run_delivery_gate is now timed as its own phase. A residual rather than only more
+      timers, because timing today's phases fixes today's gap while the next phase added outside
+      _run_steps reopens it silently — which is exactly how this one arrived. A sum that EXCEEDS
+      the turn is reported at WARNING rather than clamped, since a clamp would hide the drift it
+      proves. Below 1 ms the residual is rounding and is not named, so healthy breakdowns do not
+      grow a bucket the reader learns to ignore.
+    WHAT_THIS_DOES_NOT_DO: >-
+      It does not make his turns faster. It makes the missing two-thirds addressable — right now
+      nobody, including the platform's own brief, can say where six minutes went.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      After the restart, task_outcomes.step_durations for a new turn must contain a
+      "delivery_gate" key, and sum(step_durations.values()) must equal latency_ms to within a
+      millisecond. Before this commit the p90 shortfall was 63.9%; a single new turn closes it,
+      and if "unaccounted" is large that is now a finding rather than a blind spot.
   RECALL_2026_09_03_his_memory_could_not_be_asked_a_question:
     map_check: "No mapped item — evidence-led, from auditing the memory subsystem."
     THE_MEASUREMENT: >-
