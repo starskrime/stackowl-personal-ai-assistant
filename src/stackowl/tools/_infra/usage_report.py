@@ -94,6 +94,20 @@ async def report_never_invoked(
             exc_info=exc, extra={"_fields": {"scope": scope}},
         )
         return []
+    # THE SAME RULE THIS MODULE EXISTS FOR, applied to its own answer. "An
+    # UNKNOWN must not read as NONE" was enforced for a missing POOL and not for
+    # missing DATA: with no recorded invocations at all, `used` is empty, every
+    # registered name comes back "never invoked", and the line is shaped exactly
+    # like a genuine finding. A numerator over a zero denominator — in the module
+    # written to make numerators readable. Nothing is reported rather than
+    # accusing the whole registry on no evidence.
+    if not used:
+        log.tool.info(
+            "[tools] usage_report: usage UNKNOWN — no invocation history for "
+            "this owner, so every registered name would read as never-invoked",
+            extra={"_fields": {"scope": scope, "n_registered": len(wanted)}},
+        )
+        return []
     never = sorted(n for n in wanted if n not in used)
     log.tool.info(
         "[tools] usage_report: capability usage",
@@ -101,6 +115,11 @@ async def report_never_invoked(
             "scope": scope,
             "n_registered": len(wanted),
             "n_never_invoked": len(never),
+            # THE DENOMINATOR. "15 of 79 never invoked" cannot be weighed without
+            # knowing how much history it stands on, and its absence is why the
+            # same list printed at every boot for days without ever settling the
+            # question it was built to inform.
+            "n_observed_tools": len(used),
             "never_invoked": never,
         }},
     )

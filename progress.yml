@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  UNUSED_2026_09_03_the_report_that_names_unused_tools_had_no_denominator:
+    map_check: "No mapped item — found by asking what the boot line 'never_invoked: [15 names]' is MADE of."
+    THE_SETTLED_CAVEAT_first_because_it_unblocks_a_decision: >-
+      report_never_invoked prints 15 of 79 tools at every boot and its docstring refuses to
+      conclude anything from it: "a tool the presentation cap dropped was never OFFERED, and
+      skills_list already cost this project that exact mistake." That caveat is now SETTLED,
+      and settling it took a join the report cannot do itself. MEASURED over [pipeline]
+      execute: context budget, which records tools_count on every turn: 1,539 of 2,020 turns
+      (76%) presented ALL 79 registered tools, and "[presentation] select: eligible tools NOT
+      presented" appears ZERO times in seven days of logs. Nothing is being dropped. The
+      fifteen were OFFERED on three turns in four and refused — the reading is "declined",
+      not "never had the chance".
+    THE_SCALE: >-
+      Tool schemas are 19,423 tokens of a 22,786-token median round — 85% — at ~246 tokens
+      each. The fifteen never-invoked tools cost ~3,700 tokens EVERY ROUND.
+    THE_DEFECT_IN_THE_REPORT_ITSELF: >-
+      The module states its own rule — "AN UNKNOWN MUST NOT READ AS NONE" — and applies it to
+      a missing POOL only. With a pool that returns NO invocation history, `used` is empty,
+      so every registered name comes back never-invoked and the line is shaped exactly like a
+      genuine finding: 79 of 79, same fields, same level. A numerator over a zero denominator,
+      in the module written to make numerators readable. Same rule, one case short — the same
+      shape as the A/B-delta guard fixed earlier today, which covered the degenerate arm and
+      not the general one.
+    WHY_IT_MATTERED_beyond_the_edge_case: >-
+      The line also carried no denominator at all, so "15 of 79 never invoked" could not be
+      weighed against how much history it stands on. That is why the same list printed at
+      every boot since 2026-09-01 without ever settling the question it exists to inform — I
+      had to leave the report entirely and join two other instruments to read it. n_observed_tools
+      is now on the line.
+    WHAT_ELSE_THE_SAME_CAUSE_REACHES_checked: >-
+      The db-is-None path already had the guard (it is where the rule is written down). The
+      failed-read path already returns nothing rather than a false zero. This was the third
+      and last way the function could answer confidently on no evidence.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      3 new tests on the existing suite (extended, not duplicated); 3 mutations each caught
+      (guard removed; denominator dropped; guard swallowing the healthy case), restored from
+      a FILE COPY and re-verified green. LIVE: the boot line already carries the real numbers
+      — scope=all n_registered=79 n_never=15 — so the closing query is the same line now
+      carrying n_observed_tools. Marked PARTIAL until a boot after this commit shows it.
+
   TRISTATE_2026_09_03_a_step_nobody_checked_was_reported_to_him_as_REFUTED:
     map_check: "No mapped item — found by asking why [acceptance] abstained 874 times and judged 3."
     THE_FINDING: >-
@@ -6980,6 +7028,41 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_120_fifteen_tools_were_offered_three_turns_in_four_and_never_once_chosen:
+      premise_check: |
+        uv run python -c "
+        import json,pathlib
+        fs=sorted((pathlib.Path.home()/'.stackowl'/'logs').glob('stackowl*.jsonl'))[-2:]
+        n=[(json.loads(l).get('fields') or {}) for f in fs for l in f.open() if 'capability usage' in l]
+        a=[r for r in n if r.get('scope')=='all']
+        print('HOLDS', a[-1].get('n_never_invoked'), 'of', a[-1].get('n_registered'), 'still never invoked') if a and a[-1].get('n_never_invoked',0)>0 else print('EXPIRED')
+        " 2>/dev/null | tail -1
+      question: >-
+        Fifteen of your 79 tools have never been invoked once in the platform's entire
+        recorded history — browser_back, browser_console, browser_cookies_clear,
+        browser_cookies_set, browser_dialog, browser_get_images, browser_scroll,
+        browser_upload, evolve_now, git, pdf, run_claude_code_demo, sessions_send,
+        synthesize_skills, undo_write. They are presented to the model on 76% of turns and
+        cost ~3,700 tokens every round. Do any of them come off the presented set?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles that they were OFFERED and REFUSED rather than never shown — that
+        was the open question and it is now answered. It cannot settle whether a capability
+        you have never needed yet should stop being available. Eight of the fifteen are
+        browser controls that a future task plausibly needs the moment it needs them, and
+        this project has already paid for rationing a tool the model then could not reach
+        (skills_list). That trade is yours.
+      panel_recommendation: >-
+        Retire ONE: run_claude_code_demo, a learned tool that shells out to flags which do
+        not match the CLI it names, has zero invocations, and is immortal by construction —
+        ToolRevalidationHandler quarantines on >= min_evidence attempts with zero successes,
+        and a tool with ZERO attempts can never reach min_evidence. Keep the other fourteen
+        presented: they are real capabilities, and the token cost is a reason to reduce
+        ROUND COUNT rather than to ration the capability surface.
+      what_is_blocked: >-
+        Nothing is blocked. The report is now decision-grade and no code waits on the answer.
+      files:
+        - src/stackowl/tools/_infra/usage_report.py
+        - tests/tools/test_the_platform_can_see_which_capabilities_are_unused.py
     ESC_119_should_a_dead_model_provider_refuse_the_boot:
       premise_check: |
         uv run python -c "import stackowl.health.reachability.probes; from stackowl.health.reachability import registered_probes; p=registered_probes(); print(('HOLDS no provider probe among ' if not any('provider' in k for k in p) else 'EXPIRED provider probed in ')+str(sorted(p)))" 2>/dev/null | tail -1
