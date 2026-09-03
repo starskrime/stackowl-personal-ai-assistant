@@ -350,7 +350,15 @@ current:
       hardware, host and cost decision (the reachable second model lives on a host the sandbox
       cannot see), so it is ESC-111 with the numbers rather than a default chosen here.
     suites: "tests/providers 717 passed, 4 new including the control that caught the name-vs-model bug. Baselines held at ruff 35, mypy 65."
-    validate: OPEN_awaiting_the_next_boot
+    validate: >-
+      CLOSED at 2026-09-03T02:52:34 on a core booted after the commit: "[providers] tier ladder
+      resolved" at INFO carrying {'fast': 'NeraAiRaw/neraai-v1-raw', 'standard':
+      'NeraAiRaw/neraai-v1-raw', 'powerful': 'NeraAiRaw/neraai-v1-raw'} and degenerate: True.
+      The condition the whole item is about now states itself at every boot, where before it
+      could only be inferred from a week of cost records. THE SECOND HALF STAYS OPEN and is the
+      one that matters later: on the day a real second model is wired, the same line must report
+      degenerate=false with no edit to the check — the tests pin both directions, but only
+      production can prove the first.
     closing_query: >-
       "[providers] tier ladder resolved" at INFO with degenerate=true and all three rungs
       reading NeraAiRaw/neraai-v1-raw. ZERO such lines today because it did not exist. The
