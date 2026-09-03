@@ -315,6 +315,63 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ALERTIDENTITY_2026_09_03_the_alert_never_said_which_job_it_was_about:
+    map_check: "No mapped item — ESC-117's option (c), the half that needs no decision."
+    THE_MEASUREMENT: >-
+      Of 262 job_failed notifications carrying 31 distinct messages, ONE message text was
+      delivered 176 TIMES ACROSS 9 DISTINCT job_ids. He was told "Scheduled job X is failing
+      repeatedly" 176 times and could not tell from the message which of the nine jobs it meant.
+    THE_CAUSE: >-
+      _notify_failure composed the alert from job.handler_name — the job's TYPE, not its
+      IDENTITY. Nine different job rows running the same handler and hitting the same error
+      produce byte-identical text. That is also why nine of the thirteen repeated job_failed
+      messages arrived under different job_ids, so the per-(job_id, channel) frequency cap saw
+      each of them as a first send.
+    WHY_THIS_HALF_AND_NOT_SUPPRESSION: >-
+      ESC-117 asks whether identical alerts should be HELD BACK, and that stays his: the tree
+      already decided the opposite in code (lesson_recurrence.already_paged — "FAILS TOWARD
+      PAGING ... the cost of the wrong direction here is one duplicate message; the cost of the
+      other is a self-healing loop that fails in silence"). Naming the occurrence suppresses
+      nothing, contradicts no recorded decision, and fixes the deeper cause the panel named. It
+      also makes the escalation cheaper to answer: repetition now reads as a counter that says
+      it is getting worse, rather than the same sentence again.
+    THE_COUNTER_ALREADY_EXISTED: >-
+      Job.failure_count is maintained by the scheduler and scheduler.py:700 already spells the
+      occurrence as (job.failure_count or 0) + 1 for the audit row. The alert asks the same
+      expression rather than restating it, so the alert and the ledger can never disagree about
+      which attempt this was. All 138 live jobs read 0 because every one is currently healthy
+      and the counter resets on success — the field working, not an empty table. I checked that
+      before using it, and my first grep for an increment printed a misleading unconditional
+      "(empty = never incremented)" beneath a result set that DID contain the increments.
+    A_CONTRADICTION_FOUND_WHILE_RENDERING_THE_FIX: >-
+      Printing the three dispositions showed "failed transiently and will retry in 60s (attempt
+      3) AFTER EXHAUSTING RETRIES" — the suffix was fixed in the template and appended to every
+      alert including the transient one, so it said both that it will retry and that it has run
+      out of retries. Exactly the self-misnaming this method's own comment warns about, in its
+      own sentence. The suffix now belongs to the dispositions that mean it, and the "Failure
+      #N" counter is emitted only on the exhaustion paths — failure_count counts EXHAUSTIONS,
+      and the transient path never increments it, so a count there would have been a confident
+      wrong number. It carries its own "(attempt N)" already.
+    A_FIXTURE_THAT_COULD_NOT_SHOW_THE_BUG: >-
+      My first transient test drove _exhaust_retries and asserted on the transient alert. That
+      helper never reaches the transient branch, so the test failed with "no transient-retry
+      alert was produced" rather than proving anything. Rewritten to drive _notify_failure
+      through the same seam and with the same disposition wording the real caller passes.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: OPEN
+      document: done
+    validate_closing_query: >-
+      The next job_failed notification must carry its job_id and, on an exhaustion path, a
+      "Failure #N for this job." No transient-retry alert may contain "exhausting retries" or
+      "Failure #". Check notification_log for a new job_failed row after this commit and read
+      the delivered text from the channel; the message body is deliberately not persisted in
+      notification_log (hash only), so the delivered text is the evidence, and message_hash
+      DIVERSITY is the proxy: distinct job_failed hashes should stop collapsing to 31.
   NOTIFYREPEAT_2026_09_03_the_cap_asks_who_spoke_when_what_reaches_him_is_what_was_said:
     map_check: "No mapped item — evidence-led, from a delivery-status sweep of notification_log."
     THE_MEASUREMENT: >-

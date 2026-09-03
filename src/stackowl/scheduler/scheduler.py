@@ -867,12 +867,42 @@ class JobScheduler(SupervisedTask):
         # costs its reader the same detour every time — the defect fixed in
         # web_fetch and again in the stale last_error, and not one to reintroduce
         # in the very alert that reports a rescue.
-        if disposition is None:
+        # THE SUFFIX BELONGS TO THE DISPOSITION, NOT TO THE TEMPLATE. "after
+        # exhausting retries" used to be appended to EVERY alert, including the
+        # transient-retry one at the caller above — producing "failed transiently
+        # and will retry in 60s (attempt 3) after exhausting retries", which says
+        # both that it will retry and that it has run out of retries. Exactly the
+        # self-misnaming this method's own comment warns about, in its own
+        # sentence. An exhaustion alert says so; a transient one does not.
+        exhausted = disposition is None
+        if exhausted:
             disposition = (
-                "permanently failed" if terminal
-                else "is failing repeatedly (re-armed to its next slot)"
+                "permanently failed after exhausting retries" if terminal
+                else "is failing repeatedly and has been re-armed to its next slot"
             )
-        message = f"Scheduled job '{job.handler_name}' {disposition} after exhausting retries."
+        # NAME WHICH JOB, AND FOR THE HOW-MANIETH TIME. ``handler_name`` is the
+        # job's TYPE, not its identity, so nine different job rows running the
+        # same handler and hitting the same error composed byte-identical text.
+        # MEASURED 2026-09-03: of 262 job_failed notifications carrying 31
+        # distinct messages, ONE text was delivered 176 TIMES ACROSS 9 DISTINCT
+        # job_ids — he was told "this job is failing repeatedly" 176 times and
+        # could not tell which of the nine it meant. It is also why the
+        # per-(job_id, channel) frequency cap saw each of those as a first send.
+        #
+        # The occurrence number is the same expression the audit row already
+        # uses a hundred lines up — asked, not restated, so the alert and the
+        # ledger can never disagree about which attempt this was. It makes
+        # repetition a COUNTER rather than the same sentence again, which is the
+        # one improvement here that suppresses nothing: this tree has already
+        # decided to FAIL TOWARD PAGING (lesson_recurrence.already_paged), and
+        # whether identical alerts should ever be held back is ESC-117, his call.
+        message = f"Scheduled job '{job.handler_name}' ({job.job_id}) {disposition}."
+        if exhausted:
+            # ``failure_count`` counts EXHAUSTIONS, and only the exhaustion paths
+            # increment it — so the counter is meaningful here and would be a
+            # confident wrong number on the transient path, which carries its own
+            # "(attempt N)" already.
+            message += f" Failure #{(job.failure_count or 0) + 1} for this job."
         if last_error:
             message += f" Last error: {last_error}"
         try:
