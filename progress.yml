@@ -315,6 +315,72 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  NOTIFYREPEAT_2026_09_03_the_cap_asks_who_spoke_when_what_reaches_him_is_what_was_said:
+    map_check: "No mapped item — evidence-led, from a delivery-status sweep of notification_log."
+    THE_MEASUREMENT: >-
+      job_failed: 262 notifications carrying 31 distinct messages — 88% repeats. operator_health:
+      1,076 carrying 610 distinct — 43%. ONE identical health alert was delivered 71 times
+      between 2026-07-20 and 2026-08-31, including two sends twelve minutes apart. Simulated
+      over the full history, a one-hour identical-content window would have held back 170 of the
+      262 job_failed sends and 66 of the 1,076 operator_health sends.
+    THE_CAUSE: >-
+      NotificationRouter.deliver computes message_hash on EVERY send and writes it to the audit
+      row and nowhere else. The only rate limit is keyed on (job_id, channel) — the SENDER. Of
+      the 13 repeated job_failed messages, NINE arrived under different job_ids, so each looked
+      like a first send; and all 28 repeated operator_health messages carry job_id NULL, where
+      the cap is skipped outright. The instrument that answers the right question was already
+      being computed on every send and consulted by nothing. Same shape CLAUDE.md already
+      records: idempotency_key was stored, read back, and had no unique index.
+    THE_DEEPER_CAUSE_THE_PANEL_FOUND: >-
+      Hashing bodies at the router is a content-similarity filter bolted onto the transport
+      chokepoint. The emitters have no IDENTITY: _build_health_alert_sink builds every
+      operator_health Notification with no job_id and no idempotency_key, so it has no
+      occurrence to be idempotent against — and the platform already owns an occurrence-scoped
+      primitive in DeliveryLedger, keyed (job_id, occurrence_key, channel). The 71 identical
+      health alerts are 71 notifications from a sink that never claims a dispatch slot.
+    I_BUILT_THE_WRONG_FIX_AND_REVERTED_IT: >-
+      I implemented a content-keyed repeat cap downgrading to `batched`, and the panel killed it
+      on three checks I then verified myself. (1) It read
+      settings.notifications.repeat_window_hours, WHICH DOES NOT EXIST — it would have raised on
+      every send; my tests had not been run at that point. (2) I claimed "the digest already
+      dedupes" — it does not: digest_job dedupes by notification_id (exactly-once for one queued
+      row), never by content, so batching N repeats delivers N messages in one later burst.
+      (3) notification_id is the PRIMARY KEY, so a stable idempotency_key would COLLIDE rather
+      than collapse. Reverted; the measurement stands, the fix did not.
+    WHY_I_STOPPED_RATHER_THAN_BUILDING_THE_RIGHT_ONE: >-
+      Trigger 5 — a panel answer that contradicts a recorded decision. lesson_recurrence.py
+      states the opposite principle in code, deliberately: "FAILS TOWARD PAGING ... a signature
+      pages again rather than being silently suppressed ... The cost of the wrong direction here
+      is one duplicate message; the cost of the other is a self-healing loop that fails in
+      silence." Suppressing repeat alerts runs directly against that, and operator_health is the
+      sink that reports the health canary stale — mute it and the alarm about the alarm goes
+      first. A correct fix also needs a router outcome meaning "duplicate", which four
+      subsystems that read DELIVERED_STATUSES would each have to be taught. That is ESC-117.
+    WHAT_SHIPPED: >-
+      SchedulerSettings.max_notifications_per_hour DELETED — measured zero readers anywhere in
+      src/, while the live cap is NotificationSettings.max_notifications_per_hour read at
+      router._apply_frequency_cap. Two copies of one rule, one of them dead; a dead knob is
+      worse than none because setting it looks like it does something.
+    THREE_THINGS_I_CHECKED_AND_FOUND_HEALTHY: >-
+      Measuring first stopped three items I was about to open. DEBT-99 (the floor hiding what it
+      tried) has ZERO production instances — prefix-anchored, no real floor ever ran tools
+      without naming them, because most floors take the provider path which is already
+      severity-blind; my debt record was written from reading code, not output.
+      undelivered_outbox is NOT a write with no reader: 194 of 195 rows surfaced (99%), the one
+      pending row created today awaiting next contact. And the recurrence pager DID fire — three
+      times — which a bad grep had made look like never.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: no_change_needed
+      cleanup: done
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      243 config+notifications tests pass with the dead setting removed, and its guard now
+      asserts the attribute is ABSENT rather than equal to 10. Live at the current boot with
+      zero ERROR and zero WARNING lines since 09:34:37Z.
   DNA_2026_09_03_every_stage_was_calibrated_on_a_scale_its_values_never_occupy:
     map_check: "No mapped item — evidence-led, from a live ERROR/WARNING sweep after the restart."
     THE_ROOT_CAUSE: >-
@@ -5924,6 +5990,40 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_117_should_an_identical_alert_be_held_back_when_the_code_says_fail_toward_paging:
+      premise_check: |
+        uv run python -c "import sqlite3,os;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);t=c.execute(\"SELECT COUNT(*) FROM notification_log WHERE category='job_failed'\").fetchone()[0];d=c.execute(\"SELECT COUNT(DISTINCT message_hash) FROM notification_log WHERE category='job_failed'\").fetchone()[0];print(('HOLDS ' if t and (t-d)*100//t>=50 else 'EXPIRED ')+str(t)+' sent, '+str(d)+' distinct')" 2>/dev/null | tail -1
+      question: >-
+        88% of the job-failure alerts you received were repeats of a message you had already
+        been sent, and one health alert reached you 71 times. I can hold identical alerts back
+        for a window. I did NOT, because this codebase already decided the opposite in code —
+        "FAILS TOWARD PAGING ... the cost of the wrong direction here is one duplicate message;
+        the cost of the other is a self-healing loop that fails in silence." Which cost do you
+        want to pay?
+      why_evidence_cannot_settle_it: >-
+        The measurement is unambiguous about the volume and about why the existing cap cannot
+        see it. It cannot tell you whether the fifth copy of "jobmarket is stuck" is noise you
+        want removed or the signal that it is STILL stuck. That is a judgement about your own
+        attention, and it contradicts a principle already written into the tree — so I will not
+        reverse it silently.
+      the_options: >-
+        (a) Leave it. Duplicates are the honest cost of never missing a recurrence.
+        (b) Hold identical alerts for a window, but only for emitters that FIRST get a real
+        occurrence identity — give _build_health_alert_sink and the job-failure alert an
+        occurrence key so the platform's existing DeliveryLedger can do it, rather than hashing
+        bodies at the transport. Needs a router outcome meaning "duplicate" that the four
+        readers of DELIVERED_STATUSES are each taught, in the same change.
+        (c) Change the alert TEXT instead so a repeat is not identical — carry the occurrence
+        (which run, since when, how many times). Then repetition becomes informative rather than
+        redundant, and nothing is ever suppressed.
+      recommendation: >-
+        (c), then (b) only if (c) leaves a measured problem. (c) is the one option that does not
+        trade away a recurrence signal, and it fixes the deeper cause the panel named — the
+        alerts carry no identity for the thing that failed, which is also why nine of thirteen
+        repeated job_failed messages arrived under different job_ids.
+      blocked_until_answered: >-
+        Nothing else. The dead duplicate setting was removed independently; no suppression
+        behaviour changed.
     ESC_116_dna_has_never_changed_how_an_owl_behaves_should_it:
       premise_check: |
         uv run python -c "import sqlite3,os,json;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);n=0;t=0;[ (globals().__setitem__('t',t+1)) for _ in []];rows=c.execute('SELECT dna_snapshot FROM task_outcomes WHERE dna_snapshot IS NOT NULL').fetchall();out=sum(1 for (d,) in rows if any(float(v)>=0.7 or float(v)<0.3 for v in json.loads(d).values()));print(('HOLDS ' if out==0 else 'EXPIRED ')+str(out)+' of '+str(len(rows))+' outcomes outside the injector deadband')" 2>/dev/null | tail -1
@@ -7703,6 +7803,18 @@ upcoming:
 known_debt:
   - id: DEBT-98
     found: 2026-09-03
+    downgraded: 2026-09-03
+    downgrade_reason: >-
+      The AMBIGUITY is real and the number is larger than first recorded — measured over 14
+      days, 192 of 297 capability-naming outcomes (64%, not the 18-of-63 stop-only slice) name a
+      READ-severity tool, i.e. came from the second branch. But the HARM I asserted is not
+      evidenced. I read the twelve learned incident skills the miner produced from that column
+      and they are specific and actionable ("escalate per-host to browser_navigate/browser_extract
+      and make each retry carry the prior signal"; "insert observation-based progress checkpoints
+      between consecutive shell calls"). Naming a read tool is not wrong when the read tool is
+      what failed. Left recorded as a latent one-field-two-meanings hazard, NOT as a defect
+      awaiting repair — reconciling it would change what the user is told on the floor and wants
+      a deliberate decision, not a tidy-up.
     title: "task_outcomes.failed_capability carries TWO meanings from ONE expression"
     where: "src/stackowl/pipeline/backends/shared.py:525-527"
     what: >-
@@ -7727,6 +7839,17 @@ known_debt:
       bug fix, and it wants its own item rather than being smuggled into this one.
   - id: DEBT-99
     found: 2026-09-03
+    resolved: 2026-09-03
+    resolution: >-
+      NO CHANGE NEEDED, and the record above was written from reading a code path rather than
+      measuring its output. MEASURED 2026-09-03, prefix-anchored on the real floor text: of
+      1,792 floors ever sent, ZERO ran tools without naming them. The blank-slot half was fixed
+      by the composed-floor change (a sentence with no data is now omitted, not rendered as
+      punctuation); the "floor cannot see read-severity tools" half never reached a user,
+      because most floors take supervisor.synthesize_from_calls, which derives attempts from
+      all_calls with NO severity filter. My first count said 5 affected — that query used
+      LIKE '%complete this%' and matched the phrase "complete this turn" inside ordinary
+      replies. Anchoring the pattern took it to 0.
     title: "the honest floor's {attempts} slot renders BLANK on a read-only sweep"
     where: "src/stackowl/pipeline/delivery_gate.py:373 (_floor_chunk -> _attempts_for_state)"
     what: >-

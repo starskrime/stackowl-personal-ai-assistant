@@ -165,7 +165,13 @@ class TestSchedulerConfig:
         s = SchedulerSettings()
         assert s.max_concurrent_jobs == 3
         assert s.replay_window_hours == 24
-        assert s.max_notifications_per_hour == 10
+        # max_notifications_per_hour was DELETED from SchedulerSettings on
+        # 2026-09-03: it had zero readers anywhere in src/. The live cap is
+        # NotificationSettings.max_notifications_per_hour, read at
+        # router._apply_frequency_cap. Two copies of one rule, one of them dead —
+        # and a dead knob is worse than none, because setting it looks like it
+        # does something.
+        assert not hasattr(s, "max_notifications_per_hour")
 
     def test_settings_includes_scheduler_field(self) -> None:
         cfg = Settings()

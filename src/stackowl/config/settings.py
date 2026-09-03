@@ -588,12 +588,6 @@ class SchedulerSettings(BaseModel):
         description="How many hours back to replay missed jobs on recovery.",
         json_schema_extra={"hot_reload": True},
     )
-    max_notifications_per_hour: int = Field(
-        default=10,
-        ge=0,
-        description="Cap on user notifications emitted per hour by background agents.",
-        json_schema_extra={"hot_reload": True},
-    )
 
 
 class BriefSettings(BaseModel):
