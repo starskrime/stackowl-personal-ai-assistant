@@ -357,8 +357,18 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: OPEN
+      validate: PARTIAL
       document: done
+    what_validate_ACTUALLY_evidenced: >-
+      Live at 12:26:58Z on commit 0323d628, zero ERROR lines since boot. Verified by reading the
+      RUNNING module rather than the file: AsyncioBackend.run carries both the delivery_gate
+      timer and close_step_accounting, and the live helper returns exactly 252,357 ms on the
+      measured worst case. 1,791 pipeline tests pass and both mutations (never emit a residual;
+      clamp the negative instead of reporting it) go red.
+      NOT YET EVIDENCED: no turn has run since the restart, so no NEW outcome row carries a
+      "delivery_gate" key or a closed sum. His chat turns run about 2 a day, so this may take a
+      while — the 13:00Z morning brief should produce machine-lane turns sooner, which exercise
+      the same backend.
     validate_closing_query: >-
       After the restart, task_outcomes.step_durations for a new turn must contain a
       "delivery_gate" key, and sum(step_durations.values()) must equal latency_ms to within a
