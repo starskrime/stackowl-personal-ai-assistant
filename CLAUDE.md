@@ -43,9 +43,16 @@ This rule is earned. Every dead thing left in this tree has cost diagnosis time
 because it *looked* live: `committed_facts` retired to zero rows by migration
 0112 while every recall path still queried it; `DreamWorker` kept as a
 deliberately empty seat; `job_queue` with **zero references anywhere in `src/`**;
-`objectives`/`objective_subgoals` (~2,400 lines) with a driver firing every 60s
-against an empty table; `committed_facts_fts` still indexing 1,112 rows of
-content whose writer was removed.
+`committed_facts_fts` still indexing 1,112 rows of content whose writer was
+removed.
+
+**And the mirror, which this list used to get wrong.** `objectives` was named here
+as dead on the strength of a zero-row table and a driver ticking every 60s against
+it. It is NOT dead: the `objective` tool has ten recorded invocations and
+`objective_subgoals` holds 28 rows, newest 2026-08-27 — an empty PARENT over a
+populated CHILD. Re-measured 2026-09-03, after this file's own wording sent a
+session looking for 2,517 lines to delete. **The zero-row table is the question,
+never the answer** — and a document asserting deadness is not a measurement.
 
 Two things to check before deleting, and only these two: that it is genuinely
 unreferenced (**measure it**), and that removing it does not remove something
@@ -130,8 +137,8 @@ This is the same rule as "measure the EFFECT" below, applied to work instead of 
 
 **Before building anything that runs, retries, schedules or tracks work: find the existing
 loop and extend it.** This rule is earned — the tree already accumulated FOUR overlapping
-engines: `tasks` (live), `retry_queue` (live), `objectives`/`objective_subgoals` (~2,400
-lines, driver firing every 60s against an empty table), and `job_queue` (**zero references
+engines: `tasks` (live), `retry_queue` (live), `objectives`/`objective_subgoals` (~2,500
+lines, driver firing every 60s; live, see above), and `job_queue` (**zero references
 anywhere in `src/`**). Never add a second queue, a second retry path, or a second status
 column. Sub-tasks are rows with a parent and `depends_on`, so a graph is edges between
 rows — not a second system.
