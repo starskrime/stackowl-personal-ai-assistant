@@ -354,14 +354,22 @@ current:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: done
     validate_evidence: >-
       3 new tests on the existing suite (extended, not duplicated); 3 mutations each caught
       (guard removed; denominator dropped; guard swallowing the healthy case), restored from
-      a FILE COPY and re-verified green. LIVE: the boot line already carries the real numbers
-      — scope=all n_registered=79 n_never=15 — so the closing query is the same line now
-      carrying n_observed_tools. Marked PARTIAL until a boot after this commit shows it.
+      a FILE COPY and re-verified green. tools + tools/meta 256 pass, startup 124 pass, ruff
+      at its 35 baseline. LIVE AND CLOSED: boot 21:00:55 UTC (commit 20:59:16) logged
+      "scope=all n_registered=79 n_never_invoked=15 n_observed_tools=84". The judgement now
+      states what it stands on.
+    A_DETAIL_THE_DENOMINATOR_ITSELF_REVEALED: >-
+      n_observed_tools=84 EXCEEDS n_registered=79. The used-set is built from
+      task_outcomes.tool_sequence, which records what the model EMITTED — so at least five
+      names it reached for are tools that do not exist. That is the self-extension signal the
+      normalize step deliberately preserves (read_webpage, search_google, exec,
+      image_generate were the named examples), and it only became visible because the
+      denominator was put on the line.
 
   TRISTATE_2026_09_03_a_step_nobody_checked_was_reported_to_him_as_REFUTED:
     map_check: "No mapped item — found by asking why [acceptance] abstained 874 times and judged 3."
