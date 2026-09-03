@@ -315,6 +315,47 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D06_4_2026_09_03_undo_the_whole_turn_and_nobody_has_undone_ONE_write:
+    map_check: "D06.4 Filesystem checkpoints — P1, verdict MISSING, gap: No 'undo the whole turn'."
+    outcome: "no_change_needed on building it — measured, not assumed."
+    what_the_gap_line_says_and_what_is_actually_there: >-
+      "No 'undo the whole turn'" is TRUE and it is the only part that is missing. Everything it
+      would be built on already exists and works: undo_write is a real tool sharing ONE UndoStore
+      with edit and apply_patch; the store is an on-disk bounded ring at ~/.stackowl/undo (18
+      live snapshots, newest 2026-09-02 09:09), self-healing and surviving a restart — which
+      matters on a box that booted many times today; and side_effect_ledger already records what
+      each turn wrote, per task and per step (write_file 39, owl_build 14).
+    THE_MEASUREMENT_THAT_DECIDED_IT: >-
+      4,147 turns carrying a tool sequence. 167 (4.0%) wrote to the filesystem at all. Of those,
+      52 (31.1%) wrote MORE THAN ONCE — up to seven — so a single-step undo genuinely cannot roll
+      those back and the gap is real. AND undo_write has been invoked ZERO times. Not rarely:
+      never, in 4,147 turns, while sitting in the always-presented set.
+    why_that_is_a_REASON_NOT_TO_BUILD: >-
+      The demand for the smaller capability is zero. Building turn-level rollback on top of an
+      undo nobody has ever reached for would be the fourth built-but-not-wired of this week —
+      the same trap as the tier router with nothing to route to, clarify at 0.065%, and a marker
+      wired to one tool. The gap is real; the need is unevidenced.
+    what_would_change_my_answer: >-
+      One undo_write call. The moment a write is undone even once, the 31% multi-write figure
+      turns from arithmetic into a cost, and the composition is a small extension of an UndoStore
+      that already holds the pre-images — not a new subsystem.
+    ALSO_MEASURED_this_loop_and_worth_keeping: >-
+      Entry/exit imbalance across all retained logs: attempt_retry 140 entries / 118 exits (22
+      never finished, 15.7%); staged RCA 476 / 367 (109, 22.9%). I nearly filed that as lost
+      work. It is not: a killed retry leaves the task row `running`, the 900-second lease
+      expires, and "task_liveness_sweep: reclaimed stale running task(s)" fires — 60 times in the
+      retained logs — so the loop re-drives it. The RCA half is accounted for by
+      record_diagnosis_started and READ by interrupted_diagnoses (incident_escalation.py:624).
+      Two mechanisms doing their job; the imbalance is the interruption rate, not a loss rate.
+    A_REFORMAT_I_CAUGHT_BEFORE_COMMITTING: >-
+      Marking the stages via a yaml.safe_load/safe_dump round-trip rewrote the WHOLE file —
+      22,238 insertions and 22,475 deletions — flattening every block scalar and hand-written
+      line in the programme's state of record. Reverted and re-applied by targeted text edit.
+      A formatter is not a safe way to change two fields in a file that IS the deliverable.
+    validate: no_change_needed
+    closing_query: >-
+      Not applicable — nothing shipped. The number to watch is undo_write's invocation count,
+      today ZERO of 4,147 turns; it is the trigger that reopens this item.
   CLARIFY_2026_09_03_reversibility_was_answering_TWO_different_questions:
     map_check: "No mapped item — the third and last strand of his 2026-09-03 report."
     two_things_I_told_him_were_wrong_and_MEASURED_are_NOT: >-
@@ -5409,6 +5450,31 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_113_is_undo_the_whole_turn_worth_building_before_anyone_has_undone_one_write:
+      premise_check: |
+        uv run python -c "import sqlite3,os;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);n=sum(1 for (s,) in c.execute('SELECT tool_sequence FROM task_outcomes WHERE tool_sequence IS NOT NULL') if 'undo_write' in (s or ''));print(('EXPIRED a write was undone: %d' % n) if n else 'HOLDS undo_write never invoked')" 2>/dev/null | tail -1
+      question: >-
+        D06.4 is P1 and its gap line is right: there is no way to undo a whole turn. A single
+        write CAN be undone — undo_write is real, durable and offered on every turn — and it has
+        been used ZERO times in 4,147 turns. 31% of the turns that write, write more than once,
+        so the gap is genuine. Do you want turn-level rollback built anyway, or does it wait for
+        the first time you actually want to undo something?
+      why_evidence_cannot_settle_it: >-
+        The evidence settles the SIZE of the gap and the demand for the smaller version, and they
+        point opposite ways: the gap is real (52 multi-write turns) and nobody has used the undo
+        that exists. Whether you want rollback as INSURANCE — because the day you need it you
+        will need it badly — or only once something has gone wrong, is appetite for risk.
+      the_measurement: >-
+        4,147 turns with a tool sequence; 167 (4.0%) wrote; 52 of those (31.1%) wrote more than
+        once, up to seven. undo_write invocations: 0. UndoStore holds 18 live pre-images and
+        survives restarts. side_effect_ledger already records writes per task and step, so "what
+        did this turn change?" is answerable today.
+      panel_recommendation: >-
+        WAIT. Building rollback nobody has asked for, on top of an undo nobody has used, is the
+        fourth built-but-not-wired of this week. If you want it as insurance, say so and it is a
+        small composition over an UndoStore that already holds the pre-images. Trigger to reopen:
+        the first undo_write call.
+      blocked_until_answered: "Nothing. D06.4 is recorded as no_change_needed with the numbers."
     ESC_112_how_much_should_the_platform_interrupt_you:
       premise_check: |
         uv run python -c "from stackowl.tools.interaction.clarify import ClarifyTool; d=ClarifyTool().description; print('HOLDS durable-but-reversible now asks' if 'REVERSIBILITY IS NOT THE TEST' in d else 'EXPIRED')" 2>/dev/null | tail -1
@@ -17991,18 +18057,18 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: no_change_needed
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   no_change_needed
     doc: null
     doc_last_verified: null
     decisions: []
     changes: []
-    notes: null
+    notes: "no_change_needed 2026-09-03: the gap is REAL (52 of 167 writing turns write more than once) and the demand is ZERO (undo_write invoked 0 times in 4,147 turns). Every prerequisite already exists and works — a durable on-disk UndoStore and side_effect_ledger. Reopen on the first undo_write call. See ESC-113."
 
   - id: D07.1
     title: "Subagent delegation"
