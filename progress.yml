@@ -359,8 +359,17 @@ current:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: done
+    LIVE_CLOSED_both_halves: >-
+      Validated against the ongoing outage with TWO restarts, because the first process after
+      the commit has no history to read and must page once (correctly) to create it.
+      Restart 1 at 23:27:39 wrote health.alerted for provider:NeraAiRaw {"status":"down"} and
+      store_cadence {"status":"degraded"}. Restart 2 (boot 23:28:39), first sweep 23:32:59:
+      "[scheduler] health_sweep: alert history restored" {"subsystems":
+      ["provider:NeraAiRaw","store_cadence"], "n": 2} at INFO, the sweep FOUND the incident
+      (down=['provider:NeraAiRaw']), and ZERO operator pages were sent. Before this change
+      that restart would have paged him immediately — the twelfth such page today.
     A_SECOND_VACUITY_CAUGHT_BY_MUTATION: >-
       A mutation that seeds the state with "now" instead of "now - age" SURVIVED the first
       suite: a level change still bypassed, a new subsystem still paged, and every test
