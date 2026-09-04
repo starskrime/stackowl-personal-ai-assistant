@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D15_6_2026_09_04_five_parts_are_exercised_and_the_sixth_writes_to_nobody:
+    map_check: "No mapped item matched the phrasing; this IS D15.6, AHEAD with 'Keep'."
+    AHEAD_HOLDS_FOR_FIVE_OF_SIX: >-
+      All six named parts exist (2,051 lines) and five are EXERCISED, not merely
+      present — the D07.5 lesson applied: NotificationRouter (6,909 notification_log
+      rows), ProactiveDeliverer + delivery ledger (5,553 delivery_attempts),
+      undelivered outbox (195 rows, ALL carrying surfaced_at), digest (job
+      digest-c6847483, handler notification_digest, last run today 20:13).
+    THE_SIXTH_IS_A_WRITE_WITH_NO_READER_on_a_user_facing_command: >-
+      `/quiet` (QuietHoursCommand) INSERTs into `notification_overrides` and returned
+      "quiet: global 22:00-08:00 until <expires>" — a confident success. That table
+      has exactly ONE reference in the tree outside the command, and it is the
+      health-cadence DECLARATION, not a reader. The telegram QuietHoursChecker, which
+      is what actually gates delivery, reads no database state at all — config only.
+      So he could type /quiet, be told a window applied, and keep getting notified.
+      0 rows, so it has never bitten anyone yet.
+    AND_A_SECOND_LANDMINE_UNDERNEATH_IT: >-
+      Quiet hours is expressed in THREE places: TelegramQuietHoursConfig (telegram),
+      QuietHoursSettings (global config, enabled=False), and the DB-backed /quiet
+      command. The telegram config's timezone defaults to "UTC" while
+      `system.timezone` is correctly America/Chicago — so if quiet hours were ever
+      enabled as configured, "22:00-08:00" would evaluate in UTC and silence him from
+      17:00 LOCAL, resuming at 03:00. That is the same class as the recorded incident
+      "UTC default rolled schedules a day", waiting in a second copy of a fact the
+      platform already resolves correctly.
+    WHAT_I_FIXED_AND_WHAT_I_EXPLICITLY_DID_NOT: >-
+      Fixed: the command no longer claims an effect it does not have — it now says
+      RECORDED but NOT YET ENFORCED and that notifications will still arrive. NOT
+      fixed: the write-with-no-reader itself. Both remedies — wire a reader, or
+      retire the command — change user-facing behaviour, and wiring it TODAY would be
+      actively harmful because of the timezone landmine above. This is deliberately
+      not the rejected move of shipping a symptom fix and filing the cause: the cause
+      is DIAGNOSED here in full and what is escalated is the DECISION between two
+      remedies, which is his.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      Six modules and their line counts from the tree; five exercised by live counts
+      from the database and the jobs table; `notification_overrides` readers counted
+      across all of src/ (one, and it is a declaration); the checker confirmed to read
+      no DB state; system.timezone vs quiet_hours.timezone read from the LIVE Settings
+      (America/Chicago vs UTC) against a host clock showing CDT. 2 new tests, one of
+      which deliberately fails the day someone wires a reader so the honest message
+      stops being honest. tests/audit + tests/commands + tests/notifications: 521
+      passed. PARTIAL until he runs /quiet and sees the new text; closing query is the
+      command output itself.
   D15_5_2026_09_04_notify_the_user_do_not_wake_the_agent_and_the_evidence_says_why:
     map_check: "No mapped item matched the phrasing; this IS D15.5's Ask about background completion."
     THE_MAPS_CLAIM_HOLDS: >-
@@ -9391,6 +9443,40 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_126_quiet_writes_an_override_that_nothing_reads:
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        root=pathlib.Path('src/stackowl')
+        hits=[str(p) for p in root.rglob('*.py')
+              if p.name not in {'quiet_command.py','store_cadence.py'}
+              and 'notification_overrides' in p.read_text(errors='ignore')]
+        print('HOLDS still no reader' if not hits else f'EXPIRED now referenced by {hits}')
+        "
+      question: >-
+        `/quiet` records a notification override that NOTHING reads — the only other
+        reference to `notification_overrides` in the tree is a health-cadence
+        declaration, and the telegram checker that gates delivery is config-only.
+        Do you want quiet hours WIRED (the override actually suppresses or batches
+        non-critical notifications), or the command RETIRED?
+      why_evidence_cannot_settle_it: >-
+        Both remedies change user-facing behaviour — one starts silencing you, the
+        other removes a command you can type — and this skill requires a stop-and-brief
+        for either. Evidence settles that the write has no reader; it cannot settle
+        which of the two you want.
+      panel_recommendation: >-
+        WIRE it, but fix the timezone first and do not enable anything by default.
+        Quiet hours is expressed in three places and the telegram copy's timezone
+        defaults to "UTC" while system.timezone is America/Chicago — enabling as
+        configured would silence you from 17:00 local, the same class as the recorded
+        "UTC default rolled schedules a day" incident. The honest order is: collapse
+        the three copies onto the system timezone, then wire the override reader, then
+        let YOU turn it on. Retiring is the cheaper answer if you do not want the
+        feature, and "retired means deleted" would take the command, the table and the
+        settings block together.
+      what_is_blocked: >-
+        Nothing. The command now tells the truth about doing nothing, so no one is
+        misled while this waits.
     ESC_125_objectives_is_a_second_engine_that_has_finished_its_work:
       premise_check: |
         uv run python -c "
@@ -26023,13 +26109,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []

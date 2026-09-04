@@ -132,7 +132,20 @@ class QuietHoursCommand(SlashCommand):
             "[notifications] quiet.handle: exit",
             extra={"_fields": {"override_id": override_id, "scope": scope}},
         )
-        return f"quiet: {scope} {start_raw}-{end_raw} until {expires_at}"
+        # SAY WHAT ACTUALLY HAPPENED. This returned a bare success, and the row it
+        # writes is read by NOTHING: `notification_overrides` has one reference in
+        # the tree outside this file and it is the health-cadence declaration, not
+        # a reader. The telegram QuietHoursChecker — which is what gates delivery —
+        # reads no database state at all. So the old message told the operator his
+        # notifications would stop, and they would not. Recorded, not enforced, and
+        # the message now says which. Wiring a reader or retiring the command are
+        # both user-facing changes and are his call (ESC-126); telling the truth in
+        # the meantime is not.
+        return (
+            f"quiet: {scope} {start_raw}-{end_raw} until {expires_at} — RECORDED but "
+            f"NOT YET ENFORCED (nothing reads these overrides yet, so notifications "
+            f"will still arrive)"
+        )
 
     @classmethod
     def create_and_register(cls, db: DbPool) -> QuietHoursCommand:

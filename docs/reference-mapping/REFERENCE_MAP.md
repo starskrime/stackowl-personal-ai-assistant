@@ -1054,7 +1054,15 @@ change it:** measuring that those eight fire-and-forget turns LOSE their result 
 **Hermes.** Cron delivery only.
 **StackOwl.** `NotificationRouter` (decide) + `ProactiveDeliverer` (transport) + delivery ledger +
 undelivered outbox + quiet hours + digest.
-**Ask.** Keep — this is core to the "reaches out to you" product.
+**Ask.** Keep — this is core to the "reaches out to you" product. *(VERIFIED 2026-09-04: five of
+the six parts are EXERCISED, not merely present — router 6,909 logged, deliverer/ledger 5,553
+attempts, outbox 195 all surfaced, digest running today. The sixth is not: `/quiet` writes a
+`notification_overrides` row that NOTHING reads — the only other reference in the tree is a
+health-cadence declaration, and the telegram checker is config-only — and it used to report
+success anyway. The message now says RECORDED but NOT YET ENFORCED; wire-or-retire is **ESC-126**.
+A second landmine sits underneath: quiet hours exists in three places and the telegram copy's
+timezone defaults to UTC while `system.timezone` is America/Chicago, so enabling as configured
+would silence him from 17:00 local.)*
 
 ### D15.7 · Instincts / perches — `AHEAD`
 **Hermes.** No equivalent.
