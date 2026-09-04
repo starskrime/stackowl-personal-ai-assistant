@@ -370,9 +370,14 @@ current:
       13/13 on the D09.4 suite (4 new tests went red BEFORE the fix and green after),
       1308 passed across tests/skills + tests/memory + tests/pipeline/steps +
       tests/tools/knowledge. Both new log lines PROVEN to emit at INFO by running the
-      path, not by reading it. LIVE EVIDENCE IS BLOCKED, not skipped: every provider is
-      NXDOMAIN, so no conversation turns are happening at all. The check that closes it,
-      once DNS is back and one lane runs 10 turns:
+      path, not by reading it. RESTARTED on ./start.sh at 01:32 (commit 7b872fa2): the
+      core reached phase 6 with ZERO errors after the boot marker, and
+      `provider_probe.check: exit — ok=1 degraded=0` on the FIRST attempt — the DNS
+      outage is over and the gateway answers (401, i.e. reachable and auth-gated). So
+      live evidence is no longer BLOCKED, only UNCOLLECTED: it needs one lane to run 10
+      turns. It is not claimed here before that happens. NOTE FOR THE NEXT LOOP: several
+      other PARTIAL validates were waiting on this same outage and are now collectable.
+      The check that closes this one:
       `grep -c 'skills\] nudge: due' ~/.stackowl/logs/stackowl.jsonl`
       — and if it is still 0 while `due but SUPPRESSED` is non-zero, the remaining cause
       is that skill_manage is not being presented, which is a different item.
