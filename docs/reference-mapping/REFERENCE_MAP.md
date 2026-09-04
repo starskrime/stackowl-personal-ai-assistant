@@ -444,7 +444,14 @@ invisible one. Now INFO.
 **Hermes.** `/moa` marks one turn as MoA-enabled; `agent/moa_loop.py` gathers reference-model context
 before each iteration. Deliberately **not** a model tool.
 **StackOwl.** `tools/agents/mixture_of_agents.py` — is a tool.
-**Ask.** Their reasoning (slash command, not tool) is a Law 2 application. Move ours off the schema?
+**Ask.** ANSWERED 2026-09-04 — no, keep it on the schema, and the disagreement is recorded
+rather than averaged away. Their Law 2 arithmetic holds here: `mixture_of_agents` is 1,371 of
+79,392 schema chars (1.73% of every call) against ONE use in 4,154 tool-bearing turns (0.02%).
+But this codebase has measured the other side and been burned — `skills_list` showed zero
+invocations for eight days because on those turns it was NOT PRESENTED, so a tool the model
+cannot reach is a capability that silently does not exist. ESC-120's recorded position governs:
+"the token cost is a reason to reduce ROUND COUNT rather than to ration the capability
+surface." They optimise the waist; we have decided to optimise round count.
 
 ### D07.5 · Named persistent sessions — `AHEAD`
 **Hermes.** No equivalent.
