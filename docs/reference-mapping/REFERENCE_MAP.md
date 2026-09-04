@@ -457,7 +457,13 @@ surface." They optimise the waist; we have decided to optimise round count.
 **Hermes.** No equivalent.
 **StackOwl.** `sessions_spawn` / `sessions_send` + `owls/session_registry.py` — named persistent owl
 sessions with TTL, caps, mailbox drain.
-**Ask.** Keep.
+**Ask.** Keep. *(VERIFIED 2026-09-04, with a caveat worth carrying: AHEAD here is a claim about
+the CODE. All three parts are real and the registry is wired as an injected singleton, and the
+design is careful — continuity is deliberately NOT on the handle, so turns run under
+`session:{label}` and are read back from the history store. But measured against 4,154
+tool-bearing turns, `sessions_spawn` has ONE invocation and `sessions_send` ZERO, and no row
+anywhere is keyed `session:` — the continuity mechanism has never threaded a conversation.
+"Keep" is a bet on future use, not a defence of observed value.)*
 
 ### D07.6 · Multi-agent work queue (Kanban) — `MISSING`
 **Hermes.** A durable SQLite board where multiple **profiles** collaborate. A dispatcher loop (60s,

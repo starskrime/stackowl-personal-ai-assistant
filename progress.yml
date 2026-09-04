@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D07_5_2026_09_04_AHEAD_is_a_claim_about_CODE_here_not_about_an_exercised_capability:
+    map_check: "No mapped item matched the phrasing; this IS D07.5, whose Ask is simply 'Keep'."
+    THE_VERDICT_HOLDS_STRUCTURALLY: >-
+      D07.5 is AHEAD because the reference has no equivalent, and all three parts are
+      real: sessions_spawn (339 lines), sessions_send (322), owls/session_registry.py
+      (269), with the registry constructed in the startup assembly as an injected
+      singleton rather than a module global. The design is careful — "continuity is
+      NOT stored on the handle": turns run under `session_key="session:{label}"` and
+      classify reads prior turns back from the history store, so the handle carries
+      identity and activity only and a duplicated handle-history cannot go stale.
+    BUT_IT_HAS_ESSENTIALLY_NEVER_RUN: >-
+      Measured against 4,154 tool-bearing turns: `sessions_spawn` ONE, `sessions_send`
+      ZERO. And zero rows anywhere are keyed `session:` — not in staged_facts, not in
+      conversations — so the continuity mechanism the design rests on has never
+      actually threaded a conversation. AHEAD is therefore a claim about the CODE. It
+      is not wrong, and it is not the same as a capability whose value has been
+      observed; "keep" is a bet on future use rather than a defence of measured value,
+      and saying so is the difference between a verdict and a slogan.
+    A_THIRD_INSTANCE_OF_ONE_TRAP_IN_ONE_SESSION: >-
+      `grep -c sessions_send` over the logs returns 220, which reads like heavy use.
+      Every one of them is `[tools] usage_report: capability usage` — the report that
+      NAMES UNUSED TOOLS. The only trace of sessions_send in any log is the report
+      saying it is never used. That is the third time today a raw tool-name grep
+      produced a confident wrong number (delegate_task 544 skill-loader lines,
+      browser_extract 123 scheduler lines, now this), and the third time printing the
+      distinct messages was what fixed it.
+    WHAT_IT_CORRECTED_ELSEWHERE: >-
+      D07.3's durability table, written yesterday, omitted named sessions entirely.
+      It now carries the accurate nuance — the HANDLE is process-local (1800s idle
+      TTL), the CONVERSATION is designed to survive because it lives in the history
+      store — plus the measurement that the durable half has never been exercised.
+      A cross-item correction found by measuring, not by re-reading.
+    WHY_NOT_ESCALATED: >-
+      `sessions_send` is already one of ESC-120's fifteen never-invoked tools, and its
+      recorded panel position — keep real capabilities presented — covers it. A second
+      entry would be the queue noise the escalation check exists to prevent.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      Line counts from the tree; the registry's construction site read in
+      startup/orchestrator.py; `self._sessions: dict` and SESSION_IDLE_TTL_SECONDS
+      1800.0 read from source; usage from task_outcomes.tool_sequence parsed as JSON
+      (1 and 0 of 4,154); zero `session:`-keyed rows in staged_facts and conversations
+      by direct query; the 220 log hits resolved to their single message. No code
+      changed.
   WRONGCLAIM_2026_09_04_I_extrapolated_a_slowdown_that_did_not_happen:
     map_check: "No mapped item — a correction to a claim I put into CLAUDE.md one tick earlier."
     WHAT_I_WROTE_AND_WHY_IT_WAS_WRONG: >-
@@ -22215,13 +22266,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
