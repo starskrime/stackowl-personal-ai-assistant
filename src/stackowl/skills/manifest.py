@@ -1,8 +1,10 @@
-"""SkillManifest — frozen Pydantic shape of one ``skill.yaml`` file.
+"""SkillManifest — frozen Pydantic shape of one ``SKILL.md`` frontmatter block.
 
-Each skill on disk lives at
-``~/.stackowl/skills/<source>/<name>/skill.yaml`` and validates
-against this model. The model mirrors :class:`stackowl.plugins.manifest.PluginManifest`
+Each skill on disk lives at ``~/.stackowl/skills/<source>/<name>/SKILL.md`` (or
+``<source>/<category>/<name>/``) and its YAML frontmatter validates against this
+model. This docstring said ``skill.yaml`` until 2026-09-04, by which point there
+were 40 ``SKILL.md`` files and ZERO ``skill.yaml`` — the format changed and the
+description of it did not. The model mirrors :class:`stackowl.plugins.manifest.PluginManifest`
 conventions (frozen, extra=forbid, semver-checked version) but adds the
 fields needed for the learning loop: ``when_to_use``, ``success_rate``,
 ``n_executions``, ``parent_traces``, etc.

@@ -9491,6 +9491,32 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_127_a_real_skill_has_been_dark_for_69_days_where_does_it_go:
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        d=pathlib.Path.home()/'.stackowl/skills/trending-research-owl'
+        print('HOLDS still unplaced' if (d/'SKILL.md').exists() else 'EXPIRED moved or removed')
+        "
+      question: >-
+        `~/.stackowl/skills/trending-research-owl/SKILL.md` is a real, complete skill
+        (a trending-content research agent) that has sat OUTSIDE every source dir since
+        2026-06-27 and has therefore never been loaded — 69 days dark. The loader now
+        REPORTS it on every boot (D10.1), so it is no longer invisible. Where does it go:
+        `user/` (adopt it — it becomes a live skill the agent can select), or delete it?
+      why_evidence_cannot_settle_it: >-
+        Adopting it ENABLES a skill that has never run, adding it to the catalogue the
+        model selects from and changing agent behaviour; deleting it removes something
+        you may have written deliberately. Both are the stop-and-brief cases in this
+        skill — enabling or removing something user-facing — and `source` is a TRUST
+        level, so a loader that guesses one is a security decision made by a heuristic.
+        No measurement can tell me which you intended.
+      panel_recommendation: >-
+        Adopt into `user/` if the capability is still wanted, else delete. Do NOT leave
+        it where it is: it now costs a WARNING every boot, and a warning that is never
+        actioned is how operators learn to stop reading warnings.
+      blocked_until_answered: >-
+        Nothing. D10.1 shipped the visibility fix; only the file's placement waits.
     ESC_126_quiet_writes_an_override_that_nothing_reads:
       premise_check: |
         uv run python -c "
@@ -24205,18 +24231,49 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D10.1.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "Parity holds on the FILE. We already carry category and tags; platforms,
+         related_skills and metadata.config remain unbuilt. extra=forbid means a file
+         carrying them fails to load ENTIRELY — right for a typo, and it bounds the
+         wider-convention claim to that convention's SHAPE, not its whole vocabulary."
+      - "A stray skill is REPORTED, never adopted. source is a trust input — forced from
+         the directory so frontmatter cannot lie, and owl loading is gated on it. Adopting
+         an unplaceable dir would hand it a trust level nobody assigned. Where the file
+         belongs is the operator's call (ESC-127); making it visible is not."
+    changes:
+      - "src/stackowl/skills/loader.py — _stray_skill_dirs() walks disk-first and load_all
+         WARNs naming every SKILL.md in no source dir; _VALID_SOURCES now derived from the
+         manifest's SkillSource via get_args instead of restating it."
+      - "tests/skills/test_a_misplaced_skill_is_not_invisible.py — 4 tests: the stray is
+         reported and NOT loaded; a well-formed tree reports nothing (the control); a
+         non-skill dir is not reported; the two source definitions are one. Mutation-proven
+         (returning [] killed 2 of 4), restored from a file copy and re-run green."
+      - "docs/reference-mapping/designs/D10.1.md — Verification section RUN, not trusted."
+    notes: >-
+      MEASURED 2026-09-04: 40 SKILL.md on disk, 39 registered, and the fortieth
+      (~/.stackowl/skills/trending-research-owl/) had been dark since 2026-06-27 — 69 days
+      — with ZERO log lines. Not rejected: never a candidate. load_all iterates
+      _VALID_SOURCES joined onto the root, enumerating the dirs it EXPECTS, and an
+      iteration over the expected set can never notice an unexpected member — so the
+      "B5 — never silent" warning could not cover a file it never looked at. Same family
+      as the grep rule: a zero proves the pattern did not match, not that the thing is
+      absent; you only ever see what you enumerate. WHAT WROTE IT IS NOT ESTABLISHED —
+      migrate_legacy_skills (paths.py:449) relocates legacy.iterdir() wholesale and would
+      preserve exactly this flat layout, but the legacy tree is gone and that log has
+      rotated, so it is recorded as plausible and UNPROVEN rather than asserted. It does
+      not change the fix, which targets the silence. LIVE: WARNING fired naming the exact
+      path, re-measured against the process ./start.sh started at 21:25:44 UTC after a
+      first reading proved to come from a CodeWatcher reload 23s earlier — 1 warning +
+      39 registrations at 21:26:23, both after the cutoff.
 
   - id: D10.2
     title: "Authoring standard"

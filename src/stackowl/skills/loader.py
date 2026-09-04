@@ -28,7 +28,7 @@ import importlib.util
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, get_args
 
 import yaml
 
@@ -45,7 +45,11 @@ if TYPE_CHECKING:
     from stackowl.tools.registry import ToolRegistry
 
 
-_VALID_SOURCES: tuple[SkillSource, ...] = ("builtin", "installed", "user", "learned")
+#: Derived from the manifest's ``SkillSource`` rather than restated, so a source
+#: can never exist in one of the two and not the other: a source the loader scans
+#: but the manifest rejects fails every skill under it, and a source the manifest
+#: accepts but the loader never scans makes those skills silently unreachable.
+_VALID_SOURCES: tuple[SkillSource, ...] = get_args(SkillSource)
 _OWL_TRUSTED_SOURCES: frozenset[str] = frozenset({"builtin", "user"})
 _SKILL_MD_FILENAME = "SKILL.md"
 # A skill lives at <source>/<name>/ (flat) OR <source>/<category>/<name>/ (nested).
@@ -76,6 +80,38 @@ def _discover_skill_dirs(source_dir: Path, *, max_depth: int = _MAX_SKILL_DEPTH)
 
     _walk(source_dir, 1)
     return found
+
+
+def _stray_skill_dirs(skills_root: Path) -> list[Path]:
+    """Return skill-shaped dirs under ``skills_root`` that are in no source dir.
+
+    ``load_all`` scans by joining each known source onto the root, which
+    enumerates the directories it EXPECTS — and an iteration over the expected
+    set can never notice an unexpected member. That is why a misplaced skill
+    produced no ``skill invalid`` warning: it was never a candidate to reject.
+
+    This walks the other direction, from what is actually on disk, so the loader
+    can report what it did not load.
+    """
+    strays: list[Path] = []
+    try:
+        children = sorted(skills_root.iterdir())
+    except OSError as exc:
+        log.skills.warning(
+            "[skills] loader: cannot scan skills root for strays",
+            exc_info=exc,
+            extra={"_fields": {"root": str(skills_root)}},
+        )
+        return strays
+
+    for child in children:
+        if not child.is_dir() or child.name.startswith("_") or child.name in _VALID_SOURCES:
+            continue
+        if (child / _SKILL_MD_FILENAME).exists():
+            strays.append(child)  # a skill sitting where a SOURCE should be
+        else:
+            strays.extend(_discover_skill_dirs(child))
+    return strays
 
 
 def _category_for(source_dir: Path, skill_dir: Path) -> str | None:
@@ -149,6 +185,21 @@ class SkillLoader:
         # 2. DECISION — idempotent builtin seeding
         if builtin_seed_dir is not None:
             self._seed_builtins(builtin_seed_dir, skills_root / "builtin")
+
+        # 2b. DECISION — report skills that are on disk but in no source dir.
+        # NOT loaded: ``source`` is a trust input (forced from the directory
+        # "so frontmatter can't lie", and ``_OWL_TRUSTED_SOURCES`` gates owl
+        # loading on it), so adopting an unplaceable skill would hand it a trust
+        # level nobody assigned. Reporting is the fix; placing it is a decision.
+        if strays := _stray_skill_dirs(skills_root):
+            log.skills.warning(
+                "[skills] loader.load_all: SKILL.md outside any source dir — not loaded",
+                extra={"_fields": {
+                    "paths": [str(p) for p in strays],
+                    "count": len(strays),
+                    "valid_sources": list(_VALID_SOURCES),
+                }},
+            )
 
         # 3. STEP — scan every source dir (flat <name>/ AND nested <category>/<name>/)
         loaded: list[LoadedSkill] = []

@@ -670,6 +670,17 @@ turn (registered ≠ reachable).
 Both use `SKILL.md` with YAML frontmatter, compatible with the wider agent-skills convention.
 Hermes adds `platforms:` (OS gating), `metadata.hermes.tags/category/related_skills`, and
 `metadata.hermes.config` (config keys the skill needs, prompted during setup, injected at load).
+**CLOSED 2026-09-04 — parity holds on the FILE, and did not hold on the PLACE.** We carry
+`category` and `tags` already; `platforms`/`related_skills`/`config` remain unbuilt, and
+`extra="forbid"` means a file carrying them fails to load ENTIRELY — loud and recoverable, but
+it bounds the "compatible with the wider convention" claim to that convention's shape, not its
+whole vocabulary. The defect this item found is elsewhere: **40 `SKILL.md` on disk, 39 loaded,
+and the fortieth had been dark for 69 days with ZERO log lines.** `load_all` iterates
+`_VALID_SOURCES` joined onto the root, which enumerates the dirs it EXPECTS — and an iteration
+over the expected set can never notice an unexpected member, so the "never silent" warning could
+not cover a file it never looked at. The loader now walks disk-first and REPORTS strays (WARNING,
+verified live) without adopting them, since `source` is a trust input. `_VALID_SOURCES` was also
+a second copy of the manifest's `SkillSource` Literal; it is now derived. See `designs/D10.1.md`.
 
 ### D10.2 · Authoring standard — `MISSING`
 **Hermes.** A hard, reviewer-enforced rubric: description **≤ 60 characters**, one sentence, no
