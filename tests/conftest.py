@@ -13,11 +13,20 @@ from typing import Any
 import pytest
 import yaml
 
+from tests._source_helpers import install as _install_source_guard
 from stackowl.config.settings import Settings
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import JsonlFormatter
 from stackowl.infra.trace import TraceContext
+
+# 139 call sites across 82 files assert on source text read back with
+# `inspect.getsource`, which seeks to a line number frozen at IMPORT time and
+# reads the file as it is NOW. Edit the tree under a running suite and those
+# reads land at the wrong offset — silently, in both directions. Installed here
+# rather than at each call site so no test has to remember. See
+# tests/_source_helpers.py for the 2026-09-04 run this comes from.
+_install_source_guard()
 
 
 @pytest.fixture(autouse=True)

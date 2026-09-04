@@ -315,6 +315,36 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT_115_2026_09_04_a_red_suite_that_was_true_of_no_tree_at_all:
+    map_check: "No mapped item matches — evidence-led work, recorded in known_debt as DEBT-115."
+    THE_SUITE_FOUND_IT_AND_THE_MESSAGE_WAS_A_LIE: >-
+      3 failed where the previous run was 0, all in test_canonical_dedup.py, all
+      claiming a dedup rung had been dropped. It had not: the text they read was the
+      body of `discover`. Re-run against the settled tree: 10 passed.
+    WHY_NOT_WHAT: >-
+      TWO causes, both mine. inspect.getsource seeks to a line number frozen at
+      IMPORT and reads the file as it is NOW — I edited synthesizer.py 25 minutes
+      into a 30-minute detached run. And the suite's verdict had NO SUBJECT: nothing
+      in the log said which tree it tested, so a reader attributes it to the current
+      one. Reaches all 139 getsource call sites in 82 files, and every future loop,
+      because launch-detached-then-keep-working IS the workflow.
+    THE_QUIET_DIRECTION_IS_WORSE: >-
+      Reproducing it measured something I had not predicted: getblock consumes until
+      the block is complete, so the shifted read returned junk PLUS the wanted
+      function. `assert MARKER in src` would have PASSED from the wrong offset. My
+      test originally asserted the marker would be ABSENT; the measurement said
+      otherwise and the test now records the false green instead.
+    MY_FIRST_GUARD_WAS_BLIND_TO_ITS_OWN_BUG: >-
+      It skipped comment lines to reach the def — which walked past the 40 junk lines
+      to a def that was never the one asked for, and passed its own test. Comments
+      are the symptom, not noise.
+    FIXED: >-
+      A guard over inspect.getsource installed once in conftest (605 passed across all
+      82 source-reading files, zero false fires; fails open by design), and
+      full_suite.sh now stamps commit + dirty count + tree fingerprint and prints
+      SUITE TREE CHANGED when the tree moved under the run. Both proven in both
+      directions. Mutation-proven.
+    NEXT: "D10.4 · Skills Hub (MISSING, P2, wave 8, order 63)."
   D10_3_2026_09_04_the_split_is_the_wrong_instrument_the_catalogue_is_copies_not_concepts:
     map_check: "D10.3 — Active vs. optional skills (MISSING, P2, wave 8). The Ask is a counting question."
     THE_ANSWER_IS_NO_AND_THE_PREMISE_IS_WRONG: >-
@@ -11711,6 +11741,44 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-115
+    found: 2026-09-04
+    what: >-
+      A full-suite verdict can be true of no tree at all, and 139 source-reading
+      assertions can read the wrong function without saying so. Found by the suite
+      itself: it came back `3 failed` where the previous run was green, all three in
+      tests/skills/test_canonical_dedup.py, with messages claiming a dedup rung had
+      been dropped. It had not.
+    evidence: >-
+      The text those tests read back was the body of a DIFFERENT function —
+      `assert 'op="reinforce"' in '        log.skills.info("[synth] discover: exit"'`.
+      The suite had run detached for 30 minutes while D10.3 added ~97 lines to
+      synthesizer.py. inspect.getsource(fn) seeks to fn.__code__.co_firstlineno, a
+      line number frozen at IMPORT, and reads the file AS IT IS NOW. Re-running the
+      same file against the settled tree: 10 passed. Reproduced from first principles
+      in a temp module, and the reproduction measured something WORSE than expected —
+      getblock keeps consuming until the block is syntactically complete, so the
+      shifted read returned 40 junk lines PLUS the wanted function. `assert MARKER in
+      src` would have PASSED while reading from the wrong offset. That is the false
+      GREEN, and 139 call sites across 82 files assert exactly that shape.
+    decision: >-
+      FIXED, both causes, rather than filed. (1) tests/_source_helpers.py guards
+      inspect.getsource — the block returned must BEGIN at the declaration of the
+      object asked for — installed once in conftest so all 139 sites are covered with
+      no edits to any of them. It fails OPEN on anything it cannot positively judge,
+      because pytest reads source while reporting and a guard that raises inside the
+      runner is worse than the bug. Verified against all 82 source-reading files: 605
+      passed, zero false fires. (2) scripts/full_suite.sh now stamps commit, dirty
+      count and a tree fingerprint at START, recomputes at DONE, and prints a loud
+      SUITE TREE CHANGED block when they differ — proven both ways: silent on a still
+      tree, and firing when synthesizer.py is touched mid-run.
+      NOT chosen: "do not edit while the suite runs". The loop's own workflow is
+      launch-detached-then-keep-working, and a rule with no enforcement is one nobody
+      follows. A moving tree is fine; a verdict that hides that it moved is not.
+      A first version of the guard SKIPPED COMMENT LINES to reach the def, which
+      walked straight past the 40 junk lines to a `def` that was never the one asked
+      for — it passed its own test while being blind to the exact bug. Comments are
+      now the symptom, not noise.
   - id: DEBT-114
     found: 2026-09-04
     what: >-
