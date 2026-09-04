@@ -151,9 +151,26 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     # writer had been removed ON PURPOSE five days earlier. Asking "who writes
     # this?" for every store is what the registry is FOR, and answering it for
     # that row is what led to the table being dropped the same day.
-    _periodic("objective_events", "created_at"),
-    _periodic("objective_subgoals", "created_at"),
-    _periodic("objectives", "created_at"),
+    # PERSON-DRIVEN, not scheduled — the same situation as `owls` directly
+    # below, which was already declared correctly. Every write to these three is
+    # downstream of a request: `tools/scheduling/objective_tool.py` creates the
+    # objective, its subgoals and its "created" event, and the driver appends
+    # further events only WHILE working one. With no objective there is nothing
+    # to write, and that is the operator's choice.
+    #
+    # MEASURED 2026-09-04: objectives 0 rows, objective_subgoals 28 (newest
+    # 2026-08-27), objective_events 49 (newest 2026-08-28). Declared PERIODIC the
+    # live report already flagged objective_subgoals SILENT at 7.1d and
+    # objective_events was hours behind — and a silent store makes
+    # StoreCadenceContributor report `degraded`, which reaches him as a CRITICAL
+    # operator_health page. The platform was about to page him twice for not
+    # having created an objective in a week.
+    _on_demand("objective_events", "created_at",
+               "written while working an objective — none exists unless asked for"),
+    _on_demand("objective_subgoals", "created_at",
+               "created by the objective tool when the operator asks"),
+    _on_demand("objectives", "created_at",
+               "created by the objective tool when the operator asks"),
 
     # --- ON_DEMAND: only a person's action writes these -----------------------
     _on_demand("owls", "created_at", "11.8 days idle and CORRECT — no owl created."),

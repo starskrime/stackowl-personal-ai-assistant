@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CADENCE3_2026_09_04_the_platform_was_about_to_page_him_for_not_asking:
+    map_check: "No mapped item — the cadence report I fixed yesterday found this itself."
+    THE_FINDING: >-
+      objectives, objective_subgoals and objective_events were all declared PERIODIC — "a
+      scheduled job writes this", which alarms after seven days of silence. Their only
+      writers are reached from tools/scheduling/objective_tool.py: a person asks for an
+      objective, and everything else follows. The driver appends events only WHILE working
+      one, so with no objective there is nothing to write.
+    IT_CONTRADICTED_ITS_OWN_NEIGHBOUR_TWO_LINES_BELOW: >-
+      owls sits directly beneath them, declared ON_DEMAND with the note "11.8 days idle and
+      CORRECT — no owl created." Identical situation, opposite declaration, adjacent lines.
+      An owl and an objective are both created by a person through a tool.
+    WHAT_IT_WAS_ABOUT_TO_COST: >-
+      MEASURED 2026-09-04: objectives 0 rows, objective_subgoals 28 (newest 2026-08-27),
+      objective_events 49 (newest 2026-08-28). The live cadence report already flagged
+      objective_subgoals SILENT at 7.1d and objective_events was HOURS behind it. A silent
+      store makes StoreCadenceContributor report `degraded`, which health_sweep turns into a
+      CRITICAL operator_health page. The platform was about to page him twice for not having
+      created an objective in a week — exactly what ON_DEMAND exists to prevent: "Silence is
+      the operator's choice and can never be a defect."
+    THE_CAUSE_and_it_is_the_third_instance: >-
+      A cadence is a claim about WHO WRITES a store, and nothing checks the claim against the
+      writer. session_prompts was ON_DEMAND when the turn pipeline writes it every turn — a
+      live store exempt from checking. These three are the MIRROR: person-driven stores
+      declared as scheduled, so a person's choice reads as a fault. Same missing check, both
+      directions.
+    THE_LOOP_FOUND_IT_ITSELF: >-
+      This is the cadence work of the last two items paying for itself. Before them the
+      registry could not measure these stores at all; now it measured them, alarmed, and the
+      alarm was wrong — which is how the misdeclaration became visible. A check that can be
+      WRONG is worth more than one that cannot speak.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    LIVE_CLOSED: >-
+      cadence_report run against the real database before and after: silent went from 2
+      (side_effect_ledger 2.1d, objective_subgoals 7.1d) to 1 (side_effect_ledger only). The
+      remaining one is a TRUE positive — no durable task has committed a side effect during
+      the 18-hour provider outage. The false page is gone and the imminent second one is
+      prevented.
+    validate_evidence: >-
+      2 new tests on the existing suite; 3 mutations each caught (one table back to PERIODIC;
+      ON_DEMAND given a silence limit; the clock dropped while keeping ON_DEMAND), restored
+      from a FILE COPY and re-verified green. tests/health 63 pass. The second test asserts
+      the property on the CADENCE rather than the table list, so a fourth person-driven store
+      added later inherits it instead of re-learning it.
   LESSONQ_2026_09_03_the_platform_scored_a_turn_zero_then_served_its_lesson:
     map_check: "No mapped item — found by asking whether the learning stores decay."
     THE_FINDING: >-

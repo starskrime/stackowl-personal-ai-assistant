@@ -285,3 +285,55 @@ def test_every_store_with_a_clock_declares_it() -> None:
         "a store keeps a timestamp its declaration throws away, so nothing can "
         "contradict the cadence it claims:\n  " + "\n  ".join(missing)
     )
+
+
+# --------------------------------------------------------------------------- #
+# A cadence is a claim about WHO WRITES, and this one contradicted its neighbour #
+# --------------------------------------------------------------------------- #
+
+#: Written only when a PERSON asks for an objective. `objective_tool.py` creates
+#: the objective, its subgoals and its "created" event; the driver appends further
+#: events only WHILE working one, so every write is downstream of that request.
+PERSON_DRIVEN_OBJECTIVE_TABLES = ("objectives", "objective_subgoals", "objective_events")
+
+
+def test_the_objective_tables_are_not_declared_scheduled() -> None:
+    """THE DEFECT, and it contradicted its own neighbour two lines below.
+
+    All three objective tables were declared PERIODIC — "a scheduled job writes
+    this", which alarms after seven days of silence. Their only writers are
+    reached from ``tools/scheduling/objective_tool.py``: a person asks for an
+    objective, and everything else follows from that. ``owls`` sits directly
+    beneath them declared ON_DEMAND with the note "11.8 days idle and CORRECT —
+    no owl created", which is the identical situation.
+
+    MEASURED 2026-09-04: objectives 0 rows, objective_subgoals 28 (newest
+    2026-08-27), objective_events 49 (newest 2026-08-28). The live cadence report
+    already flags objective_subgoals SILENT at 7.1d, and objective_events is
+    hours behind it — and a silent store makes ``StoreCadenceContributor`` report
+    ``degraded``, which reaches him as a CRITICAL operator_health page.
+
+    So the platform was about to page him twice for not having created an
+    objective in a week. That is precisely what ON_DEMAND exists to prevent:
+    "Silence is the operator's choice and can never be a defect."
+    """
+    for table in PERSON_DRIVEN_OBJECTIVE_TABLES:
+        decl = next(d for d in DECLARATIONS if d.table == table)
+        assert decl.cadence is Cadence.ON_DEMAND, (
+            f"{table} is declared {decl.cadence.name}, so a week without the "
+            "operator creating an objective pages him as a fault"
+        )
+        assert decl.clock, f"{table} must still declare its clock"
+
+
+def test_a_person_driven_store_never_alarms() -> None:
+    """The property that makes the correction right, asserted on the CADENCE
+    rather than on the table list — so a fourth person-driven store added later
+    inherits it instead of re-learning it."""
+    assert Cadence.ON_DEMAND.max_silence_days is None
+    for table in (*PERSON_DRIVEN_OBJECTIVE_TABLES, "owls"):
+        decl = next(d for d in DECLARATIONS if d.table == table)
+        assert decl.cadence.max_silence_days is None, (
+            f"{table} can raise a silence alarm for something only the operator "
+            "decides to do"
+        )
