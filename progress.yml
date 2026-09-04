@@ -315,6 +315,66 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D12_4_2026_09_04_the_busiest_telegram_call_was_the_one_with_no_flood_guard:
+    map_check: "No mapped item matched the phrasing; this IS D12.4's Ask about streaming and flood-control."
+    THE_ASK_answered: >-
+      D12.4 asks "do we edit-in-place, or post successive messages? (Affects
+      flood-control, which has bitten us.)" ANSWERED BY EVIDENCE: we edit in place.
+      `TelegramProgressView` drives ONE live status message, rate-limited by
+      `edit_min_interval_s` (1.0s), coalesced, with a typing reissue at 4s. The
+      answer body still buffers and delivers once at the end — the reference
+      progressively edits the ANSWER too, and that half is not built.
+    THE_ASK_POINTED_AT_A_REAL_DEFECT: >-
+      "Affects flood-control, which has bitten us" is recorded in the adapter
+      itself: "Live incident (2026-07-19): Telegram issued a ~10h RetryAfter
+      flood-control ban" after every send path hammered the API with no backoff.
+      The fix added `_flood_wait_remaining()` (skip a call already known to fail)
+      and `_note_flood_ban()` (learn a ban from any RetryAfter). MEASURED
+      2026-09-04 by walking the adapter's AST: of EIGHT methods that call the Bot
+      API, only five consulted the guard and five recorded a ban — and the three
+      gaps were the busiest paths in the platform.
+    THE_THREE_GAPS: >-
+      `edit_message` — the progress status edit, roughly ONE PER SECOND FOR EVERY
+      TURN, the single busiest Telegram caller — neither checked the ban nor
+      recorded one, so during a ban it hammered a banned API once a second per
+      turn and any RetryAfter it saw was swallowed as "edit failed — fail open",
+      teaching the other paths nothing. `send_typing` — reissued every ~4s per
+      turn — the same. And `send_inline_keyboard`, which is a REAL send_message on
+      the CONSENT PROMPT path, was unguarded entirely.
+    MY_OWN_FIX_WAS_ONE_CASE_SHORT_and_the_sweep_caught_it: >-
+      I found and fixed `edit_message` first and was about to stop. The sweep the
+      WHY rule requires — what else does this cause reach — is what found the
+      other three, including the consent send. Same rule, one case short, inside
+      the item that exists to fix same-rule-one-case-short.
+    fix: >-
+      One helper, `_flood_blocked(op, **fields)`, so the check has a single home
+      rather than becoming eight copies; every one of the eight API callers now
+      consults it AND records a RetryAfter it observes. Failure modes were mirrored
+      per method rather than invented: cosmetic paths (typing, delete, ack, edit)
+      skip and return their existing "did nothing" value, while
+      `send_inline_keyboard` RAISES RetryAfter on the delivery-required path —
+      exactly what `_send_part` already does — so the consent gate keeps failing
+      closed instead of silently dropping a prompt.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      5 tests, including a vacuity control that an unbanned edit still goes through
+      (a guard that skipped everything would satisfy every skip test while silently
+      ending the live progress message) and a regression pin that "not modified"
+      stays a benign no-op rather than recording a ban. MUTATION-PROVEN: forcing
+      remaining to 0 turns the skip test red. A @pytest.mark.tripwire AST test now
+      fails if any Bot API caller stops doing both — a DECIDABLE predicate, which is
+      why this one is a gate while the map-freshness report deliberately is not.
+      tests/channels: 643 passed. PARTIAL until a live ban exercises it: the closing
+      query is `grep -c "still flood-banned — skipping" ~/.stackowl/logs/stackowl.jsonl`,
+      and it cannot be forced without provoking a real ban, which would be the very
+      harm this prevents.
   D12_7_2026_09_04_the_footgun_was_real_and_it_was_one_layer_below_the_token:
     map_check: "No mapped item matched the phrasing; this IS D12.7's Ask — add token locks."
     THE_ASK: >-
@@ -24477,13 +24537,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []

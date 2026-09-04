@@ -770,6 +770,24 @@ class TelegramChannelAdapter(ChannelAdapter):
         log.telegram.debug("[telegram] adapter.send_text: exit")
         return last_message
 
+    def _flood_blocked(self, op: str, **fields: object) -> bool:
+        """Is a known ban still running? Log once and let the caller bail.
+
+        ONE HOME FOR THE CHECK. Five methods reach the Bot API and the guard was
+        in three of them; adding it inline to the other two would have made five
+        copies of a rule this codebase has already watched drift. Callers stay
+        fail-open — a skipped cosmetic call returns its own "did nothing" value,
+        never an exception.
+        """
+        remaining = self._flood_wait_remaining()
+        if remaining <= 0:
+            return False
+        log.telegram.warning(
+            f"[telegram] adapter.{op}: still flood-banned — skipping",
+            extra={"_fields": {"remaining_s": remaining, **fields}},
+        )
+        return True
+
     def _flood_wait_remaining(self) -> float:
         """Seconds still remaining on an active flood-control ban, 0.0 if none.
 
@@ -941,10 +959,17 @@ class TelegramChannelAdapter(ChannelAdapter):
         TestModeGuard.assert_not_test_mode("telegram.send_typing")
         if self._bot_app is None:
             return
+        # Reissued every ~4s for every running turn — second only to the progress
+        # edit in call volume, and equally unguarded before 2026-09-04.
+        if self._flood_blocked("send_typing", chat_id=chat_id):
+            return
         try:
             await self._bot_app.bot.send_chat_action(
                 chat_id=chat_id, action=ChatAction.TYPING
             )
+        except RetryAfter as exc:
+            self._note_flood_ban(exc)
+            return
         except Exception as exc:  # noqa: BLE001 — progress is best-effort
             log.telegram.warning(
                 "[telegram] adapter.send_typing: failed — continuing",
@@ -991,6 +1016,16 @@ class TelegramChannelAdapter(ChannelAdapter):
             if chat_id is not None:
                 raise RuntimeError("telegram.send_inline_keyboard: target chat unavailable")
             return
+        # A REAL send_message, and it was unguarded — the same API call the flood
+        # guard exists for, on the CONSENT prompt path. Mirror this method's own
+        # contract rather than inventing a second one: an explicit chat_id
+        # requires delivery, so raise (as _send_part already does, with
+        # RetryAfter, so the caller's retry handling sees a real failure); the
+        # best-effort path stays a silent no-op.
+        if self._flood_blocked("send_inline_keyboard", explicit_chat=chat_id is not None):
+            if chat_id is not None:
+                raise RetryAfter(int(self._flood_wait_remaining()) + 1)
+            return None
         markup = build_inline_keyboard(keyboard)
         log.telegram.debug(
             "[telegram] adapter.send_inline_keyboard: decision markup_built",
@@ -1005,7 +1040,13 @@ class TelegramChannelAdapter(ChannelAdapter):
         # unescaped command/path cannot 400 on entity parsing (consent prompts).
         if parse_mode is not None:
             send_kwargs["parse_mode"] = parse_mode
-        message = await self._bot_app.bot.send_message(**send_kwargs)
+        try:
+            message = await self._bot_app.bot.send_message(**send_kwargs)
+        except RetryAfter as exc:
+            # Learn the ban, then RE-RAISE: this method propagated its failures
+            # before and the consent gate's fail-closed path depends on that.
+            self._note_flood_ban(exc)
+            raise
         log.telegram.debug(
             "[telegram] adapter.send_inline_keyboard: exit",
             extra={"_fields": {"parse_mode": parse_mode}},
@@ -1250,8 +1291,16 @@ class TelegramChannelAdapter(ChannelAdapter):
         if self._bot_app is None:
             log.telegram.warning("[telegram] adapter.acknowledge_callback: bot not initialised")
             return
+        if self._flood_blocked("acknowledge_callback"):
+            return
         log.telegram.debug("[telegram] adapter.acknowledge_callback: decision answer_query")
-        await self._bot_app.bot.answer_callback_query(callback_id, text=text or None)
+        try:
+            await self._bot_app.bot.answer_callback_query(callback_id, text=text or None)
+        except RetryAfter as exc:
+            # Learn the ban, then RE-RAISE: this method propagated its failures
+            # before and the callback router's own handling depends on that.
+            self._note_flood_ban(exc)
+            raise
         log.telegram.debug("[telegram] adapter.acknowledge_callback: exit")
 
     async def remove_message_buttons(self, chat_id: str | int, message_id: int) -> bool:
@@ -1327,6 +1376,15 @@ class TelegramChannelAdapter(ChannelAdapter):
         if self._bot_app is None:
             log.telegram.warning("[telegram] adapter.edit_message: bot not initialised — skipped")
             return False
+        # THE BUSIEST TELEGRAM CALL IN THE PLATFORM, and it was the one send path
+        # with no flood guard. The progress view edits this status message about
+        # once a SECOND for every running turn, so during a ban this hammered a
+        # banned API harder than any other caller — which is the exact shape of
+        # the 2026-07-19 incident recorded above ("every send path with no
+        # backoff", ~10h ban). send_text, send_file and send_ephemeral all consult
+        # the guard; this did not.
+        if self._flood_blocked("edit_message", chat_id=chat_id, message_id=message_id):
+            return False
         try:
             await self._bot_app.bot.edit_message_text(
                 text=text,
@@ -1335,6 +1393,13 @@ class TelegramChannelAdapter(ChannelAdapter):
                 parse_mode=None,
                 reply_markup=reply_markup,
             )
+        except RetryAfter as exc:
+            # AND LEARN FROM IT. Swallowed as a generic "edit failed" before, so a
+            # ban first OBSERVED on this path taught the other three nothing and
+            # they kept sending into it. Fail-open is preserved — the cosmetic
+            # edit is still lost rather than raised — but the ban is now recorded.
+            self._note_flood_ban(exc)
+            return False
         except Exception as exc:
             # "message is not modified" is benign — the new text equals the old,
             # so there is nothing to rewrite. Log at debug and carry on.
@@ -1370,6 +1435,8 @@ class TelegramChannelAdapter(ChannelAdapter):
             extra={"_fields": {"chat_id": chat_id, "message_id": message_id}},
         )
         TestModeGuard.assert_not_test_mode("telegram.delete_message")
+        if self._flood_blocked("delete_message", chat_id=chat_id, message_id=message_id):
+            return False
         if self._bot_app is None:
             log.telegram.warning(
                 "[telegram] adapter.delete_message: bot not initialised — skipped"
@@ -1377,6 +1444,9 @@ class TelegramChannelAdapter(ChannelAdapter):
             return False
         try:
             await self._bot_app.bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except RetryAfter as exc:
+            self._note_flood_ban(exc)
+            return False
         except Exception as exc:  # noqa: BLE001 — cleanup is best-effort, never raises
             log.telegram.error(
                 "[telegram] adapter.delete_message: delete failed — cosmetic, ignoring",
