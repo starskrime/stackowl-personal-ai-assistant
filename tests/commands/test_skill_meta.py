@@ -14,6 +14,12 @@ from stackowl.commands.skill_command import SkillCommand
 _EXPECTED = {
     # D10.5 — the one verb that USES a skill rather than managing it.
     "use",
+    # D10.7 (2026-09-04) — the INVERSE of the `menu` case below. `pinned` had
+    # three readers and no writer: the curator honoured it, `dedupe`'s own help
+    # said "a pinned member wins outright", and nothing could set it. Declared
+    # and dispatched together, so neither half can exist without the other.
+    "pin",
+    "unpin",
     # Found UNDECLARED on 2026-08-29: it dispatched at skill_command.py's
     # `elif sub == "menu"` and worked, but was absent from the meta, so /help,
     # /find and the CommandResolver corpus could not see it. Declared then.

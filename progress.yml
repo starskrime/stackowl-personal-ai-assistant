@@ -315,6 +315,33 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D10_7_2026_09_04_two_of_three_exercised_and_the_third_could_not_be_turned_on:
+    map_check: "D10.7 — Skill ownership per persona (AHEAD, P3, wave 8). Ask: keep, and note it seeds D05.2."
+    EXERCISED: >-
+      skill_ownership 29 rows across SIX owls, written only by failure_outcome_miner when an
+      owl fails; tool_presets imported by six modules including authz_compose.
+    THE_THIRD_COULD_NOT_BE_TURNED_ON: >-
+      `pinned` had THREE readers — set_lifecycle_state's `AND pinned = 0`, consolidation.py
+      twice, lifecycle.py:218 — and NO writer: store.set_pinned had seven callers, every one
+      a test. /skill dedupe's own help text told the operator "a pinned member wins
+      outright", promising a lever that did not exist. The /quiet shape (D15.6) inverted.
+    THE_ROW_COUNT_BEAT_THE_GREP: >-
+      0 of 39 pinned was the decisive evidence, not the grep — and that mattered
+      immediately: sibling flags `suspended` and `resume_pending` looked writerless under the
+      same regex and are NOT, being written as part of a row upsert. I claimed nothing about
+      them.
+    WHY_NOT_WHAT: >-
+      A guard's ENFORCEMENT and its CONTROL were built in different places and only the
+      enforcement was reachable. The `AND pinned = 0` clause lives beside the retirement
+      query where it belongs; the means to set it belonged to a command surface nobody went
+      back to. Reaches any protection whose control has no home.
+    SECOND_FINDING_MAKES_D103_CONCRETE: >-
+      Duplicates concentrate per owl — verifier owns 8 skills with FOUR twin pairs at >=0.90,
+      rca_gatherer 4 with one. owl_drive_thresholds nudges retirement by the owning owl's
+      drive, so a split family splits the decay signal that would retire it.
+    FIXED: "/skill pin|unpin — declared AND dispatched together, mutation-proven against the reply-success-write-nothing shape."
+    VALIDATE_PARTIAL: "Nothing is pinned yet; that is a decision, not a defect. ESC-128 is where it gets used."
+    NEXT: "D11.1 · Session store (PARITY, P3, wave 8, order 67)."
   D10_4_2026_09_04_the_declarative_sidecar_was_guarded_and_the_executable_one_was_not:
     map_check: "D10.4 — Skills Hub (MISSING, P2, wave 8). The Ask is product intent — ESC-129."
     THE_MAP_WAS_WRONG: >-
@@ -25646,19 +25673,53 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial   # the verb works; nothing is pinned yet — that is a decision
+      document:   done
+    doc: "docs/reference-mapping/designs/D10.7.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "KEEP confirmed. Ownership and tool_presets are exercised; pinned skills was a
+         protection with no way to engage it, now wired as /skill pin|unpin."
+      - "Unpin ships in the SAME change as pin. A protection you cannot release is a
+         different bug from one you cannot engage."
+      - "The verb is DECLARED and DISPATCHED together — test_skill_meta enforces the pairing
+         because `menu` once dispatched while undeclared and /help could not see it."
+    changes:
+      - "src/stackowl/commands/skill_command.py — pin/unpin SubCommands beside dedupe (whose
+         help text promises them), dispatch branches beside enable/disable, and _set_pinned
+         mirroring _set_enabled: metadata toggle, audit row, no content hash."
+      - "tests/skills/test_pinning_is_a_protection_you_can_actually_engage.py — 5 tests: the
+         unpinned control, the pin surviving retirement, unpin returning it to the curator,
+         the catalogue promise, and the verb through the REAL handle() dispatch.
+         Mutation-proven with the /quiet shape — reply success, write nothing — which the
+         end-to-end test caught."
+      - "tests/commands/test_skill_meta.py — _EXPECTED gains pin/unpin with the reason."
+    notes: >-
+      MEASURED 2026-09-04. Two of the three named artifacts are exercised: skill_ownership
+      has 29 rows across SIX owls (verifier 8, secretary 8, rca_gatherer 4, scout 4,
+      jobmarket 3, mailbutler 2), written ONLY by failure_outcome_miner when an owl fails;
+      tool_presets is imported by six modules including authz_compose and presentation.
+      PINNED had THREE READERS AND NO WRITER — set_lifecycle_state's `AND pinned = 0`,
+      consolidation.py twice, lifecycle.py:218 — with store.set_pinned called by SEVEN tests
+      and nothing in src/. The decisive check was not the grep but the ROW COUNT: 0 of 39
+      pinned, a number that could not change. That distinction earned itself immediately —
+      sibling flags `suspended` and `resume_pending` looked writerless under the same regex
+      and are NOT; they are written as part of a row upsert. WHAT MADE IT POSSIBLE: the
+      enforcement and the control were built in different places and only the enforcement
+      was reachable — and /skill dedupe's own help text told the operator "a pinned member
+      wins outright", promising a lever that did not exist. The /quiet shape (D15.6)
+      inverted. SECOND FINDING: duplicates concentrate per owl — verifier owns 8 skills of
+      which FOUR PAIRS are twins at >=0.90, rca_gatherer 4 with one pair — and
+      owl_drive_thresholds nudges retirement by the owning owl's drive, so a split family
+      splits the decay signal that would retire it. Self-reinforcing, which is why D10.3's
+      mint gate was necessary and is not sufficient for what already exists (ESC-128).
+      VALIDATE PARTIAL: nothing is pinned yet; closing query is
+      `SELECT name FROM skills WHERE pinned = 1`, empty until ESC-128 is answered.
   - id: D11.1
     title: "Session store"
     domain: D11

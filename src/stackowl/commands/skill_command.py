@@ -193,6 +193,28 @@ _SKILL_META = CommandMeta(
             examples=(Example(invocation="/skill reload"),),
         ),
         SubCommand(
+            name="pin",
+            summary="Protect a skill from retirement and merging",
+            description=(
+                "You mark a skill as one the curator may never archive and the merge "
+                "may never discard. `/skill dedupe` already decides ties this way — "
+                "'a pinned member wins outright' — so this is how you choose which "
+                "member of a duplicate family survives, before applying a merge."
+            ),
+            args=(Arg(name="name", required=True, summary="skill to pin"),),
+            examples=(Example(invocation="/skill pin rca_evidence_brief"),),
+        ),
+        SubCommand(
+            name="unpin",
+            summary="Return a skill to the curator's care",
+            description=(
+                "You release a pin, so the skill can be archived by lifecycle decay "
+                "or absorbed by a merge again."
+            ),
+            args=(Arg(name="name", required=True, summary="skill to unpin"),),
+            examples=(Example(invocation="/skill unpin rca_evidence_brief"),),
+        ),
+        SubCommand(
             name="dedupe",
             summary="Collapse -N duplicate families into one skill",
             description=(
@@ -387,6 +409,10 @@ class SkillCommand(SlashCommand):
                 result = await self._set_enabled(rest.strip(), enabled=True)
             elif sub == "disable":
                 result = await self._set_enabled(rest.strip(), enabled=False)
+            elif sub == "pin":
+                result = await self._set_pinned(rest.strip(), pinned=True)
+            elif sub == "unpin":
+                result = await self._set_pinned(rest.strip(), pinned=False)
             elif sub == "reload":
                 result = await self._reload()
             elif sub == "migrate":
@@ -799,6 +825,43 @@ class SkillCommand(SlashCommand):
         log.skills.info(f"[commands] skill.{verb}: exit",
                         extra={"_fields": {"name": sk.name}})
         return f"✓ Skill '{sk.name}' {verb}d"
+
+    async def _set_pinned(self, args: str, *, pinned: bool) -> str:
+        """Engage or release the retirement/merge protection.
+
+        `pinned` had THREE readers and no writer until 2026-09-04:
+        `store.set_lifecycle_state` (`AND pinned = 0`), and `consolidation.py`
+        twice. `store.set_pinned` existed with seven callers, every one a test —
+        and 0 of 39 live skills were pinned, which is the same finding measured
+        without a grep. Meanwhile `/skill dedupe` told the operator that "a
+        pinned member wins outright". The protection worked; nothing could ask
+        for it.
+
+        Same shape as ``_set_enabled``: a metadata toggle, so it does NOT route
+        through ``record_skill_mutation`` (the content-mutation chokepoint) and
+        its audit row carries no before/after hash.
+        """
+        verb = "pin" if pinned else "unpin"
+        log.skills.debug(f"[commands] skill.{verb}: entry",
+                         extra={"_fields": {"name": args[:60]}})
+        if not args:
+            return f"Usage: /skill {verb} <name>"
+        sk = await self._find_one(args)
+        if sk is None:
+            return f"✗ /skill {verb}: no skill matching {args!r}"
+        await self._store.set_pinned(sk.skill_id, pinned)
+        await self._store.audit_write(
+            skill_name=sk.name, source=sk.source, op=verb,
+            actor=f"user:{verb}",
+        )
+        log.skills.info(f"[commands] skill.{verb}: exit",
+                        extra={"_fields": {"name": sk.name, "pinned": pinned}})
+        return (
+            f"✓ Skill '{sk.name}' pinned — the curator will not archive it and a "
+            f"merge will keep it"
+            if pinned
+            else f"✓ Skill '{sk.name}' unpinned — decay and merge apply again"
+        )
 
     async def _reload(self) -> str:
         log.skills.info("[commands] skill.reload: entry")

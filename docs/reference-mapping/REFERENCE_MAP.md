@@ -805,6 +805,20 @@ caching. Deliberate and documented.
 **Hermes.** No equivalent.
 **StackOwl.** `owls/skill_ownership.py`, per-owl `tool_presets`, pinned skills.
 **Ask.** Keep — and note this is the natural seed for toolsets (D05.2).
+**CONFIRMED 2026-09-04 — two of the three are exercised, the third could not be turned on.**
+OWNERSHIP is real: 29 `skill_ownership` rows across SIX owls (verifier 8, secretary 8,
+rca_gatherer 4, scout 4, jobmarket 3, mailbutler 2), written automatically by
+`failure_outcome_miner` — the ONLY writer — when an owl fails. `tool_presets` is imported by
+six modules including `authz_compose` and `presentation`. PINNED SKILLS was not: three
+readers (`set_lifecycle_state`'s `AND pinned = 0`, `consolidation.py` twice,
+`lifecycle.py:218`), `store.set_pinned` with SEVEN callers every one of them a test, and 0 of
+39 rows pinned — the same finding measured without a grep. `/skill dedupe`'s own help told the
+operator "a pinned member wins outright". `/skill pin|unpin` now exist, declared AND
+dispatched together. SECOND FINDING, which makes D10.3 concrete: the duplicate families are
+ATTACHED TO OWLS and concentrate — the `verifier` owl owns 8 skills of which FOUR PAIRS are
+twins at >=0.90, `rca_gatherer` owns 4 with one twin pair. Ownership also feeds
+`owl_drive_thresholds` (retirement nudged by the owning owl's drive), so a split family splits
+the very decay signal that would retire it. See `designs/D10.7.md`.
 
 ---
 
