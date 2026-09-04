@@ -315,6 +315,48 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D09_6_2026_09_04_learning_was_visible_already_what_was_missing_was_the_document:
+    map_check: "No mapped item matched the phrasing; this IS D09.6, whose validate and document were open."
+    WHAT_WAS_ACTUALLY_OPEN: >-
+      D09.6 shipped on 2026-09-02 as commit 38a49c47 and then sat with `validate:
+      partial` and `document: not_started`, `doc: null`, and NO narrative record —
+      one of the fifteen items whose work exists only in git history. So the first
+      job was to find out what it had shipped: `LearningAssembler` in
+      brief/assemblers.py (~93 lines), wired into the morning-brief handler.
+    VALIDATE_CLOSES_ON_MEASURED_EVIDENCE: >-
+      `[brief] learning: assembled` fires at INFO on EVERY brief since it shipped —
+      once on 09-02, once on 09-03, which is every brief there was — and it carries
+      real, varying numbers rather than zeros: {lessons: 27, kinds: [reflection,
+      skill]} and {lessons: 22, kinds: [reflection, tool_heuristic]}. The kinds
+      differing between days is the part that matters: it shows which learning loop
+      actually ran, which a bare total would hide. The brief itself is delivered
+      (380 morning_brief lines on 09-03).
+    THE_MAPS_ASK_WAS_ALREADY_ANSWERED_by_a_recorded_decision: >-
+      D09.6 asks "is user-visible learning part of the product, or internal
+      machinery?" — an operator question. It did not need escalating: the shipping
+      commit cites Bakir's own words about SystemSpendAssembler, "that will give
+      visibility to user what is happening in system". Same question, already
+      settled for spend, so learning got the same treatment on the same surface.
+      Recorded here because the map still shows it as an open Ask.
+    document: >-
+      docs/reference-mapping/designs/D09.6.md, written to DOC_STANDARD and its
+      Verification section RUN rather than trusted — all three steps, including the
+      live grep, which is how the "7 passed" claim in it was checked against the
+      actual suite instead of guessed.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Verification section executed in full: (1) tests/brief/test_the_brief_says_what_it_learned.py
+      7 passed — the number the document claims; (2) tests/brief +
+      tests/scheduler/handlers 310 passed; (3) the live INFO lines above, non-zero and
+      with differing kinds across the two days. No code changed in this item, so
+      nothing here needs a restart to observe.
   D12_1_2026_09_04_four_identity_branches_and_only_ONE_is_the_gap:
     map_check: "No mapped item matched the phrasing; this IS D12.1, whose gap line is a claim about OUR code."
     THE_GAP_LINE_TESTED: >-
@@ -430,6 +472,10 @@ current:
       query is `grep -c "still flood-banned — skipping" ~/.stackowl/logs/stackowl.jsonl`,
       and it cannot be forced without provoking a real ban, which would be the very
       harm this prevents.
+      FULL SUITE on the committed tree: `11897 passed, 18 skipped, 0 failed in
+      1756.19s`, rc=0. src/ was untouched for the whole run — the previous run was
+      discarded precisely because it overlapped a source commit and therefore
+      measured a mixed tree. Eight guarded Telegram paths regressed nothing.
   D12_7_2026_09_04_the_footgun_was_real_and_it_was_one_layer_below_the_token:
     map_check: "No mapped item matched the phrasing; this IS D12.7's Ask — add token locks."
     THE_ASK: >-
@@ -23110,9 +23156,9 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   partial
-      document:   not_started
-    doc: null
+      validate:   done
+      document:   done
+    doc: docs/reference-mapping/designs/D09.6.md
     doc_last_verified: null
     decisions: []
     changes:

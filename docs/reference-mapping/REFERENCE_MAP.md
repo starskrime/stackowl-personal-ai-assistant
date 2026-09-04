@@ -607,7 +607,12 @@ distillation engine, no model-tool footprint** — a textbook rung-2 solution.
 first-class nodes, with skill→skill edges from declared `related_skills` and memory→skill edges from
 lexical overlap. Rendered in the desktop app. Answers "what have I actually taught it?".
 **StackOwl.** Owl DNA evolution is inspectable in the TUI; learning is not.
-**Ask.** Is user-visible learning part of the product, or internal machinery?
+**Ask.** ANSWERED — and it did not need escalating. The shipping commit (2026-09-02) cites
+Bakir's own words about `SystemSpendAssembler`, *"that will give visibility to user what is
+happening in system"*: the same question, already settled for spend, so learning got the same
+treatment on the same surface. `LearningAssembler` reports the last 24h of `lessons` BY KIND
+plus `learning_artifacts` counts in the morning brief. Live since 2026-09-02 and verified
+2026-09-04 — see `designs/D09.6.md`.
 
 ### D09.7 · Outcome mining from failures — `AHEAD`
 **Hermes.** No equivalent.
