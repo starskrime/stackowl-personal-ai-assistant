@@ -194,3 +194,55 @@ def test_the_id_prefix_does_not_match_a_LONGER_id() -> None:
         "items": [{"id": "D01.1", "stages": dict.fromkeys(_ALL_DONE, "not_started")}],
     }
     assert progress_lint.stale_stage_problems(data) == []
+
+
+# --------------------------------------------------------------------------
+# The cardinal rule needed an enforcer. Added 2026-09-04, after D03.4 and D11.2
+# — both P1 — were found carrying `validate: done` with no evidence of any kind.
+# --------------------------------------------------------------------------
+
+
+def _validated(**fields: object) -> dict:
+    item = {"id": "D03.4", "stages": dict(_ALL_DONE)}
+    item.update(fields)
+    return {"current": {}, "items": [item]}
+
+
+def test_validate_done_with_no_evidence_is_a_problem() -> None:
+    """Both offenders turned out to be TRUE when re-measured, which is the point:
+    the claims were right and unverifiable by inspection, so the only way to trust
+    them was to do the work again. Evidence that must be re-derived is not a
+    state of record."""
+    problems = progress_lint.unevidenced_validate_problems(_validated())
+    assert len(problems) == 1
+    assert "D03.4" in problems[0]
+
+
+@pytest.mark.parametrize(
+    "field", ["doc", "validate_result", "changes", "notes", "decisions"]
+)
+def test_any_ONE_piece_of_evidence_satisfies_it(field: str) -> None:
+    """Deliberately permissive: the check asks for something a reader can follow,
+    not for a particular ceremony. A guard that demanded one exact field would be
+    routed around by writing that field empty."""
+    assert progress_lint.unevidenced_validate_problems(_validated(**{field: "x"})) == []
+
+
+def test_an_EMPTY_evidence_field_does_not_count() -> None:
+    """`changes: []` and `notes: null` are what the two offenders actually had."""
+    data = _validated(changes=[], notes=None, decisions=[], doc=None)
+    assert len(progress_lint.unevidenced_validate_problems(data)) == 1
+
+
+def test_a_current_record_counts_as_evidence() -> None:
+    data = _validated()
+    data["current"] = {"D03_4_2026_09_04_something_was_measured": {}}
+    assert progress_lint.unevidenced_validate_problems(data) == []
+
+
+def test_an_item_still_being_validated_is_not_asked_for_evidence_yet() -> None:
+    """Vacuity control: the check must only speak about CLAIMS, not open work."""
+    stages = dict(_ALL_DONE); stages["validate"] = "partial"
+    assert progress_lint.unevidenced_validate_problems(
+        {"current": {}, "items": [{"id": "D03.4", "stages": stages}]}
+    ) == []

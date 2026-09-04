@@ -315,6 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  EVIDENCE_2026_09_04_two_P1_items_claimed_validate_done_and_nothing_could_check_them:
+    map_check: "No mapped item — found while choosing the next one, in the field that records whether work is finished."
+    HOW_IT_SURFACED_and_TWO_HYPOTHESES_I_KILLED_FIRST: >-
+      D03.5, D09.6 and D12.1 sit at validate with no design document, which suggested
+      "no doc means no Verification section, so validate can never close". MEASURED
+      AND FALSE: 15 of 19 no-doc items closed validate anyway (21% stuck vs 6% for
+      documented ones — a real but weak correlation, and four items is not a cause).
+      Second hypothesis, that the missing NARRATIVE record was the blocker: also
+      false, 12 of 15 items with neither doc nor record closed validate. Both are
+      recorded because each was one sentence away from becoming a confident finding.
+      Cutting the data the other way is what found the real thing.
+    THE_MEASUREMENT: >-
+      TWO items carry `validate: done` with NO evidence of any kind — no doc, no
+      `current` record, no validate_result, and changes/notes/decisions all empty:
+      D03.4 (Tool-result overflow defense) and D11.2 (Full-text search over
+      messages). Both are P1.
+    BOTH_CLAIMS_ARE_TRUE_and_that_IS_the_finding: >-
+      D03.4: the cap FIRES — "tool.__call__: result exceeded the tool's cap" at INFO,
+      4 occurrences on 2026-08-29, {tool: browser_extract, original_len: 1215049,
+      cap: 200000, cut: 1015049}, with _spill writing the full text under
+      ~/.stackowl/sandbox/tool_results/. D11.2: migration 0127 builds messages_fts
+      with triggers, and the index is IN SYNC rather than merely present — messages
+      3833, messages_fts 3833 — a live MATCH returns ranked snippets, and
+      session_search ran 12/17/1 across three days. Neither claim was wrong. Both
+      were UNVERIFIABLE BY INSPECTION, so the only way to trust them was to do the
+      work again — which is what I just spent this item doing.
+    ROOT_CAUSE: >-
+      The cardinal rule of this programme is that a claim in progress.yml must have
+      been measured, and NOTHING ENFORCED IT. `validate` is a bare enum; writing
+      `done` into it required no companion of any kind. Evidence that has to be
+      re-derived is not a state of record — it is a rumour that happens to be right.
+    WHAT_THE_SAME_CAUSE_REACHED: >-
+      CLAUDE.md's own landmine list still said D03.4's result cap "went out with no
+      tool declaring one and could never fire". True when written, false now:
+      browser_extract declares 200_000 and it has fired. Corrected in the same
+      change — a landmine note left after the mine is cleared sends the next reader
+      hunting a defect that no longer exists, which this file has already cost once.
+    fix: >-
+      progress_lint now fails when `validate: done` carries no doc, no current
+      record, and no non-empty validate_result / changes / notes / decisions.
+      Deliberately permissive about WHICH evidence: it asks for something a reader
+      can follow, not a particular ceremony, because a guard demanding one exact
+      field gets satisfied by writing that field empty — which is precisely what
+      `changes: []` and `notes: null` already were on both offenders.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      The check fired on exactly D03.4 and D11.2 with exit 1; after their measured
+      evidence was written it exits 0. 20 linter tests. MUTATION-PROVEN on the
+      distinction that matters: making the check accept a field's PRESENCE rather
+      than its CONTENT turns test_an_EMPTY_evidence_field_does_not_count red —
+      empty-but-present is exactly what both offenders had. Restored from a file
+      copy and re-run green.
   CALLBACKAUTHZ_2026_09_04_the_allowlist_gated_the_front_door_and_not_the_button:
     map_check: "No mapped item matched — evidence-led, found while measuring D12.3's channel duplication. Filed as DEBT-114."
     HOW_IT_SURFACED: >-
@@ -18632,6 +18691,21 @@ items:
       test:       done
       validate:   done
       document:   no_change_needed
+    validate_result: >-
+      RE-MEASURED 2026-09-04, because this item carried `validate: done` with no
+      evidence of any kind. The claim is TRUE and was simply unrecorded. The cap
+      FIRES: "tool.__call__: result exceeded the tool's cap — truncated" at INFO,
+      4 occurrences on 2026-08-29, each carrying
+      {tool: browser_extract, original_len: 1215049, cap: 200000, cut: 1015049}.
+      Level 2/3 are present in code as well — base.py `_spill` writes the full text
+      under ~/.stackowl/sandbox/tool_results/<trace>/ and degrades to "capped but
+      NOT kept" rather than failing the call. THE CAVEAT, stated because it is the
+      denominator: the only tool declaring a cap is browser_extract
+      (browser/tools.py, 200_000), so the defense covers the one tool measured to
+      overflow and no other. CLAUDE.md still said this cap "went out with no tool
+      declaring one and could never fire" — that was true when written and is now
+      false; corrected in the same change.
+      Closing query: grep -c "result exceeded the tool's cap" ~/.stackowl/logs/*.jsonl
     doc: null
     doc_last_verified: null
     decisions: []
@@ -23795,6 +23869,19 @@ items:
       test:  done
       validate:  done
       document:   no_change_needed
+    validate_result: >-
+      RE-MEASURED 2026-09-04, same reason. Also TRUE and unrecorded. Migration 0127
+      creates `messages_fts` (fts5) with AFTER INSERT/UPDATE/DELETE triggers, and
+      the live index is IN SYNC rather than merely present: messages 3833,
+      messages_fts 3833. A live query returns ranked snippets, not substrings —
+      `MATCH 'telegram'` returns 3 hits with snippet() highlighting. And it is
+      REACHED: session_search ran 12 times on 09-01, 17 on 09-02 and 1 on 09-03.
+      The index being equal in count to its source is the part worth keeping — a
+      populated FTS table whose triggers have drifted is the failure this
+      programme has already found once (committed_facts_fts indexed 1,112 rows of
+      content whose writer was removed).
+      Closing query: SELECT count(*) FROM messages, count(*) FROM messages_fts —
+      they must stay equal; plus a non-zero session_search count in the logs.
     doc: null
     doc_last_verified: null
     decisions: []

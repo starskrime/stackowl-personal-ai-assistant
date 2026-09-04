@@ -162,6 +162,43 @@ def stale_stage_problems(data: dict) -> list[str]:
     return problems
 
 
+def unevidenced_validate_problems(data: dict) -> list[str]:
+    """`validate: done` with nothing recorded that a reader could check.
+
+    THE CARDINAL RULE OF THIS PROGRAMME is that a claim in progress.yml must have
+    been measured: "an autonomous loop that marks things done is only as
+    trustworthy as its evidence." Nothing enforced it. `validate` is a bare enum,
+    and writing `done` into it required no companion of any kind.
+
+    Measured 2026-09-04: TWO items — D03.4 and D11.2, both P1 — carried
+    `validate: done` with no doc, no `current` record, no validate_result, no
+    changes, no notes and no decisions. Both turned out to be TRUE when
+    re-measured against the tree and the logs, which is the point: the claims were
+    right and UNVERIFIABLE BY INSPECTION, so the only way to trust them was to do
+    the work again. Evidence that has to be re-derived is not a state of record.
+    """
+    problems: list[str] = []
+    current = data.get("current") or {}
+    keys = [k for k in current if isinstance(k, str)]
+    for item in data.get("items", []):
+        stages = item.get("stages") or {}
+        if stages.get("validate") != "done":
+            continue
+        ident = str(item.get("id", ""))
+        prefix = ident.replace(".", "_")
+        has_record = any(k == prefix or k.startswith(f"{prefix}_") for k in keys)
+        if has_record or any(
+            item.get(f) for f in ("doc", "validate_result", "changes", "notes", "decisions")
+        ):
+            continue
+        problems.append(
+            f"{ident}: 'validate: done' with no evidence — no doc, no current "
+            f"record, no validate_result, changes, notes or decisions. A claim "
+            f"nobody can check is not a state of record."
+        )
+    return problems
+
+
 def main() -> int:
     path = Path(__file__).resolve().parent.parent / "progress.yml"
     text = path.read_text(encoding="utf-8")
@@ -176,6 +213,7 @@ def main() -> int:
         return 1
 
     problems.extend(stale_stage_problems(data))
+    problems.extend(unevidenced_validate_problems(data))
 
     for item in data.get("items", []):
         ident = item.get("id", "<unknown>")

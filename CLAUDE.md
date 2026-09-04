@@ -262,7 +262,12 @@ CORE only. A heartbeat fix sat dead for an hour while being reported as shipped.
    had no unique index. `committed_facts_fts` still indexes 1,112 rows of content
    that no longer exists because its writer was removed. **A feature ships ON: if
    nothing sets the flag, you shipped decoration** — D03.4's result cap went out
-   with no tool declaring one and could never fire.
+   with no tool declaring one and could never fire. **That is now FIXED, and the
+   correction is the point:** re-measured 2026-09-04, `browser_extract` declares
+   `_max_result_chars = 200_000` and the cap has FIRED — four INFO lines on
+   2026-08-29, `original_len 1215049 -> cap 200000, cut 1015049`. A landmine note
+   that stays after the mine is cleared sends the next reader hunting a defect
+   that no longer exists, which this file has already cost once.
 6. **Deleting a row while its writer lives.** Migration 0125 deleted the
    `retry_sweep` job at 00:31:02; scheduler assembly re-seeded it at 00:31:33.
    Every boot, for thirty-one seconds. Remove the writer, not the row.
