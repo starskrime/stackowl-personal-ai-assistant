@@ -496,6 +496,32 @@ class CuratedMemory:
             return int(budget * (1.0 - UNTIL_CHANGED_RESERVE_SHARE))
         return budget
 
+    def headroom_for(self, target: str, durability: str) -> int:
+        """Characters a write of ``durability`` may still add to ``target``.
+
+        THE PUBLIC NUMBERS DESCRIBED THE WHOLE FILE AND THE GATE DID NOT.
+        ``add`` admits a write only while the projected file stays under
+        :meth:`_effective_budget`, which for ``permanent`` is the budget minus
+        the reserve the decaying tier lives in. ``budget_for`` and ``used_chars``
+        both describe the whole file, so there was no way to ask how much room
+        THIS write has — and a caller pacing a fill on what the class exposed
+        looped forever.
+
+        MEASURED 2026-09-04 in tests/test_story_6_7.py::
+        test_remember_can_refuse_the_user_too, which paced
+        ``used_chars < budget_for - 80`` while writing ``permanent``: the file
+        stops growing at the 1,031 ceiling and the target was 1,295, so the
+        condition could never become false. It spun for 30 minutes at 65% CPU,
+        logging a refusal per iteration, and it is the reason no full test run
+        has been able to finish. This is the same per-tier/whole-file mismatch
+        TIERFULL fixed in the REPORTING on 2026-09-01; the API kept it.
+
+        Never negative: a target already past its ceiling (three were, measured
+        2026-09-01) reports 0 rather than a number that would make
+        ``while headroom > n`` true again and spin exactly as before.
+        """
+        return max(0, self._effective_budget(target, durability) - self.used_chars(target))
+
     def over_ceiling_targets(self) -> list[tuple[str, int, int, int]]:
         """Targets whose permanent tier is already past its ceiling.
 

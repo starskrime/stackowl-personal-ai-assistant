@@ -89,7 +89,14 @@ async def test_remember_can_refuse_the_user_too(_isolated_memory):
     room for you, silently."""
     mem = _isolated_memory
     i = 0
-    while mem.used_chars(USER_TARGET) < mem.budget_for(USER_TARGET) - 80:
+    # PACED AGAINST THE TIER THIS WRITES TO. `remember` defaults to permanent,
+    # and a permanent write is admitted only under the budget MINUS the reserve
+    # (1,031 of 1,375). This loop used to run until `used_chars` reached
+    # `budget_for - 80` = 1,295 — a number permanent-only writes can never make
+    # the file reach, so it spun forever at 65% CPU logging a refusal per pass
+    # and no full test run could finish. `headroom_for` asks the question the
+    # gate actually answers.
+    while mem.headroom_for(USER_TARGET, "permanent") > 80:
         mem.add(USER_TARGET, f"Existing entry number {i} about how I work.", "permanent")
         i += 1
 

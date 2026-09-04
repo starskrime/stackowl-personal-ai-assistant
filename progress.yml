@@ -315,6 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  SPINTEST_2026_09_04_the_full_suite_could_not_finish_because_one_test_never_ended:
+    map_check: "No mapped item — found by running the full suite, which is the only thing that could find it."
+    HOW_IT_SURFACED: >-
+      Launched the full suite because CLAUDE.md records it as the ONLY instrument that finds
+      cross-test pollution and it had not run since 2026-09-01. It reached 78% and stayed
+      there: 30 minutes at one marker, the pytest child pinned at 65% CPU with its CPU time
+      advancing second for second. Not hung — SPINNING. py-spy named it exactly:
+      test_remember_can_refuse_the_user_too (tests/test_story_6_7.py:93) -> curated.add ->
+      _at_capacity -> log.warning -> json.dumps.
+    THE_LOOP_IS_INFINITE_BY_CONSTRUCTION_measured: >-
+      while mem.used_chars(USER_TARGET) < mem.budget_for(USER_TARGET) - 80, writing
+      "permanent" entries. USER_BUDGET_CHARS 1375; the permanent tier ceiling is
+      budget * (1 - UNTIL_CHANGED_RESERVE_SHARE) = 1031; the loop target is 1295. Permanent
+      writes stop growing the file at 1031, so 1031 < 1295 and the condition can never become
+      false. Every further pass is refused, logs a warning and serialises it to JSON.
+    THE_CAUSE_IS_AN_ASYMMETRY_IN_THE_PUBLIC_API: >-
+      A write is admitted against a PER-DURABILITY ceiling and the only public numbers —
+      budget_for, used_chars — describe the WHOLE FILE. There was no way to ask "how much
+      room does a write of THIS durability still have", so any caller pacing a fill on what
+      the class exposes gets it wrong. _effective_budget knew the answer and was private.
+      headroom_for now asks it.
+    SECOND_CASUALTY_OF_ONE_MISMATCH: >-
+      TIERFULL (2026-09-01) found the same per-tier/whole-file confusion in the REPORTING —
+      "add() handed the RESERVED CEILING to _at_capacity, whose entire vocabulary is about
+      the WHOLE FILE" — and fixed the message. The API asymmetry underneath survived, and
+      this test has been spinning since. Nobody saw it because tests/test_story_6_7.py sits
+      directly in tests/, which no package path runs, so only a full suite reaches it — and
+      this test is what stopped any full suite from finishing. A defect that disables the one
+      instrument able to find it.
+    I_REPRODUCED_THE_BUG_IN_MY_OWN_GUARD: >-
+      The first draft of the new suite looped adding the SAME text. add() short-circuits a
+      duplicate — "Entry already present — nothing to do" — WITHOUT writing, so used_chars
+      never grew and my test spun at 99% CPU, named by py-spy the same way. The original test
+      had a counter making each entry unique; I dropped it. Every loop in the suite is now
+      hard-bounded and goes through one helper that insists on unique text, and a test pins
+      the duplicate short-circuit so the next reader does not rediscover it by hanging.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      tests/test_story_6_7.py now runs 18 tests in 0.27s — the file that spun for 30+
+      minutes. 6 new tests; 3 mutations each caught (headroom ignores durability; the
+      non-negative clamp dropped; the duplicate short-circuit removed), restored from a FILE
+      COPY and re-verified green. tests/memory + test_story_6_7 579 pass; ruff at its 35
+      baseline; mypy clean on curated.py. VALIDATE IS PARTIAL AND THE REASON MATTERS: the
+      item was to triage the FULL suite, and the suite has not yet completed once — this
+      defect is why. The full run is relaunched; its result is the closing evidence, and the
+      6-failure baseline from 2026-09-01 is what it must be read against.
+    A_CORRECTION_TO_THE_RECORD_pending_confirmation: >-
+      CLAUDE.md states the full run takes 31 minutes, measured 2026-09-01. That figure cannot
+      be right while this test spins, so either it predates the spin or the run was never
+      completed after it. Not corrected yet — the relaunched run will say what the real
+      number is, and a claim about it without that measurement is exactly what this file
+      forbids.
   WINDOW_2026_09_04_a_failed_probe_was_cached_as_a_measurement:
     map_check: "No mapped item — the same cause as this morning's host_locality fix, in a second place."
     THE_FINDING: >-
