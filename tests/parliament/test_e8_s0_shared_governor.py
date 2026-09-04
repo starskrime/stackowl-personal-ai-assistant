@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+
+from tests._async_helpers import await_until
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -101,8 +103,16 @@ class TestSharedGovernor:
         run_task = asyncio.create_task(
             parliament.run("topic", ["a", "b", "c", "d"])
         )
-        # Let the fan-out attempt all four; the governor holds two back.
-        await asyncio.sleep(0.05)
+        # WAIT for the fan-out to reach the cap; do not bet 50ms on it.
+        # `assert in_flight <= 2` after a fixed sleep is VACUOUS in the losing
+        # direction: if the scheduler had not got there yet, in_flight is 0 or 1
+        # and the assertion passes without ever observing the governor hold
+        # anything back. Measured 2026-09-04 — it is exactly 2 at the 50ms mark
+        # on an idle box, which is the margin that disappears under a full run.
+        await await_until(
+            lambda: governor.in_flight >= 2,
+            "the fan-out to reach the governor's cap",
+        )
         assert governor.in_flight <= 2
         hold.set()
         await run_task

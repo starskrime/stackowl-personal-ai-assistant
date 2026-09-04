@@ -315,6 +315,29 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT_116_2026_09_04_the_flake_was_fixed_in_one_test_and_left_in_its_sibling:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-116."
+    WHY_NOT_WHAT: >-
+      The previous fix repaired the test that FAILED, not the pattern. await_until was
+      written for this exact bug, its docstring names the sibling it was written for, and
+      `grep -rln await_until tests/` returned exactly TWO files — the helper and that one
+      caller. Correcting one copy of a rule is not correcting the rule, which this
+      programme has already paid for once when the suite-hangs claim survived in the skill
+      file after CLAUDE.md was fixed.
+    THE_SECOND_ONE_WAS_WORSE_THAN_FLAKY: >-
+      test_e8_s0_shared_governor slept 50ms then asserted `in_flight <= 2`. If the
+      scheduler had not fanned out yet, in_flight is 0 or 1 and it PASSES without
+      observing the governor hold anything back — vacuous in the losing direction.
+      Measured at exactly 2 on an idle box, so scheduler speed was the entire margin.
+    ALSO_DELETED: "A `_delayed_run()` helper defined and never called."
+    CLASSIFIED_NOT_ASSUMED: >-
+      The other parliament sleeps are legitimate: 3600s is a never-returns backend, 0.4s
+      is a release-after-timeout stimulus whose direction is safe.
+    DELIBERATELY_NOT_DONE: >-
+      A static screen over the other 99 asyncio.sleep calls in 57 files. No sound
+      predicate separates a bet on the scheduler from a legitimate stimulus, and four
+      screens have already been built and deleted here for failing a similar distinction.
+    NEXT: "D11.1 · Session store (PARITY, P3, wave 8, order 67)."
   D10_7_2026_09_04_two_of_three_exercised_and_the_third_could_not_be_turned_on:
     map_check: "D10.7 — Skill ownership per persona (AHEAD, P3, wave 8). Ask: keep, and note it seeds D05.2."
     EXERCISED: >-
@@ -11831,6 +11854,39 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-116
+    found: 2026-09-04
+    what: >-
+      A concurrency flake fixed in one test and left standing in its sibling, plus a
+      second assertion in the same family that was VACUOUS in the losing direction.
+      The full suite caught the first; only the test that failed got repaired.
+    evidence: >-
+      test_story_5_2.py::test_interjection_active_session failed once in an
+      11,930-test run on 2026-09-04 and passes alone every time. It slept 0.05s and
+      then asserted the orchestrator had registered a live session. That is the SAME
+      bet as tests/parliament/test_concurrent_sessions.py's
+      test_two_sessions_no_interjection_clobber, which flaked first, was fixed with
+      await_until, and whose fix never crossed to the identical bet one file over —
+      `grep -rln await_until tests/` returned exactly TWO files: the helper and that
+      one caller. tests/_async_helpers.py's own docstring names the sibling it was
+      written for. SECOND FINDING: tests/parliament/test_e8_s0_shared_governor.py
+      slept 0.05s then asserted `governor.in_flight <= 2` — if the scheduler had not
+      fanned out yet, in_flight is 0 or 1 and the assertion PASSES without ever
+      observing the governor hold anything back. Measured: it is exactly 2 at the
+      50ms mark on an idle box, so the whole margin is scheduler speed.
+    decision: >-
+      Both fixed to wait for the CONDITION (await_until), mutation-proven — an
+      unreachable predicate fails in 5s naming what never happened, rather than
+      hanging. A dead `_delayed_run()` helper, defined and never called, deleted in
+      the same change. The remaining parliament sleeps were CLASSIFIED, not assumed:
+      3600s is a never-returns backend and 0.4s is a release-after-timeout stimulus
+      whose direction is safe (later release only makes the queued-out more certain).
+      NOT DONE, deliberately: a static screen over the other 99 `asyncio.sleep` calls
+      in 57 test files. No sound predicate separates a bet on the scheduler from a
+      legitimate stimulus, and this programme has already built and deleted FOUR
+      screens that could not make a similar distinction. The full suite is the real
+      detector and it worked twice; the gap was never detection, it was that a caught
+      flake got repaired one instance at a time.
   - id: DEBT-115
     found: 2026-09-04
     what: >-

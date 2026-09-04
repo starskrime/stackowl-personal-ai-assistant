@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+
+from tests._async_helpers import await_until
 import logging
 import time
 from collections.abc import AsyncGenerator, Generator
@@ -327,11 +329,17 @@ class TestOrchestratorIntegration:
     async def test_interjection_active_session(
         self, parliament_db: DbPool
     ) -> None:
-        """inject_interjection returns True when a session is active."""
-        # Use a slow backend so we can inject during the run.
-        async def _delayed_run() -> None:
-            await asyncio.sleep(0.1)
+        """inject_interjection returns True when a session is active.
 
+        WAITS FOR THE SESSION, never for 50ms. This bet `await asyncio.sleep(0.05)`
+        that the orchestrator would have registered its session by then, and lost
+        it once in an 11,930-test run on 2026-09-04 while passing alone every time.
+
+        It is the SAME bug as `test_two_sessions_no_interjection_clobber`, one test
+        over — that one flaked first, was fixed with `await_until`, and this
+        identical bet in the same area was left standing. `tests/_async_helpers.py`
+        was written for exactly this and its docstring names that sibling.
+        """
         backend = SlowBackend(delay_s=0.5)
         store = SessionStore(parliament_db)
         orch = ParliamentOrchestrator(
@@ -342,7 +350,10 @@ class TestOrchestratorIntegration:
             session_timeout_s=5.0,
         )
         task = asyncio.create_task(orch.run("t", ["a"]))
-        await asyncio.sleep(0.05)
+        await await_until(
+            lambda: len(orch._active_sessions) == 1,
+            "the orchestrator to register its live session",
+        )
         accepted = await orch.inject_interjection("hello there")
         assert accepted is True
         await task
