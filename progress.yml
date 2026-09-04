@@ -375,6 +375,16 @@ current:
       `grep -c "callback_authz: press REFUSED" ~/.stackowl/logs/stackowl.jsonl` for a
       refusal, and an unchanged consent round-trip for the allow path — the second is
       what proves the fix did not cost him his own buttons.
+      RESTARTED on ./start.sh at 02:2x (commit dac35e15): phase 6 reached, ZERO errors
+      after the boot marker, and `[startup] gateway: Telegram consent + clarify
+      callbacks wired` present — so the GUARDED registration is the one now live.
+      (My first grep for that line used "Telegram consent + clarify wired" and
+      returned 0; the real text carries "callbacks". A guessed log string is not a
+      measurement — third time this session that control mattered.)
+      ONLY TELEGRAM IS LIVE-EXERCISABLE HERE: this boot logs "no Slack
+      bot_token/app_token — skipping", "Discord not enabled", "WhatsApp not enabled",
+      so the discord and slack guards are proven by test and by the structural seam
+      check, NOT by traffic. That is stated rather than glossed.
   RECORD_2026_09_04_the_state_of_record_diverged_from_the_work_and_nothing_could_see_it:
     map_check: "No mapped item — found while choosing the NEXT item, from the field that choice is made on."
     HOW_IT_SURFACED: >-
