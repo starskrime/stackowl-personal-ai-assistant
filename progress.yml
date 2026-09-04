@@ -444,6 +444,10 @@ current:
       bot_token/app_token — skipping", "Discord not enabled", "WhatsApp not enabled",
       so the discord and slack guards are proven by test and by the structural seam
       check, NOT by traffic. That is stated rather than glossed.
+      FULL SUITE on the committed tree: `11874 passed, 18 skipped, 0 failed in
+      1759.77s`, SUITE DONE rc=0. Run because this item touched three channels and
+      the startup orchestrator, and a targeted path cannot see cross-test pollution.
+      No regression anywhere from putting an allow-list in front of the button.
   RECORD_2026_09_04_the_state_of_record_diverged_from_the_work_and_nothing_could_see_it:
     map_check: "No mapped item — found while choosing the NEXT item, from the field that choice is made on."
     HOW_IT_SURFACED: >-
