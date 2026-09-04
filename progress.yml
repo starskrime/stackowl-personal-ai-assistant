@@ -315,6 +315,62 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  INGRESS_SWEEP_2026_09_04_the_debt_the_callback_fix_owed_and_it_came_back_CLEAN:
+    map_check: "No mapped item — this discharges the WHY obligation the callback allow-list item left open."
+    WHY_THIS_WAS_OWED: >-
+      The rule above all others says an item is not done until "what else does that
+      same cause reach" is answered in writing. The callback fix answered it for
+      BUTTONS in three channels and stopped there. The cause was broader than
+      buttons: the allow-list is applied PER INBOUND PATH, so every path that can
+      inject a turn is a place the rule can be one case short. That sweep is this
+      item.
+    THE_COMPLETE_SET_measured: >-
+      Ten IngressMessage construction/feed points exist outside tests. Their status:
+      ALLOW-LISTED — telegram _handle_update, _handle_document and voice (three
+      is_authorized calls), discord handle_message, slack handle_event, whatsapp
+      handle_message, dev_ingress, and now every button via the callback seam.
+      TRUSTED BY CONSTRUCTION, correctly — socket_adapter and runtime/message_bridge
+      are the internal gateway<->core bridge, where the message has ALREADY passed a
+      real adapter's allow-list, and cli_adapter reads a local TUI queue and is
+      "inherently a private 1:1 terminal" per ADR-D, with no network path in.
+      RESULT: NO SECOND HOLE. The sweep is clean.
+    THE_BUTTON_PATH_IS_FULLY_COVERED_and_this_was_checked_not_assumed: >-
+      A single `CallbackQueryHandler(` registration exists in all of src/ and it is
+      the guarded one, so the voice-confirm Send tap — which injects a turn through
+      VoiceConfirmHandler — routes through the same guard rather than a second
+      unguarded registration. That was the most likely way for my own fix to be one
+      case short, so it was measured rather than assumed.
+    I_NEARLY_REPORTED_A_HOLE_THAT_DOES_NOT_EXIST: >-
+      `grep is_authorized src/stackowl/channels/dev_ingress.py` returns exactly ONE
+      line and it is inside a DOCSTRING — no import, no call. Combined with Telegram
+      `feed()`'s docstring, which skips authorisation deliberately and delegates it
+      to "callers of feed... see DevIngressListener", that reads as two documents
+      each pointing at the other with nothing underneath. The control is REAL: the
+      seam is `DevIngressTarget.is_allowed`, and the orchestrator injects a closure
+      that imports telegram's own is_authorized and fails closed on a session_key
+      that will not parse. A grep returning one proves a MENTION, not a check —
+      and the near-miss is recorded because the next reader will grep the same way.
+    fix: >-
+      No security change was needed. The one repair earned by the sweep is in
+      dev_ingress's own docstring: it now NAMES THE SEAM (`DevIngressTarget.is_allowed`,
+      wired in the orchestrator) instead of only naming the rule, so the next reader
+      does not spend a sweep proving the control exists.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      The sweep itself is the evidence and every line of it is a measurement over the
+      tree: ten injection points enumerated, each classified with the file and the
+      reason, one CallbackQueryHandler registration counted across all of src/, and
+      the dev_ingress predicate read at its construction site in the orchestrator
+      (orchestrator.py `_tg_is_allowed`). tests -k dev_ingress: 8 passed. No code
+      behaviour changed, so there is nothing for a restart to reveal — stated plainly
+      rather than dressing a docstring edit as a live validation.
   EVIDENCE_2026_09_04_two_P1_items_claimed_validate_done_and_nothing_could_check_them:
     map_check: "No mapped item — found while choosing the next one, in the field that records whether work is finished."
     HOW_IT_SURFACED_and_TWO_HYPOTHESES_I_KILLED_FIRST: >-

@@ -40,6 +40,14 @@ THREE GUARDS, AND EACH IS MEASURABLE.
   them silently drifts, and this codebase has paid for that shape already. An
   injected turn is therefore never more privileged than a typed one.
 
+  WHERE TO LOOK FOR THAT CHECK, because it is not in this file: the seam is
+  ``DevIngressTarget.is_allowed``, and the orchestrator injects a closure that
+  imports the channel's own ``is_authorized`` and fails closed on a session_key
+  that will not parse. Grepping this module for ``is_authorized`` finds only the
+  paragraph above — which read, on 2026-09-04, as a documented control with no
+  code behind it, and cost a security sweep the time to prove otherwise. Name the
+  seam, not just the rule.
+
   EVERY INJECTION IS MARKED AT INFO, FOREVER. ``injected: True`` rides the log
   line so that traffic generated for a test can always be told apart from traffic
   the user really sent. Without it, tomorrow's measurement reads my test messages
