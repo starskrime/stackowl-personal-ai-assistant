@@ -315,6 +315,38 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D10_4_2026_09_04_the_declarative_sidecar_was_guarded_and_the_executable_one_was_not:
+    map_check: "D10.4 — Skills Hub (MISSING, P2, wave 8). The Ask is product intent — ESC-129."
+    THE_MAP_WAS_WRONG: >-
+      "No install path from outside" — but `/skill add <local-path>` and `/skill add --url`
+      both exist and are user-reachable: git clone --depth=1, or archive download+extract,
+      with defences against oversized downloads and zip bombs, an audit row and a restorable
+      snapshot. installed/ is EMPTY; it has never been used. What is missing is the hub
+      AROUND it — no source ABC, lockfile, quarantine, taps, or static analysis.
+    THE_DEFECT: >-
+      owls.yaml (DECLARATIVE) was gated on trusted source; tools/*.py (imported with
+      exec_module, every Tool subclass instantiated and registered) was gated on nothing but
+      the directory existing. The declarative artifact was guarded by provenance and the
+      executable one was not.
+    THE_GUARD_THAT_LOOKS_LIKE_IT_COVERS_THIS_DOES_NOT: >-
+      D05.1's actuator refuses to exec while the skills tree sits inside the model-writable
+      workspace — that answers "can the MODEL write what we run?", and its own comment calls
+      it a no-op for the normal layout. No scan covered it either: skill_helpers.py
+      references security_scan_gate ZERO times, and that gate reads SKILL.md TEXT, not Python.
+    WHY_NOT_WHAT: >-
+      _OWL_TRUSTED_SOURCES named its first CALLER, not the principle — which sources may
+      extend the running process — so when a second sidecar arrived there was nothing for it
+      to be measured against. A rule named after its first caller does not generalise to its
+      second. Same cause reached the vocabulary itself: FOUR copies of the source list, of
+      which D10.1 collapsed two and recorded the dedup as DONE. It was half true.
+    ZERO_LIVE_IMPACT_MEASURED_FIRST: "39 of 39 skills report tools: 0; no tools/ dir exists under any source."
+    ONE_TEST_FIXTURE_CHANGED_AND_WHY: >-
+      test_reload_same_skill_tool_is_idempotent used `learned`; its subject is IDEMPOTENCY
+      and the source was incidental (the collision test beside it already used `user`).
+      Recorded because a fixture edited to make a new guard pass is how a guard gets quietly
+      weakened, and this one was not.
+    ESCALATED: "ESC-129 — may an installed skill ever ship executable tools, and behind what scan?"
+    NEXT: "D10.7 · Skill ownership per persona (AHEAD, P3, wave 8, order 66)."
   DEBT_115_2026_09_04_a_red_suite_that_was_true_of_no_tree_at_all:
     map_check: "No mapped item matches — evidence-led work, recorded in known_debt as DEBT-115."
     THE_SUITE_FOUND_IT_AND_THE_MESSAGE_WAS_A_LIE: >-
@@ -9580,6 +9612,37 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_129_may_an_installed_skill_ever_ship_executable_tools:
+      premise_check: |
+        uv run python -c "
+        from stackowl.skills.loader import _TRUSTED_EXTENSION_SOURCES as T
+        print('HOLDS installed still refused' if 'installed' not in T
+              else 'EXPIRED installed is now trusted')
+        "
+      question: >-
+        `/skill add --url <url>` installs a skill from an arbitrary git repo or
+        archive. Its `tools/*.py` is now REFUSED, because that sidecar is imported
+        and executed and nothing scanned it. Do you want a distribution path where
+        installed skills CAN ship executable tools — which needs the hub's missing
+        half (static analysis before install, a quarantine, a lockfile) — or should
+        installed skills stay declarative-only, carrying recipes and never code?
+        This is D10.4's own Ask, made concrete.
+      why_evidence_cannot_settle_it: >-
+        It is a risk-appetite question about a capability nobody has used yet
+        (`installed/` is empty), and the two answers cost very differently: allowing
+        it means building and maintaining a code scanner you have to trust, and
+        refusing it means the marketplace ships recipes rather than tools. No
+        measurement chooses between them.
+      panel_recommendation: >-
+        Declarative-only until a hub exists. A skill that only carries a SKILL.md is
+        text the model reads; one that carries `tools/*.py` is code this process
+        imports at boot, and the gap between "the operator typed install" and "the
+        operator read the code" is exactly what the reference platform's
+        pre-install static analysis and quarantine directory exist to cover. We have
+        neither.
+      blocked_until_answered: >-
+        The hub itself (D10.4's build). The safety asymmetry is already fixed and
+        does not wait on this.
     ESC_128_ten_learned_skills_are_copies_of_each_other_merge_or_leave:
       premise_check: |
         uv run python -c "
@@ -24612,19 +24675,56 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D10.4.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "THE HUB IS NOT BUILT. No source ABC, no lockfile, no quarantine, no taps, no static
+         analysis of installed code. Whether to build it is ESC-129 — this item's own Ask,
+         and product intent the panel may not answer."
+      - "Both extension sidecars now read ONE trust set {builtin, user}. NOT learned (the
+         model wrote it, which is what D05.1's actuator exists to keep out of exec_module)
+         and NOT installed (a URL did)."
+      - "A refused sidecar never fails the SKILL. Turning a provenance question into an
+         outage is the mistake _drop_retired_keys already records."
+    changes:
+      - "src/stackowl/skills/loader.py — _TRUSTED_EXTENSION_SOURCES introduced and
+         _OWL_TRUSTED_SOURCES bound to the SAME object; tools/*.py now gated on it with a
+         WARNING naming source, skill and how many .py files were skipped."
+      - "src/stackowl/commands/skill_command.py — _VALID_SOURCES derived via get_args and the
+         `choices=` tuple pointed at it; these were copies THREE and FOUR of a vocabulary
+         D10.1 reported deduped."
+      - "tests/skills/test_the_executable_sidecar_is_gated_like_the_declarative_one.py — 5
+         tests over both untrusted sources and both trusted ones, plus a guard that the two
+         sidecars read one set. Mutation-proven (if True: killed both untrusted cases)."
+      - "tests/skills/test_a_misplaced_skill_is_not_invisible.py — the one-definition guard
+         now asserts over the command module too, not just the pair I first looked at."
+      - "tests/skills/test_loader_tool_collision.py — fixture source learned -> user, with
+         the reason in the docstring. Its subject is idempotency; the source was incidental."
+    notes: >-
+      THE MAP WAS WRONG: "no install path from outside" — `/skill add <local-path>` and
+      `/skill add --url <url>` both exist and are user-reachable (git clone --depth=1,
+      or archive download+extract, with defences against oversized downloads and zip bombs,
+      an audit row and a restorable snapshot). `installed/` is EMPTY; the path has never
+      been used. THE DEFECT: the loader gated `owls.yaml` (DECLARATIVE) on trusted source
+      and `tools/*.py` (imported with exec_module, every Tool subclass instantiated and
+      registered) on nothing but the directory existing. The declarative artifact was
+      guarded by provenance and the executable one was not. D05.1's actuator LOOKS like it
+      covers this and does not — it answers "can the MODEL write what we exec?" and is a
+      documented no-op for installed/. No scan covered it either: skill_helpers.py
+      references security_scan_gate ZERO times, and that gate reads SKILL.md TEXT, not
+      Python. ROOT CAUSE: _OWL_TRUSTED_SOURCES named its first CALLER rather than the
+      principle — which sources may extend the running process — so the second sidecar had
+      nothing to be measured against. Same cause reached the source vocabulary itself:
+      FOUR copies, of which D10.1 collapsed two and recorded the dedup as done.
+      ZERO LIVE IMPACT, measured BEFORE changing it: 39 of 39 skills report tools: 0 and no
+      tools/ directory exists under any source. VALIDATED live after ./start.sh.
   - id: D10.5
     title: "Skills as slash commands"
     domain: D10

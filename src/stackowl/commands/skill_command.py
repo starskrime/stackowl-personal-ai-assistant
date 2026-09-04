@@ -20,7 +20,7 @@ from __future__ import annotations
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, get_args
 
 from stackowl.commands.base import SlashCommand
 from stackowl.commands.dry_run import strip_sigil
@@ -52,7 +52,12 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 
 
 _CONFIRMATION = "YES"
-_VALID_SOURCES: tuple[SkillSource, ...] = ("builtin", "installed", "user", "learned")
+#: Derived, not restated. D10.1 collapsed the loader's copy onto the manifest's
+#: Literal and this file kept a THIRD — plus the `choices=` tuple below, a
+#: fourth. Four copies of one vocabulary, agreeing by luck: a source added to the
+#: manifest alone is unreachable from `/skill`, and one added here alone offers
+#: the operator a filter that can match nothing.
+_VALID_SOURCES: tuple[SkillSource, ...] = get_args(SkillSource)
 
 _SKILL_META = CommandMeta(
     grammar="verb",
@@ -94,7 +99,7 @@ _SKILL_META = CommandMeta(
                     name="--source",
                     required=False,
                     summary="filter by source",
-                    choices=("builtin", "installed", "user", "learned"),
+                    choices=_VALID_SOURCES,
                 ),
             ),
             examples=(

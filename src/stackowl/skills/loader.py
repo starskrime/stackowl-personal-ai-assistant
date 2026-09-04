@@ -50,7 +50,21 @@ if TYPE_CHECKING:
 #: but the manifest rejects fails every skill under it, and a source the manifest
 #: accepts but the loader never scans makes those skills silently unreachable.
 _VALID_SOURCES: tuple[SkillSource, ...] = get_args(SkillSource)
-_OWL_TRUSTED_SOURCES: frozenset[str] = frozenset({"builtin", "user"})
+#: Sources we will honour a skill's EXTENSION SIDECARS from — `owls.yaml`, which
+#: registers agents, and `tools/*.py`, which is imported and executed.
+#:
+#: `builtin` is code we shipped; `user` is code the operator placed by hand.
+#: NOT `learned` (the model wrote it) and NOT `installed` (a git URL or archive
+#: did, via `/skill add`).
+#:
+#: ONE set for both sidecars, because they were two constants for one rule and
+#: that is exactly how they came to disagree: until 2026-09-04 `owls.yaml` — a
+#: DECLARATIVE file — was gated on source while `tools/*.py` — Python that is
+#: exec'd at boot — was gated only on the directory existing. The declarative
+#: artifact was guarded and the executable one was not.
+_TRUSTED_EXTENSION_SOURCES: frozenset[str] = frozenset({"builtin", "user"})
+#: Kept as the name the owl path has always used; the same object, not a copy.
+_OWL_TRUSTED_SOURCES: frozenset[str] = _TRUSTED_EXTENSION_SOURCES
 _SKILL_MD_FILENAME = "SKILL.md"
 # A skill lives at <source>/<name>/ (flat) OR <source>/<category>/<name>/ (nested).
 # Scan both layouts; never deeper, so a skill's own subdirs (references/, tools/,
@@ -295,7 +309,24 @@ class SkillLoader:
         tool_names: tuple[str, ...] = ()
         tools_dir = skill_dir / "tools"
         if tools_dir.exists() and self._tool_registry is not None:
-            tool_names = self._load_tools(tools_dir, manifest.name)
+            # SAME GATE AS owls.yaml, and for a stronger reason: this sidecar is
+            # IMPORTED AND EXECUTED. D05.1's actuator below refuses to exec while
+            # the skills tree sits inside the model-writable workspace, but that
+            # answers "can the MODEL write what we run?" — not "did this arrive
+            # from an arbitrary URL?", and for `installed/` it is a documented
+            # no-op. Nothing else covered it: skill_helpers.py, which is what
+            # `/skill add` uses, references the security scan gate ZERO times,
+            # and that gate scans SKILL.md TEXT rather than Python anyway.
+            if source in _TRUSTED_EXTENSION_SOURCES:
+                tool_names = self._load_tools(tools_dir, manifest.name)
+            else:
+                log.skills.warning(
+                    "[skills] loader: refusing tools/ from untrusted source",
+                    extra={"_fields": {
+                        "source": source, "skill": manifest.name,
+                        "skipped": len(list(tools_dir.glob("*.py"))),
+                    }},
+                )
 
         owls_count = 0
         owls_manifest = _resolve_owls_manifest(skill_dir)

@@ -52,8 +52,17 @@ def _write_skill(root: Path, source: str, skill: str, tool: str) -> None:
 
 @pytest.mark.asyncio
 async def test_reload_same_skill_tool_is_idempotent(tmp_path: Path) -> None:
-    """Re-loading the same skill (the reindex case) must not raise — replace=True."""
-    _write_skill(tmp_path, "learned", "myskill", "my_tool")
+    """Re-loading the same skill (the reindex case) must not raise — replace=True.
+
+    Source changed from `learned` to `user` on 2026-09-04. The subject here is
+    IDEMPOTENCY, and the source was incidental — the collision test below already
+    used `user`. `learned` stopped being a source we execute Python from when
+    `tools/*.py` was gated on the same trust set as `owls.yaml`: `learned` is
+    written by the model, which is precisely what D05.1's actuator exists to keep
+    out of `exec_module`. Nothing regressed — no `tools/` directory existed under
+    any source on disk when that gate landed.
+    """
+    _write_skill(tmp_path, "user", "myskill", "my_tool")
     reg = ToolRegistry()
     loader = SkillLoader(tool_registry=reg, owl_registry=OwlRegistry())
     await loader.load_all(tmp_path, builtin_seed_dir=tmp_path / "none")

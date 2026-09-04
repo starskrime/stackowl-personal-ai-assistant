@@ -80,6 +80,17 @@ def test_a_non_skill_directory_is_not_reported(tmp_path: Path) -> None:
     assert [p.name for p in _stray_skill_dirs(tmp_path)] == ["orphan"]
 
 
+def test_no_module_restates_the_source_vocabulary() -> None:
+    """There were FOUR copies, agreeing by luck: the manifest Literal, the
+    loader tuple, the command tuple and the command's `choices=`. D10.1 collapsed
+    two of them and said so; the other two were found in D10.4, which is why this
+    now asserts over every module instead of the pair I happened to look at."""
+    from stackowl.commands.skill_command import _VALID_SOURCES as command_sources
+
+    assert command_sources == get_args(SkillSource)
+    assert command_sources == _VALID_SOURCES
+
+
 def test_the_valid_sources_are_one_definition_not_two() -> None:
     """The loader's tuple and the manifest's Literal were two copies of one rule.
 

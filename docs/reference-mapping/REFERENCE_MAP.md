@@ -723,6 +723,23 @@ with `HubLockFile` provenance tracking, a **quarantine** directory, an audit log
 and `skills_ast_audit.py` static analysis of skill scripts before install.
 **StackOwl.** No install path from outside.
 **Ask.** Distribution is how a platform gets adopted. In scope?
+**CORRECTED 2026-09-04 — "no install path from outside" is WRONG.** `/skill add <local-path>`
+and `/skill add --url <url>` both exist and are user-reachable, installing from a directory, a
+`git clone --depth=1`, or a downloaded archive into `skills/installed/`, with real defences
+against oversized downloads and zip-bomb expansion, plus an audit row and a restorable
+snapshot. What is genuinely absent is the hub AROUND it: no source ABC/registry, no lockfile,
+no quarantine, no taps, and **no static analysis of installed code**. The `installed/`
+directory is empty — the path has never been used. THE DEFECT FOUND: the loader gated
+`owls.yaml` (DECLARATIVE) on trusted source and `tools/*.py` (IMPORTED AND EXECUTED) on
+nothing but the directory existing. D05.1's actuator looks like it covers this and does not —
+it refuses to exec while the skills tree sits inside the model-writable workspace, which
+answers "can the MODEL write what we run?", and for `installed/` is a documented no-op. No
+scan covered it either: `skill_helpers.py` references the security scan gate ZERO times, and
+that gate reads SKILL.md TEXT rather than Python. Both sidecars now read ONE trust set
+`{builtin, user}` — zero live impact, measured: all 39 skills report `tools: 0` and no
+`tools/` directory exists under any source. See `designs/D10.4.md`. The hub itself is NOT
+built; whether installed skills may ever ship executable tools, and behind what scan, is
+**ESC-129** — which is this entry's Ask.
 
 ### D10.5 · Skills as slash commands — `PARTIAL`
 **Hermes.** `agent/skill_commands.py` scans the skills dir and exposes each as `/<skill-name>`,
