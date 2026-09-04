@@ -505,6 +505,19 @@ def is_not_a_user_utterance(state: PipelineState) -> bool:
       ``_prompt_depth > 0`` where a command authors the turn text. Blind to
       machine lanes, which set no flag.
 
+    A THIRD SIGNAL WAS BUILT AND REVERTED ON 2026-09-04 — "a blank ``input_text``
+    cannot be a user fact" — and the reason is worth more than the signal was.
+    29 of the 178 conversation rows in ``staged_facts`` are proactive sends stored
+    with an empty user half, which looks like the platform filing its own output
+    as knowledge about the person. It is not: ``committed_facts`` has held 0 rows
+    since migration 0112 and its promotion path is dead on both ends, so these
+    rows are ONLY short-term history — and there they are the mirror that lets the
+    agent know what it already told him (D12.6). The other caller, ``user_goal``,
+    was never at risk either: it returns None for blank text one line further down
+    on its own. So the signal removed a wanted capability to prevent a harm that
+    cannot occur here. If ``committed_facts`` is ever revived, this becomes real
+    and belongs at the PROMOTION step, not at staging.
+
     MEASURED 2026-09-03, the owl-role rows carry ``input_is_synthetic=False`` on
     an ``incident-`` lane while the scheduled-job rows carry the flag on a lane
     the prefix check does not recognise — so dropping either signal leaves one of

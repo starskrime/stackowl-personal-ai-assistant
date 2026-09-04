@@ -315,6 +315,62 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  NOTAFACT_2026_09_04_I_built_the_fix_measured_its_consequence_and_reverted_it:
+    map_check: "No mapped item — this settles the open question D12.6 left behind."
+    WHAT_I_SET_OUT_TO_DO: >-
+      D12.6 closed with an explicit unanswered question: whether `messages` and
+      conversation `staged_facts` should agree needs an instrument that reads the
+      WRITER, not one that greps content. Reading turn_persist answers it exactly:
+      the TRANSCRIPT is written for every turn, and a staged fact is written only
+      when the turn is a user utterance — `is_not_a_user_utterance` refuses machine
+      lanes and synthetic input. So the two stores are NOT meant to agree, and
+      `messages` (3,833) is a superset of conversation staged_facts (178).
+    THE_APPARENT_DEFECT: >-
+      29 of those 178 rows (16%) read "User:\n\nAssistant: ..." — an empty user
+      half — carrying the morning brief, job-failure alerts and goal answers. Their
+      source_ref is 72055773, Bakir's own Telegram id, so no machine-lane prefix
+      matches, and they set no synthetic flag. ALL 29 were staged AFTER the filter
+      shipped on 2026-08-25, the latest 2026-09-03T23:00. The predicate's own
+      docstring even anticipated this: "a third would otherwise be a third
+      scattered check." I added the third signal — blank input_text — with 7 tests,
+      mutation-proven, and the full pipeline/memory/sessions suite green at 2,608.
+    THEN_I_MEASURED_THE_CONSEQUENCE_AND_IT_REVERSED_THE_ITEM: >-
+      The harm I was preventing does not exist here. Conversation staged_facts are
+      NOT promoted to durable knowledge — `committed_facts` has held 0 rows since
+      migration 0112 and the path is "dead on both ends" in the tree's own words.
+      Their ONLY reader is `recent_conversation_turns`, i.e. the agent's short-term
+      history. So those 29 rows are precisely the MIRROR that D12.6 credited one
+      loop earlier: they are how the agent knows what it already told him. My fix
+      deleted that. The second caller was never at risk either — `user_goal`
+      returns None for blank text one line below its own call.
+    THE_CONTRADICTION_WAS_THE_FINDING: >-
+      Two of my own conclusions disagreed — D12.6 "the proactive rows are the
+      mirror, and that is good" versus this item's "the proactive rows are
+      pollution, and that is bad" — and the skill says to put the disagreement in
+      the record rather than average it away. Measuring which store the rows FEED
+      settled it in one query. Reverted: the code is back to two signals, the 7
+      tests are deleted, and the repaired test double is reverted with them.
+    WHAT_IS_KEPT: >-
+      The reasoning, in `state.is_not_a_user_utterance`'s docstring, so the next
+      reader who notices those 29 rows does not rebuild the same fix. It records
+      that the signal WAS built, why it was wrong here, and the condition that
+      would make it right: if committed_facts is ever revived, the check belongs at
+      the PROMOTION step, not at staging.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Live-database counts throughout: 178 conversation staged_facts, 29 proactive,
+      all staged after 2026-08-25, committed_facts at 0 rows. The suite is green on
+      the REVERTED tree — 2,601 passed across tests/pipeline, tests/memory and
+      tests/sessions — which is the number that matters, since a green suite on the
+      fix would only have proved the fix consistent with itself. No src/ behaviour
+      changed in the end, so nothing here needs a restart to observe.
   D12_6_2026_09_04_we_DO_mirror_and_the_probe_that_said_otherwise_failed_its_control:
     map_check: "No mapped item matched the phrasing; this IS D12.6, the map's verification Ask."
     THE_ASK_and_the_answer: >-
