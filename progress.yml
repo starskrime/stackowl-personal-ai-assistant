@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  MAPSTALENESS_2026_09_04_the_map_ages_where_WE_work_not_uniformly:
+    map_check: "No mapped item — this asks how far to trust the 51 entries nobody has examined."
+    THE_QUESTION: >-
+      Four map entries were corrected this week because their description of OUR side
+      had aged — D12.3 (a module that does not exist), D12.5 (a gate that was
+      deleted), D12.1 ("in places", when it is four sites), D07.6 ("no claim/reclaim"
+      when the ONE loop has both). Items are SCHEDULED from these lines, and 51 items
+      have zero stages done, so the question is how much of the rest is stale.
+    THE_SCREEN_I_BUILT_AND_DID_NOT_SHIP: >-
+      18 of the never-examined items are filed MISSING. A cheap screen — do the
+      title's words match a module or directory name in src/? — flags 13 of them.
+      Then the top three, checked by hand:
+      D04.3 "Credential pool & rotation" matched credential + pool + rotation, all
+      three, and `scheduler/handlers/credential_rotation.py` is browser SESSION
+      LIVENESS for persistent profiles — re-authing a website login, not an API-key
+      pool for provider failover. D11.4 "Session export & recap" matched `export/`,
+      and the map's own StackOwl line ALREADY SAYS "export/ covers full-archive
+      backup, not per-session export/recap". D17.3 "External security scanner"
+      matched `gateway/scanner.py`, which scans ingress messages. Three of three are
+      name collisions, and one is something the entry had already anticipated.
+      Precision on the strongest signals: zero. Not shipped — an unsound screen is
+      worse than none, the same conclusion as the drop-table tripwire after four
+      attempts.
+    THE_REAL_ANSWER_and_it_is_reassuring: >-
+      The four corrections were NOT evidence of uniform staleness. Every one of them
+      is in an area this programme has actively changed in the last three weeks —
+      channels, delegation, the ONE loop. The map ages WHERE WE WORK, not uniformly,
+      because that is where the tree moves. Testing the strongest candidates outside
+      those areas found the map right each time, and in D11.4's case more careful
+      than my own screen.
+    WHAT_THAT_MEANS_FOR_SCHEDULING: >-
+      Re-measure an entry when the item is picked up — which PROCESS.md already makes
+      every item do at Round 0 — and re-measure the WHOLE domain after a wave changes
+      it, because that is where the correlated staleness lives. No blanket distrust of
+      the remaining 51 is warranted by the evidence.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      51 never-examined items counted from progress.yml stages; 18 of them MISSING;
+      the screen run over all 18 with 13 flagged; three checked by hand against the
+      tree and the map text, all three collisions. No script shipped and no map entry
+      changed — the measurement's outcome was that the premise was weaker than it
+      looked, and recording that is the deliverable.
   D07_6_2026_09_04_the_gap_line_says_no_claim_reclaim_and_the_ONE_loop_has_both:
     map_check: "No mapped item matched the phrasing; this IS D07.6, whose gap line is a claim about OUR side."
     THE_GAP_LINE_IS_FALSE_as_written: >-
