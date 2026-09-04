@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D15_7_2026_09_04_reachable_in_the_wiring_sense_never_exercised_in_the_behavioural_one:
+    map_check: "No mapped item matched the phrasing; this IS D15.7's Ask — confirm they are actually reachable."
+    THE_ASK_PRE_BAKED_THE_RIGHT_QUESTION: >-
+      D15.7 is AHEAD and asks only "confirm they are actually reachable" — the same
+      distinction D07.5 and D15.6 turned on. Answer: reachable in the WIRING sense,
+      never exercised in the BEHAVIOURAL one, and the two halves are named
+      differently from the map.
+    PERCHES_ARE_REACHABLE_AND_UNUSED: >-
+      `scheduler/handlers/perch.py` exists and the `perch` handler is REGISTERED —
+      confirmed by name in the live boot log's list of 38, not inferred from the
+      import. It is user-creatable: cronjob.py sets `_PERCH_HANDLER = "perch"` and
+      routes "a path to the perch handler; a URL to website_watch". But ZERO perch
+      jobs exist in the jobs table. Reachable, never used.
+    INSTINCTS_DO_NOT_EXIST_UNDER_THAT_NAME_but_the_capability_does: >-
+      "instinct" has ZERO references anywhere in src/. The capability the map
+      describes — reactive behavioural triggers — is the EventBus plus
+      `notifications/event_bridge.py`, which carries an explicit ALLOW-LIST of event
+      names permitted to ping the user, with telemetry events deliberately absent so
+      they can never drive a user-facing send. A naming artifact, not a missing
+      capability — checked before claiming absence, because a name miss is not proof.
+    AND_THE_BRIDGE_HAS_NEVER_FIRED: >-
+      `event_bridge.register: subscribed proactive events` appears 664 times across
+      all logs — once per boot — and `event_bridge._on_event` appears ZERO times. The
+      subscription is made on every boot and no event has ever driven a delivery
+      through it. THAT MEASUREMENT IS TRUSTWORTHY BECAUSE THE SUCCESS PATH IS AT
+      INFO: _on_event logs at log.notifications.info, so the absence of the line is
+      evidence rather than a DEBUG blind spot — the distinction this programme paid
+      for when an acceptance check sat open behind a DEBUG line.
+    ALSO_RECORDED_IN_THE_TREE_ALREADY: >-
+      event_bridge's own comment says `perch.file_landed` is "dead v1 vocabulary — no
+      module/emitter exists". So the perch handler runs as a scheduled job and emits
+      no event; the event half of perches was retired in vocabulary but the name
+      survives in the map.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      The perch handler's registration read from the live boot log's handler list
+      (38, `perch` present by name); its user route read at cronjob.py:61 and 472;
+      zero perch jobs by direct query; "instinct" grepped across src/ with zero hits;
+      the event bridge's allow-list read in full; 664 registration lines and 0
+      _on_event lines counted across every log, with the INFO level of the success
+      path confirmed in source first so the zero means something. No code changed.
   D15_6_2026_09_04_five_parts_are_exercised_and_the_sixth_writes_to_nobody:
     map_check: "No mapped item matched the phrasing; this IS D15.6, AHEAD with 'Keep'."
     AHEAD_HOLDS_FOR_FIVE_OF_SIX: >-
@@ -26136,13 +26184,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []

@@ -1068,7 +1068,14 @@ would silence him from 17:00 local.)*
 **Hermes.** No equivalent.
 **StackOwl.** Reactive behavioral triggers and passive context observers feeding constraints back
 into the pipeline.
-**Ask.** Keep. Confirm they are actually reachable.
+**Ask.** CONFIRMED 2026-09-04 — reachable in the WIRING sense, never exercised in the
+BEHAVIOURAL one, and the halves are named differently from this entry. PERCHES: the `perch`
+handler is registered (present by name in the live boot log's 38) and user-creatable — cronjob
+routes a path to it — but ZERO perch jobs exist. INSTINCTS: no such name in `src/`; the capability
+is the EventBus + `notifications/event_bridge.py`, whose allow-list decides which events may ping
+the user. It has been SUBSCRIBED 664 times (once per boot) and `_on_event` has fired ZERO times —
+a trustworthy zero, because that success path logs at INFO. The event half of perches is already
+retired in the tree: `perch.file_landed` is "dead v1 vocabulary — no module/emitter exists".
 
 ---
 
