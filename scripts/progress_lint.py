@@ -162,8 +162,14 @@ def stale_stage_problems(data: dict) -> list[str]:
     return problems
 
 
+#: Stages whose `done` is a CLAIM ABOUT THE WORLD rather than about the tree, so
+#: a reader must be able to check it. `implement: done` is checked by the tests;
+#: these two are not checked by anything but the record they leave.
+_CLAIM_STAGES = ("validate", "document")
+
+
 def unevidenced_validate_problems(data: dict) -> list[str]:
-    """`validate: done` with nothing recorded that a reader could check.
+    """A claim stage marked `done` with nothing recorded that a reader could check.
 
     THE CARDINAL RULE OF THIS PROGRAMME is that a claim in progress.yml must have
     been measured: "an autonomous loop that marks things done is only as
@@ -176,13 +182,21 @@ def unevidenced_validate_problems(data: dict) -> list[str]:
     re-measured against the tree and the logs, which is the point: the claims were
     right and UNVERIFIABLE BY INSPECTION, so the only way to trust them was to do
     the work again. Evidence that has to be re-derived is not a state of record.
+
+    EXTENDED TO `document` ON 2026-09-04, after D03.5 was found reading
+    `document: done` while `doc` was null — the same shape one stage over, which
+    this check could not see because it only ever looked at `validate`. Nothing was
+    actually wrong: measured with THIS function's own evidence set, zero items
+    claim a done stage with nothing behind it. The extension is so that the rule is
+    the same rule for both claim stages rather than one stage's special case.
     """
     problems: list[str] = []
     current = data.get("current") or {}
     keys = [k for k in current if isinstance(k, str)]
     for item in data.get("items", []):
         stages = item.get("stages") or {}
-        if stages.get("validate") != "done":
+        claimed = [s for s in _CLAIM_STAGES if stages.get(s) == "done"]
+        if not claimed:
             continue
         ident = str(item.get("id", ""))
         prefix = ident.replace(".", "_")
@@ -192,9 +206,9 @@ def unevidenced_validate_problems(data: dict) -> list[str]:
         ):
             continue
         problems.append(
-            f"{ident}: 'validate: done' with no evidence — no doc, no current "
-            f"record, no validate_result, changes, notes or decisions. A claim "
-            f"nobody can check is not a state of record."
+            f"{ident}: {' and '.join(f'{s}: done' for s in claimed)} with no "
+            f"evidence — no doc, no current record, no validate_result, changes, "
+            f"notes or decisions. A claim nobody can check is not a state of record."
         )
     return problems
 

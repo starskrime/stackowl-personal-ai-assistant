@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CLAIMSTAGE_2026_09_04_three_predicates_and_the_narrowest_two_were_mine:
+    map_check: "No mapped item — a hardening of the evidence guard, found by working D03.5."
+    HOW_IT_SURFACED: >-
+      D03.5 read `document: done` while its `doc` was null — a claim with nothing
+      behind it, and exactly the shape the evidence guard was built for two loops
+      earlier. The guard could not see it because it only ever looked at
+      `validate`. Same rule, one stage over.
+    THE_MEASUREMENT_CONVERGED_DOWNWARD_and_that_is_the_finding: >-
+      Three predicates, in the order I tried them. "document: done with no doc
+      path" found 15 items. Adding "and no current record" found 10. Using the
+      guard's OWN evidence set — doc, current record, validate_result, changes,
+      notes, decisions — found ZERO. D09.7 carries 5 `changes`, D12.2 carries 5,
+      D02.2 carries 2 `decisions`; all three have their own `docs(Dxx.y)` commits.
+      The first two predicates were NARROWER THAN THE RULE ALREADY IN FORCE, and
+      either would have condemned ten items that carry evidence in a field the
+      predicate forgot to look at. Third time in this session that an over-narrow
+      predicate produced a confident wrong number, and the third time a control —
+      here, simply reusing the existing function — caught it before it was written
+      down as a finding.
+    SO_THIS_IS_A_HARDENING_NOT_A_FIX: >-
+      There is no unevidenced-document problem in the file. What ships is that
+      `validate` and `document` are now ONE rule rather than one stage's special
+      case: _CLAIM_STAGES = ("validate", "document"). `implement` is deliberately
+      excluded — it is checked by the tests, while these two assert something about
+      the world that nothing else verifies.
+    A_TEST_FIXTURE_EXPIRED_and_it_failed_correctly: >-
+      test_an_item_still_being_validated_is_not_asked_for_evidence_yet built its
+      fixture from dict(_ALL_DONE), harmless while only `validate` was a claim
+      stage. The moment `document` joined, that fixture asserted a SECOND
+      unevidenced claim and the test failed — the guard was right and the fixture's
+      assumption had expired. Corrected in place with the reason, the same drift a
+      test double suffers when the thing it doubles grows a field.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      26 linter tests, including both claim stages parameterised, an explicit pin
+      that `implement: done` is NOT a claim stage, and a test that runs the guard
+      over the LIVE progress.yml and asserts zero offenders — the measurement that
+      makes this a hardening rather than a repair. MUTATION-PROVEN: reverting
+      _CLAIM_STAGES to ("validate",) turns the document case red. tests/audit: 40
+      passed. No src/ change, so nothing needs a restart.
   D03_5_2026_09_04_the_probe_measured_262144_and_the_outage_proved_the_floor:
     map_check: "No mapped item matched the phrasing; this IS D03.5, whose validate was open and whose document did not exist."
     VALIDATE_CLOSES_ON_BOTH_PATHS: >-

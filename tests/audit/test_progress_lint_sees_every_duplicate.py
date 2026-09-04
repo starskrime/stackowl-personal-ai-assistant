@@ -241,8 +241,75 @@ def test_a_current_record_counts_as_evidence() -> None:
 
 
 def test_an_item_still_being_validated_is_not_asked_for_evidence_yet() -> None:
-    """Vacuity control: the check must only speak about CLAIMS, not open work."""
-    stages = dict(_ALL_DONE); stages["validate"] = "partial"
+    """Vacuity control: the check must only speak about CLAIMS, not open work.
+
+    `document` is set to not_started here deliberately. When this test was
+    written only `validate` was a claim stage, so `dict(_ALL_DONE)` was harmless;
+    once `document` joined on 2026-09-04 that fixture asserted a SECOND
+    unevidenced claim and the test failed — correctly. The guard was right and the
+    fixture's assumption had expired, which is the same drift a test double
+    suffers when the thing it doubles grows a field.
+    """
+    stages = dict(_ALL_DONE)
+    stages["validate"] = "partial"
+    stages["document"] = "not_started"
     assert progress_lint.unevidenced_validate_problems(
         {"current": {}, "items": [{"id": "D03.4", "stages": stages}]}
     ) == []
+
+
+# --------------------------------------------------------------------------
+# The claim rule is the SAME rule for both claim stages. Extended 2026-09-04
+# after D03.5 was found reading `document: done` with `doc: null` — the shape
+# the validate-only check could not see.
+# --------------------------------------------------------------------------
+
+
+def _claiming(stage: str, **fields: object) -> dict:
+    stages = dict.fromkeys(_ALL_DONE, "not_started")
+    stages[stage] = "done"
+    item = {"id": "D03.5", "stages": stages}
+    item.update(fields)
+    return {"current": {}, "items": [item]}
+
+
+@pytest.mark.parametrize("stage", ["validate", "document"])
+def test_either_claim_stage_needs_evidence(stage: str) -> None:
+    problems = progress_lint.unevidenced_validate_problems(_claiming(stage))
+    assert len(problems) == 1
+    assert stage in problems[0]
+
+
+@pytest.mark.parametrize("stage", ["validate", "document"])
+def test_either_claim_stage_is_satisfied_by_a_doc(stage: str) -> None:
+    assert progress_lint.unevidenced_validate_problems(
+        _claiming(stage, doc="docs/reference-mapping/designs/D03.5.md")
+    ) == []
+
+
+def test_implement_done_is_NOT_a_claim_stage() -> None:
+    """Deliberately excluded: `implement: done` is checked by the tests. Only
+    validate and document assert something about the world that nothing else
+    verifies, which is why only those two must leave a record."""
+    stages = dict.fromkeys(_ALL_DONE, "not_started")
+    stages["implement"] = "done"
+    data = {"current": {}, "items": [{"id": "D03.5", "stages": stages}]}
+    assert progress_lint.unevidenced_validate_problems(data) == []
+
+
+def test_the_live_file_has_no_unevidenced_claim() -> None:
+    """The measurement that made this extension a hardening rather than a fix.
+
+    Three predicates were tried while investigating: "document: done with no doc
+    path" found 15, "…and no current record" found 10, and the function's OWN
+    evidence set — doc, record, validate_result, changes, notes, decisions —
+    found ZERO. The first two were narrower than the rule already in force, and
+    each would have condemned items that carry evidence in a field it forgot to
+    look at.
+    """
+    import yaml
+
+    data = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "progress.yml").read_text()
+    )
+    assert progress_lint.unevidenced_validate_problems(data) == []
