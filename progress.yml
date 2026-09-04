@@ -356,7 +356,7 @@ current:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: done
     validate_evidence: >-
       3 tests including a vacuity control that `jobs` stays HOT — reclassifying it
@@ -365,9 +365,14 @@ current:
       which is why the wrong one was silent rather than unmeasurable.
       MUTATION-PROVEN: restoring `created_at` turns the target test red. tests/health
       + tests/scheduler: 613 passed. The live cadence_report goes from
-      silent=[jobs] to silent=[]. PARTIAL until a restart puts it in the running
-      core; the closing query is zero `UNHEALTHY subsystems detected` lines in a
-      boot that has run past a day-old job row.
+      silent=[jobs] to silent=[].
+      CLOSED LIVE: restarted on ./start.sh (commit 012b1bcb), phase 6 with ZERO
+      errors, and the 5-minute sweep then ran and reported `[health]
+      store_cadence: ok — no store past its declared cadence` {measured: 27,
+      empty: 2, unreadable: 0}, with ZERO `UNHEALTHY subsystems detected` lines.
+      I WAITED FOR THE SWEEP rather than reading the absence of an alarm 60 seconds
+      after boot: it had not run yet at that point, so "no UNHEALTHY line" would
+      have been a claim about a check that never fired.
   D07_1_2026_09_04_parity_confirmed_and_the_raw_grep_lied_twice_on_the_way:
     map_check: "No mapped item matched the phrasing; this IS D07.1, whose Ask is 'None structurally'."
     THE_ITEM: >-
