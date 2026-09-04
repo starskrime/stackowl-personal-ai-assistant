@@ -431,7 +431,14 @@ process-local — for work that must survive restart, use `cronjob` or `terminal
 notify_on_complete=True)` instead. They are explicit about the boundary.
 **StackOwl.** `pipeline/durable/` gives durable tasks and recovery — arguably stronger — but the
 delegation/durability boundary is not stated.
-**Ask.** State our equivalent rule explicitly. Which of our async paths survive a core restart?
+**Ask.** ANSWERED 2026-09-04 — see `designs/D07.3.md`. THE RULE: a delegation is durable IFF
+its parent turn is a durable task; durability is INHERITED, never declared. Durable tasks,
+their delegated children, pending messages, scheduler jobs, owl schedules and processes all
+recover at boot with counts; a delegation from a non-durable turn does not. Ours is stronger
+than the map implies — a durable child is RE-ATTACHED by a deterministic id rather than
+restarted. The defect found was an asymmetry: "durable" logged at INFO while "process-local,
+will be lost on restart" logged at DEBUG, so the only outcome worth warning about was the
+invisible one. Now INFO.
 
 ### D07.4 · Mixture-of-agents — `PARITY`
 **Hermes.** `/moa` marks one turn as MoA-enabled; `agent/moa_loop.py` gathers reference-model context

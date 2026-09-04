@@ -117,8 +117,15 @@ async def _resolve_durable_child_scope(
     rctx = get_active()
     db = get_services().db_pool
     if parent_task_id is None or rctx is None or db is None:
-        log.tool.debug(
-            "delegate_task: non-durable parent — fail-open to today's path",
+        # INFO, and its sibling below has always been INFO. The ASYMMETRY was the
+        # defect: "this delegation is durable" was visible while "this delegation
+        # is PROCESS-LOCAL and will be lost on a restart" was not, so the only
+        # outcome an operator needs warning about was the invisible one. Zero of
+        # these lines exist in any log, which is what DEBUG means in production.
+        # Volume is small — delegation is 1.8% of tool-bearing turns.
+        log.tool.info(
+            "delegate_task: non-durable parent — this delegation is PROCESS-LOCAL "
+            "and will not survive a restart",
             extra={"_fields": {
                 "has_parent_task": parent_task_id is not None,
                 "has_react_ctx": rctx is not None, "has_db": db is not None,
