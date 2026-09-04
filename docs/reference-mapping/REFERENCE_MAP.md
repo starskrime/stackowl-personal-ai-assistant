@@ -699,6 +699,23 @@ templates in `templates/`; tests at `tests/skills/test_<skill>_skill.py`.
 explicitly). Heavy-dep or niche skills belong in the second directory. This is Law 2 for skills.
 **StackOwl.** One flat set.
 **Ask.** Do we have enough skills for this split to matter yet?
+**ANSWERED 2026-09-04 — NO, and measuring it showed the premise is wrong in a way that
+matters more.** 39 registered skills (14 builtin, 25 learned) is nowhere near the reference's
+69/111. But the 25 learned skills are roughly EIGHT concepts, each confirmed by reading its
+description rather than inferred from its name: a SEVEN-strong VERIFIER family, three
+GATHERERs, two OWLS, and `incident_owl_build` / `incident_owl_build_stop` with BYTE-IDENTICAL
+descriptions. Splitting a catalogue whose problem is redundancy yields a redundant active set
+and a redundant optional set — the catalogue does not need dividing, it needs to stop growing
+sideways. ROOT CAUSE: all three rungs of the mint-time duplicate gate are LEXICAL
+(`parent_traces`, `base_name`, `canonical_key`), and skills are the artifact where two
+different sets of words describe one capability — `verify_rca_evidence` and
+`evidence-brief-verifier` share no tokens, so no rearrangement makes them equal. Each past fix
+extended the lexical family instead of changing the KIND of question. `store.semantic_recall`
+was already built and 39 of 39 skills already carried an embedding — built but not wired. A
+third rung now feeds the SAME reinforce action at a MEASURED threshold (0.90: catches 6 of 26
+known duplicate pairs, flags zero non-duplicates, over all 741 live pairs). Replayed over the
+live corpus it catches 10 of 25. See `designs/D10.3.md`. The split itself stays MISSING and
+unbuilt — revisit when the corpus is concepts, not copies.
 
 ### D10.4 · Skills Hub — `MISSING`
 **Hermes.** `tools/skills_hub.py` — a `SkillSource` ABC over GitHub repos and the bundled optional set,

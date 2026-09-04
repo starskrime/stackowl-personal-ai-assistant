@@ -315,6 +315,41 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D10_3_2026_09_04_the_split_is_the_wrong_instrument_the_catalogue_is_copies_not_concepts:
+    map_check: "D10.3 — Active vs. optional skills (MISSING, P2, wave 8). The Ask is a counting question."
+    THE_ANSWER_IS_NO_AND_THE_PREMISE_IS_WRONG: >-
+      39 registered skills (14 builtin, 25 learned) against the reference's 69/111 — nowhere
+      near a split. But the 25 learned skills are roughly EIGHT concepts, each confirmed by
+      READING its description: VERIFIER x7, GATHERER x3, OWLS x2, and incident_owl_build /
+      incident_owl_build_stop with BYTE-IDENTICAL descriptions. Splitting a catalogue whose
+      problem is redundancy yields a redundant active set and a redundant optional set.
+    WHY_NOT_WHAT: >-
+      All three rungs of the mint-time duplicate gate are LEXICAL — parent_traces, base_name,
+      canonical_key — and skills are exactly the artifact where two different sets of words
+      describe one capability. verify_rca_evidence and evidence-brief-verifier share NO
+      tokens. A ladder, not a bug: base_name missed rearrangements so canonical_key was added
+      (ESC-52), canonical_key misses synonyms, and a fourth lexical rule would be blind to the
+      fifth family. Reaches every "have I already got one of these?" decided by name —
+      owl-name-collision-check is itself a learned skill ABOUT doing this for owls.
+    BUILT_BUT_NOT_WIRED: >-
+      store.semantic_recall already existed and 39 of 39 skills already carried an embedding.
+      A third rung now feeds the SAME reinforce action — not a second gate.
+    THRESHOLD_MEASURED_NOT_CHOSEN: >-
+      Over all 741 live pairs: confirmed duplicates 0.828-0.952, everything else max 0.875.
+      They OVERLAP, so 0.90 is set for precision — 6 of 26 known dup pairs, ZERO false flags.
+      A missed duplicate is visible and mergeable; a wrongly suppressed skill never existed
+      and nothing reports it.
+    I_READ_THIS_DATA_WRONG_FIRST: >-
+      Labelling only the 7 skills I had read made the top pair (0.952) look like a false
+      positive above every confirmed duplicate, which would have killed the fix as unsound.
+      Reading those pairs showed they were duplicates I had not labelled. My labels were the
+      error, not the metric.
+    REPLAYED_ON_THE_LIVE_CORPUS: "10 of 25 learned skills have a twin the gate catches at 0.90."
+    VALIDATE_IS_PARTIAL: >-
+      The gate cannot fire without a synthesis run proposing a lesson we already hold.
+      Closing query - grep 'ALREADY KNOWN' | grep '"matched_on": "semantic"'.
+    ESCALATED: "ESC-128 — merge the ten duplicates already on disk, or leave them. A merge is a deletion."
+    NEXT: "D10.4 · Skills Hub (MISSING, P2, wave 8, order 63)."
   D10_1_2026_09_04_parity_held_on_the_file_and_not_on_the_place:
     map_check: "D10.1 — Skill format (PARITY, wave 8). Opens wave 8; wave 7 closed at 37ee9126."
     THE_FORMAT_IS_TWO_CONTRACTS_AND_ONLY_ONE_WAS_CHECKED: >-
@@ -9515,6 +9550,40 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_128_ten_learned_skills_are_copies_of_each_other_merge_or_leave:
+      premise_check: |
+        uv run python -c "
+        import sqlite3,os,json
+        import numpy as np
+        con=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True)
+        def dec(b):
+            try: return np.array(json.loads(bytes(b).decode()),dtype=np.float32)
+            except Exception: return np.frombuffer(b,dtype='<f4')
+        E={n:(lambda v: v/(np.linalg.norm(v) or 1))(dec(b)) for n,b in con.execute(
+            \"select name,embedding from skills where embedding is not null and source='learned'\")}
+        n=sum(1 for a in E if any(float(E[a]@E[b])>=0.90 for b in E if b!=a))
+        print(f'HOLDS {n} still twinned' if n else 'EXPIRED corpus deduplicated')
+        "
+      question: >-
+        Ten of the 25 learned skills have a semantic twin at >=0.90 — a seven-strong
+        VERIFIER family, three GATHERERs, and `incident_owl_build` /
+        `incident_owl_build_stop` whose descriptions are byte-identical. D10.3 stopped
+        the NEXT one being minted; it did not touch the ten already on disk. Merge them
+        (keep one per family, archive the rest), or leave them?
+      why_evidence_cannot_settle_it: >-
+        Merging is a DELETION — this skill requires a stop-and-brief for any data
+        deletion, and archiving a skill removes it from the catalogue the model selects
+        from, which is user-facing behaviour. Measurement can say which are twins; it
+        cannot say which member of a family is the one worth keeping, and picking wrong
+        silently degrades every future RCA that would have selected the better copy.
+      panel_recommendation: >-
+        Merge, keeping the member with the highest n_executions in each family and
+        archiving rather than deleting the rest, so a wrong choice is reversible. The
+        catalogue the model reads is ordered by usage (ESC-44), so seven copies of one
+        verifier do not just waste space — they split that family's usage signal seven
+        ways and push the whole concept down the list.
+      blocked_until_answered: >-
+        Nothing. The gate ships regardless; only the existing ten wait.
     ESC_127_a_real_skill_has_been_dark_for_69_days_where_does_it_go:
       premise_check: |
         uv run python -c "
@@ -24405,19 +24474,62 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial   # the gate has not yet fired in production — needs a synthesis run
+      document:   done
+    doc: "docs/reference-mapping/designs/D10.3.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "THE SPLIT IS NOT BUILT and stays MISSING. 39 skills is nowhere near the reference's
+         69/111, and splitting a catalogue whose problem is REDUNDANCY would produce a
+         redundant active set and a redundant optional set. Revisit when the corpus is
+         concepts rather than copies."
+      - "The semantic rung feeds the EXISTING reinforce-and-audit action, not a new gate —
+         the rule against a second engine applies inside the learning loop too."
+      - "Threshold 0.90 is set for PRECISION, not recall. The two errors are not symmetric:
+         a missed duplicate sits in the catalogue and can be merged; a wrongly suppressed
+         skill is a capability that never existed and nothing reports it."
+      - "Narrowed to the LEARNED corpus, the same population the lexical rungs read. A
+         proposed lesson resembling a BUILTIN skill has nothing to reinforce."
+    changes:
+      - "src/stackowl/skills/synthesizer.py — _semantic_twin() added as a third rung on
+         _reinforce_if_known; _SEMANTIC_TWIN_MIN=0.90 with its measurement in the comment;
+         the INFO line now carries matched_on and similarity; the call site builds the same
+         text shape assembly._embed_text() stores, or query and corpus are on two scales."
+      - "tests/skills/test_a_duplicate_lesson_the_name_gates_cannot_see.py — 5 tests: the
+         no-shared-tokens twin is caught and named at INFO; the control still mints; the
+         lexical rungs still work with NO embedder wired; a caller with no embed_text never
+         reaches the embedder; the threshold sits above the measured non-duplicate ceiling.
+         Mutation-proven twice (disabling the rung, and raising the threshold to 0.99)."
+      - "docs/reference-mapping/designs/D10.3.md — Verification section RUN, check 3 against
+         the live corpus rather than a fixture."
+    notes: >-
+      THE ASK WAS "do we have enough skills for this split to matter yet?" — answered NO, and
+      the measurement showed the premise is wrong in a way that matters more. 39 registered
+      skills (14 builtin, 25 learned); the 25 learned are roughly EIGHT concepts, each
+      confirmed by READING its description and when_to_use rather than inferred from its
+      name: VERIFIER x7, GATHERER x3, OWLS x2, and incident_owl_build /
+      incident_owl_build_stop with BYTE-IDENTICAL descriptions. ROOT CAUSE: all three rungs
+      of the mint-time gate are LEXICAL, and skills are exactly the artifact where two
+      different sets of words describe one capability. A ladder, not a bug — base_name missed
+      rearrangements so canonical_key was added (ESC-52); canonical_key misses synonyms, and
+      a fourth lexical rule would be blind to the fifth family. semantic_recall was already
+      built and 39 of 39 skills already carried an embedding: built but not wired.
+      THRESHOLD MEASURED over all 741 live pairs — confirmed duplicates 0.828-0.952,
+      everything else max 0.875. The distributions OVERLAP, so no threshold separates them
+      and 0.90 is chosen for precision: 6 of 26 known dup pairs, ZERO false flags (0.85 would
+      catch 21 and flag 5). A FIRST READING OF THIS DATA WAS WRONG and is recorded because it
+      nearly stopped the item: labelling only the 7 skills I had read made the top "other"
+      pair (0.952) look like a false positive above every confirmed duplicate. Reading those
+      pairs showed they were duplicates I had not labelled — my labels were the error, not
+      the metric. REPLAYED over the live corpus at 0.90: 10 of 25 learned skills have a twin
+      the gate would catch, every pair verified by reading both descriptions.
+      VALIDATE IS PARTIAL: the gate cannot fire without a synthesis run proposing a lesson we
+      already hold. Closing query — grep 'ALREADY KNOWN' | grep '"matched_on": "semantic"'.
   - id: D10.4
     title: "Skills Hub"
     domain: D10

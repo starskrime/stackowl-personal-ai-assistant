@@ -73,6 +73,18 @@ _CONSENT_TOOL_NAME_SCHEDULED = "skill_synthesizer_scheduled"
 _MIN_CLUSTER_SIZE_DEFAULT = 3
 _MIN_MEAN_QUALITY_DEFAULT = 0.75
 _LOOKBACK_DAYS_DEFAULT = 14
+#: Cosine at or above which a proposed lesson is treated as one we already hold.
+#:
+#: MEASURED, not chosen. Over all 741 pairs of the live corpus on 2026-09-04,
+#: confirmed duplicate pairs score 0.828-0.952 and every non-duplicate pair tops
+#: out at 0.875. The distributions OVERLAP, so no threshold separates them
+#: cleanly and this one is set for precision rather than recall: at 0.90 it
+#: catches 6 of 26 known duplicate pairs and flags zero non-duplicates.
+#:
+#: Deliberately conservative, because the two errors are not symmetric. A missed
+#: duplicate is visible in the catalogue and can be merged later. A wrongly
+#: suppressed skill is a capability that never existed, and nothing reports it.
+_SEMANTIC_TWIN_MIN = 0.90
 _REFINE_RANGE: tuple[float, float] = (0.5, 0.7)
 _SECONDS_PER_DAY = 86_400
 _SAMPLE_LIMIT_PER_CLUSTER = 5  # how many trace samples to include in the LLM prompt
@@ -459,8 +471,49 @@ class SkillSynthesizer:
         learned = await self._skills.list_for_source("learned")
         return any(set(sk.parent_traces) & traces for sk in learned)
 
+    async def _semantic_twin(
+        self, embed_text: str, existing: list[Skill],
+    ) -> tuple[Skill | None, float | None]:
+        """The nearest LEARNED skill above ``_SEMANTIC_TWIN_MIN``, or ``(None, None)``.
+
+        Recall runs through ``store.semantic_recall`` rather than a cosine written
+        here — one copy of that arithmetic, not two. Results are then narrowed to
+        the learned corpus, which is the same population the lexical rungs read:
+        a proposed lesson that resembles a BUILTIN skill is a different question
+        (nothing to reinforce, no audit row to write) and is deliberately out of
+        scope for this gate.
+
+        Never raises. An embedder that is absent, slow or broken must cost us a
+        DEDUPE, never a synthesis run — the same contract as the caller's.
+        """
+        if self._embedding_registry is None:
+            return None, None
+        try:
+            provider = self._embedding_registry.get()
+            vectors = await provider.embed([embed_text])
+            if not vectors or not vectors[0]:
+                return None, None
+            learned = {sk.name for sk in existing}
+            hits = await self._skills.semantic_recall(
+                list(vectors[0]), limit=5, min_similarity=_SEMANTIC_TWIN_MIN,
+            )
+            for sk, score in hits:
+                if sk.name in learned:
+                    return sk, round(float(score), 4)
+            return None, None
+        except Exception as exc:  # B5 — a dedupe rung may never cost a synthesis.
+            log.skills.warning(
+                "[synth] _semantic_twin: recall failed — falling back to the name rungs",
+                exc_info=exc,
+            )
+            return None, None
+
     async def _reinforce_if_known(
-        self, proposed_name: str, cluster: ToolSequenceCluster,
+        self,
+        proposed_name: str,
+        cluster: ToolSequenceCluster,
+        *,
+        embed_text: str | None = None,
     ) -> bool:
         """True when this lesson is already held — reinforce it and mint nothing.
 
@@ -505,6 +558,25 @@ class SkillSynthesizer:
                 by_base.get(_base_name(proposed_name))
                 or (by_canon.get(proposed_canon) if proposed_canon else None)
             )
+            matched_on = "base" if by_base.get(_base_name(proposed_name)) else "canonical"
+            similarity: float | None = None
+            # A THIRD RUNG, AND A DIFFERENT KIND OF QUESTION. Both keys above are
+            # LEXICAL, and skills are exactly the artifact where two different sets
+            # of words describe one capability: `verify_rca_evidence` and
+            # `evidence-brief-verifier` share no tokens, so no rearrangement of
+            # their letters will ever make them equal. Measured 2026-09-04, the 25
+            # learned skills are about EIGHT concepts — a seven-strong VERIFIER
+            # family, three GATHERERs, and `incident_owl_build` /
+            # `incident_owl_build_stop` with byte-identical descriptions.
+            #
+            # This is the third rung of one ladder: base_name missed
+            # rearrangements, canonical_key (ESC-52) was added, and canonical_key
+            # misses synonyms and supersets. Extending the lexical family again
+            # would have been the fourth. The instrument for the other kind of
+            # question was already built and populated and simply unused.
+            if match is None and embed_text:
+                match, similarity = await self._semantic_twin(embed_text, existing)
+                matched_on = "semantic"
             if match is None:
                 return False
             # REVIVE, BUT DO NOT CLAIM A USE. This called increment_n_executions,
@@ -540,9 +612,8 @@ class SkillSynthesizer:
                 extra={"_fields": {
                     "proposed": proposed_name,
                     "reinforced": match.name,
-                    "matched_on": (
-                        "base" if by_base.get(_base_name(proposed_name)) else "canonical"
-                    ),
+                    "matched_on": matched_on,
+                    "similarity": similarity,
                     "sequence": list(cluster.sequence),
                     "cluster_size": cluster.size,
                 }},
@@ -597,7 +668,23 @@ class SkillSynthesizer:
         # is confirmation, and confirmation should STRENGTHEN one skill rather
         # than produce a twenty-second copy of it — the same open-loop failure
         # ADR-19 describes, here inside the improvement loop itself.
-        if await self._reinforce_if_known(proposed_name, cluster):
+        # The SAME text shape assembly._embed_text() stores, or the query and the
+        # corpus are measured on two different scales and the threshold above
+        # means nothing. Body included for the same reason it is there: it is
+        # what the stored vectors cover.
+        from stackowl.skills.assembly import _BODY_EMBED_BYTES  # lazy: cyclic import
+
+        proposed_embed_text = "\n".join(
+            p for p in (
+                proposed_name,
+                parsed["description"],
+                parsed.get("when_to_use") or "",
+                (parsed.get("body") or "")[:_BODY_EMBED_BYTES],
+            ) if p
+        )
+        if await self._reinforce_if_known(
+            proposed_name, cluster, embed_text=proposed_embed_text,
+        ):
             return False
 
         # Pick a not-yet-taken directory name. Just a path decision (no I/O
