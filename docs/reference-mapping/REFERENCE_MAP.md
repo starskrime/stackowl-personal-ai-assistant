@@ -1041,7 +1041,14 @@ subgoals succeeded — but FINISHED, which is a different thing. Fold-or-keep is
 **Hermes.** `terminal(background=true, notify_on_complete=true)` → the gateway watches for completion
 and triggers a **new agent turn**. Verbosity configurable: `all` / `result` / `error` / `off`.
 **StackOwl.** `process` + `wait` tools + `task_liveness_sweep`; completion does not itself trigger a turn.
-**Ask.** Should a finished background job wake the agent, or just notify the user?
+**Ask.** ANSWERED 2026-09-04 by evidence, not escalated — NOTIFY THE USER, do not wake the agent.
+The map's claim holds (the only completion callbacks are the durable per-iteration hook and the
+queued-turn drain). Usage narrows it: `process` ran in 14 of 4,155 tool-bearing turns and `wait`
+in 6, so the agent already handles completion explicitly in six of fourteen. Three recorded
+reasons against a wake: the destination rule is satisfied by a notification; an unprompted turn
+spends the PLATFORM's budget, and this tree already billed 3.9M tokens over 137 rounds on one
+autonomous recovery; and `wait` already exists for when the agent needs the result. **What would
+change it:** measuring that those eight fire-and-forget turns LOSE their result entirely.
 
 ### D15.6 · Proactive outreach — `AHEAD`
 **Hermes.** Cron delivery only.
