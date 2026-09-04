@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D12_6_2026_09_04_we_DO_mirror_and_the_probe_that_said_otherwise_failed_its_control:
+    map_check: "No mapped item matched the phrasing; this IS D12.6, the map's verification Ask."
+    THE_ASK_and_the_answer: >-
+      D12.6 asks: "Ours may be ahead (outbox + ledger). Confirm we mirror cross-channel
+      sends." ANSWERED: YES, we mirror. A proactive delivery reaches the agent's
+      history, which is what the reference's gateway/mirror.py exists to provide.
+      PARITY confirmed, no change needed.
+    THE_MEASUREMENT: >-
+      The turn's history is NOT the `messages` transcript — `_gather_history` calls
+      `recent_conversation_turns`, which reads `staged_facts` where
+      source_type='conversation'. 178 such rows exist and 29 of them (16%) are
+      PROACTIVE: stored as "User:\n\nAssistant: ..." with an empty user half. Their
+      contents are the morning brief, job-failure alerts and goal answers — exactly
+      the cross-channel sends the Ask is about. 6,886 notifications have been
+      delivered (4,103 canary, 1,213 goal_answer, 1,139 operator_health, 266
+      job_failed, 65 check_in, 12 morning_brief).
+    THE_EMPTY_USER_HALF_IS_HANDLED_ON_PURPOSE: >-
+      I expected the phantom "User:" prefix to reach the model and it does not.
+      `_parse_turns_to_messages` skips empty halves, and `merge_consecutive_roles`
+      then collapses the consecutive assistant turns that skipping produces — with a
+      recorded refusal to synthesise a placeholder user turn, because "a fabricated
+      turn in the history is a worse defect than the one it repairs". Reading the
+      READER is what settled it; the writer alone looked like a defect.
+    WHAT_I_COULD_NOT_ESTABLISH_and_the_control_that_stopped_me: >-
+      I tried to show that proactive text reaches HISTORY but never the TRANSCRIPT,
+      which would make it invisible to session_search. A first text probe said 16 of
+      29 were present; a stricter probe said 0 of 29. Both were wrong: the CONTROL —
+      the same probe over ordinary turns, which are certainly in the transcript —
+      returned 1%. An instrument that cannot find normal turns cannot prove anything
+      about proactive ones. NO GAP IS CLAIMED HERE. What is established is only that
+      `messages` (3,833 rows) and conversation `staged_facts` (178 rows) are stores of
+      different granularity, both written by turn_persist; whether they should agree
+      needs an instrument that reads the writer, not one that greps content.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      Live-database counts throughout: 178 conversation staged_facts, 29 proactive by
+      an empty-user-half regex, 6,886 delivered notifications by category, 3,833
+      messages / 1,717 assistant. The reader path was read end to end —
+      classify._gather_history -> recent_conversation_turns -> staged_facts — rather
+      than assumed from the writer. No code changed; nothing here needs a restart.
   MAPFRESH_2026_09_04_the_scheduling_input_describes_a_tree_that_moved: 
     map_check: "No mapped item — this is about the map ITSELF, which is the input every item is chosen from."
     HOW_IT_SURFACED: >-
@@ -24379,13 +24426,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []

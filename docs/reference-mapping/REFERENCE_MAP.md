@@ -818,7 +818,12 @@ record, not a shared store, and is unconfigured here.
 `gateway/mirror.py` appends a delivery-mirror record to the target session so the receiving agent has
 context — and works standalone from CLI/cron/gateway.
 **StackOwl.** `NotificationRouter` + `ProactiveDeliverer` + delivery ledger + undelivered outbox.
-**Ask.** Ours may be ahead (outbox + ledger). Confirm we mirror cross-channel sends.
+**Ask.** ANSWERED 2026-09-04 — we DO mirror, so this is PARITY with no work owed. The
+agent's history is not the `messages` transcript: `_gather_history` reads `staged_facts`
+where `source_type='conversation'`, and 29 of those 178 rows (16%) are proactive sends —
+the morning brief, job-failure alerts and goal answers — stored with an empty user half.
+The reader handles that half deliberately (`_parse_turns_to_messages` skips it,
+`merge_consecutive_roles` collapses the run) rather than synthesising a user turn.
 
 ### D12.7 · Pairing & authorization — `PARTIAL`
 **Hermes.** `gateway/pairing.py` (DM pairing), `slash_access.py`, `authz_mixin.py`, per-adapter
