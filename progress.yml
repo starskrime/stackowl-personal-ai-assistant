@@ -315,6 +315,60 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  MAPFRESH_2026_09_04_the_scheduling_input_describes_a_tree_that_moved: 
+    map_check: "No mapped item — this is about the map ITSELF, which is the input every item is chosen from."
+    HOW_IT_SURFACED: >-
+      Two map entries were caught stale by accident this week, each while working the
+      item it described: D12.3 named a per-channel `memory_callbacks.py` that does not
+      exist, and D12.5 described a `serialize_prior` gate that had been deleted. Both
+      were found only because the item happened to touch that code. 69 items remain,
+      all scheduled from these descriptions, so the question is how many more.
+    THE_MEASUREMENT: >-
+      110 entries, 105 with a "**StackOwl.**" line, 94 backticked symbols in them.
+      THREE entries genuinely claimed something that no longer exists: D02.3 and D12.5
+      (`serialize_prior`) and D12.3 (`memory_callbacks.py`). `CommandDef`, `cli_only`
+      and `gateway_only` are absent too, but D14.1 SAYS they "are not present" — a
+      correct statement, not a stale one. All three stale entries are corrected in
+      this change, and D12.5's Ask now carries its answer.
+    MY_INSTRUMENT_WAS_WRONG_TWICE_BEFORE_IT_WAS_RIGHT: >-
+      First version used `grep -w` for existence and found 2 entries — it MISSED the
+      one staleness I already knew about, because `serialize_prior` still appears in
+      comments explaining that it is gone. A word-grep cannot tell code from prose
+      about code. Second version required a def/class and found 16 — but module names
+      (`inflight_router`, `git_tool`, `tool_presets`) never appear as a def, SQL
+      tables live in migrations, and tool names live as strings, so most of those 16
+      were false. Only the third version, which resolves modules, tables and string
+      names separately, matched what hand-checking found.
+    THE_LAST_FALSE_POSITIVE_WAS_THE_INTERESTING_ONE: >-
+      With the checker correct, it still flagged all five entries INCLUDING the three
+      I had just fixed — because fixing a stale entry KEEPS the name and adds a
+      denial ("the `serialize_prior` gate is GONE"). A report that fires on every
+      entry the moment it is corrected is 100% false positives, which is how a report
+      becomes the thing nobody reads. It now skips a token whose own sentence denies
+      it, which is a HEURISTIC OVER PROSE and is why this ships as a report and never
+      as a gate — the same conclusion, for the same reason, as the drop-table
+      tripwire that was deleted after four attempts.
+    fix: >-
+      Three map entries corrected against the tree. scripts/map_freshness.py ships as
+      a TRIAGE REPORT (always exit 0) with its three limits stated in the file: it
+      sees only backticked tokens, its denial detection is keyword-based, and D11.2's
+      SQL keyword `LIKE` is a known false positive left in place rather than
+      special-cased, because a keyword list grows quietly and then must be maintained.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      The report goes from 5 entries to 1 across the fix, and the 1 remaining is the
+      documented SQL-keyword false positive. 5 tests, including a vacuity control that
+      an absent name IS detectable, a regression pin that modules/SQL tables are not
+      "absent" (the exact error of my second version), and a MUTATION proof: disabling
+      the denial skip turns the denial test red. Restored from a file copy and re-run
+      green. No src/ behaviour changed, so nothing here needs a restart to observe.
   D12_5_2026_09_04_the_lease_is_keyed_correctly_and_the_map_described_a_gate_that_is_GONE:
     map_check: "No mapped item matched the phrasing; this IS D12.5, the map's own verification Ask."
     THE_ASK_and_the_answer: >-

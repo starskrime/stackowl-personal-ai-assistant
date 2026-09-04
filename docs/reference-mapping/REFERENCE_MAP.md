@@ -153,8 +153,13 @@ objectives? Does the budget belong per-turn or per-objective?
 **Hermes.** Three distinct verbs on the agent: `interrupt()` (stop), `steer()` (inject guidance into
 the *current* tool batch), `redirect()` (replace the goal). `/steer` drains **before** the next API
 call so it lands on the current iteration rather than the next.
-**StackOwl.** Concurrent/steerable message handling exists via `serialize_prior` + `inflight_router`,
-but there is no steer/redirect distinction and no pre-API drain.
+**StackOwl.** *(our side re-measured 2026-09-04 — the previous description named a gate
+that no longer exists.)* Concurrent handling is a NON-BLOCKING intake in
+`startup/orchestrator.py`: dispatch if idle, else ROUTE — STEER folds the message into the
+running turn's mailbox, STOP halts it cooperatively, NEW becomes a queued turn — all under a
+per-session intake lock plus `gateway/inflight_router`. The blocking `serialize_prior` gate is
+GONE. So the steer/redirect distinction this entry calls missing DOES exist now; what remains
+open is the pre-API drain.
 **Gap.** Mid-turn course-correction is coarse.
 **Ask.** Do you want to steer a running turn from Telegram, or is stop-and-resend enough?
 
@@ -780,7 +785,8 @@ plus a generic webhook and an HTTP API server.
 Wire I/O is delegated to an injected transport. **There is no per-platform gateway code at all** —
 the connector is the only side that knows.
 **StackOwl.** Four hand-written adapters with visible parity duplication (each has its own
-`callbacks.py`, `clarify.py`, `consent.py`, `helpers.py`, `memory_callbacks.py`, `settings.py`).
+`callbacks.py`, `clarify.py`, `consent.py`, `helpers.py`, `settings.py` — re-measured
+2026-09-04: `memory_callbacks.py` no longer exists in any channel).
 **Gap.** ~24 near-duplicate modules that must each be fixed separately. This is the *dedup* target
 you asked me to find.
 **Ask.** Highest-ROI refactor in the channel layer. Do it before adding channel #5?
@@ -797,8 +803,15 @@ on Telegram/Discord/Slack), rate-limited and buffered. Plus draft streaming wher
 busy guards are keyed by *routing key* while the transcript is owned by *session_id*, and
 `switch_session()` makes that mapping many-to-one. Two keys on one session would otherwise interleave
 flushes and corrupt the transcript.
-**StackOwl.** `serialize_prior` gate + `turn_registry` + `inflight_router`.
-**Ask.** Verify ours is keyed on the durable id, not the routing key. Same bug class.
+**StackOwl.** *(re-measured 2026-09-04.)* `turn_registry.session_intake_lock(session_key)` +
+`gateway/inflight_router`; the `serialize_prior` gate is GONE, replaced by the non-blocking
+intake described under D02.3.
+**Ask.** ANSWERED 2026-09-04 — ours is keyed correctly and needs no change. The lock is keyed on
+`session_key`; the transcript is owned by `messages.conversation_id`; and `conversations` carries
+exactly ONE session_key per row, so the lock key OWNS the transcript key rather than crossing it.
+Measured over 1,103 conversations / 508 session_keys: zero conversations reachable from more than
+one session_key. Our `switch_session` analogue (`resolve_identity_key`) is a label on the session
+record, not a shared store, and is unconfigured here.
 
 ### D12.6 · Delivery routing & mirroring — `PARITY`
 **Hermes.** `gateway/delivery.py` routes by explicit target / platform home channel / origin / local.
