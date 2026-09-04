@@ -404,7 +404,10 @@ parent's toolsets minus child-blocked tools, focused system prompt from the goal
 batch. Parent context sees only the call and the summary.
 **StackOwl.** `tools/agents/delegate_task.py` + `owls/a2a_delegation.py` + `A2ADelegator` +
 `ConcurrencyGovernor`. Comparable.
-**Ask.** None structurally — see D07.2/D07.3 for the deltas.
+**Ask.** None structurally — see D07.2/D07.3 for the deltas. *(VERIFIED 2026-09-04, and
+behaviourally rather than structurally: all four parts exist, and against 4,152 tool-bearing
+turns, 76 — 1.8% — used a delegate tool. `[a2a-delegator] delegate: entry` fires in the
+window with tool traffic and `[governor]` slot lines appear 300,364 times.)*
 
 ### D07.2 · Delegation roles & depth — `PARTIAL`
 **Hermes.** Two explicit roles. `leaf` (default) **cannot** call `delegate_task`, `clarify`, `memory`,
