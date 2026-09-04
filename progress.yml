@@ -364,8 +364,20 @@ current:
     validate_evidence: >-
       5/5 green on the file, 80/80 on tests/parliament, and both mutations behaved:
       neutering await_until turns the target test red, and forcing live_session_ids to ()
-      turns the two unscoped-push tests red. PARTIAL until a full run confirms the
-      pollution is gone under load — that is the only instrument that ever saw it.
+      turns the two unscoped-push tests red. The full run then confirmed it under load:
+      `11857 passed, 18 skipped, 0 failed in 1731.31s`, rc=0.
+      RESTARTED on ./start.sh at 01:03 (commit 10e1631b) and the core reached phase 6
+      with exactly TWO errors after the boot marker, both the known DNS provider outage
+      the operator elected to fix himself — no regression from live_session_ids.
+      Counting those errors is itself worth recording: a first pass over a 4,000-line
+      TAIL reported 130 errors "since boot", because a tail spans previous boots. Cut at
+      the last `[startup] phase 1` marker the real count is 2. Same denominator error
+      this programme keeps paying for, caught here before it was written down as a claim.
+      ONE CHECK STAYS OPEN: the parliament refusal path cannot be exercised in production
+      while every provider is unreachable, so `live_session_ids` is proven by test and by
+      boot, not by traffic. Closing query, to run once DNS is back:
+      `grep '"msg": "\[parliament\] orchestrator.inject_interjection' ~/.stackowl/logs/stackowl.jsonl`
+      — a `queued` line proves the property serves the live path.
       CLOSED 2026-09-04 01:00 — the closing run on 53ce6a50 came back
       `11857 passed, 18 skipped, 300 warnings in 1731.31s (0:28:51)` with `SUITE DONE
       rc=0`, the first fully green full suite this programme has recorded. The
