@@ -30,7 +30,7 @@ For duplicate-subsystem candidates specifically: two components that *look* the 
 **4. Fix immediately, if real.** Root cause, not the symptom the way `feedback_fix_core_not_patch` frames it — one guard in the shared function beats one guard per caller. Minimal diff per `feedback_minimal_code_changes` — change only the exact lines needed. Never remove, stub, or disable a working capability to make an issue go away (`feedback_never_disable_features`) — a "fix" that deletes the feature is not a fix.
 
 **5. Enhance gate — a fix is not done until all of these pass:**
-- `uv run pytest <affected test path(s)>` — green. Never the full suite (`feedback_test_run_discipline` — it hangs on this box); scope to the test file(s) covering the touched code.
+- `uv run pytest <affected test path(s)>` — green. Scope to the test file(s) covering the touched code. The full suite does NOT hang (~30min — `feedback_test_run_discipline`); run it detached via `./scripts/full_suite.sh` when the change is broad.
 - `uv run ruff check src/` — clean on touched files.
 - `uv run mypy src/` — clean on touched files.
 - Explicit self-check: "did this remove or weaken any existing capability?" — answer must be no.

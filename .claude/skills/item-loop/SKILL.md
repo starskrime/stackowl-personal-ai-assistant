@@ -124,9 +124,24 @@ Duplicate keys silently swallow whole records. This has already happened.
   looks related to, and a CROSS-CUTTING guard never looks related to anything — which
   is how an unscoped `task_outcomes` read and three stale allowlist entries both
   shipped. The gate takes ~40s and runs everything marked `@pytest.mark.tripwire`
-  plus `progress_lint` and both baselines. **Never a full `pytest` run — it hangs on this
-  box.** A hanging test is a failing test. Pre-existing red is in scope: root-cause it, fix
-  it, and say so.
+  plus `progress_lint` and both baselines.
+
+  **The full run does NOT hang — it takes ~30 minutes, and this line used to say the
+  opposite.** MEASURED twice: `6 failed, 11440 passed in 1885.47s` (2026-09-01) and
+  `10 failed, 11853 passed in 1775.99s` (2026-09-03). The false claim survived HERE after
+  `CLAUDE.md` was corrected, and because this file is what the loop reads on every
+  invocation, no invocation ever ran it — which is how TEN tests sat red, every one of
+  them a retired thing whose tests stayed behind. "It hangs" reads as *impossible*, so
+  nobody tries. Run `./scripts/full_suite.sh` (detached, stamped log) and collect it
+  later; a foreground timeout kills it mid-run, which is all "hangs" ever was.
+
+  Targeted paths stay right for the edit loop, but the full run is the ONLY detector for
+  cross-test pollution and for a retirement that left its tests behind — and no tripwire
+  can replace it: a static scan cannot tell a test asserting a dropped table EXISTS from
+  one asserting it is GONE. Four attempts at that regex failed before this was measured.
+
+  A hanging test is a failing test — but only after you have checked it is not merely
+  slow. Pre-existing red is in scope: root-cause it, fix it, and say so.
 - **validate** — restart with `./start.sh`, then verify via `~/.stackowl/logs/stackowl.jsonl`,
   never a PID. **A deletion is not live until the process holding the old code is gone** —
   check the core's start time against your last commit before believing any measurement.

@@ -315,6 +315,61 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  REDSUITE_2026_09_04_ten_red_tests_and_the_instruction_that_guaranteed_nobody_looked:
+    map_check: "No mapped item — the first COMPLETED full suite is what produced it."
+    THE_MEASUREMENT: >-
+      With both spin-tests fixed the full suite finished for the first time:
+      `10 failed, 11853 passed, 18 skipped in 1775.99s (0:29:35)`. All ten failures are
+      ONE defect wearing ten faces — something was retired and its tests stayed behind.
+      test_migration_0082.py still asserted retry_queue exists (dropped by 0135);
+      test_migration_0041_dreamworker_status.py asserted dreamworker_runs (dropped by
+      0133); the 0125 tests replayed the FULL chain to reach a table two migrations
+      later delete; test_execute_code asserted a consent default an operator decision
+      had already reversed.
+    THE_ROOT_CAUSE_IS_AN_INSTRUCTION_NOT_A_TEST: >-
+      Every one of the ten had been red since its retirement and nothing said so,
+      because the detector was FORBIDDEN. `.claude/skills/item-loop/SKILL.md` line 127
+      read "Never a full `pytest` run — it hangs on this box." That is the file this
+      autonomous loop reads on EVERY invocation, so no invocation could ever run the
+      one instrument able to see a retirement that left its tests behind. The claim was
+      measured false on 2026-09-01 and CLAUDE.md was corrected — but the SKILL was not,
+      and neither were the four other live surfaces that cite it. Two copies of one
+      rule, one corrected and one not; the uncorrected copy was the one being obeyed.
+    WHAT_ELSE_THE_SAME_CAUSE_REACHED_swept: >-
+      The false claim had propagated to FIVE live instruction surfaces, all citing one
+      source memory: item-loop/SKILL.md, tonyStyle/SKILL.md, and three auto-memory files
+      (test_run_discipline, gateway_integration_tests, always_merge_main). All five are
+      corrected with the measured numbers. Historical plan docs under docs/superpowers/
+      were deliberately left — they record what was believed at the time.
+    A_TRIPWIRE_WAS_ATTEMPTED_AND_DELETED_no_sound_predicate: >-
+      Four formulations of a static guard "no test names a table the chain drops" were
+      built and all four failed, each for its own reason, and the reasons are recorded
+      in the commit: a bare DROP is also SQLite's REBUILD idiom (flagged live audit_log);
+      the rebuild CREATEs x_new and renames it back, so the original name looks dropped
+      forever; a CREATE scan reads the keywords IF/is/without as table names and
+      intersecting with the live schema does NOT remove them; and finally a MENTION IS
+      NOT AN ASSERTION — tests/db/test_migration_0043_owner_scope.py names three retired
+      tables, replays the whole chain and PASSES. The decisive one: every remaining
+      offender was a test asserting the table is GONE (test_the_retry_queue_engine_is_gone).
+      "Names a retired table" is satisfied by both the tests that must die and the tests
+      that must live, and the difference is semantic. There is no sound static predicate.
+      Four attempts is an architecture answer, so the guard was DELETED rather than
+      shipped with false positives — retired means deleted applies to my own work too.
+    WHAT_SHIPPED_INSTEAD: >-
+      scripts/full_suite.sh — launches the suite detached, writes a stamped log, returns
+      at once. The detector was never missing; it was a 30-minute act of courage that the
+      loop's own instructions forbade. Making it one command is the durable fix.
+    stages:
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: partial
+      document: partial
+    validate_evidence: >-
+      Targeted paths green (65 passed) and tripwires chained to the commit. The closing
+      evidence is a full run on the committed tree, launched detached; until it returns
+      this stays PARTIAL. No claim of "the suite is green" is written here before then.
   SPINTEST_2026_09_04_the_full_suite_could_not_finish_because_one_test_never_ended:
     map_check: "No mapped item — found by running the full suite, which is the only thing that could find it."
     HOW_IT_SURFACED: >-

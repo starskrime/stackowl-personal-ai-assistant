@@ -106,10 +106,26 @@ def test_manifest_is_consequential_code_group() -> None:
     assert m.toolset_group == "code"
 
 
-def test_execute_code_is_on_always_ask_list() -> None:
+def test_execute_code_is_NOT_on_the_always_ask_list() -> None:
+    """REVERSED BY AN OPERATOR DECISION, not by drift.
+
+    This asserted the pre-2026-09-02 state and had been red since. consent.py
+    records the reasoning in full: ``execute_code`` was refused 26 times, every
+    one unattended on the RCA lane, while in the same logs ``shell`` launched a
+    general-purpose interpreter 110 times out of 153 with no prompt at all. The
+    capability was gated by what the tool is CALLED rather than by what it does,
+    so the gate stopped nothing — anything blocked here ran one line later
+    through ``shell``.
+
+    Two ways to close that, and the choice was Bakir's because it is a
+    risk-appetite question: gate the shell path too, or relax ``execute_code`` to
+    match. Asked 2026-09-02, answered "Relax execute_code to match shell."
+
+    Asserted in the NEGATIVE rather than deleted, so the decision stays visible
+    and a silent re-addition fails here."""
     from stackowl.tools.consent import _DEFAULT_ALWAYS_ASK_TOOLS
 
-    assert "execute_code" in _DEFAULT_ALWAYS_ASK_TOOLS
+    assert "execute_code" not in _DEFAULT_ALWAYS_ASK_TOOLS
 
 
 def test_execute_code_is_child_excluded() -> None:

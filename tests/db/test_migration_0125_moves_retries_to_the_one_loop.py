@@ -24,7 +24,7 @@ import pathlib
 import sqlite3
 import tempfile
 
-from stackowl.db.migrations.runner import MigrationRunner
+from tests._migration_helpers import schema_at
 
 _SQL = (
     pathlib.Path(__file__).resolve().parents[2]
@@ -34,9 +34,18 @@ _SQL = (
 
 
 def _db_with_pending_rows() -> sqlite3.Connection:
-    """A schema-complete DB holding retry rows, as an upgrading device would."""
-    path = pathlib.Path(tempfile.mkdtemp()) / "t.db"
-    MigrationRunner(path).run()
+    """A DB as an UPGRADING DEVICE would have it — schema at 0124, not today's.
+
+    This used to replay EVERY migration, which now ends after
+    ``0135_drop_the_retry_queue_table``: the table these rows go into is gone by
+    then, so every test here died on "no such table: retry_queue" and the whole
+    file was red. It is the shape a migration test cannot survive — replaying the
+    entire chain to test a migration whose effects a LATER migration removes.
+
+    Stopping at 0124 is also what the test actually means: a device that has not
+    yet run 0125 is precisely the device 0125 exists for.
+    """
+    path = schema_at(124)
     conn = sqlite3.connect(path)
     conn.execute("DELETE FROM tasks")
     rows = [
