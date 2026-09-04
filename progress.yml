@@ -365,6 +365,17 @@ current:
       764 across tests/owls + tests/pipeline/durable. PARTIAL until a non-durable
       delegation emits the new INFO line; closing query
       `grep -c "PROCESS-LOCAL and will not survive" ~/.stackowl/logs/stackowl.jsonl`.
+      LIVE AS OF 15:00:02Z: the commit landed AFTER the previous boot, so the running
+      core did not carry it — restarted, phase 6, ZERO errors, and the change is now
+      the running code.
+      AND ONE MORE INSTRUMENT NEAR-MISS, recorded because it looks exactly like a
+      missing edit: verifying with `grep -c "PROCESS-LOCAL and will not survive"
+      src/.../delegate_task.py` returns 0, because the message is written as two
+      ADJACENT STRING LITERALS that Python concatenates at parse time. The source
+      never contains the joined phrase; only the runtime message does. Asking the AST
+      for the constant returns it in full. The closing query above is unaffected — it
+      greps the LOG, where the string is already joined — but a source-grep for a
+      runtime-concatenated message is a false zero, every time.
   D07_2_2026_09_04_two_fork_bomb_layers_one_predicate_and_nothing_pinned_it:
     map_check: "No mapped item matched the phrasing; this IS D07.2's Ask about roles versus depth."
     THE_ASK_ANSWERED: >-
