@@ -329,6 +329,12 @@ class CircuitBreaker:
             self._state = CircuitState.CLOSED
             self._opened_at = None
             self._failures.clear()
+            # THE PROVIDER ANSWERED. Any context window cached from a FAILED
+            # probe during the outage is a guess the platform can now replace
+            # with a measurement — and this transition is the only moment it
+            # knows that. Same-layer import; a measured window is untouched.
+            from stackowl.providers import model_window
+            model_window.invalidate_provisional(self._provider_name)
         elif prior_state is CircuitState.CLOSED and self._failures:
             now = self._clock.monotonic()
             cutoff = now - self._window_seconds

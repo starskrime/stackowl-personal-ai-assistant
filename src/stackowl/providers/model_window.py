@@ -70,6 +70,21 @@ _PROBE_TIMEOUT = 30.0
 
 _WINDOW_CACHE: dict[tuple[str, str], int] = {}
 
+#: Keys whose cached value is the PROBE-FAILURE FLOOR rather than a measurement.
+#:
+#: The failure path used to write into `_WINDOW_CACHE` exactly like a success, so
+#: a window the code itself called "unknown" was indistinguishable from one it had
+#: measured — and nothing brought it back: the rejection correction only ever
+#: LOWERS a window, and `invalidate` fires solely on a config reload, which a
+#: provider merely RECOVERING is not. MEASURED 2026-09-04 during an 18-hour
+#: outage: every context-budget line reported model_window: 100000, the floor
+#: exactly, and would have kept doing so after the provider returned.
+#:
+#: Same cause as the host_locality fix earlier the same day — a transient failure
+#: written into a cache that only ever held determinations. A measurement still
+#: caches for the life of the process; a floor is provisional.
+_PROVISIONAL: set[tuple[str, str]] = set()
+
 #: Module-level pooled httpx client for ollama window probes (F129). Created once
 #: and reused across every distinct (provider, model) probe so each probe does
 #: NOT pay full client/connection-pool setup + teardown. Lazily built; lives for
@@ -188,6 +203,7 @@ def learn_window_from_error(
             # A rejection can prove a window is too SMALL, never too large.
             return None
         _WINDOW_CACHE[key] = stated
+        _PROVISIONAL.discard(key)  # learned from the provider itself: measured
         log.engine.info(
             "[model_window] learned the real context window from the provider's "
             "own rejection — the belief that caused it is now corrected",
@@ -217,6 +233,7 @@ def invalidate(provider_name: str) -> None:
     stale = [k for k in _WINDOW_CACHE if k[0] == provider_name]
     for k in stale:
         _WINDOW_CACHE.pop(k, None)
+        _PROVISIONAL.discard(k)
     if stale:
         log.engine.debug(
             "[model_window] invalidate", extra={"_fields": {"provider": provider_name, "dropped": len(stale)}}
@@ -368,6 +385,9 @@ async def resolve_window(
             # cache — but a failure that reports success would have hidden the
             # next cause just as well.
             w = DEFAULT_WINDOW_FALLBACK
+            # PROVISIONAL, not measured — dropped when the provider is next
+            # proven healthy so the real window is probed instead of assumed.
+            _PROVISIONAL.add(key)
             log.engine.warning(
                 "[model_window] probe FAILED — using the probe-failure floor, so "
                 "this model's real window is unknown",
@@ -380,3 +400,29 @@ async def resolve_window(
         log.engine.info("[model_window] fallback window", extra={"_fields": {"model": model, "window": w}})
     _WINDOW_CACHE[key] = w
     return w
+
+
+def remember_probe_failure(provider_name: str, model: str, window: int) -> None:
+    """Record ``window`` as a PROVISIONAL floor for a probe that could not run."""
+    key = (provider_name, model)
+    _WINDOW_CACHE[key] = int(window)
+    _PROVISIONAL.add(key)
+
+
+def invalidate_provisional(provider_name: str) -> None:
+    """Drop only the windows this provider GUESSED, keeping the ones it measured.
+
+    Called when the circuit breaker proves the provider answered again
+    (``HALF_OPEN -> CLOSED``). A measured window is a fact about the model and
+    survives; a probe-failure floor is dropped so the next resolve re-probes.
+    """
+    stale = [k for k in _PROVISIONAL if k[0] == provider_name]
+    for k in stale:
+        _PROVISIONAL.discard(k)
+        _WINDOW_CACHE.pop(k, None)
+    if stale:
+        log.engine.info(
+            "[model_window] provider recovered — dropping windows that were the "
+            "probe-failure floor so the real one is measured",
+            extra={"_fields": {"provider": provider_name, "dropped": len(stale)}},
+        )

@@ -315,6 +315,67 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  WINDOW_2026_09_04_a_failed_probe_was_cached_as_a_measurement:
+    map_check: "No mapped item — the same cause as this morning's host_locality fix, in a second place."
+    THE_FINDING: >-
+      resolve_window probes the provider for its real context window and memoizes the answer.
+      When the probe FAILS it uses DEFAULT_WINDOW_FALLBACK (100,000), says so plainly —
+      "[model_window] probe FAILED ... so this model's real window is unknown" — and two
+      lines later writes that unknown into the same cache as a measurement, because
+      _WINDOW_CACHE[key] = w runs on every path.
+    NOTHING_BROUGHT_IT_BACK: >-
+      The rejection self-correction only ever LOWERS a window ("a rejection can prove a
+      window is too SMALL, never too large"), and invalidate() is called from exactly one
+      place — registry.apply_settings, for providers added/rotated/removed on a config
+      reload. A provider that simply RECOVERS is not a config change, so the floor survived
+      for the life of the process.
+    MEASURED: >-
+      During the 18-hour outage every "[pipeline] execute: context budget" line reported
+      model_window: 100000 — the floor exactly, not a probed value — with "probe FAILED" in
+      the same window. Every process booted during the outage would have kept that belief
+      after the provider returned, until someone restarted it.
+    THE_SAME_CAUSE_AS_THIS_MORNING_and_that_is_the_point: >-
+      host_locality cached a DNS failure as though it were a determination; this caches a
+      probe failure the same way. That item fixed its own instance and never asked what else
+      the cause reached — which is the question the loop's own rule demands. Recorded so the
+      pair is visible: a transient failure written into a cache that only ever held facts.
+    THE_FIX_IS_THE_ASYMMETRY_NOT_A_TTL: >-
+      A MEASURED window is a fact about the model and still caches for the process lifetime.
+      A floor reached because the probe could not run is PROVISIONAL and is dropped the
+      moment the provider is proven healthy, so the next resolve measures instead of assuming.
+    WHY_RECOVERY_AND_NOT_EVERY_CALL: >-
+      Unlike a DNS lookup this probe is an HTTP round trip, so re-probing on every resolve
+      would pay a timeout per turn for the whole outage. The circuit breaker already proves
+      recovery exactly once, at HALF_OPEN -> CLOSED (probe succeeded). Hanging the
+      invalidation there costs nothing during the outage and fires once when it ends. A
+      mutation invalidating on an ORDINARY success — which would re-probe on normal traffic
+      — is caught.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    A_FOURTH_VACUITY_CAUGHT_BY_MUTATION_TODAY: >-
+      Deleting the provisional MARKING from resolve_window's own failure branch left all
+      seven original tests green: every one of them drove remember_probe_failure, the helper
+      this change introduced, and none drove the branch production takes. A suite that
+      exercises only the seam it added proves the seam, not the behaviour. Two tests now
+      drive resolve_window with a stubbed probe — one failing, one answering — and the
+      mutation is caught. (The first attempt at that mutation was malformed: a 4-space
+      pattern matched inside a 12-space line and produced an IndentationError, which reads
+      as "1 error" rather than a passing suite. A mutation that does not compile tests
+      nothing, and I nearly recorded it as a pass.)
+    validate_evidence: >-
+      9 new tests; 4 mutations each caught (unwire the breaker hook; drop MEASURED windows
+      too; never mark the floor provisional; invalidate on an ordinary success), restored
+      from FILE COPIES and re-verified green. tests/providers 726 pass; ruff at its 35
+      baseline. LIVE validation PARTIAL by nature — it closes only when the provider
+      RECOVERS, which needs the DNS zone back. Closing query: on recovery, "[model_window]
+      provider recovered — dropping windows that were the probe-failure floor" must appear at
+      INFO, and the next context-budget line must report a model_window that is NOT 100000.
   CADENCE3_2026_09_04_the_platform_was_about_to_page_him_for_not_asking:
     map_check: "No mapped item — the cadence report I fixed yesterday found this itself."
     THE_FINDING: >-
