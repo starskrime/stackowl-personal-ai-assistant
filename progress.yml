@@ -359,17 +359,18 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: partial
+      validate: done
       document: done
     validate_evidence: >-
       5/5 green on the file, 80/80 on tests/parliament, and both mutations behaved:
       neutering await_until turns the target test red, and forcing live_session_ids to ()
       turns the two unscoped-push tests red. PARTIAL until a full run confirms the
       pollution is gone under load — that is the only instrument that ever saw it.
-      Closing run launched on the committed tree at 53ce6a50 to
-      /home/boss/.stackowl/logs/full-suite-latest.log (first run to carry its own SUITE DONE verdict).
-      NEXT LOOP: `grep -c 'SUITE DONE' ~/.stackowl/logs/full-suite-latest.log` — 1 means
-      collectable. Target: 0 failed. Baseline: 1 failed, 11856 passed in 1767.71s.
+      CLOSED 2026-09-04 01:00 — the closing run on 53ce6a50 came back
+      `11857 passed, 18 skipped, 300 warnings in 1731.31s (0:28:51)` with `SUITE DONE
+      rc=0`, the first fully green full suite this programme has recorded. The
+      progression across three runs is 10 failed -> 1 failed -> 0 failed. The pollution
+      is gone under load, which is the only condition that ever exposed it.
   REDSUITE_2026_09_04_ten_red_tests_and_the_instruction_that_guaranteed_nobody_looked:
     map_check: "No mapped item — the first COMPLETED full suite is what produced it."
     THE_MEASUREMENT: >-

@@ -84,14 +84,31 @@ across a full session.
 `progress.yml`, `docs/`, or `tests/`, and on a broad question it returns ~1,100 nodes,
 which is worse than useless. Use it for "where does X live in src", not for everything.
 
-**A full `pytest` run does NOT hang — it takes 31 minutes.** MEASURED 2026-09-01,
-launched detached: `6 failed, 11440 passed, 19 skipped in 1885.47s (0:31:25)`. The
-old line here said "it hangs on this box" and had said so since 2026-08-10. It was
-wrong, and the wrongness was expensive: "it hangs" reads as *impossible*, so every
-run this programme makes is a targeted path — and that habit is what let ELEVEN
-tests sit red and a multi-tenancy tripwire sit dark while four unscoped statements
-landed. **Run it detached (`nohup ... &`) and come back**; a foreground timeout
-kills it mid-run, which is exactly what "hangs" was a misreading of.
+**A full `pytest` run does NOT hang — it takes ~30 minutes, and THE SUITE IS GREEN.**
+`./scripts/full_suite.sh` runs it detached and the log ends with its own verdict, so
+collecting it is `grep -c 'SUITE DONE'` (0 = running, 1 = finished) rather than a guess
+at a process table. Measured, in order:
+
+| when | result |
+|---|---|
+| 2026-09-01 | `6 failed, 11440 passed, 19 skipped in 1885.47s` |
+| 2026-09-03 | `10 failed, 11853 passed, 18 skipped in 1775.99s` |
+| 2026-09-04 | **`11857 passed, 18 skipped, 0 failed in 1731.31s` (rc=0)** |
+
+The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
+wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so
+every run this programme makes is a targeted path — that habit let ELEVEN tests sit red
+and a multi-tenancy tripwire sit dark while four unscoped statements landed. And when
+THIS file was corrected on 09-01 the same claim survived in
+`.claude/skills/item-loop/SKILL.md`, which is what the loop actually reads on every
+invocation — so nothing changed and TEN more tests sat red. **Correcting one copy of a
+rule is not correcting the rule.** All five surfaces now carry these numbers.
+
+**Green is a floor, not a trophy: re-run it, because only it sees cross-test pollution.**
+The last failure to fall was exactly that — a concurrency test that passed alone, passed
+in its package, passed 5/5 on repeat, and failed once in 11,875 tests because it bet
+50ms on the scheduler. It was also VACUOUS in the losing direction. No tripwire can
+replace this run.
 
 Interactively, targeted paths with timeouts are still right — but **a hanging test
 is a failing test only after you have checked it is not merely slow.** `tests/db`
@@ -108,9 +125,12 @@ owner-scope allowlist. The gate is ~40 seconds and runs everything marked
 `@pytest.mark.tripwire` plus `progress_lint`, `ruff` and `mypy`. Mark a new guard with
 that marker and it joins automatically — the marker is the source, not a path list.
 
-**Only the FULL run finds cross-test pollution.** Of the 6 failures above, at least
-three are in directories that pass cleanly in isolation (`tests/mcp` 101, `tests/owls`
-334, `tests/pipeline` 1687). No targeted path can ever see them.
+**Only the FULL run finds cross-test pollution**, and it is not a hypothetical: every
+red run above ended with failures whose directories pass cleanly in isolation
+(`tests/mcp` 101, `tests/owls` 334, `tests/pipeline` 1687, `tests/parliament` 80). No
+targeted path can ever see them. **Wait for a CONDITION, never a duration** —
+`tests/_async_helpers.py::await_until` exists so the next such test is fixed by polling
+what it actually needs instead of enlarging a sleep.
 
 **`tests/<package>` NEVER runs `tests/*.py`.** 69 test files sit directly in `tests/`
 — consent, audit chains, the SSRF guard, capability profiles, migrations — and no
