@@ -315,6 +315,46 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  WRONGCLAIM_2026_09_04_I_extrapolated_a_slowdown_that_did_not_happen:
+    map_check: "No mapped item — a correction to a claim I put into CLAUDE.md one tick earlier."
+    WHAT_I_WROTE_AND_WHY_IT_WAS_WRONG: >-
+      An autonomous tick found the full suite at 21% after 17 minutes, extrapolated
+      "~80 minutes against the usual ~30", measured the box, found it deep in swap
+      (88 MB free, 2,373 MB swapped, pytest at 35% CPU, I/O wait 11-13%, RSS pytest
+      1,880 MB + platform 1,223 MB + agent 732 MB on a 7.6 GB Jetson) and wrote into
+      CLAUDE.md that running the suite beside a live platform costs the time.
+    THE_RUN_THEN_FINISHED_IN_29_04: >-
+      `11909 passed, 18 skipped, 0 failed in 1744.83s`, rc=0 — the FASTEST of all five
+      recorded runs (1885.47, 1783.69, 1775.99, 1756.19, 1744.83). The swap was real;
+      its effect on the runtime was nil. The extrapolation was the error: progress
+      percentage is not linear in time, because the early directories are far slower
+      per test — `tests/db` alone is ~7 minutes for 102 tests, each replaying every
+      migration, so the first fifth of the bar eats a quarter of the clock.
+    THE_ROOT_CAUSE_of_my_own_error: >-
+      A MEASUREMENT OF THE BOX IS NOT A MEASUREMENT OF THE RUN. I measured swap
+      correctly and then attributed a runtime I had not measured to it. The
+      programme's own rule — never write a claim you did not measure — was broken by
+      a number I inferred rather than observed, and it went into the file the loop
+      reads on EVERY invocation, which is exactly where the "it hangs" myth lived for
+      three weeks.
+    WHAT_THE_NOTE_SAYS_NOW: >-
+      The corrected note keeps the useful half — check the process's CPU-time delta
+      rather than the percentage, because a crawling bar is the shape of the "it
+      hangs" belief — and adds the half I got wrong: having checked, do not then
+      invent a prediction from the percentage anyway.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      The suite's own verdict line, collected from the stamped log: 1744.83s against
+      the four prior recorded runs. CLAUDE.md re-read after the edit to confirm the
+      wrong claim is gone (0 occurrences) and the correction present (1). No code
+      changed; this was a false claim in guidance, and the correction is the fix.
   D07_4_2026_09_04_the_Law_2_case_is_real_and_a_recorded_decision_already_answers_it:
     map_check: "No mapped item matched the phrasing; this IS D07.4's Ask — move MoA off the tool schema?"
     THE_ASK: >-

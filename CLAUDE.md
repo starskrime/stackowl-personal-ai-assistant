@@ -104,17 +104,24 @@ THIS file was corrected on 09-01 the same claim survived in
 invocation — so nothing changed and TEN more tests sat red. **Correcting one copy of a
 rule is not correcting the rule.** All five surfaces now carry these numbers.
 
-**A SLOW run is not a hanging run, and this box can make it slow.** MEASURED
-2026-09-04 during a run that sat at 21% after 17 minutes — on track for ~80 minutes
-against the usual ~30. Nothing was stuck: pytest was at 35% CPU because the box was
-in swap. RSS at that moment was pytest 1,880 MB + the live platform 1,223 MB + the
-agent session 732 MB on a 7.6 GB Jetson, leaving 88 MB free with **2,373 MB
-swapped** and I/O wait at 11-13%. The suite alone is ~1.9 GB, so running it beside a
-live platform is what costs the time. Two consequences: expect ~30 minutes on an
-idle box and longer on a busy one, and — the part that matters — **a crawling
-progress bar is the exact shape of the "it hangs" belief that cost this programme
-ten red tests.** Check `free -m` and the process's CPU-time delta before concluding
-anything.
+**PROGRESS PERCENTAGE IS NOT LINEAR IN TIME — do not extrapolate from it.** MEASURED
+2026-09-04, and this note originally said the opposite because I did exactly that. A
+run sat at 21% after 17 minutes; I extrapolated ~80 minutes, checked the box, found
+it deep in swap (88 MB free, **2,373 MB swapped**, pytest at 35% CPU, I/O wait 11-13%
+— RSS was pytest 1,880 MB + the live platform 1,223 MB + the agent session 732 MB on
+a 7.6 GB Jetson) and wrote down that the swap was slowing the suite.
+
+**That run finished in 1744.83s — 29:04 — the FASTEST of all five recorded runs**
+(1885, 1784, 1776, 1756, 1745). The swap was real and its effect on runtime was
+nil. The early directories are simply slower per test: `tests/db` alone is ~7
+minutes for 102 tests, each replaying every migration, so the first fifth of the
+progress bar eats a quarter of the clock.
+
+Two things to keep from that. A crawling progress bar is the exact shape of the "it
+hangs" belief that cost this programme ten red tests, so **check the process's
+CPU-time delta, not the percentage** — and having checked, do not then invent a
+prediction from the percentage anyway. A measurement of the BOX is not a
+measurement of the RUN.
 
 **Green is a floor, not a trophy: re-run it, because only it sees cross-test pollution.**
 The last failure to fall was exactly that — a concurrency test that passed alone, passed
