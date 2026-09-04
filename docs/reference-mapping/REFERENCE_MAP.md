@@ -980,7 +980,14 @@ at runtime. Plus a "pet" (`agent/pet/`) and token-free affection detection (`age
 **Hermes.** `cron/jobs.py` + `cron/scheduler.py`; the gateway ticks it every 60s under a file lock
 (`~/.hermes/cron/.tick.lock`) so overlapping processes cannot double-fire.
 **StackOwl.** `JobScheduler` + 31 handlers + assembly. Comparable or ahead.
-**Ask.** Confirm we have the cross-process tick lock.
+**Ask.** ANSWERED 2026-09-04 — we do NOT have a tick lock and do not need one; the guarantee
+sits a layer lower. `UPDATE jobs SET status='running' WHERE job_id=? AND status='pending'`, with
+the rowcount checked via SQLite `changes()` and the loser bailing at INFO. Stronger than a file
+lock, which guards one host's filesystem and can be ORPHANED by a hard kill — the same shape as
+the orphaned process that kept a port bound across a restart. Since today it is also defended
+twice independently: the IPC socket guard stops a second instance binding, the CAS stops a
+double-fire. Both are unexercised because only one scheduler runs, which is the correct state
+for a safety mechanism.
 
 ### D15.2 · Job richness — `PARTIAL`
 **Hermes.** Per job: `skills` to load, `model`/`provider` override, a **pre-run script** whose stdout

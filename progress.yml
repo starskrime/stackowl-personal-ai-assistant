@@ -315,6 +315,56 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D15_1_2026_09_04_no_tick_lock_and_none_needed_the_claim_is_a_layer_lower:
+    map_check: "No mapped item matched the phrasing; this IS D15.1's Ask — confirm the cross-process tick lock."
+    THE_ASK_ANSWERED: >-
+      D15.1 asks us to confirm we have the reference's cross-process tick lock (a
+      file lock at ~/.hermes/cron/.tick.lock, so overlapping processes cannot
+      double-fire). WE DO NOT HAVE ONE, and we do not need one: the guarantee is
+      enforced a layer lower, in the database.
+      `UPDATE jobs SET status='running', claimed_at=? WHERE job_id=? AND
+      status='pending'`, with the rowcount checked by `_won_transition` reading
+      SQLite's `changes()` on the same serialised connection, and a loser that bails
+      with "lost dispatch claim — another worker is running it" at INFO.
+    WHY_THAT_IS_STRONGER_THAN_A_FILE_LOCK: >-
+      A file lock guards one host's filesystem and can be ORPHANED by a hard kill —
+      a stale lock file blocks every future tick, which is the same failure shape as
+      the orphaned process that kept port 8766 bound across a restart (start.sh's own
+      header records it). A DB compare-and-swap guards any number of processes on any
+      number of hosts sharing the database, cannot be orphaned, and pairs with a
+      stale-claim reset for rows abandoned mid-run. PARITY understates it on this
+      point.
+    AND_IT_IS_NOW_DEFENDED_TWICE_INDEPENDENTLY: >-
+      The IPC socket guard added earlier today stops a second instance binding at
+      all, and the CAS stops a double-fire even if one somehow ran. Unlike D07.2's
+      two fork-bomb layers — which shared a predicate and were therefore one layer —
+      these two are genuinely independent: a unix-socket bind and a SQL predicate.
+    BOTH_GUARDS_ARE_UNEXERCISED_and_that_is_correct: >-
+      "lost dispatch claim" has fired ZERO times across every log, because only one
+      scheduler process runs, so the contention it guards never arises. The
+      stale-claim reset has not been observed firing either. That is the right state
+      for a safety mechanism and is stated plainly rather than dressed up: they are
+      unexercised, not unwired, and the CAS is read directly in the source.
+    A_FOURTH_BROAD_GREP_CAUGHT_BEFORE_IT_BECAME_A_CLAIM: >-
+      Searching `requeue|stale claim|stuck in` returned 10/7/20 lines across three
+      days, which reads like the stale-claim reset working. Printing the distinct
+      messages shows 19 of the 20 are `[loop] task requeued with what failed` — the
+      ONE loop's task retry, a different mechanism — plus one IPC re-queue. Fourth
+      time today a broad pattern would have produced a confident wrong number, and
+      the fourth time printing the shape stopped it.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      The CAS statement and its `_won_transition` rowcount check read directly from
+      scheduler.py and scheduler_mutations.py; a file-lock search across
+      scheduler/*.py returning nothing; "lost dispatch claim" counted at zero across
+      all logs; the requeue lines resolved to their actual messages. No code changed.
   MAPSTALENESS_2026_09_04_the_map_ages_where_WE_work_not_uniformly:
     map_check: "No mapped item — this asks how far to trust the 51 entries nobody has examined."
     THE_QUESTION: >-
@@ -25595,13 +25645,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
