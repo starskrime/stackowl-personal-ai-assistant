@@ -124,3 +124,79 @@ def test_it_is_WIRED_with_the_presented_names() -> None:
     src = inspect.getsource(execute)
     assert "skills.nudge import note_turn" in src
     assert "presented_tools=_presented_names(tool_schemas)" in src
+
+
+# --------------------------------------------------------------------------
+# Added 2026-09-04, after the nudge was measured at ZERO firings in 407 turns.
+# --------------------------------------------------------------------------
+
+
+def test_a_turn_COUNTS_even_when_the_tool_is_absent() -> None:
+    """The gate must suppress the TEXT, never the COUNT.
+
+    This is the defect that made the nudge unfireable. `note_turn` returned at
+    the gate BEFORE reaching the counter, so a turn where `skill_manage` was not
+    presented — or where the caller did not pass the set at all — was not merely
+    un-nudged, it was INVISIBLE to the interval. Only one of the three provider
+    call sites passed the names, so the counter advanced on roughly 25 turns a
+    day spread across every lane, and no lane ever reached 10. Measured: 0
+    firings against 407 turns and five lanes that each exceeded the interval.
+    """
+    for _ in range(skill_nudge.SKILL_NUDGE_INTERVAL_TURNS):
+        assert skill_nudge.note_turn("lane", None) is None
+    # The interval has passed while the tool was unreachable. The very next turn
+    # that CAN reach it must nudge — the debt is not thrown away.
+    assert skill_nudge.note_turn("lane", _ALL) is not None
+
+
+def test_a_suppressed_nudge_does_not_reset_the_lane() -> None:
+    """Due-but-unreachable must stay due, not start counting from zero again."""
+    for _ in range(skill_nudge.SKILL_NUDGE_INTERVAL_TURNS * 2):
+        assert skill_nudge.note_turn("lane", frozenset({"shell"})) is None
+    assert skill_nudge.note_turn("lane", _ALL) is not None
+
+
+def test_EVERY_call_site_passes_the_presented_names() -> None:
+    """Counted, not merely present — the old guard could not see this defect.
+
+    It asserted the string `presented_tools=_presented_names(tool_schemas)`
+    appeared in the module, which one wired call site satisfies. Two others
+    called `_turn_context_prefix(state)` with the schemas one line away and the
+    nudge silent, and the guard passed the whole time. A test that can only see
+    the first instance of a rule cannot protect the rule.
+    """
+    import ast
+    import inspect
+
+    from stackowl.pipeline.steps import execute
+
+    tree = ast.parse(inspect.getsource(execute))
+    bare = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_turn_context_prefix"
+        and not any(kw.arg == "presented_tools" for kw in node.keywords)
+    ]
+    assert not bare, (
+        "these _turn_context_prefix call sites drop presented_tools, which makes "
+        f"the skill nudge permanently silent on their path: lines {bare}"
+    )
+
+
+def test_recording_a_skill_RESETS_the_lane_in_PRODUCTION() -> None:
+    """The reset half was wired only from a test.
+
+    `note_skill_written` had exactly one caller in the whole tree and it was this
+    suite — so in production the lane was never reset after a skill was recorded
+    and the model would be asked again immediately, which is the fastest way to
+    teach it to ignore the nudge. The memory half does this correctly from
+    `tools/knowledge/memory.py`, and is the control that proves the shape.
+    """
+    import inspect
+
+    from stackowl.tools.knowledge import skill_manage
+
+    src = inspect.getsource(skill_manage)
+    assert "note_skill_written" in src, "the skill write does not reset its lane"

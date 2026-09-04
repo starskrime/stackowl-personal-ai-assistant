@@ -48,6 +48,7 @@ from stackowl.paths import StackowlHome
 from stackowl.pipeline.services import get_services
 from stackowl.skills.loader import SkillLoader
 from stackowl.skills.manifest import SkillManifest, SkillSource
+from stackowl.skills.nudge import note_skill_written
 from stackowl.skills.skill_md import parse_skill_md
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
 from stackowl.tools.knowledge.skill_validation import (
@@ -706,6 +707,25 @@ class SkillManageTool(Tool):
         artifact_path: str | None = None,
     ) -> ToolResult:
         duration_ms = (time.monotonic() - t0) * 1000
+        # The agent just did the meta-work the nudge asks for, so reset its lane.
+        # Every _ok here is a MUTATION (create/edit/patch/delete/enable), so this
+        # one place covers all five and there is no second copy to drift. Reset
+        # here rather than in the nudge: the counter is per LANE and only the
+        # tool call knows which lane it is on — the same reason
+        # tools/knowledge/memory.py resets from the tool and not from
+        # CuratedMemory. Until now `note_skill_written` had exactly ONE caller in
+        # the tree and it was a test, so in production the model was asked again
+        # immediately after complying, which is how a nudge teaches itself to be
+        # ignored.
+        try:
+            session_key = getattr(get_services(), "session_key", None)
+            if session_key:
+                note_skill_written(str(session_key))
+        except Exception as exc:  # no-hidden-errors: never cost the tool its result
+            log.tool.warning(
+                "skill_manage._ok: could not reset the skill nudge lane",
+                exc_info=exc, extra={"_fields": {"op": (extra or {}).get("op")}},
+            )
         log.tool.info(
             "skill_manage.execute: exit",
             extra={"_fields": {"success": True, "duration_ms": duration_ms, **(extra or {})}},

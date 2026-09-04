@@ -315,6 +315,67 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D09_4_2026_09_04_the_nudge_could_not_fire_because_the_GATE_ran_before_the_COUNTER:
+    map_check: "No mapped item matched the phrasing — this closes D09.4's own open acceptance check."
+    THE_MEASUREMENT: >-
+      D09.4's only open check was "the skill nudge firing on a sustained conversation".
+      It has NEVER fired. Across every rotated log, `[skills] nudge` is 0 — including
+      the 407 turns since it shipped on 09-02, in which FIVE lanes each passed its
+      10-turn interval. The control is the memory nudge on the same primitive:
+      `[curated] nudge` fired 47/28/10/8/3/2 over the same files. Against a turn
+      denominator (`[pipeline] triage`) that is 6.2% of turns on 08-28 falling to 0.9%
+      by 08-31 — so the mechanism demonstrably works and only the skill half is dead.
+    GETTING_THERE_REQUIRED_FIXING_MY_OWN_INSTRUMENT_TWICE: >-
+      First grep used `[memory] nudge` and `[skills] nudge` and returned 0 for BOTH —
+      but the label is caller-supplied and the memory one is `[curated] nudge`, so a
+      zero was reported for something with 96 firings. Second, the rotated files are
+      `stackowl-2026-09-03.jsonl`, which the glob `stackowl.jsonl*` never matches, so
+      one file was scanned while eight were claimed. A grep returning zero proves the
+      pattern did not match. Both were caught by insisting on a control that MUST be
+      non-zero before believing any zero.
+    ROOT_CAUSE_three_defects_one_shape: >-
+      (1) THE GATE RAN BEFORE THE COUNTER. skills/nudge.note_turn returned None at
+      `SKILL_TOOL not in presented_tools` BEFORE reaching TurnNudge.note_turn, so a turn
+      where the tool was unreachable was not merely un-nudged — it was INVISIBLE to the
+      interval. (2) TWO OF THREE CALL SITES DROPPED THE SET. `_turn_context_prefix` is
+      called three times in execute.py; only the LLMGateway path passed
+      `presented_tools`. The pinned path and the DURABLE path each had `tool_schemas`
+      one line away and passed nothing, and `None` means silent by design. Combined
+      with (1), the counter advanced only on the gateway path — 21-33 turns a day
+      spread across every lane — so no lane ever reached 10. (3) THE RESET WAS NEVER
+      WIRED. `note_skill_written` had exactly ONE caller in the whole tree and it was a
+      test, so after the model complied it would be asked again immediately. The memory
+      half does all three correctly and is the control that proves each.
+    WHY_THE_EXISTING_GUARD_DID_NOT_CATCH_IT: >-
+      test_it_is_WIRED_with_the_presented_names asserted the string
+      `presented_tools=_presented_names(tool_schemas)` appears in execute.py. One wired
+      call site satisfies that forever. A test that can only see the FIRST instance of
+      a rule cannot protect the rule — it is now an AST walk that counts every
+      `_turn_context_prefix` call and fails naming the line numbers that drop the set.
+    fix: >-
+      TurnNudge.note_turn gained `deliverable`, which suppresses the TEXT without
+      discarding the COUNT — a lane that is due stays due until it can be delivered,
+      and logs `due but SUPPRESSED` at INFO so the withheld nudge is visible. All three
+      call sites now pass the presented names. skill_manage._ok resets the lane, in the
+      ONE helper all five mutation paths already share.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      13/13 on the D09.4 suite (4 new tests went red BEFORE the fix and green after),
+      1308 passed across tests/skills + tests/memory + tests/pipeline/steps +
+      tests/tools/knowledge. Both new log lines PROVEN to emit at INFO by running the
+      path, not by reading it. LIVE EVIDENCE IS BLOCKED, not skipped: every provider is
+      NXDOMAIN, so no conversation turns are happening at all. The check that closes it,
+      once DNS is back and one lane runs 10 turns:
+      `grep -c 'skills\] nudge: due' ~/.stackowl/logs/stackowl.jsonl`
+      — and if it is still 0 while `due but SUPPRESSED` is non-zero, the remaining cause
+      is that skill_manage is not being presented, which is a different item.
   FLAKE2_2026_09_04_a_test_that_was_flaky_one_way_and_VACUOUS_the_other:
     map_check: "No mapped item — the completed full run is what produced it."
     THE_MEASUREMENT: >-

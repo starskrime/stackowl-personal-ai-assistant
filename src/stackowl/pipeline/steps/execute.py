@@ -2744,7 +2744,12 @@ async def _run_with_tools(
         _preg = _services.provider_registry
         if choice.pinned or _preg is None:
             return await provider.complete_with_tools(
-                user_text=_turn_context_prefix(state),
+                # The presented names travel on EVERY path, not just the gateway
+                # one. This site had the schemas in hand and dropped them, so the
+                # skill nudge was silent on every pinned turn.
+                user_text=_turn_context_prefix(
+                    state, presented_tools=_presented_names(tool_schemas),
+                ),
                 system_text=state.system_prompt,
                 tool_schemas=tool_schemas,
                 tool_dispatcher=_dispatch,
@@ -2868,7 +2873,11 @@ async def _run_with_tools(
             if persistence_check is not None:
                 _durable_extra["persistence_check"] = persistence_check
             result = await provider.complete_with_tools(
-                user_text=_turn_context_prefix(state),
+                # Same on the DURABLE path — schemas one line below, names not
+                # passed, nudge permanently silent for every durable turn.
+                user_text=_turn_context_prefix(
+                    state, presented_tools=_presented_names(tool_schemas),
+                ),
                 system_text=state.system_prompt,
                 tool_schemas=tool_schemas,
                 tool_dispatcher=_dispatch,

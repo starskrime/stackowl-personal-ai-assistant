@@ -58,9 +58,13 @@ def note_turn(lane: str, presented_tools: frozenset[str] | None) -> str | None:
     Returns:
         The nudge text, or ``None``. Never raises.
     """
-    if presented_tools is None or SKILL_TOOL not in presented_tools:
-        return None
-    return _SKILL_NUDGE.note_turn(lane)
+    # COUNT THE TURN EITHER WAY. This used to `return None` here, before the
+    # counter — so an unreachable tool did not delay the nudge, it erased the
+    # turn. Combined with two provider call sites that passed no set at all, the
+    # counter advanced on a small minority of turns and no lane ever reached the
+    # interval: 0 firings in 407 turns. Fails closed on the TEXT, never on time.
+    deliverable = presented_tools is not None and SKILL_TOOL in presented_tools
+    return _SKILL_NUDGE.note_turn(lane, deliverable=deliverable)
 
 
 def note_skill_written(lane: str) -> None:

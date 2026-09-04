@@ -50,8 +50,22 @@ class TurnNudge:
     label: str
     _seen: dict[str, int] = field(default_factory=dict, init=False)
 
-    def note_turn(self, lane: str) -> str | None:
+    def note_turn(self, lane: str, *, deliverable: bool = True) -> str | None:
         """Count a turn on *lane*; return the text when a nudge is due.
+
+        Args:
+            lane: The conversation lane to count against.
+            deliverable: Whether the nudge can actually be acted on this turn —
+                for the skill nudge, whether its tool is in the presented set.
+                False SUPPRESSES THE TEXT WITHOUT DISCARDING THE COUNT.
+
+        THE COUNT AND THE GATE ARE SEPARATE, and conflating them is what made the
+        skill nudge unfireable. Its caller returned at the gate before reaching
+        this method, so a turn where the tool was unreachable — or where the
+        caller simply had not been given the presented set — was not merely
+        un-nudged, it was INVISIBLE to the interval. Measured 2026-09-04: zero
+        firings across 407 turns, including five lanes that each passed the
+        interval. A lane that is due stays due until it can be delivered.
 
         Returns ``None`` almost always. Never raises — a reminder may not cost a
         turn its answer.
@@ -61,6 +75,17 @@ class TurnNudge:
             count = self._seen.get(key, 0) + 1
             if count < max(1, self.interval):
                 self._seen[key] = count
+                return None
+            if not deliverable:
+                # Stay due. INFO because this is the ONLY evidence that a nudge
+                # was owed and withheld; at DEBUG the silence would be
+                # indistinguishable from a counter that never ran, which is
+                # exactly how this defect survived being shipped.
+                self._seen[key] = count
+                log.memory.info(
+                    f"{self.label}: due but SUPPRESSED — cannot be acted on this turn",
+                    extra={"_fields": {"session_key": key, "turns": count}},
+                )
                 return None
             self._seen[key] = 0
             log.memory.info(
