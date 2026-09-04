@@ -1658,13 +1658,24 @@ async def _run_with_tools(
         # (delegation_depth>0) may not itself spawn/delegate, so remove those tools
         # from the PRESENTED set. Excluded by NAME defensively.
         if state.delegation_depth > 0:
+            _before = len(schemas)
             schemas = _exclude_spawn_tools(schemas)
-            log.engine.debug(
-                "[pipeline] execute: depth>0 — excluding spawn/delegate tools",
+            # INFO, not debug. This is the PRIMARY fork-bomb cap and production
+            # runs at INFO, so at debug there is no line in the world that says it
+            # ever fired. The dispatch WARNING below is not a substitute: it only
+            # fires when a child ATTEMPTS a blocked tool, and a working exclusion
+            # means the model never sees one to attempt — so the enforcement log
+            # is silent exactly when prevention is healthy. Measured 2026-09-04:
+            # deleting the depth increment neuters both layers and 481 tests stay
+            # green, so the only thing that would have noticed is a line that did
+            # not exist. Volume is small: ~1.8% of tool-bearing turns delegate.
+            log.engine.info(
+                "[pipeline] execute: depth>0 — excluded spawn/delegate tools",
                 extra={"_fields": {
                     "trace_id": state.trace_id,
                     "delegation_depth": state.delegation_depth,
                     "tools": len(schemas),
+                    "removed": _before - len(schemas),
                 }},
             )
         return schemas

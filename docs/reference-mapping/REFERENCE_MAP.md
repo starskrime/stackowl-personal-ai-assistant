@@ -417,7 +417,12 @@ window with tool traffic and `[governor]` slot lines appear 300,364 times.)*
 `max_iterations`.
 **StackOwl.** `owls/delegation_limits.py` + governor exist; role split and per-role tool blocking
 need confirming.
-**Ask.** Do we have the leaf/orchestrator distinction, or just depth limits?
+**Ask.** ANSWERED 2026-09-04 — we have the distinction, as a depth PREDICATE rather than a
+named role (depth 0 may delegate, depth>0 may not), enforced at BOTH presentation and
+dispatch. Narrower than their `leaf`, which also blocks clarify/memory/send_message/cronjob.
+The finding was underneath it: both layers gate on the SAME predicate, and deleting the one
+`+ 1` that increments child depth neutered the whole cap with **481 tests still passing**.
+Now pinned, and the exclusion raised from DEBUG to INFO so it is countable.
 
 ### D07.3 · Background delegation & durability — `PARTIAL`
 **Hermes.** `background=true` returns a delegation id immediately; the result re-enters the conversation
