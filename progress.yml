@@ -368,8 +368,11 @@ current:
       document: partial
     validate_evidence: >-
       Targeted paths green (65 passed) and tripwires chained to the commit. The closing
-      evidence is a full run on the committed tree, launched detached; until it returns
-      this stays PARTIAL. No claim of "the suite is green" is written here before then.
+      evidence is a full run on the committed tree at 5e498620, launched detached via the
+      new script at 23:53 to ~/.stackowl/logs/full-suite-20260903-235313.log. Until that
+      log returns its summary line this stays PARTIAL — no claim of "the suite is green"
+      is written here before then. NEXT LOOP: collect that log first.
+      Baseline to beat: 10 failed, 11853 passed, 18 skipped in 1775.99s.
   SPINTEST_2026_09_04_the_full_suite_could_not_finish_because_one_test_never_ended:
     map_check: "No mapped item — found by running the full suite, which is the only thing that could find it."
     HOW_IT_SURFACED: >-
