@@ -315,6 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  LESSONQ_2026_09_03_the_platform_scored_a_turn_zero_then_served_its_lesson:
+    map_check: "No mapped item — found by asking whether the learning stores decay."
+    THE_FINDING: >-
+      Every reflection-sourced lesson carries its turn's quality_score in metadata, and
+      NOTHING reads it back. lessons_store.search ranks purely on distance
+      (np.argsort(distances)[:limit]) and rank_lessons UCB-ranks only HEURISTIC-sourced hits,
+      appending reflections in order. A write with no reader — the first shape on this
+      codebase's own list of what accounts for nearly every real defect here.
+    THE_MEASURED_TAIL: >-
+      quality_score histogram over 5,507 scored lessons: 0.0->23, 0.1->25, 0.2->14, 0.3->10,
+      0.4->5, 0.5->7, then 0.6->216, 0.7->167, 0.8->1024, 0.9->1919, 1.0->2097. Median 0.95,
+      p10 0.75. So 84 lessons (1.5%) sit below 0.6, TWENTY-THREE of them at exactly 0.0, and
+      46 say "(low-quality)" in the prose. All 46 share the timestamp 2026-08-15T01:52:24 —
+      one backfill, not a live writer.
+    WHY_THE_GUARD_BELONGS_AT_THE_READER: >-
+      The standing rule is that self-learning stores WINS, never failures, and the writer
+      honours it: 5,507 of 5,772 lessons open "What worked for <owl>: ...". It was enforced
+      at the writer and NOWHERE ELSE, so anything bypassing the writer — this backfill, an
+      import, a future change — put a failed turn's advice in front of the model. Reading the
+      score at recall makes the rule hold regardless of who writes.
+    WHY_0_6: >-
+      The break in the live histogram is between 0.5 (7 rows) and 0.6 (216). Below it is 1.5%
+      of the corpus and every "(low-quality)" row. A floor at 0.7 would drop 368 rows (6%)
+      including a 0.6 band nothing has shown to be bad.
+    ABSENCE_IS_NOT_A_LOW_SCORE: >-
+      265 lessons carry no numeric quality — the skill and tool_heuristic tiers do not mine
+      one — and they are KEPT, as is a corrupt/non-numeric value. Excluding them would delete
+      two whole tiers from recall on no evidence, which is the "an unknown must not read as
+      none" rule applied twice already today. A mutation treating a missing score as failing
+      is caught.
+    FILTERED_BEFORE_THE_LIMIT: >-
+      The cut runs over the full sorted order, not the top-N slice, so a corpus with a few bad
+      rows still returns as many lessons as were asked for. A mutation filtering after the
+      limit — where a bad row silently eats a slot — is caught.
+    THREE_INFERENCES_OF_MINE_THAT_DID_NOT_SURVIVE_MEASUREMENT: >-
+      (1) The top lesson texts all read "Reflection on secretary task (low-quality)", which
+      looked like a wholesale violation of the positive-only rule; it was four arbitrary rows
+      from Counter.most_common over unique texts, and the real figure is 0.8%. (2) The
+      lessons_store docstring says ranking reads `quality`, and the metadata key is
+      `quality_score` — that looked like a key mismatch, but rank_lessons deliberately ranks
+      only heuristic hits, so there is no mismatch to fix. (3) knowledge_prune is named "the
+      platform's DECAY pass" and covers skills only; lessons (+304/day) and reflections
+      (+92/day) have no decay — real, but a deletion question, not this item.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      6 new tests; 3 mutations each caught (no filter; a missing score treated as failing;
+      filtering after the limit), restored from a FILE COPY and re-verified green.
+      tests/learning + acceptance 178 pass; ruff at its 35 baseline; mypy clean on the touched
+      module after adding the Any import it needed. LIVE validation PARTIAL: lesson recall
+      runs inside classify on a real turn, and no turn has succeeded since 06:18 UTC. Closing
+      query: on the next successful turn, no injected lesson may carry a metadata
+      quality_score below 0.6 — and 84 rows in the live corpus do.
   EPHEMERAL_2026_09_03_the_same_degradation_loud_in_one_branch_and_silent_in_the_next:
     map_check: "No mapped item — found by asking what canary's 4,078 telegram notifications are."
     HOW_IT_SURFACED_and_what_it_was_NOT: >-

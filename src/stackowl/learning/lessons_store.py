@@ -60,7 +60,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -339,7 +339,24 @@ class SqliteLessonsStore:
         )
         # Floating point can push an exact match a hair below zero.
         np.maximum(distances, 0.0, out=distances)
-        top = np.argsort(distances)[:limit]
+        # A FAILED TURN MAY NOT TEACH THE NEXT ONE. Every reflection-sourced
+        # lesson carries its turn's `quality_score`, and until now NOTHING read
+        # it back: search ranked purely on distance and `rank_lessons` UCB-ranks
+        # only heuristic hits, appending reflections in order. A write with no
+        # reader — and the cost is that a lesson mined from a turn the platform
+        # itself scored 0.0 competed for injection against one scored 1.0.
+        #
+        # MEASURED 2026-09-03: 84 of 5,772 lessons (1.5%) score below 0.6, 23 of
+        # them exactly 0.0, and 46 say "(low-quality)" in the prose. All arrived
+        # in one backfill at 2026-08-15T01:52:24 — no live writer produces them,
+        # which is exactly why the guard belongs at the READER: the standing
+        # positive-only rule was enforced at the writer and nowhere else, so
+        # anything bypassing the writer put a failed turn's advice in the prompt.
+        #
+        # FILTERED BEFORE THE LIMIT, so a corpus with a few bad rows still
+        # returns as many lessons as were asked for.
+        order = [i for i in np.argsort(distances) if _quality_admits(usable[i])]
+        top = order[:limit]
 
         hits = [
             LessonHit(
@@ -546,3 +563,26 @@ class SqliteLessonsStore:
 
 
 __all__ = ["SqliteLessonsStore", "unpack_embedding"]
+
+
+#: The break in the live quality distribution: 7 lessons at 0.5, 216 at 0.6.
+#: Below it is 1.5% of the corpus and every "(low-quality)" row; a floor at 0.7
+#: would drop a 6% band nothing has shown to be bad.
+_MIN_LESSON_QUALITY = 0.6
+
+
+def _quality_admits(row: dict[str, Any]) -> bool:
+    """False only when the row RECORDS a quality below the floor.
+
+    ABSENCE IS NOT A LOW SCORE. 265 live lessons carry no numeric quality — the
+    skill and tool_heuristic tiers do not mine one — and excluding them would
+    delete two whole tiers from recall on no evidence. A non-numeric or corrupt
+    value is an unknown for the same reason, and is kept.
+    """
+    raw = (SqliteLessonsStore._metadata(row) or {}).get("quality_score")
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return True
+    q = float(raw)
+    if q != q:  # NaN
+        return True
+    return q >= _MIN_LESSON_QUALITY
