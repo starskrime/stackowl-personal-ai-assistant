@@ -996,9 +996,16 @@ job A's output into job B, `workdir` (runs there with that dir's `AGENTS.md` loa
 multi-platform delivery. Schedule formats: duration (`30m`), phrase (`every monday 9am`), 5-field cron,
 ISO one-shot.
 **StackOwl.** Handlers are typed Python classes; jobs carry less per-job configuration.
-**Gap.** Their jobs are user-authorable in natural language; ours are developer-authored handlers.
-**Ask.** This is the difference between "I can schedule anything" and "the dev shipped a handler
-for it". Which model do you want?
+**Gap.** ~~Their jobs are user-authorable in natural language; ours are developer-authored
+handlers.~~ *(HALF WRONG, re-measured 2026-09-04.)* `cronjob` — the user-facing tool — creates jobs
+with `_HANDLER = "goal_execution"`, and GoalExecutionHandler "runs a natural-language goal through
+the pipeline ... as if the user had typed the goal at the prompt", with `run_once` for
+fire-and-forget. Five live jobs use it. The 34 typed handlers are the PLATFORM's own work, not a
+ceiling on the user's. The real gap is per-job CONFIGURATION.
+**Ask.** ANSWERED as posed — we already have "I can schedule anything". The narrowed question,
+which per-job knobs are worth building, is **ESC-124**. Two of the five are already settled by
+evidence: a model override is a no-op while the tier ladder is degenerate (D04.4), and
+`context_from` would be a second expression of the `depends_on` edge the ONE loop already has.
 
 ### D15.3 · Cron hardening invariants — `PARTIAL`
 **Hermes.** **3-minute hard interrupt** on cron sessions so a runaway loop cannot monopolize the

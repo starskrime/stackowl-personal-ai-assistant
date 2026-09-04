@@ -315,6 +315,45 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D15_2_2026_09_04_we_already_have_schedule_anything_the_question_is_only_the_knobs:
+    map_check: "No mapped item matched the phrasing; this IS D15.2's Ask about job richness."
+    THE_ASK_IS_A_FALSE_DICHOTOMY_as_posed: >-
+      D15.2 asks "the difference between 'I can schedule anything' and 'the dev
+      shipped a handler for it' — which model do you want?", on a gap line reading
+      "ours are developer-authored handlers". MEASURED: we already have the first
+      one. `cronjob`, the user-facing tool, creates jobs with `_HANDLER =
+      "goal_execution"`, and GoalExecutionHandler "runs a natural-language goal
+      through the pipeline ... as if the user had typed the goal at the prompt", with
+      `run_once` for fire-and-forget. Five live jobs use it. A user can already
+      schedule anything expressible as a goal; the 34 typed handlers are the
+      PLATFORM's own work, not the ceiling on the user's.
+    SO_THE_REAL_QUESTION_IS_MUCH_SMALLER: >-
+      What we lack is per-job CONFIGURATION, not user-authorability: a pre-run script
+      whose stdout is injected into the prompt, `context_from` chaining job A's output
+      into job B, `workdir` with that directory's AGENTS.md loaded, skills-to-load,
+      and a model/provider override.
+    AND_EVIDENCE_ALREADY_SETTLES_TWO_OF_THE_FIVE: >-
+      The MODEL OVERRIDE would be a no-op today — D04.4 measured the tier ladder as
+      degenerate, every tier resolving to the same model, and the platform says so at
+      INFO on every boot. CHAINING has a partial analogue already: `depends_on` exists
+      on the durable task path (decompose/loop/task), so job-to-job `context_from`
+      would be a second expression of a dependency edge the ONE loop already has —
+      which is the no-second-engine rule's territory, not a free feature.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      `_HANDLER = "goal_execution"` read at cronjob.py:59; GoalExecutionHandler's
+      docstring read in full; 34 handler files counted; live job counts by handler
+      from the database (rollover_summary 104, goal_execution 5, ...); the degenerate
+      ladder from D04.4's recorded INFO line; depends_on references counted in
+      pipeline/durable. No code changed — what this item produced is a narrowed
+      question, ESC-124.
   D15_1_2026_09_04_no_tick_lock_and_none_needed_the_claim_is_a_layer_lower:
     map_check: "No mapped item matched the phrasing; this IS D15.1's Ask — confirm the cross-process tick lock."
     THE_ASK_ANSWERED: >-
@@ -9211,6 +9250,37 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_124_which_per_job_knobs_are_worth_it_now_that_schedule_anything_already_works:
+      premise_check: |
+        uv run python -c "
+        import pathlib,re
+        t=pathlib.Path('src/stackowl/tools/scheduling/cronjob.py').read_text()
+        print('HOLDS user-authorable goals still wired' if '_HANDLER = \"goal_execution\"' in t
+              else 'EXPIRED the cronjob tool no longer creates goal_execution jobs')
+        "
+      question: >-
+        D15.2 asked whether we want "I can schedule anything" or "the dev shipped a
+        handler for it". We ALREADY have the first: `cronjob` creates goal_execution
+        jobs that run any natural-language goal through the full pipeline. So the
+        remaining question is narrow — which per-job KNOBS are worth building? The
+        reference has five: (1) a pre-run script whose stdout is injected into the
+        prompt, (2) `context_from` chaining one job's output into another, (3)
+        `workdir` with that directory's AGENTS.md loaded, (4) skills-to-load per job,
+        (5) a model/provider override.
+      why_evidence_cannot_settle_it: >-
+        Which of these you would USE is product appetite, not a measurement. Evidence
+        narrows it but cannot close it.
+      panel_recommendation: >-
+        Build NONE of them yet, and if you pick one, pick (1) the pre-run script. (5)
+        is a no-op today — the tier ladder is degenerate, every tier resolves to the
+        same model. (2) duplicates a dependency edge the ONE loop already expresses as
+        `depends_on`, so it belongs on tasks rather than as a second chaining
+        mechanism. (3) and (4) are real but only pay off once you are scheduling work
+        against several repos or owl skill-sets, which the live job table does not yet
+        show. (1) is the only one that adds something the goal string cannot already
+        carry: deterministic input gathered at run time.
+      what_is_blocked: >-
+        Nothing. Scheduling arbitrary goals already works; these are additions.
     ESC_123_a_column_never_written_in_six_weeks_of_rows:
       premise_check: |
         uv run python -c "
@@ -25672,13 +25742,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
