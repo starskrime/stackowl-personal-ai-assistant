@@ -472,9 +472,17 @@ spawns assigned profiles. Board = hard isolation boundary (`HERMES_KANBAN_BOARD`
 tenant = soft namespace within a board. Auto-blocks a task after `failure_limit` consecutive failures.
 Workers get a `kanban_*` toolset only when spawned as workers — zero schema footprint otherwise.
 Swarm topology on top: planning root → parallel specialists → verifier → synthesizer.
-**StackOwl.** `objectives/` (decomposer, driver, epic_runner, graph, store) is the closest analogue —
-single-agent goal advancement, not a shared multi-worker board.
-**Gap.** No shared work queue, no claim/reclaim, no cross-profile collaboration.
+**StackOwl.** *(re-measured 2026-09-04 — this entry predates the ONE loop.)* `tasks` IS the
+durable board: `lease_owner` + `lease_expires_at` (atomic claim AND stale-claim reclaim),
+`depends_on` (promotion), `attempt_count`/`max_attempts` with a terminal `dead_letter` state
+(auto-block after a failure limit — 76 rows sit in it), `parent_task_id` (topology),
+`next_attempt_at`, `position`, `idempotency_key`. 1,169 rows have been through it. `objectives/`
+is not the closest analogue.
+**Gap.** ~~No shared work queue, no claim/reclaim,~~ **only** cross-profile collaboration and the
+board-as-isolation-boundary — both multi-tenancy shapes this deliberately single-principal
+deployment does not have. **Verdict should read `PARTIAL`, not `MISSING`.** And the work is NOT
+to build a board: "never add a second queue, a second retry path, or a second status column" —
+cross-profile support is columns and a scope predicate on `tasks`, not a fifth engine.
 **Ask.** This is the closest thing in either codebase to your "autonomous epic platform" vision.
 Is Kanban the right shape, or is `objectives/` the right shape with Kanban's durability bolted on?
 

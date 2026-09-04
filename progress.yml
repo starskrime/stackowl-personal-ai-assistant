@@ -315,6 +315,56 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D07_6_2026_09_04_the_gap_line_says_no_claim_reclaim_and_the_ONE_loop_has_both:
+    map_check: "No mapped item matched the phrasing; this IS D07.6, whose gap line is a claim about OUR side."
+    THE_GAP_LINE_IS_FALSE_as_written: >-
+      D07.6 says "No shared work queue, no claim/reclaim, no cross-profile
+      collaboration", and names `objectives/` as our closest analogue. The first two
+      thirds are wrong and the entry predates the ONE loop. `tasks` carries EVERY
+      element the reference's board describes: status columns, `lease_owner` +
+      `lease_expires_at` (atomic claim AND stale-claim reclaim), `depends_on`
+      (dependency promotion), `attempt_count`/`max_attempts`/`last_failure_class`
+      with a terminal `dead_letter` state (auto-block after a failure limit — 76 rows
+      are in it), `parent_task_id`/`parent_owl` (swarm topology), `next_attempt_at`
+      (backoff), `position` (ordering) and `idempotency_key` (exactly-once). 1,169
+      rows have been through it.
+    WHAT_IS_ACTUALLY_MISSING: >-
+      Only the third clause: multiple PROFILES collaborating on one board, and the
+      board-as-isolation-boundary. Both are multi-tenancy concepts, and this
+      deployment is deliberately single-principal — delegate_task's own comment calls
+      it "deliberate single-user scoping, not an unscoped multi-tenant gap". So the
+      honest verdict is PARTIAL, not MISSING: the mechanism is here, the multi-tenant
+      shape is not.
+    AND_BUILDING_A_BOARD_WOULD_BREAK_A_STANDING_RULE: >-
+      "Before building anything that runs, retries, schedules or tracks work: find the
+      existing loop and extend it. Never add a second queue, a second retry path, or a
+      second status column." A Kanban board beside `tasks` is exactly the fifth engine
+      that rule was written against, after this tree already accumulated four. If
+      cross-profile collaboration is ever wanted, it is columns and a scope predicate
+      on the existing table, not a new one.
+    A_NUMBER_THAT_LOOKED_ALARMING_AND_IS_NOT: >-
+      849 of the 1,169 task rows read `failed`, which is 73%. The newest of them is
+      2026-08-15 — three weeks old — and every one carries a NULL failure_class and
+      NULL trigger_kind, i.e. they predate those columns being populated. The newest
+      COMPLETED task is today at 14:12. Historical residue from before the
+      loop-autonomy work, not a live failure rate. Checked because a 73% failure rate
+      would have been the real finding if the dates had said otherwise.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      The tasks schema read from the LIVE database (41 columns, each named above
+      matched to the reference's description); status distribution 849 failed / 244
+      completed / 76 dead_letter over 1,169 rows; failure_class and trigger_kind
+      grouped and both entirely NULL for the failed set; max(updated_at) compared
+      between failed (2026-08-15) and completed (today). No code changed — the correct
+      outcome here is a map correction, and building the thing would violate the
+      no-second-engine rule.
   D07_5_2026_09_04_AHEAD_is_a_claim_about_CODE_here_not_about_an_exercised_capability:
     map_check: "No mapped item matched the phrasing; this IS D07.5, whose Ask is simply 'Keep'."
     THE_VERDICT_HOLDS_STRUCTURALLY: >-
@@ -22335,13 +22385,13 @@ items:
     blocks: []
     dedup_target: X1
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
