@@ -831,7 +831,12 @@ The reader handles that half deliberately (`_parse_turns_to_messages` skips it,
 profiles cannot use the same bot credential.
 **StackOwl.** `tenancy/` + `authz/` are stronger conceptually, but channel-level pairing and token
 locks are not present.
-**Ask.** Add token locks — cheap protection against a real footgun.
+**Ask.** ANSWERED 2026-09-04. The footgun is real but sits one layer BELOW the bot
+token: `IpcServer.start` unlinked its socket unconditionally, so a second instance stole a
+running gateway's endpoint silently (proven: two servers on one path both bound). It now
+probes for a live listener and refuses, while still reclaiming a socket file left by a
+hard-killed process. A bot-token lock as described guards the MULTI-PROFILE case, and there
+is no profile concept in settings — so that half is not built.
 
 ### D12.8 · Untrusted-input toolset — `MISSING`
 **Hermes.** Webhook events may carry third-party content, so the webhook toolset is deliberately

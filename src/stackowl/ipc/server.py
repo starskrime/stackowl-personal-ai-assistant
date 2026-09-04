@@ -14,9 +14,15 @@ import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
 
 ConnectionHandler = Callable[[FrameConnection], Awaitable[None]]
+
+
+#: How long to wait for an answer before calling the socket residue. Short: this
+#: runs on every boot, and a live server accepts immediately.
+_PROBE_TIMEOUT_S = 1.0
 
 
 class IpcServer:
@@ -35,13 +41,69 @@ class IpcServer:
         """Bind the socket and begin accepting. Unlinks any stale socket file."""
         self._handler = handler
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        # Remove a stale socket file from a prior run; start_unix_server would
-        # otherwise fail with EADDRINUSE.
+        # ASK WHETHER ANYTHING ANSWERS BEFORE REMOVING THE FILE. This used to
+        # unlink unconditionally, commented "remove a stale socket file from a
+        # prior run" — the right intent, but `unlink` cannot tell a stale socket
+        # from a LIVE one. MEASURED 2026-09-04: two servers on one path BOTH bound
+        # and the second reported success, so a stray `python -m stackowl start`
+        # silently stole the running gateway's endpoint. The first kept running,
+        # every new client reached the second, and both would poll Telegram with
+        # the same bot credential — D12.7's footgun, arrived at from below.
+        #
+        # Existence alone must NOT refuse: a unix socket file outlives a process
+        # killed with -9, and refusing on the file would strand the platform after
+        # any hard kill — the incident start.sh's own header records. The question
+        # is whether anything ANSWERS, and the only way to know is to try.
+        if await self._is_live():
+            raise OSError(
+                f"the IPC socket is already in use by a running instance: "
+                f"{self._path} — stop it first (./start.sh does this), or that "
+                f"instance would keep running unreachable while this one took "
+                f"its place"
+            )
         with contextlib.suppress(FileNotFoundError):
             self._path.unlink()
         self._server = await asyncio.start_unix_server(
             self._on_connect, path=str(self._path)
         )
+
+    async def _is_live(self) -> bool:
+        """Is another server accepting on this path right now?
+
+        A refused or absent connection means the file is residue and may be
+        reclaimed. Never raises: an unexpected error is treated as NOT live, so a
+        probe that cannot decide can never be the reason the platform will not
+        boot.
+        """
+        if not self._path.exists():
+            return False
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_unix_connection(str(self._path)), timeout=_PROBE_TIMEOUT_S
+            )
+        except (ConnectionRefusedError, FileNotFoundError):
+            return False  # residue from a process that is gone
+        except TimeoutError:
+            log.gateway.warning(
+                "[ipc] server._is_live: the socket did not answer in time — "
+                "treating it as stale and reclaiming it",
+                extra={"_fields": {"path": str(self._path)}},
+            )
+            return False
+        except Exception as exc:  # B5 — never let the probe block a boot
+            log.gateway.warning(
+                "[ipc] server._is_live: probe failed — treating the socket as stale",
+                exc_info=exc, extra={"_fields": {"path": str(self._path)}},
+            )
+            return False
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        log.gateway.info(
+            "[ipc] server._is_live: another instance is answering on this socket",
+            extra={"_fields": {"path": str(self._path)}},
+        )
+        return True
 
     async def _on_connect(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter

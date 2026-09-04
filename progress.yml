@@ -315,6 +315,55 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D12_7_2026_09_04_the_footgun_was_real_and_it_was_one_layer_below_the_token:
+    map_check: "No mapped item matched the phrasing; this IS D12.7's Ask — add token locks."
+    THE_ASK: >-
+      D12.7 asks for "token locks — cheap protection against a real footgun": two
+      profiles using one bot credential, so both poll the same bot and messages are
+      split between them at random.
+    ROUND_0_KILLED_THE_OBVIOUS_VERSION: >-
+      The conflict has NEVER happened here — zero log lines contain "Conflict" or
+      "terminated by other getUpdates" across all eight logs. My first count said
+      thousands, because the pattern included a bare `409` which matches any number
+      containing those digits; printing the matching lines showed 0. And the
+      multi-profile scenario cannot arise: there is no profile concept in settings
+      at all. A bot-token lock would guard a shape this deployment does not have.
+    THE_FOOTGUN_IS_REAL_AND_IT_IS_ONE_LAYER_DOWN: >-
+      `IpcServer.start` unlinked the socket path before binding, commented "Remove a
+      stale socket file from a prior run; start_unix_server would otherwise fail
+      with EADDRINUSE". The intent is right; `unlink` cannot tell a STALE socket
+      from a LIVE one. PROVEN BY EXPERIMENT before a line was written: two servers
+      on one path BOTH bind and the second reports success. So a stray
+      `python -m stackowl start` silently steals the running gateway's endpoint —
+      the first keeps running unreachable, every new client reaches the second, and
+      both would then poll Telegram with the same credential. That IS D12.7's
+      footgun, arrived at from below, and there was no lock of any kind.
+    WHY_EADDRINUSE_ALONE_IS_NOT_THE_ANSWER: >-
+      A unix socket file outlives a process killed with -9, so refusing whenever the
+      file exists would strand the platform after any hard kill — the exact incident
+      start.sh's own header records (an orphaned core holding a port across a
+      restart). The question is not "does the file exist" but "does anything ANSWER
+      on it", and the only way to know is to try. The probe fails OPEN on every
+      error: a probe that cannot decide must never be the reason a boot fails.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      4 new tests including a vacuity control that a normal FIRST start still works —
+      a guard that refused everything would satisfy every refusal test and stop the
+      platform booting. Mutation-proven: restoring the unconditional unlink turns
+      both refusal tests red. tests/ipc + tests/startup + tests/gateway = 358 passed.
+      LIVE, not just tested: restarted on ./start.sh — phase 6, ZERO errors after the
+      boot marker, gateway link established, and ZERO false refusals, so the guard
+      does not block the normal restart path. Then probed the REAL running gateway:
+      `_is_live()` returns True for the live core.sock and False for a path with no
+      socket. That read-only half was used deliberately — it connects and never
+      unlinks, so proving it against production could not endanger production.
   NOTAFACT_2026_09_04_I_built_the_fix_measured_its_consequence_and_reverted_it:
     map_check: "No mapped item — this settles the open question D12.6 left behind."
     WHAT_I_SET_OUT_TO_DO: >-
@@ -24509,13 +24558,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
