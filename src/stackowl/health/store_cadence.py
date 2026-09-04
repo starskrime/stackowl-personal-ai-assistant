@@ -122,7 +122,15 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     _hot("tasks", "created_at"),
     _hot("task_outcomes", "captured_at"),
     _hot("job_runs", "ran_at"),
-    _hot("jobs", "created_at"),
+    # `last_run_at`, NOT `created_at`. A job ROW is created once when the job is
+    # scheduled; the live loop this declaration describes writes `last_run_at` on
+    # every run. MEASURED 2026-09-04: created_at was 1.2 days old while
+    # last_run_at was 22 SECONDS old, and the sweep reported UNHEALTHY 31 times in
+    # one boot — a perfectly running scheduler alarming because nobody had
+    # scheduled a NEW job that day. Dating it by the run also makes the check mean
+    # something: "the scheduler has stopped" is worth an alarm, "nobody added a
+    # job today" is not.
+    _hot("jobs", "last_run_at"),
     _hot("cost_records", "recorded_at"),
     _hot("messages", "created_at"),
     _hot("message_ledger", "created_at"),

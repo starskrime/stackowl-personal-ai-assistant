@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  HEALTHFALSE_2026_09_04_a_perfectly_running_scheduler_reported_itself_UNHEALTHY:
+    map_check: "No mapped item — found by an autonomous check reading the platform's own health log."
+    HOW_IT_SURFACED: >-
+      An autonomous check found 31 ERROR lines since boot where recent boots had
+      0-2, all identical: `[scheduler] health_sweep.execute: UNHEALTHY subsystems
+      detected` with `down: [], degraded: ["store_cadence"]`. The platform was
+      telling us something 31 times and nothing was reading it.
+    THE_MEASUREMENT_REVERSED_TWICE: >-
+      The log named four silent stores — jobs, sessions, side_effect_ledger,
+      approach_rating_pending — which looked like a broken platform. Querying their
+      timestamps reversed it: side_effect_ledger had been written 2 minutes earlier
+      and jobs 22 SECONDS earlier. Asking the instrument itself (cadence_report)
+      narrowed it further: only ONE store was still silent, `jobs`, at idle_days
+      1.22 against allowed_days 1.0. The other three had recovered on their own.
+    THE_ROOT_CAUSE_is_the_column_not_the_cadence: >-
+      `jobs` was declared HOT with clock `created_at`, and its own reason reads "a
+      live loop writes this on ordinary traffic". That reason is TRUE and the column
+      is wrong: a job ROW is created once when scheduled, while the live loop writes
+      `last_run_at` on every run. So the check was really asking "has anyone
+      scheduled a NEW job lately", and a platform whose scheduler was running
+      flawlessly alarmed because nobody had added a job that day.
+    THE_FIX_BUYS_MORE_THAN_SILENCE: >-
+      Dating `jobs` by `last_run_at` makes the check mean "the scheduler has
+      stopped", which is worth an alarm, instead of "nobody added a job today",
+      which nothing depends on. The check goes from a false positive to a real
+      detector. Live report after the change: measured 27, silent [].
+    THE_SWEEP_and_its_own_noise: >-
+      I swept every HOT store for the same shape. The instrument was noisy and is
+      recorded as such: `max_attempts` matched a "_at" substring filter, and
+      `jobs.next_run_at` is a FUTURE time rather than a write. Hand-checking the
+      four hits leaves only jobs as a real defect — `message_ledger` and
+      `delivery_attempts` also declare created_at while carrying a fresher
+      updated_at, but both were within SECONDS of each other when measured, so
+      neither can produce this failure. Left alone deliberately rather than swept
+      into churn.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      3 tests including a vacuity control that `jobs` stays HOT — reclassifying it
+      as on-demand would also silence the alarm while throwing away the
+      scheduler-stopped signal — and a schema test proving BOTH columns exist,
+      which is why the wrong one was silent rather than unmeasurable.
+      MUTATION-PROVEN: restoring `created_at` turns the target test red. tests/health
+      + tests/scheduler: 613 passed. The live cadence_report goes from
+      silent=[jobs] to silent=[]. PARTIAL until a restart puts it in the running
+      core; the closing query is zero `UNHEALTHY subsystems detected` lines in a
+      boot that has run past a day-old job row.
   D07_1_2026_09_04_parity_confirmed_and_the_raw_grep_lied_twice_on_the_way:
     map_check: "No mapped item matched the phrasing; this IS D07.1, whose Ask is 'None structurally'."
     THE_ITEM: >-
