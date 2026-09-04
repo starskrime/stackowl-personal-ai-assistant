@@ -366,6 +366,10 @@ current:
       neutering await_until turns the target test red, and forcing live_session_ids to ()
       turns the two unscoped-push tests red. PARTIAL until a full run confirms the
       pollution is gone under load — that is the only instrument that ever saw it.
+      Closing run launched on the committed tree at 53ce6a50 to
+      /home/boss/.stackowl/logs/full-suite-latest.log (first run to carry its own SUITE DONE verdict).
+      NEXT LOOP: `grep -c 'SUITE DONE' ~/.stackowl/logs/full-suite-latest.log` — 1 means
+      collectable. Target: 0 failed. Baseline: 1 failed, 11856 passed in 1767.71s.
   REDSUITE_2026_09_04_ten_red_tests_and_the_instruction_that_guaranteed_nobody_looked:
     map_check: "No mapped item — the first COMPLETED full suite is what produced it."
     THE_MEASUREMENT: >-
