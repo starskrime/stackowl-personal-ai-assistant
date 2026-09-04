@@ -368,6 +368,17 @@ current:
       item was to triage the FULL suite, and the suite has not yet completed once — this
       defect is why. The full run is relaunched; its result is the closing evidence, and the
       6-failure baseline from 2026-09-01 is what it must be read against.
+    A_SECOND_INSTANCE_I_SHOULD_HAVE_SWEPT_FOR: >-
+      The fix went in, the suite was relaunched, and it froze AGAIN — 13 minutes at 86%, 70%
+      CPU. py-spy named tests/tools/knowledge/test_memory_curated_writes.py:170
+      test_the_over_budget_refusal_carries_the_entries_through, with the identical condition:
+      "while mem.used_chars(USER_TARGET) < mem.budget_for(USER_TARGET) - 120" writing
+      "permanent". Fixing one instance and relaunching a 50-minute suite without sweeping for
+      siblings cost a full hour. The loop's own rule — what else does this cause reach — was
+      the thing I did not do, on the item whose whole subject was a cause that reaches.
+      An AST tripwire now asserts over tests/ AND src/ that no while-condition paces on
+      budget_for, so a third instance cannot be written; a mutation reintroducing the shape
+      is caught. tests/tools/knowledge 16 tests now run in 0.45s.
     A_CORRECTION_TO_THE_RECORD_pending_confirmation: >-
       CLAUDE.md states the full run takes 31 minutes, measured 2026-09-01. That figure cannot
       be right while this test spins, so either it predates the spin or the run was never

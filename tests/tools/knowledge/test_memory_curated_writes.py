@@ -165,10 +165,18 @@ async def test_the_over_budget_refusal_carries_the_entries_through(tool, tmp_pat
     """The refusal is an instruction the model must act on this turn, so it must
     not be flattened to a bare message — it needs the entry list to consolidate."""
     mem = _mem(tmp_path)
-    i = 0
-    while mem.used_chars(USER_TARGET) < mem.budget_for(USER_TARGET) - 120:
+    # PACED AGAINST THE TIER THIS WRITES TO, and hard-bounded. A `permanent`
+    # write is admitted only under the budget MINUS the reserve (1,031 of
+    # 1,375), so waiting for `used_chars` to pass `budget_for - 120` = 1,255
+    # waits for something permanent-only writes can never produce. This spun for
+    # 13 minutes at 70% CPU and was the SECOND test to stall the whole suite for
+    # the same reason — see `CuratedMemory.headroom_for`.
+    for i in range(500):
+        if mem.headroom_for(USER_TARGET, "permanent") <= 120:
+            break
         mem.add(USER_TARGET, f"Fact {i} about how the user works day to day.", "permanent")
-        i += 1
+    else:  # pragma: no cover — only if the ceiling stops binding
+        raise AssertionError("the permanent tier never filled — headroom_for is not shrinking")
 
     res = await tool.execute(
         action="add", content="x" * 300, durability="permanent",

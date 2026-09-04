@@ -163,3 +163,50 @@ def test_a_duplicate_write_does_not_move_the_headroom(mem: CuratedMemory) -> Non
     assert mem.headroom_for(USER_TARGET, "permanent") == before, (
         "a duplicate changed the headroom — the helper's uniqueness would be moot"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The sweep, made executable                                                   #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.tripwire
+def test_no_fill_loop_paces_against_the_whole_file_budget() -> None:
+    """TWO tests spun on this exact shape before anyone swept for it.
+
+    The first (``tests/test_story_6_7.py``) froze the full suite at 78% for 30
+    minutes. It was fixed, the suite relaunched, and it froze again at 86% for 13
+    minutes on the second (``tests/tools/knowledge/test_memory_curated_writes.py``)
+    — same condition, different file, found only because the run was watched a
+    second time. Fixing the first instance without sweeping for siblings cost a
+    full hour of suite time.
+
+    THE SHAPE: a ``while`` whose condition asks ``budget_for`` — the WHOLE-FILE
+    number — to pace a loop whose body writes a durability the gate caps lower.
+    It cannot terminate, and it burns CPU logging a refusal per pass.
+
+    Asserted over the whole tree rather than remembered, because "remember to
+    check the other one" is exactly what did not happen."""
+    import ast as _ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]           # tests/
+    src = root.parent / "src"
+    offenders: list[str] = []
+    for base in (root, src):
+        for path in base.rglob("*.py"):
+            try:
+                tree = _ast.parse(path.read_text(errors="ignore"))
+            except SyntaxError:  # pragma: no cover — the syntax gate covers this
+                continue
+            for node in _ast.walk(tree):
+                if not isinstance(node, _ast.While):
+                    continue
+                cond = _ast.unparse(node.test)
+                if "budget_for" in cond and "headroom_for" not in cond:
+                    offenders.append(f"{path.relative_to(base.parent)}:{node.lineno}  while {cond}")
+    assert not offenders, (
+        "a loop paces on the whole-file budget while its body writes a "
+        "durability the admission gate caps lower — this spins forever:\n  "
+        + "\n  ".join(offenders)
+    )
