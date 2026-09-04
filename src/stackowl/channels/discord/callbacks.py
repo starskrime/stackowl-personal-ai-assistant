@@ -27,6 +27,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from stackowl.channels.callback_authz import press_is_authorized
+from stackowl.channels.discord.helpers import is_authorized
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -149,6 +151,28 @@ def build_view(
                     log.discord.warning(
                         "[discord] callbacks.view: no router attached — tap ignored",
                     )
+                    return
+                # THE ALLOW-LIST, which this seam had in hand and never asked.
+                # `interaction.user` was right here while the router — which
+                # dispatches consent: and clarify: — was given only the custom_id.
+                # Messages were gated; taps were not.
+                presser_id = None
+                settings = getattr(adapter, "_settings", None)
+                allowed = getattr(settings, "allowed_user_ids", None)
+                try:
+                    user = getattr(interaction, "user", None)
+                    presser_id = getattr(user, "id", None)
+                except Exception as exc:  # no-hidden-errors: unknown presser DENIES
+                    log.discord.error(
+                        "[discord] callbacks.view: could not read the presser — "
+                        "refusing the tap",
+                        exc_info=exc, extra={"_fields": {}},
+                    )
+                    return
+                if not press_is_authorized(
+                    "discord", presser_id,
+                    None if allowed is None else (lambda uid: is_authorized(uid, allowed)),
+                ):
                     return
                 await router.route(callback_id, _cid)
 

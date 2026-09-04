@@ -3748,8 +3748,12 @@ class StartupOrchestrator:
                 # socket starts (handlers attach on the app pre-connect), so the
                 # very first tap is routed. Mirrors the Telegram callback wiring.
                 try:
+                    from stackowl.channels.callback_authz import press_is_authorized
                     from stackowl.channels.slack.callbacks import SlackActionRouter
                     from stackowl.channels.slack.clarify import SlackClarifyResolver
+                    from stackowl.channels.slack.helpers import (
+                        is_authorized as slack_is_authorized,
+                    )
 
                     slack_router = SlackActionRouter()
                     slack_router.register(
@@ -3786,6 +3790,25 @@ class StartupOrchestrator:
                                 or body.get("trigger_id")
                                 or action_id
                             )
+                            # THE ALLOW-LIST. `body["user"]["id"]` was in hand at
+                            # this seam and never checked, while Slack MESSAGES
+                            # are gated in the adapter. The router dispatches
+                            # consent: and clarify:, so an ungated tap resolves a
+                            # pending approval.
+                            presser = body.get("user")
+                            presser_id = (
+                                presser.get("id") if isinstance(presser, dict) else None
+                            )
+                            _allowed = getattr(
+                                getattr(slack_adapter, "_settings", None),
+                                "allowed_user_ids", None,
+                            )
+                            if not press_is_authorized(
+                                "slack", presser_id,
+                                None if _allowed is None
+                                else (lambda uid: slack_is_authorized(uid, _allowed)),
+                            ):
+                                return
                             await slack_router.route(action_id, delivery_id=delivery_id)
                         except Exception as exc:  # noqa: BLE001 — handler guard
                             log.error(

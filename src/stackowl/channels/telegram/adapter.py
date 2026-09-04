@@ -27,6 +27,7 @@ from telegram.error import BadRequest, RetryAfter
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from stackowl.channels.base import ChannelAdapter
+from stackowl.channels.callback_authz import press_is_authorized
 from stackowl.channels.chat_id import chat_id_from_session
 from stackowl.channels.splitter import TelegramMessageSplitter
 from stackowl.channels.telegram._bot import (
@@ -1404,12 +1405,42 @@ class TelegramChannelAdapter(ChannelAdapter):
         ``router`` must expose an async ``route(update, context)`` callback. Used
         to wire the consent inline-keyboard round-trip; safe no-op if the bot is
         not initialised.
+
+        THE ALLOW-LIST IS APPLIED HERE, and it was not before. ``_handle_update``,
+        ``_handle_document`` and the voice handler each check ``is_authorized``;
+        this handler was registered with no filter, so a tap from ANYONE reached
+        the router — which dispatches ``consent:`` and ``clarify:``, i.e. resolves
+        a pending approval. This adapter supports groups, and a group is exactly
+        where a non-allow-listed member can see the prompt and press its button.
+        The check goes at the SEAM rather than inside the router because this is
+        where the presser's identity exists; the router is never given it.
         """
         log.telegram.debug("[telegram] adapter.attach_callback_router: entry")
         if self._bot_app is None:
             log.telegram.warning("[telegram] adapter.attach_callback_router: bot not initialised — skipped")
             return
-        self._bot_app.add_handler(CallbackQueryHandler(router.route))
+
+        async def _guarded_route(update: Any, context: Any) -> None:
+            presser_id = None
+            try:
+                cq = getattr(update, "callback_query", None)
+                from_user = getattr(cq, "from_user", None) if cq is not None else None
+                presser_id = getattr(from_user, "id", None)
+            except Exception as exc:  # no-hidden-errors: unknown presser DENIES
+                log.telegram.error(
+                    "[telegram] adapter.attach_callback_router: could not read the "
+                    "presser — refusing the tap",
+                    exc_info=exc, extra={"_fields": {}},
+                )
+                return
+            if not press_is_authorized(
+                "telegram", presser_id,
+                lambda uid: is_authorized(uid, self._settings.allowed_user_ids),
+            ):
+                return
+            await router.route(update, context)
+
+        self._bot_app.add_handler(CallbackQueryHandler(_guarded_route))
         log.telegram.debug("[telegram] adapter.attach_callback_router: exit")
 
     async def _handle_update(

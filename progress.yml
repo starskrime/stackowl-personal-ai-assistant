@@ -315,6 +315,66 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  CALLBACKAUTHZ_2026_09_04_the_allowlist_gated_the_front_door_and_not_the_button:
+    map_check: "No mapped item matched — evidence-led, found while measuring D12.3's channel duplication. Filed as DEBT-114."
+    HOW_IT_SURFACED: >-
+      D12.3 (Generic relay adapter, P1) claims ~24 near-duplicate channel modules.
+      Measuring that first — the map entry is partly stale, it names a
+      `memory_callbacks.py` that does not exist — the sharpest duplication is
+      helpers.py, where `is_authorized` exists in FOUR variants of 3, 3, 8 and 23
+      lines. Reading all four for a policy difference found none: every one denies on
+      an empty allow-list. The defect was one level out — not how the check is
+      written, but WHERE IT IS CALLED.
+    THE_MEASUREMENT: >-
+      Telegram calls is_authorized on THREE inbound paths (_handle_update,
+      _handle_document, voice) and registers `CallbackQueryHandler(router.route)`
+      with NO filter. Discord's button seam receives the whole `interaction` and
+      never reads `interaction.user`. Slack's action seam receives `body` and never
+      reads `body["user"]["id"]`. Zero of the three callback routers reference
+      is_authorized, allowed_user_ids, or even user_id. Tests covered an
+      unauthorized MESSAGE (test_handle_update_unauthorized_drops_silently) and no
+      test anywhere covered an unauthorized PRESS.
+    WHY_IT_MATTERS: >-
+      Those routers dispatch `consent:` and `clarify:` — the tap RESOLVES A PENDING
+      APPROVAL, and the consent handler resolves the future by rid alone, its
+      docstring stating chat_id "is not otherwise needed here". The Telegram adapter
+      documents itself as "DM + group support, allowlist-gated", and a group is
+      exactly where someone not on the allow-list can see the prompt and press its
+      button. The front door was locked; the side door was not.
+    ROOT_CAUSE: >-
+      Same rule, one case short. The allow-list is applied per INBOUND PATH, and
+      every time a new path was added the rule was copied to it — three times in
+      Telegram alone. The button path was added without it, in three channels, and
+      nothing could notice because the presser's identity was never handed to the
+      code that decides. The identity existed at every seam and reached no decision.
+    fix: >-
+      channels/callback_authz.press_is_authorized — ONE decision and one refusal log
+      line for every channel, failing closed on an unknown presser, a missing
+      allow-list and a predicate that raises. Applied at the three SEAMS, because
+      that is the only place the presser's identity exists; the routers are never
+      given it. Deliberately NOT a signature change on the routers: that would have
+      touched 24 test construction sites for no security gain, and a scripted edit
+      across many files is a landmine this repo has already paid for.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      8 new tests; the two refusal tests are MUTATION-PROVEN — restoring the pre-fix
+      "route every tap" behaviour turns exactly those two red, restored from a file
+      copy and re-run green. A vacuity control asserts the owner's own press still
+      routes, because a guard that refuses everyone would satisfy every refusal test
+      and silently break his buttons. Suites: tests/channels + tests/startup +
+      tests/smoke + tests/journeys = 1181 passed, 3 skipped. The consent suite was
+      GREEN BEFORE the edit (631 passed), which this skill requires before touching
+      consent-adjacent code. PARTIAL until a live press: the closing query is
+      `grep -c "callback_authz: press REFUSED" ~/.stackowl/logs/stackowl.jsonl` for a
+      refusal, and an unchanged consent round-trip for the allow path — the second is
+      what proves the fix did not cost him his own buttons.
   RECORD_2026_09_04_the_state_of_record_diverged_from_the_work_and_nothing_could_see_it:
     map_check: "No mapped item — found while choosing the NEXT item, from the field that choice is made on."
     HOW_IT_SURFACED: >-
@@ -9960,6 +10020,26 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-114
+    found: 2026-09-04
+    what: >-
+      D12.3's map entry is partly stale and its headline number was not re-measured
+      before this session. It names a per-channel `memory_callbacks.py` that does not
+      exist in the tree.
+    evidence: >-
+      Measured 2026-09-04: channels/ holds discord, slack, telegram, whatsapp with
+      shared module names settings/helpers/consent/adapter/clarify/callbacks — ~26
+      files, ~7,100 lines, adapters alone 4,247. Same-named functions are NOT copies:
+      is_authorized has 4 structurally distinct variants (3/3/8/23 lines),
+      hash_user_id 3, strip_bot_mention 3.
+    decision: >-
+      D12.3's collapse-to-one-relay is NOT attempted here. It rewrites four
+      user-facing channels and ~7k lines, which is a wave rather than an item, and
+      the duplication is near-miss rather than literal so a mechanical collapse would
+      change behaviour. What this item took instead is the defect the measurement
+      actually exposed — the ungated button path — which is the part with a security
+      consequence. The map entry should be re-measured before D12.3 is scheduled.
+    status: open
   - id: DEBT-113
     found: 2026-09-04
     what: >-
