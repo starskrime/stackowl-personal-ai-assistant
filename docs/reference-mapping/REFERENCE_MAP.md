@@ -765,6 +765,14 @@ runner adapts instead of branching per platform.
 **StackOwl.** `ChannelAdapter` ABC with `receive`/`send`/`send_text` + optional
 `send_inline_keyboard`/`send_clarify`/`send_file`/`download_media`. Capabilities are implicit.
 **Gap.** Ours branches on channel identity in places; theirs reads a descriptor.
+*(Re-measured 2026-09-04: exactly FOUR sites outside `channels/` compare a channel name,
+and `channels/base.py` exposes no capability descriptor for them to ask. Three are not the
+gap — a setup wizard, a one-line CLI ownership decision, and an approach-rating gate that is
+correct in effect because `approach_rating` exists only in the Telegram package. The one that
+IS the gap is `notifications/recipient.py`, which resolves a proactive address for Telegram
+alone and already carries a `TODO(channels)` for a per-channel resolver registry. It costs
+nothing today: no undelivered row anywhere says "no address", and Telegram is the only
+enabled channel. The work belongs in the change that enables a second channel.)*
 **Ask.** Adopt a declared capability descriptor? This is what makes 20 adapters maintainable.
 
 ### D12.2 · Channel breadth — `PARTIAL`
