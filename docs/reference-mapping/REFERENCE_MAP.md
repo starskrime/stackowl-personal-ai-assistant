@@ -235,7 +235,12 @@ cap, no persistence — oversized output is simply lost.
 change-detector-test ban to keep it from rotting.
 **StackOwl.** `providers/model_window.py` actively **probes** the live endpoint for the real window
 (built after finding a model running at 8192 vs its real 262144).
-**Ask.** Keep the probe. Add their catalog as a fallback?
+**Ask.** ANSWERED 2026-09-04 — keep the probe, do NOT add the catalog. The failure modes
+are asymmetric: a stale catalog OVER-states a window and costs the whole call, while our
+probe-failure floor UNDER-states one and costs only some context. Their own design concedes
+it, pairing the catalog with "a change-detector-test ban to keep it from rotting". Measured
+on the day's real outage: the floor cost a handful of calls at 100k instead of 262k and
+self-corrected on the next probe. See `designs/D03.5.md`.
 
 ---
 
