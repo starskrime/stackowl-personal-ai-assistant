@@ -315,6 +315,47 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D15_4_2026_09_04_objectives_is_not_dead_it_is_FINISHED_and_that_is_a_different_thing:
+    map_check: "No mapped item matched the phrasing; this IS D15.4's Ask — reconcile objectives with the Kanban question."
+    HALF_THE_ASK_IS_ALREADY_CLOSED: >-
+      D15.4 says "Keep. Reconcile with Kanban (D07.6) so we do not end up with two
+      work queues." D07.6 was answered yesterday: `tasks` IS the board, and building a
+      Kanban would be the fifth engine the no-second-engine rule was written against.
+      So no Kanban is coming and that half of the risk is shut.
+    THE_OTHER_HALF_IS_STILL_OPEN_and_measured: >-
+      objectives and tasks are two engines in CODE today. Only one is doing work.
+      `tasks`: 1,170 rows, newest today. `objectives`: 0 parent rows;
+      `objective_subgoals` 28 rows ALL TERMINAL (27 done, 1 failed), untouched since
+      2026-08-28; the ObjectiveDriverHandler is registered and ran 19 times this boot,
+      every single exit carrying `{"advanced": 0}`. 2,530 lines behind it.
+    NOT_DEAD_FINISHED_and_the_distinction_is_the_whole_finding: >-
+      CLAUDE.md warns specifically against this table: it was "named as dead on the
+      strength of a zero-row table" once already and the warning is earned — the
+      objective tool has NINE turns in task_outcomes and 27 of its 28 subgoals
+      COMPLETED SUCCESSFULLY. That is not dead code, it is an engine that did its work
+      and has none left. "Zero rows" here means finished, not broken and not unused,
+      and calling it dead would repeat the exact error the rule was written about.
+    WHAT_I_DID_NOT_DO: >-
+      Not retired. It is a capability he has used nine times, and removing something
+      user-facing is a stop-and-brief. ESC-121 covers three OTHER zero-reference
+      tables and not this one, so nothing in the queue already asks it — escalated as
+      ESC-125 with the reconciliation the map actually wants.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      Row counts and newest timestamps for objectives / objective_subgoals / tasks
+      from the live database; subgoal statuses grouped (27 done, 1 failed); the
+      driver's 19 ticks and their `advanced: 0` fields counted from this boot's log;
+      2,530 lines counted across src/stackowl/objectives; nine objective-tool turns
+      counted from task_outcomes.tool_sequence; ESC-121 read to confirm it does not
+      already cover this. `job_queue` is confirmed GONE — the table no longer exists,
+      so one of the four engines CLAUDE.md named is definitively retired.
   D15_3_2026_09_04_the_walk_the_Ask_asked_for_and_one_number_that_has_grown:
     map_check: "No mapped item matched the phrasing; this IS D15.3's Ask — walk our equivalents one by one."
     ONE_HARD_INTERRUPT_PRESENT: >-
@@ -9306,6 +9347,38 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_125_objectives_is_a_second_engine_that_has_finished_its_work:
+      premise_check: |
+        uv run python -c "
+        import sqlite3,os
+        c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True)
+        p=c.execute('SELECT COUNT(*) FROM objectives').fetchone()[0]
+        o=c.execute(\"SELECT COUNT(*) FROM objective_subgoals WHERE status NOT IN ('done','failed')\").fetchone()[0]
+        print(f'HOLDS {p} objectives, {o} open subgoals' if p==0 and o==0
+              else f'EXPIRED {p} objectives, {o} open subgoals - it has work again')
+        "
+      question: >-
+        `objectives/` is 2,530 lines with a driver that ran 19 times this boot and
+        advanced NOTHING every time. Its parent table is empty and all 28 subgoals are
+        terminal (27 done, 1 failed), untouched since 2026-08-28. Meanwhile `tasks`
+        carries 1,170 rows with the newest today. The standing rule says one loop and
+        never a second engine. Do you fold objectives onto the task loop, keep it as
+        the standing-goals surface, or retire it?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles that it is FINISHED, not that it is unwanted — you used the
+        objective tool nine times and 27 of its 28 subgoals completed. Whether standing
+        goals remain a product surface is your intent, and retiring a used capability
+        is a stop-and-brief either way.
+      panel_recommendation: >-
+        FOLD, do not delete. The capability is real and was used; the second engine is
+        what the rule forbids. `tasks` already carries `parent_task_id` and
+        `depends_on`, which is precisely "sub-tasks are rows with a parent, so a graph
+        is edges between rows — not a second system". Folding keeps standing goals and
+        removes 2,530 lines plus a driver that currently exists to advance nothing. If
+        you would rather keep it, the honest minimum is unscheduling the driver so it
+        stops ticking against an empty table.
+      what_is_blocked: >-
+        Nothing. Both engines are stable; one simply has no work.
     ESC_124_which_per_job_knobs_are_worth_it_now_that_schedule_anything_already_works:
       premise_check: |
         uv run python -c "
@@ -25852,13 +25925,13 @@ items:
     blocks: []
     dedup_target: X1
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []

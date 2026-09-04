@@ -1029,7 +1029,13 @@ rejects consecutive same-role turns outright.
 ### D15.4 · Objectives / standing goals — `AHEAD`
 **Hermes.** `/goal`, `/subgoal`, `cron/blueprint_catalog.py`, `suggestions.py` — lighter.
 **StackOwl.** `objectives/` — decomposer, driver on a cadence, epic runner, graph, store.
-**Ask.** Keep. Reconcile with Kanban (D07.6) so we do not end up with two work queues.
+**Ask.** HALF CLOSED 2026-09-04. No Kanban is coming — D07.6 established that `tasks` IS the
+board and a second one would be the fifth engine the no-second-engine rule was written against.
+The other half is open and now measured: objectives and tasks are two engines in code, and only
+one has work. `tasks` 1,170 rows, newest today; `objectives` 0 parent rows, all 28 subgoals
+terminal (27 done, 1 failed) since 2026-08-28, and its driver ran 19 times this boot advancing
+NOTHING each time, behind 2,530 lines. NOT DEAD — the objective tool has nine turns and 27 of 28
+subgoals succeeded — but FINISHED, which is a different thing. Fold-or-keep is **ESC-125**.
 
 ### D15.5 · Background-process notifications — `PARTIAL`
 **Hermes.** `terminal(background=true, notify_on_complete=true)` → the gateway watches for completion
