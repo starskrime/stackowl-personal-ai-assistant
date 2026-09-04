@@ -122,3 +122,75 @@ class TestTheRealFileIsSound:
 
 if __name__ == "__main__":  # pragma: no cover
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# --------------------------------------------------------------------------
+# The state of record can also diverge from itself. Added 2026-09-04, after
+# D04.4, D12.8 and N01 — the three most recently worked items — were found with
+# a full narrative record under `current` and every one of their seven stages
+# still reading `not_started`.
+# --------------------------------------------------------------------------
+
+
+def _data(stages: dict[str, str]) -> dict:
+    return {
+        "current": {"D12_8_2026_09_03_the_untrusted_marker_reached_ONE_tool": {}},
+        "items": [{"id": "D12.8", "stages": stages}],
+    }
+
+
+_ALL_DONE = {
+    "brainstorm": "done", "architect": "done", "implement": "done",
+    "cleanup": "done", "test": "done", "validate": "done", "document": "done",
+}
+
+
+def test_a_worked_item_whose_stages_never_moved_is_a_problem() -> None:
+    """The loop picks its next item FROM these stages.
+
+    A finished item still reading `not_started` is picked again, and the count
+    of what remains is wrong in the direction that hides work.
+    """
+    stages = dict.fromkeys(_ALL_DONE, "not_started")
+    problems = progress_lint.stale_stage_problems(_data(stages))
+    assert len(problems) == 1
+    assert "D12.8" in problems[0]
+
+
+def test_it_catches_a_HALF_updated_item_too() -> None:
+    """The first version of this check asserted 'every stage is not_started'.
+
+    It was too weak in a way it demonstrated immediately: a repair script
+    rewrote ONE stage line per item — the others use aligned padding its regex
+    missed — and the check went green over a state still recording implement and
+    test as never started. A guard that passes on a known-wrong state is worse
+    than no guard, because it becomes the reason nobody looks.
+    """
+    stages = dict.fromkeys(_ALL_DONE, "not_started")
+    stages["brainstorm"] = "done"  # exactly the half-update that slipped through
+    problems = progress_lint.stale_stage_problems(_data(stages))
+    assert len(problems) == 1, "a half-updated item must still be caught"
+    assert "implement" in problems[0]
+
+
+def test_a_genuinely_finished_item_is_silent() -> None:
+    """Vacuity control: the check must not fire on the state it wants."""
+    assert progress_lint.stale_stage_problems(_data(dict(_ALL_DONE))) == []
+
+
+def test_an_item_with_NO_record_is_never_flagged() -> None:
+    """Most items have no `current` record and are simply not started yet."""
+    data = {"current": {}, "items": [{"id": "D12.8",
+                                      "stages": dict.fromkeys(_ALL_DONE, "not_started")}]}
+    assert progress_lint.stale_stage_problems(data) == []
+
+
+def test_the_id_prefix_does_not_match_a_LONGER_id() -> None:
+    """`D01.1` must not claim `D01_10`'s record — an off-by-one that would mark
+    a genuinely unstarted item as worked, which is the failure this check exists
+    to prevent, pointed the other way."""
+    data = {
+        "current": {"D01_10_2026_09_04_some_other_item": {}},
+        "items": [{"id": "D01.1", "stages": dict.fromkeys(_ALL_DONE, "not_started")}],
+    }
+    assert progress_lint.stale_stage_problems(data) == []

@@ -109,6 +109,59 @@ def duplicate_key_problems(text: str) -> list[str]:
     return problems
 
 
+def stale_stage_problems(data: dict) -> list[str]:
+    """Items the loop WORKED but whose structured stages never moved.
+
+    WHY THIS IS A CHECK. An item's progress lives in two places: the narrative
+    record under ``current``, which every loop writes, and the ``stages`` map
+    under ``items``, which the loop is supposed to update after EVERY stage. Only
+    the first was being written. Measured 2026-09-04: D04.4, D12.8 and N01 — the
+    three most recent items — each carried a full worked record under ``current``
+    (measurements, what shipped, suites, a validate verdict) while every one of
+    their seven stages still read ``not_started`` and ``changes`` was empty.
+
+    That is not cosmetic. **The loop chooses its next item FROM THESE STAGES.** A
+    finished item that still reads not_started gets picked again; and the count of
+    what remains is wrong in the direction that hides work. Same shape as every
+    other defect here: two copies of one fact, one of them written, and nothing
+    asking whether they agree.
+    """
+    problems: list[str] = []
+    current = data.get("current") or {}
+    keys = [k for k in current if isinstance(k, str)]
+    for item in data.get("items", []):
+        ident = str(item.get("id", ""))
+        if not ident:
+            continue
+        prefix = ident.replace(".", "_")
+        records = [
+            k for k in keys
+            if k == prefix or k.startswith(f"{prefix}_")
+        ]
+        if not records:
+            continue
+        stages = item.get("stages") or {}
+        # NOT "every stage is not_started". That was the first version of this
+        # check and it was too weak in a way it demonstrated immediately: a
+        # repair script rewrote ONE stage line of each item — the rest use
+        # aligned padding its regex missed — and this check went green over a
+        # state still recording implement/test/validate as never started. A guard
+        # that passes on a known-wrong state is worse than none, because it is
+        # now the reason nobody looks. These three stages cannot be skipped by an
+        # item whose work is written down, so any one of them left at
+        # 'not_started' beside a worked record is the divergence.
+        unstarted = [s for s in ("architect", "implement", "test")
+                     if stages.get(s) == "not_started"]
+        if stages and unstarted:
+            problems.append(
+                f"{ident}: stage(s) {', '.join(unstarted)} read 'not_started' but "
+                f"current holds {len(records)} worked record(s) — e.g. "
+                f"'{records[0][:56]}'. The loop picks its next item from these "
+                f"stages, so a finished item recorded this way is picked again."
+            )
+    return problems
+
+
 def main() -> int:
     path = Path(__file__).resolve().parent.parent / "progress.yml"
     text = path.read_text(encoding="utf-8")
@@ -121,6 +174,8 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001 — the message is the output
         print(f"✗ progress.yml does not parse: {exc}")
         return 1
+
+    problems.extend(stale_stage_problems(data))
 
     for item in data.get("items", []):
         ident = item.get("id", "<unknown>")

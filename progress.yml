@@ -315,6 +315,69 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  RECORD_2026_09_04_the_state_of_record_diverged_from_the_work_and_nothing_could_see_it:
+    map_check: "No mapped item — found while choosing the NEXT item, from the field that choice is made on."
+    HOW_IT_SURFACED: >-
+      Picking the next item means reading `items[].stages`. D12.8 read
+      `not_started` for all seven stages with `changes: []`, while `current` held a
+      full worked record for it — measurements, root cause, what shipped, suites, a
+      validate verdict. Sweeping the whole file: THREE items are in that state, and
+      they are the three most recently worked — D04.4, D12.8 and N01, all 2026-09-03.
+    ROOT_CAUSE: >-
+      An item's progress lives in TWO places: the narrative record under `current`,
+      which every loop writes, and the structured `stages` map under `items`, which
+      PROCESS.md says to update after EVERY stage. Only the first was being written.
+      Two copies of one fact, one of them maintained, and nothing asking whether they
+      agree — the same shape this programme keeps finding in the code, this time in
+      its own state of record.
+    WHY_IT_MATTERS_and_it_is_not_cosmetic: >-
+      THE LOOP PICKS ITS NEXT ITEM FROM THESE STAGES. A finished item that still reads
+      not_started gets picked and re-done; and the remaining-work count is wrong in the
+      direction that HIDES work. My own count of "43 complete, 69 incomplete" earlier
+      in this session was built on this field and was therefore wrong by at least three.
+    VERIFIED_BEFORE_WRITING_ANY_STATUS: >-
+      Nothing was marked done on the strength of the record. D04.4's claimed evidence
+      line was re-measured independently — `[providers] tier ladder resolved` at INFO,
+      174 occurrences, carrying degenerate:true. D12.8's marker module and its three
+      call sites were confirmed in the tree. N01's closing query was RUN and returns
+      the line with every field it requires (success_now 0.894, success_prior 0.828,
+      improved 2, regressed 0, skills_learned 22) — so N01's validate CLOSES here.
+      All three suites were re-run: tests/providers 726, tests/brief +
+      tests/scheduler/handlers 310, tests/infra + tests/tools 2127. All green.
+    D12_8_STAYS_PARTIAL_and_the_denominator_is_why: >-
+      Its closing query — `[untrusted] wrapped external content` — returns 0. That
+      looked like an unfired actuator until the denominator was checked: `browser_extract`
+      appeared 265/125/34 times in the logs, but 123 of the 125 on 09-03 are a SCHEDULER
+      line that merely NAMES the tool, not an execution. Real fetch volume in the window
+      is ~0, so 0 wraps is 0-over-0 and proves nothing either way. Left OPEN, exactly as
+      its own record says.
+    THE_GUARD_and_the_weak_version_it_replaced: >-
+      progress_lint now fails when an item has a `current` record while architect,
+      implement or test read not_started. The FIRST version asked "is every stage
+      not_started", and it was too weak in a way it demonstrated within minutes: the
+      repair script rewrote ONE stage line per item — the rest use aligned padding its
+      regex missed — and the linter went green over a state still recording implement
+      and test as never started. A guard that passes on a known-wrong state is worse
+      than no guard, because it becomes the reason nobody looks. Mutation-proven: the
+      weak predicate turns the half-update test red.
+    MEASURED_AND_NOT_FIXED_HERE: >-
+      16 of the 48 items with `implement: done` have `doc: None` — a third of shipped
+      work has no design document, though "Done means" requires one. That is a real gap
+      and it is NOT these three items' gap; writing 16 documents is not one item. All
+      three keep `document: not_started`, which is the honest value. Filed as DEBT-113.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      The check fired on exactly the three known-bad items and exit 1; after the
+      correction it exits 0. 11 tests on the linter including the half-update case and
+      an id-prefix off-by-one (D01.1 must not claim D01_10's record). Mutation: the weak
+      predicate turns the half-update test red, restored from a file copy and re-run green.
   D09_4_2026_09_04_the_nudge_could_not_fire_because_the_GATE_ran_before_the_COUNTER:
     map_check: "No mapped item matched the phrasing — this closes D09.4's own open acceptance check."
     THE_MEASUREMENT: >-
@@ -9897,6 +9960,25 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-113
+    found: 2026-09-04
+    what: >-
+      A third of shipped items have no design document. 16 of the 48 items with
+      `implement: done` carry `doc: null`, though PROCESS.md's "Done means" requires a
+      document closed to DOC_STANDARD.
+    evidence: >-
+      Measured over progress.yml on 2026-09-04: items with implement in (done,
+      no_change_needed) = 48; of those, doc is null for 16, including D02.2-D02.5,
+      D03.1, D03.3-D03.5, D06.4, D08.3, D08.5, D09.6, D04.4, D12.8 and N01. Zero items
+      name a doc that is missing from disk, so the gap is unwritten documents, not
+      broken links.
+    decision: >-
+      NOT fixed in the item that found it. It surfaced while correcting three items'
+      stages, and writing 16 design documents is not one item — it is its own wave.
+      Those three keep `document: not_started`, which is the honest value rather than a
+      quiet promotion to done. Recorded here so the size of the gap is a measured number
+      instead of a feeling.
+    status: open
   - id: DEBT-98
     found: 2026-09-03
     downgraded: 2026-09-03
@@ -18730,12 +18812,12 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
       document:   not_started
     doc: null
     doc_last_verified: null
@@ -23990,12 +24072,12 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial
       document:   not_started
     doc: null
     doc_last_verified: null
@@ -25696,12 +25778,12 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
       document:   not_started
     doc: null
     doc_last_verified: null
