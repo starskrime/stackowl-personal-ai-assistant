@@ -39,6 +39,13 @@ def merge_consecutive_roles(messages: list[Message]) -> list[Message]:
     4 live conversations violate alternation, and one of them is the operator's own
     lane, whose history opens ``A A A A`` — four consecutive assistant turns.
 
+    RE-MEASURED 2026-09-04 across every lane: 33 of 34 have ZERO empty-user rows —
+    the violation is not spreading. The exception is the same one, his own Telegram
+    lane, and there the longest run is now **NINE**, from 60 turns of which 30 have
+    an empty user half. More than doubled in nine days. Nothing is broken by it (the
+    merge below is lossless and wired on classify's history path), but the number is
+    kept here because the risk this repair covers grows with it.
+
     WHY IT HAPPENS: a stored row is ``"User: X\n\nAssistant: Y"``, and a scheduled
     job writes one with an EMPTY user half (a daily digest nobody asked for in
     words). ``_parse_turns_to_messages`` skips empty halves — correctly, because a

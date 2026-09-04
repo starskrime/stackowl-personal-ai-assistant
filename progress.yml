@@ -315,6 +315,62 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D15_3_2026_09_04_the_walk_the_Ask_asked_for_and_one_number_that_has_grown:
+    map_check: "No mapped item matched the phrasing; this IS D15.3's Ask — walk our equivalents one by one."
+    ONE_HARD_INTERRUPT_PRESENT: >-
+      Theirs is a 3-minute hard interrupt so a runaway cron session cannot
+      monopolise the scheduler. Ours is `asyncio.wait_for(handler.execute(job),
+      timeout=_HANDLER_TIMEOUT_SEC)` at 1200s, with a WARNING naming the breach. The
+      20-vs-3 minute difference is defensible because the monopolisation concern is
+      addressed structurally instead: dispatch is concurrent, and the code says so —
+      "a long handler must never delay the NEXT tick".
+    TWO_AND_THREE_CATCHUP_AND_GRACE_PRESENT_BUT_DIFFERENT: >-
+      Theirs computes a catchup window (half the period, clamped 120s-2h) plus a 120s
+      grace for missed one-shots. Ours is a per-job `replay_missed` flag with
+      coalescing — "boot never backfills a missed run — coalesces to <=1 catch-up".
+      Opt-in per job rather than a global heuristic. Neither is obviously better and
+      ours cannot produce a thundering herd of backfills, which is what the clamp
+      exists to prevent.
+    FOUR_SKIP_MEMORY_IS_ABSENT: >-
+      Their cron sessions pass `skip_memory=True` and memory providers deliberately do
+      not run. We have NO such concept — zero hits for skip_memory anywhere — because
+      a scheduled job runs the standard pipeline "as if the user had typed the goal".
+      Left alone: it is a cost/relevance optimisation and no measurement here shows
+      scheduled-turn recall costing anything. Recorded as a real difference rather
+      than a gap to close on the strength of the reference doing it.
+    FIVE_IS_THE_ONE_WITH_A_NUMBER_THAT_MOVED: >-
+      Their cron deliveries are NOT mirrored into the target session — they land in
+      their own, "so role alternation stays intact". Ours mirror into the operator's
+      lane, which produces consecutive assistant turns. MEASURED 2026-09-04 across
+      every lane: 33 of 34 have ZERO empty-user rows. The exception is `72055773`,
+      his own Telegram lane — 60 turns, 30 empty-user, LONGEST CONSECUTIVE RUN OF 9.
+      `merge_consecutive_roles`, written 2026-08-26, recorded that run as FOUR. It has
+      more than doubled in nine days.
+    WHY_IT_IS_CONTAINED_and_what_would_uncontain_it: >-
+      The repair is WIRED, not merely present: classify.py returns
+      `merge_consecutive_roles(...)` on the history-parsing path, and the merge is
+      lossless by construction ("joining the run's contents keeps every word ... and
+      invents nothing"). Its own note is the risk statement: "strict providers reject
+      two consecutive turns of the same role outright. The live provider tolerates it,
+      which is the only reason this has never surfaced as an error — so the RISK is
+      latent while the VIOLATION is not." A provider change is what would surface it,
+      and the run doubling is the reason to keep the number rather than forget it.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      _HANDLER_TIMEOUT_SEC and the wait_for read from scheduler.py; `replay_missed`
+      read from job.py and the coalescing comment from owl_lifecycle.py; skip_memory
+      searched across src/ with zero hits; the per-lane empty-user and longest-run
+      figures computed over every conversation staged_fact in the live database; the
+      merge's call site confirmed at classify.py:787 rather than assumed from the
+      import. No code changed — the Ask asked for a walk, and the walk is the
+      deliverable.
   D15_2_2026_09_04_we_already_have_schedule_anything_the_question_is_only_the_knobs:
     map_check: "No mapped item matched the phrasing; this IS D15.2's Ask about job richness."
     THE_ASK_IS_A_FALSE_DICHOTOMY_as_posed: >-
@@ -25769,13 +25825,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []

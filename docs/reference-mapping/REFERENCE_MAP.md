@@ -1015,7 +1015,16 @@ Cron deliveries are **not** mirrored into the target gateway session; they land 
 with a header/footer frame so role alternation stays intact.
 **StackOwl.** Circuit breaker + cooldown auto-requeue + self-heal notify (shipped). Timeouts and
 catchup semantics need confirming.
-**Ask.** Walk our equivalents one by one — several of these are bugs we have already been bitten by.
+**Ask.** WALKED 2026-09-04. (1) Hard interrupt: PRESENT — `asyncio.wait_for(..., 1200s)` vs their
+180s, defensible because dispatch is concurrent so a long handler never delays the next tick.
+(2)+(3) Catchup/grace: PRESENT but DIFFERENT — a per-job `replay_missed` flag that coalesces to
+<=1 catch-up, rather than a computed window clamped 120s-2h. (4) `skip_memory`: ABSENT, zero hits
+— a scheduled job runs the full pipeline; left alone as an unmeasured optimisation. (5) Delivery
+mirroring: DIFFERENT, and the one with a moving number — we mirror into the operator's lane, and
+33 of 34 lanes have zero empty-user rows while his has 30 of 60 with a longest consecutive-assistant
+run of **9**, up from 4 when `merge_consecutive_roles` measured it on 2026-08-26. Contained: the
+merge is lossless and wired on classify's history path. The latent risk is a STRICT provider, which
+rejects consecutive same-role turns outright.
 
 ### D15.4 · Objectives / standing goals — `AHEAD`
 **Hermes.** `/goal`, `/subgoal`, `cron/blueprint_catalog.py`, `suggestions.py` — lighter.
