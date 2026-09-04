@@ -315,6 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D12_5_2026_09_04_the_lease_is_keyed_correctly_and_the_map_described_a_gate_that_is_GONE:
+    map_check: "No mapped item matched the phrasing; this IS D12.5, the map's own verification Ask."
+    THE_ASK_and_the_answer: >-
+      D12.5 asks one falsifiable question: "Verify ours is keyed on the durable id,
+      not the routing key. Same bug class." ANSWERED: it is keyed correctly and no
+      code change is needed. The reference's bug needs busy-guards keyed by ROUTING
+      KEY while the transcript is owned by SESSION — two keys on one transcript
+      interleaving flushes. Ours cannot form that shape.
+    THE_MEASUREMENT: >-
+      The intake lock is `turn_registry.session_intake_lock(msg.session_key)` at every
+      one of its four call sites. The transcript is owned by
+      `messages.conversation_id`, and `conversations` carries exactly ONE session_key
+      per row — so the lock key OWNS the transcript key rather than crossing it.
+      Empirically over 1,103 conversations and 508 distinct session_keys: ZERO
+      conversations reachable from more than one session_key. And conversation
+      selection never depends on liveness — transcript_store keys the row by the
+      INCARNATION, so a rollover starts a new transcript (invariant I6).
+    THE_MANY_TO_ONE_MAKER_EXISTS_and_is_inert_here: >-
+      The reference's `switch_session()` has an analogue: `resolve_identity_key` maps
+      many channel handles to one identity_key. It is NOT a shared store — sessions
+      stay keyed by session_key and identity_key rides the session record as a label
+      — and on this deployment the identity map is unconfigured, so the resolver
+      returns the handle unchanged. The bug class is absent by construction AND by
+      configuration. Both are stated because "absent by configuration" alone would be
+      a much weaker answer, and it is the half that could change without notice.
+    THE_MAP_DESCRIBED_A_GATE_THAT_NO_LONGER_EXISTS: >-
+      D12.5's StackOwl column reads "serialize_prior gate + turn_registry +
+      inflight_router". `serialize_prior` is GONE — clarify_pump says so, and the
+      orchestrator's intake docstring says it "Replaces the blocking serialize_prior
+      gate". Today's mechanism is a NON-BLOCKING intake: dispatch if idle, ROUTE
+      (steer / stop / queue-new) if a same-session turn runs, under a per-session lock
+      held across the running-check -> dispatch-or-enqueue decision. Second map entry
+      this week whose description of OUR side had aged — D12.3 named a module that
+      does not exist. The map is a 2026-07 snapshot and must be re-measured per item
+      before it is scheduled, never read as current.
+    FOUND_WHILE_MEASURING_and_escalated_not_fixed: >-
+      `conversations.ended_at` is DEAD SCHEMA: no writer, no reader, no test
+      reference — its only occurrence in the tree is migration 0002, which created it.
+      All 1,103 rows are NULL, oldest since 2026-07-26. Nothing is broken by it, since
+      the lifecycle is expressed by INCARNATION. Dropping a column is a destructive
+      migration, which this skill requires a stop-and-brief for rather than an
+      autonomous decision — ESC-123. The DIAGNOSIS is complete here; only the decision
+      is his.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_evidence: >-
+      Every claim above is a query, not a reading: four call sites of
+      session_intake_lock counted in the orchestrator; the messages and conversations
+      schemas read from the LIVE database; the cross-key join returning 0; 1,103
+      conversations and 508 session_keys counted; `ended_at` greps returning exactly
+      one hit (the migration) across src/ and zero across tests/. No code changed, so
+      there is nothing a restart could reveal — said plainly rather than dressing a
+      measurement-only item as a live validation.
   INGRESS_SWEEP_2026_09_04_the_debt_the_callback_fix_owed_and_it_came_back_CLEAN:
     map_check: "No mapped item — this discharges the WHY obligation the callback allow-list item left open."
     WHY_THIS_WAS_OWED: >-
@@ -8177,6 +8236,38 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_123_a_column_never_written_in_six_weeks_of_rows:
+      premise_check: |
+        uv run python -c "
+        import sqlite3,os
+        c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True)
+        try:
+            n=c.execute('SELECT COUNT(*) FROM conversations WHERE ended_at IS NOT NULL').fetchone()[0]
+        except sqlite3.OperationalError:
+            print('EXPIRED the column is gone'); raise SystemExit
+        print('HOLDS still 0 written' if n==0 else f'EXPIRED {n} rows now carry it')
+        "
+
+      question: >-
+        `conversations.ended_at` has no writer, no reader and no test reference — its
+        only occurrence in the tree is migration 0002, which created it. All 1,103
+        rows are NULL, the oldest since 2026-07-26. Should it be dropped?
+      why_evidence_cannot_settle_it: >-
+        Evidence settles that it is unused; it cannot settle whether you want it. A
+        column drop is a destructive migration on the table that owns every
+        transcript, and this skill requires a stop-and-brief before any of those. There
+        is a design question underneath too: conversation lifecycle is expressed by
+        INCARNATION today and a conversation is never "ended", so the real choice is
+        between deleting the column and deciding conversations SHOULD have an end —
+        which is a feature, not a cleanup.
+      panel_recommendation: >-
+        Drop it. "Retired means deleted", and this was never alive: no writer has ever
+        existed, so nothing is bounding or triggering on it and nothing can re-seed it.
+        If conversation-ending is wanted later it is a new column with a writer
+        designed alongside it, which is the honest version of the same work.
+      what_is_blocked: >-
+        Nothing. No behaviour depends on it either way; this is schema hygiene on the
+        transcript table and it waits for you safely.
     ESC_122_nine_megabytes_of_ledger_rows_belong_to_tasks_that_no_longer_exist:
       premise_check: |
         uv run python -c "
@@ -24207,13 +24298,13 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
+      brainstorm: done
+      architect:  no_change_needed
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   done
+      document:   done
     doc: null
     doc_last_verified: null
     decisions: []
