@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  FLAKE2_2026_09_04_a_test_that_was_flaky_one_way_and_VACUOUS_the_other:
+    map_check: "No mapped item — the completed full run is what produced it."
+    THE_MEASUREMENT: >-
+      The only failure left in the 11,875-test run was
+      tests/parliament/test_concurrent_sessions.py::test_two_sessions_no_interjection_clobber:
+      `assert await orch.inject_interjection("for-A", session_id="SESS-A") is True` ->
+      False. It passes ALONE (4) and in its own package (80) and 5/5 on repeat, so this
+      is cross-test pollution of the kind CLAUDE.md says only a full run can find.
+    ROOT_CAUSE_reproduced_deterministically: >-
+      The test waited `await asyncio.sleep(0.05)` and then asserted that two tasks had
+      registered themselves as live. That is a bet on scheduler speed, not a test of
+      anything — 50ms was the ENTIRE margin for two create_task coroutines to reach
+      their registration point, and under a loaded full run it is not enough. Proven
+      rather than argued: zeroing that sleep reproduces the identical failure on demand.
+      Same root cause as FLAKE_2026_09_01 (a wall-clock threshold standing in for an
+      observable property), in a different file.
+    THE_SECOND_DEFECT_IS_WORSE_THAN_THE_FLAKE: >-
+      test_ambiguous_unscoped_push_refuses_loudly made the same bet, and when the bet
+      LOSES that test passes for the wrong reason. Its assertion is
+      `inject_interjection("ambiguous") is False`, and _resolve_interjection_target_locked
+      returns None — hence False — when NO session is live, not only when several are.
+      So a short sleep left zero sessions registered and the test asserted the refusal
+      WITHOUT EVER CREATING THE AMBIGUITY IT EXISTS TO TEST. The race did not merely make
+      it flaky; it made it vacuous in exactly the failing direction. Proven by mutation:
+      with live_session_ids forced to (), the OLD shape passed and the new one fails.
+    WHAT_THE_SAME_CAUSE_REACHES_measured: >-
+      All FOUR fixed-duration barriers in this file are gone; `asyncio.sleep(0.05)`
+      count in it is now 0. Wider: 33 test files combine create_task with a sub-second
+      sleep. They were NOT rewritten — only one has ever been observed to fail, most of
+      those sleeps simulate work rather than synchronise, and a scripted edit across 33
+      files is the landmine this repo already paid for. What ships instead is the shared
+      helper so the next one is fixed by waiting on its condition, not by enlarging a
+      sleep. Recorded as a measured class, not as a claim that they are all broken.
+    fix: >-
+      tests/_async_helpers.py::await_until(predicate, what) polls until a condition holds,
+      with the timeout as a HANG GUARD rather than a synchronisation budget, and names
+      what never became true so a real deadlock cannot be re-run away as a flake.
+      ParliamentOrchestrator gained a public `live_session_ids`; the refusal path that
+      was building the same list inline now asks it, so there is ONE source.
+    stages:
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      5/5 green on the file, 80/80 on tests/parliament, and both mutations behaved:
+      neutering await_until turns the target test red, and forcing live_session_ids to ()
+      turns the two unscoped-push tests red. PARTIAL until a full run confirms the
+      pollution is gone under load — that is the only instrument that ever saw it.
   REDSUITE_2026_09_04_ten_red_tests_and_the_instruction_that_guaranteed_nobody_looked:
     map_check: "No mapped item — the first COMPLETED full suite is what produced it."
     THE_MEASUREMENT: >-
@@ -364,15 +415,16 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: partial
-      document: partial
+      validate: done
+      document: done
     validate_evidence: >-
       Targeted paths green (65 passed) and tripwires chained to the commit. The closing
-      evidence is a full run on the committed tree at 5e498620, launched detached via the
-      new script at 23:53 to ~/.stackowl/logs/full-suite-20260903-235313.log. Until that
-      log returns its summary line this stays PARTIAL — no claim of "the suite is green"
-      is written here before then. NEXT LOOP: collect that log first.
-      Baseline to beat: 10 failed, 11853 passed, 18 skipped in 1775.99s.
+      COLLECTED 2026-09-04 00:26 from ~/.stackowl/logs/full-suite-20260903-235313.log,
+      run on the committed tree at 5e498620:
+      `1 failed, 11856 passed, 18 skipped, 300 warnings in 1767.71s (0:29:27)`.
+      Every one of the ten retirement-residue failures is gone. The single remaining
+      failure is a DIFFERENT defect, not residue — it is recorded and fixed as
+      FLAKE2_2026_09_04 below.
   SPINTEST_2026_09_04_the_full_suite_could_not_finish_because_one_test_never_ended:
     map_check: "No mapped item — found by running the full suite, which is the only thing that could find it."
     HOW_IT_SURFACED: >-

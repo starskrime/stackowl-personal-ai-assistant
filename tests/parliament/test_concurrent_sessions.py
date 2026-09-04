@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._async_helpers import await_until
+
 from stackowl.config.test_mode import TestModeGuard
 from stackowl.db.pool import DbPool
 from stackowl.parliament.orchestrator import ParliamentOrchestrator
@@ -79,7 +81,14 @@ async def test_two_sessions_no_interjection_clobber(parliament_db: DbPool) -> No
 
     task_a = asyncio.create_task(orch.run("topic-A", ["a"], session_id="SESS-A"))
     task_b = asyncio.create_task(orch.run("topic-B", ["b"], session_id="SESS-B"))
-    await asyncio.sleep(0.05)  # both parked inside _run_session, both "active"
+    # NOT a sleep. This used to wait a fixed 50ms and assert that both tasks had
+    # registered themselves — which is a bet on scheduler speed, not a test of
+    # anything. It passed alone and in tests/parliament and failed once in a
+    # 11,875-test run. Zeroing the 50ms reproduces that failure exactly.
+    await await_until(
+        lambda: {"SESS-A", "SESS-B"} <= set(orch.live_session_ids),
+        "both sessions parked inside _run_session and registered as live",
+    )
 
     assert await orch.inject_interjection("for-A", session_id="SESS-A") is True
     assert await orch.inject_interjection("for-B", session_id="SESS-B") is True
@@ -100,7 +109,10 @@ async def test_timeout_fails_only_its_own_session(parliament_db: DbPool) -> None
 
     task_a = asyncio.create_task(orch.run("topic-A", ["a"], session_id="SESS-A"))
     task_b = asyncio.create_task(orch.run("topic-B", ["b"], session_id="SESS-B"))
-    await asyncio.sleep(0.05)
+    await await_until(
+        lambda: {"SESS-A", "SESS-B"} <= set(orch.live_session_ids),
+        "both sessions live before the gate opens",
+    )
     gate.set()  # frees A's round; B is stuck in the 3600s hang → times out
 
     final_a, final_b = await asyncio.gather(task_a, task_b)
@@ -114,7 +126,15 @@ async def test_ambiguous_unscoped_push_refuses_loudly(parliament_db: DbPool) -> 
 
     task_a = asyncio.create_task(orch.run("topic-A", ["a"], session_id="SESS-A"))
     task_b = asyncio.create_task(orch.run("topic-B", ["b"], session_id="SESS-B"))
-    await asyncio.sleep(0.05)  # TWO live sessions
+    # Waiting on the CONDITION is load-bearing here in a way a sleep can never be.
+    # With a fixed 50ms that falls short, ZERO sessions are live — and an unscoped
+    # push with no live session also returns False, so the assertion below would
+    # pass WITHOUT THE AMBIGUITY IT EXISTS TO TEST. The race did not just make this
+    # test flaky; it made it vacuous in the failing direction.
+    await await_until(
+        lambda: {"SESS-A", "SESS-B"} <= set(orch.live_session_ids),
+        "TWO live sessions, so the push is genuinely ambiguous",
+    )
 
     # Unscoped push with two live debates → refuse, never silently pick one.
     assert await orch.inject_interjection("ambiguous") is False
@@ -130,7 +150,10 @@ async def test_unscoped_push_routes_to_sole_session(parliament_db: DbPool) -> No
     orch = _orch(parliament_db, _GatedBackend(gate))
 
     task_a = asyncio.create_task(orch.run("topic-A", ["a"], session_id="SESS-A"))
-    await asyncio.sleep(0.05)  # exactly ONE live session
+    await await_until(
+        lambda: set(orch.live_session_ids) == {"SESS-A"},
+        "exactly ONE live session, so the unscoped push has a natural target",
+    )
 
     assert await orch.inject_interjection("only-one") is True  # the natural target
 

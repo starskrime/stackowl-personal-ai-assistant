@@ -156,6 +156,18 @@ class ParliamentOrchestrator:
         )
         return final
 
+    @property
+    def live_session_ids(self) -> tuple[str, ...]:
+        """Session ids currently running, newest state included.
+
+        Public because two callers already needed it and one of them was reaching
+        past the underscore: the refusal path below builds its "which debate did
+        you mean" warning from it, and a caller waiting for a session to become
+        live has no other way to ask. Reads the dict without awaiting, so it is
+        atomic with respect to the lock holders.
+        """
+        return tuple(self._active_sessions)
+
     async def inject_interjection(
         self, message: str, session_id: str | None = None
     ) -> bool:
@@ -205,7 +217,7 @@ class ParliamentOrchestrator:
                 )
                 return None
             return session_id
-        live = list(self._active_sessions.keys())
+        live = list(self.live_session_ids)
         if not live:
             log.parliament.debug(
                 "[parliament] orchestrator.inject_interjection: no active session",
