@@ -3,7 +3,7 @@
 Two tests:
 
 1. test_backstop_constants_present_and_sane
-   Verifies that DEFAULT_TURN_MAX_TIME_S and DEFAULT_TURN_MAX_STEPS exist in
+   Verifies that DEFAULT_TURN_MAX_STEPS exists in
    stackowl.authz.bounds and have the specified safe-backstop values, and that
    ResourceCaps() still defaults all-None (the backstop is injected only by
    execute.py when the owl sets no explicit caps, not in the model itself).
@@ -25,7 +25,6 @@ import pytest
 from stackowl.authz.bounds import (
     DEFAULT_SCHEDULED_TURN_MAX_STEPS,
     DEFAULT_TURN_MAX_STEPS,
-    DEFAULT_TURN_MAX_TIME_S,
     ResourceCaps,
 )
 from stackowl.owls.manifest import OwlAgentManifest
@@ -43,11 +42,15 @@ from stackowl.tools.registry import ToolRegistry
 
 
 def test_backstop_constants_present_and_sane() -> None:
-    """The two backstop constants must be importable and have the documented
-    values. DEFAULT_TURN_MAX_TIME_S raised 120.0 -> 600.0 on 2026-07-22 to fix
-    an inversion — it was tighter than the 400s single-item timeout nested
-    inside the turn it wraps (owls/manifest.py's OwlAgentManifest.timeout_seconds)."""
-    assert DEFAULT_TURN_MAX_TIME_S == 600.0
+    """The step backstop must be importable and have the documented value.
+
+    THIS USED TO ASSERT A WALL-CLOCK CONSTANT TOO. `DEFAULT_TURN_MAX_TIME_S == 600.0`
+    was pinned here while nothing in `src/` ever assigned `max_time_s` — a green test
+    guarding a protection that had never once run, which is exactly why nobody looked.
+    Deleted 2026-09-05 (ESC-148, operator decision). `ResourceCaps.max_time_s` remains
+    an axis an operator may set, and the assertion below still pins that ResourceCaps
+    defaults it to None.
+    """
     assert DEFAULT_TURN_MAX_STEPS == 20
 
     # ResourceCaps() must still default all-None — the backstop lives in execute.py,

@@ -60,14 +60,25 @@ class NetworkRule(BaseModel):
 # Guarantees every turn terminates with a reply in bounded time/steps even when a
 # weak model spirals. Generous for happy-path multi-step; bounds the pathology.
 #
-# Raised 120.0 -> 600.0 on 2026-07-22 (owner decision): this whole-turn ceiling was
-# TIGHTER than owls/manifest.py's OwlAgentManifest.timeout_seconds (400.0), a
-# SINGLE stream item's stall timeout nested inside this same turn — an inversion
-# that was never caught because the item timeout was widened twice (30->60->400)
-# on live-incident evidence while this outer ceiling was never revisited to match.
-# 600.0 gives real headroom above one 400s item, not just barely exceeding it —
-# a turn can legitimately involve more than one such item.
-DEFAULT_TURN_MAX_TIME_S: float = 600.0
+# THERE IS NO DEFAULT WALL-CLOCK CEILING, and its absence is deliberate as of
+# 2026-09-05 (ESC-148, operator decision: "delete it and its test").
+# `DEFAULT_TURN_MAX_TIME_S = 600.0` lived here, was asserted by a green test, and was
+# described by three comments — and was ASSIGNED BY NOTHING. `BudgetGovernor` enforces
+# `caps.max_time_s` faithfully; no code path ever supplied a value and every live owl
+# carries `max_time_s: null`, so the check could not fire. Measured: of 205 traces with
+# 20+ model calls since 2026-08-01, 86 exceeded 600 seconds and 35 exceeded an hour, the
+# longest running 13.1 hours over 294 calls. A constant, a test and three comments
+# asserting a protection that has never once run is worse than not having one, because it
+# is why nobody looked.
+#
+# WHAT STILL BOUNDS THE CLOCK, so the next reader does not over-correct: each ROUND is
+# capped by `_ROUND_DEADLINE_FALLBACK_S` (600.0) in both providers, which is what the
+# `wrapup_deadline_s` fallback resolves to — and since `max_time_s` is never set, the
+# residual is always None and that fallback is what actually runs. So no single round can
+# hang forever; a TURN's total wall clock is what nothing bounds.
+#
+# `ResourceCaps.max_time_s` REMAINS, because it is a per-owl manifest axis an operator can
+# still set. Only the never-supplied DEFAULT is gone.
 DEFAULT_TURN_MAX_STEPS: int = 20
 
 # Default backstop for a NON-interactive, DEFERRED-delivery turn (a scheduled

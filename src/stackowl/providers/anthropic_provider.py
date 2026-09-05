@@ -78,8 +78,12 @@ def _max_tokens(kwargs: dict[str, object], default: int = 4096) -> int:
 # the anthropic SDK's own default takes (minutes). Bounded by the SAME residual
 # budget threaded in as wrapup_deadline_s when the caller (execute.py's
 # BudgetGovernor) supplies one; this fallback covers a non-budgeted caller.
-# Raised 120.0 -> 600.0 on 2026-07-22 to match authz/bounds.py's
-# DEFAULT_TURN_MAX_TIME_S (fixing the same wall-clock-timeout-family inversion).
+# Raised 120.0 -> 600.0 on 2026-07-22, fixing a wall-clock-timeout-family inversion
+# (the ceiling was tighter than the 400s single-item stall timeout nested inside it).
+# It matched a per-turn default that was DELETED on 2026-09-05 (ESC-148) for never
+# having been supplied to anything. This per-ROUND deadline is not that constant and is
+# very much live: `max_time_s` is never set, so the residual is always None and this
+# fallback is what actually bounds every round.
 _ROUND_DEADLINE_FALLBACK_S = 600.0
 
 # D01.2 — how many (incarnation, model) span measurements to keep before dropping

@@ -315,6 +315,33 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC148_2026_09_05_a_protection_that_never_ran_is_worse_than_none:
+    map_check: "No mapped item — implementing his ESC-148 answer: delete it and its test."
+    WHAT_WENT: >-
+      DEFAULT_TURN_MAX_TIME_S = 600.0 from authz/bounds.py, its green assertion from
+      tests/pipeline/test_default_backstop_caps.py, and the three comments that named it.
+      Measured unreferenced FIRST, as the rule requires: read by nothing in src/ — only two
+      provider comments, one docstring paragraph and that single test — and no code path
+      anywhere assigns max_time_s, so the governor's time check could never fire.
+    WHAT_STAYED_AND_WHY_THAT_IS_NOT_A_HALF_DELETION: >-
+      ResourceCaps.max_time_s remains: it is a per-owl manifest axis an operator can set, so
+      the enforcement is reachable by configuration rather than dead. Only the DEFAULT that
+      nothing supplied is gone. Deleting the axis would have removed the ability to ever
+      bound wall clock, which is not what was asked and not what the evidence supports.
+    I_CORRECTED_MYSELF_MID_ITEM: >-
+      When I put this decision to him I said "nothing will then bound wall clock". Too
+      strong. _ROUND_DEADLINE_FALLBACK_S = 600.0 exists in BOTH providers and is LIVE — it
+      is what wrapup_deadline_s falls back to, and because max_time_s is never set the
+      residual is ALWAYS None, so that fallback is what actually bounds every round today
+      (anthropic_provider.py:753, openai_provider.py:877). No single ROUND can hang forever.
+      What nothing bounds is a TURN's TOTAL clock: 294 rounds at up to 600s each is how one
+      trace reached 13.1 hours. The risk he accepted is real but narrower than I described,
+      and he is owed the corrected version.
+    EVIDENCE: >-
+      tests/pipeline + tests/providers + tests/authz: 2,697 passed. Baselines held exactly
+      (ruff 35, mypy 65). Every residual mention of the symbol is historical prose that says
+      outright it was deleted, so no reader will hunt for a constant that is gone.
+    NEXT: "All four of his answers are now shipped. The mid-turn prefix re-fit still needs his word (it contradicts D05.2)."
   ESC147_2026_09_05_one_round_may_no_longer_spend_the_whole_turn:
     map_check: "No mapped item — implementing his ESC-147 answer, which overrode his own 2026-07-22 decision."
     ROOT_CAUSE: >-
@@ -449,6 +476,25 @@ current:
       providers/base.py should say: its claim that an OpenAI-protocol backend "already
       collects the discount" is now to be corrected, not left open.
     ESC_148_delete_the_dead_time_cap: >-
+      SHIPPED_2026_09_05: >-
+        DELETED, per his answer. `DEFAULT_TURN_MAX_TIME_S = 600.0` is gone from
+        authz/bounds.py, its green assertion is gone from
+        tests/pipeline/test_default_backstop_caps.py, and the three comments that named it
+        no longer reference a symbol that does not exist. Measured unreferenced first: the
+        constant was read by NOTHING in src/ — only two provider comments, one docstring
+        paragraph and that one test — and no code path anywhere assigns `max_time_s`.
+        `ResourceCaps.max_time_s` REMAINS, because it is a per-owl manifest axis an operator
+        may still set; only the never-supplied DEFAULT went, so no capability was removed.
+      A_CORRECTION_TO_WHAT_I_TOLD_HIM: >-
+        I said "nothing will then bound wall clock" when putting this decision to him. That
+        is too strong, and I found the correction while doing the deletion.
+        `_ROUND_DEADLINE_FALLBACK_S = 600.0` exists in BOTH providers and is LIVE — it is
+        the value `wrapup_deadline_s` falls back to, and since `max_time_s` is never set the
+        residual is always None, so that fallback is what actually bounds every round today
+        (anthropic_provider.py:753, openai_provider.py:877). So no single ROUND can hang
+        forever; what nothing bounds is a TURN's TOTAL wall clock — 294 rounds at up to 600s
+        each is how one trace reached 13.1 hours. The risk he accepted is real but narrower
+        than I described it.
       Constant, green test and three comments go together in one change. I flagged the
       consequence and he took it: nothing will then bound wall clock, and 86 of 205 long
       traces exceeded 600s with one at 13.1 hours. Still strictly better than asserting a
