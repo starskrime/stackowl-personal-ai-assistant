@@ -315,6 +315,30 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D17_4_2026_09_05_parity_holds_and_one_comment_was_claiming_to_be_tracked:
+    map_check: "D17.4 — URL/path/egress guards (PARITY, wave 9). Ask: none. Stages verified not_started first."
+    ALL_THREE_WIRED: >-
+      ssrf_guard → web_fetch, browser/sessions (route-level), vision/loader; path_guard →
+      search_files, pdf, write_file, edit; _egress → brave, searxng. The SSRF guard is
+      resolve-then-validate over IP CLASSES, so cloud-metadata literals are covered by class
+      rather than by an address list.
+    THE_THIRD_PROVIDERS_ZERO_IS_CORRECT: >-
+      ddg.py does not use egress_target and does not need to — it drives a library rather than
+      building a URL, and logs a literal `ddgs:text` label plus query_len, never the query.
+      Checked rather than assumed, because the shape looks exactly like the one-case-short
+      defect found five times this session and is the one that is not.
+    THE_COMMENT_WAS_LYING: >-
+      "Known limitation (tracked)" — and progress.yml plus every reference-mapping document
+      mentioned rebind, pinned resolver or proxy egress ZERO times. It also still listed
+      redirect hops as unvalidated when guard_playwright_navigation validates every one, with
+      a test pinning it. Half the stated limitation had already shipped.
+    MY_OWN_GUARD_WAS_WRONG_FIRST: >-
+      It asserted `ident in progress` and PASSED pointing at DEBT-117 — an id appearing only
+      inside another item's sentence "recorded as DEBT-117", never written into known_debt.
+      Presence of a token is not existence of the thing: D16.4's co-occurrence weakness, one
+      item later, in a guard I wrote. It now requires a literal `- id: DEBT-nnn` entry.
+    RECORDED: "DEBT-118 (the TTL-0 rebind residual) and DEBT-119 (the dangling id, and a malformed DEBT-2026)."
+    NEXT: "D17.5 · Dependency pinning policy (MISSING, wave 9, order 82)."
   D17_3_2026_09_05_two_of_the_three_threats_are_structurally_answered:
     map_check: "D17.3 — External security scanner (MISSING, P2, wave 9). Stages verified not_started first."
     PIPE_TO_INTERPRETER_IS_IMPOSSIBLE_NOT_UNDETECTED: >-
@@ -12351,6 +12375,49 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-118
+    found: 2026-09-05
+    what: >-
+      The SSRF guard validates at CALL TIME, so a TTL-0 DNS rebind between the check
+      and the socket connect is not covered. Closing it needs a pinned resolver or a
+      proxy egress at the fetch layer.
+    evidence: >-
+      `infra/net/ssrf_guard.py` is resolve-then-validate: it resolves the host and
+      rejects loopback / private / link-local / CGNAT / multicast / reserved /
+      unspecified, plus an http(s)-only scheme allow-list. That defends against a
+      rebind ANSWER pointing at internal infrastructure, but not against the answer
+      changing between check and connect. The redirect half of the original
+      limitation is already closed: guard_playwright_navigation re-validates every
+      navigation and redirect hop, pinned by
+      tests/infra/test_the_ssrf_guard_is_callable_as_a_route_handler.py.
+    decision: >-
+      NOT fixed here. A pinned resolver or proxy egress is a change to the fetch
+      layer's transport, not to this guard, and it is a design with real
+      cross-platform cost (custom resolver, connection pinning) for a threat that
+      needs an attacker who controls DNS for a host the agent was already going to
+      fetch. Recorded so the docstring's tracking claim has a referent — it said
+      "(tracked)" while progress.yml and every reference-mapping document mentioned
+      rebind, pinned resolver and proxy egress ZERO times.
+    status: open
+  - id: DEBT-119
+    found: 2026-09-05
+    what: >-
+      A dangling debt id. A `current` record says "No mapped item matches —
+      evidence-led work, recorded as DEBT-117", and DEBT-117 was never written into
+      known_debt.
+    evidence: >-
+      Measured 2026-09-05: `- id: DEBT-` entries are 1-72, 97-99, 113-116 and one
+      malformed `DEBT-2026`. 117 is absent. The only occurrence of the string in
+      progress.yml is inside that sentence, which is how a first version of
+      tests/infra/test_a_known_limitation_names_where_it_is_tracked.py PASSED while
+      pointing at nothing — substring presence is not entry existence.
+    decision: >-
+      NOT invented here. The record describes a memory-decay finding (USER.md at 98.2%
+      of budget, every entry [permanent], until_changed evicted on arrival) and writing
+      its debt entry would mean authoring another item's conclusion. Recorded so the
+      dangling reference is visible rather than looking tracked. `DEBT-2026` is
+      malformed and noted in the same breath.
+    status: open
   - id: DEBT-116
     found: 2026-09-04
     what: >-
@@ -28483,19 +28550,47 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D17.4.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "PARITY CONFIRMED — all three guards wired, with named call sites."
+      - "ddg.py not using egress_target is CORRECT, not a gap: it drives a library rather than
+         building a URL, and logs a literal label plus query_len. Checked rather than assumed,
+         because the shape looks exactly like the one-case-short defect found five times."
+      - "The TTL-0 rebind residual is NOT fixed here: a pinned resolver or proxy egress is a
+         change to the fetch layer's transport, with real cross-platform cost, for a threat
+         needing an attacker who controls DNS for a host the agent was already fetching."
+    changes:
+      - "src/stackowl/infra/net/ssrf_guard.py — the known-limitation paragraph corrected: it
+         claimed `(tracked)` with no referent anywhere, and still listed redirect hops as
+         unvalidated when guard_playwright_navigation validates every one. Now names DEBT-118."
+      - "tests/infra/test_a_known_limitation_names_where_it_is_tracked.py — a tripwire that the
+         paragraph names a DEBT-/ESC- id which EXISTS as a known_debt entry, and no longer
+         claims the closed half. Mutation-proven."
+      - "progress.yml — DEBT-118 (the rebind residual) and DEBT-119 (a dangling DEBT-117
+         reference, plus a malformed DEBT-2026 id)."
+    notes: >-
+      PARITY HOLDS. ssrf_guard reaches web_fetch, browser/sessions and vision/loader;
+      path_guard reaches search_files, pdf, write_file, edit; _egress reaches brave and
+      searxng. WHAT WAS WRONG WAS A COMMENT: the docstring said "Known limitation (tracked)"
+      while progress.yml and every reference-mapping document mentioned rebind, pinned resolver
+      or proxy egress ZERO times — a tracking claim with no referent, which is worse than an
+      admitted gap because a reader checks the queue, finds nothing and concludes it was
+      handled. It also still listed redirect hops as unvalidated, when
+      guard_playwright_navigation validates every navigation and redirect and a test pins it —
+      half the stated limitation had shipped. AND THE GUARD I WROTE FOR IT WAS WRONG FIRST: it
+      asserted `ident in progress` and PASSED while pointing at DEBT-117, an id that appears in
+      progress.yml only inside another item's sentence "recorded as DEBT-117" and was never
+      written into known_debt. Presence of a token is not existence of the thing — the same
+      weakness as D16.4's co-occurrence predicate, in a guard written one item later. It now
+      requires a literal `- id: DEBT-nnn` entry.
   - id: D17.5
     title: "Dependency pinning policy"
     domain: D17

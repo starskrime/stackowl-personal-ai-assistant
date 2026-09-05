@@ -9,9 +9,18 @@ defends against DNS-rebinding answers that point at internal infrastructure
 literal ``100.100.100.200`` falls in the CGNAT range). Pure stdlib
 (``ipaddress`` + ``socket``); cross-platform.
 
-Known limitation (tracked): this validates at call time. A TTL-0 rebind between
-this check and the socket connect, and per-redirect re-validation, need a pinned
-resolver / proxy egress — a fast-follow for the fetch layer, not this guard.
+Known limitation, tracked as DEBT-118: this validates at CALL TIME, so a TTL-0
+rebind between the check here and the socket connect is not covered. Closing it
+needs a pinned resolver or proxy egress at the fetch layer, not a change here.
+
+CORRECTED 2026-09-05. This paragraph previously said "(tracked)" while nothing
+tracked it — progress.yml and every reference-mapping document mentioned rebind,
+pinned resolver and proxy egress ZERO times. A tracking claim with no referent is
+worse than an admitted gap, because a reader checks the queue, finds nothing and
+concludes it was handled. It also still listed redirect hops as
+unvalidated: :func:`guard_playwright_navigation` checks every navigation and
+redirect, and ``tests/infra/test_the_ssrf_guard_is_callable_as_a_route_handler.py``
+pins that, so half of what this paragraph claimed had already shipped.
 """
 
 from __future__ import annotations

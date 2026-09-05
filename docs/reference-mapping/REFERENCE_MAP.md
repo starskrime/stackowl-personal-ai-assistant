@@ -1419,6 +1419,21 @@ plugins, so even a "yes" lands at rung 4, never in `src/`. See `designs/D17.3.md
 `docs/security/network-egress-isolation.md`.
 **StackOwl.** `infra/net/ssrf_guard.py`, `tools/io/path_guard.py`, `web_search/providers/_egress.py`.
 **Ask.** None.
+**PARITY CONFIRMED 2026-09-05, all three wired with named call sites.** ssrf_guard →
+`web_fetch` (guard_playwright_navigation), `browser/sessions.py` (make_route_guard),
+`vision/loader.py`; path_guard → `search_files`, `pdf`, `write_file`, `edit`; `_egress` →
+`brave.py`, `searxng.py`. The SSRF guard is resolve-then-validate over IP CLASSES (link-local
+covers 169.254.169.254; CGNAT covers 100.100.100.200), and `_egress.py` is egress LOGGING
+hygiene — collapse a URL to scheme://netloc/path so logs never carry the query text or an API
+key. `ddg.py` not using it is CORRECT, not a gap: it drives a library rather than building a
+URL and logs a literal `ddgs:text` label plus `query_len`, never the query — checked, because
+the shape looks exactly like the one-case-short defect found five times this session and is the
+one that is not. WHAT WAS WRONG: the guard's docstring said "Known limitation **(tracked)**"
+while progress.yml and every reference-mapping doc mentioned rebind / pinned resolver / proxy
+egress **ZERO** times, and it still listed redirect hops as unvalidated when
+`guard_playwright_navigation` re-validates every hop and a test pins it. Corrected; the
+residual (TTL-0 rebind between check and connect) is now DEBT-118, which exists. See
+`designs/D17.4.md`.
 
 ### D17.5 · Dependency pinning policy — `MISSING`
 **Hermes.** Every dependency needs an upper bound (`>=floor,<next_major`); git URLs pinned to a
