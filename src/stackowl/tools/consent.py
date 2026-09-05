@@ -83,6 +83,82 @@ _INTERPRETERS = frozenset({
 #: name, a shell command by its program — have ONE home rather than drifting.
 _CODE_EXECUTION_TOOLS = frozenset({"execute_code", "claude_code"})
 
+#: Event emitted when a CONFINED run is granted with nobody attached (ESC-150).
+#: Named here, in the module that EMITS it, because `notifications/event_bridge.py`
+#: builds its allow-list from publishers' constants — "a subscription is a contract
+#: with the module that emits", and a second spelling over there would leave the
+#: bridge subscribing to a name nobody sends.
+CONFINED_EXEC_GRANTED_EVENT = "consent.confined_execution_granted"
+
+#: Tools whose CONTRACT forbids reaching the host. Keyed on the guarantee, never on
+#: the consent category and never on a name alone — because `code_execution` holds
+#: TWO tools and only one of them is confined:
+#:
+#:   execute_code  NEVER runs on the host. With no sandbox wired it REFUSES
+#:                 (`tools/code/execute_code.py`), and SandboxBackend invariant 1
+#:                 forbids degrading to a bare subprocess: "If isolation cannot be
+#:                 established, refuse — never degrade (that is what `shell` already
+#:                 is)."
+#:   claude_code   "runs shell commands in `workdir` on the HOST (no isolated
+#:                 sandbox — unlike execute_code)" — its own docstring.
+#:
+#: Granting the CATEGORY would therefore have made unattended HOST execution
+#: automatic, which is the opposite of what ESC-150 approved. A tool joins this set
+#: only when it cannot reach the host even if it tried.
+_CONFINED_EXECUTION_TOOLS = frozenset({"execute_code"})
+
+
+def _emit_confined_grant(req: ConsentRequest) -> None:
+    """Ping the operator that a confined run proceeded with nobody attached.
+
+    BEST-EFFORT BY CONSTRUCTION, and that is stated rather than hidden. The proactive
+    bridge drops an event when no recipient resolves (its honest-recipient rail), so on
+    an install with no channel configured this delivers nothing — which is exactly why
+    the caller logs at INFO FIRST and unconditionally. The log is the guaranteed record;
+    this is the ping on top.
+
+    NEVER RAISES, and never blocks the grant. A notification failure must not turn a
+    permitted, confined execution into a refusal — that would rebuild the very defect
+    ESC-150 removed, with the failure mode moved from "no human attached" to "no
+    notifier wired". Every except logs.
+    """
+    try:
+        from stackowl.pipeline.services import get_services
+
+        bus = getattr(get_services(), "event_bus", None)
+        if bus is None:
+            log.tool.info(
+                "[consent] confined grant: no event bus wired — the INFO record above "
+                "is the only trace of this run",
+                extra={"_fields": {"tool": req.tool_name}},
+            )
+            return
+        bus.emit(CONFINED_EXEC_GRANTED_EVENT, {
+            "tool": req.tool_name,
+            "channel": req.channel,
+            "session_key": req.session_key,
+            "message": (
+                f"Ran {req.tool_name} unattended inside the sandbox — it cannot reach "
+                f"the host. Session {req.session_key}."
+            ),
+        })
+    except Exception as exc:  # noqa: BLE001 — a ping must never break execution
+        log.tool.warning(
+            "[consent] confined grant: notification failed — the run still proceeded "
+            "and the INFO record above stands",
+            exc_info=exc,
+            extra={"_fields": {"tool": req.tool_name}},
+        )
+
+
+def runs_confined(tool_name: str | None) -> bool:
+    """Whether this tool is contractually unable to execute on the host.
+
+    Fails closed: anything unknown is NOT confined, so a new execution tool has to be
+    added here deliberately rather than inheriting an exemption by category.
+    """
+    return (tool_name or "") in _CONFINED_EXECUTION_TOOLS
+
 
 def is_code_execution(tool_name: str | None, category: str | None) -> bool:
     """Does this request run code the model wrote? Never raises.
@@ -385,6 +461,35 @@ class AutonomousPrompter:
             )
             if official:
                 return ConsentScope.ONCE
+        # A CONFINED RUN MAY PROCEED (ESC-150, operator decision 2026-09-05).
+        # The confinement subsystem exists so untrusted code can run SAFELY WITHOUT A
+        # HUMAN, and always-ask then refused it precisely when no human was there:
+        # MEASURED 27 deny / 1 allow, every refusal "no human is attached", while
+        # `shell` — unconfined by design — ran 205 times unattended. The safe path was
+        # shut and the unsafe one was open.
+        #
+        # Keyed on `runs_confined`, i.e. on the CONTRACT, not the category: the same
+        # category holds `claude_code`, which runs on the HOST, and granting the
+        # category would have made unattended host execution automatic.
+        #
+        # LOGGED UNCONDITIONALLY AT INFO, and the ping rides the proactive seam on top.
+        # That order is deliberate: the bridge DROPS an event when no recipient
+        # resolves, so on an install with no channel configured the notification is
+        # best-effort and the log is the only guaranteed trace. Refusing the grant when
+        # undeliverable was rejected — it would rebuild the original defect in a new
+        # costume and break any fresh clone that has not configured a channel.
+        if not req.allow_relaxation and runs_confined(req.tool_name):
+            log.tool.info(
+                "[consent] confined execution granted with no human attached — the "
+                "run cannot reach the host",
+                extra={"_fields": {
+                    "tool": req.tool_name, "category": req.category,
+                    "channel": req.channel, "session_key": req.session_key,
+                    "event": CONFINED_EXEC_GRANTED_EVENT,
+                }},
+            )
+            _emit_confined_grant(req)
+            return ConsentScope.ONCE
         if not req.allow_relaxation:
             log.tool.warning(
                 "[consent] autonomous grant REFUSED — this is always-ask and no "

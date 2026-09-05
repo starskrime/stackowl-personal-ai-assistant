@@ -131,10 +131,32 @@ class TestOrdinaryAutonomousWorkIsStillUnblocked:
         assert scope is ConsentScope.ONCE
 
     async def test_the_prompter_refuses_an_always_ask_request(self) -> None:
-        """allow_relaxation=False is how the policy already marks always-ask."""
+        """allow_relaxation=False is how the policy already marks always-ask.
+
+        USES `claude_code`, NOT `execute_code`, SINCE 2026-09-05. ESC-150 made a
+        CONFINED run grantable unattended, and `execute_code` cannot reach the host by
+        contract — so it is no longer an example of this rule. `claude_code` sits in the
+        SAME always-ask category and runs shell commands on the HOST, which makes it the
+        honest example and keeps this guard pointed at the case that still matters.
+        """
         scope = await AutonomousPrompter().prompt(ConsentRequest(
-            tool_name="execute_code", channel="cron", session_key="s1",
+            tool_name="claude_code", channel="cron", session_key="s1",
             allow_relaxation=False,
         ))
 
         assert scope is ConsentScope.DENY
+
+    async def test_the_confined_carve_out_is_NARROW(self) -> None:
+        """The other half of the same rule, so the pair cannot drift apart: the
+        exemption applies to the confined tool and to nothing else in its category."""
+        confined = await AutonomousPrompter().prompt(ConsentRequest(
+            tool_name="execute_code", channel="cron", session_key="s1",
+            allow_relaxation=False,
+        ))
+        host = await AutonomousPrompter().prompt(ConsentRequest(
+            tool_name="claude_code", channel="cron", session_key="s1",
+            allow_relaxation=False,
+        ))
+
+        assert confined is ConsentScope.ONCE
+        assert host is ConsentScope.DENY

@@ -29,6 +29,7 @@ from stackowl.providers.cost_tracker import (
     BUDGET_EXCEEDED_EVENT,
     BUDGET_WARNING_EVENT,
 )
+from stackowl.tools.consent import CONFINED_EXEC_GRANTED_EVENT
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.events.bus import EventBus
@@ -62,7 +63,8 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
 # would have left this subscribing to a name nobody sends, with the wiring audit
 # (holding a third copy) still reporting it healthy.
 _ALLOWED_EVENTS: frozenset[str] = frozenset(
-    {BUDGET_EXCEEDED_EVENT, BUDGET_WARNING_EVENT, COST_REPORT_EVENT}
+    {BUDGET_EXCEEDED_EVENT, BUDGET_WARNING_EVENT, COST_REPORT_EVENT,
+     CONFINED_EXEC_GRANTED_EVENT}
 )
 # ``parliament.completed`` (orchestrator) stays DEFERRED — its payload is a bare
 # ``session_key`` (not a dict; _build_notification would drop it as malformed),

@@ -315,6 +315,77 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D06_1_IMPLEMENT_2026_09_05_the_safe_path_was_shut_and_the_unsafe_one_was_open:
+    map_check: "D06.1 implement — recorded no_change_needed PENDING the ESC-150 answer he has now given, so it reopens and closes."
+    WHAT_SHIPPED: >-
+      A confined run is granted with nobody attached. `runs_confined()` keys the carve-out
+      on the CONTRACT a tool holds, the grant is logged at INFO unconditionally, and a
+      `consent.confined_execution_granted` event rides the existing proactive bridge so he
+      is notified — the broad rule plus observation channel he chose.
+    THE_MISTAKE_THE_MEASUREMENT_PREVENTED: >-
+      `code_execution` is a CATEGORY WITH TWO MEMBERS and they are not alike. execute_code
+      NEVER runs on the host — with no sandbox wired it REFUSES, and SandboxBackend
+      invariant 1 forbids degrading to a bare subprocess. claude_code, in the SAME category,
+      "runs shell commands in workdir on the HOST (no isolated sandbox — unlike
+      execute_code)" by its own docstring. Granting the CATEGORY — the obvious
+      implementation — would have made unattended HOST execution automatic, the exact
+      opposite of what he approved. The carve-out is keyed on the guarantee and fails closed
+      for anything it has not been told about.
+    WHY_THE_LOG_COMES_FIRST_AND_THE_PING_SECOND: >-
+      He made the notification load-bearing. But the proactive bridge DROPS an event when
+      no recipient resolves — its own honest-recipient rail — so on a fresh clone with no
+      channel configured a notification-only design would execute silently. The INFO record
+      is therefore unconditional and the ping rides on top, and `_emit_confined_grant` can
+      never raise or block the grant: a notifier failure turning a permitted confined run
+      into a refusal would rebuild the original defect with the cause renamed. Refusing when
+      undeliverable was considered and rejected for the same reason, and because it would
+      break any install that has not configured a channel — his platform-not-setup rule.
+    A_PRE_EXISTING_GUARD_RE_POINTED_NOT_WEAKENED: >-
+      tests/tools/test_permission_is_real_in_both_directions.py asserted the prompter
+      refuses an always-ask request, using execute_code as its example — the very tool now
+      exempt. Its INTENT still holds for every always-ask tool that is not confined, so it
+      now uses claude_code (same category, host executor) and gained a sibling asserting the
+      carve-out is NARROW: confined granted, host refused, in one test so the pair cannot
+      drift apart.
+    MUTATION_FOUND_A_VACUOUS_TEST_OF_MINE: >-
+      Demoting the grant record to DEBUG left everything green. My assertion matched ANY
+      message containing "confined", and the emitter's own fallback line ("no event bus
+      wired") also says confined, at INFO — so the test passed on the wrong line while the
+      thing it existed to protect was gone. It now names the grant sentence exactly.
+    EVIDENCE: >-
+      20 tests across two files (two tripwires). tests/tools + tests/notifications +
+      tests/pipeline: 3,935 passed. Baselines held exactly (ruff 35 after I fixed my own
+      unsorted import and a quoted annotation; mypy 65). Three mutants, each verified
+      applied: claude_code joining the confined set, keying on the category instead of the
+      contract, and the demoted grant record.
+    NEXT: "Validate live, then D06.2 (which D06.1 blocks) is next by order."
+  OPERATOR_ANSWERED_2026_09_05_second_sitting_four_more:
+    what_this_record_is: "Four more answers, recorded on the REAL keys this time — the last set went onto a narrative scalar via a first-match bug."
+    ESC_150_design_AUTO_GRANT_ANY_CONFINED_RUN_AND_NOTIFY: >-
+      He took the broad rule with an observation channel, not the narrower network-off-only
+      variant. Any bwrap/Docker run is grantable unattended, network included, and every
+      unattended execution notifies him. THE CONSEQUENCE HE ACCEPTED: a confined process
+      WITH network can still reach internal hosts, so the notification is load-bearing — if
+      it breaks, unattended execution goes silent. Its delivery must be guarded, not merely
+      wired, which is the difference between this and a log line.
+    MID_TURN_PREFIX_REFIT_BUILD_IT: >-
+      Approved against D05.2, whose premise (prefix stability serves a prompt cache) his
+      ESC-149 answer removed. Re-fit the DISCRETIONARY tools when the turn's remaining budget
+      can no longer afford them. Costs the 90% nothing — p50 is 2 prefix-carrying rounds —
+      and targets the 1% where prefix is 83.6% of the budget. The named risk is a tool
+      dropped mid-turn being called; tool_search and tool_describe are guaranteed, so the
+      model can re-find it, and that is the mitigation to pin with a test.
+    THE_24_UNDOCUMENTED_ITEMS_WRITE_THEM: >-
+      He chose to write the missing documents rather than lint against new ones or downgrade
+      the stages. That is ~24 items of real re-measurement, because a document I cannot
+      evidence is worse than none — DOC_STANDARD's Verification section has to be RUN, not
+      asserted. Sizeable, and now authorised.
+    LOOP_FOCUS_MAPPED_ITEMS_IN_ORDER: >-
+      Keep the programme moving, one item to done per invocation, escalating only what
+      genuinely needs him. By order the earliest incomplete item is D06.1 (order 99), whose
+      `implement` was recorded no_change_needed PENDING EXACTLY the ESC-150 answer he has
+      now given — so it reopens rather than D06.2 (order 100), which D06.1 blocks.
+    NEXT: "D06.1 implement — auto-grant a confined run, and notify."
   SYNC_2026_09_05_the_bookkeeping_had_drifted_and_two_of_the_faults_were_mine:
     why_this_record: "He asked for progress.yml and the docs to be synced, and for what is still pending."
     DEFECT_1_MY_ANSWERS_NEVER_LEFT_THE_OPEN_QUEUE: >-
@@ -11209,6 +11280,15 @@ current:
               if deny > allow else
               f'EXPIRED execute_code {allow} allow / {deny} deny — confined execution now runs')
         "
+      DESIGN_ANSWERED_2026_09_05: >-
+        AUTO-GRANT ANY CONFINED RUN, AND NOTIFY HIM EACH TIME. He chose the broad rule with
+        an observation channel over the narrower network-off-only variant: a run inside
+        bwrap or Docker is grantable unattended, network included, and every unattended
+        execution raises a notification so he sees them as they happen. NOTE THE
+        CONSEQUENCE he accepted: a confined process WITH network can still reach internal
+        hosts, so the notification path is now load-bearing rather than cosmetic — if it
+        breaks, unattended execution becomes silent. That makes its own delivery something
+        that has to be guarded, not merely wired.
       question: >-
         D06.1's own Ask: does "runs anywhere" matter, or is the Jetson + local the target?
         And the sharper version the measurement raises: given that CONFINED execution is
@@ -25595,7 +25675,7 @@ items:
     stages:
       brainstorm: done
       architect:  done
-      implement:  no_change_needed
+      implement:  done
       cleanup:    no_change_needed
       test:       no_change_needed
       validate:   no_change_needed
