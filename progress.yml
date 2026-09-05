@@ -315,6 +315,31 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D17_1_2026_09_05_the_fatigue_the_ask_assumes_is_not_there:
+    map_check: "D17.1 — Dangerous-command approval (PARTIAL, P2, wave 9). Stages verified not_started first."
+    THE_PREMISE_IS_NOT_SUPPORTED: >-
+      121 consent decisions across nine daily logs — 83 allow, 38 deny. Thirteen a day,
+      mostly granted. That is not approval fatigue.
+    AND_27_OF_38_DENIALS_WERE_ONE_FIXED_DEFECT: >-
+      Every execute_code denial matches one-for-one an `autonomous grant REFUSED` line, and
+      all PREDATE ESC-98's fix 058e94ee (2026-09-01 23:51 local; last refusal 02:05 UTC =
+      21:05 local). Since the fix: 319 assemblies, 10 decisions, ALL allow, zero denials.
+    THE_HONEST_PHRASING: >-
+      No execute_code request has come through since, so the fix is UNREFUTED rather than
+      exercised. Zero denials over zero requests is not proof it works.
+    WHY_NOTHING_WAS_BUILT: >-
+      Smart-approve would add an auxiliary-LLM trust surface for ~zero measured friction AND
+      contradict recorded decisions — _DEFAULT_ALWAYS_ASK_TOOLS is annotated "Bakir's
+      decision" and ESC-1 wrote down why prompt_surface is always-ask despite being
+      reversible. The skill says escalate a contradiction, never silently reconcile it.
+    THE_SECOND_GAP_IS_REAL_AND_ALSO_POSTURE: >-
+      _session_batch and _windows are in-memory dicts, so every restart wipes the operator's
+      grants — and CodeWatcher restarts the core on every code change (eight boots in the
+      current window). Persisting them widens authority across a boundary never approved.
+    NOT_A_DEFECT_CHECKED: >-
+      The 27 `RoutingPrompter: no channel UX` lines are the fallback WORKING — an unknown
+      channel routes rather than denying, pinned by a test. FailClosedPrompter never fired.
+    NEXT: "D17.2 · Prompt-injection pattern library (PARTIAL, P2, wave 9, order 79)."
   D16_6_2026_09_04_not_rung_6_a_placeholder_in_the_brief_and_my_own_unsound_guard:
     map_check: "D16.6 — Integrations (DIVERGENT, P2, wave 9). Stages verified not_started first."
     THE_PREMISE_WAS_WRONG: >-
@@ -9898,6 +9923,40 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_134_smart_approve_and_whether_a_grant_should_outlive_a_restart:
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        src = pathlib.Path('src/stackowl/tools/consent.py').read_text()
+        mem = '_session_batch: dict[str, set[str]] = field(default_factory=dict' in src
+        print('HOLDS grants still in-memory only' if mem else 'EXPIRED grants now persisted')
+        "
+      question: >-
+        TWO, and the first is smaller than the map implies. (1) SMART-APPROVE — an
+        auxiliary LLM auto-approving low-risk commands. Measured, the fatigue it targets
+        is not there: 121 consent decisions in nine days (83 allow / 38 deny), and 27 of
+        the 38 denials were one defect ESC-98 already fixed. Since that fix: 10 decisions,
+        all allow, zero denials. Do you still want it? (2) PERSISTED GRANTS — session
+        batches and 15-minute trust windows are in-memory dicts, so every restart wipes
+        them, and CodeWatcher restarts the core on every code change. Should a grant
+        survive a restart?
+      why_evidence_cannot_settle_it: >-
+        Both are security posture. (1) would let an LLM approve actions that
+        _DEFAULT_ALWAYS_ASK_TOOLS and _DEFAULT_ALWAYS_ASK_CATEGORIES deliberately
+        exclude — the first is annotated "Bakir's decision" and ESC-1 wrote down why
+        prompt_surface is always-ask even though its writes are reversible, so building it
+        would contradict a recorded decision rather than extend one. (2) widens authority
+        across a boundary you never approved: a 15-minute window that survives three
+        restarts is a different promise from the one you answered.
+      panel_recommendation: >-
+        No to (1) on the evidence — it buys nothing measurable and costs a new trust
+        surface; revisit if denials rise. Yes in principle to (2), but scoped: persist the
+        EXPLICIT batch grants only, never the time windows, and expire them on a version
+        change so a grant cannot outlive the code it was given about. If neither is wanted,
+        the honest move is to strike "no persisted user allowlist" from the map's Gap line
+        rather than leave a gap nobody intends to close.
+      blocked_until_answered: >-
+        All of D17.1. Nothing else — this item built nothing.
     ESC_133_four_vendor_modules_live_in_the_core_tree_do_they_move_out:
       premise_check: |
         uv run python -c "
@@ -28190,19 +28249,41 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
+      brainstorm: done
+      architect:  no_change_needed   # nothing built — both gaps are posture decisions (ESC-134)
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D17.1.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "NOTHING BUILT. Smart-approve would add an auxiliary-LLM trust surface for ~zero
+         measured friction, and it CONTRADICTS recorded decisions —
+         _DEFAULT_ALWAYS_ASK_TOOLS is annotated `Bakir's decision`, and ESC-1 explains why
+         prompt_surface is always-ask despite being reversible. Escalated, not reconciled."
+      - "Persisting grants across restarts is ALSO a posture decision: it widens authority
+         across a process boundary the operator never approved. A 15-minute window surviving
+         three restarts is a different promise from the one they answered."
     changes: []
-    notes: null
-
+    notes: >-
+      THE ASK'S PREMISE IS NOT SUPPORTED. 121 consent decisions across nine daily logs — 83
+      allow, 38 deny — roughly thirteen a day and mostly granted. That is not approval fatigue.
+      AND 27 OF THE 38 DENIALS ARE ONE ALREADY-FIXED DEFECT: every execute_code denial matches
+      one-for-one an `autonomous grant REFUSED — this is always-ask` line (category null,
+      channel rca, 2026-08-28 to 2026-09-02), and all of them PREDATE ESC-98's fix 058e94ee
+      (2026-09-01 23:51:57 local; last refusal 2026-09-02T02:05:16 UTC = 21:05 local).
+      execute_code is no longer in _DEFAULT_ALWAYS_ASK_TOOLS, which now holds only
+      {computer_use, ha_call_service, browser_dialog}. SINCE THE FIX: 319 consent assemblies,
+      10 decisions, ALL allow, zero denials — but NO execute_code request has come through, so
+      the honest phrasing is unrefuted rather than exercised, not "the fix works". THE SECOND
+      GAP IS REAL: _session_batch and _windows are plain in-memory dicts, so every restart
+      wipes the operator's grants, and CodeWatcher exec-replaces the core on every code change
+      (eight boots in the current log window). NOT A DEFECT, CHECKED: the 27
+      `RoutingPrompter: no channel UX` lines are the fallback WORKING — an unknown channel
+      routes rather than denying outright, pinned by a test — and the separate
+      FailClosedPrompter, which does deny, never fired.
   - id: D17.2
     title: "Prompt-injection pattern library"
     domain: D17

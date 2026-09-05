@@ -1346,6 +1346,25 @@ allowlist persisted to config.
 exclusions, audited, fails **closed** with no prompter. Conceptually richer.
 **Gap.** No LLM-assisted smart approval; no persisted user allowlist.
 **Ask.** Add smart-approve? It is the difference between "approve everything" fatigue and usable autonomy.
+**MEASURED 2026-09-05 — THE FATIGUE IS NOT THERE; nothing built (ESC-134).** Across nine daily
+logs: **121 consent decisions, 83 allow / 38 deny** — about thirteen a day, mostly granted. And
+**27 of the 38 denials are a single already-fixed defect**: all 27 `execute_code` denials match
+one-for-one the 27 `autonomous grant REFUSED — this is always-ask` lines (same tool, category
+null, channel rca, 2026-08-28 → 2026-09-02), and every one PREDATES ESC-98's fix `058e94ee`
+("code execution gated by NAME is now gated by NOTHING", 2026-09-01 23:51 local; the last
+refusal is 02:05 UTC = 21:05 local). Since that deployed: **319 consent assemblies, 10
+decisions, ALL allow, zero denials** — though no `execute_code` request has come through, so
+the fix is unrefuted rather than exercised. So smart-approve would add an auxiliary-LLM trust
+surface for ~zero measured friction, and it would contradict recorded decisions
+(`_DEFAULT_ALWAYS_ASK_TOOLS` is annotated "Bakir's decision"; ESC-1 explains why
+`prompt_surface` is always-ask despite being reversible). THE OTHER GAP IS REAL and is not
+about an LLM: `_session_batch` and `_windows` are in-memory dicts, so **every restart wipes the
+operator's grants** — and CodeWatcher exec-replaces the core on every code change (eight boots
+in the current window). Persisting them widens authority across a boundary the operator never
+approved, so it is a posture decision too. NOT a defect, checked: the 27
+`RoutingPrompter: no channel UX` lines are the fallback WORKING — an unknown channel routes
+rather than denying, pinned by `tests/channels/test_unwired_channel_consent_fails_closed.py`.
+See `designs/D17.1.md`.
 
 ### D17.2 · Prompt-injection pattern library — `PARTIAL`
 **Hermes.** `tools/threat_patterns.py` — one library organized **by attack class**, each pattern a
