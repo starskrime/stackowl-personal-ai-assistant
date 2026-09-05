@@ -1272,7 +1272,19 @@ model providers, context engines.
 ship as **standalone plugin repos**, not in-tree. Reason given is maintenance load, not quality.
 The in-tree memory-provider set is formally **closed**.
 **StackOwl.** No policy.
-**Ask.** Adopt — it is the discipline that keeps a fast-moving core fast-moving.
+**ADOPTED 2026-09-04 — and the tree already VIOLATES it, live (ESC-133).** The design agreed in
+June: `IntegrationRegistry.register()` is documented "open for extension: plugins can call
+register() at import time", and `/connect` tells the operator "No integrations registered.
+**Install an integration plugin first.**" But FOUR vendor-specific modules live in
+`src/stackowl/integrations/` — `gmail.py`, `gmail_settings.py`, `google_calendar.py`,
+`google_oauth.py` — registered from THREE core sites (`cli/app.py`, `commands/assembly.py`,
+`startup/orchestrator.py`), and it is live rather than dormant: the Gmail OAuth token on disk
+was refreshed 2026-09-02. The in-tree MEMORY-PROVIDER set is already effectively closed at one
+(`BuiltinCuratedProvider`), matching the reference. The rule is stated in
+`integrations/__init__.py` and enforced by a tripwire that pins BOTH the module set and the
+registrar set with set equality — a fifth vendor module or a fourth registrar fails the gate.
+Moving the existing four out is user-facing capability with real credentials, so it is the
+operator's call. See `designs/D16.4.md`.
 
 ### D16.5 · MCP — `PARITY`
 **Hermes.** Client with OAuth manager, stdio watchdog, catalog, security review, dashboard OAuth flow;

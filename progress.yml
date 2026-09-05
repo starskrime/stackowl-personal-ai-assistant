@@ -315,6 +315,32 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D16_4_2026_09_04_the_design_agreed_in_june_and_the_tree_does_the_opposite:
+    map_check: "D16.4 — Third-party products stay out of tree (MISSING, P2, wave 9). Stages verified not_started first."
+    THE_DESIGN_ALREADY_AGREED: >-
+      IntegrationRegistry.register() is documented "open for extension: plugins can call
+      register() at import time", and /connect tells the operator "No integrations
+      registered. Install an integration plugin first."
+    AND_THE_TREE_DOES_THE_OPPOSITE: >-
+      FOUR vendor modules in src/stackowl/integrations/ — gmail.py, gmail_settings.py,
+      google_calendar.py, google_oauth.py — registered from THREE core sites. Live, not
+      dormant: the Gmail OAuth token was refreshed 2026-09-02. So the platform tells the
+      operator one thing and does another.
+    I_GOT_BOTH_NUMBERS_WRONG_FIRST: >-
+      `ls | tail -8` TRUNCATED the listing, so I called the vendor set a pair when it is
+      four. And I grepped register() only INSIDE the package and concluded nothing in src/
+      calls it — three modules do, which turns a dormant-code finding into a live violation.
+      The tests caught both, because the assertion was written before the measurement was
+      believed.
+    A_THIRD_INSTRUMENT_NOTE: >-
+      "0 of 10 files log" measured the NAMED-LOGGER convention, not logging. gmail.py has 31
+      statements through a plain module logger.
+    WHAT_SHIPPED: >-
+      The rule in integrations/__init__.py, and a tripwire pinning the module set, the vendor
+      subset (4) and the core-registrar set (3) — set equality both directions, so the lists
+      must also shrink when ESC-133 is answered. Gate 55 -> 58 by marker.
+    WHAT_I_DID_NOT_DO: "Move the four. Live credentials and user-facing capability — ESC-133."
+    NEXT: "D16.5 · MCP (PARITY, P3, wave 9, order 76)."
   D16_2_2026_09_04_the_rule_was_half_enforced_already_and_the_other_half_cannot_be_screened_yet:
     map_check: "D16.2 — Plugins must not touch core (MISSING, P2, wave 9). The Ask is a build instruction."
     STAGES_CHECKED_FIRST: >-
@@ -9822,6 +9848,36 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_133_four_vendor_modules_live_in_the_core_tree_do_they_move_out:
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        d = pathlib.Path('src/stackowl/integrations')
+        vendor = {'gmail.py','gmail_settings.py','google_calendar.py','google_oauth.py'}
+        here = vendor & {p.name for p in d.glob('*.py')}
+        print(f'HOLDS {len(here)} vendor modules still in-tree' if here else 'EXPIRED all moved out')
+        "
+      question: >-
+        D16.4's rule — third-party connectors ship as PLUGINS, not in the core tree — is
+        now stated and enforced against growth. The four modules that predate it are
+        still here: gmail.py, gmail_settings.py, google_calendar.py, google_oauth.py,
+        registered from three core sites. Do they move out to a plugin, or stay as a
+        named exception? The platform's own /connect already says "install an
+        integration plugin first", so today it tells the operator one thing and does
+        another.
+      why_evidence_cannot_settle_it: >-
+        Moving them removes user-facing capability and touches live credentials — the
+        Gmail OAuth token on disk was refreshed 2026-09-02, so this is in use, not dead
+        code. "Retired means deleted" does not apply to something nobody has decided to
+        retire, and a stop-and-brief is required for removing anything user-facing.
+      panel_recommendation: >-
+        Move Gmail and Calendar to one plugin when there is a reason to touch them
+        anyway, not as a dedicated project. The rule's value is preventing the FIFTH
+        connector, which the tripwire now does at zero cost; relocating four working
+        modules with live tokens buys tidiness and risks a capability you use. Until
+        then the exception is named in integrations/__init__.py rather than implied.
+      blocked_until_answered: >-
+        Nothing. The rule and its enforcement shipped; only the relocation waits.
     ESC_132_three_of_four_channels_have_never_carried_a_message_keep_or_retire:
       premise_check: |
         uv run python -c "
@@ -27905,19 +27961,46 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D16.4.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "The rule is stated in integrations/__init__.py — where the EXCEPTION lives, so a
+         reader meets the policy and its outstanding violation together."
+      - "The guard PINS THE SET rather than judging membership. No sound predicate decides
+         whether a module is third-party; four static screens have already been built and
+         deleted here for that kind of distinction. A guard can notice the set CHANGING,
+         which is when the question needs asking."
+      - "The four existing vendor modules are NOT moved. User-facing capability with live
+         credentials (Gmail token refreshed 2026-09-02) is the operator's call — ESC-133."
+    changes:
+      - "src/stackowl/integrations/__init__.py — the rule, what is generic and stays, what
+         predates it, and what enforces it."
+      - "tests/plugins/test_the_core_tree_does_not_grow_a_vendor_connector.py — a tripwire
+         pinning the module set, the vendor subset (4) and the core-registrar set (3), all by
+         set equality in both directions. Mutation-proven."
+    notes: >-
+      THE DESIGN ALREADY AGREED IN JUNE: IntegrationRegistry.register() is documented "open for
+      extension: plugins can call register() at import time", and /connect tells the operator
+      "No integrations registered. Install an integration plugin first." AND THE TREE DOES THE
+      OPPOSITE — four vendor modules (gmail.py, gmail_settings.py, google_calendar.py,
+      google_oauth.py) in src/stackowl/integrations/, registered from THREE core sites
+      (cli/app.py, commands/assembly.py, startup/orchestrator.py), live rather than dormant:
+      the Gmail OAuth token on disk was refreshed 2026-09-02. The in-tree MEMORY-PROVIDER set
+      is already effectively closed at one (BuiltinCuratedProvider), matching the reference.
+      I GOT BOTH NUMBERS WRONG FIRST and the tests corrected them, which is why the assertion
+      was written before the measurement was believed: `ls | tail -8` TRUNCATED the package
+      listing so I called the vendor set a pair when it is four, and I grepped for register()
+      only INSIDE the package and concluded nothing in src/ calls it when three modules do —
+      that second error turned a finding about dormant code into one about a live violation.
+      A third instrument note: "0 of 10 files log" measured the NAMED-LOGGER convention, not
+      logging; gmail.py has 31 statements through a plain module logger.
   - id: D16.5
     title: "MCP"
     domain: D16
