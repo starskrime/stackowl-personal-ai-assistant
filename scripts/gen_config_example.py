@@ -58,6 +58,23 @@ _HEADER = """\
 # Environment variables are for bootstrap, host-specific and terminal-convention
 # settings only — see tests/test_a_new_env_var_has_to_justify_itself.py for the
 # taxonomy. Everything behavioural belongs here.
+#
+# WHERE THIS FILE GOES, and how to run a second isolated instance:
+#
+#   STACKOWL_HOME roots the ENTIRE instance. Config, database, logs, the knowledge
+#   graph, skills, plugins, secrets, the runtime socket and the pid file all derive
+#   from it — measured, all 25 path accessors, 0 escapes, and guarded by
+#   tests/test_one_home_contains_the_whole_instance.py. It defaults to ~/.stackowl.
+#
+#     STACKOWL_HOME=~/.stackowl-work ./start.sh
+#
+#   ./start.sh honours it: it asks StackowlHome for the home and scopes its process
+#   sweep to that instance, so it will not stop or delete another one's state.
+#
+#   STORAGE is isolated; the PROCESS-level surface is not yet. Two instances still
+#   share the OS keychain entries, a Telegram bot token (the same bot cannot poll
+#   twice), the service-unit filename, and the webhook/MCP ports unless each config
+#   sets a different one. Give the second instance its own credentials and ports.
 """
 
 

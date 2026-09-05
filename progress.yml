@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D18_3_2026_09_05_the_storage_half_was_done_the_launcher_was_instance_hostile:
+    map_check: "D18.3 — Profiles / multi-instance (MISSING, wave 9, order 86). Stages verified not_started first."
+    THE_VERDICT_WAS_WRONG_IN_BOTH_DIRECTIONS: >-
+      MISSING said nothing existed. Measured: ALL 25 StackowlHome accessors returning a Path
+      are contained by STACKOWL_HOME — 0 escapes — including db, logs, config, kuzu graph,
+      skills, plugins, secrets, socket and pid, and the root is read at CALL time. The gap's
+      second clause, "no clean test isolation", is FALSE: tests/conftest.py already redirects
+      the home per run.
+    AND_MY_OWN_REFRAMING_WAS_WRONG_TOO_A_LENS_FALSIFIED_IT: >-
+      I concluded "it works today, it is only undiscoverable". It did not work. ./start.sh —
+      which CLAUDE.md mandates as THE restart path — hardcoded $HOME/.stackowl twice and swept
+      processes by NAME via pgrep, blind to which home it was acting on. STACKOWL_HOME=...
+      ./start.sh would have KILLED the running instance, deleted its pid and socket, and
+      overwritten its stdout log, while all 25 accessors correctly resolved into the new home.
+    ROOT_CAUSE_AND_WHAT_ELSE_IT_REACHES: >-
+      The single-accessor rule holds across ALL of src/ and broke in the two files written in
+      BASH, where no guard this repo owns could see it — every guard reads Python. Measured:
+      start.sh and scripts/full_suite.sh:20 were the only two offenders out of 20 shell files.
+      BOTH were fixed the same way — the shell ASKS StackowlHome instead of re-deriving the
+      path, and refuses to act if it cannot resolve it — and the new tripwire reads shell
+      files, so the rule now has an enforcer in the language it was being broken in.
+    THE_PANEL_CONTRADICTION_IS_THE_FINDING: >-
+      One lens held a --profile flag would work because every accessor follows a late-set
+      STACKOWL_HOME; another held it would break on the one import-time frozen path. Both were
+      half right, and the test separating them IS the finding: every accessor DID follow the
+      switch and PluginIndex WAS frozen — so the single exception to an otherwise
+      call-time-correct codebase was exactly what would have made the proposed feature
+      silently wrong. Fixed: _CONFIG_BASE is gone, default_index_path() resolves at call time.
+    HONEST_SCOPE_THE_FREEZE_HAD_CAUSED_NO_HARM: >-
+      Every src/ importer of plugins.index is function-local, so on the production path the
+      constant resolved at first CALL, and an AST sweep found it the ONLY one of its kind — a
+      latent hazard whose trigger was a feature that does not exist yet, not a class of bug.
+      Recorded as that, not dressed up as a live defect.
+    NOT_CLAIMED_MULTI_INSTANCE_IS_NOT_SUPPORTED: >-
+      Five process-level names still collide, all measured: keychain service strings (the
+      second setup overwrites the first's credential), the Telegram bot token (no Conflict/409
+      handler; restart_polling drops the backlog, so messages vanish silently), the
+      service-unit filename, the webhook port (8766, BOUND RIGHT NOW), and the MCP port.
+      ESC-136. Storage isolation is complete; process isolation is not, and the documentation
+      says so rather than implying otherwise.
+    A_FALSE_DEPENDENCY_EDGE_CORRECTED: >-
+      The map claimed profiles are "how Kanban (D07.6) gets its worker isolation". D07.6's own
+      re-measurement says `tasks` IS the durable board and isolation comes from
+      lease_owner/lease_expires_at. blocks:[D07.6] dropped, and flagged in ESC-136 rather than
+      changed silently.
+    EVIDENCE: >-
+      9 passed across the three new test files (5 tripwires). The scoped sweep proven BOTH
+      directions against the live platform: custom home -> EMPTY while three real StackOwl
+      processes run; default home -> all three PIDs. Four mutants caught and restored from file
+      copies: a hardcoded home in the launcher, a hardcoded home in a NON-launcher shell file,
+      a new module-level StackowlHome call, and an accessor escaping the home.
+    NEXT: "D18.4 · State-path discipline (PARITY, wave 9, order 87) — and note D18.3 just
+      measured its exact subject: two shell files were violating it."
   D18_2_2026_09_05_the_artifact_is_worth_having_their_way_of_maintaining_it_is_not:
     map_check: "D18.2 — Config surface & loaders (DIVERGENT, wave 9, order 85). Stages verified not_started first."
     THE_LOADER_HALF_WAS_RE_MEASURED_NOT_ASSUMED: >-
@@ -10087,6 +10140,62 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_136_multi_instance_five_process_level_names_still_collide:
+      premise_check: |
+        uv run python -c "
+        import pathlib, re
+        tg = pathlib.Path('src/stackowl/channels/telegram')
+        has409 = any('Conflict' in f.read_text() for f in tg.rglob('*.py'))
+        wh = pathlib.Path('src/stackowl/config/webhook_settings.py').read_text()
+        port = re.search(r'default=(\d+)', wh.split('port: int')[1]).group(1)
+        print('EXPIRED a 409 handler now exists' if has409
+              else f'HOLDS no Conflict handler; webhook port still {port}')
+        "
+      question: >-
+        Do you want multiple isolated StackOwl instances (a work assistant and a personal
+        assistant side by side)? The STORAGE half already works and is now documented and
+        guarded: STACKOWL_HOME=~/.stackowl-work ./start.sh gives a fully separate database,
+        config, logs, graph, skills, plugins, secrets, socket and pid — 25 of 25 accessors
+        contained, 0 escapes. What is NOT isolated is the PROCESS level, five names, all
+        measured 2026-09-05: (1) OS keychain service strings are global constants
+        ("telegram-bot", f"stackowl-provider-{name}"), so the second instance's setup
+        OVERWRITES the first's credential; (2) the same Telegram bot cannot poll twice and
+        there is NO Conflict/409 handler in channels/telegram/, so one instance silently
+        loses messages — restart_polling re-arms with drop_pending_updates=True, discarding
+        the backlog; (3) the service-unit filename is fixed (stackowl.service,
+        com.stackowl.plist), so a second install overwrites the first; (4) the webhook port
+        defaults to 8766 and is BOUND RIGHT NOW by the running core; (5) the MCP port
+        likewise. Each is solvable — per-instance keychain namespacing, a 409 handler, an
+        instance-suffixed unit name, and per-profile ports — but that is a feature, not a
+        fix. ALSO IN THIS QUESTION: a CLI surface. A --profile flag is feasible (measured:
+        every accessor follows a late-set STACKOWL_HOME once the one frozen path was fixed)
+        but it cannot help ./start.sh, which is the actual entry point, so it would be a
+        second way to say one thing.
+      why_evidence_cannot_settle_it: >-
+        There is NO demand evidence in the tree — the logs (13,776 msg lines) and the
+        messages table (3,859 rows) contain zero references to a second instance, a work/
+        personal split, or multi-instance anything, and 24 of 30 owner-scoped tables hold
+        exactly one principal. So evidence says nobody has wanted this yet, which is not
+        the same as saying nobody will. Whether to spend on five process-level fixes for a
+        capability with no observed demand is product intent, and the cost is not trivial:
+        the reference platform's equivalent is ~2,600 lines across five modules.
+      panel_recommendation: >-
+        DO NOT BUILD PROFILES YET. What shipped in D18.3 is the whole of the cheap half —
+        the launcher is safe, the capability is documented, and the containment property is
+        guarded — and it forecloses nothing: no profile name, no directory layout, no
+        persisted column, no CLI flag has been committed to. If you ever want it, the next
+        cheapest step is the Telegram 409 handler, which is worth having ANYWAY (today two
+        instances lose messages silently, and so would any accidental double-start).
+      blocked_until_answered: >-
+        Nothing. D18.3 shipped its three root-cause fixes without this answer. Only the
+        profile FEATURE (a -p flag, `profile list`, per-instance keychain/unit/ports) waits.
+      also_decided_here: >-
+        A CORRECTION YOU SHOULD SEE rather than have made silently: the map claimed
+        profiles are "how Kanban (D07.6) gets its worker isolation". That is measurably
+        false — D07.6's own re-measurement records that `tasks` IS the durable board and
+        isolation comes from lease_owner/lease_expires_at, not from processes. The
+        blocks:[D07.6] edge has been dropped. If you disagree, that edge is the thing to
+        put back.
     ESC_135_a_third_party_scanner_and_one_markup_exposure:
       premise_check: |
         uv run python -c "
@@ -28946,21 +29055,72 @@ items:
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d183"
     gap: "No way to run a work assistant and a personal assistant side by side, and no clean test isolation."
     depends_on: []
-    blocks: [D07.6]
+    blocks: []            # was [D07.6] — the stated reason is measurably false, see notes
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D18.3.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "MISSING IS WRONG IN BOTH DIRECTIONS. The STORAGE half is complete — all 25
+         StackowlHome accessors returning a Path are contained by STACKOWL_HOME, 0
+         escapes, resolved at CALL time. And the gap's second clause, 'no clean test
+         isolation', is FALSE: tests/conftest.py already redirects the home per run."
+      - "BUT 'it works today' WAS ALSO WRONG. ./start.sh — mandated by CLAUDE.md as THE
+         restart path — hardcoded $HOME/.stackowl twice and swept by process NAME, so
+         STACKOWL_HOME=... ./start.sh would have killed the running instance and deleted
+         its pid and socket. Storage isolation without lifecycle isolation is not
+         isolation."
+      - "ROOT CAUSE: the single-accessor rule holds across all of src/ and broke in the
+         two files written in BASH, where no guard this repo owns could see it. Fixed by
+         having the SHELL ASK StackowlHome rather than re-derive the path, in BOTH
+         offenders (start.sh and scripts/full_suite.sh) — architecture, not the example —
+         and the new guard reads shell files, so the rule now has an enforcer in the
+         language it was being broken in."
+      - "MULTI-INSTANCE IS NOT SUPPORTED AND NOTHING HERE CLAIMS IT IS. Five process-level
+         names still collide: keychain service strings, the Telegram bot token (no 409
+         handler in channels/telegram/), the service-unit filename, and the webhook/MCP
+         ports — 8766 is bound right now. Whether to solve them is ESC-136."
+      - "THE blocks:[D07.6] EDGE IS DROPPED. The map claimed profiles are 'how Kanban gets
+         its worker isolation'; D07.6's own re-measurement says `tasks` IS the durable
+         board and isolation comes from lease_owner/lease_expires_at, not from processes.
+         Corrected rather than reconciled silently, and flagged in ESC-136."
+    changes:
+      - "start.sh — resolves the home by calling StackowlHome.home() and REFUSES to sweep
+         or delete anything if that fails; the orphan sweep (kept: it exists for the
+         2026-07-22 orphaned-__core__ incident) now reads /proc/<pid>/environ, falling
+         back to `ps eww`, to decide which home a PID belongs to, and warns loudly rather
+         than killing when it cannot tell."
+      - "scripts/full_suite.sh — same fix; its verdict log used to land in the DEFAULT
+         home's logs even when the run was isolated."
+      - "src/stackowl/plugins/index.py — _CONFIG_BASE (the ONLY import-time frozen path in
+         src/, by AST sweep) replaced with default_index_path(), resolved at call time.
+         src/stackowl/cli/app.py updated; the name is gone, not merely corrected."
+      - "scripts/gen_config_example.py + docs/stackowl.yaml.example — STACKOWL_HOME is now
+         documented where an operator looks, including what is NOT yet isolated."
+      - "tests/test_the_launcher_honours_the_home_it_is_given.py (4 tests, 3 tripwires),
+         tests/test_no_path_is_frozen_at_import_time.py (2, 1 tripwire),
+         tests/test_one_home_contains_the_whole_instance.py (3, 1 tripwire)."
+    notes: >-
+      A PANEL CONTRADICTION RESOLVED BY MEASUREMENT RATHER THAN AVERAGED. One lens held a
+      --profile flag would work because every accessor follows a late-set STACKOWL_HOME;
+      another held it would break on the import-time freeze. Both were half right, and the
+      test that separates them IS the finding: every accessor did follow the switch, and
+      PluginIndex was frozen — so the single exception to an otherwise call-time-correct
+      codebase was precisely the thing that would have made the proposed feature silently
+      wrong. HONEST SCOPE ON THAT FREEZE: it had caused no harm. Every src/ importer of
+      plugins.index is function-local, so on the production path it resolved at first CALL,
+      and an AST sweep found it to be the only one of its kind — a latent hazard whose
+      trigger was a feature that does not exist yet, not a class of bug. It is fixed
+      because the fix also deletes an indirection, and because the property "no path is
+      decided at import time" is cheap to keep and load-bearing for the test isolation that
+      already relies on it.
 
   - id: D18.4
     title: "State-path discipline"

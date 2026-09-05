@@ -913,12 +913,12 @@ def plugins_update_index(
     """Update the local plugin index from the configured source."""
     import sys
 
-    from stackowl.plugins.index import _CONFIG_BASE, PluginIndex
+    from stackowl.plugins.index import PluginIndex, default_index_path
 
     # 1. ENTRY
     log.debug("[plugins] plugins_update_index: entry — url=%s", url)
 
-    target = _CONFIG_BASE / "plugin-index.yaml"
+    target = default_index_path() / "plugin-index.yaml"
 
     if url is not None:
         # 2. DECISION — validate HTTPS only

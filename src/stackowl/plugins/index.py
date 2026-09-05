@@ -12,7 +12,24 @@ from stackowl.paths import StackowlHome
 
 log = logging.getLogger("stackowl.plugins")
 
-_CONFIG_BASE = StackowlHome.plugins_dir()
+def default_index_path() -> Path:
+    """The local plugin index, resolved AGAINST THE CURRENT ENVIRONMENT.
+
+    This was a module-level constant, ``_CONFIG_BASE = StackowlHome.plugins_dir()``.
+    Every other path in this platform resolves at call time, which is what lets
+    ``STACKOWL_HOME`` isolate an instance and what lets ``tests/conftest.py``
+    redirect the home away from the operator's real one. Freezing it here meant a
+    process that switched home in-process would read one home's plugin index while
+    every other subsystem read the other's — silently, since a missing index is
+    indistinguishable from an empty one.
+
+    Measured 2026-09-05: no harm had occurred, because every ``src/`` importer of
+    this module is function-local, so the constant resolved at first CALL on the
+    production path. The hazard's trigger was a feature that does not exist yet —
+    a ``--profile`` flag setting the variable after imports. Resolved at call time
+    it cannot arise, and the indirection is gone rather than merely corrected.
+    """
+    return StackowlHome.plugins_dir()
 
 
 @dataclass(frozen=True)
@@ -39,7 +56,7 @@ class PluginIndex:
     def __init__(self, index_path: Path | None = None) -> None:
         # 1. ENTRY
         log.debug("plugins.index.__init__: entry")
-        self._path = index_path or (_CONFIG_BASE / "plugin-index.yaml")
+        self._path = index_path or (default_index_path() / "plugin-index.yaml")
         # 4. EXIT
         log.debug(
             "plugins.index.__init__: exit",

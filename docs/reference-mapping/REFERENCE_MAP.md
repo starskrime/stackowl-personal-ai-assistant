@@ -1541,6 +1541,33 @@ purpose** — a PR adding config inheritance between them was rejected as fighti
 **Gap.** No way to run a work assistant and a personal assistant side by side, and no clean test isolation.
 **Ask.** Do you want multiple isolated StackOwl instances? It is also how Kanban (D07.6) gets its
 worker isolation.
+**MEASURED 2026-09-05 — `MISSING` IS WRONG IN BOTH DIRECTIONS, and the launcher was the
+instance-hostile part.** The STORAGE half is already complete: **all 25 `StackowlHome`
+accessors returning a Path are contained by `STACKOWL_HOME`, 0 escapes** — database, logs,
+config, kuzu graph, skills, plugins, secrets, the runtime socket and the pid file — and the
+root is read at CALL time. The second clause of the gap, "no clean test isolation", is
+simply FALSE: `tests/conftest.py` already redirects the home per run, added after test data
+reached the operator's live `USER.md`. **But "it works today" was also wrong, and a panel
+lens falsified it:** `./start.sh`, which `CLAUDE.md` mandates as *the* restart path,
+hardcoded `$HOME/.stackowl` twice and swept processes by NAME
+(`pgrep -f "python3? -m stackowl"`), blind to which home it was acting on — so
+`STACKOWL_HOME=… ./start.sh` would have KILLED the running instance, deleted its pid and
+socket, and overwritten its stdout log. **Root cause: the single-accessor rule holds across
+all of `src/` and broke in the two files written in BASH, where no guard this repo owns
+could see it** — `start.sh` and `scripts/full_suite.sh:20`, the only two of 20 shell files.
+Both now ASK `StackowlHome` and refuse to act if it cannot be resolved; the sweep decides
+which home a PID belongs to and warns rather than killing when it cannot tell (proven both
+directions against the live platform). Two further fixes: the ONE import-time frozen path in
+`src/` (`plugins/index.py`, found by AST sweep, the only one of its kind) now resolves at
+call time — it was the single exception that would have made a `--profile` flag silently
+wrong; and `STACKOWL_HOME` is documented in the generated config example, guarded by a
+containment tripwire so the claim cannot rot. **NOT CLAIMED: multi-instance is not
+supported.** Five process-level names still collide — keychain service strings, the Telegram
+bot token (no 409 handler), the service-unit filename, and the webhook/MCP ports (8766 is
+bound right now). That is ESC-136. **And this entry's claim that profiles are "how Kanban
+gets its worker isolation" is FALSE** — D07.6's own re-measurement says `tasks` IS the
+durable board and isolation comes from `lease_owner`/`lease_expires_at`, not processes; the
+`blocks: [D07.6]` edge is dropped. See `designs/D18.3.md`.
 
 ### D18.4 · State-path discipline — `PARITY`
 Both mandate a single accessor (`get_hermes_home()` / `StackowlHome`) and ban hardcoded home paths.

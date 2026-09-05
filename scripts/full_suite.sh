@@ -17,7 +17,15 @@
 #   ./scripts/full_suite.sh tests/db        # any pytest args, for testing this script
 set -euo pipefail
 cd "$(dirname "$0")/.."
-log="${STACKOWL_SUITE_LOG:-$HOME/.stackowl/logs/full-suite-$(date +%Y%m%d-%H%M%S).log}"
+# D18.3: ask StackowlHome for the log root rather than re-deriving ~/.stackowl.
+# A suite run under a non-default STACKOWL_HOME used to write its verdict into the
+# DEFAULT home's logs — the run isolated, its record not.
+suite_home="$(uv run python -c 'from stackowl.paths import StackowlHome; print(StackowlHome.logs_dir())' 2>/dev/null)"
+if [ -z "$suite_home" ]; then
+    echo "FATAL: could not resolve the StackOwl log directory from StackowlHome." >&2
+    exit 1
+fi
+log="${STACKOWL_SUITE_LOG:-$suite_home/full-suite-$(date +%Y%m%d-%H%M%S).log}"
 mkdir -p "$(dirname "$log")"
 
 # A VERDICT NEEDS A SUBJECT. Measured 2026-09-04: a 30-minute run came back
