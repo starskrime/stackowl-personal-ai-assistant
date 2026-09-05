@@ -1510,6 +1510,25 @@ them, because a behavioural setting has a home and it is not the environment. Se
 acknowledged wart.
 **StackOwl.** One `Settings` class, pydantic-validated, one loader. **Ours is better.**
 **Ask.** Keep ours. Adopt their annotated example file as a docs artifact?
+**MEASURED 2026-09-05 — THE ARTIFACT IS WORTH HAVING; THEIR WAY OF MAINTAINING IT IS NOT.**
+The loader half is settled in our favour and was re-checked rather than assumed:
+`settings_customise_sources` returns `(env_settings, _YamlSource(...))` — one loader, no
+"know which one you are in" warning to inherit. The example half is a real gap: **210
+settable fields across 33 top-level sections** (36 nested models at every depth, 52
+top-level keys) and **zero** example files, so an operator's only route to the surface was
+1,100 lines of `settings.py`. But theirs is 1,616 HAND-WRITTEN lines — a second copy of the
+surface, correct only until someone forgets, which is `CLAUDE.md` shape 3. Ours is
+**GENERATED**: `scripts/gen_config_example.py` walks `Settings` and emits every field with
+its default and its own `Field(description=...)`; a tripwire regenerates and compares BYTES,
+so adding a setting without regenerating fails the gate. It ROUND-TRIPS (`Settings(**it)`
+accepts it) and it INVENTS NOTHING — **107 of 210 fields carry a description**, and the
+other 103 emit no comment rather than a guessed one, so the file shows honestly where the
+model's documentation stops. **AND THE GUARD IMMEDIATELY EARNED ITSELF:** it failed under
+pytest only, which exposed four `*_dir` defaults resolving against `STACKOWL_HOME` — the
+checked-in artifact was carrying absolute paths wrong on every other machine AND leaking the
+operator's home directory name into a publishable doc. Rendering home-derived paths as
+`~/.stackowl/...` fixed portability, the leak, and reproducibility together. See
+`designs/D18.2.md`.
 
 ### D18.3 · Profiles / multi-instance — `MISSING`
 **Hermes.** Fully isolated instances, each with its own `HERMES_HOME` (config, keys, memory, sessions,

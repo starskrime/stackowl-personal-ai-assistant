@@ -315,6 +315,41 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D18_2_2026_09_05_the_artifact_is_worth_having_their_way_of_maintaining_it_is_not:
+    map_check: "D18.2 — Config surface & loaders (DIVERGENT, wave 9, order 85). Stages verified not_started first."
+    THE_LOADER_HALF_WAS_RE_MEASURED_NOT_ASSUMED: >-
+      settings_customise_sources returns (env_settings, _YamlSource(settings_cls, config_path)).
+      ONE loader. The reference has three with a documented "know which one you are in" warning
+      it calls a wart. Nothing to adopt; the map's verdict holds.
+    THE_EXAMPLE_HALF_IS_A_REAL_GAP: >-
+      210 settable fields across 33 top-level sections (36 nested models at every depth, 52
+      top-level keys) and ZERO example files in the repo. An operator's only route to the
+      configuration surface was reading 1,100 lines of settings.py.
+    ADOPTED_THE_ARTIFACT_REJECTED_THE_MAINTENANCE_MODEL: >-
+      Theirs is 1,616 HAND-WRITTEN lines — a second copy of the surface, correct only until
+      someone adds a field and forgets, which is CLAUDE.md shape 3. Ours is GENERATED from
+      Settings by scripts/gen_config_example.py (416 lines), and a tripwire regenerates and
+      compares BYTES so it cannot fall behind the model. It round-trips — Settings(**it)
+      accepts it — and it invents nothing: 107 of 210 fields carry a description, the other
+      103 emit no comment rather than a guessed one, so the file shows where the model's
+      own documentation stops.
+    THE_GUARD_EARNED_ITSELF_IMMEDIATELY_AND_THIS_IS_THE_ROOT_CAUSE: >-
+      The byte comparison failed under pytest and passed everywhere else — generator directly
+      0 diff, subprocess outside pytest 0 diff, subprocess INSIDE pytest 11 diff lines. conftest
+      redirects STACKOWL_HOME to a tmpdir and four browser *_dir defaults resolve against it.
+      That was NOT a test-environment quirk to work around: the checked-in artifact was carrying
+      /home/boss/... absolute paths that are WRONG ON EVERY OTHER MACHINE and were LEAKING THE
+      OPERATOR'S HOME DIRECTORY NAME into a publishable docs artifact. One fix — rendering
+      home-derived Paths as ~/.stackowl/... — answered portability, the leak and reproducibility
+      together. WHAT ELSE DOES THAT CAUSE REACH: any generator emitting a resolved Path into a
+      committed artifact. Measured — this is the only script that writes into docs/, so the fix
+      is complete rather than exemplary, and the rule the guard enforces is the general one.
+    EVIDENCE: >-
+      4 passed in tests/test_the_example_config_cannot_go_stale.py; regenerate-and-diff IN-SYNC;
+      grep -c '/home/' docs/stackowl.yaml.example = 0; round-trip load confirmed. Mutation-proven:
+      a new Settings field without regeneration fails the guard; restored from a file copy and
+      re-run green.
+    NEXT: "D18.3 · Profiles / multi-instance (MISSING, wave 9, order 86)."
   D18_1_2026_09_05_there_is_no_sprawl_and_adopting_the_rule_verbatim_would_be_wrong:
     map_check: "D18.1 — Config vs. secrets discipline (MISSING, wave 9). Stages verified not_started first."
     THE_PREMISE_DOES_NOT_HOLD: >-
@@ -28846,18 +28881,59 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D18.2.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "THE LOADER HALF NEEDS NOTHING, re-measured rather than assumed:
+         settings_customise_sources returns (env_settings, _YamlSource(settings_cls,
+         config_path)) — ONE loader. The reference has three and documents the ambiguity
+         as a wart."
+      - "ADOPT THE ARTIFACT, REJECT THE MAINTENANCE MODEL. The gap is real — 210 settable
+         fields across 33 top-level sections and zero example files, so the only route to
+         the surface was 1,100 lines of settings.py. But their 1,616 HAND-WRITTEN lines are
+         a second copy of that surface, correct only until someone forgets. Ours is
+         GENERATED from Settings and a tripwire compares BYTES."
+      - "THE EXAMPLE MUST ROUND-TRIP OR IT IS DECORATION. Settings(**yaml.safe_load(it))
+         is asserted: a documentation file that would not load teaches the one operator who
+         tries it that the docs are not real."
+      - "NO DESCRIPTION IS INVENTED. 107 of 210 fields carry one; the other 103 emit no
+         comment rather than a guessed one, so the artifact shows honestly where the model's
+         documentation stops. Writing those 103 belongs in settings.py, where the generator
+         picks them up for free."
+    changes:
+      - "scripts/gen_config_example.py (new, 158 lines) — walks Settings, emits each field
+         with its default and its own Field(description=...) as a comment. _plain() normalises
+         frozenset/tuple/Path/Enum defaults (a frozenset default is what made the first run
+         raise RepresenterError) and SORTS sets so the output is byte-stable."
+      - "docs/stackowl.yaml.example (new, 416 lines, 134 comment lines) — the generated
+         artifact, with a header teaching keychain:/file:/env secret REFERENCES."
+      - "tests/test_the_example_config_cannot_go_stale.py (new, 4 tests, 2 tripwires) —
+         regenerate-and-compare-bytes, round-trip load, determinism, and no
+         credential-shaped default reaching the file."
+      - "scripts/gen_config_example.py::_symbolic_home — renders home-derived Paths as
+         ~/.stackowl/..., fixing the three defects the guard exposed (see notes)."
+    notes: >-
+      THE GUARD EARNED ITSELF BEFORE IT SHIPPED. The byte comparison failed under pytest and
+      passed everywhere else: generator directly 0 diff, subprocess outside pytest 0 diff,
+      subprocess INSIDE pytest 11 diff lines. conftest redirects STACKOWL_HOME to a tmpdir
+      and four browser *_dir defaults resolve against it. That was not a test-environment
+      quirk to route around — the checked-in artifact was carrying /home/boss/... absolute
+      paths that are WRONG ON EVERY OTHER MACHINE and were LEAKING THE OPERATOR'S HOME
+      DIRECTORY NAME into a docs artifact meant for publication. Same family as D18.1's
+      host-specific finding: a property of the MACHINE must not ship as a user's
+      configuration. One fix answered portability, the leak and reproducibility together.
+      What else that cause reaches: any generator emitting a resolved Path into a committed
+      artifact — measured, this is the only script that writes into docs/, so the fix is
+      complete rather than exemplary. VALIDATE is no_change_needed and this is deliberate:
+      nothing under src/ changed, so there is no live behaviour a restart could evidence.
+      The item's evidence is the regenerate-and-diff, which is stronger than a log line.
 
   - id: D18.3
     title: "Profiles / multi-instance"

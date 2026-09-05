@@ -120,7 +120,16 @@ Duplicate keys silently swallow whole records. This has already happened.
   never the gate and the commit as two independent commands in one step.** Measured
   2026-09-02: the gate ran, printed `TRIPWIRES FAILED — do not commit` for a genuine
   unscoped `skills` read, and the commit went out anyway because `git commit` was
-  chained to `git add`, not to the gate. A verdict nothing depends on is not a gate.** Targeted paths are chosen by what the change
+  chained to `git add`, not to the gate. A verdict nothing depends on is not a gate.**
+
+  **AND NEVER PIPE THE GATE.** `./scripts/tripwires.sh | tail -6 && git commit` looks
+  chained and is not: `&&` binds to the exit status of the PIPELINE, which is `tail`'s,
+  and `tail` always succeeds. Measured 2026-09-05 — the gate printed `TRIPWIRES FAILED
+  — do not commit` and the commit went out anyway, the SAME defect as above wearing a
+  different disguise, three days after the first one was recorded here. Run the gate
+  bare, or redirect to a file and chain on `$?`. A pipe is a second way to decouple the
+  verdict from the action, and the rule is the verdict must gate the commit by
+  construction, not by reading. Targeted paths are chosen by what the change
   looks related to, and a CROSS-CUTTING guard never looks related to anything — which
   is how an unscoped `task_outcomes` read and three stale allowlist entries both
   shipped. The gate takes ~40s and runs everything marked `@pytest.mark.tripwire`
