@@ -315,6 +315,26 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D18_1_2026_09_05_there_is_no_sprawl_and_adopting_the_rule_verbatim_would_be_wrong:
+    map_check: "D18.1 — Config vs. secrets discipline (MISSING, wave 9). Stages verified not_started first."
+    THE_PREMISE_DOES_NOT_HOLD: >-
+      All 18 STACKOWL_* variables measured, and every one is legitimately environmental:
+      9 bootstrap, 2 host-specific, 2 terminal convention, 2 logging bootstrap, 1 deployment
+      secret, 1 unwired. There is no behavioural sprawl to migrate.
+    ADOPTING_IT_VERBATIM_WOULD_HAVE_BEEN_WRONG: >-
+      CONTEXT_CEILING's own docstring says "ONLY to opt into a HOST-SPECIFIC cap (e.g. to bound
+      KV-cache RAM on a constrained inference server)". Moving it into stackowl.yaml would ship
+      one machine's RAM limit to another.
+    THE_SECRETS_HALF_IS_ALREADY_STRONGER: >-
+      There is no .env at all. SecretResolver resolves a REFERENCE — keychain:, file:, or an
+      env name — so the config file holds a pointer, never a value, and the strongest option is
+      the OS keychain rather than a dotfile.
+    WHAT_WAS_ACTUALLY_MISSING: >-
+      Not a migration — the QUESTION. Today's discipline is held by the authors who wrote each
+      of these carefully, and nothing asks when the next one is added. A behavioural setting
+      introduced as a bare os.environ.get would look exactly like the eighteen that are right.
+      The tripwire asks it, and "behavioural" is deliberately NOT a valid justification.
+    NEXT: "D18.2 · Config surface & loaders (DIVERGENT, P2, wave 9, order 85)."
   D17_6_2026_09_05_the_honest_statement_is_honest_and_two_true_statements_looked_contradictory:
     map_check: "D17.6 — Authz & tenancy (AHEAD, wave 9). Ask: keep. Stages verified not_started first."
     THE_CLAIM_WORTH_CHECKING: >-
@@ -28757,19 +28777,48 @@ items:
     blocks: []
     dedup_target: X10
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D18.1.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "THE RULE IS NOT ADOPTED VERBATIM, because measuring says it would be wrong: all 18
+         env vars are legitimately environmental (bootstrap, host-specific, terminal
+         convention, logging bootstrap, deployment secret, unwired). Moving CONTEXT_CEILING
+         into stackowl.yaml would ship one machine's KV-cache RAM limit to another."
+      - "The secrets half needs nothing: there is no .env, and SecretResolver takes a
+         REFERENCE (keychain:/file:/env name) so the config file holds a pointer rather than a
+         value — stronger than the rule being offered."
+      - "What ships instead is the QUESTION, asked automatically. `behavioural` is deliberately
+         NOT a valid justification in the taxonomy: a behavioural setting has a home, and it is
+         not the environment."
+    changes:
+      - "tests/test_a_new_env_var_has_to_justify_itself.py — a tripwire classifying every
+         STACKOWL_* name in src/ against five reasons, set equality both directions, plus a
+         check that no .env appears and SecretResolver still takes references.
+         Mutation-proven with a bare os.environ.get for a retry delay."
+    notes: >-
+      THE ASK'S PREMISE — env sprawl — DOES NOT HOLD, measured across all 18 STACKOWL_*
+      variables. BOOTSTRAP (9): DATA_DIR, HOME, LOG_DIR, PID_FILE, CONFIG_FILE, YAML,
+      CORE_SOCKET, MODEL_CACHE_DIR, TEST_MODE — read before Settings can exist, because you
+      cannot read config.yaml to learn where config.yaml is. HOST-SPECIFIC (2):
+      CONTEXT_CEILING's own docstring says "ONLY to opt into a host-specific cap (e.g. to bound
+      KV-cache RAM on a constrained inference server)", and BROWSER_OFFLINE. TERMINAL
+      CONVENTION (2): REDUCED_MOTION and NO_GLYPHS follow NO_COLOR / prefers-reduced-motion.
+      LOGGING BOOTSTRAP (2): configured before Settings loads, with existing recorded scrutiny.
+      DEPLOYMENT SECRET (1): FINGERPRINT_SECRET, read at import where SecretResolver is not
+      available, its fallback's weakness stated in the comment (F134). UNWIRED (1):
+      HEADLESS_OAUTH, in the integration D16.4 measured as never registered. THE SECRETS HALF
+      IS ALREADY BETTER: no .env exists; SecretResolver resolves keychain:/file:/env
+      REFERENCES, so the config file never holds a secret value. WHAT WAS ACTUALLY MISSING is
+      that the discipline is held by careful authors and nothing asks the question when the
+      next variable is added — a behavioural setting introduced as a bare os.environ.get would
+      look exactly like the eighteen that are correct.
   - id: D18.2
     title: "Config surface & loaders"
     domain: D18

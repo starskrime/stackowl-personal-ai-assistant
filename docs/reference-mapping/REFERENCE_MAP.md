@@ -1487,6 +1487,22 @@ value to an env var, but user-facing docs always point at `config.yaml`.
 **StackOwl.** `Settings` merges YAML + `STACKOWL_*` env with env taking priority — both channels are
 equally blessed.
 **Ask.** Adopt the split? It makes config discoverable and prevents env sprawl.
+**MEASURED 2026-09-05 — THERE IS NO SPRAWL, and adopting the rule verbatim would have been
+WRONG.** All 18 `STACKOWL_*` variables were read and every one has a reason to be
+environmental: BOOTSTRAP (9 — you cannot read config.yaml to learn where config.yaml is),
+HOST-SPECIFIC (2 — `CONTEXT_CEILING`'s own docstring says "ONLY to opt into a host-specific cap
+(e.g. to bound KV-cache RAM on a constrained inference server)", and moving that to YAML would
+ship one machine's RAM limit to another), TERMINAL CONVENTION (2 — the NO_COLOR /
+prefers-reduced-motion family), LOGGING BOOTSTRAP (2 — logging configures before Settings
+loads), DEPLOYMENT SECRET (1, read at import before SecretResolver exists, with its fallback's
+weakness stated), UNWIRED (1). AND THE SECRETS HALF IS ALREADY ANSWERED MORE STRONGLY: there is
+no `.env` at all — `config/secret_resolver.py` resolves a REFERENCE (`keychain:`, `file:`, or an
+env name), so the config file holds a pointer and the strongest option is the OS keychain rather
+than a dotfile. WHAT WAS MISSING is not a migration but the QUESTION: today's discipline is held
+by careful authors and nothing asks when the next variable is added. A tripwire now classifies
+every `STACKOWL_*` name against five reasons — and "behavioural" is deliberately NOT one of
+them, because a behavioural setting has a home and it is not the environment. See
+`designs/D18.1.md`.
 
 ### D18.2 · Config surface & loaders — `DIVERGENT`
 **Hermes.** ~19 top-level sections, a 1,616-line annotated example file, and **three** loaders
