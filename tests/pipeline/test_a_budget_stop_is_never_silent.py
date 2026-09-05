@@ -69,24 +69,39 @@ def test_the_note_is_plain_english_not_a_developer_marker() -> None:
     """The original concern stays honoured: no `budget:stop:steps:limit=20` in
     user-facing content. Plain English is the alternative to silence, not the
     marker."""
-    branch = _backstop_branch()
-    note = re.search(r'_backstop_note\s*=\s*\((.*?)\)', branch, re.S)
-    assert note, "expected a _backstop_note literal"
-    text = note.group(1)
-    for leak in ("budget:stop", "limit=", "actual=", "exc.cap", "exc.limit"):
-        assert leak not in text, f"developer-facing detail leaked into the note: {leak}"
+    # MOVED, not weakened. The note used to be a literal inside execute.py; that
+    # SECOND COPY of the governor's answer is exactly what told the operator
+    # "steps" on turns that died on tokens, so the literal is gone and the note is
+    # derived from the BudgetBreach. The requirement is unchanged and is now
+    # asserted against every note the single source can produce.
+    from stackowl.exceptions import BudgetBreach
+    from stackowl.pipeline.budget.stop_note import stop_note_for
+
+    for cap in ("steps", "tokens", "time", "cost", "an_unknown_cap"):
+        text = stop_note_for(BudgetBreach(cap, 20.0, 23.0))
+        for leak in ("budget:stop", "limit=", "actual=", "exc.cap", "exc.limit", "20.0", "23.0"):
+            assert leak not in text, f"developer-facing detail leaked into the note: {leak}"
 
 
 def test_the_note_tells_the_user_what_to_DO() -> None:
     """A notice that only reports a failure leaves the user stuck. The whole
     reason this matters is that he asked a question and got no path forward."""
-    branch = _backstop_branch()
-    note = re.search(r'_backstop_note\s*=\s*\((.*?)\)', branch, re.S)
-    assert note
-    text = note.group(1).lower()
-    assert "continue" in text or "again" in text, (
-        "the note must offer a next step, not merely announce a stop"
-    )
+    # Same move as above, and the requirement got STRONGER: every cap's note must
+    # offer a next step, not just the one that happened to be hardcoded. The offer
+    # also had to become TRUE — the old "I'll pick up from here" promised a
+    # continuation that nothing implements (`budget_capped` makes the corrective
+    # path report `corrected: false`, and no continuation task is enqueued).
+    from stackowl.exceptions import BudgetBreach
+    from stackowl.pipeline.budget.stop_note import stop_note_for
+
+    for cap in ("steps", "tokens", "time", "cost", "an_unknown_cap"):
+        text = stop_note_for(BudgetBreach(cap, 20.0, 23.0)).lower()
+        assert "again" in text or "continue" in text, (
+            f"the {cap} note announces a stop with no way forward: {text!r}"
+        )
+        assert "pick up from here" not in text, (
+            "that offer is not implemented — do not re-promise it"
+        )
 
 
 def test_an_empty_partial_still_routes_to_the_floor() -> None:

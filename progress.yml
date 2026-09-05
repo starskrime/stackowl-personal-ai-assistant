@@ -315,6 +315,45 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT119_2026_09_05_the_platform_named_a_cap_that_cannot_fire:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-119 in known_debt."
+    TRIGGER: >-
+      The operator reported that almost every request runs out of steps and asked for a
+      principal-level diagnosis. His symptom was real; his diagnosis was the one his own
+      platform had handed him.
+    ROOT_CAUSE_TWO_COPIES_OF_ONE_RULE: >-
+      execute.py built a fixed "[stopped: I ran out of steps ...]" literal for every
+      default-backstop breach, while the BudgetBreach it was handling — in scope, three
+      lines below, used for exc.partial_text — already carried cap, limit and actual. The
+      governor decided which cap fired; the note asserted one independently. Now derived:
+      pipeline/budget/stop_note.py is the single source, kept as DATA (cap -> sentence) so a
+      new cap cannot be added without someone saying what it tells the user, and a tripwire
+      fails if the literal ever returns to execute.py.
+    THE_SECOND_LIE_IN_THE_SAME_SENTENCE: >-
+      It ended "Ask me to continue and I'll pick up from here" — an offer nothing
+      implements. budget_capped=True makes the corrective path count the turn as floored
+      (retry_actuator.py:205 logs corrected: false) and no continuation task is enqueued
+      anywhere. Replaced with an offer that is TRUE, because budgets are per-turn: ask again
+      with a narrower scope and the next turn starts with a full budget.
+    A_RECORDED_REQUIREMENT_I_BROKE_AND_RESTORED: >-
+      Two pre-existing tests failed on my first pass, and they were RIGHT: the note must
+      leak no developer detail, and must offer a next step. Both asserted it by regexing a
+      literal in execute.py — the very copy this fix deletes. Their INTENT was preserved and
+      strengthened rather than deleted: both now assert against every cap the single source
+      can produce, not just the one that happened to be hardcoded.
+    WHAT_IS_NOT_FIXED_AND_WHY_IT_IS_THE_NEXT_ITEM: >-
+      The reason turns die is unchanged: ~99.5% of each 31k round is unchanged prefix, and
+      prompt caching is inert everywhere (0 cached over 708M input tokens, all providers,
+      all history, source "not_reported"). Fixing the message stops the misdiagnosis; it
+      does not stop the deaths. Escalated separately because the cap VALUES are a product
+      decision.
+    EVIDENCE: >-
+      16 new/updated tests pass; tests/pipeline 1846 passed. Baselines held EXACTLY after a
+      self-inflicted ruff regression (my inserted import was unsorted: 36, then 35). Three
+      mutants caught and restored from file copies — every cap reporting "steps" again (3
+      failures), dropping the next-step offer (1), and re-hardcoding the literal in
+      execute.py (1, the tripwire).
+    NEXT: "The prefix economics: ~31k re-sent per round with zero caching. Measurements banked."
   D04_6_2026_09_05_the_ask_is_confirmed_and_declined_the_actuator_lies:
     map_check: "D04.6 — Rate limiting & circuit breaking (PARITY, track verify, wave 10, order 98, dedup X9). Stages verified not_started first."
     THE_ASK_IS_CONFIRMED_ON_ITS_FACTS: >-
@@ -10753,6 +10792,57 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_146_the_two_turn_budgets_contradict_each_other_and_only_you_own_the_numbers:
+      premise_check: |
+        uv run python -c "
+        import sqlite3, statistics
+        c = sqlite3.connect('file:/home/boss/.stackowl/workspace/stackowl.db?mode=ro', uri=True)
+        rows = [r[0] for r in c.execute(
+            'SELECT input_tokens FROM cost_records WHERE input_tokens > 10000 '
+            'ORDER BY id DESC LIMIT 400')]
+        med = statistics.median(rows) if rows else 0
+        reach = (500000 / med) if med else 999
+        # COINCIDENT, not contradictory. Measured 2026-09-05 the crossover is 20.15
+        # rounds against a 20-step cap — within 1%, so which cap fires is decided by a
+        # turn's mix of large and small calls rather than by design. HOLDS while the two
+        # remain within 25% of each other; EXPIRED once one clearly dominates, which is
+        # what any of the four options below would produce.
+        print(f'HOLDS crossover ~{reach:.1f} rounds vs a 20-step cap (median big-round '
+              f'{med:,.0f} tok) — the two caps are coincident, so which one fires is '
+              'effectively arbitrary'
+              if 15 <= reach <= 25 else
+              f'EXPIRED crossover ~{reach:.1f} rounds vs 20 steps (median {med:,.0f} tok) '
+              '— one cap now clearly binds first')
+        "
+      question: >-
+        The step cap (20) and the token cap (500,000) are COINCIDENT — they bind at
+        essentially the same moment. Measured across the last 400 substantive rounds the
+        median is 24,811 tokens, so the token meter crosses 500,000 at ~20.15 rounds
+        against a 20-step cap: a 1% margin. Which cap fires is therefore decided by a
+        turn's incidental mix of large and small calls, not by design, which is exactly why
+        the historical split is 42 steps / 27 tokens rather than one dominating. Two caps
+        that coincide give a turn no headroom on either axis and make its death
+        unpredictable. Which cap should actually bound a turn, and at what value? Options, with their consequences: (a) raise the token cap above
+        steps x per-round cost, which makes the step cap real again and lets turns cost
+        ~620k; (b) lower the step cap to ~12 so it binds first and turns die predictably
+        and cheaper; (c) drop the step cap entirely and let tokens be the only bound, which
+        is the honest meter since cost_usd is $0.00 on an unpriced model; (d) leave both and
+        accept that tokens is the real bound.
+      why_evidence_cannot_settle_it: >-
+        Every option is internally consistent. Choosing between them is an appetite for how
+        much one turn may cost and how often a long turn may die — a product decision about
+        the platform's behaviour, not a fact about it. Evidence can say the current pair is
+        contradictory, and has; it cannot say which number you want.
+      recommendation: >-
+        (c) then (a). Tokens is the meter that actually measures what a turn spends, and the
+        governor's own docstring already argues this against cost. But do NOT set the number
+        before the next item: the ~31k round is ~99.5% unchanged prefix re-sent with zero
+        caching, so the right token cap after that is fixed is a different number from the
+        right one today. Deciding now would bake in today's waste.
+      blocked_until_answered: >-
+        Nothing is blocked. The misattribution is fixed and shipped: a capped turn now names
+        the cap that actually stopped it, so whichever way this is decided, the message will
+        be true. This is the number, not the behaviour.
     ESC_145_the_checkable_condition_under_which_a_router_earns_its_place:
       premise_check: |
         uv run python -c "
@@ -13540,6 +13630,42 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-119
+    found: 2026-09-05
+    what: >-
+      TWO COINCIDENT CAPS, AND THE MESSAGE ALWAYS NAMED ONE OF THEM. CORRECTED MID-ITEM:
+      I first wrote that the step cap "can never fire", from a single trace's ~31,000-token
+      rounds. My own premise_check refuted it — across the last 400 substantive rounds the
+      median is 24,811 tokens, so the token cap crosses at ~20.15 rounds against a 20-step
+      cap. They are COINCIDENT within 1%, not contradictory, which is why the historical
+      split is 42 steps / 27 tokens rather than all tokens. Every default-backstop stop
+      nevertheless told the user "I ran out of steps", because execute.py built a fixed
+      string while the BudgetBreach in the same scope already carried cap/limit/actual.
+    evidence: >-
+      Measured 2026-09-05 from ~/.stackowl/logs and cost_records. Cap breaches split 42
+      steps / 27 tokens overall; on 2026-09-05 FOUR of five were tokens, one recovery task
+      hitting it three times in a row and GROWING each time (514,503 -> 549,238 -> 584,905).
+      Consecutive rounds inside one turn: 30,952 -> 31,086 -> 31,255, deltas +134 and +169,
+      so ~99.5% of every round is unchanged prefix re-sent. Prompt caching is inert
+      platform-wide: 0 cached tokens across 708M input tokens and ~130k calls on EVERY
+      provider, with cost_tracker recording {"source": "not_reported"}. 20 x 31k = 620,000
+      against a 500,000 cap.
+    decision: >-
+      FIXED the misattribution (the WHY: two copies of one rule — the governor decides the
+      cap, the note asserted one). The note is now DERIVED from the breach in
+      pipeline/budget/stop_note.py, one source, and a tripwire stops the literal returning.
+      NOT fixed here, and escalated because the numbers are the operator's call, not
+      evidence's: WHICH cap should bind, and at what value. Also NOT fixed: the ~31k
+      per-round prefix and the absent prompt caching, which are the reason turns die at all
+      — that is the next item, specified with its measurements banked.
+    cost_of_the_wrong_message: >-
+      Not hypothetical. The operator read his own platform's output and reported that
+      "almost every request runs out of steps", asking what was wrong with the PLANNER. The
+      planner was never the problem. A message that names the wrong cause does not merely
+      fail to help — it directs the next person's attention at the wrong subsystem, and a
+      test docstring in tests/pipeline/test_a_retry_is_told_which_ceiling_it_hit.py had
+      ALREADY recorded that "a hardcoded 'ran out of steps' would now be false". The finding
+      existed in the tree and no one acted on it.
   - id: DEBT-118
     found: 2026-09-05
     what: >-

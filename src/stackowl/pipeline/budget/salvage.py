@@ -130,7 +130,11 @@ def build_salvage_messages(
     findings_block = "\n\n".join(lines)
 
     system = (
-        "You ran out of steps before finishing. Below are the tool results you "
+        # CAP-NEUTRAL, deliberately. This said "You ran out of steps", which is
+        # false on a token breach — four of five breaches on 2026-09-05. The model
+        # does not need to know WHICH budget ended the turn to answer from
+        # evidence, so the honest sentence is the one that asserts nothing extra.
+        "You stopped before finishing. Below are the tool results you "
         "already obtained — evidence only, no reasoning. Answer the user's question "
         "directly from that evidence.\n"
         "Be concrete and brief. Do not describe your process, do not apologise, and "

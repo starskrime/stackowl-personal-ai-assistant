@@ -56,6 +56,7 @@ from stackowl.pipeline.budget import BudgetGovernor, make_budget_callback
 from stackowl.pipeline.budget.callback import resolve_clarify_wait_timeout
 from stackowl.pipeline.budget.human_wait import current_human_wait_seconds
 from stackowl.pipeline.budget.salvage import summarize_findings
+from stackowl.pipeline.budget.stop_note import stop_note_for
 from stackowl.pipeline.cache_audit import audit_tools_stability
 from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP
 from stackowl.pipeline.message_shaping import merge_consecutive_roles
@@ -3030,10 +3031,12 @@ async def _run_with_tools(
             # The original concern is preserved: no developer-facing marker
             # (`budget:stop:steps:limit=20`) in user content. Plain English is the
             # alternative to silence; silence was never the only way to avoid a leak.
-            _backstop_note = (
-                "[stopped: I ran out of steps for this turn before I could finish. "
-                "Ask me to continue and I'll pick up from here.]"
-            )
+            # ASK THE BREACH, DO NOT ASSERT A CAP. This was a fixed "ran out of
+            # steps" string while `exc` — in scope, three lines below — already
+            # carried `cap`, `limit` and `actual`. FOUR of 2026-09-05's five
+            # breaches were `tokens`, and every one of them said "steps"; the
+            # operator read that and reported a PLANNER problem. One source now.
+            _backstop_note = stop_note_for(exc)
             if exc.partial_text:
                 _breach_chunks = (ResponseChunk(
                     content=f"{exc.partial_text}\n\n{_backstop_note}",
