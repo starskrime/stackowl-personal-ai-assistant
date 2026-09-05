@@ -315,6 +315,31 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D16_5_2026_09_04_the_doctrine_was_already_adopted_the_evidence_line_was_not:
+    map_check: "D16.5 — MCP (PARITY, P3, wave 9). Stages verified not_started first. Ask: adopt the DOCTRINE."
+    ALREADY_ADOPTED: >-
+      PROCESS.md's Footprint Ladder already reads "extend existing code -> CLI command + skill
+      -> service-gated tool -> plugin -> MCP server -> new core tool (last resort)". MCP is
+      rung 5 and a core tool is the last resort — the doctrine, in the file every architect
+      stage must cite. The code is there both directions.
+    MEASURED_IT_HAS_NEVER_RUN: >-
+      Zero mcp.* messages across nine daily logs, against a control of 1,521
+      transcript.record_turn: exit lines in the same files. No server is configured.
+    AND_IF_ONE_WERE_THE_OPERATOR_COULD_NOT_SEE_IT: >-
+      117 log calls in the package, TWO at INFO and 82 at DEBUG. Both operator-facing
+      questions were DEBUG: did it connect and how many tools (discover_tools: exit), and
+      which reached the registry (register_server_tools: exit). D08.1 at package scale.
+      Both now INFO; entry lines left at DEBUG and pinned, because 117 INFO lines would be a
+      different failure rather than a fix.
+    FOUR_INSTRUMENT_CORRECTIONS_IN_ONE_ITEM: >-
+      The prefix is `mcp.client.` not `[mcp]`; my level-count regex matched ZERO of 117 real
+      calls; an earlier `ls | tail` had truncated a package listing; and a grep scoped to one
+      package understated a violation. Each caught before it reached a claim, mostly because
+      two measurements disagreed.
+    RECORDED_NOT_RETROFITTED: >-
+      24 of 47 design docs name a ladder rung though PROCESS.md requires it. Filling a rung
+      onto 23 closed documents would be completing a form, not making a decision.
+    NEXT: "Wave 9 closes. Remaining unworked: 33 items — next is D16.6 · Integrations (DIVERGENT)."
   D16_4_2026_09_04_the_design_agreed_in_june_and_the_tree_does_the_opposite:
     map_check: "D16.4 — Third-party products stay out of tree (MISSING, P2, wave 9). Stages verified not_started first."
     THE_DESIGN_ALREADY_AGREED: >-
@@ -28015,19 +28040,44 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial   # the lines fire on the first configured server — none exists
+      document:   done
+    doc: "docs/reference-mapping/designs/D16.5.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "THE DOCTRINE WAS ALREADY ADOPTED. PROCESS.md's Footprint Ladder puts MCP at rung 5 and
+         a new core tool as the last resort. Nothing to adopt; the item confirmed it."
+      - "Two lifecycle exit lines raised DEBUG -> INFO. Entry lines deliberately left at DEBUG
+         and pinned by a test — 117 lines at INFO is a different failure from 2, not a fix."
+      - "The 24-of-47 rung-declaration gap is RECORDED, not retrofitted. Filling a rung onto 23
+         closed documents would be completing a form, not making a decision."
+    changes:
+      - "src/stackowl/mcp/client.py — discover_tools: exit and register_server_tools: exit
+         raised to INFO, each with the reason inline."
+      - "tests/mcp/test_a_configured_server_is_visible_at_info.py — 4 tests: the three exit
+         lines must be INFO (asserting presence before level, so a rename fails loudly) and the
+         entry lines must stay DEBUG. Mutation-proven."
+    notes: >-
+      THE DOCTRINE WAS ALREADY IN PROCESS.md — "extend existing code -> CLI command + skill ->
+      service-gated tool -> plugin -> MCP server -> new core tool (last resort)". MCP is rung 5.
+      The code covers both directions: client.py + allowlist/probe/cache consume, server.py +
+      tool_exposure + sse_encoder expose. MEASURED: MCP HAS NEVER RUN — zero mcp.* messages
+      across nine daily logs, control 1,521 transcript.record_turn: exit lines in the same
+      files. AND IF A SERVER WERE CONFIGURED THE OPERATOR COULD NOT SEE IT: 117 log calls, TWO
+      at INFO and 82 at DEBUG, with both operator-facing questions (did it connect and how many
+      tools — discover_tools: exit; which reached the registry — register_server_tools: exit) at
+      DEBUG. That is D08.1 at package scale. FOUR INSTRUMENT CORRECTIONS in this one item, each
+      caught before it reached a claim: the prefix is `mcp.client.` not `[mcp]`; my level-count
+      regex matched zero of 117 real calls; `ls | tail` had truncated an earlier listing; and a
+      grep scoped to one package understated a violation. The two counts differing —
+      discovered vs registered — is the interesting case (allowlist rejection, name collision)
+      and neither number was readable. VALIDATE PARTIAL: the lines fire on the first configured
+      server; none exists, which is honest rather than a gap.
   - id: D16.6
     title: "Integrations"
     domain: D16

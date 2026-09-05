@@ -114,7 +114,11 @@ class McpClient:
                 log.error("mcp.client.discover_tools: discovery failed — not caching", exc_info=exc, extra={"_fields": {"server": config.name, "kind": exc.kind}})
                 return []
         self._cache.put(config.name, tools)
-        log.debug("mcp.client.discover_tools: exit", extra={"_fields": {"server": config.name, "count": len(tools)}})
+        # INFO, not DEBUG (D16.5). Production runs at INFO, and this line carries
+        # the COUNT — the answer to "did my MCP server connect, and what does it
+        # expose?". At DEBUG an operator who configures a server sees nothing, which
+        # is the D08.1 failure: evidence that no volume of traffic can surface.
+        log.info("mcp.client.discover_tools: exit", extra={"_fields": {"server": config.name, "count": len(tools)}})
         return tools
 
     async def _fetch_tools(self, config: McpServerConfig) -> list[McpToolDefinition]:
@@ -250,7 +254,10 @@ class McpClient:
                     exc_info=exc,
                     extra={"_fields": {"server": config.name, "tool": tool.name}},
                 )
-        log.debug(
+        # INFO for the same reason as discover_tools above: this is the second half
+        # of the operator's question — how many of the discovered tools actually
+        # reached the registry. The two counts differing is the interesting case.
+        log.info(
             "mcp.client.register_server_tools: exit",
             extra={"_fields": {"server": config.name, "registered": count}},
         )

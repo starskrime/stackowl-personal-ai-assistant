@@ -1291,6 +1291,20 @@ operator's call. See `designs/D16.4.md`.
 plus `mcp_serve.py` exposing Hermes as an MCP server. MCP is **rung 5** — preferred over a new core tool.
 **StackOwl.** `mcp/` covers both directions with allowlist, probe, cache, tool exposure.
 **Ask.** Adopt the *doctrine* (MCP before core tool), not the code.
+**ALREADY ADOPTED, confirmed 2026-09-04 — and the evidence line was the thing missing.**
+PROCESS.md's Footprint Ladder already reads "extend existing code -> CLI command + skill ->
+service-gated tool -> plugin -> **MCP server** -> new core tool (last resort)", so MCP is rung 5
+and a core tool is the last resort — the doctrine, in the file every architect stage must cite.
+The code is there both directions (client + allowlist/probe/cache; server + tool_exposure +
+sse_encoder). MEASURED: MCP has NEVER run — zero `mcp.*` messages across nine daily logs against
+a control of 1,521 `transcript.record_turn: exit` lines in the same files. AND IF A SERVER WERE
+CONFIGURED THE OPERATOR COULD NOT SEE IT: of 117 log calls, TWO were INFO and 82 DEBUG, and the
+two questions that matter — did it connect and how many tools did it expose
+(`discover_tools: exit`), which of them reached the registry (`register_server_tools: exit`) —
+were both DEBUG, invisible at production level. Both now INFO, entry lines deliberately left at
+DEBUG and pinned by a test. Separately measured: 24 of 47 design docs name a ladder rung, though
+PROCESS.md requires it — a process-compliance gap recorded, not retrofitted. See
+`designs/D16.5.md`.
 
 ### D16.6 · Integrations — `DIVERGENT`
 **Hermes.** Integrations arrive as **skills + CLI** (Google Workspace, Notion, Airtable, Apple apps,
