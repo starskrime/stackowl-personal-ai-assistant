@@ -20,6 +20,7 @@ from stackowl.authz.bounds import BoundsSpec
 from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
+from stackowl.infra.resilience import jittered
 from stackowl.pipeline.durable.failure_class import (
     _RESHAPING_CLASSES,
     SMALL_CEILING_CLASSES,
@@ -83,9 +84,16 @@ _permanent_classes = permanent_classes
 _UNACHIEVED_EFFECT_MAX_ATTEMPTS = 3
 
 
-def _backoff_for(attempt: int) -> int:
+def _backoff_for(attempt: int) -> float:
+    """The ladder rung for ``attempt``, decorrelated (D04.6).
+
+    JITTERED because this is the site that produced the observed lockstep: seven
+    rollover tasks created within 23ms of each other all took rung 0 and became
+    due in the same second. Additive-only, so a rung is a FLOOR — the wait is
+    never shorter than the table says.
+    """
     idx = min(max(attempt - 1, 0), len(_BACKOFF_SECONDS) - 1)
-    return _BACKOFF_SECONDS[idx]
+    return jittered(float(_BACKOFF_SECONDS[idx]))
 
 
 def _channel_of(destination: str | None) -> str | None:

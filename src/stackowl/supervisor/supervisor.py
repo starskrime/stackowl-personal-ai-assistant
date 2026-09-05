@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
+from stackowl.infra.resilience import jittered
 
 _BACKOFF_INITIAL = 1.0
 _BACKOFF_MAX = 60.0
@@ -186,7 +187,11 @@ class Supervisor:
                     return
                 backoff = _BACKOFF_INITIAL
 
-            await self._clock.async_sleep(backoff)
+            # JITTERED (D04.6): N supervised tasks killed by one shared cause
+            # (a dropped DB handle, a provider outage) otherwise restart in
+            # lockstep forever, re-applying the same load that felled them.
+            # Additive-only — never restarts EARLIER than the backoff says.
+            await self._clock.async_sleep(jittered(backoff))
             backoff = min(backoff * 2, _BACKOFF_MAX)
 
     async def _invoke(self, state: _TaskState) -> None:

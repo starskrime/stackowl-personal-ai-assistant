@@ -106,7 +106,7 @@ class RateLimiter:
 
     def penalize(
         self, *, factor: float = _DEFAULT_PENALTY_FACTOR, duration_seconds: float = _DEFAULT_PENALTY_SECONDS,
-    ) -> None:
+    ) -> bool:
         """Shrink the effective refill rate for ``duration_seconds`` (FX-01).
 
         Called on a classified RATE_LIMIT (429) failure: the server just told us
@@ -114,9 +114,21 @@ class RateLimiter:
         without touching the circuit breaker's outage-detection threshold. A
         no-op on a no-op (uncapped) limiter. Sync and cheap; safe to call from
         an exception handler.
+
+        RETURNS whether a penalty was actually APPLIED. An uncapped limiter has no
+        refill rate to shrink, so it can only decline — and the caller records a
+        retry-ledger event from this call, so a silent decline made that record
+        claim a back-pressure response that never happened (D04.6). The decline is
+        logged at INFO, not DEBUG: production runs at INFO, and "we were told to
+        slow down and have no way to" is precisely the fact an operator needs.
         """
         if self._capacity is None:
-            return
+            log.engine.info(
+                "[rate_limiter] penalize: cannot pace — no rate_limit_rpm configured "
+                "for this provider, so a rate-limit response changes nothing",
+                extra={"_fields": {"provider": self._provider_name, "is_noop": True}},
+            )
+            return False
         # Floor the factor so a penalty can never zero out the effective rate
         # (that's the fail-closed job of the base refill_rate check in acquire(),
         # not a temporary pacing penalty) and cause a division by zero there.
@@ -132,6 +144,7 @@ class RateLimiter:
                 }
             },
         )
+        return True
 
     def _effective_refill_rate(self) -> float:
         if self._clock.monotonic() < self._penalty_until:

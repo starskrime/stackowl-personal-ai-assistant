@@ -468,7 +468,7 @@ async def resilient_round[T](
             )
         elif cause is FailureCause.RATE_LIMIT and limiter is not None:
             try:
-                limiter.penalize()
+                paced = limiter.penalize()
             except Exception as pen_exc:  # B5 — must never mask the real error.
                 log.engine.error(
                     "[resilient_round] limiter.penalize raised — continuing to re-raise",
@@ -476,7 +476,17 @@ async def resilient_round[T](
                     extra={"_fields": {"provider": provider}},
                 )
             else:
-                retry_ledger.record_retry(kind="rate_limit_penalty", provider=provider)
+                # RECORD THE EFFECT, NOT THE CALL (D04.6). `penalize()` declines on
+                # an uncapped limiter, which is the live configuration for 100% of
+                # traffic — no `rate_limit_rpm` is set for any provider. Recording
+                # "rate_limit_penalty" regardless made the ledger assert a
+                # back-pressure response that never happened, and made the zero
+                # events in nine days of logs unreadable: inert path, or no 429s?
+                # The two now record differently, so the next zero means something.
+                retry_ledger.record_retry(
+                    kind="rate_limit_penalty" if paced else "rate_limit_unpaced",
+                    provider=provider,
+                )
             if breaker is not None:
                 reset_seconds = _parse_retry_after_seconds(exc)
                 cooldown_seconds = (

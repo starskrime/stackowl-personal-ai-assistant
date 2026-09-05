@@ -6,17 +6,65 @@ ModelProviders, LanceDB/Kuzu adapters, channel adapters, MCP server) implements
 and the in-flight operation retried exactly once at the call site via
 :func:`retry_once_on_dead_handle`.
 
-This module is intentionally minimal: a protocol + one helper. Each subsystem
+This module is intentionally minimal: a protocol + two helpers. Each subsystem
 provides its own ``ensure_available()`` body that knows how to reconnect or
 restart itself.
+
+The second helper is :func:`jittered` (D04.6) — the one place that decorrelates a
+self-computed retry delay. It lives HERE rather than in a new module because
+``infra/`` is the base layer every other layer may depend on (the same argument
+``retry_ledger.py`` makes, citing ``infra/trace.py`` and ``infra/recovery_context``
+as the two prior proofs), and because a delay is retry POLICY, which is what this
+module already owns. It is a function returning a float: it owns no timer, no
+queue and no ``next_attempt_at``, so it collapses six copies of one rule rather
+than adding the second engine the standing rule forbids.
 """
 
 from __future__ import annotations
 
+import math
+import random
 from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 
 from stackowl.infra.observability import log
+
+#: Jitter as a fraction of the computed delay: the wait lands in
+#: ``[d, d * 1.25]``. Deliberately NOT a config field — a jitter fraction is a
+#: correctness property of a distributed retry, not a preference, and an operator
+#: who can set it to 0 re-creates the lockstep it exists to prevent. The
+#: ``fraction=`` parameter is for TESTS (and for proving the change is reversible
+#: byte-for-byte), not for a knob.
+JITTER_FRACTION = 0.25
+
+#: One process-wide source, seeded by the OS. NOT seeded per call from a counter:
+#: this platform runs one loop in one process, so per-call reseeding would buy
+#: nothing and would make the sequence reproducible in a way that defeats the
+#: decorrelation.
+_JITTER_RNG = random.Random()
+
+
+def jittered(
+    delay: float, *, fraction: float = JITTER_FRACTION, rng: random.Random | None = None,
+) -> float:
+    """``delay`` plus a random share of itself — ADDITIVE ONLY, never shorter.
+
+    ``jittered(d) >= d`` is the invariant, and it is the reason this is safe to
+    place near retry code at all. Several delays in this platform are durations a
+    SERVER chose (``retry_actuator``'s ``retry_after + buffer``, the Telegram
+    flood deadline, the breaker's ``open_for`` cooldown); a jitter that could
+    subtract would re-earn the ~10-hour flood ban of 2026-07-19. Those sites are
+    additionally guarded by
+    ``tests/infra/test_jitter_can_only_ever_add.py`` — the invariant makes it
+    safe, the guard keeps it deliberate.
+
+    Fails closed to ``0.0`` on a delay that is negative, NaN or infinite: a bad
+    delay upstream must not become an unbounded random wait here.
+    """
+    if not math.isfinite(delay) or delay <= 0.0:
+        return 0.0
+    source = rng if rng is not None else _JITTER_RNG
+    return delay + source.uniform(0.0, fraction * delay)
 
 DEFAULT_DEAD_HANDLE_MARKERS: tuple[str, ...] = (
     # Playwright / browser

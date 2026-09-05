@@ -385,6 +385,14 @@ open-codes the decision again. See `designs/D04.5.md`.
 (`retry_utils.py`) to avoid thundering herds.
 **StackOwl.** `rate_limiter.py`, `circuit_breaker.py`, plus a shared Telegram flood guard.
 **Ask.** Adopt jittered backoff specifically? Ours may be fixed exponential.
+**Answered 2026-09-05 — `docs/reference-mapping/designs/D04.6.md`.** Confirmed: exactly ONE
+file in `src/` imports `random` (`owls/dna_attribution.py`), so nothing jitters — and the
+shapes are not uniformly exponential either (`startup/provider_probe.py` is LINEAR). Jitter
+ADOPTED on the operator's call, additive-only, on self-computed delays only; never on the
+breaker's half-open field, which `open_for()` overwrites with the server's `Retry-After`.
+The larger finding was elsewhere: `penalize()` returned silently on an uncapped bucket — the
+live configuration for 100% of traffic — while the caller recorded a `rate_limit_penalty`
+ledger event claiming the platform had slowed down. It now records the EFFECT.
 
 ---
 

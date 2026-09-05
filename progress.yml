@@ -315,6 +315,86 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D04_6_2026_09_05_the_ask_is_confirmed_and_declined_the_actuator_lies:
+    map_check: "D04.6 — Rate limiting & circuit breaking (PARITY, track verify, wave 10, order 98, dedup X9). Stages verified not_started first."
+    THE_ASK_IS_CONFIRMED_ON_ITS_FACTS: >-
+      "Adopt jittered backoff? Ours may be fixed exponential." Measured: EXACTLY ONE file in
+      all of src/ imports `random` — owls/dna_attribution.py — so there is zero jitter in
+      every retry path. Confirmed, and more completely than the Ask put it: the shapes are not
+      even uniformly exponential. startup/provider_probe.py:184 is LINEAR (base * attempt),
+      pipeline/durable/store.py:71 is a fixed TABLE (5,15,60,300,900), supervisor/supervisor.py
+      doubles to a 60s cap, circuit_breaker doubles a half-open window to 900s.
+    AND DECLINED ON ITS EVIDENCE: >-
+      Jitter is 0-OVER-0 here, and I nearly shipped it before measuring the denominator. In the
+      platform's ENTIRE history exactly FOUR task rows ever reached attempt 2 (attempt_count
+      22, 23, 30, 72); 1,081 of 1,157 sit at zero. The herd that justified it is a FOSSIL of a
+      different, already-fixed defect: the 7-wide cohorts sharing 2026-08-20T09:15:52 are
+      unreachable-owner rows filed under a non-principal owner, and `claimable()` is
+      owner-scoped — NO LOOP COULD EVER CLAIM THEM. They contended for nothing and were
+      dead-lettered 18h later still at attempt 1. The `jobs` 17-wide cohorts were a
+      MINUTE-BINNING ARTEFACT of my own query: at second granularity the max cohort is 6, and
+      their last_run_at spreads over ~90s — the dispatcher had already serialised them.
+      Jitter would also be ACTIVELY WRONG where it looks most natural:
+      circuit_breaker._current_half_open_seconds carries BOTH the self-computed doubling AND
+      the server-mandated cooldown written by open_for(), so jittering it shortens a provider's
+      own Retry-After — the same class as the ~10h Telegram flood ban this programme already
+      paid for — and would break 7 assertions that pin exactly that.
+    THE ROOT CAUSE IS NOT THE DELAY, IT IS THAT THE ACTUATOR LIES: >-
+      On a classified RATE_LIMIT the provider path calls limiter.penalize() and, in the `else`
+      of that try, records retry_ledger kind="rate_limit_penalty" — a claim that the platform
+      paced itself down. penalize() returns SILENTLY when the bucket is uncapped
+      (rate_limiter.py: `if self._capacity is None: return`, BEFORE its own WARNING). And the
+      bucket IS uncapped for 100% of traffic: rate_limit_rpm is absent from the live
+      stackowl.yaml and from_rpm(None) returns a pass-through. So the ledger would record a
+      back-pressure response that DID NOT HAPPEN, and nothing distinguishes it from one that
+      did. `is_noop` — the exact property that would let the caller tell — EXISTS at
+      rate_limiter.py:104 with ZERO consumers. Built, correct, never asked.
+    WHAT ELSE THAT CAUSE REACHES: >-
+      Measured, so the answer is not a restatement. 0 penalize events and 0 open_for events in
+      nine days of logs cannot today be read as "no 429 ever arrived" rather than "the path is
+      inert" — a zero over a zero, which CLAUDE.md says is not a pass either. The breaker's 26
+      threshold-opens all record `failures_in_window: 3, threshold: 3` and NOT ONE records
+      which cause opened it, while task_outcomes.failure_class stores our own control-flow
+      class names — AllProvidersUnavailableError 6586, OwlTimeoutError 1800, CircuitOpenError
+      1321, of 10,734 non-empty — never an upstream cause. The platform computes a precise
+      FailureCause and discards it at every boundary.
+    PANEL_CONTRADICTION_IS_THE_FINDING: >-
+      Killer-functionality reported "tasks.next_attempt_at: every value unique, max cohort 1";
+      I had measured cohorts of 7. BOTH ARE RIGHT and the difference is the point: the values
+      differ in MICROSECONDS (…52.550930, .562888, .573996). Uniqueness at microsecond
+      precision is not decorrelation when the consumer polls at second-or-worse granularity —
+      a distinction that would have silently justified either verdict.
+    SHIPPED: >-
+      Three changes, one principle — RECORD THE EFFECT, NEVER THE CALL. (1) penalize() now
+      returns whether it applied and logs its refusal at INFO; the caller records
+      rate_limit_penalty or rate_limit_unpaced accordingly, so the next zero is readable.
+      (2) jittered() in infra/resilience.py — additive-only, fail-closed on NaN/inf/negative,
+      exact at fraction=0 so the change is reversible by configuration — applied to the three
+      SELF-COMPUTED delays and guarded by a tripwire from ever reaching the three
+      SERVER-MANDATED ones. (3) ResilienceContributor, written and tested and never once
+      constructed, is now registered in the in-process assembly and degrades on the recycle
+      DELTA between sweeps rather than a cumulative count that would latch forever.
+    OPERATOR_DECISIONS_THIS_ITEM: >-
+      Four questions put, four answered. Jitter: he OVERRULED my decline and it ships.
+      Rate limiting: make it say it cannot pace rather than invent an rpm. Dead detector:
+      wire it, not delete it. Scope: keep D04.6 tight and take X9's classification work next.
+    EVIDENCE: >-
+      21 new tests pass; tests/providers 743, tests/pipeline/durable 409, tests/infra+
+      supervisor+startup 362. Baselines held EXACTLY: ruff 35, mypy 65. Three mutants caught
+      and each restored from a file copy — penalize claiming success when uncapped (2
+      failures), jitter SUBTRACTING (5), the contributor thresholding a cumulative count (2).
+    INSTRUMENT_FAILURES_THIS_ITEM: >-
+      Four, every one caught by a control, and they are the reason the numbers above can be
+      trusted. (a) I queried ~/.stackowl/stackowl.db — 0 bytes, a stray from 2026-07-25; the
+      live DB is workspace/stackowl.db at 343MB, and the empty one answers "no such table" in
+      a way that reads as "the retry path was never exercised". (b) I picked a time column by
+      substring "at" and matched **lat**ency_ms. (c) I treated captured_at as ISO and substr'd
+      it; it is an epoch FLOAT, exposed only because a control asked "do outcomes cluster AT
+      ALL?" and returned NONE across 20,293 rows, which is impossible. (d) I ran ruff over
+      src+tests+scripts and read 290 against a baseline of 35 — the gate measures src/ ONLY.
+      A fifth was a false alarm in the other direction: my ast.parse gate reported SyntaxError
+      on two files because the SYSTEM python3.11 cannot parse PEP 695 generics, which uv can.
+    NEXT: "D04.7 — and X9's classification work is now specified with its measurements banked."
   D04_5_2026_09_05_it_survives_the_explanation_did_not:
     map_check: "D04.5 — Tier escalation (AHEAD, track keep, wave 10, order 97). Stages verified not_started first, and a current record checked for — the previous item was found at 6/7."
     CONFIRMED_THREE_WAYS_NOT_ASSUMED: >-
@@ -22657,18 +22737,51 @@ items:
     blocks: []
     dedup_target: X9
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D04.6.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "The Ask is CONFIRMED on its facts: exactly one file in src/ imports random
+         (owls/dna_attribution.py), so no retry path jitters. The shapes are not even
+         uniformly exponential — provider_probe is LINEAR (base*attempt)."
+      - "Jitter ADOPTED on the operator's explicit call, over the evidence, and the record
+         says so: only FOUR task rows in the platform's history ever reached attempt 2, and
+         the 7-wide herd was unclaimable unreachable-owner rows that contended for nothing.
+         Preventive, not corrective."
+      - "Jitter is ADDITIVE-ONLY and applies to self-computed delays ONLY. Never to
+         circuit_breaker._current_half_open_seconds (which open_for() overwrites with the
+         server's Retry-After), retry_actuator, or the Telegram flood deadline — the class of
+         bug that earned a ~10h flood ban on 2026-07-19. A tripwire enforces it."
+      - "Rate limiting is NOT enabled by inventing an rpm — the right value is the provider's
+         contract. Operator chose: make the platform SAY it cannot pace."
+      - "ResilienceContributor WIRED (operator's call) rather than deleted, and it degrades on
+         the recycle RATE between sweeps, never the cumulative count."
+      - "X9's real content deferred to keep this item tight (operator's call): the classifier
+         computes a precise FailureCause and every boundary discards it."
+    changes:
+      - "providers/rate_limiter.py — penalize() returns whether it APPLIED; declining logs at INFO."
+      - "providers/_resilient_round.py — records rate_limit_penalty vs rate_limit_unpaced by EFFECT."
+      - "infra/resilience.py — jittered(), additive-only, fail-closed on NaN/inf/negative."
+      - "pipeline/durable/store.py, supervisor/supervisor.py, startup/provider_probe.py — jittered."
+      - "health/contributors.py — ResilienceContributor degrades on the recycle DELTA."
+      - "scheduler/assembly.py — ResilienceContributor CONSTRUCTED for the first time."
+      - "tests/providers/test_a_pacing_claim_means_pacing_happened.py (5)"
+      - "tests/infra/test_jitter_can_only_ever_add.py (10, one tripwire)"
+      - "tests/health/test_a_recycled_pool_has_a_voice.py (6, one tripwire)"
+    notes: >-
+      ROOT CAUSE: the back-pressure actuator recorded an action it did not perform.
+      penalize() returned silently on an uncapped bucket — the live configuration for 100%
+      of traffic, since rate_limit_rpm is set for no provider — while the caller wrote a
+      retry-ledger event claiming the platform had paced itself down. is_noop, the exact
+      property that distinguishes the two, existed on the class with ZERO consumers. That is
+      why 0 penalize events in nine days was unreadable: inert path, or no 429s? The two now
+      record differently, so the NEXT zero means something.
 
   - id: D05.1
     title: "Registry & auto-discovery"

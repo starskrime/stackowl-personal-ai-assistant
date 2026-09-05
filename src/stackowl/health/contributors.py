@@ -689,9 +689,22 @@ class ResilienceContributor:
     can spot flapping subsystems in one place.
     """
 
+    #: Recycles within ONE sweep interval that mean "flapping" rather than "healed".
+    #: One recycle is the self-heal working as designed. Measured baseline: recycle
+    #: incidents run ~9.5/day — about 0.03 per 5-minute sweep — so two in a single
+    #: interval is genuinely abnormal.
+    FLAP_THRESHOLD = 2
+
     def __init__(self, resources: dict[str, object]) -> None:
         """``resources`` maps a short label ('browser', 'db_pool') to the resource instance."""
         self._resources = resources
+        #: Last observed cumulative recycle count per label. The status is driven by
+        #: the DELTA between sweeps, never the total: a monotonic counter on a
+        #: long-lived process crosses any fixed threshold eventually and then latches
+        #: degraded forever, which is CLAUDE.md defect shape #4 (no decay) and an
+        #: alarm the operator learns to ignore. `None` until the first observation,
+        #: so a process that has been up for a week does not alarm about history.
+        self._seen: dict[str, int] = {}
 
     @property
     def contributor_name(self) -> str:
@@ -702,22 +715,43 @@ class ResilienceContributor:
         log.debug("[health] resilience_contributor: entry")
         parts: list[str] = []
         any_unavailable = False
+        flapping: list[str] = []
         for label, res in self._resources.items():
             available = bool(getattr(res, "available", True))
             recycle_count = int(getattr(res, "recycle_count", 0))
             reason = getattr(res, "unavailable_reason", None)
+
+            # DELTA, not total — see `_seen`. A first sighting establishes the
+            # baseline and cannot alarm.
+            previous = self._seen.get(label)
+            self._seen[label] = recycle_count
+            recent = 0 if previous is None else max(recycle_count - previous, 0)
+            if recent >= self.FLAP_THRESHOLD:
+                flapping.append(f"{label}+{recent}")
+
             if not available:
                 any_unavailable = True
                 parts.append(f"{label}:DOWN({reason or 'unknown'})")
+            elif recent:
+                parts.append(f"{label}:ok(recycles={recycle_count},+{recent} since last sweep)")
+            elif recycle_count > 0:
+                parts.append(f"{label}:ok(recycles={recycle_count})")
             else:
-                if recycle_count > 0:
-                    parts.append(f"{label}:ok(recycles={recycle_count})")
-                else:
-                    parts.append(f"{label}:ok")
+                parts.append(f"{label}:ok")
+
+        if flapping:
+            # INFO, not DEBUG: production runs at INFO, and this line is the
+            # evidence for the degraded verdict above it.
+            log.info(
+                "[health] resilience_contributor: a resource is flapping — "
+                "recycled repeatedly between sweeps",
+                extra={"_fields": {"flapping": flapping, "threshold": self.FLAP_THRESHOLD}},
+            )
+
         latency_ms = (time.monotonic() - t0) * 1000
         return HealthStatus(
             name="resilience",
-            status="degraded" if any_unavailable else "ok",
+            status="degraded" if (any_unavailable or flapping) else "ok",
             message=" ".join(parts) if parts else "no healable resources registered",
             latency_ms=latency_ms,
         )

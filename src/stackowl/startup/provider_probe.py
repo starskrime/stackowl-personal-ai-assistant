@@ -12,6 +12,7 @@ import httpx
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.secret_resolver import SecretResolver
 from stackowl.exceptions import ConfigurationError, StartupError
+from stackowl.infra.resilience import jittered
 
 log = logging.getLogger("stackowl.startup")
 
@@ -180,7 +181,10 @@ class ProviderProbe:
 
             # All degraded on this attempt — retry unless this was the last.
             if attempt < self._max_retries:
-                delay = self._backoff_base_s * attempt
+                # JITTERED (D04.6). Note this ladder is LINEAR, not exponential —
+                # the item's premise that everything here is fixed-exponential was
+                # not uniformly true.
+                delay = jittered(self._backoff_base_s * attempt)
                 log.warning(
                     "[startup] provider_probe.check: all %d providers down on attempt %d/%d — "
                     "retrying after %.1fs",

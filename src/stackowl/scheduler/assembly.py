@@ -1110,11 +1110,22 @@ def _build_health_aggregator(
         # `retry_queue` quiet for 5.9 is a stopped engine, and only PURPOSE tells
         # them apart. Rides the 5-minute sweep that already exists.
         from stackowl.health.contributors import (
+            ResilienceContributor,
             StoreCadenceContributor,
             UnattributedSpendContributor,
         )
 
         agg.register(StoreCadenceContributor(db))
+        # NOTHING NOTICED CONTENTION. `ResilienceContributor` was written, tested
+        # and constructed NOWHERE in src/ — the one component that can see a
+        # subsystem flapping was never asked, while `DbContributor` computes a
+        # latency it never thresholds, so a pool sitting on a 15s busy_timeout
+        # reports ok. `cli/app.py` correctly declines to wire it (an
+        # out-of-process CLI holds no live handles); THIS is the in-process
+        # assembly where the pool actually exists, so this is its home. It
+        # degrades on the recycle RATE between sweeps, never the cumulative
+        # count, which would latch forever after one bad afternoon.
+        agg.register(ResilienceContributor({"db_pool": db}))
         # SPEND THAT BELONGS TO NO TRACE. `_bind_job_trace` fixed a real defect —
         # 54.5% of recorded LLM calls carried a blank trace_id on 2026-08-29 — and
         # three tests pin that fix. They pin the CODE, that a scheduled job binds a
