@@ -875,6 +875,21 @@ across compression-split sessions is NOT adopted and stays unbuilt. See `designs
 `session_listing.py`, `/sessions`, `/resume`.
 **StackOwl.** `export/` covers full-archive backup, not per-session export/recap.
 **Ask.** Product feature or nice-to-have?
+**VERIFIED 2026-09-04 — the gap is real and BIGGER than this row says; nothing built (ESC-130).**
+No session-export surface exists, and two names that look like hits are not: `/sessions` is
+BROWSER sessions and `/resume` resumes an OWL's cadence. But "full-archive backup" is generous:
+`export/` is a curated FIVE-table export — committed_facts (0 rows), staged_facts (230),
+owl_dna (11), parliament_sessions (0), audit_log (11,257) — and `conversations` (1,107),
+`messages` (3,841) and `sessions` (123) are in NONE of it. **The conversation history is in no
+export at any granularity**, so the gap is prior to formatting and recap. `committed_facts` is
+NOT removed here: it is the unwired target of a promotion step that never runs (staged_facts
+holds the live rows), which is different from a retired table, and a sanitization merge-gate
+depends on it. DEMAND, measured across nine daily logs: `session_search` 18, `transcripts` tool
+**0**, operator-run exports **0** (all 8 export lines are the migration runner's automatic
+backup). The transcripts zero is about demand, not reach — live discovery finds it among 79
+tool classes, while a static grep says it is unreferenced, and a raw grep for "transcript"
+returns 3,353 that are the WRITER plus 168 lines about voice transcription. See
+`designs/D11.4.md`.
 
 ### D11.5 · Trajectory capture for training — `MISSING`
 **Hermes.** `agent/trajectory.py` + `batch_runner.py` + `trajectory_compressor.py` (70KB) —

@@ -315,6 +315,27 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D11_4_2026_09_04_the_conversation_history_is_in_no_export_at_all:
+    map_check: "D11.4 — Session export & recap (MISSING, P2, wave 8). The Ask is product intent."
+    NOTHING_BUILT: "The Ask is the operator's. What this item did was make it answerable."
+    THE_GAP_IS_BIGGER_THAN_THE_ROW_SAYS: >-
+      "full-archive backup" is generous: export/ covers FIVE tables (committed_facts 0,
+      staged_facts 230, owl_dna 11, parliament_sessions 0, audit_log 11,257) and
+      conversations 1,107 / messages 3,841 / sessions 123 are in NONE of it. The
+      conversation history is in no export at any granularity — the gap is prior to
+      markdown, HTML and recap.
+    TWO_NAMES_THAT_LOOK_LIKE_HITS_AND_ARE_NOT: "/sessions is BROWSER sessions; /resume resumes an OWL's cadence."
+    THE_INSTRUMENT_WAS_WRONG_TWICE_BEFORE_IT_WAS_RIGHT: >-
+      A static grep says TranscriptsTool is unreferenced outside its own file — but live
+      discovery finds it among 79 tool classes, because this codebase wires tools
+      dynamically. And a raw grep for "transcript" returns 3,353, of which 1,515 are the
+      WRITER firing every turn and 168 are VOICE transcription. The tool's real count is 0.
+    WHAT_I_DID_NOT_DELETE: >-
+      committed_facts, despite 0 rows and being in the export. It is the unwired TARGET of a
+      promotion step that never runs — staged_facts holds the live 230 — which is different
+      from a retired table, and a sanitization merge-gate depends on it.
+    ESCALATED: "ESC-130 — should transcripts be in the archive, and is export/recap wanted?"
+    NEXT: "D11.5 · Trajectory capture for training (MISSING, P2, wave 8, order 71)."
   D11_3_2026_09_04_bookends_are_the_frame_for_a_hit_not_a_session_picker:
     map_check: "D11.3 — Session-search shapes (PARITY, P3, wave 8). The Ask is a build instruction."
     MEASURED_FIRST: >-
@@ -9704,6 +9725,39 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_130_your_conversation_history_is_in_no_export_and_is_the_feature_wanted:
+      premise_check: |
+        uv run python -c "
+        import pathlib,re
+        src=pathlib.Path('src/stackowl/export/exporter.py').read_text()
+        block=re.search(r'_EXPORTED_TABLES.*?\)\n\n', src, re.S).group(0)
+        print('HOLDS transcript still unexported' if 'messages' not in block
+              else 'EXPIRED messages now exported')
+        "
+      question: >-
+        TWO questions, the second prior to the first. (1) The archive export covers five
+        tables and `conversations` (1,107 rows), `messages` (3,841) and `sessions` (123)
+        are in none of them — your conversation history is in NO export at any
+        granularity. Should the transcript be in the archive? (2) D11.4's own Ask:
+        session export & recap as a FEATURE — markdown/HTML export, recap, a session
+        listing — product feature or nice-to-have?
+      why_evidence_cannot_settle_it: >-
+        (1) is a privacy scope decision, not a defect I can call: putting 3,841 user
+        messages into a portable archive changes what a backup discloses, and no
+        recorded decision says it was ever intended — test_c7_f131_export_scope governs
+        SANITIZATION scope, not table selection, so it does not settle it either.
+        (2) is product intent. The demand evidence points one way and cannot see what
+        you intend the platform to be for.
+      panel_recommendation: >-
+        Answer (1) yes and (2) not yet. The measured demand for reading sessions back is
+        low — session_search 18 uses in nine days, the transcripts tool 0, operator-run
+        exports 0 — which argues against building export/recap surfaces now. But that
+        same evidence makes (1) worse, not better: nobody is reading the transcript back,
+        and it is also in no backup, so the least-effort failure is losing it silently.
+        Adding conversations/messages to _EXPORTED_TABLES is a few lines and the
+        sanitizer already covers free-text strategies.
+      blocked_until_answered: >-
+        All of D11.4. Nothing else — this item built nothing.
     ESC_129_may_an_installed_skill_ever_ship_executable_tools:
       premise_check: |
         uv run python -c "
@@ -26036,19 +26090,40 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
+      brainstorm: done
+      architect:  no_change_needed   # nothing built — the Ask is product intent (ESC-130)
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D11.4.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "NOTHING BUILT. The Ask is product intent and the panel may not answer it. What this
+         item did was make it answerable — and it is now TWO questions: the feature, and the
+         prior one of whether transcripts belong in the archive at all."
+      - "committed_facts is NOT removed from the export despite 0 rows. It is the unwired
+         TARGET of a promotion step that never runs (staged_facts holds the live 230), which
+         is different from a retired table, and test_c7_f131_export_scope depends on it."
     changes: []
-    notes: null
-
+    notes: >-
+      THE GAP IS REAL AND BIGGER THAN THE ROW SAYS. No session-export surface exists; two
+      names that look like hits are not — `/sessions` is BROWSER sessions, `/resume` resumes
+      an OWL's cadence. And "full-archive backup" is generous: export/ covers FIVE tables —
+      committed_facts (0), staged_facts (230), owl_dna (11), parliament_sessions (0),
+      audit_log (11,257) — while conversations (1,107), messages (3,841) and sessions (123)
+      are in NONE of it. The conversation history is in no export at any granularity, so the
+      gap is prior to markdown/HTML/recap. DEMAND across nine daily logs: session_search 18
+      (discover 16, browse 2, scroll 0), transcripts tool 0, operator-run exports 0 — all 8
+      `[export] backup.backup: exit` lines are the migration runner's automatic pre-migration
+      backup. THE TRANSCRIPTS ZERO IS ABOUT DEMAND, NOT REACH, and proving that took the
+      right instrument twice: a static grep says TranscriptsTool is unreferenced outside its
+      own file, but live discovery over stackowl.tools finds 79 tool classes with
+      `transcripts` among them (this codebase wires tools dynamically, so static reads are
+      wrong by construction); and a raw grep for "transcript" returns 3,353, of which 1,515
+      are the WRITER firing every turn and 168 are VOICE transcription — a different sense of
+      the word. Not one is the tool.
   - id: D11.5
     title: "Trajectory capture for training"
     domain: D11
