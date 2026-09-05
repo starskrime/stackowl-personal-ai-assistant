@@ -315,6 +315,31 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D12_3_2026_09_04_three_of_the_four_channels_have_never_carried_a_message:
+    map_check: "D12.3 — Generic relay adapter (MISSING, P1, wave 6). DEBT-114 required this re-measurement first."
+    NOTHING_REFACTORED_NOTHING_DELETED: >-
+      The collapse remains a wave, as DEBT-114 concluded. Three registered user-facing
+      channels are the operator's to keep or retire.
+    THE_LAYER_RE_MEASURED: >-
+      The whole channels/ tree is 12,985 lines; the four channel dirs are 10,596 — slack
+      2,208, whatsapp 1,525, TELEGRAM 5,421, discord 1,442 — and the six same-named modules
+      account for 7,244. NOT four copies: whatsapp has no callbacks.py or clarify.py, telegram
+      is over half the total, and a SHARED layer already exists (2,389 lines, 12 modules).
+    THE_FACT_THAT_CHANGES_THE_QUESTION: >-
+      Three of the four have NEVER carried a message — zero sessions, zero task_outcomes and
+      ZERO log lines across nine daily logs — 5,175 of the 10,596 channel-dir lines never ran.
+      It cuts both ways, which is why it is a decision.
+    TWO_SUB_FINDINGS: >-
+      Only telegram has a notifications.py — a channel-specific proactive dispatcher beside
+      the channel-agnostic NotificationRouter/ProactiveDeliverer, two paths to one job. And
+      the brief/synthesis formatters in the other three are reached by nothing but tests.
+    A_DETECTOR_THAT_DID_NOT_WORK_TWICE: >-
+      `grep -rl name src/` counts another channel's definition of the same name as a
+      reference, so all four reported zero dead functions — contradicting a hand measurement.
+      An AST call-site scan has the same flaw by name and cannot see properties or framework
+      callbacks. Recorded in the doc so a FIFTH static screen is not built here.
+    ESCALATED: "ESC-132 — are slack, discord and whatsapp wanted? Everything in D12.3 follows."
+    NEXT: "Wave 9 — D16.1 Plugin surface (PARTIAL, P0, order 72)."
   D11_5_2026_09_04_the_corpus_already_exists_and_the_11_percent_was_not_a_defect:
     map_check: "D11.5 — Trajectory capture for training (MISSING, P2, wave 8). The Ask is strategy."
     NOTHING_BUILT: "Whether the platform wants its own training data is strategy — ESC-131."
@@ -9746,6 +9771,36 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_132_three_of_four_channels_have_never_carried_a_message_keep_or_retire:
+      premise_check: |
+        uv run python -c "
+        import sqlite3, os
+        con = sqlite3.connect('file:' + os.path.expanduser('~/.stackowl/workspace/stackowl.db') + '?mode=ro', uri=True)
+        seen = {r[0] for r in con.execute('select distinct channel from task_outcomes')}
+        idle = {'slack', 'discord', 'whatsapp'} - seen
+        print('HOLDS all three still idle' if len(idle) == 3 else 'EXPIRED traffic appeared on ' + str(sorted({'slack','discord','whatsapp'} - idle)))
+        "
+      question: >-
+        Are slack, discord and whatsapp channels you intend to use? They hold 5,175 of
+        the channel layer's 10,596 channel-directory lines and have carried ZERO messages — no sessions, no
+        task_outcomes, no log lines in nine days. Everything about D12.3 follows from
+        this. If they are wanted they need proactive dispatchers: morning briefs and
+        parliament syntheses reach only Telegram, and those three channels' formatters
+        are called by nothing but tests. If they are not wanted, retiring them is the
+        cheapest deletion available and removes most of the duplication D12.3 exists for.
+      why_evidence_cannot_settle_it: >-
+        Zero traffic cannot distinguish UNCONFIGURED from UNWANTED, and slack was built
+        deliberately as a first-class channel at Telegram parity — a recorded intent the
+        traffic contradicts without overruling. Retiring three registered user-facing
+        channels is also a stop-and-brief case in its own right.
+      panel_recommendation: >-
+        Answer this BEFORE scheduling the collapse, not after. A relay refactor over three
+        never-exercised adapters has nothing to validate against, and if the answer is
+        retire then most of what the refactor was for disappears with them. If the answer
+        is keep, the first fix is a dispatcher, not a relay — the briefs do not reach
+        those channels at all today.
+      blocked_until_answered: >-
+        D12.3's refactor. The measurement is done; nothing else waits on it.
     ESC_131_the_trajectory_corpus_already_exists_do_you_want_to_train_on_it:
       premise_check: |
         uv run python -c "
@@ -12088,7 +12143,15 @@ known_debt:
       change behaviour. What this item took instead is the defect the measurement
       actually exposed — the ungated button path — which is the part with a security
       consequence. The map entry should be re-measured before D12.3 is scheduled.
-    status: open
+    status: closed
+    closed: 2026-09-04
+    closed_by: >-
+      D12.3's own item did the re-measurement this asked for. The channels/ tree is 12,985
+      lines across 4 channels (dirs total 10,596: slack 2,208, telegram 5,421, discord
+      1,442, whatsapp 1,525), and the deferral was right for a reason this record did not have:
+      THREE OF THE FOUR CHANNELS HAVE NEVER CARRIED A MESSAGE — slack, discord and
+      whatsapp have zero sessions, zero task_outcomes and zero log lines across nine
+      daily logs, so 5,175 of those lines have never run. Scheduling is now ESC-132.
   - id: DEBT-113
     found: 2026-09-04
     what: >-
@@ -26322,19 +26385,48 @@ items:
     blocks: [D12.2]
     dedup_target: X6
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
+      brainstorm: done
+      architect:  no_change_needed   # nothing refactored — the Ask is scheduling (ESC-132)
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D12.3.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "NOTHING REFACTORED. The collapse remains a wave, as DEBT-114 concluded, and this
+         measurement strengthens that: the duplication is near-miss rather than literal, so a
+         mechanical collapse would change behaviour on paths with NO traffic to catch it."
+      - "NOTHING DELETED. Three registered user-facing channels are the operator's to keep or
+         retire. `retired means deleted` applies to what HAS been retired, not to what nobody
+         has decided about — and zero traffic cannot distinguish unconfigured from unwanted."
+      - "The dead-copy detector was attempted TWICE and cannot work this way; recorded in the
+         doc so a fifth static screen is not built. It needs receiver-type resolution."
     changes: []
-    notes: null
-
+    notes: >-
+      RE-MEASURED as DEBT-114 required before scheduling — and the first number was WRONG until
+      the doc's own Verification section caught it. 7,244 is the six same-named modules only;
+      the four channel dirs are 10,596 (slack 2,208, whatsapp 1,525, TELEGRAM 5,421, discord
+      1,442) and the whole channels/ tree is 12,985. NOT four copies in THREE ways: whatsapp
+      has no callbacks.py or clarify.py at all; telegram is more than half the total with
+      twelve modules the others lack; and a SHARED LAYER ALREADY EXISTS — 2,389 lines across
+      12 top-level modules (_format, base, registry, splitter, callback_authz, socket_adapter,
+      chat_id, token, ...) doing exactly the factoring D12.3 proposes. is_authorized has four
+      structurally distinct variants (3/3/8/23 lines). THE FACT THAT CHANGES THE QUESTION: three of the four
+      channels have NEVER carried a message. Sessions telegram 107 / cli 13 / rca 3;
+      task_outcomes rca 9,623 / telegram 9,617 / cli 989 / internal 50; slack, discord and
+      whatsapp have ZERO log lines across all nine daily logs — 5,175 lines (slack 2,208,
+      whatsapp 1,525, discord 1,442) have never run. It cuts both ways, which is why it is a decision: a mechanical collapse would
+      rewrite three implementations with no traffic to validate against, and three unexercised
+      adapters are also the cheapest deletion in the tree if they are not wanted. TWO
+      SUB-FINDINGS: only telegram has a notifications.py — a channel-specific proactive
+      dispatcher sitting beside the channel-agnostic NotificationRouter/ProactiveDeliverer
+      that D15.6 measured at 6,909 decisions and 5,553 attempts, two paths to one job; and the
+      format_morning_brief / format_parliament_synthesis helpers in slack, whatsapp and
+      discord are reached by NOTHING, because the agnostic deliverer formats through the
+      shared channels/_format and only telegram's dispatcher calls a per-channel formatter.
+      Their only callers are tests.
   - id: D12.4
     title: "Streaming to chat platforms"
     domain: D12

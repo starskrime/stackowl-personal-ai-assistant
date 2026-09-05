@@ -958,6 +958,25 @@ the connector is the only side that knows.
 **Gap.** ~24 near-duplicate modules that must each be fixed separately. This is the *dedup* target
 you asked me to find.
 **Ask.** Highest-ROI refactor in the channel layer. Do it before adding channel #5?
+**RE-MEASURED 2026-09-04 as DEBT-114 required before scheduling; nothing refactored (ESC-132).**
+The whole `channels/` tree is **12,985 lines**: the four channel dirs are **10,596** (slack
+2,208, whatsapp 1,525, **telegram 5,421**, discord 1,442) and the six same-named modules across
+them account for 7,244. It is NOT four copies, in three ways — whatsapp has no `callbacks.py`
+or `clarify.py` at all; telegram is more than half the total, carrying twelve modules the others
+lack; and **a shared layer already exists**, 2,389 lines across 12 top-level modules
+(`_format`, `base`, `registry`, `splitter`, `callback_authz`, `socket_adapter`, …) doing exactly
+the factoring D12.3 proposes. DEBT-114 also found `is_authorized` in four structurally distinct
+variants (3/3/8/23 lines). **THE
+FACT THAT CHANGES THE QUESTION: three of the four channels have never carried a message.**
+Sessions are telegram 107 / cli 13 / rca 3; task_outcomes telegram 9,617 / rca 9,623 / cli 989 /
+internal 50; and slack, discord and whatsapp have **ZERO log lines across all nine daily logs**.
+So 5,175 lines — slack 2,208, whatsapp 1,525, discord 1,442 — have never run. TWO SUB-FINDINGS: only telegram has a
+`notifications.py` (a channel-specific proactive dispatcher, built beside the channel-agnostic
+NotificationRouter/ProactiveDeliverer), and the `format_morning_brief` /
+`format_parliament_synthesis` helpers in slack, whatsapp and discord are reached by NOTHING —
+the agnostic deliverer formats through the shared `channels/_format`, and only telegram's
+dispatcher calls a per-channel formatter. Nothing deleted: three registered user-facing
+channels are the operator's to keep or retire. See `designs/D12.3.md`.
 
 ### D12.4 · Streaming to chat platforms — `PARTIAL`
 **Hermes.** `gateway/stream_consumer.py` — bridges sync agent callbacks to async delivery: queue the
