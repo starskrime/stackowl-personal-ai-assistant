@@ -32,7 +32,7 @@ from stackowl.providers._truncate import (
 )
 from stackowl.providers._wrapup import FORMAT_FIX_DIRECTIVE, WRAPUP_DIRECTIVE
 from stackowl.providers.base import CompletionResult, Message, ModelProvider
-from stackowl.providers.escalation_signal import escalation_requested
+from stackowl.providers.escalation_signal import escalation_allowed
 from stackowl.providers.iteration_budget import IterationBudget
 from stackowl.providers.llm_gateway import ESCALATE_SENTINEL
 from stackowl.providers.model_config import resolve_model_override
@@ -663,7 +663,7 @@ class AnthropicProvider(ModelProvider):
             # pipeline set the turn-scoped escalation flag). Escalate to a stronger
             # tier instead of dead-ending. No-op for pinned owls (can_escalate
             # False ⇒ byte-identical) and at the ceiling (falls through to floor).
-            if can_escalate and escalation_requested():
+            if escalation_allowed(can_escalate=can_escalate):
                 log.engine.warning(
                     "[anthropic] complete_with_tools: circuit-open this turn — escalating to a stronger tier",
                     extra={"_fields": {"provider": self._name}},

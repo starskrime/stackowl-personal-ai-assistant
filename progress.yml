@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D04_5_2026_09_05_it_survives_the_explanation_did_not:
+    map_check: "D04.5 — Tier escalation (AHEAD, track keep, wave 10, order 97). Stages verified not_started first, and a current record checked for — the previous item was found at 6/7."
+    CONFIRMED_THREE_WAYS_NOT_ASSUMED: >-
+      The gate LLMGateway._can_escalate_meaningfully exists and asks the real question
+      ("is there a HIGHER tier that actually resolves somewhere else?"); on the live
+      configuration it answers FALSE, because describe_tier_ladder() returns
+      NeraAiRaw/neraai-v1-raw on all three rungs and tier_ladder_is_degenerate() is True;
+      and BOTH provider loops honour it, with six test files exercising the area, one
+      named test_escalation_that_changes_nothing_is_visible.py.
+    THE_GATE_WAS_EARNED_AND_ITS_DOCSTRING_SAYS_WHAT_IT_COST: >-
+      25 escalations, all landing on the same (NeraAiRaw, neraai-v1-raw). Each made the
+      provider DISCARD a finished attempt — 14, 15, 16 and 19 tool calls in four of those
+      turns — return the sentinel, and hand the gateway a turn to re-run, with on_escalate
+      resetting the tool-outcome ledger so the re-run was blind to what the first attempt
+      had already learned. can_escalate used to mean "not the last rung", a fact about the
+      LADDER rather than the TARGET.
+    WHAT_DID_NOT_SURVIVE_IS_THE_EXPLANATION: >-
+      The pipeline logs "circuit open — requested tier escalation" at INFO when a tool
+      breaker opens. Measured across every kept log: 12 such requests (2026-08-28..08-31,
+      on web_fetch, shell and owl_build) and ZERO lines recording the outcome. Someone
+      asking why a turn did not escalate found a request and silence — and the honest
+      answer, that every rung resolves to the same model, is exactly the fact D04.4 had
+      to make visible for the ladder itself one item earlier.
+    ONE_FUNCTION_NOT_TWO_IF_STATEMENTS: >-
+      Both provider loops open-coded `if can_escalate and escalation_requested():`, so
+      adding the decline message to each would have been two copies of one rule — the
+      shape that made the vendor sniff wrong in D04.2 and one of the four CLAUDE.md lists
+      as accounting for nearly every real defect here. escalation_allowed() is now the
+      single place that answers "should this turn escalate" and therefore the single
+      place that can say why not: silent when nothing asked, said ONCE per turn, and
+      carrying the reason rather than a bare refusal.
+    HOUSEKEEPING_AN_ESCALATION_EXPIRED_FOR_THE_WRONG_REASON: >-
+      escalation_check reported ESC-114 EXPIRED on "steps dominant again {'steps': 1}" —
+      a denominator of ONE. Measured properly: budget-cap events went 30 (08-28) to 7
+      (09-02) to ZERO on 09-03 and 09-04 to 1 (09-05), but the ceilings did not stop
+      binding — THE WORKLOAD DROPPED, owl/goal-lane calls falling 708/day to 29, a 24x
+      fall, while the jobs that drive them still exist. Closing it as resolved would have
+      recorded a fix that never happened. Its check now measures whether any ceiling binds
+      often enough to judge. MY REPLACEMENT WAS WRONG TWICE FIRST: a volume threshold that
+      called a 24x reduction "active again", then a glob-results-as-Path bug that raised
+      into suppressed stderr so the queue printed "(no output)" — a premise check that
+      ERRORS is a check that never fires.
+    VALIDATE_ONE_CHECK_STAYS_OPEN_HONESTLY: >-
+      The decline line cannot be forced: it needs a tool circuit to open, and there have
+      been ZERO such events in five days. The behaviour is pinned by five tests including
+      the once-per-turn and single-source properties; the LIVE check stays OPEN with the
+      query that closes it — grep "escalation declined — no stronger tier" in
+      ~/.stackowl/logs/stackowl.jsonl after the next tool-breaker event.
+    EVIDENCE: >-
+      5 passed on the new file; 738 passed across tests/providers. Three mutants caught and
+      each restored from a file copy: silencing the decline (2 failures), saying it every
+      step instead of once, and letting a provider open-code the decision again.
+    NEXT: "D04.6 · Rate limiting & circuit breaking (PARITY, wave 10, order 98)."
   D04_4_2026_09_05_the_document_stage_and_the_bug_the_missing_router_was_hiding:
     map_check: "D04.4 — Auxiliary-model router. Stages read 6/7 done from 2026-09-03; only `document` was open."
     THIS_ITEM_WAS_ALREADY_AT_SIX_OF_SEVEN: >-
@@ -11671,7 +11724,18 @@ current:
         ENFORCES what the prose now says.
     ESC_114_which_ceiling_should_bind_on_a_long_research_sweep:
       premise_check: |
-        uv run python -c "import json,pathlib,collections;fs=sorted((pathlib.Path.home()/'.stackowl'/'logs').glob('stackowl*.jsonl'))[-3:];c=collections.Counter();[c.update([(json.loads(l).get('fields') or {}).get('cap')]) for f in fs for l in f.open() if 'budget cap reached' in l];print('HOLDS tokens dominant' if c.get('tokens',0)>=c.get('steps',0) else 'EXPIRED steps dominant again', dict(c))" 2>/dev/null | tail -1
+        uv run python -c "import json,glob,os,collections;fs=sorted(glob.glob(os.path.expanduser('~/.stackowl/logs/stackowl*.jsonl')))[-3:];c=collections.Counter();[c.update([(json.loads(l).get('fields') or {}).get('cap')]) for f in fs for l in open(f,errors='ignore') if 'budget cap reached' in l];n=sum(c.values());print(f'DORMANT only {n} budget-cap event(s) in the last 3 logs — no ceiling is binding often enough to judge' if n < 5 else f'HOLDS ceilings binding again: {dict(c)} — re-read the question')" 2>/dev/null | tail -1
+      premise_note_2026_09_05: >-
+        THE OLD CHECK FLIPPED, AND ITS REASON WAS WRONG. It asked whether the token cap or the
+        step cap dominates, and reported "EXPIRED steps dominant again {'steps': 1}" — on a
+        denominator of ONE event. Measured properly: budget-cap events collapsed from 30 on
+        08-28 to 7 on 09-02, ZERO on 09-03 and 09-04, and 1 on 09-05. But the ceilings did not
+        stop binding — THE WORKLOAD DROPPED. Owl/goal-lane calls went 708 on 08-29 to 29 on
+        09-05, a 24x fall, while the goal_execution and objective_driver jobs still exist. So
+        the question is DORMANT, not answered: nothing is hitting a ceiling because almost
+        nothing is sweeping. Closing it as resolved would have recorded a fix that never
+        happened. The check now measures sweep VOLUME, so it stays quiet while the lane is
+        idle and asks for a re-read the moment real sweeps return.
       question: >-
         22% of your scheduled owl runs stop before finishing — jobmarket and headhunter, mid-way
         through verifying listings live. The ceiling doing it has moved from the 20-step cap to
@@ -22513,18 +22577,55 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D04.5.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "IT SURVIVES, verified three ways rather than assumed: the gate exists and asks
+         the real question; on the live configuration it answers FALSE because the
+         ladder is degenerate (all three rungs NeraAiRaw/neraai-v1-raw); and BOTH
+         provider loops honour it, with six test files exercising the area."
+      - "THE GATE WAS EARNED. Its docstring records 25 escalations all landing on the
+         same (provider, model), each discarding a FINISHED attempt — 14, 15, 16 and 19
+         tool calls in four of those turns — and handing back a turn to re-run, with the
+         tool-outcome ledger reset so the re-run was blind to what the first learned."
+      - "WHAT DID NOT SURVIVE IS THE EXPLANATION: 12 'requested tier escalation' INFO
+         lines in the kept logs and ZERO recording the outcome. A no-op that says nothing
+         is the shape this programme keeps paying for, and the honest answer is the same
+         fact D04.4 had to make visible for the ladder itself."
+      - "ONE FUNCTION, NOT TWO IF-STATEMENTS. Both loops open-coded `can_escalate and
+         escalation_requested()`, so adding the message to each would have been two
+         copies of one rule — the shape that made the vendor sniff wrong in D04.2."
+    changes:
+      - "src/stackowl/providers/escalation_signal.py — escalation_allowed(), which both
+         provider loops now ask; it is silent when nothing requested, says the reason
+         ONCE per turn, and clear_escalation() re-arms both flags so the second is never
+         the one forgotten. Plus reset_decline_notice() for turn boundaries and tests."
+      - "src/stackowl/providers/openai_provider.py and anthropic_provider.py — routed
+         through the shared decision instead of open-coding it."
+      - "tests/providers/test_a_declined_escalation_says_so.py (new, 5 tests) — including
+         one asserting neither provider open-codes the decision again."
+      - "progress.yml — ESC-114's premise_check restated (see notes)."
+    notes: >-
+      HOUSEKEEPING: AN ESCALATION WHOSE PREMISE EXPIRED FOR THE WRONG REASON. escalation_check
+      reported ESC-114 EXPIRED on a verdict of "steps dominant again {'steps': 1}" — a
+      denominator of ONE. Measured properly, budget-cap events went 30 (08-28) to 7 (09-02) to
+      ZERO on 09-03 and 09-04 to 1 (09-05), but the ceilings did not stop binding: THE WORKLOAD
+      DROPPED, owl/goal-lane calls falling from 708 a day to 29, a 24x fall, while the jobs
+      that drive them still exist. Closing it as resolved would have recorded a fix that never
+      happened, so its check now measures whether any ceiling binds often enough to judge.
+      MY REPLACEMENT CHECK WAS WRONG TWICE FIRST. The first used sweep VOLUME with a threshold
+      that reported "active again" for a 24x reduction. The second referenced glob.glob results
+      as Path objects, raising AttributeError into a suppressed stderr so the queue printed
+      "(no output)". A premise check that ERRORS is a check that never fires — the same failure
+      as a DEBUG-only acceptance line, and the same cure: run the closing query before you need
+      it.
 
   - id: D04.6
     title: "Rate limiting & circuit breaking"

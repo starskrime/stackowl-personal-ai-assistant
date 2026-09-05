@@ -361,6 +361,24 @@ keeping it. See `designs/D04.4.md`.
 **StackOwl.** `providers/tier_selector.py` + `escalation_signal.py` — a same-turn ESCALATE sentinel
 that re-runs the turn on a stronger tier when a breaker opens.
 **Ask.** Keep. Confirm it survives.
+**CONFIRMED 2026-09-05 — IT SURVIVES; THE EXPLANATION DID NOT.** Verified three ways:
+`LLMGateway._can_escalate_meaningfully` exists and asks the real question ("is there a HIGHER
+tier that actually resolves somewhere else?"); on the live configuration it answers FALSE
+because the ladder is degenerate (all three rungs `NeraAiRaw/neraai-v1-raw`); and BOTH provider
+loops honour it, with six test files exercising the area. **The gate was earned** — its
+docstring records the cost of not having it: 25 escalations all landing on the same
+(provider, model), each making the provider DISCARD a finished attempt (14, 15, 16 and 19 tool
+calls in four of those turns) and hand back a turn to re-run, with the tool-outcome ledger
+reset so the re-run was blind to what the first had learned. **WHAT WAS MISSING:** the
+pipeline logs "circuit open — requested tier escalation" at INFO when a tool breaker opens —
+**12 such requests in the kept logs and ZERO lines recording the outcome.** Someone asking why
+a turn did not escalate found a request and silence, when the honest answer (every rung is the
+same model) is exactly the fact D04.4 had to make visible for the ladder itself. Fixed by ONE
+shared decision, `escalation_signal.escalation_allowed()`: both loops previously open-coded
+`if can_escalate and escalation_requested():`, so adding the message to each would have been
+two copies of one rule — the shape that made the vendor sniff wrong in D04.2. It is silent
+when nothing asked, says the reason ONCE per turn, and a test asserts neither provider
+open-codes the decision again. See `designs/D04.5.md`.
 
 ### D04.6 · Rate limiting & circuit breaking — `PARITY`
 **Hermes.** `rate_limit_tracker.py`, `nous_rate_guard.py`, jittered decorrelated backoff
