@@ -315,6 +315,32 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT121_2026_09_05_the_platform_now_measures_the_prefix_it_re_sends:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-121."
+    ROOT_CAUSE: >-
+      A self-sealing assertion. `providers/base.py` states as fact that an OpenAI-protocol
+      backend caches a byte-identical prefix automatically and therefore "already collects
+      the discount". That is a property of a BACKEND, not of a wire protocol, and because the
+      assertion makes `supports_cache_breakpoints` False, no cache marker is ever sent — so
+      no positive can ever be observed, so the probe built to test exactly this can never
+      contradict it. The claim removes its own falsifier, and 384M tokens of re-sent prefix
+      rode on it unexamined.
+    WHAT_SHIPPED: >-
+      `PrefixGrowthContributor`, owner-scoped and registered in the in-process assembly, on
+      the 5-minute sweep that already exists. It reports the median FIRST prefix-carrying
+      round per trace and degrades when that grows 1.20x — the measured +20-tool trajectory —
+      saying the consequence in the unit an operator feels: "a turn now gets ~17 rounds
+      instead of ~20 before its token cap".
+    THREE_TIMES_MY_OWN_INSTRUMENT_WAS_WRONG_AND_I_CAUGHT_IT: >-
+      (1) The inherited claim "5,977 of 5,977 not_reported" was counted from a bare "source"
+      grep, and that field is shared by builtin/learned/cold_build/manifest lines — the
+      number happened to be right, the denominator was not, and I re-measured on the message
+      itself. (2) The threshold was set to 1.25 while being justified by a trajectory that is
+      1.20x, so it MISSED the exact case written down to motivate it; the test asserting the
+      motivating case fires is what caught it. (3) The first metric reported DEGRADED on live
+      data — and it was measuring conversation length, not prefix. Corrected to the first
+      round per trace, it reads ok and cross-checks an independent figure.
+    NEXT: "ESC-149 asks whether the gateway can report cache statistics at all — the fact that would settle 64% of the bill."
   DEBT120_2026_09_05_a_round_may_eat_a_third_of_the_turn_and_nothing_says_so:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-120."
     ROOT_CAUSE: >-
@@ -10857,6 +10883,48 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_149_can_the_gateway_tell_us_whether_it_caches_because_64_percent_of_the_bill_depends_on_it:
+      premise_check: |
+        uv run python -c "
+        import json, pathlib, collections
+        c = collections.Counter()
+        for f in sorted(pathlib.Path.home().glob('.stackowl/logs/stackowl*.jsonl')):
+            for ln in f.read_text(errors='ignore').splitlines():
+                if 'cache stats source' not in ln: continue
+                try: r = json.loads(ln)
+                except Exception: continue
+                c[(r.get('fields') or {}).get('source')] += 1
+        rep = c.get('reported', 0); tot = sum(c.values())
+        print(f'HOLDS {tot} cache-stat readings, {rep} reported — the backend still says '
+              'nothing, so prefix cost remains unmeasurable' if rep == 0 else
+              f'EXPIRED {rep} of {tot} readings now REPORT cache statistics')
+        "
+      question: >-
+        Can the LiteLLM gateway at llm-gateway.dev.nera.gov:4000 be configured to return
+        `prompt_tokens_details.cached_tokens` (or does its backend do automatic prefix
+        caching at all)? Measured: 5,977 of 5,977 cache-stat readings say `not_reported`, and
+        cached_input_tokens is 0 across 130,667 calls and ~708M input tokens. 384,429,704 of
+        those tokens — 64% of the bill — are prefix re-sent within the same turn. If the
+        backend caches, that cost is already nearly free and the platform is calibrating turn
+        budgets against bytes nobody pays for. If it does not, it is the single largest
+        efficiency item on the platform. Today we cannot tell which world we are in.
+      why_evidence_cannot_settle_it: >-
+        The gateway is your infrastructure and it is not reachable from this sandbox; the
+        answer lives in its configuration and its upstream backend, not in this tree. The
+        platform's own extractor is fine — it reads all three field shapes
+        (prompt_tokens_details.cached_tokens, cache_read_input_tokens, cached_tokens) — and
+        the endpoint simply sends none of them. This is the one fact I cannot obtain by
+        measuring harder.
+      recommendation: >-
+        Ask for usage reporting to be enabled on the gateway first, because it is free and it
+        converts an assumption into a measurement. If the backend is vLLM or SGLang, its
+        automatic prefix caching is probably already saving most of the 384M and the honest
+        response is to stop treating that number as waste — and to say so in
+        `providers/base.py`, whose current wording asserts the answer instead of measuring
+        it. If it is not caching, this becomes the largest single efficiency item open.
+      blocked_until_answered: >-
+        No code is blocked. `PrefixGrowthContributor` now measures and reports the prefix
+        either way, so the platform will notice it growing regardless of how this is answered.
     ESC_148_a_600_second_cap_that_is_defined_tested_described_and_never_supplied:
       premise_check: |
         uv run python -c "
@@ -13763,6 +13831,42 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-121
+    found: 2026-09-05
+    what: >-
+      THE PLATFORM COULD NOT SEE ITS LARGEST COST. 384,429,704 tokens — 64% of the primary
+      provider's entire input bill — is prompt prefix already sent earlier in the SAME turn,
+      and nothing measured it: `grep -rn input_tokens src/stackowl/health/` returned ZERO.
+      Worse, the code asserts the cost is already recovered: `providers/base.py:471-478` says
+      an OpenAI-protocol backend "caches a byte-identical prefix AUTOMATICALLY, so D01.1's
+      frozen prompt already collects the discount and there is nothing to mark."
+    evidence: >-
+      Measured 2026-09-05. `cost_records`: 130,667 rows, cached_input_tokens = 0 for EVERY
+      provider ever. The cache-stats line, counted on its own field rather than a bare
+      "source" grep (which spans several unrelated messages): 5,977 lines, ALL
+      `not_reported`, all NeraAiRaw. So the gateway returns no prompt_tokens_details at all
+      and the assertion is not merely unproven — it is UNFALSIFIABLE HERE, because
+      `supports_cache_breakpoints` returning False for the OpenAI protocol means no marker is
+      ever sent, so `cache_breakpoint_probes` (0 rows, and asymmetric BY DESIGN — only
+      positives are durable) can never record a contradiction. The claim suppresses the
+      instrument that would test it.
+    decision: >-
+      SHIPPED `PrefixGrowthContributor`, registered in the in-process health assembly: the
+      platform now measures the prefix it re-sends. Reports GROWTH, not share — the share is
+      a property of the architecture and would degrade forever (shape #4, no decay), while
+      growth is the regression that silently shortens every turn. NOT changed: the
+      self-sealing assertion itself, and whether the gateway can report cache statistics —
+      ESC-149, because it is a question about the operator's infrastructure that no amount of
+      reading this tree can answer.
+    the_correction_that_matters: >-
+      The first version measured the median of ALL prefix-carrying rounds and reported
+      DEGRADED on live data — "prefix grew 19,283 -> 25,531 (1.32x)". That was FALSE. A later
+      round carries the prefix PLUS accumulated tool results, so the metric moved when
+      conversations got longer and reported it as the prefix growing. Corrected to the FIRST
+      prefix-carrying round of each trace, the same window reads 23,754 — which independently
+      matches a separately derived 23,458 — and the honest verdict is `ok`. A detector that
+      would have cried regression on its first day in production, caught by pointing it at
+      real data before believing it.
   - id: DEBT-120
     found: 2026-09-05
     what: >-

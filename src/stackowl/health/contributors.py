@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from stackowl.authz.bounds import DEFAULT_TURN_MAX_INPUT_TOKENS
 from stackowl.config.provider import ProviderConfig
 from stackowl.health.status import HealthStatus
 
@@ -191,6 +192,189 @@ _UNATTRIBUTED_SQL = (
     "SUM(CASE WHEN trace_id IS NULL OR trace_id = '' THEN 1 ELSE 0 END) AS blank "
     "FROM cost_records WHERE recorded_at >= ? AND owner_id = ?"
 )
+
+
+#: A round below this many input tokens is not carrying the prefix — it is a judge,
+#: classifier or router call. Measured: those cluster around 200-700 tokens while a
+#: prefix-carrying round is ~25,000, so the floor separates two populations rather
+#: than trimming one.
+_PREFIX_ROUND_FLOOR_TOKENS = 10_000
+
+#: Below this many prefix-carrying rounds in a window, a median is arithmetic rather
+#: than a measurement — the same floor, and the same reason, as
+#: ``_UNATTRIBUTED_MIN_SAMPLE`` one class down.
+_PREFIX_MIN_SAMPLE = 30
+
+#: Growth in the median prefix-carrying round that counts as a regression, chosen
+#: from the CONSEQUENCE rather than taste — and corrected once, which is the point.
+#: It was first set to 1.25 while being justified by the measured +20-tool
+#: trajectory (median 24,811 -> ~29,800). That is 1.20x, so the threshold MISSED the
+#: exact case written down to motivate it; the test asserting the motivating case
+#: fires is what caught it. At 1.20 the 500,000-token cap goes from ~20.1 rounds per
+#: turn to ~16.8 — losing three rounds of working room is a change an operator should
+#: be told about, not discover as "it stops earlier than it used to".
+_PREFIX_GROWTH_ALARM = 1.20
+
+#: OWNER-SCOPED for the same reason its sibling is: `cost_records` is owner-governed
+#: and `tests/tenancy/test_no_owner_scope_bypass.py` exists because this predicate was
+#: omitted once already, in `usage_report.py`.
+#: THE FIRST prefix-carrying round of each trace, not every round. A later round
+#: carries the prefix PLUS accumulated tool results, so a median over all rounds
+#: moves when conversations merely get longer — it would measure "turns grew" and
+#: report it as "the prefix grew". Measured on live data before this was corrected:
+#: all-rounds gave 1.32x over 24h while the first-round measure is the one that
+#: isolates the schemas + system prompt this class is named for. Naming a metric
+#: after a quantity it does not measure is how a dashboard starts lying.
+_PREFIX_SQL = (
+    "SELECT input_tokens FROM cost_records WHERE id IN ("
+    " SELECT MIN(id) FROM cost_records"
+    " WHERE recorded_at >= ? AND recorded_at < ? AND owner_id = ?"
+    " AND input_tokens >= ? AND trace_id != ''"
+    " GROUP BY trace_id"
+    ") ORDER BY id DESC LIMIT 500"
+)
+
+
+def _median(values: list[int]) -> float:
+    ordered = sorted(values)
+    n = len(ordered)
+    if not n:
+        return 0.0
+    mid = n // 2
+    return float(ordered[mid]) if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+class PrefixGrowthContributor:
+    """Health contributor: the unchanging prompt prefix is getting more expensive.
+
+    WHY THIS EXISTS. Every provider round re-sends a prefix — 79 tool schemas
+    (~19,900 tokens) plus the system prompt — and measured 2026-09-05, **384,429,704
+    tokens, 64% of the primary provider's entire input bill, is prefix already sent
+    earlier in the SAME turn**. Nothing measured it: before this class,
+    ``grep -rn input_tokens src/stackowl/health/`` returned zero, so the platform
+    could not answer its single largest cost question about itself.
+
+    WHY GROWTH AND NOT SHARE. "64% of your tokens are re-sent prefix" would be a
+    permanently-degraded alarm — CLAUDE.md shape #4, no decay — and an alarm that can
+    never clear is one the operator learns to ignore. The share is a property of the
+    architecture. The GROWTH is a regression, and it is the one that bites.
+
+    WHAT GROWTH COSTS, and it is not tokens. A turn ends when its cumulative token cap
+    is reached, so the prefix sets how many ROUNDS a turn gets. At the measured median
+    of 24,811 tokens the 500,000-token cap binds at ~20.1 rounds — which happens to
+    sit on the 20-step cap by coincidence rather than design. Twenty more tools at the
+    measured ~249 tokens each moves the median to ~29,800 and the crossing to ~16.8,
+    and every turn on the platform quietly gets a shorter leash. The registry only
+    grows, `HARD_TOOL_COUNT_CAP` (150 against 79 registered) permits roughly double
+    today's prefix, and no eviction event appears in any retained log — so nothing
+    else in the tree would notice this happening.
+
+    DEGRADED, NEVER DOWN: an expensive prefix serves turns perfectly, it just serves
+    fewer rounds of them.
+    """
+
+    def __init__(
+        self, db: object, *, window_hours: int = 72, owner_id: str | None = None
+    ) -> None:
+        """``window_hours`` is 72, not 24, and the number came from the data.
+
+        One trace contributes ONE sample (its first prefix-carrying round), so the
+        sample rate is turns-per-day, not calls-per-day. Measured on the live ledger:
+        a 24-hour window yields 25 recent and 5 baseline samples against a floor of
+        30 — it would have answered "not enough to judge" almost always, which is an
+        honest answer and a useless contributor. At 72 hours both windows carry
+        enough to judge and the medians agree with an independently derived figure
+        (23,754 / 23,536 here vs 23,458 measured separately).
+        """
+        from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
+
+        self._db = db
+        self._window_hours = window_hours
+        self._owner_id = owner_id or DEFAULT_PRINCIPAL_ID
+
+    @property
+    def contributor_name(self) -> str:
+        return "prefix_growth"
+
+    async def _window(self, start: str, end: str) -> list[int]:
+        rows = await self._db.fetch_all(  # type: ignore[attr-defined]
+            _PREFIX_SQL, (start, end, self._owner_id, _PREFIX_ROUND_FLOOR_TOKENS)
+        )
+        return [int(r.get("input_tokens") or 0) for r in (rows or [])]
+
+    async def health_check(self) -> HealthStatus:
+        # 1. ENTRY
+        log.debug("[health] prefix_growth: entry")
+        t0 = time.monotonic()
+        now = datetime.now(UTC)
+        recent_from = (now - timedelta(hours=self._window_hours)).isoformat()
+        base_from = (now - timedelta(hours=self._window_hours * 2)).isoformat()
+        try:
+            # 2. DECISION — two windows, most recent first (the stub in tests
+            #    answers in this order, and so does production).
+            recent = await self._window(recent_from, now.isoformat())
+            baseline = await self._window(base_from, recent_from)
+        except Exception as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            # "I could not measure it" is not "it has regressed" — reporting the
+            # first as the second is the instrument lying, which is the sibling's
+            # rule and it applies identically here.
+            log.warning("[health] prefix_growth: check failed: %s", exc)
+            return HealthStatus(
+                name="prefix_growth", status="degraded",
+                message=f"could not measure prefix growth: {exc}", latency_ms=latency_ms,
+            )
+
+        latency_ms = (time.monotonic() - t0) * 1000
+        if len(recent) < _PREFIX_MIN_SAMPLE or len(baseline) < _PREFIX_MIN_SAMPLE:
+            # 3. STEP — say UNKNOWN rather than compute a ratio the data cannot carry.
+            return HealthStatus(
+                name="prefix_growth", status="ok",
+                message=(
+                    f"not enough prefix-carrying rounds to judge "
+                    f"({len(recent)} recent, {len(baseline)} baseline; "
+                    f"{_PREFIX_MIN_SAMPLE} needed)"
+                ),
+                latency_ms=latency_ms,
+            )
+
+        now_median = _median(recent)
+        was_median = _median(baseline)
+        ratio = (now_median / was_median) if was_median else 1.0
+        cap = DEFAULT_TURN_MAX_INPUT_TOKENS
+        rounds_now = cap / now_median if now_median else 0
+        rounds_was = cap / was_median if was_median else 0
+
+        if ratio < _PREFIX_GROWTH_ALARM:
+            return HealthStatus(
+                name="prefix_growth", status="ok",
+                message=(
+                    f"median prefix-carrying round {now_median:,.0f} tok "
+                    f"(~{rounds_now:.1f} rounds per turn)"
+                ),
+                latency_ms=latency_ms,
+            )
+
+        # 4. EXIT — INFO, because production runs at INFO and this line is the
+        #    evidence for "why do my turns stop earlier than they used to".
+        log.info(
+            "[health] prefix_growth: the re-sent prompt prefix has grown — every "
+            "turn now gets fewer rounds before its token cap",
+            extra={"_fields": {
+                "median_now": now_median, "median_baseline": was_median,
+                "growth": round(ratio, 3),
+                "rounds_now": round(rounds_now, 1), "rounds_before": round(rounds_was, 1),
+            }},
+        )
+        return HealthStatus(
+            name="prefix_growth", status="degraded",
+            message=(
+                f"prefix grew {was_median:,.0f} -> {now_median:,.0f} tok per round "
+                f"({ratio:.2f}x): a turn now gets ~{rounds_now:.0f} rounds instead of "
+                f"~{rounds_was:.0f} before its token cap"
+            ),
+            latency_ms=latency_ms,
+        )
 
 
 class UnattributedSpendContributor:

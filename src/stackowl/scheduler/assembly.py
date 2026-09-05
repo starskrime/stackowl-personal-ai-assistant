@@ -1110,6 +1110,7 @@ def _build_health_aggregator(
         # `retry_queue` quiet for 5.9 is a stopped engine, and only PURPOSE tells
         # them apart. Rides the 5-minute sweep that already exists.
         from stackowl.health.contributors import (
+            PrefixGrowthContributor,
             ResilienceContributor,
             StoreCadenceContributor,
             UnattributedSpendContributor,
@@ -1134,6 +1135,14 @@ def _build_health_aggregator(
         # TraceContext would reappear the same silent way. Rides the 5-minute sweep
         # that already exists rather than adding a second loop.
         agg.register(UnattributedSpendContributor(db))
+        # THE PLATFORM COULD NOT SEE ITS LARGEST COST. Measured 2026-09-05:
+        # 384,429,704 tokens — 64% of the primary provider's entire input bill — is
+        # prompt prefix already sent earlier in the SAME turn, and nothing measured
+        # it (`grep -rn input_tokens src/stackowl/health/` returned zero). Reports
+        # GROWTH rather than share, because the share is a property of the
+        # architecture and would degrade forever, while growth is the regression
+        # that silently shortens every turn as the tool registry grows.
+        agg.register(PrefixGrowthContributor(db))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
     agg.register(graph_contributor if graph_contributor is not None else GraphContributor.probe())
     if embedding_registry is not None:
