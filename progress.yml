@@ -315,6 +315,35 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  SYNC_2026_09_05_the_bookkeeping_had_drifted_and_two_of_the_faults_were_mine:
+    why_this_record: "He asked for progress.yml and the docs to be synced, and for what is still pending."
+    DEFECT_1_MY_ANSWERS_NEVER_LEFT_THE_OPEN_QUEUE: >-
+      escalation_check.py:45 treats an entry as open unless it has a truthy `resolution`.
+      The four he answered today carried my own `ANSWERED_2026_09_05` key instead, which the
+      tooling does not read — so all four still counted as OPEN and the queue said 55 when
+      it was 51. That is EXACTLY the rot the queue exists to prevent, created by me on the
+      same day I wrote that recording them immediately was the whole point. All four now
+      carry a canonical `resolution:` and the count is honest.
+    DEFECT_2_A_FIRST_MATCH_BUG_PUT_TEXT_INSIDE_A_STRING: >-
+      There are TWO keys beginning `ESC_147_`: a NARRATIVE key inside a current record
+      (a block scalar) and the real escalation 10,800 lines later. My scripted edits used
+      `s.index("    ESC_147_")`, which matched the narrative one — so the SHIPPED notes for
+      ESC-147 and ESC-148 were committed INSIDE a string rather than onto the escalations,
+      and a later resolution insert did the same. YAML parsed and progress_lint passed
+      throughout, because injecting lines into a `>-` scalar is legal text, not a syntax
+      error. A lint that validates STRUCTURE cannot see content in the wrong place.
+      Repaired: the narrative scalars now read as written, and the real escalations carry
+      the resolutions.
+    DOCS_SYNCED: >-
+      D06.1.md and D12.8.md still said "against commit `<pending>`" — I wrote both and never
+      stamped them. Now stamped f79c49df and dde65c22, each naming the Verification evidence.
+      No design doc carries an unstamped commit any more.
+    FOUND_BUT_NOT_TOUCHED: >-
+      24 items carry `document: done` with `doc: null` and no design file on disk (D02.2,
+      D07.1, D12.1 and 21 more). They ARE in REFERENCE_MAP but the map does not mark them
+      Answered. This predates the session and I did not silently rewrite 24 stages or invent
+      24 documents — either would be fabricating a record. Reported as pending instead.
+    NEXT: "Reported the pending list to him; ESC-150 is the one authorised piece still unbuilt."
   ESC148_2026_09_05_a_protection_that_never_ran_is_worse_than_none:
     map_check: "No mapped item — implementing his ESC-148 answer: delete it and its test."
     WHAT_WENT: >-
@@ -484,47 +513,23 @@ current:
       providers/base.py should say: its claim that an OpenAI-protocol backend "already
       collects the discount" is now to be corrected, not left open.
     ESC_148_delete_the_dead_time_cap: >-
-      SHIPPED_2026_09_05: >-
-        DELETED, per his answer. `DEFAULT_TURN_MAX_TIME_S = 600.0` is gone from
-        authz/bounds.py, its green assertion is gone from
-        tests/pipeline/test_default_backstop_caps.py, and the three comments that named it
-        no longer reference a symbol that does not exist. Measured unreferenced first: the
-        constant was read by NOTHING in src/ — only two provider comments, one docstring
-        paragraph and that one test — and no code path anywhere assigns `max_time_s`.
-        `ResourceCaps.max_time_s` REMAINS, because it is a per-owl manifest axis an operator
-        may still set; only the never-supplied DEFAULT went, so no capability was removed.
-      A_CORRECTION_TO_WHAT_I_TOLD_HIM: >-
-        I said "nothing will then bound wall clock" when putting this decision to him. That
-        is too strong, and I found the correction while doing the deletion.
-        `_ROUND_DEADLINE_FALLBACK_S = 600.0` exists in BOTH providers and is LIVE — it is
-        the value `wrapup_deadline_s` falls back to, and since `max_time_s` is never set the
-        residual is always None, so that fallback is what actually bounds every round today
-        (anthropic_provider.py:753, openai_provider.py:877). So no single ROUND can hang
-        forever; what nothing bounds is a TURN's TOTAL wall clock — 294 rounds at up to 600s
-        each is how one trace reached 13.1 hours. The risk he accepted is real but narrower
-        than I described it.
-      Constant, green test and three comments go together in one change. I flagged the
-      consequence and he took it: nothing will then bound wall clock, and 86 of 205 long
-      traces exceeded 600s with one at 13.1 hours. Still strictly better than asserting a
-      protection that has never fired.
+      Constant, green test and three comments went together in one change, and it is now
+      SHIPPED (925d6dac). I flagged the consequence and he took it. CORRECTION, found while
+      doing the deletion: I told him "nothing will then bound wall clock" and that is too
+      strong — `_ROUND_DEADLINE_FALLBACK_S` (600.0) is live in BOTH providers and is what
+      `wrapup_deadline_s` falls back to, so every ROUND is bounded; only a turn's TOTAL
+      clock is not. 294 rounds at up to 600s each is how one trace reached 13.1 hours.
     ESC_147_he_overrode_his_own_recorded_decision: >-
-      SHIPPED_2026_09_05: >-
-        DONE. `round_char_budget()` in providers/_truncate.py derives the per-round trim
-        budget from the turn's REMAINING tokens — min(configured_chars, remaining x 3.85 x
-        0.5) — threaded to both provider loops as `token_budget_fn`, mirroring the
-        `wrapup_deadline_fn` precedent that already recomputes a residual budget FRESH per
-        attempt from the live governor. Early in a turn it is ~962,500 chars, just under
-        today's 1,000,000, so ordinary work (p50 = 2 prefix rounds) is unchanged; late in a
-        turn it tightens, so the last of the budget buys several rounds instead of one. Half
-        of what remains, by construction, so a turn can ALWAYS afford one more round. It can
-        only ever TIGHTEN (min), and with no governor threaded the behaviour is
-        byte-identical to before.
-      The per-round trim budget will be derived from the turn's REMAINING token budget
-      rather than left at a flat 1,000,000 chars. That reverses his 2026-07-22 "pure
-      backstops, not shaping ceilings" — which is precisely why it was escalated instead of
-      changed, and why the answer had to be his.
+      The per-round trim budget is now derived from the turn's REMAINING token budget rather
+      than left at a flat 1,000,000 chars — SHIPPED (db75d0ff) as `round_char_budget()`,
+      threaded to both provider loops from the live governor. That reverses his 2026-07-22
+      "pure backstops, not shaping ceilings", which is precisely why it was escalated
+      instead of changed, and why the answer had to be his.
     WHAT_I_HAVE_NOT_DONE: >-
-      None of the four is implemented yet. This record closes the questions, not the work.
+      UPDATED 2026-09-05 after the work: THREE of the four are now shipped — ESC-147
+      (db75d0ff), ESC-148 (925d6dac) and ESC-149's half that was mine to build (3b9dab1e).
+      ESC-150 is answered and deliberately NOT built: it relaxes the consent gate so code
+      runs unattended, which is a design he should see rather than find already live.
     NEXT: >-
       His priority instruction is explicit — prefix reduction is the top item. The
       capability-neutral lever is already measured: 15 tools have NEVER been invoked
@@ -11182,6 +11187,8 @@ current:
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
     ESC_150_does_runs_anywhere_matter_when_confined_execution_is_already_gated_shut:
+      resolution: >-
+        ANSWERED 2026-09-05: GRANT CONFINED RUNS UNATTENDED. A bwrap/Docker run becomes autonomously grantable; unconfined `shell` keeps needing a human. NOT YET IMPLEMENTED — it relaxes the consent gate so code executes unattended, and that design should be seen before it ships. He did NOT pick remote backends, so SSH/Modal/Daytona stay unbuilt; D06.1's document already records what they would have to satisfy. UNBLOCKS D06.1 implement and D06.2 once built.
       ANSWERED_2026_09_05: >-
         GRANT CONFINED RUNS UNATTENDED. A run inside bwrap/Docker becomes autonomously grantable; unconfined `shell` keeps needing a human. This inverts today's shape, where the SAFE path is refused 27 times out of 28 and the UNSAFE one is open. It relaxes the always-ask policy he set himself, so it needed his word and now has it. UNBLOCKS D06.1 implement and D06.2. Remote backends stay unbuilt — he did not choose (b) or (c).
       premise_check: |
@@ -11230,6 +11237,8 @@ current:
         D06.1 implement (recorded no_change_needed with this reason) and D06.2, which this
         item blocks. Nothing else. The local path is live, documented and tested (163 pass).
     ESC_149_can_the_gateway_tell_us_whether_it_caches_because_64_percent_of_the_bill_depends_on_it:
+      resolution: >-
+        ANSWERED 2026-09-05: ASSUME IT DOES NOT CACHE — prefix reduction is the top item. SHIPPED (3b9dab1e): base.py's self-sealing claim corrected, plus a recurring-cost tripwire pricing the tool block at p90 rounds against the turn cap. The measurement REFRAMED it — prefix is 8.0% of the cap at p50, 31.8% at p90, 83.6% at p99 — so no static cut helps the tail without taxing the body, and none shipped. STILL OPEN in substance under his 2026-09-05 platform rule: measuring caching BEHAVIOURALLY is the platform fix; asking a gateway operator to enable reporting is a setup fix.
       ANSWERED_2026_09_05: >-
         ASSUME THE GATEWAY DOES NOT CACHE — PREFIX REDUCTION IS NOW THE TOP ITEM. The 384,429,704 re-sent tokens (64% of the primary provider's input bill) are to be treated as REAL spend, not as an already-cached freebie. That promotes prefix reduction from 'speculative, declined' to the largest open efficiency item, and it means `providers/base.py`'s claim that an OpenAI-protocol backend 'already collects the discount' must be corrected rather than left as an open question.
       premise_check: |
@@ -11274,6 +11283,8 @@ current:
         No code is blocked. `PrefixGrowthContributor` now measures and reports the prefix
         either way, so the platform will notice it growing regardless of how this is answered.
     ESC_148_a_600_second_cap_that_is_defined_tested_described_and_never_supplied:
+      resolution: >-
+        ANSWERED 2026-09-05: DELETE IT AND ITS TEST. SHIPPED (925d6dac) — constant, green assertion and three naming comments gone; ResourceCaps.max_time_s remains a settable per-owl axis so no capability was removed. CORRECTION TO MY OWN BRIEF: I said 'nothing will then bound wall clock'; _ROUND_DEADLINE_FALLBACK_S (600.0) is live in both providers and bounds every ROUND — only a turn's TOTAL clock is unbounded.
       ANSWERED_2026_09_05: >-
         DELETE THE TIME CAP AND ITS TEST. RETIRED MEANS DELETED. `DEFAULT_TURN_MAX_TIME_S`, the green test asserting it exists, and the three comments describing it all go in one change. CONSEQUENCE HE ACCEPTED AND I FLAGGED: nothing then bounds wall clock — 86 of 205 long traces exceeded 600s and one ran 13.1 hours. Deleting is still strictly better than today, where a constant, a test and three comments assert a protection that has never once fired.
       premise_check: |
@@ -11309,6 +11320,8 @@ current:
         Nothing. The false prose claiming the cap "still applies" is already corrected, so the
         tree no longer lies about it either way.
     ESC_147_one_round_may_spend_a_third_of_the_turn_and_the_limit_that_would_stop_it_is_yours:
+      resolution: >-
+        ANSWERED 2026-09-05: DERIVE IT FROM WHAT REMAINS — he overrode his own 2026-07-22 'pure backstops, not shaping ceilings'. SHIPPED (db75d0ff): round_char_budget() = min(configured_chars, remaining_tokens x 3.85 x 0.5), threaded to both provider loops as token_budget_fn from the live governor. Can only tighten; byte-identical when no governor is wired.
       ANSWERED_2026_09_05: >-
         DERIVE THE PER-ROUND BUDGET FROM WHAT IS LEFT. budget = min(window_chars, remaining_turn_tokens x chars_per_token x 0.5). He OVERRODE his own 2026-07-22 decision ('pure backstops, not shaping ceilings') with the measurement in front of him — one round took 162,912 tokens, 32.6% of the whole turn budget, and the trimmer waved it through at ~627k chars. Stays a backstop on ordinary turns; binds only when a single round would eat half of what remains.
       premise_check: |
