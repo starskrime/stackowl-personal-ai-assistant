@@ -1241,7 +1241,22 @@ running and honestly reporting zero. NOT pip entry points — declined in ESC-16
 surface** — never special-case the plugin in core. One PR removed 95 lines of hardcoded plugin argparse
 from `main.py` for exactly this reason.
 **StackOwl.** No stated rule.
-**Ask.** Adopt verbatim. Costs nothing, prevents a known decay mode.
+**ADOPTED 2026-09-04.** Stated in `src/stackowl/plugins/__init__.py`, which was EMPTY — the
+place someone adding a ninth extension point actually looks. THE DECAY IS NOT HYPOTHETICAL
+HERE: D08.2 added `MemoryProvider` to the ABC table and not to the registry table, so
+`_registries.get("MemoryProvider")` returned None and registration hit `continue` SILENTLY —
+a plugin would have loaded and registered nowhere with every table looking correct. HALF WAS
+ALREADY ENFORCED by two tests predating this item (`set(_ABC_NAMES) == set(loader._registries)`
+both directions, plus one that reads the REAL construction site because that check passes even
+when a slot's VALUE is None). ADDED: a tripwire over all **841 modules** in `src/stackowl` —
+exactly SEVEN outside the plugin package may import it (three hook-dispatch seams, boot, and
+four plugin-management modules that name no plugin). Set equality in BOTH directions, because
+this repo has had an allowlist rot the other way (three dead entries in the owner-scope list),
+and marked `@pytest.mark.tripwire` so it joined the gate by its marker — 50 tests to 55, no
+path list edited. NOT ENFORCED and stated openly: "core must not special-case a plugin" cannot
+be screened while ZERO plugins are installed — the decay looks like `if plugin_name == "foo"`
+and there is no name to look for, so it would be a zero over a zero denominator. See
+`designs/D16.2.md`.
 
 ### D16.3 · Category ABCs — `PARTIAL`
 **Hermes.** Six categories each with ABC + orchestrator + implementation directory: memory providers,

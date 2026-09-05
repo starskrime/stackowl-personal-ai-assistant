@@ -315,6 +315,29 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D16_2_2026_09_04_the_rule_was_half_enforced_already_and_the_other_half_cannot_be_screened_yet:
+    map_check: "D16.2 — Plugins must not touch core (MISSING, P2, wave 9). The Ask is a build instruction."
+    STAGES_CHECKED_FIRST: >-
+      All seven not_started, doc None — verified BEFORE starting, which is the correction from
+      last loop where I pointed at D16.1 by reading its verdict instead of its stages.
+    THE_DECAY_ALREADY_HAPPENED_HERE: >-
+      D08.2 added MemoryProvider to _ABC_NAMES and not to _registries, so the lookup returned
+      None and registration hit `continue` SILENTLY. A plugin would have loaded and registered
+      nowhere while every table looked correct. That is why this rule is earned, not borrowed.
+    HALF_WAS_ALREADY_ENFORCED: >-
+      Two tests predating this item cover "widen the surface" — set equality on the two tables
+      both directions, and a second that reads the REAL construction site because the first
+      passes even when a slot's VALUE is None.
+    WHAT_I_ADDED: >-
+      The other side: a tripwire over all 841 src modules asserting exactly seven outside the
+      plugin package import it, in BOTH directions — this repo has had an allowlist rot the
+      other way. It joined the gate by its marker, 50 tests to 55, no path list edited.
+    WHAT_I_REFUSED_TO_BUILD: >-
+      The direct screen for "core must not special-case a plugin". With zero plugins installed
+      the decay has no name to look for, so it would be a zero over a zero denominator. Stated
+      openly in the package docstring rather than implied, with the condition that makes it
+      writable later.
+    NEXT: "D16.4 · Third-party products stay out of the tree (MISSING, P2, wave 9, order 75)."
   D16_1_2026_09_04_already_closed_and_the_map_still_said_it_needed_confirming:
     map_check: "D16.1 — Plugin surface. I POINTED HERE WRONGLY: all seven stages were already done."
     MY_OWN_POINTER_WAS_WRONG: >-
@@ -27571,19 +27594,46 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D16.2.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "The rule is stated in plugins/__init__.py, which was EMPTY — where someone adding a
+         ninth extension point actually looks, not in a document they must know exists."
+      - "SET EQUALITY, not subset, for the surface-caller list. This repo has had an allowlist
+         rot the other way — deleting six modules left three dead entries in the owner-scope
+         list, which a subset check cannot see."
+      - "The direct screen for `core must not special-case a plugin` was NOT built. With zero
+         plugins installed the decay has no name to look for, so it would be a zero over a
+         zero denominator — the failure refused three times this week, and four static screens
+         have already been built and deleted here for a similar unsound distinction."
+    changes:
+      - "src/stackowl/plugins/__init__.py — the rule, the eight-point surface, what enforces
+         it, and what does not. The file was empty."
+      - "tests/plugins/test_core_reaches_the_plugin_surface_and_nothing_else.py — a tripwire
+         over all 841 src modules: exactly seven outside the package may import it, both
+         directions, plus a denominator check and a per-seam assertion. Mutation-proven BOTH
+         ways."
+    notes: >-
+      THE DECAY MODE IS NOT HYPOTHETICAL HERE — it already happened: D08.2 added MemoryProvider
+      to _ABC_NAMES and not to _registries, so _registries.get("MemoryProvider") returned None
+      and _register_classes hit `continue` SILENTLY; a memory-provider plugin would have loaded
+      and registered nowhere with every table looking correct. HALF THE RULE WAS ALREADY
+      ENFORCED by two tests predating this item — set(_ABC_NAMES) == set(loader._registries)
+      both directions, and TestEveryDeclaredSlotIsActuallyWired which reads the REAL
+      construction site because the first check passes even when a slot's VALUE is None. So
+      this MISSING item had less to build than its verdict suggested. WHAT WAS ADDED is the
+      other side: core reaching INTO the plugin package is the first move of every special
+      case, and it has a real denominator — 841 modules, seven importers, each the generic
+      surface (three hook-dispatch seams, boot, four management modules that name no plugin).
+      Marked @pytest.mark.tripwire, so it joined the gate by its MARKER: 50 tests to 55 with no
+      path list edited. VALIDATE: the gate count rising is the evidence, and it was run.
   - id: D16.3
     title: "Category ABCs"
     domain: D16
