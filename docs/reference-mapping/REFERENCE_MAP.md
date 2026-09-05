@@ -1748,6 +1748,37 @@ because `cost_records` has no column naming the code path — which is exactly w
 **Hermes.** No migration framework visible; schema evolves in `hermes_state.py`.
 **StackOwl.** 90 idempotent SQL migrations with a runner.
 **Ask.** Keep.
+**VERIFIED 2026-09-05 — KEPT, AND VERIFYING IT FOUND THE HALF THAT WAS MISSING.** Two
+specifics are stale: there are **136** migrations, not 90 (all applied, highest 0136); and
+"idempotent" describes the RUNNER, not the SQL — 68 of the 136 use `ALTER TABLE`, which
+SQLite cannot re-run, so safety comes from `_apply` skipping any version already in the
+ledger. **THE DEFECT: `_apply` has always written `sha256(sql)` into
+`schema_migrations.checksum` and NOTHING in src/ ever read it back.** An applied migration is
+skipped by version, so editing its file changes what a FRESH install builds while the
+existing database keeps the old schema. **It had already happened: 130 checksums matched and
+6 DRIFTED**, all six edited by one commit ("no vendor names in shipped code") with ZERO
+SQL-statement lines changed — no schema diverged, and nothing would have told the difference.
+**AND THERE IS A SECOND DATABASE:** `tests/_schema_template.py` builds schema from the
+migration FILES while the live DB holds what was APPLIED, and `stackowl db restore` replaces
+the live DB from a backup whose ledger already lists those versions. **WHY THE READER WAS
+NEVER WIRED: it was UNWIREABLE** — a byte comparison would have opened with six false alarms,
+every one a comment edit, which is the same finding D18.7 recorded for the cross-platform
+checker one item earlier. So `semantic_checksum` hashes the STATEMENTS, taken from
+`_split_sql` — the very function the runner uses to EXECUTE — with a new `keep_comments=False`
+mode. That is deliberately not a normalisation RULE: the tokenizer deciding what is a comment
+is the one deciding what gets run, so there is no second copy to keep correct. Measured: all
+six drifted files hash IDENTICALLY under it. The column is added by the RUNNER at bootstrap,
+not by a migration — it was first written as 0137 and the first behavioural test failed,
+which is how that was caught: `schema_migrations` is the runner's own bookkeeping, so a
+numbered migration would have to run before the column could be read and no test fixture with
+its own migrations directory would ever get it. **WARN, NOT REFUSE, on a principle rather
+than a precedent** (the repo's two precedents disagree): fail closed when refusing PREVENTS
+the harm, warn when the harm already happened — refusing to boot cannot un-diverge a schema.
+An applied migration whose FILE IS GONE now warns too; `_pending` only ever computed
+disk-minus-applied. **AND A CLAIM RELAYED EARLIER IS REFUTED:** the "19% of suite time
+recoverable by converting migration-replaying tests" figure is wrong — the populations are
+disjoint (49 sites inside `tests/db`, 35 outside) and the template's own docstring forbids its
+use in tests OF the migrations. See `designs/D18.9.md`.
 
 ---
 

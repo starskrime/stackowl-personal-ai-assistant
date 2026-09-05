@@ -38,7 +38,62 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 """
 
 
-def _split_sql(sql: str) -> list[str]:
+def _ensure_sql_checksum_column(conn: sqlite3.Connection) -> None:
+    """Add ``schema_migrations.sql_checksum`` if this database predates it.
+
+    THE RUNNER OWNS THIS TABLE, so the runner extends it. It was first written as
+    migration 0137 and that was the wrong home: ``schema_migrations`` is the
+    runner's own bookkeeping, created by ``_CREATE_SCHEMA_MIGRATIONS`` and never by
+    a migration, so a numbered migration would have to run BEFORE the column it
+    adds could be read — and any runner pointed at a different migrations directory
+    (every test fixture that builds a schema) would never get the column at all.
+    That is how the first behavioural test for this feature failed, which is the
+    only reason the mistake was caught.
+
+    It also avoids shipping an irreversible migration for a bookkeeping column: a
+    numbered migration can never be un-shipped, while this is re-derived from the
+    table's real shape on every boot.
+    """
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(schema_migrations)")}
+    if "sql_checksum" in cols:
+        return
+    conn.execute("ALTER TABLE schema_migrations ADD COLUMN sql_checksum TEXT")
+    log.info("[db] runner: added schema_migrations.sql_checksum")
+
+
+def semantic_checksum(sql: str) -> str:
+    """Hash what a migration DOES, ignoring comments and layout.
+
+    WHY NOT THE BYTE HASH THAT WAS ALREADY THERE. ``_apply`` has always stored
+    ``sha256(sql)`` in ``schema_migrations.checksum``, and measured 2026-09-05
+    **nothing in src/ ever read that column back** — a value computed, stored and
+    never compared. The thing it exists to catch is real: an applied migration is
+    skipped by version, so editing its file changes what a FRESH install gets while
+    the existing database keeps the old schema. Same version number, two shapes.
+
+    IT HAD ALREADY HAPPENED, AND THAT IS WHY THE READER WAS NEVER WIRED. Six of the
+    136 applied migrations drifted from their files — all six edited by one commit,
+    ``419493a3 "refactor: no vendor names in shipped code"``, with **0 SQL-statement
+    lines changed** between them. Switching on a byte comparison would have opened
+    with six false alarms, and a guard that fires on correct code is one nobody
+    wires. Measured: under this function all six hash IDENTICALLY.
+
+    IT REUSES ``_split_sql`` RATHER THAN STRIPPING COMMENTS WITH A REGEX, because
+    that tokenizer already knows a ``--`` inside a string literal is DATA, not a
+    comment. A second implementation would be two copies of one rule, and the copy
+    that had to be right about quoting would be the new one.
+
+    Commenting a statement OUT still changes the hash — the statement leaves the
+    list — which is the direction a naive strip-then-compare gets wrong.
+    """
+    statements = [
+        " ".join(stmt.split()) for stmt in _split_sql(sql, keep_comments=False)
+    ]
+    meaningful = [stmt for stmt in statements if stmt.strip(" ;")]
+    return hashlib.sha256(";".join(meaningful).encode()).hexdigest()
+
+
+def _split_sql(sql: str, *, keep_comments: bool = True) -> list[str]:
     """Split SQL into statements, treating ``CREATE TRIGGER … BEGIN … END`` bodies
     as atomic (so the ``;`` between body statements is not a split point).
 
@@ -64,13 +119,15 @@ def _split_sql(sql: str) -> list[str]:
         if ch == "-" and i + 1 < n and sql[i + 1] == "-":
             j = sql.find("\n", i)
             end = n if j == -1 else j  # comment runs to EOL (newline kept below)
-            buf.append(sql[i:end])
+            if keep_comments:
+                buf.append(sql[i:end])
             i = end
             continue
         if ch == "/" and i + 1 < n and sql[i + 1] == "*":
             j = sql.find("*/", i + 2)
             end = n if j == -1 else j + 2
-            buf.append(sql[i:end])
+            if keep_comments:
+                buf.append(sql[i:end])
             i = end
             continue
 
@@ -215,9 +272,85 @@ class MigrationRunner:
                 log.info("[db] runner.run: resuming agents after migration")
                 self._agent_pause.resume_after_migration()
 
+        self._verify_applied(files)
+
         applied = sum(1 for r in results if r.action == "applied")
         log.info("[db] runner.run: exit — applied=%d skipped=%d", applied, len(results) - applied)
         return results
+
+    def _verify_applied(self, files: list[tuple[str, str, Path]]) -> None:
+        """Read the checksum back — the half that was missing for 136 migrations.
+
+        WARNS, IT DOES NOT REFUSE. A drifted migration means this database and a
+        fresh install disagree, which is serious; refusing to boot over it would
+        take the platform down to report a discrepancy it cannot fix anyway — an
+        applied migration cannot be un-applied safely. D18.4 faced the same trade
+        for unknown config keys and chose the same side: say it loudly, keep
+        running. The message names the file, because "schema drift detected" with
+        no subject is the shape this programme keeps finding.
+
+        Backfills NULL rows from the current file. That is honest ONLY because the
+        drift present when this shipped was measured to be comment-only in all six
+        cases; baselining blind would have blessed whatever was there.
+        """
+        by_version = {version: path for version, _name, path in files}
+        try:
+            conn = sqlite3.connect(self._db_path)
+        except sqlite3.Error as exc:
+            log.warning("[db] runner.verify: could not open db to verify checksums", exc_info=exc)
+            return
+        try:
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(schema_migrations)")}
+            if "sql_checksum" not in cols:
+                log.debug("[db] runner.verify: sql_checksum column absent — nothing to verify")
+                return
+            rows = conn.execute(
+                "SELECT version, name, sql_checksum FROM schema_migrations ORDER BY version"
+            ).fetchall()
+            drifted: list[str] = []
+            backfilled = 0
+            for version, name, stored in rows:
+                path = by_version.get(version)
+                if path is None:
+                    # An applied migration whose FILE is gone is its own alarm: this
+                    # database ran something the tree can no longer describe.
+                    log.warning(
+                        "[db] runner.verify: applied migration %s (%s) has no file in "
+                        "the tree — this database ran something no longer present",
+                        version, name,
+                    )
+                    continue
+                try:
+                    current = semantic_checksum(path.read_text(encoding="utf-8"))
+                except OSError as exc:
+                    log.warning("[db] runner.verify: could not read %s", path, exc_info=exc)
+                    continue
+                if stored is None:
+                    conn.execute(
+                        "UPDATE schema_migrations SET sql_checksum = ? WHERE version = ?",
+                        (current, version),
+                    )
+                    backfilled += 1
+                elif stored != current:
+                    drifted.append(name)
+            if backfilled:
+                conn.commit()
+                log.info("[db] runner.verify: baselined %d migration checksum(s)", backfilled)
+            if drifted:
+                log.warning(
+                    "[db] runner.verify: %d applied migration(s) CHANGED since they ran: "
+                    "%s — this database and a fresh install now build different schemas",
+                    len(drifted), ", ".join(sorted(drifted)),
+                )
+            else:
+                log.info(
+                    "[db] runner.verify: exit — %d applied migrations match their files",
+                    len(rows),
+                )
+        except sqlite3.Error as exc:
+            log.warning("[db] runner.verify: verification failed", exc_info=exc)
+        finally:
+            conn.close()
 
     def _execute(self, files: list[tuple[str, str, Path]]) -> list[MigrationResult]:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -225,6 +358,7 @@ class MigrationRunner:
         conn.isolation_level = None  # manual transaction control
         try:
             conn.execute(_CREATE_SCHEMA_MIGRATIONS)
+            _ensure_sql_checksum_column(conn)
             # A VERIFIED SNAPSHOT BEFORE THE FIRST CHANGE, and only when there is
             # a change to make. _exclusive_tx already prevents a HALF-applied
             # migration; it does nothing about a migration that runs perfectly and

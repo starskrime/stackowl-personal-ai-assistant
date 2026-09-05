@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D18_9_2026_09_05_a_checksum_written_136_times_and_read_never:
+    map_check: "D18.9 — Migrations (AHEAD, track keep, wave 9, order 92). Stages verified not_started first."
+    THE_CLAIM_HOLDS_TWO_SPECIFICS_ARE_STALE: >-
+      The reference platform has no migration framework, so AHEAD is not in doubt. But
+      there are 136 migrations, not 90; and "idempotent" describes the RUNNER, not the SQL
+      — 68 of 136 use ALTER TABLE, which SQLite cannot re-run, so safety comes from _apply
+      skipping any version already in the ledger.
+    A_VALUE_COMPUTED_STORED_AND_NEVER_COMPARED: >-
+      _apply has always written sha256(sql) into schema_migrations.checksum and NOTHING in
+      src/ ever read it back. Measured: 130 checksums matched their files and 6 DRIFTED,
+      all six edited by commit 419493a3 with ZERO SQL-statement lines changed. No schema
+      diverged — and nothing would have distinguished that from a change that did. There
+      IS a second database: tests/_schema_template.py builds from the migration FILES while
+      the live DB holds what was APPLIED, and `db restore` reinstates a ledger that makes
+      the runner skip those versions forever.
+    THE_READER_WAS_NEVER_WIRED_BECAUSE_IT_WAS_UNWIREABLE: >-
+      A byte comparison would have opened with SIX false alarms, every one a comment edit.
+      That is the same finding D18.7 recorded for the cross-platform checker one item
+      earlier, and the same reason that one sat red and unread for months. semantic_checksum
+      hashes the STATEMENTS instead, taken from _split_sql — the function the runner uses to
+      EXECUTE — via a new keep_comments=False mode. Measured: all six hash IDENTICALLY under
+      it. It is deliberately NOT a normalisation rule: the tokenizer deciding what is a
+      comment is the one deciding what runs, so there is no second copy to keep correct.
+    THE_FIRST_BEHAVIOURAL_TEST_CAUGHT_A_DESIGN_ERROR: >-
+      The column was first written as migration 0137 and the test failed. schema_migrations
+      is the RUNNER'S OWN bookkeeping, created by _CREATE_SCHEMA_MIGRATIONS and never by a
+      migration — so a numbered migration would have to run before the column could be read,
+      and no fixture pointed at its own migrations directory would ever get it. It is now
+      added at bootstrap, re-derived every boot, and deletable by deleting one function
+      rather than being an un-shippable migration.
+    WARN_NOT_REFUSE_ON_A_PRINCIPLE_NOT_A_PRECEDENT: >-
+      The repo's two precedents disagree — the backup step fails CLOSED ("apply anyway with
+      a warning is how 'we thought we had a backup' happens"), D18.4 warns and boots. The
+      rule that reconciles them: fail closed when refusing PREVENTS the harm; warn when the
+      harm already happened. A mismatch can only concern an ALREADY-applied version, and
+      refusing to boot cannot un-diverge a schema. An applied migration whose FILE IS GONE
+      now warns too — _pending only ever computed disk-minus-applied, so that was silent.
+    A_CLAIM_I_RELAYED_LAST_INVOCATION_IS_REFUTED: >-
+      The "~19% of suite time recoverable" figure is wrong, verified independently. The
+      populations are DISJOINT — 49 MigrationRunner sites inside tests/db, 35 outside — and
+      tests/_schema_template.py's own docstring says "DO NOT USE THIS IN A TEST OF THE
+      MIGRATIONS ... Those call sites are deliberately left alone", because they assert on
+      what the runner does. Per-site cost measures ~2.5s, not the ~9s assumed. Tens of
+      seconds of ~1,745.
+    EVIDENCE: >-
+      13 passed on the new file; 115 passed across tests/db in 341s. Three mutants caught
+      and restored from file copies: removing the verifier call, hashing WITH comments (8
+      failures — the false-alarm regression), and sorting the statements — which found a
+      MISSING TEST rather than a missing behaviour, since the hash was already
+      order-sensitive and nothing pinned it.
+    NEXT: "wave 10 — D04.2 Transport adapters (PARTIAL, order 94) is the next unworked item."
   D18_8_2026_09_05_the_trace_win_is_real_and_nothing_would_have_noticed_it_regressing:
     map_check: "D18.8 — Observability (AHEAD, track keep, wave 9, order 91). Stages verified not_started first."
     THE_CLAIM_HOLDS_VERIFIED_NOT_RESTATED: >-
@@ -10397,6 +10448,41 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_141_an_installed_plugin_is_verified_once_and_never_again:
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        m = pathlib.Path('src/stackowl/plugins/manifest.py').read_text()
+        boot = pathlib.Path('src/stackowl/plugins/boot.py').read_text()
+        print('EXPIRED a stored digest is now read back' if ('sha256' in m or 'verify_bytes' in boot)
+              else 'HOLDS plugins.sha256 is stored and never re-read')
+        "
+      question: >-
+        Should an installed plugin be re-verified against its stored digest at boot?
+        MEASURED 2026-09-05, the same shape D18.9 just fixed for migrations, one
+        subsystem over: `remote_install.py:143` verifies the archive at INSTALL
+        (`verify.verify_bytes(archive, expected_sha256=entry.sha256)`) and
+        `registry.py:75` stores the digest in the `plugins` table — and nothing ever
+        reads it back. `PluginManifest` has `extra="forbid"` and no `sha256` field, so
+        the stored value cannot even reach the object the loader uses. A plugin file
+        modified on disk AFTER install is loaded without complaint.
+      why_evidence_cannot_settle_it: >-
+        Whether install-time verification is sufficient is a security posture judgement,
+        not a measurement. Verifying at every boot costs I/O proportional to plugin size
+        and turns a corrupted-or-edited plugin into a boot-time refusal or warning —
+        which is a behaviour change for a subsystem the operator may edit deliberately
+        while developing one. Evidence can say the digest is unread; it cannot say
+        whether you want the platform policing plugin files between installs.
+      panel_recommendation: >-
+        WORTH DOING, and cheap — the verifier already exists and is already correct;
+        only the reader is missing, exactly as with the migration checksum. Apply the
+        same principle D18.9 settled on: fail closed when refusing PREVENTS the harm,
+        warn when it already happened. A modified plugin is about to be EXECUTED, so
+        unlike a drifted migration, refusing genuinely prevents the harm — this is the
+        case where the answer differs, and that is why it is worth asking rather than
+        assuming D18.9's answer carries over.
+      blocked_until_answered: >-
+        Nothing. D18.9 shipped its own reader and its guard.
     ESC_140_a_blank_cost_record_cannot_name_its_caller:
       premise_check: |
         uv run python -c "
@@ -29933,18 +30019,66 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D18.9.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "TWO MAP SPECIFICS ARE STALE: there are 136 migrations, not 90; and 'idempotent'
+         describes the RUNNER, not the SQL — 68 of 136 use ALTER TABLE, which SQLite
+         cannot re-run, so safety comes from skipping any version already in the ledger."
+      - "THE CHECKSUM WAS WRITTEN 136 TIMES AND READ NEVER. Measured: 130 matched their
+         files, 6 DRIFTED, all six edited by one commit with ZERO SQL-statement lines
+         changed. No schema diverged — and nothing would have told the difference."
+      - "THE READER WAS NEVER WIRED BECAUSE IT WAS UNWIREABLE. A byte comparison would
+         have opened with six false alarms, every one a comment edit. Same finding as
+         D18.7's cross-platform checker one item earlier: a guard that fires on correct
+         code is one nobody turns on."
+      - "THE SEMANTIC HASH IS NOT A NORMALISATION RULE. It reuses _split_sql — the
+         function the runner uses to EXECUTE — via a new keep_comments=False mode, so the
+         tokenizer deciding what is a comment is the one deciding what gets run. There is
+         no second copy to keep correct forever, which was the sharpest objection to it."
+      - "THE COLUMN BELONGS TO THE RUNNER, NOT TO A MIGRATION. It was first written as
+         0137 and the first behavioural test FAILED, which is the only reason that was
+         caught: schema_migrations is the runner's own bookkeeping, so a numbered
+         migration would have to run before the column could be read, and no fixture with
+         its own migrations directory would ever get it. Also un-shippable in reverse."
+      - "WARN, NOT REFUSE — on a principle, because the repo's two precedents disagree
+         (the backup step fails CLOSED, D18.4 warns): fail closed when refusing PREVENTS
+         the harm; warn when the harm already happened. A mismatch can only concern an
+         ALREADY-applied version, and refusing to boot cannot un-diverge a schema."
+    changes:
+      - "src/stackowl/db/migrations/runner.py — semantic_checksum(), _split_sql gains
+         keep_comments=False, _ensure_sql_checksum_column() at bootstrap, and
+         _verify_applied() called from run(): backfills NULL rows, warns by name on
+         semantic drift, and warns when an APPLIED migration's file is gone (previously
+         invisible — _pending only ever computed disk-minus-applied)."
+      - "tests/db/test_an_edited_migration_does_not_go_unnoticed.py (new, 13 tests) —
+         including the six real drifts pinned against git history, a commented-OUT
+         statement counting as a change, a `--` inside a string literal staying data, and
+         statement ORDER being part of the meaning."
+    notes: >-
+      A CLAIM I RELAYED LAST INVOCATION IS REFUTED, and verified independently here. A
+      measurement lens reported ~19% of suite time recoverable because "22 files outside
+      tests/db still construct a real MigrationRunner" while a fast template exists. The
+      populations are DISJOINT — 49 sites inside tests/db and 35 outside — and
+      tests/_schema_template.py's own docstring says "DO NOT USE THIS IN A TEST OF THE
+      MIGRATIONS ... Those call sites are deliberately left alone", because they assert on
+      what the runner does and a template would make them assert on a cached artefact of
+      themselves. Per-site cost also measures ~2.5s, not the ~9s assumed. Tens of seconds of
+      ~1,745, not 19%.
+      MUTATION TESTING FOUND A MISSING TEST RATHER THAN A MISSING BEHAVIOUR: sorting the
+      statements before hashing broke nothing. The hash was already order-sensitive and
+      nothing pinned it, though CREATE-then-ALTER reversed is not a migration.
+      ONE UNREPRODUCED REPORT, recorded rather than dismissed: a lens observed
+      test_migration_0083 failing in-directory and passing alone. tests/db ran 115 passed
+      here. It read the tree while this item was editing it — the condition D18.5's harness
+      exists to flag.
   - id: N01
     title: "Dreaming — the agent reflects on its own life and growth"
     domain: N
