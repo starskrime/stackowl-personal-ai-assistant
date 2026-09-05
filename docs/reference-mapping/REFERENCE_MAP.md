@@ -1399,6 +1399,20 @@ JSON stdout enriches but never overrides. Configurable fail-open; auto-installs 
 with **SHA-256 verification** and cosign when available.
 **StackOwl.** None.
 **Ask.** Worth it, or does our sandbox make it redundant?
+**ANSWERED 2026-09-05, threat by threat; nothing built (ESC-135).** (1) PIPE-TO-INTERPRETER is
+structurally IMPOSSIBLE, not merely undetected: `ShellTool` uses `create_subprocess_exec` with
+`shell=False` (ARCH-75) and its docstring states the consequence — "pipes/redirects/chaining are
+inert". `curl | sh` cannot be expressed, so a scanner for it is redundant and strictly weaker.
+(2) HOMOGRAPH URLs are NOT covered — `ssrf_guard.py` is resolve-then-validate on IPs with no
+IDN/punycode handling — but the threat model differs: a homograph is a PHISHING control for a
+human misreading a domain, and our reader is a model that sees bytes while the guard asks where
+the host actually resolves. Open question, not asserted either way. (3) TERMINAL INJECTION is a
+real, narrow exposure: `cli_adapter.py:70` composes `RichLog(..., markup=True, ...)`, so `[...]`
+in content is interpreted — but that widget's own docstring says "Used in tests / fallback
+only" and what reaches it is assistant response text, not raw tool output. Ours to fix
+structurally (escape markup on untrusted content) if worth fixing, not an argument for a
+third-party binary. AND D16.4 PRE-ANSWERS WHERE IT WOULD LIVE: third-party products ship as
+plugins, so even a "yes" lands at rung 4, never in `src/`. See `designs/D17.3.md`.
 
 ### D17.4 · URL / path / egress guards — `PARITY`
 **Hermes.** `url_safety.py`, `path_security.py` (shared resolve+relative_to helpers), `website_policy.py`,

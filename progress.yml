@@ -315,6 +315,27 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D17_3_2026_09_05_two_of_the_three_threats_are_structurally_answered:
+    map_check: "D17.3 — External security scanner (MISSING, P2, wave 9). Stages verified not_started first."
+    PIPE_TO_INTERPRETER_IS_IMPOSSIBLE_NOT_UNDETECTED: >-
+      ShellTool uses create_subprocess_exec with shell=False (ARCH-75); its docstring states
+      "pipes/redirects/chaining are inert". `curl | sh` cannot be EXPRESSED — there is no
+      shell to interpret the pipe. Structurally stronger than a scanner, which can be evaded
+      by an encoding it did not anticipate.
+    HOMOGRAPH_IS_NOT_COVERED_AND_MAY_NOT_NEED_TO_BE: >-
+      ssrf_guard.py is resolve-then-validate on IPs with no IDN/punycode handling. But a
+      homograph is a phishing control for a HUMAN misreading a domain; our reader is a model
+      reading bytes, and the guard asks where the host resolves — which a homograph answers
+      honestly. Recorded OPEN rather than asserted either way.
+    TERMINAL_INJECTION_IS_REAL_AND_NARROW: >-
+      cli_adapter.py:70 renders RichLog(markup=True), so `[...]` is interpreted. SCOPED before
+      calling it a hole: that widget is "Used in tests / fallback only" by its own docstring,
+      and what reaches it is assistant response text, not raw tool output.
+    D16_4_PRE_ANSWERS_WHERE_IT_WOULD_LIVE: >-
+      Third-party products ship as plugins, so even a yes lands at rung 4, never in src/. The
+      rule adopted two items ago answers half this question before risk appetite is consulted.
+    ESCALATED: "ESC-135 — the scanner, and whether to escape markup on untrusted content."
+    NEXT: "D17.4 · URL / path / egress guards (PARITY, wave 9, order 81)."
   D17_2_2026_09_05_the_fence_reached_three_of_the_four_tools_its_own_evidence_names:
     map_check: "D17.2 — Prompt-injection pattern library (PARTIAL, P2, wave 9). Stages verified not_started first."
     THE_MAP_NAMES_HALF_THE_MACHINERY: >-
@@ -9946,6 +9967,37 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_135_a_third_party_scanner_and_one_markup_exposure:
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        src = pathlib.Path('src/stackowl/channels/cli_adapter.py').read_text()
+        print('HOLDS markup still enabled' if 'markup=True' in src else 'EXPIRED markup disabled or escaped')
+        "
+      question: >-
+        TWO. (1) Do you want a third-party security scanner at all? Of the three threats
+        it targets, pipe-to-interpreter is structurally impossible here (shell=False makes
+        pipes inert, which is stronger than detecting them) and homograph URLs are a
+        phishing control for a human reader rather than for a model reading bytes. Only
+        terminal injection is unaddressed. (2) `cli_adapter.py:70` renders with
+        `markup=True`, so `[...]` in content is interpreted as Rich markup. It is a
+        fallback/test path carrying assistant text, so exposure is narrow — worth closing
+        by escaping markup on untrusted content at the render boundary, or leave it?
+      why_evidence_cannot_settle_it: >-
+        (1) is risk appetite about taking a dependency: an auto-installing external binary
+        is a supply-chain surface, and whether one unaddressed threat justifies it is a
+        judgement about what you are defending against. (2) changes what the operator SEES
+        — escaping markup would also flatten any intentional formatting on that path, so
+        it is a UX call as much as a security one.
+      panel_recommendation: >-
+        No to (1): two of three threats are already answered and one more strongly than a
+        scanner could manage, so the dependency buys one narrow case. If it is ever wanted,
+        D16.4 already decides it ships as a PLUGIN, not in src/. Yes to (2), cheaply —
+        escape markup on fenced (untrusted) content only, so intentional formatting on the
+        trusted path is unaffected. That is a few lines and it closes the one gap the
+        scanner would have covered.
+      blocked_until_answered: >-
+        All of D17.3. Nothing else — this item built nothing.
     ESC_134_smart_approve_and_whether_a_grant_should_outlive_a_restart:
       premise_check: |
         uv run python -c "
@@ -28378,19 +28430,45 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
+      brainstorm: done
+      architect:  no_change_needed   # nothing built — the Ask is risk appetite (ESC-135)
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D17.3.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "NOTHING BUILT. Two of the three threats are already answered — one structurally and
+         more strongly than a scanner could be, one by a guard asking a different and more
+         reliable question. The third has a cheap in-house fix."
+      - "D16.4 pre-answers WHERE a scanner would live: third-party products ship as plugins,
+         so even a yes lands at rung 4, never in src/."
+      - "The homograph question is recorded as OPEN rather than answered either way. Asserting
+         that a model cannot be fooled by a lookalike domain would be a claim about attacker
+         behaviour I have not measured."
     changes: []
-    notes: null
-
+    notes: >-
+      THREAT BY THREAT. (1) PIPE-TO-INTERPRETER is structurally impossible: ShellTool uses
+      create_subprocess_exec with shell=False (ARCH-75) and its docstring states
+      "pipes/redirects/chaining are inert" — `curl | sh` cannot be EXPRESSED, so there is no
+      shell to interpret the pipe and a pattern scanner would be strictly weaker, since it can
+      be evaded by an encoding it did not anticipate. (2) HOMOGRAPH URLs are not covered:
+      ssrf_guard.py is resolve-then-validate (loopback/private/link-local/CGNAT/multicast) with
+      no IDN or punycode handling, measured. But a homograph is a phishing control for a HUMAN
+      misreading a domain; our reader is a model reading bytes, and the guard's question is
+      where the host resolves, which a homograph answers honestly. (3) TERMINAL INJECTION is
+      real and narrow: cli_adapter.py:70 composes RichLog(highlight=True, markup=True,
+      wrap=True), so `[...]` is interpreted — SCOPED before calling it a hole: that widget's
+      docstring says "Used in tests / fallback only" and what reaches it is assistant response
+      text (`self._app.write(chunk.content)`), not raw tool output. Untrusted content arrives
+      only if the model echoes it. Fixable in-house at the render boundary; not an argument for
+      a third-party binary. THE DOC'S OWN VERIFICATION CAUGHT ME ONCE: `grep -c shell=True`
+      returns 1 for shell.py, because line 1's docstring says "never shell=True (ARCH-75)".
+      AST confirms ZERO actual keyword uses. A text scan cannot tell a module PROMISING
+      something from a module DOING it — the assertion-versus-mention problem again, this time
+      in my own verification section, caught by running it rather than trusting it.
   - id: D17.4
     title: "URL / path / egress guards"
     domain: D17
