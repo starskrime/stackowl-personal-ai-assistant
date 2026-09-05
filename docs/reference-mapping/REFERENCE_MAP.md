@@ -897,6 +897,20 @@ batch trajectory generation and compression **for training tool-calling models**
 a research lab.
 **StackOwl.** Nothing.
 **Ask.** Out of scope, or does the "agentic OS" vision want its own training data?
+**CORRECTED 2026-09-04 — "Nothing" is WRONG; nothing built (ESC-131).** There is no batch
+generator and no compressor, but the TRAJECTORIES are captured and already labelled:
+`task_outcomes`, **20,276 rows**, one per turn — `input_text` 100%, `tool_sequence` 100% (real
+rows look like `["browser_navigate","browser_extract",…]`), `tool_call_count` 100%, `success`
+100%, `dna_snapshot` 100%, `response_text` 99%, `failure_class` 52%, `quality_score` 47%. Six
+more tables join on the same `trace_id`: cost_records 130,420, reflections 6,427, messages
+3,841, approach_rating_pending 1,427, turn_decisions 766, message_ledger 498. THE 11% THAT WAS
+NOT A DEFECT: `task_outcomes.model` reads 2,346/20,276, which looks like an actuator wired on
+only some paths — but three quarters of that denominator PREDATE the feature (ESC-47/50; first
+stamped outcome 2026-08-24 21:57). Since then it is **90%**, and the remainder is not a gap
+either: turns with 1+ tools are 99%, zero-tool successes are 100%, and **246 of the 253
+unstamped rows are `AllProvidersUnavailableError`** — no provider was reachable, so no model
+ran and an empty stamp is the CORRECT value. What is missing is only the export in a training
+shape — the same shape as D11.4. See `designs/D11.5.md`.
 
 ---
 

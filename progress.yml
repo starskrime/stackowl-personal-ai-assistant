@@ -315,6 +315,27 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D11_5_2026_09_04_the_corpus_already_exists_and_the_11_percent_was_not_a_defect:
+    map_check: "D11.5 — Trajectory capture for training (MISSING, P2, wave 8). The Ask is strategy."
+    NOTHING_BUILT: "Whether the platform wants its own training data is strategy — ESC-131."
+    THE_MAPS_NOTHING_IS_WRONG: >-
+      task_outcomes holds 20,276 labelled turns: input_text 100%, tool_sequence 100%,
+      tool_call_count 100%, success 100%, dna_snapshot 100%, response_text 99%,
+      failure_class 52%, quality_score 47% — plus six tables joining on the same trace_id.
+      Only the batch generator, compressor and training-shaped export are absent.
+    THE_11_PERCENT_THAT_WAS_NOT_A_DEFECT: >-
+      task_outcomes.model reads 2,346/20,276 — exactly the shape of an actuator wired on
+      only some paths. CHECK WHAT THE DENOMINATOR IS MADE OF: three of four eras are
+      0/5,069 because they predate ESC-47/50. Since the feature shipped it is 90%, and the
+      missing tenth is not a gap either — 1+ tool turns 99%, zero-tool successes 100%, and
+      246 of the 253 unstamped rows are AllProvidersUnavailableError. No provider was
+      reachable, so no model ran, and an empty stamp is the CORRECT value.
+    IT_ALSO_SETTLES_D111_FROM_THE_OTHER_SIDE: >-
+      Model attribution lives in cost_records (100%) and task_outcomes (99% wherever a model
+      ran), which is what licensed dropping messages.model.
+    ESCALATED: "ESC-131 — do you want the platform to produce its own training data?"
+    WAVE_8_CLOSES: "D10.1, D10.3, D10.4, D10.7, D11.1, D11.3, D11.4, D11.5."
+    NEXT: "Wave 9 — D16.1 Plugin surface (PARTIAL, P0, order 72)."
   D11_4_2026_09_04_the_conversation_history_is_in_no_export_at_all:
     map_check: "D11.4 — Session export & recap (MISSING, P2, wave 8). The Ask is product intent."
     NOTHING_BUILT: "The Ask is the operator's. What this item did was make it answerable."
@@ -9725,6 +9746,33 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_131_the_trajectory_corpus_already_exists_do_you_want_to_train_on_it:
+      premise_check: |
+        uv run python -c "
+        import sqlite3,os
+        con=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True)
+        n=con.execute('select count(*) from task_outcomes').fetchone()[0]
+        import pathlib
+        built=any(pathlib.Path('src/stackowl').rglob('*trajectory*.py'))
+        print(f'HOLDS {n} trajectories, no exporter' if not built else 'EXPIRED exporter exists')
+        "
+      question: >-
+        The map says we have "Nothing" for trajectory capture. We have 20,276 labelled
+        turns — input_text, the ordered tool_sequence, response_text, success, and a
+        quality_score on about half — plus six joinable tables. What is absent is only
+        the batch generator, the compressor and a training-shaped export. Do you want
+        the platform to produce its own training data, or is that out of scope?
+      why_evidence_cannot_settle_it: >-
+        It is a question about what StackOwl is FOR. The reference platform does this
+        because it is a research lab; whether an agentic OS should is a strategy call,
+        and the corpus existing tells you the cost is low without telling you the intent.
+      panel_recommendation: >-
+        Not now, and keep capturing. The corpus grows on its own and costs nothing extra;
+        building an exporter is cheap whenever the answer changes. If the answer is yes,
+        raise quality_score coverage (47%) first — an unlabelled trajectory is much less
+        useful than a labelled one, and that is the field a training run would key on.
+      blocked_until_answered: >-
+        All of D11.5. Nothing else — this item built nothing.
     ESC_130_your_conversation_history_is_in_no_export_and_is_the_feature_wanted:
       premise_check: |
         uv run python -c "
@@ -26138,19 +26186,39 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
+      brainstorm: done
+      architect:  no_change_needed   # nothing built — the Ask is strategy (ESC-131)
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D11.5.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "NOTHING BUILT. Whether the platform wants its own training data is strategy, not a
+         question evidence can settle."
+      - "The map's `StackOwl. Nothing` is WRONG. The corpus exists and is labelled; only the
+         batch generator, compressor and training-shaped export are absent."
+      - "task_outcomes.model is NOT a defect. The 11% denominator is three-quarters
+         pre-feature rows; since the feature shipped it is 90%, and 246 of the 253 unstamped
+         rows are AllProvidersUnavailableError — no model ran, so an empty stamp is correct."
     changes: []
-    notes: null
-
+    notes: >-
+      MEASURED 2026-09-04. task_outcomes holds 20,276 rows, one per turn, keyed by trace_id:
+      input_text 100%, tool_sequence 100% (real rows are ordered tool-call arrays),
+      tool_call_count 100%, success 100%, dna_snapshot 100%, response_text 99%, failure_class
+      52%, quality_score 47%, approach_rating 0.3%. Six more tables join on trace_id —
+      cost_records 130,420, reflections 6,427, messages 3,841, approach_rating_pending 1,427,
+      turn_decisions 766, message_ledger 498. THE 11% THAT WAS NOT A DEFECT: model reads
+      2,346/20,276, which is exactly the shape of an actuator wired on only some paths. CHECK
+      WHAT THE DENOMINATOR IS MADE OF — three of four eras are 0/5,069 because they predate
+      ESC-47/50, whose first stamped outcome is 2026-08-24 21:57. Since then: 2,346/2,599 =
+      90%. And the missing tenth is not a gap: 1+ tool turns 99%, zero-tool successes 100%,
+      and 246 of the 253 unstamped rows are AllProvidersUnavailableError — no provider was
+      reachable, so no model ran and the empty stamp is the CORRECT value. That also settles
+      D11.1's messages.model drop from the other side: attribution lives in cost_records
+      (100%) and task_outcomes (99% wherever a model ran).
   - id: D12.1
     title: "Platform adapter contract"
     domain: D12
