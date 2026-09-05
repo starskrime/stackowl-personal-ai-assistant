@@ -355,6 +355,17 @@ current:
       next_hour parameter across all 11 call sites, and the landmine comment about dropped
       minutes — removed with its mine, because a note that outlives its mine sends the next
       reader hunting a defect that no longer exists.
+    HONEST_SEVERITY_IT_WAS_FIRST_RUN_ONLY: >-
+      Measured on the live board AFTER the fix, correcting the impression the above could
+      leave: all 15 daily jobs hold a next_run_at consistent with their schedule INCLUDING
+      minutes (browser_cache_eviction daily@04:30 -> 09:30Z = 04:30 CDT). The deleted helper
+      could not have produced those. scheduler.py and owl_lifecycle.py BOTH recompute through
+      compute_next_run, so the duplicate was the lone outlier among THREE callers and its
+      damage was undone the first time each job fired. Blast radius: the FIRST run after a
+      job is seeded — wrong minute always, wrong hour on any host whose zone differs from
+      system.timezone. Smaller than "the scheduler uses the wrong timezone", recorded at its
+      true size, and exactly why it survived: the one wrong value each job held was
+      overwritten before anyone looked.
     EVIDENCE: >-
       7 passed across the two new test files (5 tripwires); 548 passed in tests/scheduler
       (two of which asserted the DEFECT and now assert the operator's zone). Four mutants
