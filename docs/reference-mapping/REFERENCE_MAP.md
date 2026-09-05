@@ -1222,7 +1222,18 @@ points**. A plugin's `register(ctx)` can add: lifecycle hooks (`pre_tool_call`, 
 argparse tree is wired into `hermes` at startup with no core edit.
 **StackOwl.** `plugins/` with registry, manifest, capabilities, remote install, verify. Hook set and
 CLI-command registration need confirming.
-**Ask.** Do our plugins get lifecycle hooks and CLI commands, or only tools?
+**CONFIRMED 2026-09-04 — both, and four more; this entry's "need confirming" is now answered and
+the ITEM IS ALREADY CLOSED (all seven stages done, `designs/D16.1.md`).** Plugins load AT BOOT
+from `~/.stackowl/plugins/` via `load_installed_plugins` + `LocalPluginLoader`, handed SEVEN
+registries: tools, **CLI commands** (`CommandRegistry`), scheduler handlers, channels, owls,
+**lifecycle hooks** (`HookRegistry`) and prompt contributors — against the reference's three.
+ALL SIX reference hook points exist and are DISPATCHED, not merely declared: `PRE_TOOL_CALL` /
+`POST_TOOL_CALL` from `tools/base.py`, `PRE_LLM_CALL` / `POST_LLM_CALL` from `providers/base.py`,
+`ON_SESSION_START` / `ON_SESSION_END` from `sessions/store.py` (twice each). Observe-only is
+ENFORCED rather than trusted — `dispatch` returns `None` whatever a hook returns, so no call site
+can grow a veto by accident — and with no plugins installed the whole surface costs one dict
+lookup. LIVE: `[plugins] boot: no plugins installed` on every boot, which is the loading path
+running and honestly reporting zero. NOT pip entry points — declined in ESC-16.
 
 ### D16.2 · "Plugins must not touch core" rule — `MISSING`
 **Hermes.** A named policy: plugins may not modify `run_agent.py`, `cli.py`, `gateway/run.py`,

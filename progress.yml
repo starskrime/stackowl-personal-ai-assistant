@@ -315,6 +315,34 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D16_1_2026_09_04_already_closed_and_the_map_still_said_it_needed_confirming:
+    map_check: "D16.1 — Plugin surface. I POINTED HERE WRONGLY: all seven stages were already done."
+    MY_OWN_POINTER_WAS_WRONG: >-
+      Last loop's NEXT said "wave 9 — D16.1 (PARTIAL, P0)". I read the verdict, priority and
+      order off the record without checking its STAGES, and the unworked-items query had
+      never listed it. D16.1 has been complete since 2026-08-21 with a 24KB design doc. The
+      next genuinely unworked item is D16.2.
+    WHAT_THE_MEASUREMENT_FOUND_ANYWAY: >-
+      Two stale records that would mislead the next reader. The map entry still says "hook
+      set and CLI-command registration need confirming", and the item carried a 2026-08-17
+      finding ("NOTHING IN THE RUNNING PLATFORM EVER LOADS A PLUGIN") in present tense,
+      eighteen days after the decision that closed it.
+    CONFIRMED_BOTH_AND_FOUR_MORE: >-
+      Plugins load AT BOOT via load_installed_plugins + LocalPluginLoader, handed SEVEN
+      registries — tools, CLI commands, scheduler handlers, channels, owls, lifecycle hooks
+      and prompt contributors — against the reference's three. All six reference hook points
+      are DISPATCHED, not merely declared: PRE/POST_TOOL_CALL from tools/base.py,
+      PRE/POST_LLM_CALL from providers/base.py, ON_SESSION_START/END from sessions/store.py.
+    THE_INSTRUMENT_LIED_AND_A_CONTRADICTION_CAUGHT_IT: >-
+      Grepping the hook-point STRINGS returned "0 mentions outside hooks.py" for all six,
+      one command after a grep had printed `hooks.dispatch(hooks.POST_TOOL_CALL, ...)`. The
+      call sites use the CONSTANTS, not the strings. Only the contradiction between two
+      measurements exposed it.
+    NO_DEFECT: >-
+      dispatch short-circuits on one dict lookup with no plugins installed, and returns None
+      whatever a hook returns — so observe-only is ENFORCED at the seam rather than trusted
+      of every call site.
+    NEXT: "D16.2 · Plugins must not touch core (MISSING, P2, wave 9, order 73)."
   D12_3_2026_09_04_three_of_the_four_channels_have_never_carried_a_message:
     map_check: "D12.3 — Generic relay adapter (MISSING, P1, wave 6). DEBT-114 required this re-measurement first."
     NOTHING_REFACTORED_NOTHING_DELETED: >-
@@ -27052,6 +27080,19 @@ items:
     order: 72
     map_ref: "docs/reference-mapping/REFERENCE_MAP.md#d161"
     IMPLEMENT_STAGE_REORDERED_2026_08_17:
+      SUPERSEDED_2026_09_04: >-
+        THE FINDING BELOW IS HISTORY, NOT THE CURRENT STATE, and it was left reading as
+        present-tense for eighteen days. Bakir decided the same day (2026-08-17) that
+        plugins load AT BOOT, and they do: startup/orchestrator.py calls
+        load_installed_plugins() with a LocalPluginLoader constructed with SEVEN
+        registries. Re-measured 2026-09-04 — all six reference hook points are
+        dispatched (PRE/POST_TOOL_CALL from tools/base.py, PRE/POST_LLM_CALL from
+        providers/base.py, ON_SESSION_START/END from sessions/store.py), and the live
+        log carries `[plugins] boot: no plugins installed` on every boot, which is the
+        loading path running and reporting zero rather than a catalogue counting
+        nothing. Kept rather than deleted because the finding is why the item was
+        reordered; marked because a superseded finding read as current is exactly the
+        cost this programme has already paid twice.
       finding: >-
         NOTHING IN THE RUNNING PLATFORM EVER LOADS A PLUGIN. Boot constructs
         PluginIndex (a catalogue) and PluginRegistry (a db table); LocalPluginLoader
