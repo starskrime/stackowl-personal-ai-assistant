@@ -315,6 +315,31 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D16_6_2026_09_04_not_rung_6_a_placeholder_in_the_brief_and_my_own_unsound_guard:
+    map_check: "D16.6 — Integrations (DIVERGENT, P2, wave 9). Stages verified not_started first."
+    THE_PREMISE_WAS_WRONG: >-
+      The map calls this "rung 6 for something they solve at rung 2". It is not rung 6: a
+      rung-6 core tool is model-callable and there is NO gmail or calendar tool among the 77
+      registered. The whole capability is ONE method contributing a morning-brief section
+      through the IntegrationAdapter ABC — so rung 2 (a COMMAND shape) is wrong too. The
+      fitting rung is 4, a plugin implementing the ABC that already exists.
+    DEFECT_1_A_PLACEHOLDER_IN_THE_BRIEF: >-
+      get_morning_brief_section returned a section titled "Email" whose only item was
+      "[Gmail brief section — live fetch requires active connection]", with no fetch in the
+      method. The same file states the rule twenty lines below: NEVER fabricate 'ok' for an
+      unperformed action (F024). Unreachable today, so fixing it changes no behaviour.
+    DEFECT_2_MY_OWN_GUARD_WAS_UNSOUND: >-
+      D16.4's tripwire asked whether a file contained the strings IntegrationRegistry AND
+      .register( anywhere, and reported three core "registrars" that actually register health
+      contributors, commands and owls. Co-occurrence is not a call. The false positive reached
+      the map, the design doc, progress.yml and a commit message, and made the violation sound
+      LIVE when it is UNWIRED. Fifth unsound-screen episode here, first that was mine.
+    THE_AST_DISTINCTION: >-
+      The placeholder guard reads string LITERALS via AST, not text — the fix's own comment
+      quotes the removed placeholder, and a substring scan cannot tell comment from code. It
+      failed on exactly that before being fixed. Assertion versus mention, soundly separable
+      this time because a Python comment is not an AST node.
+    NEXT: "D17.1 · Dangerous-command approval (P2, wave 9, order 78)."
   D16_5_2026_09_04_the_doctrine_was_already_adopted_the_evidence_line_was_not:
     map_check: "D16.5 — MCP (PARITY, P3, wave 9). Stages verified not_started first. Ask: adopt the DOCTRINE."
     ALREADY_ADOPTED: >-
@@ -9895,6 +9920,13 @@ current:
         Gmail OAuth token on disk was refreshed 2026-09-02, so this is in use, not dead
         code. "Retired means deleted" does not apply to something nobody has decided to
         retire, and a stop-and-brief is required for removing anything user-facing.
+      AMENDED_2026_09_04_BY_D16_6: >-
+        The rung is now named and the severity corrected. These are NOT rung-6 core tools —
+        there is no gmail or calendar tool among the 77 registered, and the whole capability
+        is one method contributing a morning-brief section through the IntegrationAdapter ABC.
+        So skill+CLI (rung 2) is the wrong shape too; the fitting rung is 4, a PLUGIN
+        implementing the ABC that already exists. And they are UNWIRED, not live: nothing in
+        src/ constructs either adapter, so moving them breaks nothing that currently runs.
       panel_recommendation: >-
         Move Gmail and Calendar to one plugin when there is a reason to touch them
         anyway, not as a dedicated project. The rule's value is preventing the FIFTH
@@ -28015,9 +28047,13 @@ items:
       extension: plugins can call register() at import time", and /connect tells the operator
       "No integrations registered. Install an integration plugin first." AND THE TREE DOES THE
       OPPOSITE — four vendor modules (gmail.py, gmail_settings.py, google_calendar.py,
-      google_oauth.py) in src/stackowl/integrations/, registered from THREE core sites
-      (cli/app.py, commands/assembly.py, startup/orchestrator.py), live rather than dormant:
-      the Gmail OAuth token on disk was refreshed 2026-09-02. The in-tree MEMORY-PROVIDER set
+      google_oauth.py) in src/stackowl/integrations/. CORRECTED 2026-09-04 BY D16.6: this record
+      first said "registered from THREE core sites". They are NOT — that came from an unsound
+      predicate of mine (a file containing both the strings IntegrationRegistry and .register(
+      anywhere); those three register health CONTRIBUTORS, COMMANDS and owls. Nothing in src/
+      constructs GmailAdapter or GoogleCalendarAdapter: the vendor code is in-tree but UNWIRED,
+      which is why /connect correctly says "install an integration plugin first". A Gmail OAuth
+      token was refreshed 2026-09-02, but no adapter reads it. The in-tree MEMORY-PROVIDER set
       is already effectively closed at one (BuiltinCuratedProvider), matching the reference.
       I GOT BOTH NUMBERS WRONG FIRST and the tests corrected them, which is why the assertion
       was written before the measurement was believed: `ls | tail -8` TRUNCATED the package
@@ -28092,19 +28128,54 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D16.6.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "THE PREMISE WAS WRONG: this is not rung 6. A rung-6 core tool is model-callable and
+         there is NO gmail or calendar tool among the 77 registered. The whole capability is
+         one method contributing a morning-brief section through the IntegrationAdapter ABC."
+      - "So skill+CLI (rung 2) is the wrong shape too — that is a COMMAND shape. The fitting
+         rung is 4, a plugin implementing the ABC that already exists and that
+         IntegrationRegistry.register() is documented open for."
+      - "The placeholder fix returns None rather than an empty section: the assembler omits it,
+         which is the honest answer until a real fetch exists."
+    changes:
+      - "src/stackowl/integrations/gmail.py — get_morning_brief_section no longer returns a
+         placeholder BriefSection; returns None with an INFO line saying no fetch is
+         implemented."
+      - "tests/integrations/test_the_brief_never_carries_a_placeholder.py — 3 tests, the third
+         reading STRING LITERALS via AST rather than scanning text, because the fix's own
+         comment quotes the removed placeholder and a substring scan cannot tell the two
+         apart. It failed on exactly that before being fixed."
+      - "tests/plugins/test_the_core_tree_does_not_grow_a_vendor_connector.py — the unsound
+         co-occurrence predicate replaced with `does any core module CONSTRUCT a vendor
+         adapter`. Mutation-proven."
+      - "src/stackowl/integrations/google_calendar.py + gmail.py — `_last_api_call_at` deleted:
+         initialised and written FOUR times across the two modules, read NOWHERE in src/ or
+         tests/. Found because removing the placeholder orphaned its only gmail write and the
+         ruff gate caught the unused import."
+    notes: >-
+      TWO DEFECTS. (1) get_morning_brief_section returned a PLACEHOLDER once is_connected()
+      passed — a section titled "Email" whose only item read "[Gmail brief section — live fetch
+      requires active connection]", with no fetch anywhere in the method, and is_connected() is
+      only oauth.exists(), a token FILE being present. The same file states the rule it broke
+      twenty lines below: "NEVER fabricate 'ok' for an unperformed action" (F024). Same rule,
+      one method short, with the rule in the same file. UNREACHABLE today (nothing constructs
+      the adapter), so this is a correction rather than a behaviour change. (2) MY OWN GUARD
+      FROM D16.4 WAS UNSOUND: its predicate asked whether a file contained the strings
+      IntegrationRegistry AND .register( anywhere, and reported three core "registrars" that
+      register health contributors, commands and owls instead. Co-occurrence is not a call.
+      That false positive reached the map, the D16.4 doc, progress.yml and a commit message,
+      and it made the violation sound LIVE when the true state is UNWIRED — materially
+      different, and it changes what ESC-133 asks. This is the fifth unsound-screen episode in
+      the programme and the FIRST WHERE THE UNSOUND SCREEN WAS MINE.
   - id: D17.1
     title: "Dangerous-command approval"
     domain: D17

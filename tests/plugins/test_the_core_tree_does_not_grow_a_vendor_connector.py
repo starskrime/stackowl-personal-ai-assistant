@@ -63,15 +63,10 @@ _VENDOR_SPECIFIC = {
     "google_oauth.py",
 }
 
-#: Core modules that register an integration at boot. This is the CURRENT state and
-#: it is what D16.4 says should not exist — pinned, not blessed, so a fourth
-#: registrar is a design event rather than a quiet commit. ESC-133 asks whether
-#: these move out to a plugin.
-_CORE_REGISTRARS = {
-    "cli/app.py",
-    "commands/assembly.py",
-    "startup/orchestrator.py",
-}
+#: The vendor adapter classes. Core must not CONSTRUCT one — that is the precise,
+#: checkable form of "do not wire a third-party product into core", and it is
+#: what the first version of this test failed to measure.
+_VENDOR_ADAPTERS = ("GmailAdapter", "GoogleCalendarAdapter")
 
 
 def _modules() -> set[str]:
@@ -117,34 +112,38 @@ def test_the_vendor_specific_set_never_grows() -> None:
 
 
 @pytest.mark.tripwire
-def test_no_further_core_module_registers_an_integration() -> None:
-    """The violation is LIVE, and this pins its size rather than pretending it away.
+def test_no_core_module_constructs_a_vendor_adapter() -> None:
+    """The precise form of the rule — and a correction of this test's first version.
 
-    A first draft of this test asserted that NO core module registers an
-    integration. That assertion was false: three do. I had grepped only inside the
-    integrations package and concluded "nothing in src/ calls register()" — the
-    test is what corrected it, which is the argument for writing the assertion
-    before believing the measurement.
+    THE FIRST VERSION WAS UNSOUND, in exactly the way this repo keeps refusing in
+    other people's screens. It asked whether a file contained the string
+    "IntegrationRegistry" AND the string ".register(" anywhere, and reported three
+    core "registrars": cli/app.py, commands/assembly.py, startup/orchestrator.py.
+    None of them registers an integration. They register health CONTRIBUTORS
+    (`agg.register(DbContributor(...))`), COMMANDS (`registry.register(factory())`)
+    and owls. Co-occurrence in a file is not a call, and that false positive was
+    recorded in the map, the design doc, progress.yml and a commit message before
+    the next item caught it.
+
+    What replaces it is a fact with one meaning: does any core module CONSTRUCT a
+    vendor adapter? Nothing does — `GmailAdapter` and `GoogleCalendarAdapter` have
+    no reference anywhere outside their own modules and their tests. The vendor
+    code is in-tree but UNWIRED, which is why `/connect` correctly reports "No
+    integrations registered. Install an integration plugin first."
     """
     src_root = _INTEGRATIONS.parent
-    callers: list[str] = []
+    constructors: list[str] = []
     for path in src_root.rglob("*.py"):
         if path.parent == _INTEGRATIONS:
-            continue  # the registry's own definition and its neighbours
+            continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if "IntegrationRegistry" in text and ".register(" in text:
-            callers.append(path.relative_to(src_root).as_posix())
+        for cls in _VENDOR_ADAPTERS:
+            if f"{cls}(" in text:
+                constructors.append(f"{path.relative_to(src_root).as_posix()}:{cls}")
 
-    unexpected = set(callers) - _CORE_REGISTRARS
-    assert not unexpected, (
-        f"core module(s) newly registering an integration: {sorted(unexpected)}.\n"
-        "D16.4: a third-party connector ships as a PLUGIN, and register() is open "
-        "for exactly that. Three core sites already do this and are pending "
-        "ESC-133; a fourth abandons the rule rather than amending it."
-    )
-    stale = _CORE_REGISTRARS - set(callers)
-    assert not stale, (
-        f"_CORE_REGISTRARS names module(s) that no longer register: {sorted(stale)}.\n"
-        "If ESC-133 was answered and an integration moved to a plugin, remove it "
-        "here — the list must shrink with the violation, or it stops being true."
+    assert not constructors, (
+        f"core module(s) constructing a vendor adapter: {sorted(constructors)}.\n"
+        "D16.4: a third-party connector ships as a PLUGIN. IntegrationRegistry."
+        "register() is open for exactly that, and /connect already tells the "
+        "operator to install one."
     )

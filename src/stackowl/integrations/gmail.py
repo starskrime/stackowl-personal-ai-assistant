@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import TYPE_CHECKING, Any
 
 from stackowl.brief.models import BriefSection
@@ -51,7 +50,6 @@ class GmailAdapter(IntegrationAdapter):
         self._brief_filter = brief_filter
         self._brief_max_items = brief_max_items
         self._autonomy_level = autonomy_level
-        self._last_api_call_at: float | None = None
         self._last_api_ok: bool = True
         log.debug("integrations.gmail.__init__: exit")
 
@@ -157,11 +155,23 @@ class GmailAdapter(IntegrationAdapter):
         if not await self.is_connected():
             log.debug("integrations.gmail.get_morning_brief_section: decision — not connected, returning None")
             return None
-        self._last_api_call_at = time.time()
-        items = ["[Gmail brief section — live fetch requires active connection]"]
-        result = BriefSection(key="email", title="Email", items=items[: self._brief_max_items])
-        log.debug("integrations.gmail.get_morning_brief_section: exit")
-        return result
+        # NO SECTION RATHER THAN A PLACEHOLDER ONE (D16.6). This returned a
+        # BriefSection titled "Email" whose only item was the literal string
+        # "[Gmail brief section — live fetch requires active connection]" — a
+        # section in the operator's morning brief announcing that nothing was
+        # fetched. `execute_action` below states the rule this broke: "NEVER
+        # fabricate 'ok' for an unperformed action" (F024). Same rule, one method
+        # short, with the rule written in this same file.
+        #
+        # `is_connected()` is only `oauth.exists()` — a token FILE being present,
+        # not a mailbox being read — so it cannot stand in for having content.
+        # Until this method performs a real fetch, the honest answer is None, and
+        # the assembler simply omits the section.
+        log.info(
+            "integrations.gmail.get_morning_brief_section: exit — no fetch implemented",
+            extra={"_fields": {"section": None, "connected": True}},
+        )
+        return None
 
     async def execute_action(self, action: str, params: dict[str, Any]) -> ActionResult:
         log.debug(

@@ -48,7 +48,6 @@ class GoogleCalendarAdapter(IntegrationAdapter):
         self._brief_max_items = brief_max_items
         self._autonomy_level = autonomy_level
         self._timezone = timezone
-        self._last_api_call_at: float | None = None
         self._last_api_ok: bool = True
         log.debug("integrations.google_calendar.__init__: exit")
 
@@ -159,7 +158,6 @@ class GoogleCalendarAdapter(IntegrationAdapter):
                 "integrations.google_calendar.get_morning_brief_section: decision — not connected, returning None"
             )
             return None
-        self._last_api_call_at = time.time()
         items = ["[Calendar brief section — live fetch requires active connection]"]
         result = BriefSection(
             key="calendar",
@@ -316,7 +314,6 @@ class GoogleCalendarAdapter(IntegrationAdapter):
                 None,
                 lambda: service.calendarList().list(maxResults=1).execute(),
             )
-            self._last_api_call_at = time.time()
             self._last_api_ok = True
             log.debug("integrations.google_calendar.health_check: exit — ok (probe succeeded)")
             return HealthStatus(
@@ -326,7 +323,6 @@ class GoogleCalendarAdapter(IntegrationAdapter):
                 latency_ms=(time.time() - t0) * 1000,
             )
         except Exception as exc:  # never crash the health aggregator
-            self._last_api_call_at = time.time()
             self._last_api_ok = False
             log.warning(
                 "integrations.google_calendar.health_check: probe failed",

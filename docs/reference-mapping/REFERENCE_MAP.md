@@ -1277,9 +1277,13 @@ June: `IntegrationRegistry.register()` is documented "open for extension: plugin
 register() at import time", and `/connect` tells the operator "No integrations registered.
 **Install an integration plugin first.**" But FOUR vendor-specific modules live in
 `src/stackowl/integrations/` — `gmail.py`, `gmail_settings.py`, `google_calendar.py`,
-`google_oauth.py` — registered from THREE core sites (`cli/app.py`, `commands/assembly.py`,
-`startup/orchestrator.py`), and it is live rather than dormant: the Gmail OAuth token on disk
-was refreshed 2026-09-02. The in-tree MEMORY-PROVIDER set is already effectively closed at one
+`google_oauth.py`. **CORRECTED 2026-09-04 by D16.6:** this entry first said they were
+"registered from THREE core sites". They are NOT — that came from an unsound predicate of mine
+(a file containing both the strings `IntegrationRegistry` and `.register(` anywhere), and those
+three register health CONTRIBUTORS, COMMANDS and owls. **Nothing in `src/` constructs
+`GmailAdapter` or `GoogleCalendarAdapter`**: the vendor code is in-tree but UNWIRED, which is
+why `/connect` correctly reports "install an integration plugin first". A Gmail OAuth token on
+disk was refreshed 2026-09-02, but no adapter reads it. The in-tree MEMORY-PROVIDER set is already effectively closed at one
 (`BuiltinCuratedProvider`), matching the reference. The rule is stated in
 `integrations/__init__.py` and enforced by a tripwire that pins BOTH the module set and the
 registrar set with set equality — a fifth vendor module or a fourth registrar fails the gate.
@@ -1313,6 +1317,21 @@ core tool.
 **StackOwl.** `integrations/` with OAuth manager + Gmail + Google Calendar as first-class code.
 **Gap.** Ours is rung 6 for something they solve at rung 2.
 **Ask.** Would Gmail/Calendar be better as a skill + CLI command pair?
+**ANSWERED 2026-09-04 — no, and the premise needs correcting first: it is not rung 6.** A rung-6
+"new core tool" would be model-callable, and there is NO gmail or calendar tool among the 77
+registered — zero. The entire capability of both adapters is one method,
+`get_morning_brief_section()`, contributing a section to the morning brief through the
+`IntegrationAdapter` ABC. So skill+CLI (rung 2) is the wrong shape too: this is an ADAPTER
+interface, not a command. The fitting rung is 4 — a plugin implementing the ABC that already
+exists, which `IntegrationRegistry.register()` is documented "open for extension" to accept.
+TWO DEFECTS FOUND. (1) `get_morning_brief_section` returned a PLACEHOLDER once
+`is_connected()` passed — a section titled "Email" whose only item read "[Gmail brief section —
+live fetch requires active connection]", with no fetch anywhere in the method. The same file
+states the rule it broke, twenty lines below: "NEVER fabricate 'ok' for an unperformed action"
+(F024). Same rule, one method short. Now returns None, and it was UNREACHABLE (nothing
+constructs the adapter), so this is a correction rather than a behaviour change. (2) D16.4's
+"three core registrars" was my own false positive; corrected above and the guard's predicate
+replaced. See `designs/D16.6.md`.
 
 ---
 
