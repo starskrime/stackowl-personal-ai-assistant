@@ -1131,8 +1131,16 @@ is no profile concept in settings — so that half is not built.
 **Hermes.** Webhook events may carry third-party content, so the webhook toolset is deliberately
 constrained to 4 read-only tools to blunt prompt injection.
 **StackOwl.** `webhooks/` accepts and enqueues; the resulting job gets the normal tool surface.
-**Gap.** A public webhook can currently reach shell.
+**Gap.** A public webhook can currently reach shell. — **FALSIFIED 2026-08-28.**
+`WebhookHandlerJob.execute` is a stub that never enters the pipeline, and the receiver
+defaults to disabled, so there is no live path from the internet to `shell`.
 **Ask.** Security item. Raise priority?
+**Answered 2026-09-05 — `docs/reference-mapping/designs/D12.8.md`.** The exposure was
+never the webhook: measured, it is the browser, and it is ordinary work. A fence
+(`infra/untrusted.py`) now marks external content wherever it enters and names its
+source — 213 wraps in production — with ESC-110's narrow-on-demand above it, declared
+in the fetch call BEFORE the content is readable. `MISSING` still stands for the
+webhook toolset itself: that lane is a stub, and Story 11 is the trigger to revisit.
 
 ---
 

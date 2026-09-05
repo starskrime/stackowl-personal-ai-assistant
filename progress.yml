@@ -315,6 +315,43 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D12_8_2026_09_05_the_closing_query_that_returned_zero_now_returns_213:
+    map_check: "D12.8 Untrusted-input toolset — wave 6, order 46, the earliest item with unstarted stages (5/7 done). validate was partial, document not_started."
+    WHAT_WAS_LEFT_AND_WHY_IT_WAS_LEFT: >-
+      D12.8 shipped its marker on 2026-09-02 and could not close: its own acceptance query,
+      `[untrusted] wrapped external content`, returned ZERO — the line had only just started
+      existing, so the item was honestly parked at validate=partial rather than declared done.
+      That is the discipline working; the item was waiting for traffic, not for code.
+    THE_QUERY_NOW_ANSWERS: >-
+      213 wraps: web_search 178, browser_extract 22, browser_navigate 13, first appearing
+      2026-09-04 (12) then 2026-09-05 (201). The fence fires in production, names its source,
+      and is countable — which is the whole thing D12.8 set out to make true.
+    THE_ZERO_I_ALMOST_REPORTED_AS_A_HOLE: >-
+      web_fetch shows 678 entries, 525 successful exits ALL status=200, and ZERO wraps —
+      while `web_fetch.py:232` demonstrably calls the fence on its success path. I was one
+      step from recording a live security gap: 525 fetched pages reaching the model unfenced.
+      The dates refute it. The fence reached web_fetch in commit 1767b9ab on 2026-09-02, and
+      web_fetch's successful runs were 522 on 2026-08-28, 1 on 08-29, 2 on 08-31 — it has not
+      succeeded once since the fence landed. Same for pdf. A zero over a zero denominator,
+      and the difference between that and a defect was four days of dates.
+    THE_EXPOSURE_IS_A_RATE_AND_REPORTING_THE_COUNT_WOULD_HAVE_LIED: >-
+      The record's figure was 66 turns mixing external content with a powerful tool. Today it
+      is 6. That is NOT risk receding: fetching turns fell from 256 to 25 over the same
+      windows. As a rate the exposure is 24% of fetching turns over 7 days and 43% over 14 —
+      unchanged in kind. This is exactly the ESC-114 error (a 24x workload drop read as a fix)
+      and the second time in this session that a falling count nearly became a false all-clear.
+    MY_OWN_DENOMINATOR_WAS_WRONG_FIRST: >-
+      I counted 1,297 "turns with a tool sequence" before noticing `tool_sequence` is often
+      the literal string '[]' — an empty list that passes a `!= ''` filter and can co-occur
+      with nothing. The honest denominator is 590 turns that actually used a tool. Printing
+      one raw value is what exposed it.
+    VERDICT_UNCHANGED_AND_THAT_IS_DELIBERATE: >-
+      MISSING still stands for the WEBHOOK TOOLSET the map names, because the webhook handler
+      is still a stub and building a constrained toolset for a lane that does not dispatch
+      would be the dead seat the standing rule forbids. What the measured exposure actually
+      needed — a fence, and ESC-110's narrow-on-demand above it — is live. The document says
+      both, and names Story 11 as the trigger to revisit.
+    NEXT: "D06.1 Pluggable execution backends (wave 10, order 99) is the next unstarted mapped item."
   DEBT121_2026_09_05_the_platform_now_measures_the_prefix_it_re_sends:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-121."
     ROOT_CAUSE: >-
@@ -28687,10 +28724,10 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D12.8.md"
+    doc_last_verified: "2026-09-05"
     decisions: []
     changes: []
     notes: null
