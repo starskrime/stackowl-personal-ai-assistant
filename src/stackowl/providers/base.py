@@ -470,10 +470,30 @@ class ModelProvider(ABC):
     def supports_cache_breakpoints(self) -> bool:
         """Whether this provider needs EXPLICIT prompt-cache markers (D01.2).
 
-        Two protocols, two economics. An OpenAI-protocol backend caches a
-        byte-identical prefix AUTOMATICALLY, so D01.1's frozen prompt already
-        collects the discount and there is nothing to mark. An Anthropic-protocol
-        backend caches only what the request explicitly marks with
+        Two protocols, two economics — and the OpenAI half of that sentence was an
+        ASSUMPTION stated as a fact until 2026-09-05. It read: "An OpenAI-protocol
+        backend caches a byte-identical prefix AUTOMATICALLY, so D01.1's frozen
+        prompt already collects the discount and there is nothing to mark."
+
+        THAT IS A PROPERTY OF A BACKEND, NOT OF A WIRE PROTOCOL, and it was
+        self-sealing: returning False here means no marker is ever sent, so no
+        positive can ever be observed, so `cache_breakpoint_probes` — which by
+        design records only positives — can never contradict it. The claim removed
+        its own falsifier.
+
+        MEASURED: `cache_stats_reported` says `not_reported` on 5,977 of 5,977
+        readings, `cached_input_tokens` is 0 across 130,667 calls and ~708M input
+        tokens, and this deployment's gateway returns no `prompt_tokens_details` at
+        all. 384,429,704 tokens — 64% of that provider's input bill — is prefix
+        re-sent inside the same turn, and NOBODY CAN SAY whether it was free.
+        Operator decision (ESC-149, 2026-09-05): assume it is NOT cached and treat
+        it as real spend. So the honest statement is that returning False here buys
+        nothing measurable on this deployment; it is retained because sending
+        Anthropic-shaped markers to an OpenAI-protocol endpoint would be worse than
+        useless, not because the discount is known to be collected.
+
+        An Anthropic-protocol backend caches only what the request explicitly marks
+        with
         ``cache_control``, so the same frozen prompt buys **nothing at all**
         without a marker — which is exactly the state StackOwl shipped in until
         this item (``grep -rn cache_control src/`` returned zero).

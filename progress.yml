@@ -315,6 +315,42 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT122_2026_09_05_the_prefix_is_fine_for_90_percent_and_fatal_for_1:
+    map_check: "No mapped item matches — evidence-led, DEBT-122. Taken because ESC-149's answer named prefix reduction THE TOP ITEM."
+    ROOT_CAUSE: >-
+      Admission prices a tool by whether it FITS (against a 262,144-token window); the
+      platform then PAYS for it once per round against a 500,000-token turn cap. Nothing
+      multiplies size by rounds, so a tool's real cost has never been expressed anywhere.
+    THE_NUMBERS_THAT_CHANGED_WHAT_I_SHIPPED: >-
+      p50 = 2 prefix rounds (8.0% of the turn cap), p90 = 8 (31.8%), p99 = 21 (83.6%). I
+      came in intending to cut the prefix. The distribution says a static cut taxes the 90%
+      to help the 1%: at a 50% share, sizing at p90 changes nothing and sizing at p99 leaves
+      4 of 57 discretionary tools. So no static budget shipped — that would have been a
+      confident wrong answer to a correct priority.
+    WHAT_SHIPPED: >-
+      (1) A tripwire pricing the tool block by its RECURRING cost — tokens x p90 rounds
+      against the turn cap — with a 40% ceiling that today reads 31.8% and fires at roughly
+      +20 tools, the exact increment that moves the token cap's crossing from ~20 rounds to
+      ~17. It carries the remedies in ranked order and a companion test proving discovery
+      (`tool_search`, `tool_describe`) is guaranteed, so demotion stays a presentation change
+      rather than the `skills_list` capability cut. (2) The correction ESC-149 settled:
+      providers/base.py asserted an OpenAI-protocol backend "caches a byte-identical prefix
+      AUTOMATICALLY, so the frozen prompt already collects the discount". Self-sealing —
+      returning False means no marker is sent, so no positive can be observed, so the probe
+      that records only positives can never contradict it.
+    A_MUTANT_SURVIVED_AND_IT_WAS_MY_TEST_THAT_WAS_WRONG: >-
+      Deleting `* P90_PREFIX_ROUNDS` — pricing a tool ONCE, the precise defect this file
+      names — left all four tests green. The test meant to pin it RE-DERIVED the arithmetic
+      instead of calling the guard's, so it was duplicating the code under test rather than
+      exercising it. Extracted to one `_turn_cost_share()` both callers ask; the mutant now
+      fails. Found by asking what a mutant would survive BEFORE running it.
+    NOT_BUILT_AND_WHY_IT_IS_A_BRIEF_NOT_A_DODGE: >-
+      The tail needs the prefix to shrink as a turn runs long, which means re-fitting the
+      tool array mid-turn. D05.2 deliberately froze that array because per-turn variation
+      defeated the prompt-cache marker — and ESC-149's answer (assume no caching) removes
+      that premise. A panel finding that contradicts a recorded decision is an explicit
+      stop-and-brief, so it goes to him rather than into the tree.
+    NEXT: "ESC-147 and ESC-148 are both authorised, small and certain; the mid-turn re-fit needs his word."
   OPERATOR_ANSWERED_2026_09_05_four_escalations_cleared_in_one_sitting:
     what_this_record_is: >-
       Not an item. Four escalations were put to Bakir and answered; recording them
@@ -14001,6 +14037,36 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-122
+    found: 2026-09-05
+    what: >-
+      A TOOL IS PRICED AS IF IT WERE PAID ONCE, AND IT IS PAID EVERY ROUND. Admission asks
+      only "does this fit the 262,144-token context WINDOW" — a question about one request —
+      while the tool is then re-sent against a 500,000-token per-TURN cap. Nothing in the
+      tree multiplies a schema's size by the number of rounds it will ride on.
+    evidence: >-
+      Measured 2026-09-05. 77 tools = 76,620 chars = ~19,901 tokens at the deployment's
+      back-derived 3.85 chars/token. The tier machinery already exists and is correct: 20
+      GUARANTEED tools (7,238 tok, non-evictable) and 57 DISCRETIONARY (12,663 tok,
+      budget-eligible, ranked by measured per-owl usage). It has simply never had a reason
+      to run — zero eviction events in any retained log, because the budget is
+      `window - fixed_cost` and the window is 262,144. The registry's own comment records
+      the block cost ~7,524 tokens when tool_count_cap was 30; it has grown 2.6x since.
+    THE_MEASUREMENT_THAT_REFRAMED_THE_ITEM: >-
+      Over 6,772 traces carrying a prefix-bearing round: p50 = 2 rounds, p90 = 8, p99 = 21,
+      max 140. So the prefix costs 8.0% of the turn cap at p50, 31.8% at p90 and 83.6% at
+      p99. THE PREFIX IS NOT A PROBLEM FOR 90% OF TURNS AND IS CATASTROPHIC FOR THE 1% —
+      which are exactly the turns that die.
+    decision: >-
+      NO STATIC BUDGET SHIPPED, and the arithmetic is why rather than caution. Computed at a
+      50% share of the turn cap: sizing the tool budget at p90 changes NOTHING today, while
+      sizing at p99 admits 4 of 57 discretionary tools. There is no single static number that
+      helps the tail without taxing the body, so shipping one would have been a confident
+      wrong answer to the operator's "make prefix reduction the top item". What shipped is a
+      CEILING at p90 — the body of the distribution — that fires if the block grows by
+      roughly 20 more tools, plus the correction of the assertion that hid the whole
+      question. The tail needs a turn-length-aware fix, which is briefed rather than built:
+      it contradicts D05.2's recorded stability decision, and that is a stop-and-brief.
   - id: DEBT-121
     found: 2026-09-05
     what: >-
