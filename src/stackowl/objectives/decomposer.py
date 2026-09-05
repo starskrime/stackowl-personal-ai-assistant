@@ -169,6 +169,11 @@ class ObjectiveDecomposer:
                 model=model,
                 max_tokens=_DECOMP_MAX_TOKENS,
                 temperature=_DECOMP_TEMPERATURE,
+                # A capped budget AND reasoning left on is the exact pair the shared
+                # seam was built for: the model spends _DECOMP_MAX_TOKENS on
+                # invisible thinking, returns empty, and this degrades to the
+                # single-step fallback — which reads as "nothing to decompose".
+                disable_thinking=True,
             )
         except Exception as exc:  # noqa: BLE001 — never strand an objective
             log.engine.error(
@@ -234,6 +239,11 @@ class ObjectiveDecomposer:
                 model=model,
                 max_tokens=_DECOMP_MAX_TOKENS,
                 temperature=_DECOMP_TEMPERATURE,
+                # A capped budget AND reasoning left on is the exact pair the shared
+                # seam was built for: the model spends _DECOMP_MAX_TOKENS on
+                # invisible thinking, returns empty, and this degrades to the
+                # single-step fallback — which reads as "nothing to decompose".
+                disable_thinking=True,
             )
         except Exception as exc:  # noqa: BLE001 — never strand an epic
             log.engine.error(

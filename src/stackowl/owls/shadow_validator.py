@@ -339,7 +339,10 @@ class ShadowValidator:
         )
         messages = self._prompt_builder.build(replay_outcome)
         try:
-            result = await provider.complete(messages, model=model)
+            # disable_thinking: the critic this mirrors gets it via safe_complete;
+            # without it an empty reply becomes quality=None, which this validator
+            # treats as NOT verified — silently rejecting a good DNA proposal.
+            result = await provider.complete(messages, model=model, disable_thinking=True)
         except Exception as exc:  # B5 — never let a critic-call failure crash validate()
             log.owls.warning(
                 "[shadow] score_replay: critic provider.complete failed — treating as unscored",

@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D04_4_2026_09_05_the_document_stage_and_the_bug_the_missing_router_was_hiding:
+    map_check: "D04.4 — Auxiliary-model router. Stages read 6/7 done from 2026-09-03; only `document` was open."
+    THIS_ITEM_WAS_ALREADY_AT_SIX_OF_SEVEN: >-
+      A 2026-09-03 session recorded D04_4_..._a_tier_ladder_whose_rungs_are_all_the_same_model
+      and shipped describe_tier_ladder(), tier_ladder_is_degenerate() and a boot INFO line;
+      ESC-111 answered "leave it". Only the document stage was open, so the brainstorm was
+      NOT redone — its findings were re-verified instead, and they hold: the boot line still
+      fires on every boot carrying degenerate: True, and my own independent measurement of
+      cost_records reproduced its conclusion (side tasks and conversational turns both at
+      100% NeraAiRaw/neraai-v1-raw).
+    THE_ASKS_FRAMING_FAILS_BOTH_HALVES: >-
+      "High-value, low-risk early adopt" — the map wrote its conclusion into the question.
+      High-value is arithmetically ZERO: a router's only product is choosing between models,
+      and applied to side tasks (5% of spend) where every choice resolves to one string the
+      ceiling is zero BY CONSTRUCTION. Low-risk is INVERTED: the risk arrives on the first
+      day it does something, changing thirteen modules at once with no per-task acceptance
+      evidence. And the reference's OWN default is not to route — 8,255 lines shipping
+      exactly two pinnable tasks, both unpinned, with an `auto` that is an availability
+      fallback of the same kind as our get_with_cascade.
+    WHAT_THE_MISSING_ROUTER_WAS_HIDING_IS_CORRECTNESS_NOT_COST: >-
+      safe_complete sets disable_thinking=True; the provider defaults it FALSE
+      (openai_provider.py:1461). So every call bypassing the seam spends its whole output
+      budget on invisible reasoning and returns empty — and SEVEN sites coerced empty into a
+      benign default: shadow_validator (quality=None -> "fail closed" -> a good DNA proposal
+      SILENTLY REJECTED), planner/proposer (frozenset() -> "selected: 0" at INFO),
+      decomposer x2 (a capped budget AND reasoning on — the exact pair the seam exists for),
+      rollover_summary, salvage, owl_build_infer. Nothing errors; every one reads as the
+      system deciding something.
+    THE_FIX_IS_THE_GUARD_NOT_THE_PATCHES: >-
+      classifier_base's own docstring records this bug "independently rediscovered and
+      patched" in FIVE places — "five incidents, one root cause, never fixed once at a shared
+      layer until now." The shared layer was built and seven sites still bypassed it, so
+      patching them alone would have been the sixth rediscovery. A tripwire now fails any
+      AWAITED completion that neither disables thinking nor justifies keeping it, with an
+      allowlist for calls where reasoning IS the product.
+    THREE_CORRECTIONS: >-
+      My first sweep counted ".complete(" textually and reported 14 bypassing modules:
+      parliament/orchestrator.py was a FALSE POSITIVE (a frozen-dataclass state transition,
+      not an LLM call) and six real ones were missing. The detector now requires an awaited
+      call with a messages argument. Its LIMIT is stated rather than papered over — it cannot
+      see moa_runner, which passes the coroutine into a wait_for. And shadow_validator's
+      comment claims its tier "mirrors CriticScorerHandler's default": the tiers do agree,
+      but the comment tracks the WRONG FIELD — the real divergences were disable_thinking and
+      an unguarded get_with_cascade.
+    EVIDENCE: >-
+      3 passed on the new guard; 1,187 passed across tests/owls, tests/objectives and
+      tests/providers; 890 across tests/pipeline/planner, tests/pipeline/budget, tests/memory
+      and tests/tools/meta. Two mutants caught and each restored from a file copy: removing
+      disable_thinking from a fixed site, and a stale allowlist entry.
+    NEXT: "D04.5 · Tier escalation (AHEAD, wave 10, order 97) — and note this item just
+      measured that the ladder it escalates along is degenerate."
   D04_3_2026_09_05_one_key_zero_failures_and_two_things_i_nearly_called_dead:
     map_check: "D04.3 — Credential pool & rotation (MISSING, wave 10, order 95). Stages verified not_started first."
     THE_ASK_ANSWERS_NO_MEASURABLY: >-
@@ -10553,6 +10604,42 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_145_the_checkable_condition_under_which_a_router_earns_its_place:
+      premise_check: |
+        uv run python -c "
+        import yaml, os
+        cfg = yaml.safe_load(open(os.path.expanduser('~/.stackowl/stackowl.yaml'))) or {}
+        live = [p for p in (cfg.get('providers') or []) if p.get('enabled')]
+        models = {p.get('default_model') for p in live}
+        print(f'HOLDS {len(live)} enabled provider(s), {len(models)} distinct model(s) — '
+              'a router still has nowhere to route'
+              if len(live) < 2 or len(models) < 2 else 'EXPIRED a second model is now live')
+        "
+      question: >-
+        Not a question for now — a TRIPWIRE ON A DECISION, recorded so the answer is
+        revisited by evidence rather than by memory. D04.4 declined the auxiliary
+        router because a router's only product is choosing between models and there is
+        exactly one: four providers, three disabled and all naming the same model, and
+        the one enabled provider resolving fast, standard AND powerful to
+        NeraAiRaw/neraai-v1-raw. The condition that flips it is precise and checkable:
+        TWO OR MORE distinct models across TWO OR MORE enabled providers. That makes
+        routing possible. A second clause makes it worth the blast radius: side-task
+        spend at or above roughly 20% of input tokens — it is 5% today. The premise
+        check above tests the first clause on every loop.
+      why_evidence_cannot_settle_it: >-
+        Evidence settles it completely TODAY — the answer is no, and ESC-111 already
+        recorded your "leave it" on wiring a cheaper model. What evidence cannot do is
+        notice the day you change your mind and enable a second model, which is exactly
+        when a decision recorded once and never re-read becomes wrong. This entry exists
+        so that day is caught by the loop rather than by someone remembering.
+      panel_recommendation: >-
+        NOTHING TO DO. Leave it open with its check; it costs one line per loop and
+        closes itself the moment its premise expires. If it ever does expire, the router
+        should be a PARAMETER of the existing seam in classifier_base, never a second
+        engine beside it — the standing rule against duplicating something that already
+        runs work applies exactly here.
+      blocked_until_answered: >-
+        Nothing. D04.4 is closed 7/7.
     ESC_144_should_command_join_keychain_and_file_as_a_secret_source:
       premise_check: |
         uv run python -c "
@@ -22405,9 +22492,9 @@ items:
       cleanup:    no_change_needed
       test:       done
       validate:   done
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      document:   done
+    doc: "docs/reference-mapping/designs/D04.4.md"
+    doc_last_verified: "2026-09-05"
     decisions: []
     changes: []
     notes: null

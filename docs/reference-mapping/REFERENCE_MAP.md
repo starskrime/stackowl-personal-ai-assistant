@@ -329,6 +329,32 @@ ordered fallback list.
 `critic_scorer`, `reflection`, judges — each resolving its own model.
 **Gap.** No single seam for "cheap model work", so cost/latency of side tasks is unmanaged.
 **Ask.** This looks like a high-value, low-risk early adopt. Agree?
+**MEASURED 2026-09-03 and 2026-09-05 — NO, ON BOTH HALVES, and the framing is worth
+rejecting explicitly because the map wrote its conclusion into the question.** The GAP LINE IS
+HALF RIGHT: the seam already exists — `interaction/classifier_base.py` gives one resolution
+chain (`resolve_cascade_tier`, circuit-aware, walks fast->standard->powerful->local, never
+raises; plus `safe_complete`) and THIRTEEN modules use it. What does not exist is anything
+cheaper to route TO: four providers, three disabled and all naming the SAME model, and the one
+enabled provider declares fast AND standard AND powerful, so **every rung resolves to
+`NeraAiRaw/neraai-v1-raw`** — cost records agree, side tasks and conversational turns both at
+100%. **"High-value" is arithmetically ZERO** (a router's product is choosing between models;
+applied to side tasks at 5% of spend where every choice resolves to one string, the ceiling is
+zero by construction), and **"low-risk" is INVERTED** — the risk arrives on the first day it
+does something, changing thirteen modules at once. **The reference's own default is NOT to
+route:** its `auxiliary_client.py` is 8,255 lines but ships exactly TWO pinnable tasks, both
+`provider: "auto"`, `model: ""`, while ~14 task labels appear at its call sites; its `auto` is
+an availability fallback of the same kind as our `get_with_cascade`. **WHAT SHIPPED (09-03):**
+`describe_tier_ladder()`, `tier_ladder_is_degenerate()` and a boot INFO line, because the real
+defect was that tier routing is a NO-OP and nothing said so — verified still firing.
+ESC-111 answered "leave it". **WHAT SHIPPED (09-05):** the concrete cost of bypassing the seam
+is CORRECTNESS, not cents. `safe_complete` sets `disable_thinking=True`; the provider defaults
+it FALSE, so a bypassing call spends its whole output budget on invisible reasoning and
+returns empty — and SEVEN sites coerced empty into a benign default, most sharply
+`shadow_validator`, where it becomes `quality=None` and **silently rejects a good DNA
+proposal**. `classifier_base`'s own docstring records this bug being "independently
+rediscovered and patched" in FIVE places — "five incidents, one root cause". All seven fixed
+and a tripwire now fails any awaited completion that neither disables thinking nor justifies
+keeping it. See `designs/D04.4.md`.
 
 ### D04.5 · Tier escalation — `AHEAD`
 **Hermes.** `smart_model_routing` config + `/fast`; no in-loop escalation.

@@ -173,7 +173,9 @@ async def summarize_findings(
         return None
 
     try:
-        result = await provider.complete(messages, model)
+        # disable_thinking: a capped salvage budget spent on invisible reasoning
+        # returns empty and degrades to the floor, which reads as a normal salvage.
+        result = await provider.complete(messages, model, disable_thinking=True)
     except Exception as exc:  # noqa: BLE001 — degrade to the floor, never crash the exit
         log.engine.warning(
             "[budget] salvage: provider failed — falling back to the floor",

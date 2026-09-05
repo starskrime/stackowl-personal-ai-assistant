@@ -279,8 +279,10 @@ class RolloverSummaryHandler(JobHandler):
                                "prompt_chars": len(prompt),
                                "messages": len(transcript)}},
         )
+        # disable_thinking: a summary budget spent on invisible reasoning returns
+        # empty, and an empty summary is indistinguishable from "nothing to say".
         result = await provider.complete([Message(role="user", content=prompt)],
-                                         model=model)
+                                         model=model, disable_thinking=True)
         return str(getattr(result, "content", "") or "")
 
     async def _stage(self, summary: str, *, scope: str, ended: str) -> bool:

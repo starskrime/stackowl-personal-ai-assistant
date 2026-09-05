@@ -45,7 +45,12 @@ async def _complete(providers: ProviderRegistry | None, prompt: str) -> str | No
         return None
     try:
         provider, model = reg.get_by_tier(_FAST_TIER)
-        result = await provider.complete([Message(role="user", content=prompt)], model=model)
+        # disable_thinking: this fail-opens to None, so an empty reply looks
+        # exactly like "the model had nothing to infer" and the caller asks the
+        # operator instead — a silent downgrade of the whole inference step.
+        result = await provider.complete(
+            [Message(role="user", content=prompt)], model=model, disable_thinking=True
+        )
     except Exception as exc:  # fail-open — caller falls back to asking
         log.tool.warning("owl_build.infer: provider call failed — ask instead", exc_info=exc)
         return None

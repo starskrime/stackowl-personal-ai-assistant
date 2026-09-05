@@ -119,7 +119,9 @@ class ToolProposer:
         ]
         try:
             provider, model = self._providers.get_with_cascade("fast")
-            result = await provider.complete(messages, model=model)
+            # disable_thinking: an empty reply parses to frozenset(), so the planner
+            # proposes no tools and logs it as an ordinary "selected: 0".
+            result = await provider.complete(messages, model=model, disable_thinking=True)
         except Exception as exc:  # noqa: BLE001 — fail-open; planner decides
             log.engine.warning(
                 "[planner] proposer.propose: provider failed — empty",
