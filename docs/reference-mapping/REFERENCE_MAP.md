@@ -293,6 +293,32 @@ the error classifier can decide "rotate credential" as a distinct action from "f
 provider". Plus `credential_sources.py` / `secret_sources/` (1Password, Bitwarden, command).
 **StackOwl.** One key per provider from config.
 **Ask.** Do you run multiple keys per provider today?
+**MEASURED 2026-09-05 — NO, AND `MISSING` IS TOO FLAT.** Four providers are configured,
+**one is enabled** (NeraAiRaw) with **one** api_key, and `ProviderConfig.api_key` is
+`str | None` — the model permits nothing else. **Demand is zero:** across **502,215 log
+records in 9 files** there are exactly TWO distinct auth-or-rate-limit messages — a 400
+payload rejection (twice, our own request) and `credential_rotation handler registered` (569
+times). Not one rate-limit event, not one auth failure, ever. (A first `grep -c` reported
+271/250/262 hits for "429"/"401"/"403"; they were OUTPUT TOKEN COUNTS — `(640in/429out
+tokens)`.) **AND THE HALF THE MAP CREDITS THE REFERENCE WITH IS ALREADY HERE:** the error
+classifier that "can decide rotate-credential as a distinct action" exists in
+`providers/_resilient_round.py` and its docstring says it was deliberately ported — `AUTH`
+(401/403), `RATE_LIMIT` (429, "back-pressure, not an outage"), `BILLING` (402, "credit
+exhausted; rotate, do not retry"), PAYLOAD_TOO_LARGE, TIMEOUT, BAD_REQUEST, SERVER_5XX, each
+mapped to a RecoveryAction and pinned by `tests/providers/test_failure_taxonomy.py`. Ours
+dropped their English-substring matching and their runtime-specific member names. **Only the
+POOL is absent, and there is nothing to put in it.** **TWO NEAR-MISSES, both checked before
+concluding:** `credential_rotation` is a NAME COLLISION — a browser-session liveness check,
+registered 569 times with ZERO `jobs` rows, but reachable on demand via `cronjob.py:520`'s
+generic `handler_name=handler`, so not dead ("the zero-row table is the QUESTION"); and
+`FailureCause` appears zero times outside its module but the retry loop IS its consumer.
+**WHAT SHIPPED INSTEAD:** `SecretResolver._from_file` read secret files without ever looking
+at their mode. The operator's own are correct (`700` dir, `0600` on all six keys) so the
+check is SILENT on his box; it exists for the invisible case — a restore or `cp` leaving a
+key world-readable, which the platform would have read forever without a word. It WARNS and
+still returns the secret (D18.9: fail closed only when refusing prevents the harm), stays
+quiet when the mode is right (D18.7: a guard that fires on correct code is never wired), and
+is POSIX-guarded. See `designs/D04.3.md`.
 
 ### D04.4 · Auxiliary-model router — `MISSING`
 **Hermes.** `agent/auxiliary_client.py` — **one** resolution chain for every side-LLM task

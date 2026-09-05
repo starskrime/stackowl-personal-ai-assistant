@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D04_3_2026_09_05_one_key_zero_failures_and_two_things_i_nearly_called_dead:
+    map_check: "D04.3 — Credential pool & rotation (MISSING, wave 10, order 95). Stages verified not_started first."
+    THE_ASK_ANSWERS_NO_MEASURABLY: >-
+      Four providers configured, ONE enabled (NeraAiRaw) with ONE api_key, and
+      ProviderConfig.api_key is str|None so the model permits nothing else. Across
+      502,215 log records in 9 files there are exactly TWO distinct auth-or-rate-limit
+      messages: a 400 payload rejection (twice, our own malformed request) and a handler
+      registration line. Not one rate-limit event, not one auth failure, ever. A pool for
+      one key and no failures is decoration.
+    MY_FIRST_DEMAND_MEASUREMENT_WAS_WRONG: >-
+      A raw grep -c reported 271 hits for "429", 250 for "401" and 262 for "403" —
+      suspiciously alike, and they were OUTPUT TOKEN COUNTS: `(640in/429out tokens)`.
+      Parsing the JSON and matching message text left two. A substring count over a file
+      of UUIDs and token totals measures nothing.
+    THE_MAPS_MISSING_IS_TOO_FLAT: >-
+      The half it credits the reference with — an error classifier that can decide
+      "rotate credential" as a distinct action — is ALREADY HERE and its docstring says
+      it was deliberately ported: AUTH, RATE_LIMIT, BILLING ("credit exhausted; rotate,
+      do not retry"), PAYLOAD_TOO_LARGE, TIMEOUT, BAD_REQUEST, SERVER_5XX, each mapped to
+      a RecoveryAction and pinned by tests/providers/test_failure_taxonomy.py. Ours
+      dropped their English-substring matching and their runtime-specific member names.
+      Only the POOL is absent, and there is nothing to put in it.
+    TWO_NEAR_MISSES_BOTH_CHECKED_AND_BOTH_WOULD_HAVE_BEEN_WRONG: >-
+      `credential_rotation` is a NAME COLLISION — a browser-session liveness check, not
+      API-key rotation — registered 569 times with ZERO jobs rows. It looked like dead
+      code; it is reachable on demand through cronjob.py:520's generic
+      handler_name=handler. CLAUDE.md's "the zero-row table is the QUESTION, never the
+      answer" stopped a wrong deletion. And FailureCause appears zero times outside its
+      module, which looked like the write-with-no-reader shape found twice this week —
+      but the retry loop IS its consumer, used ten times internally and pinned by its own
+      test file.
+    WHAT_SHIPPED_INSTEAD: >-
+      SecretResolver._from_file read secret files without ever looking at their mode. The
+      operator's own are correct — 700 on the directory, 0600 on all six keys — so the
+      check is SILENT on his box, which is what a healthy guard looks like. It exists for
+      the invisible case: a restore, a cp, or an archive extracted without modes leaving a
+      key readable by every process on the machine, which the platform would have read
+      forever without a word. It WARNS and still returns the secret (D18.9: fail closed
+      only when refusing PREVENTS the harm), stays quiet when the mode is right (D18.7: a
+      guard that fires on correct code is never wired), treats an unmeasurable mode as
+      not-an-exposure, and is POSIX-guarded per the b4 boundary gated in D18.7.
+    EVIDENCE: >-
+      7 passed on the new file; 168 passed across tests/config and tests/setup; silent
+      against all six of the operator's real secrets. Two mutants caught and each restored
+      from a file copy: removing the mode check (4 failures) and making it refuse rather
+      than warn (5).
+    NEXT: "D04.4 · Auxiliary-model router (MISSING, wave 10, order 96)."
   D04_2_2026_09_05_the_split_already_exists_and_the_defect_was_guessing_a_vendor_from_a_url:
     map_check: "D04.2 — Transport adapters (PARTIAL, wave 10, order 94). Stages verified not_started first."
     THE_ASK_ANSWERED_NO_WITH_NUMBERS: >-
@@ -10506,6 +10553,40 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_144_should_command_join_keychain_and_file_as_a_secret_source:
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        s = pathlib.Path('src/stackowl/config/secret_resolver.py').read_text()
+        print('EXPIRED a command: source now exists' if 'command:' in s
+              else 'HOLDS secret sources are keychain:, file:, and a bare env name')
+        "
+      question: >-
+        Should `command:<argv>` join `keychain:`, `file:` and a bare env name as a
+        secret source? The reference platform ships THREE vendor integrations for this
+        (two password managers and a command runner). A single `command:` source
+        subsumes all of them without a line of vendor code — `command:pass show
+        stackowl/api`, `command:vault kv get -field=key secret/stackowl`, or any
+        password manager's CLI — which is the shape your standing rules already ask for
+        ("no vendor names in shipped code", "self-hosted/open-source only"). MEASURED:
+        you use `file:` today for all six secrets, all correctly 0600, so the demand is
+        zero right now.
+      why_evidence_cannot_settle_it: >-
+        It is a new execution surface, and that is the whole question. `command:` means
+        the config file can name a program the platform will RUN at startup with the
+        operator's privileges — which is exactly the capability a compromised config
+        would want. `file:` and `keychain:` cannot execute anything. Whether that trade
+        is worth making for a capability you do not currently need is a security-posture
+        judgement, not a measurement.
+      panel_recommendation: >-
+        NOT NOW. You have no unmet need — six secrets, all `file:`, all 0600 — and the
+        keychain path already exists for anyone wanting stronger-than-a-file. Revisit if
+        you ever want the platform to read from a password manager, and if so require
+        the argv to be a list rather than a shell string, so the source can never become
+        a shell-injection seam.
+      blocked_until_answered: >-
+        Nothing. D04.3 declined the pool on measured demand and shipped the
+        secret-permission check instead.
     ESC_143_three_protocols_are_built_and_have_never_carried_a_call:
       premise_check: |
         uv run python -c "
@@ -22230,18 +22311,53 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D04.3.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "NO POOL. Four providers configured, ONE enabled, ONE api_key, and
+         ProviderConfig.api_key is str|None so the model permits nothing else. Across
+         502,215 log records in 9 files there are exactly TWO distinct auth/rate-limit
+         messages — a 400 payload rejection (twice, our own request) and a handler
+         registration line. Not one rate-limit event, not one auth failure, ever."
+      - "THE MAP'S MISSING IS TOO FLAT. The error classifier the map credits the
+         reference with is already ported and tested: AUTH, RATE_LIMIT, BILLING
+         ('credit exhausted; rotate, do not retry'), PAYLOAD_TOO_LARGE, TIMEOUT,
+         BAD_REQUEST, SERVER_5XX, each mapped to a RecoveryAction. Ours deliberately
+         dropped their English-substring matching and runtime-specific member names.
+         Only the POOL is absent, and there is nothing to put in it."
+      - "WHAT SHIPPED INSTEAD: the platform now notices a secret file readable beyond
+         its owner. It WARNS and still returns the secret (D18.9's rule — fail closed
+         only when refusing PREVENTS the harm; a world-readable key is already exposed
+         and stopping does not un-expose it), stays SILENT when the mode is right
+         (D18.7 — a guard that fires on correct code is one nobody wires), treats an
+         unmeasurable mode as not-an-exposure, and is POSIX-guarded."
+    changes:
+      - "src/stackowl/config/secret_resolver.py — _warn_if_widely_readable(), called
+         from _from_file. Silent on the operator's six real secrets, all 0600."
+      - "tests/config/test_a_secret_file_that_anyone_can_read_says_so.py (new, 7 tests)
+         — 0600 is silent, four bad modes each warn with file and mode, the secret is
+         still returned, and a stat failure never breaks the read."
+    notes: >-
+      TWO NEAR-MISSES, BOTH CHECKED BEFORE CONCLUDING, AND BOTH WOULD HAVE BEEN WRONG.
+      `credential_rotation` is a NAME COLLISION — a browser-session liveness check, not
+      API-key rotation — registered 569 times with ZERO jobs rows. It looked like dead
+      code; it is reachable on demand through cronjob.py:520's generic
+      handler_name=handler, exactly as assembly.py:1557 documents. CLAUDE.md's rule that
+      "the zero-row table is the QUESTION, never the answer" is what stopped a wrong
+      deletion. And `FailureCause` appears ZERO times outside its own module, which looked
+      like the write-with-no-reader shape found twice already this week — but the retry
+      loop IS its consumer, it is used ten times internally, and a dedicated test file
+      pins it. Legitimate encapsulation.
+      AND THE FIRST DEMAND MEASUREMENT WAS WRONG. A raw grep -c reported 271/250/262 hits
+      for "429"/"401"/"403" — suspiciously alike, and they were output TOKEN COUNTS
+      (`640in/429out tokens`). Parsing the JSON and matching message text left two.
 
   - id: D04.4
     title: "Auxiliary-model router"
