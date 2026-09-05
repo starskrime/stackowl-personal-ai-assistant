@@ -34,6 +34,20 @@ if (-not $NssmExe) {
 
     New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
 
+    # REFUSE BEFORE DOWNLOADING if no hash has been pinned. The expected hash is
+    # still the placeholder, so the comparison below could never match and this
+    # path has never been able to succeed — it is fail-CLOSED, which is the right
+    # direction, but it reported a "checksum mismatch" and dumped the placeholder
+    # as the expected value. That names the wrong cause: nothing is mismatched,
+    # nothing was ever pinned. Say so, before spending a download on it.
+    if ($NssmExpectedSha256 -eq "PLACEHOLDER_REAL_SHA256_MUST_BE_SET_BEFORE_DEPLOYMENT") {
+        Write-Error ("[stackowl] No SHA-256 has been pinned for NSSM $NssmVersion, so " +
+                     "this installer cannot verify what it downloads and refuses to " +
+                     "install it. Pin the real hash in `$NssmExpectedSha256, or install " +
+                     "NSSM yourself and put it on PATH — this script uses it when found.")
+        exit 1
+    }
+
     # Download
     Invoke-WebRequest -Uri $NssmUrl -OutFile $ZipPath -UseBasicParsing
 

@@ -1682,6 +1682,35 @@ uv, Python, Node, ripgrep, ffmpeg, and a portable MinGit so shell commands work 
 Docker compose, Nix flake, systemd units.
 **StackOwl.** `uv sync` + `setup --minimal` + `install-service`.
 **Ask.** Distribution is adoption. How far do you want to go?
+**MEASURED 2026-09-05 — THE INSTALLER QUESTION IS YOURS; MEASURING IT FOUND THAT EIGHT
+ARCHITECTURAL CHECKS RUN NOWHERE.** On distribution the evidence is one-sided: ONE human
+in ~4,037 commits, NO README at the repo root, ONE tag (`v0.1.1`, from the pre-rewrite
+TypeScript era), no published package and no pushed image — so an installer serves users
+who do not exist, and the reference's equivalent is 3,127 + 3,830 lines plus a Rust GUI
+bootstrapper, most of it managing Node, which a `uv` project does not have. Escalated as
+ESC-139. **WHAT MEASURING FOUND:** `scripts/boundaries/` holds B1-B9; **five exit 1** —
+b1 50 import cycles, b2 196 oversized files, b3 4 ASCII-only regexes, b5 145 silent
+excepts, b6 mypy --strict — and **NOT ONE of the eight was in `scripts/tripwires.sh`**,
+their only CI home being a pre-commit hook still running `cd v2 &&` after the v2->root
+migration deleted `v2/` on 2026-06-17. **FOUR OF THEM ENFORCE STANDING OPERATOR RULES**
+(cross-platform, "every except logs", "never hardcode English keyword lists", file size).
+**b4 IS FIXED AND WIRED, AND WHY IT WAS NEVER WIRED IS THE ROOT CAUSE: it was
+UNWIREABLE** — it fired on `os.path.expandvars` (portable; pathlib has no equivalent), a
+`hasattr(signal,"SIGHUP")`-guarded call, a security REGEX that DETECTS /tmp staging, help
+text, and a container-side mount. Made sound first (carve-outs for docstrings, hasattr
+tests, posix-named functions, and an allowlist with a reason each), now 0 across 842
+files, wired, and the gate proven to fail on it. Its `os.path` rule was DELETED: os.path
+IS cross-platform, so that was a STYLE rule smuggled into a portability checker, and
+ruff's PTH ruleset does it properly (23 findings measured; enabling it is a separate call
+because several sit in shell.py's path-safety code and the ruff baseline may not rise).
+**PLATFORM REACH, MEASURED:** Windows has exactly ONE hard blocker — `split_process`
+defaults True and the gateway/core IPC uses asyncio's unix-socket helpers, which CPython
+exports only under `hasattr(socket,"AF_UNIX")` (4 call sites, boot crash). macOS degrades
+gracefully, but code execution is unavailable there and nothing says so at boot.
+**DELETED (retired means deleted):** `release.yml` (npm-era, referencing a package.json
+and a build script that do not exist — and D17.5 pinned commit SHAs onto it the day
+before without noticing it could never run), `deploy/migrate-to-root.sh` and
+`deploy/ci-post-migration.yml`. See `designs/D18.7.md`.
 
 ### D18.8 · Observability — `AHEAD`
 **Hermes.** `hermes_logging.py` → `agent.log` / `errors.log` / `gateway.log`, browsable via

@@ -315,6 +315,60 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D18_7_2026_09_05_eight_architectural_checks_existed_and_none_of_them_ran:
+    map_check: "D18.7 — Installer & platform reach (PARTIAL, wave 9, order 90). Stages verified not_started first."
+    THE_ASK_IS_YOURS_AND_THE_EVIDENCE_IS_ONE_SIDED: >-
+      "How far do you want to go?" is appetite, escalated as ESC-139. But the evidence is
+      one-sided against spending now: ONE human in ~4,037 commits, NO README at the repo
+      root, ONE tag (v0.1.1, pre-rewrite TypeScript era), no published package, no pushed
+      image. The reference's installer is 3,127 + 3,830 lines plus a Rust GUI
+      bootstrapper, most of it managing Node — which a uv project does not have.
+    WHAT_MEASURING_IT_FOUND: >-
+      scripts/boundaries/ holds the B1-B9 architectural checks. FIVE exit 1 — b1 50 import
+      cycles, b2 196 oversized files, b3 4 ASCII-only regexes, b5 145 silent excepts, b6
+      mypy --strict — and NOT ONE of the eight was in scripts/tripwires.sh. Their only CI
+      home was a pre-commit hook still running `cd v2 &&` after the v2->root migration
+      deleted v2/ on 2026-06-17. FOUR of them enforce STANDING OPERATOR RULES:
+      cross-platform, "every except logs", "never hardcode English keyword lists", file
+      size. Five verdicts, unread, for months.
+    ROOT_CAUSE_AND_WHY_b4_SPECIFICALLY_WAS_NEVER_WIRED: >-
+      The migration moved the tree and left every CI and packaging path pinned to the old
+      layout, with nothing gating those paths — a failing pre-commit hook takes the whole
+      run down, including the boundary step behind it. AND b4 had a second cause that is
+      not neglect: it was UNWIREABLE. It fired on os.path.expandvars (portable — pathlib
+      has no equivalent), a hasattr(signal,'SIGHUP')-guarded call, a security REGEX that
+      DETECTS /tmp staging, help text, and a container-side mount. A guard that fires on
+      correct code teaches its reader to ignore it. Made sound FIRST, then wired.
+    A_STYLE_RULE_WAS_SMUGGLED_INTO_A_PORTABILITY_CHECKER: >-
+      b4's os.path rule produced 14 of its 23 findings, and os.path IS cross-platform. It
+      is deleted. ruff's PTH ruleset does that job properly — it names the exact
+      replacement per function and does NOT flag expandvars, because there is nothing to
+      replace it with. 23 PTH findings measured across src/; enabling it is a separate
+      decision because several sit inside shell.py's path-safety checks and the ruff
+      baseline may not rise.
+    PLATFORM_REACH_MEASURED: >-
+      Windows has exactly ONE hard blocker: runtime.split_process defaults True and the
+      gateway/core IPC uses asyncio's unix-socket helpers, which CPython exports only
+      under hasattr(socket,'AF_UNIX') — 4 call sites, a boot crash rather than an import
+      error. macOS degrades gracefully (all /proc reads guarded or inert, systemd probed,
+      launchd handled, kill_platform genuinely portable); its real gap is that code
+      execution is unavailable there and nothing says so at boot.
+    TWO_CORRECTIONS_ONE_OF_THEM_TO_MY_OWN_INSTRUMENTS: >-
+      A lens reported install-service.ps1 as shipping a checksum BYPASS; it is the
+      opposite — fail-CLOSED, because the placeholder can never equal a real SHA-256. What
+      was wrong was the MESSAGE, which named a mismatch that does not exist. AND my own
+      sweep first reported "12 unguarded POSIX files": the sandbox is probed as a
+      SUBSYSTEM, the /proc read is try/except-guarded with a docstring saying so, and
+      cli/app.py's signal use carries an explicit Windows-aware comment. Portability
+      guards here take at least FOUR shapes, so any single-shape detector overstates —
+      the same lesson as D18.6 one item earlier.
+    EVIDENCE: >-
+      b4 now reports 0 across 842 files with a positive control proving it still sees both
+      real classes; b4/b8/b9 wired and the GATE proven to exit 1 on an injected violation,
+      end to end; 4 passed on the new boundary guard. Four mutants caught and restored from
+      file copies: unwiring b4, an unclassified new checker, a returning v2/ path, and a
+      real /tmp literal plus unguarded SIGKILL.
+    NEXT: "D18.8 · Observability (AHEAD, wave 9, order 91)."
   D18_6_2026_09_05_the_rule_is_right_but_as_stated_it_would_have_deleted_900_good_tests:
     map_check: "D18.6 — Change-detector test ban (MISSING, wave 9, order 89). Stages verified not_started first."
     AS_STATED_TOO_BLUNT: >-
@@ -10289,6 +10343,56 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_139_distribution_reach_and_five_red_boundary_checks:
+      premise_check: |
+        uv run python -c "
+        import pathlib, subprocess
+        gate = pathlib.Path('scripts/tripwires.sh').read_text()
+        red = [b for b in ('b1','b2','b3','b5','b6')
+               if f'boundaries/{b}.py' not in gate]
+        print(f'HOLDS {len(red)} boundary checks still unwired: {red}' if red
+              else 'EXPIRED all boundary checks are now wired')
+        "
+      question: >-
+        THREE, and they are separable. (1) HOW FAR ON DISTRIBUTION? Evidence is
+        one-sided against spending now: ONE human in ~4,037 commits, no README at the
+        repo root, one tag from the pre-rewrite TypeScript era, no published package and
+        no pushed image — and the reference's installer is 3,127 + 3,830 lines plus a
+        Rust GUI bootstrapper, most of it managing Node, which a uv project does not
+        have. A Dockerfile already exists and is already smoke-tested in CI. (2) THE FIVE
+        RED BOUNDARY CHECKS. b4 is fixed and wired; the others are b1 (50 import cycles),
+        b2 (196 files over 300 lines — and its own docstring still says "v2/src/", so the
+        limit predates the migration; is 300 still the intended number?), b3 (4 ASCII-only
+        regexes — the cheapest, and it maps to your "never hardcode English keyword lists"
+        rule), b5 (145 excepts with no log and no re-raise — maps to the MANDATORY "every
+        except logs" rule), and b6 (mypy --strict, a programme). Each is now DECLARED with
+        its cost rather than silently red; which do you want closed, and in what order?
+        (3) THE PROBES ARE NOT PLUGGED INTO PRESENTATION. infra/capabilities.py has
+        exactly ONE registered name, "browser", while SandboxCapability.probe(),
+        ImageCapability.probe() and BrowserProbe.check() all exist — so on a host that
+        cannot sandbox, the sandboxed tools are still OFFERED to the model. Closing that
+        changes what the model is presented, which is why it is not done here.
+      why_evidence_cannot_settle_it: >-
+        (1) is appetite: whether to build for users who do not exist yet is a bet about
+        the future, and evidence can only say nobody has installed this but you. (2) is
+        priority and scale — b5 alone is 145 sites and b1 is a refactor programme; how
+        much of the tree to disturb for rules you already stated is your call, not a
+        derivation. (3) changes the model's offered toolset on non-Linux hosts, which is
+        user-facing behaviour.
+      panel_recommendation: >-
+        (1) NO installer now. The Dockerfile already exists and Docker is already a
+        runtime dependency for the network-capable sandbox, so keeping it green costs
+        nothing and gives "runs anywhere Docker does" for free; a one-line install script
+        is decoration for a zero-user project, and native Windows is worse than that
+        because the sandbox is bubblewrap/seccomp/cgroup — Linux by nature — so Windows
+        would commit to a second, strictly weaker execution model forever. (2) b3 FIRST:
+        four sites, maps to a standing rule, closeable in one item. Then b5, which is the
+        largest but protects the rule you marked MANDATORY. b1/b2/b6 are programmes and
+        should be scheduled, not squeezed. (3) worth doing and small — the probes already
+        return structured verdicts; only the registration is missing.
+      blocked_until_answered: >-
+        Nothing in D18.7 itself, which shipped its root-cause fix and its guard. Only the
+        FIVE remaining red checks and the installer decision wait.
     ESC_138_a_flake_costs_a_thirty_minute_rerun_to_identify:
       premise_check: |
         uv run python -c "
@@ -29579,18 +29683,83 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D18.7.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "THE INSTALLER HALF IS ESCALATED, on one-sided evidence: ONE human in ~4,037
+         commits, NO README at the repo root, ONE tag (v0.1.1, pre-rewrite TypeScript
+         era), no published package, no pushed image. An installer serves users who do
+         not exist, and the reference's equivalent is 3,127 + 3,830 lines plus a Rust
+         GUI bootstrapper, most of it managing Node — which a uv project does not have."
+      - "EIGHT ARCHITECTURAL CHECKS RUN NOWHERE. scripts/boundaries/ holds B1-B9; FIVE
+         exit 1 (b1 50 import cycles, b2 196 oversized files, b3 4 ASCII-only regexes,
+         b5 145 silent excepts, b6 mypy --strict) and NOT ONE was in tripwires.sh. Their
+         only CI home was a pre-commit hook still running `cd v2 &&` after the v2->root
+         migration deleted v2/ on 2026-06-17. FOUR of them enforce STANDING OPERATOR
+         RULES: cross-platform, 'every except logs', 'never hardcode English keyword
+         lists', and file size."
+      - "WHY b4 WAS NEVER WIRED IS THE ROOT CAUSE AND IT IS NOT NEGLECT: it was
+         UNWIREABLE. It fired on os.path.expandvars (portable — pathlib has no
+         equivalent), a hasattr(signal,'SIGHUP')-guarded call, a security REGEX that
+         DETECTS /tmp staging, help text, and a container-side mount. A guard that fires
+         on correct code teaches its reader to ignore it. Made sound FIRST, then wired."
+      - "b4's os.path RULE IS DELETED. os.path IS cross-platform — that was a STYLE
+         preference smuggled into a PORTABILITY checker, and it produced 14 of the 23
+         findings. ruff's PTH ruleset does it properly and does NOT flag expandvars,
+         because there is nothing to replace it with. 23 PTH findings measured; enabling
+         it is a separate decision because several sit in shell.py's path-safety code
+         and the ruff baseline may not rise."
+      - "WINDOWS HAS EXACTLY ONE HARD BLOCKER: runtime.split_process defaults True and
+         the gateway/core IPC uses asyncio's unix-socket helpers, which CPython exports
+         only under hasattr(socket,'AF_UNIX') — 4 call sites, a boot crash. macOS
+         degrades gracefully; its real gap is that code execution is unavailable and
+         nothing says so at boot."
+    changes:
+      - "scripts/boundaries/b4.py — rewritten. Carve-outs for docstrings, hasattr
+         feature tests, posix/unix-named functions, and an allowlist of non-host-path
+         literals each carrying its reason. The os.path rule removed. Now 0 violations
+         across 842 files, with a positive control proving it still sees both real
+         classes."
+      - "scripts/tripwires.sh — b4, b8 and b9 wired in. Proven end to end: injecting a
+         /tmp literal made the GATE exit 1, not just the checker."
+      - "tests/test_every_boundary_check_is_wired_or_declared.py (new, 4 tests, 3
+         tripwires) — every checker must be wired or declared known-red WITH A REASON,
+         both directions, plus a check that no CI path names the deleted v2/ tree.
+         Deliberately stores no violation COUNTS: a count would be the change detector
+         D18.6 just banned."
+      - "DELETED: .github/workflows/release.yml (npm-era; no package.json, no
+         scripts/build-release.sh — and D17.5 pinned commit SHAs onto it the day before
+         without noticing it could never run), deploy/migrate-to-root.sh and
+         deploy/ci-post-migration.yml (helpers for a migration completed 2026-06-17,
+         last touched by the migration commit itself)."
+      - ".pre-commit-config.yaml — its two `cd v2 &&` / `v2/scripts/` paths repaired.
+         The hooks are wanted; the paths were stale, and a failing pre-commit run took
+         the B1-B9 step in ci-v2.yml down with it."
+      - "deploy/install-service.ps1 — refuses BEFORE downloading when no SHA-256 has
+         been pinned, naming that as the cause."
+    notes: >-
+      A CORRECTION TO A PANEL FINDING: a lens reported install-service.ps1 as shipping a
+      checksum BYPASS. It is the opposite — fail-CLOSED. The placeholder can never equal a
+      real SHA-256, so the comparison always fails and the install refuses, which is the
+      right direction. What was wrong was the MESSAGE: it reported a "checksum mismatch"
+      and printed the placeholder as the expected value, naming a cause that does not
+      exist.
+      AND MY OWN DETECTORS OVERCOUNTED REPEATEDLY. A first sweep reported "12 unguarded
+      POSIX files"; inspection showed the sandbox is probed as a SUBSYSTEM, the /proc read
+      is try/except-guarded with a docstring saying so, and cli/app.py's signal use
+      carries an explicit Windows-aware comment. Portability guards here take at least
+      FOUR shapes — a platform branch, a hasattr feature test, a try/except fallback, and
+      a documented limitation — so any single-shape detector overstates. Same lesson as
+      D18.6 one item earlier, and it is why b4 needed carve-outs rather than more patterns.
+      VALIDATE is no_change_needed and deliberate: nothing under src/ changed — the item
+      touched scripts/, tests/, deploy/, .github/ and .pre-commit-config.yaml only.
 
   - id: D18.8
     title: "Observability"

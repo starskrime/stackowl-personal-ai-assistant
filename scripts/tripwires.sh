@@ -32,6 +32,23 @@ step() { printf '\n=== %s\n' "$1"; }
 step "cross-cutting guards (pytest -m tripwire)"
 uv run pytest -m tripwire -q -p no:cacheprovider 2>&1 | tail -2 || fail=1
 
+step "B4 cross-platform boundary (Linux/macOS/Windows)"
+# The operator's standing rule is that this code runs on all three. `b4.py` was
+# written to enforce it and had never been wired into anything that runs — not
+# here, and its only CI home was a pre-commit hook still doing `cd v2 &&` after
+# the v2->root migration deleted `v2/`. It exited 1 for months, unread. It is
+# green now, so it can be a gate; it could not be one before, because it fired
+# on `os.path.expandvars` (portable), a hasattr-guarded SIGHUP, a security regex
+# that DETECTS /tmp, and help text. A guard that fails on correct code is a guard
+# nobody wires.
+uv run python scripts/boundaries/b4.py 2>&1 | tail -1 || fail=1
+
+step "B8/B9 boundaries (no network in embeddings, no blocking I/O in handlers)"
+# Green and fast, and they were unwired for the same reason b4 was: the whole
+# boundary suite's only CI home was a pre-commit hook pinned to the deleted v2/.
+uv run python scripts/boundaries/b8.py 2>&1 | tail -1 || fail=1
+uv run python scripts/boundaries/b9.py 2>&1 | tail -1 || fail=1
+
 step "progress.yml is parseable and has no duplicate keys"
 uv run python scripts/progress_lint.py 2>&1 | tail -1 || fail=1
 

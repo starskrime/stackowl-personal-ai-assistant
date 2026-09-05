@@ -12,8 +12,11 @@ repos:
     hooks:
       - id: mypy-strict
         name: mypy strict (src/stackowl)
-        # Hooks run from git root; cd into v2/ so mypy resolves config and src correctly.
-        entry: bash -c 'cd v2 && uv run mypy --strict src/stackowl/'
+        # The v2->root migration (c72a1704, 2026-06-17) moved the project to the
+        # repo root; this hook still ran `cd v2 &&` afterwards and so failed every
+        # time, taking the whole pre-commit run — and the B1-B9 boundary checks in
+        # ci-v2.yml behind it — down with it.
+        entry: bash -c 'uv run mypy --strict src/stackowl/'
         language: system
         types: [python]
         pass_filenames: false
@@ -21,7 +24,7 @@ repos:
 
       - id: check-file-length
         name: check file length (300-line limit)
-        entry: bash v2/scripts/boundaries/check_file_length.sh
+        entry: bash scripts/boundaries/check_file_length.sh
         language: system
         pass_filenames: false
         always_run: true
