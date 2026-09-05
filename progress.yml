@@ -315,6 +315,42 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D06_1_2026_09_05_the_backend_was_never_the_constraint:
+    map_check: "D06.1 Pluggable execution backends — PARTIAL, close_gap, P2, wave 10 order 99, 0/7. The next unstarted mapped item."
+    THE_GAP_LINE_IS_HALF_WRONG: >-
+      It reads "No remote/cloud execution. The ABC exists — the implementations do not." The
+      second sentence is misleading and would misdirect anyone planning from it: TWO
+      implementations exist, are wired and are exercised — BwrapSandbox and DockerSandbox
+      behind SandboxBackend, chosen by SandboxSelector with a capability probe on every boot,
+      and both binaries are installed here. What is genuinely absent is REMOTE.
+    THE_ASK_ANSWERED_WITH_EVIDENCE_NOT_OPINION: >-
+      "Does runs-anywhere matter, or is the Jetson + local the target?" The measurement
+      answers a sharper question first. execute_code consent decisions across every retained
+      log: 27 DENY, 1 ALLOW. All 27 refusals are on the rca lane, same reason — "always-ask
+      and no human is attached". The single allow came via Telegram with a human, and then ran
+      successfully on bwrap (exit_reason ok). SO THE SANDBOX WORKS AND IS ALMOST NEVER
+      REACHED. Meanwhile shell — unconfined by design — ran 205 times and launched an
+      interpreter 33 detected times, logged with a line that says outright "not gated as
+      code_execution". A remote backend would add a sixth place to run confined code that
+      policy already declines to run unattended, while the path that DOES run code unattended
+      is not confined at all. The backend is not the binding constraint.
+    WHAT_I_ALMOST_REPORTED_AS_NEW_TWICE: >-
+      (1) The 27 denials looked like the sandbox being bypassed by its own gate. consent.py:52
+      already records that measurement (26 at the time), already root-caused it — the gate was
+      keyed on a tool NAME while the risk belongs to a CAPABILITY, and shell reached the same
+      effect on the next round, 110 of 153 times unattended — and already FIXED it on
+      2026-09-01 with the CODE_EXECUTION category. (2) I was about to write a guard forcing
+      each execution path to declare whether it is confined; sandbox/base.py invariant 1
+      already says it — "never degrade to a bare subprocess (that is what shell already is)".
+      Reading the file cost less than writing the guard would have.
+    DECISION_NOT_BUILT_AND_NOT_DEBT: >-
+      implement/cleanup/test/validate are no_change_needed with the reason recorded, not
+      blocked-and-forgotten. Building SSH/Modal/Daytona now is scaffolding for a capability
+      today's policy declines to use unattended — the dead seat the standing rule forbids. The
+      document records what a remote backend must satisfy (three of the six SandboxBackend
+      invariants are materially harder off-host, and ptc/ assumes a local socket) so the work
+      is cheap whenever it is wanted. Trigger to reopen: an answer to ESC-150.
+    NEXT: "D06.2 Serverless/hibernating environments is blocked by this same answer; D13.1 Surface count is the next independent item."
   D12_8_2026_09_05_the_closing_query_that_returned_zero_now_returns_213:
     map_check: "D12.8 Untrusted-input toolset — wave 6, order 46, the earliest item with unstarted stages (5/7 done). validate was partial, document not_started."
     WHAT_WAS_LEFT_AND_WHY_IT_WAS_LEFT: >-
@@ -10930,6 +10966,52 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_150_does_runs_anywhere_matter_when_confined_execution_is_already_gated_shut:
+      premise_check: |
+        uv run python -c "
+        import json, pathlib, collections
+        d = collections.Counter()
+        for f in sorted(pathlib.Path.home().glob('.stackowl/logs/stackowl*.jsonl')):
+            for ln in f.read_text(errors='ignore').splitlines():
+                if '\"tool\": \"execute_code\"' not in ln: continue
+                try: r = json.loads(ln)
+                except Exception: continue
+                fl = r.get('fields') or {}
+                if fl.get('tool') == 'execute_code' and 'policy.request: exit' in r.get('msg',''):
+                    d[fl.get('decision')] += 1
+        allow, deny = d.get('allow', 0), d.get('deny', 0)
+        print(f'HOLDS execute_code {deny} deny / {allow} allow — confined execution is still '
+              'refused unattended, so more backends would serve a gated path'
+              if deny > allow else
+              f'EXPIRED execute_code {allow} allow / {deny} deny — confined execution now runs')
+        "
+      question: >-
+        D06.1's own Ask: does "runs anywhere" matter, or is the Jetson + local the target?
+        And the sharper version the measurement raises: given that CONFINED execution is
+        refused 27 times out of 28 because it is always-ask and the autonomous lane has no
+        human, while UNCONFINED execution through `shell` runs 205 times and launches an
+        interpreter 33 detected times with the log saying "not gated" — what should
+        autonomous code execution look like? Three coherent answers: (a) Jetson + local is
+        the target, close D06.1 and D06.2 as WONT_DO; (b) runs-anywhere matters, build SSH
+        first as the cheapest real remote backend; (c) neither — the real gap is that
+        confinement buys nothing while the gate requires a human, so make a CONFINED run
+        autonomously grantable and leave backends alone.
+      why_evidence_cannot_settle_it: >-
+        (a) is appetite. (b) is roadmap. (c) is a security-posture change to a policy you
+        recorded yourself — always-ask for code execution is your decision, and relaxing it
+        for confined runs is exactly the kind of user-facing authority change the loop is
+        forbidden to make autonomously. Evidence can say the backend is not the constraint,
+        and has; it cannot choose which of the three you want.
+      recommendation: >-
+        (c), then (a). The sandbox demonstrably works — the one approved call ran on bwrap
+        and exited ok — so the highest-value change is letting a CONFINED run proceed
+        unattended while the unconfined path keeps needing a human. That inverts today's
+        shape, where the safe path is blocked and the unsafe one is open. If that lands,
+        remote backends stay unbuilt until a workload actually needs a machine this one is
+        not.
+      blocked_until_answered: >-
+        D06.1 implement (recorded no_change_needed with this reason) and D06.2, which this
+        item blocks. Nothing else. The local path is live, documented and tested (163 pass).
     ESC_149_can_the_gateway_tell_us_whether_it_caches_because_64_percent_of_the_bill_depends_on_it:
       premise_check: |
         uv run python -c "
@@ -25245,15 +25327,15 @@ items:
     blocks: [D06.2]
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D06.1.md"
+    doc_last_verified: "2026-09-05"
     decisions: []
     changes: []
     notes: null

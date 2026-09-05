@@ -473,8 +473,18 @@ aliases) captured once and re-sourced before each command; CWD carried via in-ba
 remotely or a temp file locally.
 **StackOwl.** Two confinement backends (`sandbox/bwrap.py`, `sandbox/docker.py`) behind `SandboxBackend`.
 Local host only.
-**Gap.** No remote/cloud execution. The ABC exists — the implementations do not.
+**Gap.** No remote/cloud execution. ~~The ABC exists — the implementations do not.~~
+**CORRECTED 2026-09-05:** two implementations exist, are wired and are exercised
+(`BwrapSandbox`, `DockerSandbox` behind `SandboxBackend`, chosen by `SandboxSelector`
+with a boot-time capability probe; both binaries installed). Only *remote* is absent.
 **Ask.** Does "runs anywhere" matter to you, or is the Jetson + local the target?
+**Answered 2026-09-05 — `docs/reference-mapping/designs/D06.1.md`, ESC-150.** The backend
+is not the binding constraint. `execute_code` consent decisions are **27 deny / 1 allow**,
+every refusal "always-ask and no human is attached"; the one approval ran on bwrap and
+exited ok. Meanwhile `shell` — unconfined by design — ran 205 times and launched an
+interpreter 33 detected times, logged as *"not gated as code_execution"*. A remote backend
+would add a sixth place to run confined code that policy already declines to run
+unattended. Not built; not filed as debt.
 
 ### D06.2 · Serverless / hibernating environments — `MISSING`
 **Hermes.** Modal and Daytona offer persistent sandboxes that hibernate when idle and wake on demand —
