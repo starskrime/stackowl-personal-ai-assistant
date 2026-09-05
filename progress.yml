@@ -340,6 +340,16 @@ current:
       motivating case fires is what caught it. (3) The first metric reported DEGRADED on live
       data — and it was measuring conversation length, not prefix. Corrected to the first
       round per trace, it reads ok and cross-checks an independent figure.
+    VALIDATED_LIVE_AND_CLOSED: >-
+      Boot 2026-09-05T16:35:32Z against a commit at 16:35:01Z — and the commit time was
+      converted with `%cI` this time rather than `--date=format:`, which renders the
+      commit's OWN offset and made the previous item's check compare a UTC boot against a
+      local-time commit. 495 records since, ZERO ERROR lines. CLOSED, not open: the health
+      sweep ran at 16:37:34 and COMPLETED with no UNHEALTHY line, so the newly-registered
+      contributor executed in production and returned a verdict — matching the read taken
+      against the live ledger before shipping (ok, median 23,754 tok, ~21.0 rounds/turn).
+      That is the acceptance check this item most needed, because the defect it guards
+      against is precisely a contributor that is written and never constructed.
     NEXT: "ESC-149 asks whether the gateway can report cache statistics at all — the fact that would settle 64% of the bill."
   DEBT120_2026_09_05_a_round_may_eat_a_third_of_the_turn_and_nothing_says_so:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-120."
