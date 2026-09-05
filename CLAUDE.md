@@ -94,6 +94,7 @@ at a process table. Measured, in order:
 | 2026-09-01 | `6 failed, 11440 passed, 19 skipped in 1885.47s` |
 | 2026-09-03 | `10 failed, 11853 passed, 18 skipped in 1775.99s` |
 | 2026-09-04 | **`11857 passed, 18 skipped, 0 failed in 1731.31s` (rc=0)** |
+| 2026-09-05 | **`12123 passed, 18 skipped, 0 failed in 1880.78s` (rc=0)** |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so

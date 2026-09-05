@@ -374,6 +374,18 @@ current:
       growing once `tokens_remaining()` falls, or simply confirm no turn dies on `tokens`
       with a single round over 30% of the cap. The behaviour is pinned by 11 tests and three
       mutants meanwhile.
+    FULL_SUITE_GREEN: >-
+      12,123 passed, 18 skipped, 0 FAILED, rc=0 in 1880.78s — a new high-water mark, and
+      the run carries `SUITE TREE STILL`, so the verdict is about ONE tree at commit
+      d6b96280 with dirty_files=0. That closes the ABC change end to end: the earlier run
+      on the same change returned 7 FAILED in tests/journeys/, and every one is fixed.
+      Recorded in CLAUDE.md's measured table beside 09-01, 09-03 and 09-04, because that
+      table is what stops the "it hangs" belief coming back.
+      NOTE FOR THE NEXT RUN: `full_suite.sh` returning is NOT the suite finishing. It
+      detaches and exits 0 immediately, so a task-notification on it says nothing about the
+      verdict — collect by polling `grep -c 'SUITE DONE'`. An earlier attempt this session
+      was also killed at 13% with rc=99 by a foreground command timeout, which is a killed
+      run rather than a result.
     NEXT: "ESC-148 (delete the dead 600s time cap) is the last small authorised one."
   DEBT122_2026_09_05_the_prefix_is_fine_for_90_percent_and_fatal_for_1:
     map_check: "No mapped item matches — evidence-led, DEBT-122. Taken because ESC-149's answer named prefix reduction THE TOP ITEM."
