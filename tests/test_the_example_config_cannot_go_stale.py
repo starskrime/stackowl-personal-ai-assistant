@@ -29,6 +29,7 @@ import sys
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _ARTIFACT = _ROOT / "docs" / "stackowl.yaml.example"
@@ -62,6 +63,25 @@ def test_the_example_is_loadable_config_not_just_prose() -> None:
     assert isinstance(data, dict) and len(data) > 20, "expected the real surface"
 
     Settings(**data)  # raises if the example is not valid configuration
+
+    # THIS CHECK WAS VACUOUS WHEN IT SHIPPED, and the control is why it no longer
+    # is. `settings_customise_sources` never returned `init_settings`, so pydantic
+    # discarded every keyword argument — `Settings(**data)` built pure defaults and
+    # would have "accepted" literally anything, including a non-numeric port
+    # (measured 2026-09-05, D18.4). A test that passes immediately may be vacuous;
+    # this one did. Proving the call REJECTS nonsense is the only thing that makes
+    # its accepting the real file mean something.
+    with pytest.raises(ValidationError):
+        Settings(webhook={"port": "not-a-number"})
+
+    # And the values must actually ARRIVE, not merely be tolerated. The example
+    # renders home-derived paths as `~/.stackowl/...` (no machine path, no
+    # operator username), which is only safe because ConfigPath expands them.
+    settings = Settings(**data)
+    assert settings.browser.screenshots_dir.is_absolute(), (
+        "the example's `~` path stayed relative — it would create a directory "
+        "literally named `~` beside the working directory"
+    )
 
 
 def test_the_generator_is_deterministic() -> None:

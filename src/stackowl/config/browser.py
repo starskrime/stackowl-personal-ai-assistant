@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from stackowl.config.config_path import ConfigPath
 from stackowl.paths import StackowlHome
 
 
@@ -32,7 +32,7 @@ class BrowserSettings(BaseModel):
     geoip: bool = True
     cache_enabled: bool = True
     disable_coop: bool = True  # Cloudflare Turnstile compatibility
-    addons: list[Path] = Field(default_factory=list)
+    addons: list[ConfigPath] = Field(default_factory=list)
     firefox_user_prefs: dict[str, Any] = Field(default_factory=dict)
     fingerprint_rotation: Literal["per_session", "per_profile", "fixed"] = "per_profile"
 
@@ -72,10 +72,10 @@ class BrowserSettings(BaseModel):
     dialog_auto_dismiss_seconds: float = 60.0
 
     # --- Paths (resolved lazily so test fixtures can override STACKOWL_HOME) ---
-    screenshots_dir: Path = Field(default_factory=StackowlHome.screenshots_dir)
-    profiles_dir: Path = Field(default_factory=StackowlHome.browser_profiles_dir)
-    downloads_dir: Path = Field(default_factory=StackowlHome.downloads_dir)
-    browser_cache_dir: Path = Field(default_factory=StackowlHome.browser_cache_dir)
+    screenshots_dir: ConfigPath = Field(default_factory=StackowlHome.screenshots_dir)
+    profiles_dir: ConfigPath = Field(default_factory=StackowlHome.browser_profiles_dir)
+    downloads_dir: ConfigPath = Field(default_factory=StackowlHome.downloads_dir)
+    browser_cache_dir: ConfigPath = Field(default_factory=StackowlHome.browser_cache_dir)
 
     # --- Proxy ---
     default_proxy: ProxyConfig | None = None

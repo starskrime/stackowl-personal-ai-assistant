@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D18_4_2026_09_05_the_answer_is_no_and_asking_found_two_defects_one_hiding_the_other:
+    map_check: "D18.4 — State-path discipline (PARITY, wave 9, order 87). Stages verified not_started first."
+    THE_ASK_IS_DECLINED_ON_EVIDENCE: >-
+      Add a display-form helper? NO. The live DB holds 20 messages containing /home/boss/,
+      14 from the assistant, and every one is MODEL-AUTHORED PROSE — runnable instructions
+      the model wrote because it SEES absolute paths in tool results. A helper wired at the
+      five formatting sites fixes 0 of 14. And one of those five is the tool SCHEMA the
+      model reads, where a ~ is a latent breakage because ShellTool passes workdir straight
+      to cwd= unexpanded.
+    ONE_DEFECT_WAS_THE_OTHERS_ALIBI: >-
+      settings_customise_sources accepted init_settings and never RETURNED it, so pydantic
+      discarded every keyword argument: Settings(webhook={"port":9999}) came back 8766, and
+      Settings(**{"no_such_key":1,"webhook":{"port":"not-a-number"}}) was ACCEPTED. A panel
+      lens flagged the ~ paths in the example config as broken; I measured them as ABSOLUTE
+      and reported the lens wrong. They measured absolute BECAUSE the YAML value was being
+      discarded and the default came back. Fixing the loader unmasked the tilde — relative,
+      exactly as predicted. The instrument that cleared it was measuring the bug that
+      swallowed it.
+    WHAT_THE_LOADER_DEFECT_REACHED: >-
+      A webhook supervisor-contract test asserted the behaviour of an ENABLED receiver
+      against a disabled one; a memory test set a 10 MB ceiling that never arrived; and
+      D18.2's OWN round-trip acceptance check — Settings(**data), written to prove the
+      generated example is real configuration — validated nothing at all. A test that
+      passes immediately may be vacuous; that one did, and it was mine, shipped yesterday.
+    THREE_ROOT_CAUSE_FIXES: >-
+      (1) init_settings is returned, first — an explicitly passed value outranks the
+      environment, which outranks the file. (2) ConfigPath, a BeforeValidator expanding ~
+      and $VARS, on all five Path-typed settings fields — ~ is now a SUPPORTED form rather
+      than a directory literally named ~. (3) An unknown top-level key is announced at
+      WARNING instead of vanishing: a mistyped SECTION NAME used to discard that whole
+      section in silence, because the root is extra=ignore while every sub-model forbids.
+      It warns and still boots — locking the operator out to catch a typo is a bad trade.
+    THE_MISSING_THIRD_LEG: >-
+      The accessor rule HOLDS in Python — no Path.home()/".stackowl" outside paths.py, and
+      the three other Path.home() call sites in two files are OS-standard locations that
+      must NOT move with the home. But nothing enforced it: D18.3 guarded shell because
+      that is where it broke, and its guard globs *.sh, so the Python case was not one
+      short, it was ZERO. The reference is the argument — same rule in its guide, no guard
+      at all, and ~20 files that now build the home by hand.
+    EVIDENCE: >-
+      15 passed across the four affected test files (6 new tripwires). Three mutants caught
+      and each restored from a file copy, then re-run green: dropping init_settings again
+      (4 failures), reverting a field to a bare Path (3), and a module building the home by
+      hand (2). A SECOND self-correction in this item: my first bare-Path guard read
+      field.annotation and accused all four CONVERTED fields, because pydantic moves the
+      validator into field.metadata.
+    NEXT: "D18.5 · Test isolation (PARTIAL, wave 9, order 88) — note D18.3 already measured
+      that conftest redirects STACKOWL_HOME per run, so its stated gap needs re-checking."
   D18_3_2026_09_05_the_storage_half_was_done_the_launcher_was_instance_hostile:
     map_check: "D18.3 — Profiles / multi-instance (MISSING, wave 9, order 86). Stages verified not_started first."
     THE_VERDICT_WAS_WRONG_IN_BOTH_DIRECTIONS: >-
@@ -10140,6 +10188,44 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_137_there_is_no_way_to_ask_the_platform_where_its_state_is:
+      premise_check: |
+        uv run python -c "
+        import subprocess
+        out = subprocess.run(['uv','run','python','-m','stackowl','--help'],
+                             capture_output=True, text=True).stdout
+        print('EXPIRED a paths/doctor command exists' if ('paths' in out or 'doctor' in out)
+              else 'HOLDS no state-locator command in --help')
+        "
+      question: >-
+        Do you want a `stackowl paths` (or `doctor`) command? MEASURED 2026-09-05: the CLI
+        exposes 20 commands — init, start, setup, install-service, stop, export,
+        recover-skills, import, backup, restore, serve, health, db, providers, models, mcp,
+        plugins, integrations, identity, trace — and NONE of them answers "where is my
+        state". `stackowl health --json` returns checks named filesystem, graph, browser and
+        provider with ZERO locations in the payload; `stackowl db` offers
+        migrate/backup/restore/reindex-memory/revalidate-tools but never "where is it".
+        Meanwhile `StackowlHome` has 30 accessors (home, db_path, logs_dir, kuzu_dir,
+        skills_dir, models_dir, media_dir, downloads_dir, browser_cache_dir, worktrees_dir,
+        python_env, …) and `shutil.disk_usage` is already used in two modules. Everything a
+        `stackowl paths` would print — path, exists, size — is sitting there unexposed.
+      why_evidence_cannot_settle_it: >-
+        There is NO demand evidence: of 2,129 user messages, a location-scoped query returns
+        2 rows and both are system-generated file-receipt envelopes, not questions. But that
+        cuts both ways and evidence cannot say which — he may never have asked because he
+        has never had a command to ask with. Whether a new user-facing command is worth
+        adding is product intent, and the repo's rule is that a new command ships ON and
+        discoverable, so it is not a free addition.
+      panel_recommendation: >-
+        WORTH BUILDING, and more useful than the display-form helper this item declined.
+        It is the honest version of what a display form gestures at: instead of prettifying
+        a path in four messages, it lets the operator ASK where everything lives, which is
+        also the natural place to surface that STACKOWL_HOME roots the whole instance
+        (D18.3). Small: one command reading accessors that already exist. NOT built in this
+        item because a new user-facing command is your call, and D18.4's own root causes
+        were fixed without it.
+      blocked_until_answered: >-
+        Nothing. D18.4 shipped three root-cause fixes and its guard without this.
     ESC_136_multi_instance_five_process_level_names_still_collide:
       premise_check: |
         uv run python -c "
@@ -29136,18 +29222,66 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D18.4.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "NO DISPLAY-FORM HELPER, on measured grounds. The live DB has 20 messages
+         containing /home/boss/, 14 from the assistant, and every one is MODEL-AUTHORED
+         PROSE — runnable instructions the model wrote because it SEES absolute paths in
+         tool results. A helper wired at the five formatting sites fixes 0 of 14. One of
+         those five (tools/system/shell.py:784) is the tool SCHEMA the model reads, and
+         ShellTool dispatches through create_subprocess_exec with workdir passed straight
+         to cwd= unexpanded — a ~ there is a latent breakage, not a cosmetic."
+      - "THE REFERENCE'S OWN HISTORY AGREES. Their helper caused an outage and the fix
+         reverted their tool description to a static string — the same model-facing site.
+         Their motivation was that hardcoded homes broke the model under PROFILES, which
+         D18.3 recorded as explicitly unsupported (ESC-136). A display helper is profile
+         machinery bought before the profile decision it serves."
+      - "AND THE HALF WORTH KEEPING IS THE ONE THEY LOST. Their tree has the accessor rule
+         in its contributor guide, a display helper built on it, and NO automated guard —
+         and now ~20 production files that build the home by hand, one reaching the
+         operator's real credential file. Ours holds; nothing enforced it. Guard added."
+      - "THE ROOT WARNS RATHER THAN REFUSES. Settings uses extra=ignore at the root and
+         forbid in every sub-model, so a mistyped SECTION NAME discarded that whole
+         section in silence. Flipping the root to forbid would make a config that used to
+         boot suddenly fail; locking the operator out of his platform to catch a typo is a
+         bad trade. Measured: the live config has 0 unknown top-level keys."
+    changes:
+      - "src/stackowl/config/settings.py — settings_customise_sources now RETURNS
+         init_settings, first. It accepted the parameter and never returned it, and
+         pydantic-settings consults only the sources a model returns, so every keyword
+         argument to Settings(...) was silently discarded."
+      - "src/stackowl/config/config_path.py (new) + browser.py — ConfigPath, a
+         BeforeValidator expanding ~ and $VARS, applied to all five Path-typed settings
+         fields. Covers config file, environment and constructor alike, because all three
+         pass through validation."
+      - "src/stackowl/config/settings.py::_YamlSource._warn_unknown_keys — an unknown
+         top-level key is now announced at WARNING and still boots."
+      - "tests/test_the_example_config_cannot_go_stale.py — D18.2's round-trip check
+         strengthened: it now proves Settings REJECTS nonsense and that the example's ~
+         paths arrive ABSOLUTE. It previously proved nothing."
+      - "tests/test_settings_cannot_silently_discard_what_you_pass_it.py (5 tests, 2
+         tripwires), tests/test_a_config_path_expands_like_a_human_wrote_it.py (4, 2),
+         tests/test_no_python_module_reimplements_the_home.py (2, 2)."
+    notes: >-
+      ONE DEFECT WAS THE OTHER'S ALIBI, and that is the finding. A panel lens flagged the
+      ~ paths in docs/stackowl.yaml.example as a breakage. I MEASURED it and reported the
+      lens WRONG — loading the example returned an absolute path. It returned an absolute
+      path because the YAML value was being DISCARDED by the init_settings defect and the
+      default came back. With kwargs honoured, the same measurement gives
+      PosixPath('~/.stackowl/screenshots') — relative, exactly as the lens predicted. The
+      instrument that cleared the tilde was measuring the bug that swallowed it. SECOND
+      CORRECTION IN THE SAME ITEM: my first version of the bare-Path guard read
+      field.annotation and reported all four CONVERTED fields as offenders, because
+      pydantic strips the Annotated wrapper and moves the validator into field.metadata —
+      the guard measuring the wrong attribute and confidently accusing the fix.
 
   - id: D18.5
     title: "Test isolation"

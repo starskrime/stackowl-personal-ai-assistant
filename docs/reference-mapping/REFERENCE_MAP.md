@@ -1574,6 +1574,34 @@ Both mandate a single accessor (`get_hermes_home()` / `StackowlHome`) and ban ha
 Hermes additionally separates the **display** form. Their note that this was the source of 5 bugs in
 one PR matches our own experience.
 **Ask.** Add a display-form helper?
+**MEASURED 2026-09-05 — NO to the helper, and asking the question found TWO defects,
+ONE HIDING THE OTHER.** The helper is declined on evidence: the live DB holds 20 messages
+containing `/home/boss/`, 14 from the assistant, and every one is **model-authored prose**
+(runnable instructions like `cd /home/boss/.stackowl/workspace && …`) that the model emits
+because it SEES absolute paths in tool results — so a helper wired at the five formatting
+sites fixes **0 of 14**. One of those five, `tools/system/shell.py:784`, is the tool SCHEMA
+the model reads, and `ShellTool` dispatches through `create_subprocess_exec` with `workdir`
+passed straight to `cwd=` unexpanded, so a `~` there is a latent breakage. The reference's
+own history agrees: their helper caused an outage and the fix reverted their tool
+description to a static string — the same site — and their motivation was that hardcoded
+homes broke the model under PROFILES, which D18.3 recorded as explicitly unsupported. **A
+display helper is profile machinery bought before the profile decision it serves.**
+**WHAT MEASURING IT FOUND:** `settings_customise_sources` accepted `init_settings` and never
+RETURNED it, so pydantic discarded every keyword argument — `Settings(webhook={"port":9999})`
+came back 8766 and `Settings(**{"no_such_key":1,"webhook":{"port":"not-a-number"}})` was
+ACCEPTED. That made two tests vacuous (a supervisor contract for an ENABLED webhook receiver
+asserted against a disabled one) and made **D18.2's own round-trip acceptance check validate
+nothing**. Fixing it UNMASKED a second defect it had been concealing: the example config's
+`~/.stackowl/...` paths had measured as absolute only because the YAML value was being
+discarded; with kwargs honoured they come back RELATIVE — `Path("~/x")` is a directory
+literally named `~`. `ConfigPath` (a BeforeValidator expanding `~` and `$VARS`) now covers all
+five Path-typed settings fields. Third fix: a mistyped SECTION NAME silently discarded that
+whole section (`extra="ignore"` at the root, `forbid` in every sub-model) — it now WARNS and
+still boots, because locking the operator out to catch a typo is a bad trade. **And the half
+worth keeping from the reference is the one THEY lost:** the accessor rule holds in our `src/`
+but nothing enforced it (D18.3 guarded shell only, so Python was not one short — it was zero),
+while their tree has the rule in its guide, no guard at all, and ~20 files that build the home
+by hand. Guard added. See `designs/D18.4.md`.
 
 ### D18.5 · Test isolation — `PARTIAL`
 **Hermes.** `scripts/run_tests.sh` is **mandatory** — enforces CI parity (unset credential vars,

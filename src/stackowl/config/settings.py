@@ -80,7 +80,35 @@ class _YamlSource(PydanticBaseSettingsSource):
             raise ConfigurationError(
                 f"config file {self._path} exists but failed to parse: {exc}"
             ) from exc
-        return raw if isinstance(raw, dict) else {}
+        data = raw if isinstance(raw, dict) else {}
+        self._warn_unknown_keys(data)
+        return data
+
+    def _warn_unknown_keys(self, data: dict[str, Any]) -> None:
+        """Say out loud which top-level keys were ignored.
+
+        `Settings` uses ``extra="ignore"`` at the ROOT while every sub-model uses
+        ``extra="forbid"``. So a typo INSIDE a section is caught by validation, and
+        a typo in a SECTION NAME — `webhok:` — silently discards that entire
+        section's configuration. The asymmetry is the defect: the root is exactly
+        where the section names live, so it is the one place a typo costs the most
+        and said the least.
+
+        This warns rather than refusing. Flipping the root to ``extra="forbid"``
+        would make a config file that used to boot suddenly fail, and locking the
+        operator out of his own platform to catch a typo is a bad trade. Measured
+        2026-09-05: the live config has 0 unknown top-level keys, so nothing is
+        being warned about today — the line exists for the next typo, not this one.
+        """
+        unknown = sorted(set(data) - set(self.settings_cls.model_fields))
+        if unknown:
+            log.warning(
+                "[config] %s: ignoring unknown top-level key(s): %s — "
+                "check the spelling against docs/stackowl.yaml.example; a "
+                "mistyped SECTION name discards that whole section silently",
+                self._path,
+                ", ".join(unknown),
+            )
 
     def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
         return self._data.get(field_name), field_name, self.field_is_complex(field)
@@ -1047,7 +1075,18 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         config_path = StackowlHome.config_file()
-        return (env_settings, _YamlSource(settings_cls, config_path))
+        # `init_settings` FIRST, and it must be here at all. It was accepted as a
+        # parameter and never returned, and pydantic-settings consults only the
+        # sources a model RETURNS — so every keyword argument to `Settings(...)`
+        # was silently discarded. Measured 2026-09-05: `Settings(webhook={"port":
+        # 9999})` came back 8766, and `Settings(**{"no_such_key": 1})` was accepted
+        # without error, which is what made two tests vacuous and made D18.2's
+        # round-trip acceptance check assert nothing at all.
+        #
+        # The order is the contract: an explicitly passed value outranks the
+        # environment, which outranks the config file. A caller who names a value
+        # meant it.
+        return (init_settings, env_settings, _YamlSource(settings_cls, config_path))
 
     @model_validator(mode="after")
     def _post_init(self) -> Settings:
