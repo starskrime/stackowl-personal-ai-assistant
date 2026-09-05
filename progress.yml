@@ -361,6 +361,19 @@ current:
       mutants, each verified applied: dropping the min() so a round could WIDEN past the
       window, letting a round spend ALL of what remains rather than half, and un-wiring ONE
       provider — the same-rule-one-case-short shape the tripwire exists for.
+    VALIDATED_LIVE: >-
+      Boot 2026-09-05T21:35:34Z against a commit at 21:35:05Z (converted with %cI). 459
+      records since. FOUR ERROR lines, and they are NOT mine: "provider_probe.check: all
+      providers unreachable" and "booting in DEGRADED mode". Checked two ways rather than
+      assumed — curl to the gateway returns HTTP 000 (unreachable) right now, and the same
+      message has history on 2026-08-29 (8), 09-01 (2), 09-03 (72) and 09-04 (19), all
+      before this change. The probe retried three times and reported honestly; a DEGRADED
+      boot is the correct behaviour for a down gateway.
+      OPEN, and the outage is why: no live turn can exercise the new per-round budget while
+      the provider is unreachable. Closing query — grep the log for a turn whose rounds stop
+      growing once `tokens_remaining()` falls, or simply confirm no turn dies on `tokens`
+      with a single round over 30% of the cap. The behaviour is pinned by 11 tests and three
+      mutants meanwhile.
     NEXT: "ESC-148 (delete the dead 600s time cap) is the last small authorised one."
   DEBT122_2026_09_05_the_prefix_is_fine_for_90_percent_and_fatal_for_1:
     map_check: "No mapped item matches — evidence-led, DEBT-122. Taken because ESC-149's answer named prefix reduction THE TOP ITEM."
