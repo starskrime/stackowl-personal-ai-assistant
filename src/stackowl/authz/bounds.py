@@ -11,9 +11,21 @@ axis documents WHERE it is enforced:
     * ``tools``              — enforced HERE (E2-S1) at the dispatch seam.
     * ``fs_read_roots`` /
       ``fs_write_roots``     — enforced by the workspace sandbox (Epic 3).
-    * ``network``            — enforced by the host egress proxy (Epic 3).
+    * ``network``            — MODELLED ONLY. The host egress proxy is Epic 3 and
+                               does not exist; measured 2026-09-05, nothing reads
+                               ``BoundsSpec.network`` anywhere in ``src/``. Egress
+                               is guarded instead by ``infra/net/ssrf_guard.py``,
+                               which is global and IP-class based rather than
+                               per-owl (see D17.4, and DEBT-118 for the residual).
     * ``data_owner_id`` /
-      ``data_namespaces``    — enforced by tenancy ``OwnedRepository`` (already).
+      ``data_namespaces``    — enforced GLOBALLY by tenancy ``OwnedRepository``,
+                               which constrains every query to its own owner_id.
+                               NOT enforceable as a TASK-SCOPED divergence: nothing
+                               plumbs a per-task owner into a repository, so
+                               ``ENFORCED_AXES`` in ``authz/enforcement.py``
+                               excludes it and a task that diverges here is refused.
+                               Both statements are true and read as contradictory
+                               apart; measured 2026-09-05.
     * ``caps``               — enforced by the budget governor (E2-S4) and the
                                stop-policy (E2-S5).
 

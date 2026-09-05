@@ -18,6 +18,14 @@ from stackowl.authz.bounds import BoundsSpec
 from stackowl.exceptions import DomainError
 
 #: Axes with a live enforcement seam. TOOLS only, in S2.
+#:
+#: RE-MEASURED 2026-09-05 and still accurate, axis by axis: nothing in ``src/``
+#: reads ``BoundsSpec.network``; ``path_guard`` anchors to a global ``data_root()``
+#: rather than per-owl roots; and ``data_owner_id`` is enforced GLOBALLY by
+#: ``OwnedRepository`` while nothing plumbs a task-scoped value — which is why it
+#: is excluded HERE even though ``bounds.py`` calls it already-enforced. Both are
+#: true: enforced as a property of every query, unenforceable as a per-task
+#: divergence.
 ENFORCED_AXES = frozenset({"tools"})
 
 #: All axes a task spec can carry, paired with their "unset / unrestricted" value.

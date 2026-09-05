@@ -1459,6 +1459,21 @@ resolves 210 packages and the lock diff has ZERO `version =` changes — only th
 **StackOwl.** `authz/` `BoundsSpec` (5 axes, with an honest statement of which are actually enforced),
 `tenancy/` principals + owned repositories, `audit/` hash-chained append-only log.
 **Ask.** Keep. This is enterprise-grade and Hermes has nothing comparable.
+**KEEP CONFIRMED 2026-09-05, and the "honest statement" re-measured axis by axis — it is
+honest.** `ENFORCED_AXES = {"tools"}`, and `enforcement.py` does more than document the gap: a
+task-scoped divergence on an unenforced axis is REFUSED at construction, fail closed, whether
+TIGHTER or looser, because "a task envelope that diverges on an axis no seam enforces would
+manufacture false confidence (e.g. `network: none` that does not block the network)". That is
+the defect this whole programme hunts, refused by construction. VERIFIED: nothing in `src/`
+reads `BoundsSpec.network` (the `.network` hits are execute_code's sandbox flag on a different
+object); `path_guard` anchors to a global `data_root()` rather than per-owl roots. ONE PLACE
+TWO TRUE STATEMENTS READ AS CONTRADICTORY: bounds.py called `data_owner_id` "enforced by
+tenancy OwnedRepository (already)" while enforcement.py excludes it — both correct, because
+OwnedRepository constrains EVERY query to its owner while NOTHING plumbs a task-scoped value,
+so a per-task divergence cannot be honoured. They now cross-reference with that distinction
+stated. ADDED: a tripwire that the CLOSED enumeration stays closed in BOTH places — an axis in
+`BoundsSpec` but absent from `_AXIS_UNSET` is never walked, so it would be a constraint no seam
+enforces and no check refuses. See `designs/D17.6.md`.
 
 ---
 

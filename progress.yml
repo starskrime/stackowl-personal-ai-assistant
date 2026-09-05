@@ -315,6 +315,28 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D17_6_2026_09_05_the_honest_statement_is_honest_and_two_true_statements_looked_contradictory:
+    map_check: "D17.6 — Authz & tenancy (AHEAD, wave 9). Ask: keep. Stages verified not_started first."
+    THE_CLAIM_WORTH_CHECKING: >-
+      The entry praises "an honest statement of which are actually enforced". A
+      self-describing comment is a claim, not a measurement — so it was re-measured.
+    IT_IS_HONEST: >-
+      ENFORCED_AXES = {"tools"}. Nothing in src/ reads BoundsSpec.network — the .network hits
+      are execute_code's sandbox flag on a different object. path_guard anchors to a global
+      data_root(), never per-owl roots. Nothing has quietly become enforced.
+    AND_IT_DOES_MORE_THAN_DOCUMENT: >-
+      enforcement.py REFUSES a task-scoped divergence on an unenforced axis at construction —
+      tighter OR looser — because "network: none that does not block the network" would
+      manufacture false confidence. The defect this programme hunts, refused by construction.
+    TWO_TRUE_STATEMENTS_THAT_READ_AS_CONTRADICTORY: >-
+      bounds.py called data_owner_id "enforced by OwnedRepository (already)"; enforcement.py
+      excludes it. OwnedRepository constrains EVERY query to its owner_id, and NOTHING plumbs
+      a task-scoped value. Both right; neither said which sense. Now cross-referenced.
+    THE_DRIFT_RISK_GUARDED: >-
+      Two enumerations of one CLOSED set. An axis in BoundsSpec but absent from _AXIS_UNSET is
+      never walked — a constraint no seam enforces and no check refuses. The tripwire derives
+      the set from model_fields, both directions. Mutation-proven with a sixth axis.
+    NEXT: "D18.1 (wave 9, order 84) — the D18 configuration/state/operations domain opens."
   D17_5_2026_09_05_a_ceiling_on_every_dependency_and_a_sha_on_every_action:
     map_check: "D17.5 — Dependency pinning policy (MISSING, wave 9). Stages verified not_started first."
     MEASURED_FIRST: >-
@@ -28678,19 +28700,49 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D17.6.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "KEEP CONFIRMED. The honest statement is honest: re-measured axis by axis, nothing has
+         quietly become enforced."
+      - "The two statements about data_owner_id were BOTH TRUE and read as contradictory.
+         Cross-referenced rather than picking one: enforced as a property of every query,
+         unenforceable as a per-task divergence."
+      - "The guard derives the axis set from BoundsSpec.model_fields rather than restating it,
+         because two enumerations of one closed set is what created the drift risk."
+    changes:
+      - "src/stackowl/authz/bounds.py — the network axis marked MODELLED ONLY with the
+         measurement, and data_owner_id given the global-vs-task-scoped distinction."
+      - "src/stackowl/authz/enforcement.py — ENFORCED_AXES annotated with the 2026-09-05
+         re-measurement and why data_owner_id is excluded despite bounds.py calling it
+         already-enforced."
+      - "tests/tenancy/test_the_closed_axis_set_stays_closed_in_both_places.py — a tripwire
+         that _AXIS_UNSET covers exactly BoundsSpec's task-scopable fields, both directions,
+         plus a behavioural check that an unenforced divergence is still refused.
+         Mutation-proven with a sixth axis."
+    notes: >-
+      THE ENTRY SINGLES OUT ONE PROPERTY — "an honest statement of which are actually enforced"
+      — and a self-describing comment is a claim, not a measurement. RE-MEASURED AXIS BY AXIS
+      and it is honest: ENFORCED_AXES is {"tools"}; nothing in src/ reads BoundsSpec.network
+      (the .network hits are execute_code's sandbox flag on a different object); path_guard
+      anchors to a global data_root() rather than per-owl roots. AND enforcement.py does more
+      than document the gap — it REFUSES a task-scoped divergence on an unenforced axis at
+      construction, tighter OR looser, because no seam can honour either. A constraint that
+      looks enforced and is not is the defect this programme hunts, refused by construction.
+      ONE PLACE TWO TRUE STATEMENTS READ AS CONTRADICTORY: bounds.py said data_owner_id is
+      "enforced by tenancy OwnedRepository (already)" while enforcement.py excludes it.
+      OwnedRepository constrains EVERY query to its owner_id, and NOTHING plumbs a task-scoped
+      value (zero references outside authz/) — so both are right and neither said which sense
+      it meant. THE DRIFT RISK IS THE TWO ENUMERATIONS: an axis in BoundsSpec but absent from
+      _AXIS_UNSET is never walked, so it would be a task constraint no seam enforces and no
+      check refuses — false confidence through the one door that module does not watch.
   - id: D18.1
     title: "Config vs. secrets discipline"
     domain: D18
