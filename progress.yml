@@ -315,6 +315,39 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  OPERATOR_ANSWERED_2026_09_05_four_escalations_cleared_in_one_sitting:
+    what_this_record_is: >-
+      Not an item. Four escalations were put to Bakir and answered; recording them
+      immediately is the whole point of the queue, because the failure it exists to prevent
+      is an answered question that nobody wrote down. Each is now marked ANSWERED in place
+      with what he chose and what it unblocks.
+    ESC_150_grant_confined_runs_unattended: >-
+      A bwrap/Docker run becomes autonomously grantable; unconfined shell still needs a
+      human. UNBLOCKS D06.1 implement (recorded no_change_needed pending exactly this) and
+      D06.2. He did NOT choose remote backends, so SSH/Modal/Daytona stay unbuilt and D06.1's
+      document already records what they would have to satisfy.
+    ESC_149_the_re_sent_prefix_is_REAL_spend: >-
+      He chose to assume the gateway does NOT cache. That promotes prefix reduction from
+      "speculative, declined by the panel" to THE TOP ITEM, and it settles what
+      providers/base.py should say: its claim that an OpenAI-protocol backend "already
+      collects the discount" is now to be corrected, not left open.
+    ESC_148_delete_the_dead_time_cap: >-
+      Constant, green test and three comments go together in one change. I flagged the
+      consequence and he took it: nothing will then bound wall clock, and 86 of 205 long
+      traces exceeded 600s with one at 13.1 hours. Still strictly better than asserting a
+      protection that has never fired.
+    ESC_147_he_overrode_his_own_recorded_decision: >-
+      The per-round trim budget will be derived from the turn's REMAINING token budget
+      rather than left at a flat 1,000,000 chars. That reverses his 2026-07-22 "pure
+      backstops, not shaping ceilings" — which is precisely why it was escalated instead of
+      changed, and why the answer had to be his.
+    WHAT_I_HAVE_NOT_DONE: >-
+      None of the four is implemented yet. This record closes the questions, not the work.
+    NEXT: >-
+      His priority instruction is explicit — prefix reduction is the top item. The
+      capability-neutral lever is already measured: 15 tools have NEVER been invoked
+      (~3,688 tok/round) and CLAUDE.md says a zero-invocation tool is a DELETION question,
+      not a presentation one. ESC-147 and ESC-148 are both small and now authorised.
   D06_1_2026_09_05_the_backend_was_never_the_constraint:
     map_check: "D06.1 Pluggable execution backends — PARTIAL, close_gap, P2, wave 10 order 99, 0/7. The next unstarted mapped item."
     THE_GAP_LINE_IS_HALF_WRONG: >-
@@ -10967,6 +11000,8 @@ current:
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
     ESC_150_does_runs_anywhere_matter_when_confined_execution_is_already_gated_shut:
+      ANSWERED_2026_09_05: >-
+        GRANT CONFINED RUNS UNATTENDED. A run inside bwrap/Docker becomes autonomously grantable; unconfined `shell` keeps needing a human. This inverts today's shape, where the SAFE path is refused 27 times out of 28 and the UNSAFE one is open. It relaxes the always-ask policy he set himself, so it needed his word and now has it. UNBLOCKS D06.1 implement and D06.2. Remote backends stay unbuilt — he did not choose (b) or (c).
       premise_check: |
         uv run python -c "
         import json, pathlib, collections
@@ -11013,6 +11048,8 @@ current:
         D06.1 implement (recorded no_change_needed with this reason) and D06.2, which this
         item blocks. Nothing else. The local path is live, documented and tested (163 pass).
     ESC_149_can_the_gateway_tell_us_whether_it_caches_because_64_percent_of_the_bill_depends_on_it:
+      ANSWERED_2026_09_05: >-
+        ASSUME THE GATEWAY DOES NOT CACHE — PREFIX REDUCTION IS NOW THE TOP ITEM. The 384,429,704 re-sent tokens (64% of the primary provider's input bill) are to be treated as REAL spend, not as an already-cached freebie. That promotes prefix reduction from 'speculative, declined' to the largest open efficiency item, and it means `providers/base.py`'s claim that an OpenAI-protocol backend 'already collects the discount' must be corrected rather than left as an open question.
       premise_check: |
         uv run python -c "
         import json, pathlib, collections
@@ -11055,6 +11092,8 @@ current:
         No code is blocked. `PrefixGrowthContributor` now measures and reports the prefix
         either way, so the platform will notice it growing regardless of how this is answered.
     ESC_148_a_600_second_cap_that_is_defined_tested_described_and_never_supplied:
+      ANSWERED_2026_09_05: >-
+        DELETE THE TIME CAP AND ITS TEST. RETIRED MEANS DELETED. `DEFAULT_TURN_MAX_TIME_S`, the green test asserting it exists, and the three comments describing it all go in one change. CONSEQUENCE HE ACCEPTED AND I FLAGGED: nothing then bounds wall clock — 86 of 205 long traces exceeded 600s and one ran 13.1 hours. Deleting is still strictly better than today, where a constant, a test and three comments assert a protection that has never once fired.
       premise_check: |
         uv run python -c "
         import pathlib, re
@@ -11088,6 +11127,8 @@ current:
         Nothing. The false prose claiming the cap "still applies" is already corrected, so the
         tree no longer lies about it either way.
     ESC_147_one_round_may_spend_a_third_of_the_turn_and_the_limit_that_would_stop_it_is_yours:
+      ANSWERED_2026_09_05: >-
+        DERIVE THE PER-ROUND BUDGET FROM WHAT IS LEFT. budget = min(window_chars, remaining_turn_tokens x chars_per_token x 0.5). He OVERRODE his own 2026-07-22 decision ('pure backstops, not shaping ceilings') with the measurement in front of him — one round took 162,912 tokens, 32.6% of the whole turn budget, and the trimmer waved it through at ~627k chars. Stays a backstop on ordinary turns; binds only when a single round would eat half of what remains.
       premise_check: |
         uv run python -c "
         import re, pathlib
