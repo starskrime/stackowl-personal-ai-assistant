@@ -358,7 +358,17 @@ current:
       unsorted import and a quoted annotation; mypy 65). Three mutants, each verified
       applied: claude_code joining the confined set, keying on the category instead of the
       contract, and the demoted grant record.
-    NEXT: "Validate live, then D06.2 (which D06.1 blocks) is next by order."
+    VALIDATED_LIVE: >-
+      Boot 2026-09-05T23:34:30Z against a commit at 23:34:04Z. 461 records, 4 ERROR lines —
+      all the SAME gateway-unreachable condition present on the previous three restarts and
+      re-confirmed by curl (HTTP 000). Nothing new from the consent change; the platform
+      boots and reaches steady state with the carve-out live.
+      OPEN, and the outage is why: zero confined grants since boot, because no turn can run
+      while the provider is unreachable, so nothing has requested execute_code. The path is
+      pinned by 20 tests and three verified mutants meanwhile. Closing query: grep
+      "confined execution granted" in ~/.stackowl/logs/stackowl.jsonl after the next
+      unattended RCA turn — the population that produced all 27 denials.
+    NEXT: "D06.2 (which D06.1 blocks) is next by order; then the 24 documents he authorised."
   OPERATOR_ANSWERED_2026_09_05_second_sitting_four_more:
     what_this_record_is: "Four more answers, recorded on the REAL keys this time — the last set went onto a narrative scalar via a first-match bug."
     ESC_150_design_AUTO_GRANT_ANY_CONFINED_RUN_AND_NOTIFY: >-
