@@ -359,6 +359,17 @@ current:
       MIGRATIONS ... Those call sites are deliberately left alone", because they assert on
       what the runner does. Per-site cost measures ~2.5s, not the ~9s assumed. Tens of
       seconds of ~1,745.
+    THE_GUARD_CAUGHT_MY_OWN_MISTAKE_ON_ITS_FIRST_LIVE_RUN: >-
+      The applied-minus-disk check fired at once, and correctly: "applied migration 0137
+      has no file in the tree". I created 0137, the RUNNING platform applied it at
+      12:24:21, and I then deleted the file after the first behavioural test showed the
+      column belonged in the runner's bootstrap. It was never committed (0 commits touch
+      it), so no other database can have that row. The live ledger holds 137 rows against
+      136 files. Removing it is a DELETE on the operator's database, so it is ESC-142 and
+      not done unilaterally — the schema is identical either way, because the column is
+      now created at bootstrap. That the detector's first live act was to catch the
+      person who wrote it is the most convincing evidence it works that this item could
+      have produced.
     EVIDENCE: >-
       13 passed on the new file; 115 passed across tests/db in 341s. Three mutants caught
       and restored from file copies: removing the verifier call, hashing WITH comments (8
@@ -10448,6 +10459,42 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_142_STOP_AND_BRIEF_a_phantom_migration_row_I_created_is_in_your_live_ledger:
+      premise_check: |
+        uv run python -c "
+        import sqlite3, os
+        db = os.path.expanduser('~/.stackowl/workspace/stackowl.db')
+        c = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+        row = c.execute(\"SELECT version FROM schema_migrations WHERE version='0137'\").fetchone()
+        print('HOLDS phantom 0137 row still present' if row else 'EXPIRED row is gone')
+        "
+      question: >-
+        May I delete one row from `schema_migrations`? WHAT HAPPENED, plainly: while
+        working D18.9 I created `0137_migration_semantic_checksum.sql`, the running
+        platform picked it up and APPLIED it at 12:24:21, and I then deleted the file
+        because the column belonged in the runner's bootstrap rather than in a numbered
+        migration. It was NEVER COMMITTED — `git log --all` shows 0 commits touching it —
+        so no other database can ever have that row. Your live ledger now holds 137 rows
+        against 136 files, and the new verifier correctly reports it on every boot:
+        "applied migration 0137 ... has no file in the tree". The fix is one statement:
+        DELETE FROM schema_migrations WHERE version = '0137';
+      why_evidence_cannot_settle_it: >-
+        This is a DELETE against your live database, which your standing rule says I do
+        not do unilaterally, and I am not making an exception for my own mess. Evidence
+        can and does say it is safe — the column `sql_checksum` that migration added is
+        now created by `_ensure_sql_checksum_column` at runner bootstrap, so the schema is
+        identical with or without the row, and removing it makes your ledger match what
+        every fresh install builds. What evidence cannot decide is whether you want me
+        touching that table at all.
+      panel_recommendation: >-
+        DELETE IT, and the warning is not the reason — the warning is TRUE and doing its
+        job. The reason is that the row makes your database permanently disagree with a
+        fresh install by exactly the mechanism this item exists to detect, which would be
+        an absurd thing to leave in place in the same change that added the detector. If
+        you would rather not, leaving it is harmless: the schema is correct either way and
+        the boot warning is an accurate description of a real inconsistency.
+      blocked_until_answered: >-
+        Nothing in D18.9, which shipped complete and green. Only this one row.
     ESC_141_an_installed_plugin_is_verified_once_and_never_again:
       premise_check: |
         uv run python -c "
