@@ -57,10 +57,10 @@ KEY = (PROVIDER, MODEL)
 
 @pytest.fixture(autouse=True)
 def _clean_cache():
-    model_window._WINDOW_CACHE.clear()
+    model_window.reset_window_cache()
     model_window._PROVISIONAL.clear()
     yield
-    model_window._WINDOW_CACHE.clear()
+    model_window.reset_window_cache()
     model_window._PROVISIONAL.clear()
 
 

@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D04_2_2026_09_05_the_split_already_exists_and_the_defect_was_guessing_a_vendor_from_a_url:
+    map_check: "D04.2 — Transport adapters (PARTIAL, wave 10, order 94). Stages verified not_started first."
+    THE_ASK_ANSWERED_NO_WITH_NUMBERS: >-
+      cost_records holds 130,523 rows; every call for 57 days — 96,937 of them — went
+      through the one LiteLLM gateway, and the anthropic, gemini and grok protocols have
+      NEVER carried a single call. And none of the reference's four transports is
+      unreachable through a gateway: read against their code, their Vertex and Azure
+      "adapters" are credential providers feeding the OpenAI SDK; only Bedrock (boto3
+      SigV4) and Codex-responses genuinely differ, and LiteLLM does the SigV4 itself.
+    THE_MAPS_PREMISE_IS_WRONG: >-
+      "No transport/profile split" is false. PROTOCOLS = (anthropic, openai, gemini, grok)
+      is validated per catalog entry, _build_provider dispatches on config.protocol and
+      never on a name, and there are ZERO imports of a concrete provider class outside
+      providers/. protocol IS the transport dimension, and per-vendor classes inside that
+      package are the sanctioned shape — so adding one would not violate the rule; there
+      is simply no demand for it.
+    THE_STANDING_RULE_WAS_BEING_BROKEN_TWICE: >-
+      model_window.py:268 and openai_provider.py:1283 independently tested ":11434" in url
+      or "ollama" in url.lower(). De Morgan-identical, never diverged, and both wrong the
+      same two ways: a gateway path like gw.example.com/ollama/v1 matches, and so does a
+      vLLM server on port 11434 — which was then sent an options.num_ctx body it may
+      reject. The CAPABILITY is real; the INSTRUMENT was a vendor guessed from a substring.
+    PROBE_DO_NOT_GUESS: >-
+      The probe already returned int-or-None and swallowed every error, so it was already
+      a perfect capability test and guessing first bought nothing. It is now tried for any
+      backend with a base_url, the result is recorded as a measured fact, and
+      openai_provider asks that fact instead of re-deriving the guess. Fifteen lines from
+      the deleted sniff, a comment describes the incident where a URL-shaped assumption
+      cost a 32x window error, and config/provider.py:152 already named the pattern: "a
+      hardcoded guess wearing discovery's clothes."
+    A_SECOND_MEMO_NEEDS_ONE_SEAM: >-
+      Adding _NATIVE_WINDOW_API immediately produced cross-test pollution — a test seeded
+      it, the next inherited it, because the autouse fixture cleared only _WINDOW_CACHE.
+      The cause was not the new dict but that reset knowledge lived in 15 sites across 8
+      test files. All now call reset_window_cache(), which owns both memos.
+    MY_GUARD_PRODUCED_THREE_FALSE_POSITIVES_BEFORE_IT_WAS_AIMED: >-
+      A line scan flagged this module's own docstring DESCRIBING the deleted guess; an AST
+      scan of string constants flagged cli/providers_cli.py, where the literal is a PROMPT
+      HINT shown during setup; the rule finally matches only a membership test containing
+      the literal, which is the actual defect shape. Prose about a defect is not the
+      defect, and display text is not dispatch.
+    EVIDENCE: >-
+      730 passed across tests/providers; 6 passed across the other suites whose reset calls
+      were re-routed. Three mutants caught and each restored from a file copy: making the
+      measured fact always true (3 failures — the vLLM false positive returns), never
+      recording the probe result, and reintroducing a ":11434" in url test.
+    NEXT: "D04.3 · Credential pool & rotation (MISSING, wave 10, order 95)."
   D18_9_2026_09_05_a_checksum_written_136_times_and_read_never:
     map_check: "D18.9 — Migrations (AHEAD, track keep, wave 9, order 92). Stages verified not_started first."
     THE_CLAIM_HOLDS_TWO_SPECIFICS_ARE_STALE: >-
@@ -10459,6 +10506,40 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_143_three_protocols_are_built_and_have_never_carried_a_call:
+      premise_check: |
+        uv run python -c "
+        import sqlite3, os
+        db = os.path.expanduser('~/.stackowl/workspace/stackowl.db')
+        c = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+        used = {r[0] for r in c.execute('SELECT DISTINCT provider_name FROM cost_records')}
+        print(f'HOLDS providers ever used: {sorted(used)}' if len(used) <= 6
+              else 'EXPIRED the provider mix has widened')
+        "
+      question: >-
+        Do you want the unexercised protocols smoke-tested against a real endpoint?
+        MEASURED 2026-09-05: `cost_records` holds 130,523 rows and only FIVE provider
+        names have ever appeared, all `protocol: openai`. The `anthropic`, `gemini` and
+        `grok` protocols — three of the four the platform builds — have never carried a
+        single call. That is not decoration: your own recorded constraint says your USERS
+        run many different backends and the provider config exists to support them, so
+        the protocols are for them rather than for you. The risk is different: code that
+        has never run against a real endpoint can be broken without anyone knowing, and
+        the first person to find out would be a user on their first turn.
+      why_evidence_cannot_settle_it: >-
+        Evidence establishes the exposure precisely and cannot price it. Closing it means
+        either credentials for three vendors on this box — which cuts against
+        self-hosted-only and puts real keys somewhere they are not needed — or a recorded
+        fixture of each vendor's real wire responses, which is work and goes stale. Which
+        of those you are willing to carry is your call.
+      panel_recommendation: >-
+        RECORDED FIXTURES, not live credentials, and only if you want it at all. The unit
+        tests already cover the request-building side; what is unexercised is the RESPONSE
+        parsing, and a captured real response per protocol is enough to pin that without a
+        key ever touching this box. Low priority: the failure mode lands on a hypothetical
+        user, and D04.2 measured that no such user exists yet.
+      blocked_until_answered: >-
+        Nothing. D04.2 shipped its root-cause fix and its guard.
     ESC_142_STOP_AND_BRIEF_a_phantom_migration_row_I_created_is_in_your_live_ledger:
       premise_check: |
         uv run python -c "
@@ -22073,18 +22154,67 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D04.2.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "NO to more transports, on measured demand: cost_records holds 130,523 rows and
+         every call for 57 days (96,937) went through the one LiteLLM gateway, while the
+         anthropic, gemini and grok protocols have NEVER carried a single call. And none
+         of the reference's four is unreachable through a gateway — their Vertex and
+         Azure adapters are credential providers feeding the OpenAI SDK; only Bedrock
+         (boto3 SigV4) and Codex-responses differ, and LiteLLM does the SigV4."
+      - "THE MAP'S PREMISE IS WRONG. `PROTOCOLS = (anthropic, openai, gemini, grok)` is
+         validated per catalog entry and _build_provider dispatches on config.protocol,
+         never on a name — protocol IS the transport dimension. Zero imports of a
+         concrete provider class outside providers/, so per-vendor CLASSES inside that
+         package are the sanctioned shape and adding one would not violate the rule."
+      - "THE STANDING NO-VENDOR-BRANCH RULE WAS BEING BROKEN TWICE, in model_window.py
+         and openai_provider.py, with De Morgan-identical URL sniffs. The CAPABILITY is
+         real — a native metadata endpoint no other OpenAI-compatible server exposes —
+         but the INSTRUMENT was a vendor guessed from a substring, which matched a
+         gateway path containing 'ollama' and any vLLM server on port 11434."
+      - "PROBE, DO NOT GUESS. The probe already returned int-or-None and swallowed every
+         error, so it was already a perfect capability test and guessing first bought
+         nothing. The result is recorded as a measured fact that openai_provider asks,
+         instead of re-deriving the same guess."
+    changes:
+      - "src/stackowl/providers/model_window.py — _looks_like_ollama DELETED; _probe_ollama
+         renamed _probe_native_window_api and tried for any backend with a base_url;
+         _NATIVE_WINDOW_API records which (provider, model) answered; answered_native_window_api()
+         and reset_window_cache() added."
+      - "src/stackowl/providers/openai_provider.py — _ollama_extra_body renamed
+         _native_window_extra_body and now consults the measured fact rather than
+         re-sniffing the URL."
+      - "tests/providers/test_a_backend_is_probed_not_guessed_from_its_url.py (new, 4
+         tests) — including an AST guard banning URL-substring membership tests for
+         backend identity, with a positive control."
+      - "15 direct _WINDOW_CACHE.clear() sites across 8 test files re-routed through
+         model_window.reset_window_cache(); tests/providers/test_ollama_num_ctx.py,
+         test_model_window.py and test_disable_thinking.py updated from the URL contract
+         to the measured one."
+    notes: >-
+      A SECOND MEMO NEEDS A SECOND LINE IN EVERY RESET — OR ONE SEAM. Adding
+      _NATIVE_WINDOW_API immediately produced cross-test pollution: a test seeded it and
+      the next inherited it, because the autouse fixture cleared only _WINDOW_CACHE. The
+      cause was not the new dict but that reset knowledge lived in 15 sites across 8 files.
+      They now call reset_window_cache(), which owns both.
+      THE GUARD PRODUCED THREE FALSE POSITIVES BEFORE IT WAS AIMED PROPERLY, each the same
+      lesson one layer down: a line scan flagged this module's own docstring DESCRIBING the
+      deleted guess; an AST scan of string constants flagged cli/providers_cli.py, where the
+      literal is a PROMPT HINT shown during setup; the rule finally matches only a
+      membership test containing the literal, which is the actual defect shape. Prose about
+      a defect is not the defect, and display text is not dispatch.
+      THE TESTS ENCODED THE GUESS. test_ollama_num_ctx.py stated the old contract in its own
+      docstring — "the base_url is an ollama-family URL" — and test_model_window.py pinned
+      the ladder by that selection. Both now assert the measured fact, with the
+      ollama-shaped URL deliberately kept in the negative case to show it no longer decides.
 
   - id: D04.3
     title: "Credential pool & rotation"

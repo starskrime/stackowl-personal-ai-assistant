@@ -70,6 +70,26 @@ _PROBE_TIMEOUT = 30.0
 
 _WINDOW_CACHE: dict[tuple[str, str], int] = {}
 
+#: Which (provider, model) pairs ANSWERED the native metadata endpoint. A measured
+#: fact, replacing the URL guess that `openai_provider` used to make independently —
+#: two copies of one rule, both wrong for a vLLM server on port 11434.
+_NATIVE_WINDOW_API: dict[tuple[str, str], bool] = {}
+
+
+def answered_native_window_api(provider_name: str, model: str) -> bool:
+    """True iff this backend answered its native metadata endpoint when probed.
+
+    The replacement for `":11434" in base_url or "ollama" in base_url.lower()`,
+    which said "looks like a vendor" where the caller meant "accepts this option".
+    """
+    return _NATIVE_WINDOW_API.get((provider_name, model), False)
+
+
+def reset_window_cache() -> None:
+    """Drop both memos (test hygiene)."""
+    _WINDOW_CACHE.clear()
+    _NATIVE_WINDOW_API.clear()
+
 #: Keys whose cached value is the PROBE-FAILURE FLOOR rather than a measurement.
 #:
 #: The failure path used to write into `_WINDOW_CACHE` exactly like a success, so
@@ -240,7 +260,17 @@ def invalidate(provider_name: str) -> None:
         )
 
 
-async def _probe_ollama(base_url: str, model: str) -> int | None:
+async def _probe_native_window_api(base_url: str, model: str) -> int | None:
+    """Ask a backend for the model's real context length via its native metadata
+    endpoint. Returns None for any backend that does not answer.
+
+    NAMED FOR THE CAPABILITY, NOT THE VENDOR. It was `_probe_ollama`, selected by
+    `_looks_like_ollama` — a substring guess at a vendor from its URL. The standing
+    rule is to dispatch on response SHAPE and declared CAPABILITY, and this function
+    IS the capability test: it returns an int or None and swallows every error, so
+    calling it costs one fast miss against a backend that does not speak it. There
+    is no reason to guess first.
+    """
     base = base_url.rstrip("/")
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
@@ -260,12 +290,6 @@ async def _probe_ollama(base_url: str, model: str) -> int | None:
             exc_info=exc, extra={"_fields": {"url": url, "model": model}},
         )
         return None
-
-
-def _looks_like_ollama(base_url: str | None) -> bool:
-    if not base_url:
-        return False
-    return ":11434" in base_url or "ollama" in base_url.lower()
 
 
 # Live incident (2026-07-18): a custom OpenAI-compatible gateway (behind LiteLLM)
@@ -348,12 +372,16 @@ async def resolve_window(
     if context_chars is not None and context_chars > 0:
         w = window_from_config(context_chars=context_chars)
         log.engine.debug("[model_window] config override", extra={"_fields": {"model": model, "window": w}})
-    elif _looks_like_ollama(base_url) and base_url is not None:
-        probed = await _probe_ollama(base_url, model)
-        w = _clamp(probed) if probed else DEFAULT_WINDOW_FALLBACK
+    elif base_url is not None and (native := await _probe_native_window_api(base_url, model)):
+        # PROBE, DO NOT GUESS. This used to run only when the URL contained
+        # ":11434" or "ollama" — a vendor guessed from a substring, which matched a
+        # gateway path like `gw.example.com/ollama/v1` and any vLLM server on that
+        # port, and MISSED a backend that speaks the endpoint on any other address.
+        _NATIVE_WINDOW_API[key] = True
+        w = _clamp(native)
         log.engine.info(
-            "[model_window] resolved via probe",
-            extra={"_fields": {"model": model, "probed": probed, "window": w}},
+            "[model_window] resolved via native metadata probe",
+            extra={"_fields": {"model": model, "probed": native, "window": w}},
         )
     elif protocol in ("anthropic", "openai", "gemini", "grok") and base_url is None:
         w = _clamp(_CLOUD_DEFAULT)

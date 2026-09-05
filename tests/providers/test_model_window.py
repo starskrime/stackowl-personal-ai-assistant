@@ -6,10 +6,10 @@ from stackowl.providers import model_window as mw
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
     mw._reset_probe_client()
     yield
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
     mw._reset_probe_client()
 
 
@@ -154,24 +154,32 @@ async def test_resolve_openai_compatible_probe_request_failure_falls_back(monkey
     assert w == mw.DEFAULT_WINDOW_FALLBACK
 
 
-async def test_resolve_still_uses_ollama_probe_not_the_openai_compatible_one(monkeypatch):
-    """Ollama must keep going through _probe_ollama (its own richer model_info
-    endpoint) — the new openai-compatible probe is only the non-ollama fallback."""
-    called = {"ollama": False, "openai_compatible": False}
+async def test_the_native_probe_wins_over_the_openai_compatible_one(monkeypatch):
+    """A backend with its own richer metadata endpoint must be asked FIRST — the
+    openai-compatible probe is the fallback.
 
-    async def _fake_ollama(base_url, model):
-        called["ollama"] = True
+    THE INTENT IS UNCHANGED; THE MECHANISM IS. This was
+    `test_resolve_still_uses_ollama_probe_not_the_openai_compatible_one`, and the
+    native probe was selected by sniffing the URL for ":11434" or "ollama". D04.2
+    replaced that guess with the probe itself: the native endpoint is tried for any
+    backend with a base_url, and a backend that does not answer falls through. The
+    URL below is left ollama-shaped precisely to show it no longer decides anything.
+    """
+    called = {"native": False, "openai_compatible": False}
+
+    async def _fake_native(base_url, model):
+        called["native"] = True
         return 32768
 
     async def _fake_openai_compatible(base_url, model, api_key):
         called["openai_compatible"] = True
         return 999
 
-    monkeypatch.setattr(mw, "_probe_ollama", _fake_ollama)
+    monkeypatch.setattr(mw, "_probe_native_window_api", _fake_native)
     monkeypatch.setattr(mw, "_probe_openai_compatible", _fake_openai_compatible)
     w = await mw.resolve_window(
         provider_name="ollama", base_url="http://x:11434/v1",
         model="m", context_chars=None, protocol="openai",
     )
     assert w == 32768
-    assert called == {"ollama": True, "openai_compatible": False}
+    assert called == {"native": True, "openai_compatible": False}

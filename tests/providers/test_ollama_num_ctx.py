@@ -1,12 +1,20 @@
-"""Task 6 — inject budgeted window as ollama num_ctx (extra_body).
+"""Task 6 — inject the budgeted window as ``num_ctx`` (extra_body).
 
-Ollama silently truncates input to its own num_ctx default unless told otherwise.
+Such a backend silently truncates input to its own default unless told otherwise.
 The provider must spread ``extra_body={"options": {"num_ctx": W}}`` into BOTH
 ``chat.completions.create(...)`` calls when:
-  (a) the base_url is an ollama-family URL (contains ":11434" or "ollama"), AND
+  (a) the backend ANSWERED its native metadata endpoint when probed, AND
   (b) the model's window was already resolved and cached.
 
-Non-ollama providers must NOT receive extra_body.
+**CONDITION (a) CHANGED IN D04.2, AND THIS FILE ENCODED THE DEFECT.** It used to
+read "the base_url is an ollama-family URL (contains ':11434' or 'ollama')" — a
+vendor guessed from a substring, which the standing constraint bans ("dispatch on
+response SHAPE and declared CAPABILITY"). It matched a gateway path like
+`gw.example.com/ollama/v1`, and it matched a vLLM server on port 11434, which was
+then sent an option it may reject. The discriminator is now a MEASURED fact
+recorded when the window was resolved.
+
+A backend that did not answer must NOT receive extra_body, whatever its address.
 
 Tests:
   1. ``_ollama_extra_body`` helper — ollama URL + cached window → correct dict.
@@ -177,9 +185,9 @@ def _make_provider(base_url: str, provider_name: str = _PROVIDER_NAME) -> OpenAI
 
 @pytest.fixture(autouse=True)
 def _clear_window_cache() -> Any:
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
     yield
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -191,26 +199,34 @@ def test_ollama_extra_body_returns_num_ctx_when_cached(monkeypatch: pytest.Monke
     """Ollama URL + pre-seeded cache → returns extra_body dict with correct window."""
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
     mw._WINDOW_CACHE[(_PROVIDER_NAME, _MODEL)] = _CACHED_WINDOW
+    mw._NATIVE_WINDOW_API[(_PROVIDER_NAME, _MODEL)] = True   # it ANSWERED
     provider = _make_provider(_OLLAMA_BASE_URL)
-    result = provider._ollama_extra_body(_MODEL)
+    result = provider._native_window_extra_body(_MODEL)
     assert result == {"extra_body": {"options": {"num_ctx": _CACHED_WINDOW}}}
 
 
 def test_ollama_extra_body_non_ollama_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Non-ollama base_url → empty dict, even if a window is cached."""
+    """A backend that did not answer the native API → empty dict, even with a
+    cached window, and even if its URL looks the part.
+
+    The URL used here is deliberately the ollama-shaped one: under the old sniff
+    this returned the option. It is the vLLM-on-port-11434 case.
+    """
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
     mw._WINDOW_CACHE[(_PROVIDER_NAME, _MODEL)] = _CACHED_WINDOW
-    provider = _make_provider(_OPENAI_BASE_URL)
-    result = provider._ollama_extra_body(_MODEL)
+    # _NATIVE_WINDOW_API deliberately NOT set — the backend never answered.
+    provider = _make_provider(_OLLAMA_BASE_URL)
+    result = provider._native_window_extra_body(_MODEL)
     assert result == {}
 
 
 def test_ollama_extra_body_no_cached_window_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ollama URL but no cached window → empty dict (don't send a spurious 0)."""
+    """Answered the native API but no cached window → empty (no spurious 0)."""
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
-    # Cache is clear (autouse fixture)
+    mw._NATIVE_WINDOW_API[(_PROVIDER_NAME, _MODEL)] = True
+    # Window cache is clear (autouse fixture)
     provider = _make_provider(_OLLAMA_BASE_URL)
-    result = provider._ollama_extra_body(_MODEL)
+    result = provider._native_window_extra_body(_MODEL)
     assert result == {}
 
 
@@ -224,9 +240,11 @@ async def test_main_loop_create_receives_extra_body_for_ollama(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """complete_with_tools main-loop create() call is spread with extra_body when
-    the base_url is ollama and the window is pre-seeded in the cache."""
+    the backend ANSWERED the native metadata endpoint and the window is
+    pre-seeded in the cache."""
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
     mw._WINDOW_CACHE[(_PROVIDER_NAME, _MODEL)] = _CACHED_WINDOW
+    mw._NATIVE_WINDOW_API[(_PROVIDER_NAME, _MODEL)] = True  # it ANSWERED (D04.2)
 
     completions = _FinalAnswerCompletions()
     provider = _make_provider(_OLLAMA_BASE_URL)
@@ -258,6 +276,7 @@ async def test_wrapup_create_receives_extra_body_for_ollama(
     """Wrapup create() (no tools=, fired at max-out) also carries extra_body."""
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
     mw._WINDOW_CACHE[(_PROVIDER_NAME, _MODEL)] = _CACHED_WINDOW
+    mw._NATIVE_WINDOW_API[(_PROVIDER_NAME, _MODEL)] = True  # it ANSWERED (D04.2)
 
     completions = _MaxOutCompletions()
     provider = _make_provider(_OLLAMA_BASE_URL)

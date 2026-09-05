@@ -262,6 +262,30 @@ a registry. Adding a backend means editing core.
 first-class constructor param.
 **StackOwl.** One shape per provider file; no transport/profile split.
 **Ask.** Do we need more than chat-completions + Anthropic native?
+**MEASURED 2026-09-05 — NO, AND THE PREMISE IS WRONG.** "No transport/profile split" is
+false: `setup/provider_catalog.py:28` defines `PROTOCOLS = ("anthropic","openai","gemini",
+"grok")`, validated per entry, and `providers/registry.py::_build_provider` dispatches on
+`config.protocol` and never on a name — **protocol IS the transport dimension**, with the 49
+bundled providers mapping onto it (45 openai-shaped, 2 anthropic, 1 gemini, 1 grok), and zero
+imports of a concrete provider class anywhere outside `providers/`. **DEMAND IS ZERO:**
+`cost_records` holds 130,523 rows, and every call for 57 days (96,937 of them) went through
+the one LiteLLM gateway, while the anthropic, gemini and grok protocols have NEVER carried a
+single call. **AND NONE OF THE REFERENCE'S FOUR TRANSPORTS IS UNREACHABLE THROUGH A GATEWAY**
+— read against their code, their Vertex and Azure "adapters" are credential providers feeding
+the OpenAI SDK (Vertex's own docstring says "OpenAI-compatible endpoint"); only Bedrock
+differs (boto3 SigV4) and Codex-responses is a second wire format, both reachable via LiteLLM,
+which does the SigV4 itself. **WHAT THE ITEM WAS WORTH:** the standing constraint bans
+branching on a provider's name, and it was being broken TWICE — `model_window.py:268` and
+`openai_provider.py:1283` independently tested `":11434" in url or "ollama" in url.lower()`.
+De Morgan-identical, never diverged, and both wrong the same two ways: a gateway path like
+`gw.example.com/ollama/v1` matches, and so does a vLLM server on port 11434, which was then
+sent an `options.num_ctx` body it may reject. The CAPABILITY is real (a native metadata
+endpoint no other OpenAI-compatible server exposes); the INSTRUMENT was a vendor sniff. Fixed
+by probing instead of guessing — the probe already returned int-or-None, so guessing first
+bought nothing — and the result is recorded as a measured fact that `openai_provider` now
+asks. Fifteen lines away, `model_window.py:271` describes the incident where a URL-shaped
+assumption cost a 32x window error, and `config/provider.py:152` already named the pattern:
+"a hardcoded guess wearing discovery's clothes." See `designs/D04.2.md`.
 
 ### D04.3 · Credential pool & rotation — `MISSING`
 **Hermes.** `agent/credential_pool.py` — persistent multi-credential pool for same-provider failover;

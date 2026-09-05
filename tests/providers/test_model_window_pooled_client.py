@@ -14,9 +14,9 @@ from stackowl.providers import model_window as mw
 
 @pytest.fixture(autouse=True)
 def _clear_cache():
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
     yield
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
 
 @pytest.mark.asyncio

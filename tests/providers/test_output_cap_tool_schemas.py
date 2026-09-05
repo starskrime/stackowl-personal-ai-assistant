@@ -23,9 +23,9 @@ _WINDOW = 262_144
 
 @pytest.fixture(autouse=True)
 def _clear_window_cache():
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
     yield
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
 
 def _provider(name: str = "NeraAiRaw") -> OpenAIProvider:

@@ -74,9 +74,9 @@ def _make_provider(base_url: str, name: str) -> OpenAIProvider:
 
 @pytest.fixture(autouse=True)
 def _clear_window_cache() -> Any:
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
     yield
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
 
 @pytest.mark.asyncio
@@ -115,10 +115,15 @@ async def test_without_disable_thinking_no_extra_body(
 async def test_disable_thinking_merges_with_ollama_num_ctx(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """ollama URL + cached window + disable_thinking → BOTH hints survive in one
-    extra_body (merge, not clobber)."""
+    """A backend that ANSWERED the native API + cached window + disable_thinking →
+    BOTH hints survive in one extra_body (merge, not clobber).
+
+    D04.2: the num_ctx hint is now gated on the measured fact that the backend
+    answered its native metadata endpoint, not on its URL containing ":11434".
+    """
     monkeypatch.setattr(TestModeGuard, "_active", False, raising=False)
     mw._WINDOW_CACHE[("ollama", _MODEL)] = 12000
+    mw._NATIVE_WINDOW_API[("ollama", _MODEL)] = True
     completions = _CapturingCompletions()
     provider = _make_provider(_OLLAMA_BASE_URL, name="ollama")
     provider._client = _FakeClient(completions)  # type: ignore[assignment]

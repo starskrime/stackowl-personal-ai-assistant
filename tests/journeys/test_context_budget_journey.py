@@ -445,7 +445,7 @@ async def test_large_window_presents_full_eligible_tool_set(
 
     import stackowl.providers.model_window as mw
     # Re-clear the cache so the small provider gets a fresh resolve.
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
     with caplog.at_level(logging.INFO, logger="stackowl.engine"):
         await _drive_turn(small_backend, GatewayScanner(owl_registry=owl_registry))

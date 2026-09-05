@@ -101,7 +101,7 @@ async def test_small_window_still_uses_full_charter() -> None:
     still picks the full charter. model_window is still resolved/stamped
     (other consumers — delivery_gate's honest acknowledgement,
     progress_tracker's adaptive threshold — still need it)."""
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
     owl_registry = _make_owl_registry()
     provider_registry = _make_provider_registry(context_chars=8000)
@@ -130,7 +130,7 @@ async def test_small_window_still_uses_full_charter() -> None:
 @pytest.mark.asyncio
 async def test_large_window_uses_full_charter() -> None:
     """context_chars=320000 → window clamped to 16384 (> 8192) → full charter."""
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
     owl_registry = _make_owl_registry()
     provider_registry = _make_provider_registry(context_chars=320_000)
@@ -159,7 +159,7 @@ async def test_large_window_uses_full_charter() -> None:
 @pytest.mark.asyncio
 async def test_provider_selection_failure_falls_back_to_full() -> None:
     """Empty ProviderRegistry → select_tool_provider raises → fail-safe: full charter, no crash."""
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
     owl_registry = _make_owl_registry()
     # An empty registry: select_tool_provider will raise ProviderNotFoundError /
@@ -219,7 +219,7 @@ async def test_tier_resolved_model_used_in_window_probe(
     pre-fix code and pass on the current code (verified via git stash of the
     assemble.py fix with this test in place).
     """
-    mw._WINDOW_CACHE.clear()
+    mw.reset_window_cache()
 
     captured: dict[str, Any] = {}
 

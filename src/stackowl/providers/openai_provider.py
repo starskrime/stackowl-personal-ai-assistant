@@ -817,7 +817,7 @@ class OpenAIProvider(ModelProvider):
                         else self._output_cap(resolved_model, _msgs, tool_schemas)
                     ),
                     tools=tool_schemas,  # type: ignore[arg-type]
-                    **self._ollama_extra_body(resolved_model),
+                    **self._native_window_extra_body(resolved_model),
                 )
 
             def _shrink(attempt: int) -> Callable[[], Awaitable[Any]] | None:
@@ -1181,7 +1181,7 @@ class OpenAIProvider(ModelProvider):
                         max_tokens if max_tokens is not None
                         else self._output_cap(resolved_model, messages)
                     ),
-                    **self._ollama_extra_body(resolved_model),
+                    **self._native_window_extra_body(resolved_model),
                 )
 
             # F027 — bound the terminal wrap-up by the governor's residual budget so
@@ -1275,14 +1275,30 @@ class OpenAIProvider(ModelProvider):
             cache_stats_reported=cache_stats_reported(usage),
         )
 
-    def _ollama_extra_body(self, resolved_model: str) -> dict[str, Any]:
-        """For an ollama-family base_url, send the budgeted window as num_ctx so the
-        server honors exactly the window we budgeted (else ollama truncates to its
-        own default). Empty dict for non-ollama providers / unknown window."""
-        base = self._config.base_url or ""
-        if ":11434" not in base and "ollama" not in base.lower():
+    def _native_window_extra_body(self, resolved_model: str) -> dict[str, Any]:
+        """Send the budgeted window as ``num_ctx`` to a backend that accepts it, so
+        the server honours exactly the window we budgeted instead of truncating to
+        its own default. Empty dict otherwise.
+
+        IT ASKS WHAT THE BACKEND ANSWERED, IT NO LONGER GUESSES FROM THE URL. This
+        was `if ":11434" not in base and "ollama" not in base.lower(): return {}` —
+        the same substring guess `model_window` was making independently, two copies
+        of one rule (`CLAUDE.md` shape 3). They never diverged, but both were wrong
+        the same two ways: a gateway path like `gw.example.com/ollama/v1` matched,
+        and so did a vLLM server on port 11434 — which was then sent an
+        `options.num_ctx` body it may reject.
+
+        `answered_native_window_api` is a MEASURED fact recorded when the window was
+        resolved: this backend answered its native metadata endpoint. A server that
+        did not answer does not get the option, whatever its address looks like.
+        """
+        from stackowl.providers.model_window import (
+            answered_native_window_api,
+            cached_window,
+        )
+
+        if not answered_native_window_api(self._name, resolved_model):
             return {}
-        from stackowl.providers.model_window import cached_window
         w = cached_window(self._name, resolved_model)
         return {"extra_body": {"options": {"num_ctx": w}}} if w else {}
 
@@ -1302,9 +1318,9 @@ class OpenAIProvider(ModelProvider):
         both hints survive when a local reasoning model is also num_ctx-budgeted.
         """
         body: dict[str, Any] = {}
-        ollama = self._ollama_extra_body(resolved_model)
-        if ollama:
-            body.update(ollama["extra_body"])
+        native = self._native_window_extra_body(resolved_model)
+        if native:
+            body.update(native["extra_body"])
         if disable_thinking:
             body["chat_template_kwargs"] = {"enable_thinking": False}
         return {"extra_body": body} if body else {}
