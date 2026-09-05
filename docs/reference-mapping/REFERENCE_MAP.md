@@ -1374,6 +1374,23 @@ tool, and the tool-result delimiter system.
 **StackOwl.** `infra/prompt_safety.py` — a fence neutralizer, structural (no keyword lists, per your
 standing rule). Narrower scope.
 **Ask.** Extend ours to tool results and context files with the same scoping idea?
+**DONE 2026-09-05 — and this entry names only half our machinery.** Besides `prompt_safety.py`
+(a header neutraliser) there is **`infra/untrusted.py`**, the fence D12.8 built —
+`wrap(text, source=…)` — whose docstring carries the measurement that justified it: 974 turns
+over 7 days, 66 fetching external content AND using a powerful tool in the same turn.
+**FOUR tools are named in that table and only TWO fenced**: `web_fetch` ✓, `browser_extract` ✓,
+`web_search` ✗, `browser_navigate` ✗. web_search serialised third-party titles and descriptions
+straight into `output`; browser_navigate returned `await page.title()`, a string the visited
+site chooses. Same rule, one tool short — twice, in the module written for that shape, with its
+own docstring naming the tools it had not reached. BOTH NOW FENCED, and the set is tied to the
+evidence: a tripwire asserts every tool in that table fences with a source naming it, and that
+every guarded tool is still named in the docstring — both directions, so a fifth entry point
+cannot be added without fencing it. NO PATTERN LIBRARY ADOPTED: theirs is regexes by attack
+class, which is a keyword list under a standing ban and monolingual besides; a test pins that
+`untrusted.py` never acquires one. The web_search fence is PER FIELD (title, description) so
+the JSON stays parseable — the `_render` docstring states the shape exists "keeping the
+canonical shape available to downstream consumers", and a first attempt wrapping the whole
+document broke it. Still a MARKER, not a control (ESC-110). See `designs/D17.2.md`.
 
 ### D17.3 · External security scanner — `MISSING`
 **Hermes.** `tools/tirith_security.py` — runs an external binary to scan commands for content-level

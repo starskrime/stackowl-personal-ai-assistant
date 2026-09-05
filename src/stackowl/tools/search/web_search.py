@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import time
 
+from stackowl.infra import untrusted
 from stackowl.infra.observability import log
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -31,6 +32,33 @@ from stackowl.web_search.base import WebSearchResult, failure_result
 
 _DEFAULT_LIMIT = 5
 _TOOLSET_GROUP = "web"
+
+
+def _query_of(result: object) -> str:
+    """The searched text, for the fence's source label. Never raises."""
+    return str(getattr(result, "query", "") or "")
+
+
+def _fence_hits(payload: dict[str, object], *, source: str) -> None:
+    """Mark the attacker-authored prose in each hit, in place.
+
+    ``title`` and ``description`` only: ``url`` and ``position`` are structured
+    values a reader parses rather than reads, and fencing them would make the
+    canonical shape harder to use for no security gain.
+    """
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return
+    hits = data.get("web")
+    if not isinstance(hits, list):
+        return
+    for hit in hits:
+        if not isinstance(hit, dict):
+            continue
+        for field in ("title", "description"):
+            value = hit.get(field)
+            if isinstance(value, str) and value:
+                hit[field] = untrusted.wrap(value, source=source)
 
 
 class WebSearchTool(Tool):
@@ -150,6 +178,23 @@ class WebSearchTool(Tool):
         """
         payload = result.to_dict()
         duration_ms = (time.monotonic() - t0) * 1000
+        # FENCED PER FIELD, NOT PER DOCUMENT (D17.2). A title and a description are
+        # authored by a third party — a search result is exactly the text an attacker
+        # can rank into the model's context — and untrusted.py's own measurement table
+        # names web_search (`web_search + write_file`, 31 turns of 974) while the fence
+        # had never reached it: same rule, one tool short, in the module written for
+        # that shape.
+        #
+        # WHY NOT WRAP THE WHOLE PAYLOAD, which is what the first attempt did: this
+        # docstring states the JSON shape exists "matching how other read tools return
+        # structured JSON, keeping the canonical shape available to downstream
+        # consumers". A fence around the document makes it unparseable, and routing
+        # around stated intent because nothing consumes it YET is how a contract dies
+        # quietly. ADR-7 freezes the field NAMES and order, not their values, so
+        # marking the two prose fields honours both. `url` and `position` are
+        # structured and stay clean; wrap() is idempotent, so a re-render cannot
+        # double-fence.
+        _fence_hits(payload, source=f"web_search:{_query_of(result)}")
         output = json.dumps(payload, ensure_ascii=False)
         error = None if success_floor else str(payload.get("error", ""))
         return ToolResult(

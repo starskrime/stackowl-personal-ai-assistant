@@ -315,6 +315,29 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D17_2_2026_09_05_the_fence_reached_three_of_the_four_tools_its_own_evidence_names:
+    map_check: "D17.2 — Prompt-injection pattern library (PARTIAL, P2, wave 9). Stages verified not_started first."
+    THE_MAP_NAMES_HALF_THE_MACHINERY: >-
+      Besides prompt_safety.py there is infra/untrusted.py — the fence D12.8 built, with the
+      974-turn measurement in its docstring.
+    FOUR_NAMED_TWO_FENCED: >-
+      That table names web_fetch, web_search, browser_navigate, browser_extract. Only
+      web_fetch and browser_extract fenced. web_search serialised third-party titles and
+      descriptions into output; browser_navigate returned page.title(), set by the visited
+      site. Same rule, one tool short — TWICE, in the module written for that shape.
+    THE_ROOT_CAUSE: >-
+      The fence was applied tool-by-tool at the sites someone remembered, and nothing tied the
+      FENCED set to the set the evidence NAMED. The tripwire now ties them in both directions.
+    THE_FIRST_FIX_WAS_WRONG: >-
+      Wrapping the whole JSON payload made it unparseable and broke seven tests. The _render
+      docstring states the shape exists "keeping the canonical shape available to downstream
+      consumers" — and nothing in src/ parses it today, but routing around stated intent
+      because nothing consumes it YET is how a contract dies quietly. Per-field fencing
+      (title, description) honours both; ADR-7 freezes names and order, not values.
+    NO_PATTERN_LIBRARY: >-
+      Theirs is regexes by attack class — a keyword list under a standing ban, monolingual by
+      construction. A test pins that untrusted.py never acquires one.
+    NEXT: "D17.3 · External security scanner (MISSING, P2, wave 9, order 80)."
   D17_1_2026_09_05_the_fatigue_the_ask_assumes_is_not_there:
     map_check: "D17.1 — Dangerous-command approval (PARTIAL, P2, wave 9). Stages verified not_started first."
     THE_PREMISE_IS_NOT_SUPPORTED: >-
@@ -28298,19 +28321,49 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D17.2.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "NO PATTERN LIBRARY. Theirs is regexes by attack class — a keyword list under a
+         standing ban, and monolingual by construction. A test pins that untrusted.py never
+         acquires one (no re.compile, no `ignore previous`, no `jailbreak`)."
+      - "The web_search fence is PER FIELD, not per document. The first attempt wrapped the
+         whole JSON and broke seven tests; the _render docstring states the shape exists
+         `keeping the canonical shape available to downstream consumers`. Nothing in src/
+         parses it TODAY, but routing around stated intent because nothing consumes it yet is
+         how a contract dies quietly. ADR-7 freezes field names and order, not values."
+      - "Still a MARKER, not a control — inherited from D12.8. Narrowing the toolset after a
+         fetch would break the same 66 legitimate turns; that policy is ESC-110's to make."
+    changes:
+      - "src/stackowl/tools/search/web_search.py — _fence_hits() marks title and description
+         per hit, leaving url and position structured; _query_of() labels the source."
+      - "src/stackowl/tools/browser/tools.py — browser_navigate fences the page title, which
+         the visited site chooses."
+      - "tests/infra/test_the_fence_reaches_every_tool_its_own_table_names.py — a tripwire
+         over all four tools untrusted.py's own table names, both directions, plus the
+         no-pattern-library guard and an idempotency check. Mutation-proven both ways."
+      - "tests/tools/search/test_web_search.py — the frozen-shape test now asserts ADR-7 field
+         ORDER and that the prose is fenced with its source, instead of literal values."
+    notes: >-
+      THE MAP NAMES HALF THE MACHINERY: besides prompt_safety.py there is infra/untrusted.py,
+      the fence D12.8 built, whose docstring carries the 974-turn measurement (66 turns fetched
+      external content AND used a powerful tool). FOUR tools are named in that table and only
+      TWO fenced — web_fetch and browser_extract yes; web_search and browser_navigate no.
+      web_search serialised third-party titles/descriptions into output; browser_navigate
+      returned page.title(), which the visited site sets. SAME RULE, ONE TOOL SHORT — TWICE,
+      in the module written for that shape, with its own evidence naming the gaps. ROOT CAUSE:
+      the fence was applied tool-by-tool at remembered sites, and nothing tied the fenced set
+      to the set the evidence named — so the tripwire now ties them, both directions. THE
+      FIRST FIX WAS WRONG and is recorded: wrapping the whole JSON payload made it unparseable
+      and broke seven tests, against a docstring that states the canonical shape is kept for
+      downstream consumers. Per-field fencing honours both.
   - id: D17.3
     title: "External security scanner"
     domain: D17

@@ -282,7 +282,10 @@ class BrowserNavigateTool(_BrowserTool):
             "session_id": session_id,
             "page_handle": page_handle,
             "final_url": url_path_only(page.url),
-            "title": title,
+            # FENCED (D17.2): a page TITLE is chosen by the visited site, so it is
+            # attacker-authored text arriving in the model's context. untrusted.py's
+            # table names browser_navigate and the fence had never reached it.
+            "title": untrusted.wrap(title, source=f"browser_navigate:{log_url}"),
             "status": status,
             "captcha_detected": captcha_kind,
         }, t0)

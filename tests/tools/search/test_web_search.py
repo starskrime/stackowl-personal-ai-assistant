@@ -88,27 +88,32 @@ async def test_happy_returns_frozen_success_shape() -> None:
 
     assert res.success
     assert fake.calls == [("how to brew coffee", 2)]
+    # THE SHAPE IS STILL FROZEN — and the prose is now FENCED (D17.2). `title` and
+    # `description` are authored by whoever ranked into the results, so they carry
+    # the untrusted marker; `url` and `position` are structured and stay clean. ADR-7
+    # freezes the field NAMES and order, which is what this test guards, and the
+    # payload is still valid JSON so the canonical shape survives for consumers.
+    from stackowl.infra import untrusted
+
     payload = json.loads(res.output)
-    assert payload == {
-        "success": True,
-        "data": {
-            "web": [
-                {
-                    "title": "Result 1",
-                    "url": "https://example.test/1",
-                    "description": "snippet 1",
-                    "position": 1,
-                },
-                {
-                    "title": "Result 2",
-                    "url": "https://example.test/2",
-                    "description": "snippet 2",
-                    "position": 2,
-                },
-            ]
-        },
-    }
-    assert "error" not in payload  # success omits error entirely
+    assert list(payload) == ["success", "data"], "success omits error entirely"
+    assert payload["success"] is True
+
+    hits = payload["data"]["web"]
+    assert [list(h) for h in hits] == [
+        ["title", "url", "description", "position"],
+    ] * 2, "ADR-7 field order is frozen"
+    assert [h["url"] for h in hits] == [
+        "https://example.test/1", "https://example.test/2",
+    ]
+    assert [h["position"] for h in hits] == [1, 2]
+    for i, hit in enumerate(hits, start=1):
+        for field, raw in (("title", f"Result {i}"), ("description", f"snippet {i}")):
+            assert untrusted.contains_untrusted(hit[field]), (
+                f"{field} is third-party prose and must be fenced"
+            )
+            assert raw in hit[field], "the fence must not alter the text it marks"
+            assert "web_search:" in hit[field], "the fence must name its source"
 
 
 async def test_default_limit_is_five() -> None:
