@@ -115,8 +115,8 @@ async def _write_transcript(db: DbPool, *, conversation_id: str = ENDED,
     for i in range(turns):
         for role, text in (("user", f"question {i}"), ("assistant", f"answer {i}")):
             await db.execute(
-                "INSERT INTO messages (id, conversation_id, role, content, model,"
-                " created_at, trace_id) VALUES (?, ?, ?, ?, NULL, ?, '')",
+                "INSERT INTO messages (id, conversation_id, role, content,"
+                " created_at, trace_id) VALUES (?, ?, ?, ?, ?, '')",
                 (str(uuid.uuid4()), conversation_id, role, text,
                  (stamp + datetime.timedelta(seconds=i)).isoformat()),
             )
@@ -301,8 +301,8 @@ async def test_another_owners_rows_never_enter_the_transcript(tmp_db: DbPool) ->
     await _write_transcript(tmp_db, turns=1)
     # A foreign row that claims the same conversation.
     await tmp_db.execute(
-        "INSERT INTO messages (id, conversation_id, role, content, model,"
-        " created_at, trace_id, owner_id) VALUES (?, ?, ?, ?, NULL, ?, '', ?)",
+        "INSERT INTO messages (id, conversation_id, role, content,"
+        " created_at, trace_id, owner_id) VALUES (?, ?, ?, ?, ?, '', ?)",
         (str(uuid.uuid4()), ENDED, "user", "SOMEONE ELSES SECRET",
          datetime.datetime.now(datetime.UTC).isoformat(), "principal-intruder"),
     )

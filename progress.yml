@@ -315,6 +315,28 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D11_1_2026_09_04_the_model_was_recorded_one_table_over:
+    map_check: "D11.1 — Session store (PARITY, P3, wave 8). Ask: none — a claim to verify."
+    PARITY_HOLDS_AND_ONE_PROPERTY_IS_AHEAD: >-
+      WAL set by the pool and persistent in the live file header; sessions.channel populated
+      (telegram 107, cli 13, rca 3); and model config recorded per CALL in cost_records
+      (130,420 rows, 100% populated) rather than per session. The map's "90 migrations" was
+      stale — there are 135.
+    I_READ_IT_BACKWARDS_FIRST: >-
+      messages.model is empty in 0 of 3,841 rows, which alone reads as a gap. Wrong table.
+      Same mistake as committed_facts vs staged_facts: an empty table is a QUESTION — where
+      did the writes go — never an answer.
+    THE_INSTRUMENT_ALSO_NEARLY_LIED: >-
+      A first pass read busy_timeout=5000 and foreign_keys=0 off a fresh read-only Python
+      connection. Both are PER-CONNECTION, so I measured my own defaults. Only journal_mode
+      is persistent in the file header; the pool source is the authority for the rest.
+    RETIRED_MEANS_DELETED: >-
+      messages.model dropped (migration 0136) with the record_turn parameter, its INSERT
+      column and both test fixtures, in the same change. Dead on every axis: 0 rows, 0
+      readers, one INSERT handed None, and 9 of 10 fixtures already omitted it. No data
+      destroyed — 3,841 rows preserved, the column held nothing.
+    THE_PACKAGE_RUN_EARNED_ITSELF: "11 failures in one file — the tests the retirement left behind."
+    NEXT: "D11.3 · Session-search shapes (PARITY, P3, wave 8, order 69)."
   DEBT_116_2026_09_04_the_flake_was_fixed_in_one_test_and_left_in_its_sibling:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-116."
     WHY_NOT_WHAT: >-
@@ -25790,19 +25812,54 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D11.1.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "PARITY CONFIRMED on all three named properties, and AHEAD on the third: they record
+         model config per SESSION, we record it per CALL in cost_records (130,420 rows, 100%
+         populated, joinable by trace_id/conversation_id/session_key/owl_name)."
+      - "messages.model DROPPED rather than filled. Filling it would be lossy — ~34 model
+         calls per recorded message means one string cannot represent a turn without a rule
+         for which call counts, and a summary that can disagree with the ledger is worse
+         than no summary."
+      - "The map's `90 migrations` was stale. There are 135 (136 with this one)."
+    changes:
+      - "src/stackowl/db/migrations/0136_drop_the_unfilled_message_model.sql — ALTER TABLE
+         messages DROP COLUMN model, with the measurement that licensed it in the header."
+      - "src/stackowl/memory/transcript_store.py — the `model` parameter removed from
+         record_turn and from its INSERT. The signature is the promise; leaving it would
+         keep inviting a caller to fill a column that is gone."
+      - "tests/memory/test_rollover_summary.py — the two fixtures that named the column.
+         Both passed a literal NULL."
+      - "tests/db/test_the_transcript_stopped_claiming_to_know_the_model.py — 4 tests: the
+         column is gone, a turn still records both sides, the signature no longer advertises
+         it, and the surviving copy is still joinable. Mutation-proven by neutering the
+         ALTER."
+    notes: >-
+      I READ THIS BACKWARDS FIRST and the correction is the point. messages.model is empty in
+      0 of 3,841 rows, which alone reads as "we are behind on model config". Wrong table:
+      cost_records holds 130,420 rows with model populated in EVERY one. Same mistake this
+      programme paid for when committed_facts was empty and 361 memories sat in staged_facts
+      one table over — an empty table is a QUESTION (where did the writes go?), never an
+      answer. TWO PRAGMAS NEARLY WENT IN AS FACTS TOO: a first pass read busy_timeout=5000
+      and foreign_keys=0 off a fresh read-only Python connection — those are Python's
+      defaults, not the platform's, because both are PER-CONNECTION. Only journal_mode is
+      persistent in the file header, so WAL is genuinely confirmed and the other two are
+      confirmed from the pool source instead. DEAD ON EVERY AXIS: 0 rows, 0 readers (every
+      SELECT over messages names id/role/content/created_at), one INSERT handed None by its
+      only caller, and 9 of 10 test fixtures already omitted the column. PipelineState
+      carries no field naming the model that answered, only model_window, so the caller had
+      nothing to pass. THE PACKAGE RUN CAUGHT THE TESTS THE RETIREMENT LEFT BEHIND — 11
+      failures in one file, exactly the case CLAUDE.md names. LIVE: column gone, 3,841 rows
+      preserved, cost_records still 130,420 populated. It had already applied before my
+      explicit restart — CodeWatcher picked the migration up on an earlier boot.
   - id: D11.2
     title: "Full-text search over messages"
     BRAINSTORM_AND_VALIDATE_2026_08_29: >

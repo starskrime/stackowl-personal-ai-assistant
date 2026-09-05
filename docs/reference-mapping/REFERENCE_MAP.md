@@ -829,6 +829,18 @@ the very decay signal that would retire it. See `designs/D10.7.md`.
 (`cli`/`telegram`/…), model config recorded per session.
 **StackOwl.** SQLite with pool + 90 migrations, `conversations`/`messages`.
 **Ask.** None.
+**CONFIRMED 2026-09-04 — parity holds on all three named properties, and the count was
+stale.** WAL: set by the pool (`PRAGMA journal_mode=WAL`) AND persistent in the live file
+header — the pool also sets `foreign_keys=ON` and `busy_timeout=15000` (raised from 5000 after
+a measured writer-contention burst). SOURCE TAGGING: `sessions.channel`, populated —
+telegram 107, cli 13, rca 3. MODEL CONFIG: we are AHEAD, and I read this backwards first.
+`messages.model` was empty in 0 of 3,841 rows, which looked like the gap — but the fact lives
+ONE TABLE OVER in `cost_records`: **130,420 rows, `model` populated in 100% of them**, beside
+provider, tokens, cost, TTFT and prompt hash, joinable by trace_id / conversation_id /
+session_key / owl_name. That is per-CALL, finer than their per-session config. MIGRATIONS:
+**135**, not 90 — the number here was stale. `messages.model` is now DROPPED (migration 0136):
+0 rows, 0 readers, one INSERT handed None by its only caller, and 9 of the 10 test fixtures
+already omitted it. See `designs/D11.1.md`.
 
 ### D11.2 · Full-text search over messages — `PARTIAL`
 **Hermes.** **FTS5 virtual table over all session messages**, used by session search.

@@ -66,7 +66,6 @@ class TranscriptStore:
         user_text: str,
         assistant_text: str | None,
         trace_id: str = "",
-        model: str | None = None,
         now: datetime.datetime | None = None,
     ) -> int:
         """Append this turn. Returns the number of message rows written.
@@ -126,11 +125,11 @@ class TranscriptStore:
         for role, content in rows:
             await self._db.execute(
                 """
-                INSERT INTO messages (id, conversation_id, role, content, model,
+                INSERT INTO messages (id, conversation_id, role, content,
                                       created_at, trace_id, owner_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (str(uuid.uuid4()), conversation_id, role, content, model,
+                (str(uuid.uuid4()), conversation_id, role, content,
                  stamp.isoformat(), trace_id, self._owner_id),
             )
 

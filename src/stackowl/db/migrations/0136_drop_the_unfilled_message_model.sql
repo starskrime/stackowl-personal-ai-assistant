@@ -1,0 +1,32 @@
+-- Migration 0136 — drop `messages.model` (D11.1).
+--
+-- WHY IT GOES. It is a second home for a fact `cost_records` already owns, and
+-- it is the copy that was never filled.
+--
+-- MEASURED on the live database 2026-09-04, before removing:
+--
+--     messages.model        populated in 0 of 3,841 rows
+--     cost_records.model    populated in 130,420 of 130,420 rows
+--
+-- `cost_records` carries the model beside provider, input/output tokens, cost,
+-- TTFT and prompt hash, with trace_id, conversation_id, session_key and owl_name
+-- to join back to the turn. Nothing is lost by dropping the empty copy.
+--
+-- NOT A GAP TO FILL, EITHER. 130,420 model calls against 3,841 recorded messages
+-- is ~34 calls per message, so one `model` string on a message cannot represent
+-- a turn without a rule for which of the 34 counts — and a summary that can
+-- disagree with the ledger is worse than no summary. The column could not have
+-- been filled from the path that writes it in any case: `PipelineState` carries
+-- no field naming the model that answered, only `model_window`.
+--
+-- DEAD ON EVERY AXIS. 0 rows, 0 readers (every SELECT over `messages` names
+-- id/role/content/created_at and never model), one INSERT handed None by its
+-- only caller, and no test supplying it.
+--
+-- Migration 0110 is the precedent and its reasoning is the same sentence: "Two
+-- writers to one fact is how fields drift." That drop removed a column populated
+-- in 169 of 170 rows. This one removes a column populated in none, so it deletes
+-- no information at all.
+--
+-- IRREVERSIBLE by nature, as any dropped column is.
+ALTER TABLE messages DROP COLUMN model;
