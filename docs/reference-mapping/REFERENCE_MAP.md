@@ -1718,6 +1718,31 @@ before without noticing it could never run), `deploy/migrate-to-root.sh` and
 **StackOwl.** JSONL with `trace_id`/`span_id`/`parent_span_id` propagated through every async hop via
 contextvars, mandated 4-point logging, `read_logs` tool, `trace` CLI.
 **Ask.** Keep — this is a clear StackOwl win and it is what makes debugging the rewrite tractable.
+**VERIFIED 2026-09-05 — THE CLAIM HOLDS, AND THE GAP WAS THAT IT HAD NO ALARM.** A real
+turn produces a nested tree: one trace with **56 records across 11 spans**, `triage`,
+`dispatch`, `memory.recall` and `classify` all parented to the backend `run` span, and all
+eleven trace fields present on every one of 21,523 live log records. The attribution defect
+that prompted the trace work STAYED FIXED: blank `trace_id` on cost records went **54.5%
+(2026-08-29) -> 3% (08-30) -> 0-2% daily -> 0% today**; the 51% all-time figure is history.
+**The untraced 80% of log lines is not a defect and checking the denominator mattered** —
+it is `registry.register` (1,813), `loader._load_one` (1,638), `store.upsert` (1,638) and
+`startup` (3,495): boot-time registration and recovery sweeps with no request to belong to.
+Likewise `stackowl.tasks` at 2-of-396 is entirely boot recovery, not task execution.
+**WHAT WAS MISSING:** `_bind_job_trace` is pinned by THREE test files — and they pin the
+CODE, that a scheduled job binds a lane. NOTHING WATCHED THE EFFECT. The original 54.5% was
+found because a person happened to query for it, so a new background caller reaching a
+provider outside any TraceContext would reappear the same silent way. This repo's standing
+question — if this degrades silently, what notices? — had the measured answer NOTHING, asked
+of its own observability. `UnattributedSpendContributor` now rides the 5-minute health sweep
+that already exists (never a second loop): degraded at >=10% of a 24h window (measured — the
+failure was 54.5%, healthy is 0-3%), a floor of 20 records so a ratio is never computed over
+a denominator that cannot carry it, DEGRADED never DOWN, an instrument failure reported as
+"could not measure" rather than as a regression, and the OK case carrying its denominator.
+Live: `ok — 1 of 175 unattributed (1%) in 24h`. **THE RESIDUAL IS CHARACTERISED, NOT
+GUESSED:** 142 records since 08-30, every one with `system_prompt_chars = 0`, no owl,
+180-244 input tokens, falling 107/day to 1/day. It is NOT attributed to a caller here
+because `cost_records` has no column naming the code path — which is exactly why the first
+54.5% needed a human to reason it out. ESC-140. See `designs/D18.8.md`.
 
 ### D18.9 · Migrations — `AHEAD`
 **Hermes.** No migration framework visible; schema evolves in `hermes_state.py`.

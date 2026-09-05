@@ -315,6 +315,60 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D18_8_2026_09_05_the_trace_win_is_real_and_nothing_would_have_noticed_it_regressing:
+    map_check: "D18.8 — Observability (AHEAD, track keep, wave 9, order 91). Stages verified not_started first."
+    THE_CLAIM_HOLDS_VERIFIED_NOT_RESTATED: >-
+      A real turn produces a nested tree — one trace with 56 records across 11 spans,
+      triage/dispatch/memory.recall/classify all parented to the backend run span — and all
+      eleven trace fields are present on every one of 21,523 live log records. The
+      attribution defect that prompted the trace work STAYED FIXED: blank trace_id on cost
+      records went 54.5% (2026-08-29) -> 3% (08-30) -> 0-2% daily -> 0% today. The 51%
+      all-time figure is history, not a live rate.
+    THE_UNTRACED_80_PERCENT_IS_NOT_A_DEFECT: >-
+      Reading the denominator is what showed it: registry.register (1,813),
+      loader._load_one (1,638), store.upsert (1,638), startup (3,495) — boot-time
+      registration and recovery sweeps with no request to belong to. stackowl.tasks at
+      2-of-396 looked alarming for the ONE LOOP until measured: every one of those records
+      is a boot recovery sweep, not task execution.
+    WHAT_WAS_MISSING_WAS_THE_ALARM: >-
+      _bind_job_trace is pinned by THREE test files, and every one of them pins the CODE —
+      that a scheduled job binds a lane. Nothing watched the EFFECT. The original 54.5% was
+      found because a person happened to query for it, so a new background caller reaching
+      a provider outside any TraceContext would reappear exactly the same silent way. This
+      repo's standing question — if this degrades silently, what notices? — had the measured
+      answer NOTHING, asked of its own observability.
+    THE_THRESHOLDS_ARE_MEASURED_NOT_CHOSEN: >-
+      Degraded at >=10% of a 24h window (the failure was 54.5%, healthy has been 0-3% every
+      day since 08-30). A floor of 20 records, because two blank of three is 67% and means
+      nothing. DEGRADED never DOWN — unattributable spend is bookkeeping, not an outage, and
+      reporting down for something that does not stop the platform is how an operator learns
+      to ignore the health surface. An instrument failure reports "could not measure", never
+      a regression verdict. The OK case carries its denominator. Live: ok — 1 of 175 (1%).
+    THE_TENANCY_TRIPWIRE_CAUGHT_ME_REPEATING_A_RECORDED_DEFECT: >-
+      The first version of the query read cost_records with NO owner_id predicate, and
+      cost_records is owner-governed — the exact defect CLAUDE.md already records against
+      usage_report.py. tests/tenancy/test_no_owner_scope_bypass.py failed the GATE before
+      the commit, with the right instruction in its own message: scope new code by owner_id
+      rather than allowlisting it, because the allowlist is for pre-existing accessors.
+      Scoped to DEFAULT_PRINCIPAL_ID; every row is principal-default today so it narrows
+      nothing now and closes the gap for when it does. THIS IS THE CROSS-CUTTING-GUARD
+      ARGUMENT IN MINIATURE: a targeted run picked by what the change looks related to would
+      have run tests/health/ and seen five greens; the guard that caught it lives in
+      tests/tenancy/ and looks related to nothing. Live verdict is unchanged after scoping
+      (1 of 175, 1%), which is the idiom's own prediction.
+    MUTATION_CAUGHT_MY_OWN_WEAK_GUARD: >-
+      The registration test first searched assembly.py for the class NAME. Deleting the
+      agg.register(...) line left the IMPORT behind, so the name was still present and the
+      test passed — it was guarding a string, not a wiring. It now walks the AST for a
+      register() call taking that constructor. A guard for the built-but-not-wired shape
+      that was itself not wired would have been a fitting way to fail this item.
+    EVIDENCE: >-
+      5 passed on the new test file; the contributor run against the LIVE database returns
+      "ok — 1 of 175 unattributed (1%) in 24h". Three mutants caught and each restored from
+      a file copy: removing the registration (caught only after the guard was sharpened),
+      reporting an instrument failure as a regression, and removing the small-denominator
+      floor.
+    NEXT: "D18.9 · Migrations (AHEAD, wave 9, order 92)."
   D18_7_2026_09_05_eight_architectural_checks_existed_and_none_of_them_ran:
     map_check: "D18.7 — Installer & platform reach (PARTIAL, wave 9, order 90). Stages verified not_started first."
     THE_ASK_IS_YOURS_AND_THE_EVIDENCE_IS_ONE_SIDED: >-
@@ -10343,6 +10397,42 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_140_a_blank_cost_record_cannot_name_its_caller:
+      premise_check: |
+        uv run python -c "
+        import sqlite3, os
+        db = os.path.expanduser('~/.stackowl/workspace/stackowl.db')
+        c = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
+        cols = [r[1] for r in c.execute('PRAGMA table_info(cost_records)')]
+        named = [x for x in cols if x in ('call_site','caller','origin','source')]
+        print('EXPIRED cost_records now names its caller: ' + str(named) if named
+              else 'HOLDS cost_records has no caller column')
+        "
+      question: >-
+        Should `cost_records` carry a column naming the code path that made the call?
+        MEASURED 2026-09-05: 142 records since 2026-08-30 still have a blank trace_id —
+        every one with system_prompt_chars = 0, no owl, 180-244 input tokens, falling
+        from 107/day to 1/day. The signature is precise, and it is still not enough to
+        name the caller: the record says a call happened and was unattributable, never
+        WHICH code made it. That is exactly why the original 54.5% needed a person to
+        reason it out from the shape of the data rather than read it off. A `call_site`
+        column would close that loop — a blank record would say what to fix — at the
+        cost of a migration and a field every provider path must populate.
+      why_evidence_cannot_settle_it: >-
+        The residual is 1% and falling, so evidence cannot say whether the remaining
+        cases justify a schema change and a new field on every provider call path. That
+        is a proportionality judgement about migration cost versus diagnostic value, and
+        it is yours. Evidence CAN say the alarm now exists either way: the health sweep
+        reports the share every five minutes, so the residual is visible whether or not
+        it is attributable.
+      panel_recommendation: >-
+        NOT YET. The alarm shipped in D18.8 makes a regression loud, which was the actual
+        risk; the remaining 1% is a diagnosis convenience, not a spend or safety problem.
+        Revisit if the health contributor ever reports degraded and the signature is not
+        enough to find the caller — that is the moment the column would have paid for
+        itself, and it is a moment the platform will now announce rather than hide.
+      blocked_until_answered: >-
+        Nothing. D18.8 shipped its verification and its alarm.
     ESC_139_distribution_reach_and_five_red_boundary_checks:
       premise_check: |
         uv run python -c "
@@ -29775,18 +29865,59 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D18.8.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "THE AHEAD CLAIM HOLDS, verified not restated. A real turn produces 56 records
+         across 11 nested spans; all eleven trace fields are present on every one of
+         21,523 live log records; and the attribution defect stayed fixed — blank
+         trace_id on cost records went 54.5% (08-29) to 0-2% daily and 0% today."
+      - "THE UNTRACED 80% OF LOG LINES IS NOT A DEFECT, and reading the denominator is
+         what showed it: registry.register (1,813), loader._load_one (1,638),
+         store.upsert (1,638) and startup (3,495) are boot-time registration and
+         recovery sweeps with no request to belong to. stackowl.tasks at 2-of-396 is
+         entirely boot recovery, not task execution."
+      - "WHAT WAS MISSING WAS THE ALARM. _bind_job_trace is pinned by three test files
+         and they all pin the CODE — that a scheduled job binds a lane. Nothing watched
+         the EFFECT, so a new caller reaching a provider outside any TraceContext would
+         reappear exactly as the first did: silently. The original was found because a
+         person happened to query for it."
+      - "THE THRESHOLDS ARE MEASURED, NOT CHOSEN: degraded at >=10% of a 24h window
+         (the failure was 54.5%, healthy is 0-3%), a floor of 20 records so a rate is
+         never computed over a denominator that cannot carry it, DEGRADED never DOWN
+         (unattributable spend is bookkeeping, not an outage), an instrument failure
+         reported as 'could not measure' rather than as a regression, and the OK case
+         carrying its denominator."
+    changes:
+      - "src/stackowl/health/contributors.py — UnattributedSpendContributor (new, ~114
+         lines), 4-point logged, its exit line at INFO so it is evidenceable in
+         production."
+      - "src/stackowl/scheduler/assembly.py — registered on the existing 5-minute health
+         sweep rather than adding a second loop."
+      - "tests/health/test_unattributed_spend_has_a_voice.py (new, 5 tests) — the clean
+         window carries its denominator, a 54.5%-shaped regression is degraded, a tiny
+         window is never degraded, an instrument failure is not a regression verdict,
+         and the contributor is actually REGISTERED."
+    notes: >-
+      MUTATION TESTING CAUGHT MY OWN WEAK GUARD, and the shape is worth keeping. The
+      registration test first searched assembly.py for the class NAME; deleting the
+      agg.register(...) line left the IMPORT behind, so the name was still present and the
+      test still passed — it was guarding a string, not a wiring. It now walks the AST for
+      a register() call taking that constructor. A guard for the built-but-not-wired shape
+      that was itself not wired would have been a fitting way to fail this item.
+      THE RESIDUAL IS CHARACTERISED RATHER THAN GUESSED: 142 records since 2026-08-30, EVERY
+      one with system_prompt_chars = 0, no owl, 180-244 input tokens, falling from 107/day
+      to 1/day. It is deliberately NOT attributed to a specific caller, because cost_records
+      carries no column naming the code path that made the call — which is precisely why the
+      first 54.5% needed a human to reason it out from the shape of the data. Naming a
+      caller from a signature would be the unmeasured claim this programme bans. ESC-140.
 
   - id: D18.9
     title: "Migrations"

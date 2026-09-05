@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -164,6 +165,133 @@ class DbContributor:
 # upgraded a degraded report into "ok" is the exact silent-upgrade mistake flagged
 # for Kuzu. Both it and the adapter went in D08.2: a health surface for a subsystem
 # that no longer exists reports on nothing.
+
+#: Above this share of a window, spend has stopped being attributable and someone
+#: should know. MEASURED, not chosen: the defect that prompted the trace work sat at
+#: **54.5%** (67,383 of 123,648 records) on 2026-08-29, and the repaired platform has
+#: run at **0-3%** every day since 2026-08-30. Ten per cent is clear of the noise and
+#: far below the failure, so it can neither cry wolf at the healthy rate nor stay
+#: quiet through a return of the original defect.
+_UNATTRIBUTED_DEGRADED_SHARE = 0.10
+
+#: Below this many records the share is arithmetic, not a measurement. Two blank out
+#: of three is 67% and means nothing — the same "0 exemptions over 7 browser calls"
+#: shape where a ratio was computed over a denominator that could not carry it.
+_UNATTRIBUTED_MIN_SAMPLE = 20
+
+#: OWNER-SCOPED, and the tenancy tripwire is why. `cost_records` is owner-governed,
+#: and this query first shipped without an `owner_id` predicate — the exact defect
+#: `CLAUDE.md` already records against `usage_report.py`, caught here by
+#: `tests/tenancy/test_no_owner_scope_bypass.py` before the commit. That test's own
+#: message is the rule: scope new code by owner_id rather than allowlisting it, since
+#: the allowlist is for pre-existing accessors. Every row is `principal-default`
+#: today, so this narrows nothing now and closes the gap for when it does.
+_UNATTRIBUTED_SQL = (
+    "SELECT COUNT(*) AS total, "
+    "SUM(CASE WHEN trace_id IS NULL OR trace_id = '' THEN 1 ELSE 0 END) AS blank "
+    "FROM cost_records WHERE recorded_at >= ? AND owner_id = ?"
+)
+
+
+class UnattributedSpendContributor:
+    """Health contributor: model spend that belongs to no trace.
+
+    WHY THIS EXISTS. `_bind_job_trace` fixed a real defect — on 2026-08-29, 54.5% of
+    recorded LLM calls carried a blank `trace_id`, so a fifth of all spend was
+    attributable to nothing. Three tests pin that fix. **They pin the CODE**: that a
+    scheduled job binds a lane. Nothing watched the EFFECT, so a new background
+    caller reaching a provider outside any `TraceContext` would reappear exactly as
+    the first one did — silently, and visible only to whoever thought to look. The
+    original was found because a human happened to query for it.
+
+    This repo's standing question is "if this degrades silently, what notices?", and
+    for its own observability the measured answer was: nothing.
+
+    WHY A HEALTH CONTRIBUTOR rather than a job. The health sweep already runs every
+    five minutes, already aggregates subsystem status and already dedupes its alerts;
+    the platform's rule is to extend the loop that exists rather than add a second.
+
+    DEGRADED, NEVER DOWN. Unattributable spend is a bookkeeping failure, not an
+    outage — the platform serves turns perfectly while it is true. Reporting "down"
+    for something that does not stop the platform is how an operator learns to ignore
+    the health surface, a lesson already recorded here at the cost of 25 pages in one
+    day for something that was never down.
+    """
+
+    def __init__(
+        self, db: object, *, window_hours: int = 24, owner_id: str | None = None
+    ) -> None:
+        from stackowl.tenancy.principal import DEFAULT_PRINCIPAL_ID
+
+        self._db = db
+        self._window_hours = window_hours
+        self._owner_id = owner_id or DEFAULT_PRINCIPAL_ID
+
+    @property
+    def contributor_name(self) -> str:
+        return "unattributed_spend"
+
+    async def health_check(self) -> HealthStatus:
+        # 1. ENTRY
+        log.debug("[health] unattributed_spend: entry")
+        t0 = time.monotonic()
+        since = (
+            datetime.now(UTC) - timedelta(hours=self._window_hours)
+        ).isoformat()
+        try:
+            rows = await self._db.fetch_all(  # type: ignore[attr-defined]
+                _UNATTRIBUTED_SQL, (since, self._owner_id)
+            )
+        except Exception as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            # NEVER a regression verdict on an instrument failure. "I could not
+            # measure it" and "it has regressed" are different claims, and reporting
+            # the first as the second is the instrument lying.
+            log.warning("[health] unattributed_spend: check failed: %s", exc)
+            return HealthStatus(
+                name="unattributed_spend", status="degraded",
+                message=f"could not measure attribution: {exc}", latency_ms=latency_ms,
+            )
+
+        row = (rows or [{}])[0]
+        total = int(row.get("total") or 0)
+        blank = int(row.get("blank") or 0)
+        latency_ms = (time.monotonic() - t0) * 1000
+
+        # 2. DECISION — a denominator that cannot carry a rate
+        if total < _UNATTRIBUTED_MIN_SAMPLE:
+            log.debug("[health] unattributed_spend: exit — too few records (%d)", total)
+            return HealthStatus(
+                name="unattributed_spend", status="ok",
+                message=f"too few records to judge ({total} in {self._window_hours}h)",
+                latency_ms=latency_ms,
+            )
+
+        share = blank / total
+        # 3. STEP — the OK case carries its denominator, or it is worthless
+        if share >= _UNATTRIBUTED_DEGRADED_SHARE:
+            detail = (
+                f"{blank} of {total} model calls in the last {self._window_hours}h "
+                f"({share:.0%}) carry no trace_id — their spend is attributable to "
+                "nothing. A caller is reaching a provider outside any TraceContext."
+            )
+            log.warning("[health] unattributed_spend: %s", detail)
+            return HealthStatus(
+                name="unattributed_spend", status="degraded",
+                message=detail, latency_ms=latency_ms,
+            )
+
+        # 4. EXIT
+        log.info(
+            "[health] unattributed_spend: exit — ok",
+            extra={"_fields": {"total": total, "blank": blank, "share": round(share, 4)}},
+        )
+        return HealthStatus(
+            name="unattributed_spend", status="ok",
+            message=f"{blank} of {total} unattributed ({share:.0%}) in {self._window_hours}h",
+            latency_ms=latency_ms,
+        )
+
 
 class StoreCadenceContributor:
     """Health contributor: a store that has gone quiet past its own declaration.

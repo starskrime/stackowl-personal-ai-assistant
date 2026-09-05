@@ -1109,9 +1109,20 @@ def _build_health_aggregator(
         # detecting one were both refuted: `owls` quiet for 11.8 days is correct,
         # `retry_queue` quiet for 5.9 is a stopped engine, and only PURPOSE tells
         # them apart. Rides the 5-minute sweep that already exists.
-        from stackowl.health.contributors import StoreCadenceContributor
+        from stackowl.health.contributors import (
+            StoreCadenceContributor,
+            UnattributedSpendContributor,
+        )
 
         agg.register(StoreCadenceContributor(db))
+        # SPEND THAT BELONGS TO NO TRACE. `_bind_job_trace` fixed a real defect —
+        # 54.5% of recorded LLM calls carried a blank trace_id on 2026-08-29 — and
+        # three tests pin that fix. They pin the CODE, that a scheduled job binds a
+        # lane; nothing watched the EFFECT. The original was found because a human
+        # happened to query for it, and a new caller reaching a provider outside any
+        # TraceContext would reappear the same silent way. Rides the 5-minute sweep
+        # that already exists rather than adding a second loop.
+        agg.register(UnattributedSpendContributor(db))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
     agg.register(graph_contributor if graph_contributor is not None else GraphContributor.probe())
     if embedding_registry is not None:
