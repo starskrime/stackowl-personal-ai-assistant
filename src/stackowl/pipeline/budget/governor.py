@@ -96,23 +96,11 @@ class BudgetGovernor:
         # so a cost cap can never fire and would silently rank above a meter that
         # can. Tokens are what a turn actually spends.
         if self._max_input_tokens is not None and self._cost is not None:
-            reader = getattr(self._cost, "turn_input_tokens", None)
-            if reader is not None:
-                try:
-                    used = int(reader(self._trace_id))
-                except Exception as exc:  # noqa: BLE001 — never disable steps/time
-                    log.engine.warning(
-                        "[budget] governor: token meter unreadable — token cap inert",
-                        extra={"_fields": {"trace_id": self._trace_id, "error": str(exc)}},
-                    )
-                    used = 0
-                # Cumulative across durable attempts (prior) + this attempt's
-                # running total, mirroring the cost ceiling above.
-                spent_tokens = self._prior_input_tokens + used
-                if spent_tokens >= self._max_input_tokens:
-                    return BudgetBreach(
-                        "tokens", float(self._max_input_tokens), float(spent_tokens),
-                    )
+            spent_tokens = self.current_input_tokens()
+            if spent_tokens >= self._max_input_tokens:
+                return BudgetBreach(
+                    "tokens", float(self._max_input_tokens), float(spent_tokens),
+                )
         if self._max_cost_usd is not None and self._cost is not None:
             # Cumulative spend = prior durable attempts + this attempt's running
             # total (F093). For a non-durable turn _prior_cost_usd is 0.0.
@@ -126,6 +114,12 @@ class BudgetGovernor:
 
         The token counterpart to :meth:`current_cost_usd`. Returns the prior seed
         alone when no token-capable tracker is wired.
+
+        THE SINGLE SOURCE for the brake (:meth:`check`) and the gauge
+        (:meth:`tokens_remaining`). It predates both; a private duplicate was added
+        alongside it on 2026-09-05 and deleted the same day, which is the exact
+        "two copies of one rule" this repo names as its own most common defect —
+        committed inside the change that cites it. Both now ask this.
         """
         used = 0
         reader = getattr(self._cost, "turn_input_tokens", None) if self._cost else None
@@ -133,8 +127,13 @@ class BudgetGovernor:
             try:
                 used = int(reader(self._trace_id))
             except Exception as exc:  # noqa: BLE001 — reporting must never raise
-                log.engine.debug(
-                    "[budget] governor.current_input_tokens: meter unreadable",
+                # WARNING, not debug: this method is now the single source for the
+                # cap itself (`check`) as well as the gauge, and an unreadable meter
+                # silently disables the token ceiling. Production runs at INFO, so a
+                # debug line here is a cap going inert with no evidence anywhere.
+                log.engine.warning(
+                    "[budget] governor.current_input_tokens: meter unreadable "
+                    "— token cap inert",
                     extra={"_fields": {"trace_id": self._trace_id, "error": str(exc)}},
                 )
         return self._prior_input_tokens + used
@@ -155,6 +154,25 @@ class BudgetGovernor:
             return None
         steps_done = iteration + 1 if tool_calls is None else max(iteration + 1, tool_calls)
         return max(0, self._max_steps - steps_done)
+
+    def tokens_remaining(self) -> int | None:
+        """Residual token budget for this TASK, or ``None`` when no cap is set.
+
+        The mirror of :meth:`steps_remaining` and :meth:`remaining_seconds` on the
+        one axis that had no gauge at all. MEASURED 2026-09-05: nothing in
+        ``src/stackowl/health/`` reads ``input_tokens``, so the only signal that a
+        turn was consuming abnormally was the cap FIRING — a brake doing duty as a
+        dashboard. Trace ``goal-f6b00937`` grew 7,011 -> 49,135 -> 87,608 ->
+        162,912 tokens per round, that last one being 32.6% of the whole turn
+        budget, and no line anywhere said so.
+
+        Counts prior durable attempts, because the cap does: ``recover-cf91d7c8c8d0``
+        breached three times (514,503 / 549,238 / 584,905) with each attempt seeded
+        from its predecessor while the step count reset.
+        """
+        if self._max_input_tokens is None:
+            return None
+        return max(0, self._max_input_tokens - self.current_input_tokens())
 
     def current_cost_usd(self) -> float:
         """Cumulative spend so far = prior durable attempts + this attempt's total.

@@ -315,6 +315,42 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT120_2026_09_05_a_round_may_eat_a_third_of_the_turn_and_nothing_says_so:
+    map_check: "No mapped item matches — evidence-led work, recorded as DEBT-120."
+    ROOT_CAUSE: >-
+      A units-and-scope mismatch between two live bounds. `trim_messages_to_budget` bounds a
+      ROUND in CHARS against the model's WINDOW; `BudgetGovernor` bounds a TURN in TOKENS
+      cumulatively. Neither knows the other exists, so the per-round limit sits ~4x above
+      what the per-turn limit survives once. Measured: one round of 162,912 tokens was 32.6%
+      of the whole turn budget and ~627,000 chars — comfortably under the 1,000,000-char
+      trimmer, which never fired.
+    WHAT_ELSE_THAT_CAUSE_REACHES: >-
+      The same shape twice more. `DEFAULT_TURN_MAX_TIME_S = 600.0` is defined, guarded by a
+      green test asserting it exists, described in three comments — and ASSIGNED TO NOTHING
+      in src/. The governor enforces caps.max_time_s faithfully; nothing supplies it. Of 205
+      traces with 20+ calls since 2026-08-01, 86 exceeded 600s and 35 exceeded an hour, the
+      longest 13.1 hours over 294 calls. And `providers/base.py:473-479` asserts an
+      OpenAI-protocol backend "caches a byte-identical prefix AUTOMATICALLY" — falsified by
+      the platform's own instrument, which reports `not_reported` on 5,977 of 5,977 calls.
+      Bounds and claims that measure nothing, all the way down.
+    SHIPPED: >-
+      `tokens_remaining()` — the mirror of steps_remaining and remaining_seconds on the one
+      axis that had no gauge at all — and an INFO line naming a round that consumed >=25% of
+      the remaining budget, i.e. "fewer than four more rounds of this size fit". Expressed
+      against REMAINING rather than the total so it needs no access to the cap's value and
+      cannot drift from it. Plus the correction of the false 600s prose claim.
+    THREE_OF_MY_OWN_MISTAKES_CAUGHT_IN_FLIGHT: >-
+      (1) I justified the item with a 92% figure drawn from the MEDIAN round while the
+      breaching population is 51.4%, a quarter of it at 11.7-14.8% — my own denominator
+      error. (2) I added `_spent_input_tokens()` as a private helper and only discovered,
+      via an ambiguous mutation pattern, that `current_input_tokens()` ALREADY EXISTED doing
+      exactly that — I committed the "two copies of one rule" defect inside the change whose
+      docstring cites it, and deleted mine. (3) My mutation harness used str.replace, which
+      is SILENT when the pattern misses: two of three mutants were never planted and their
+      "caught" verdicts were worthless. The harness now asserts the edit applied — and with
+      that assertion, a third mutant proved a clause in my own guard was DEAD, which is now
+      deleted.
+    NEXT: "ESC-147 and ESC-148 are the operator's; the prefix economics remain measured and unfixed."
   DEBT119_2026_09_05_the_platform_named_a_cap_that_cannot_fire:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-119 in known_debt."
     TRIGGER: >-
@@ -10803,6 +10839,74 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_148_a_600_second_cap_that_is_defined_tested_described_and_never_supplied:
+      premise_check: |
+        uv run python -c "
+        import pathlib, re
+        src = pathlib.Path('src/stackowl')
+        hits = [p for p in src.rglob('*.py')
+                if re.search(r'max_time_s\s*=(?!=)', p.read_text(encoding='utf-8', errors='ignore'))
+                and p.name != 'governor.py']
+        print('HOLDS DEFAULT_TURN_MAX_TIME_S is still assigned nowhere — the wall-clock cap '
+              'cannot fire' if not hits else
+              f'EXPIRED max_time_s is now assigned in {[p.name for p in hits]}')
+        "
+      question: >-
+        `DEFAULT_TURN_MAX_TIME_S = 600.0` exists in authz/bounds.py, a green test asserts it
+        exists, three comments describe it — and it is ASSIGNED to nothing in src/.
+        BudgetGovernor enforces caps.max_time_s faithfully; nothing ever supplies a value,
+        and live owls carry max_time_s: null. Measured: of 205 traces with 20+ model calls
+        since 2026-08-01, 86 exceeded 600 seconds of wall clock and 35 exceeded an HOUR, the
+        longest running 13.1 hours over 294 calls. Wire it, or delete it and its test?
+      why_evidence_cannot_settle_it: >-
+        Wiring it is a behaviour change that would start ending long turns — 35 of them in
+        five weeks, including legitimate multi-hour recovery work. Whether a turn may run for
+        13 hours is an appetite question about how the platform should behave, not a fact
+        about how it does. Evidence can say the bound does not run, and has.
+      recommendation: >-
+        Wire it, but not at 600s. 600 was chosen when it was never going to fire, so it has
+        never been tested against real work; the measured p50 for 20+-call traces should set
+        it. Deleting is the honest alternative under RETIRED MEANS DELETED and is strictly
+        better than today's state, where a constant, a test and three comments assert a
+        protection that does not exist.
+      blocked_until_answered: >-
+        Nothing. The false prose claiming the cap "still applies" is already corrected, so the
+        tree no longer lies about it either way.
+    ESC_147_one_round_may_spend_a_third_of_the_turn_and_the_limit_that_would_stop_it_is_yours:
+      premise_check: |
+        uv run python -c "
+        import re, pathlib
+        t = pathlib.Path('src/stackowl/providers/_truncate.py').read_text()
+        m = re.search(r'CONTEXT_CHAR_BUDGET\s*=\s*([0-9_]+)', t)
+        chars = int(m.group(1).replace('_','')) if m else 0
+        tok = chars / 3.85
+        print(f'HOLDS per-round trim budget {chars:,} chars (~{tok:,.0f} tok) is '
+              f'{tok/500000:.0%} of the 500,000-token TURN cap — one round may still eat '
+              'a large share of the turn' if tok > 125000 else
+              f'EXPIRED per-round budget is now ~{tok:,.0f} tok, under a quarter of the turn cap')
+        "
+      question: >-
+        The per-round trimmer's budget is 1,000,000 CHARS (~260,000 tokens) while the whole
+        TURN may spend 500,000 TOKENS. So one round may legally consume half the turn, and
+        measured, one did: trace `goal-f6b00937` had a 162,912-token round — 32.6% of the
+        turn budget — that the trimmer waved through because ~627,000 chars is under its
+        threshold. Should the per-round budget be derived from the turn's REMAINING token
+        budget, and if so at what share?
+      why_evidence_cannot_settle_it: >-
+        Because the current value is YOUR decision, recorded at providers/_truncate.py:22-26
+        on 2026-07-22 — "Raised (owner decision) … both are now pure backstops against a
+        genuinely pathological single tool result, not shaping ceilings." Lowering it makes it
+        a shaping ceiling again, which is the thing that decision explicitly rejected. Evidence
+        can show the two bounds are mismatched, and has; it cannot overrule the intent.
+      recommendation: >-
+        Derive it: budget = min(window_chars, remaining_turn_tokens x chars_per_token x 0.5),
+        so it stays a backstop on ordinary turns and only binds when a single round would eat
+        half of what is left. That honours "not a shaping ceiling" while closing the case that
+        kills `goal-*` turns. The detector shipped in DEBT-120 will show how often it would
+        have bound BEFORE anything is changed — deliberately report-then-enforce.
+      blocked_until_answered: >-
+        Nothing is blocked. The gauge and the INFO line ship now, so the next occurrence is
+        visible and quantified rather than silent, whichever way this is decided.
     ESC_146_the_two_turn_budgets_contradict_each_other_and_only_you_own_the_numbers:
       premise_check: |
         uv run python -c "
@@ -13641,6 +13745,48 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-120
+    found: 2026-09-05
+    what: >-
+      TWO LIVE BOUNDS, TWO UNITS, TWO SCOPES, AND NOTHING RECONCILES THEM. The per-round
+      trimmer asks "does this round fit the model's WINDOW?" in CHARS
+      (`providers/_truncate.py:28`, 1,000,000); the governor asks "has this TURN spent its
+      budget?" in TOKENS, cumulatively (500,000). The per-round bound therefore sits ~4x
+      above what the per-turn bound can survive even ONCE, so a single round may legally
+      consume a third of the whole turn — and nothing anywhere measured it.
+    evidence: >-
+      Trace `goal-f6b00937`: 21 calls, 1,643,689 input tokens, per-round inputs growing
+      7,011 -> 11,028 -> 49,135 -> 87,608 -> 162,912. That largest round is ~627,000 chars,
+      UNDER the 1,000,000-char trimmer threshold, so the trimmer never fired once; it is
+      32.6% of the entire 500,000-token turn budget. `grep -rn input_tokens
+      src/stackowl/health/` returns ZERO — the only signal a turn was consuming abnormally
+      was the cap FIRING, a brake doing duty as a dashboard.
+    decision: >-
+      SHIPPED the gauge and the detector, which is the half that needed no permission:
+      `BudgetGovernor.tokens_remaining()` (the mirror of steps_remaining on the one axis
+      with none) and an INFO line when a single round eats >=25% of the remaining budget.
+      NOT changed, and escalated as ESC-147: the trimmer's 1,000,000-char budget was RAISED
+      by owner decision on 2026-07-22 ("no artificial 80% shrink … pure backstops, not
+      shaping ceilings"), so lowering it reverses a recorded decision — stop-and-brief rule
+      5, not a diagnosis being deferred.
+    the_proposal_that_was_REJECTED_and_why: >-
+      I came into this item intending to re-base the meter to charge accumulated tokens
+      rather than re-sent prefix. The panel killed it on evidence and the reasons are
+      recorded so it is not re-proposed. Simulated over 5,038 traces: traces reaching
+      500,000 go 99 under SUM to 4 under DELTA — the cap keeps 4% of its catch, and
+      `recover-task-925aa68-fix`, the trace cited BY NAME in `authz/bounds.py` as the reason
+      the cap exists (3,893,308 tokens across 137 calls), would never breach again. It also
+      saves ZERO tokens: it re-labels them, and is arithmetically identical to raising one
+      constant to 1,030,000 while being NON-MONOTONIC — two turns costing the same get
+      different verdicts based on how large their tool array happened to be. And the cap is
+      the only ALARM, so weakening it deletes the detector along with the brake.
+    my_own_denominator_error: >-
+      I justified this work with "~92% of every round is fixed prefix". That is true of the
+      MEDIAN round and false of the population that matters: across the 23 traces that
+      actually hit the cap the prefix is 51.4% of spend, and a quarter of them (`goal-*`
+      lanes) run at 11.7-14.8% — they die on accumulated tool RESULTS, which no prefix fix
+      could ever reach. Citing the median to justify work on the breaching population is
+      exactly the "check what the denominator is MADE OF" rule, failed by me.
   - id: DEBT-119
     found: 2026-09-05
     what: >-

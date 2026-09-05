@@ -37,6 +37,47 @@ if TYPE_CHECKING:  # pragma: no cover
 # interval of 5 means something different at max_steps=8 than at max_steps=200.
 _CONVERGE_AT_FRACTION = 0.75
 
+# Share of the REMAINING token budget one round may consume before it is called out.
+# 0.25 means "fewer than four more rounds of this size fit" — the point at which a
+# turn's death becomes predictable rather than surprising.
+#
+# MEASURED 2026-09-05, and the number is not arbitrary. Trace `goal-f6b00937` grew
+# 7,011 -> 11,028 -> 49,135 -> 87,608 -> 162,912 input tokens per round; that last
+# round alone was 32.6% of the entire 500,000-token turn budget. Nothing said so,
+# because nothing measures a round against the turn: `grep -rn input_tokens
+# src/stackowl/health/` returns ZERO, and the only signal was the cap FIRING — a
+# brake standing in for a dashboard.
+#
+# Expressed against REMAINING rather than the total deliberately: it needs no access
+# to the cap's value, so it cannot drift from it, and it keeps meaning the same thing
+# after a `raise_caps()` doubling.
+_ROUND_SHARE_ALARM = 0.25
+
+
+def round_is_outsized(*, before: int | None, after: int | None) -> float | None:
+    """Share of the remaining token budget consumed by ONE round, when outsized.
+
+    Returns ``None`` when there is nothing to say — no cap, no meter, no movement,
+    or an ordinary round. Returns the share (0..1] only when a single round ate at
+    least :data:`_ROUND_SHARE_ALARM` of what was left.
+
+    Pure and total: the caller is a logging path, so this never raises and never
+    needs the cap's value. A non-decreasing reading (a meter that stalled, or a
+    `raise_caps()` between checks) is NOT an alarm — reporting one would train the
+    reader to ignore the line, which is how the previous silence started.
+    """
+    if before is None or after is None or before <= 0:
+        return None
+    # `consumed <= 0` covers BOTH no-movement and a RAISED cap (`after > before`
+    # after `raise_caps()` doubles the ceiling mid-turn). An explicit `after >
+    # before` clause was here and mutation testing proved it dead — nothing could
+    # distinguish its presence, because this line already does its job.
+    consumed = before - after
+    if consumed <= 0:
+        return None
+    share = consumed / before
+    return share if share >= _ROUND_SHARE_ALARM else None
+
 # How many consecutive iterations with NO plan movement before the turn is asked
 # to re-plan. Bakir's number, 2026-08-29: "check of progress for every 5 steps.
 # If agent did not move on task then optimize and replan actions again."
@@ -214,6 +255,7 @@ def make_budget_callback(
     # threshold would grow the transcript on exactly the turns already closest to the
     # cap — paying the accumulating context cost to repeat what the model has read.
     converge_sent = False
+    tokens_before: int | None = None
     # Progress-evaluation state: the last plan shape we saw, the iteration it was
     # first seen at, and how many nudges this turn has already been given.
     last_signature: tuple[int, ...] | None = None
@@ -263,7 +305,29 @@ def make_budget_callback(
         return [{"role": "user", "content": template.format(steps=steps_still)}]
 
     async def _gate(iter_state: ReActIterationState) -> list[dict[str, Any]] | None:
-        nonlocal converge_sent
+        nonlocal converge_sent, tokens_before
+        # SAY WHEN ONE ROUND ATE THE TURN. Runs before the breach check so the
+        # round that CAUSES a breach is still reported — otherwise the single most
+        # informative round is the one that never gets a line. INFO, because
+        # production runs at INFO and this is the evidence for "why did my turn die".
+        try:
+            tokens_now = governor.tokens_remaining()
+        except Exception:  # noqa: BLE001 — a gauge must never break the gate
+            tokens_now = None
+        share = round_is_outsized(before=tokens_before, after=tokens_now)
+        if share is not None:
+            log.engine.info(
+                "[budget] round: one round consumed a large share of the remaining "
+                "token budget — the turn will end soon at this rate",
+                extra={"_fields": {
+                    "share_of_remaining": round(share, 3),
+                    "tokens_before": tokens_before, "tokens_after": tokens_now,
+                    "iteration": iter_state.iteration,
+                    "rounds_left_at_this_rate": int(1 / share) if share else None,
+                }},
+            )
+        if tokens_now is not None:
+            tokens_before = tokens_now
         # tool_call_records is the cumulative snapshot of all dispatches this turn,
         # so the step cap counts individual tool calls (not just ReAct rounds).
         n_calls = len(iter_state.tool_call_records)

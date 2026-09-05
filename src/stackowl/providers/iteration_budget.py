@@ -21,9 +21,21 @@ struggling. Refunding those rounds gives the budget back to the work.
 WHAT THIS DELIBERATELY DOES NOT CHANGE. The ceiling itself is untouched:
 ``DEFAULT_TURN_MAX_STEPS`` (20 interactive) and
 ``DEFAULT_SCHEDULED_TURN_MAX_STEPS`` (45 background) are sized from live incident
-evidence, the 600s ``DEFAULT_TURN_MAX_TIME_S`` still applies, and the graceful
+evidence, and the graceful
 max-out ("Phase F") still guarantees an answer rather than a dead loop. A refund
 can never raise ``used`` above the cap or below zero.
+
+THIS PARAGRAPH USED TO SAY "the 600s ``DEFAULT_TURN_MAX_TIME_S`` still applies".
+IT DOES NOT, AND HAS NOT. Measured 2026-09-05: the constant is defined
+(``authz/bounds.py:70``), a green test asserts it exists, three comments describe
+it — and it is ASSIGNED to nothing in ``src/``. ``BudgetGovernor`` enforces
+``caps.max_time_s`` faithfully; no code path ever supplies a value, and all live
+owls carry ``max_time_s: null``. Of 205 traces with 20+ model calls since
+2026-08-01, **86 exceeded 600 seconds of wall clock and 35 exceeded an hour**, the
+longest running 13.1 hours over 294 calls. A sentence asserting a bound that does
+not run is worse than no sentence: it is why nobody looked. The wire-or-delete
+decision is ESC-148 — it is a behaviour change (it would start ending long turns),
+so it is the operator's, not a diagnosis being deferred.
 """
 
 from __future__ import annotations
