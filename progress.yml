@@ -350,6 +350,15 @@ current:
       defeated the prompt-cache marker — and ESC-149's answer (assume no caching) removes
       that premise. A panel finding that contradicts a recorded decision is an explicit
       stop-and-brief, so it goes to him rather than into the tree.
+    VALIDATED_LIVE: >-
+      Restarted; boot 2026-09-05T17:57:07Z against a commit at 17:56:35Z, the commit time
+      converted with `%cI` rather than `--date=format:` (which renders the commit's OWN
+      offset and produced a wrong comparison two items ago). 470 records since, 10 startup
+      phases ok, ZERO ERROR lines. The src/ change is a docstring, so no behaviour was
+      expected to move and none did — the restart exists to prove the tree the process holds
+      is the tree that was committed, not to observe an effect.
+      The guard's own acceptance is a test, not a log line, and it is green in the gate at
+      101 tripwires: nothing here waits on traffic.
     NEXT: "ESC-147 and ESC-148 are both authorised, small and certain; the mid-turn re-fit needs his word."
   OPERATOR_ANSWERED_2026_09_05_four_escalations_cleared_in_one_sitting:
     what_this_record_is: >-
