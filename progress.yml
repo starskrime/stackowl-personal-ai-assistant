@@ -12512,6 +12512,19 @@ known_debt:
       screens that could not make a similar distinction. The full suite is the real
       detector and it worked twice; the gap was never detection, it was that a caught
       flake got repaired one instance at a time.
+    second_instance_2026_09_05: >-
+      tests/db/test_pool_transaction_chunk_load.py's
+      test_foreground_write_completes_quickly_during_chunked_background_job failed once in an
+      11,973-test run and passed alone. SAME FAMILY, DIFFERENT SHAPE — its SUBJECT is latency,
+      so await_until cannot replace it. Both its assertions compared a MEASURED duration
+      against a CONSTANT: `_COMMIT_DELAY_S * 3`, and `whole_job_span_s`, which is
+      `n_chunks * _COMMIT_DELAY_S` — computed, not observed. Under load fg_elapsed inflates and
+      a constant does not. FIXED by comparing measured against measured: `bg_total_s` IS
+      observed and inflates identically, so `fg_elapsed < bg_total_s / 2` keeps the same
+      strength (bg spans ~6 delays, so /2 is the old 3-delay bound) while surviving a loaded
+      box. Measured after: fg waited 0.088s of a 0.426s job, a ratio of 0.21. The now-unused
+      constant was deleted rather than left in place. Mutation-proven at /200; tests/db 102
+      passed.
   - id: DEBT-115
     found: 2026-09-04
     what: >-

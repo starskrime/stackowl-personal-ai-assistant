@@ -70,7 +70,6 @@ async def test_foreground_write_completes_quickly_during_chunked_background_job(
 
         n_chunks = -(-_N_ROWS // _CHUNK_SIZE)  # ceil
         assert n_chunks == 6
-        whole_job_span_s = n_chunks * _COMMIT_DELAY_S
 
         bg_start = time.monotonic()
         bg_task = asyncio.create_task(_run_chunked_background_job(pool, _N_ROWS))
@@ -86,8 +85,27 @@ async def test_foreground_write_completes_quickly_during_chunked_background_job(
         # Foreground must wait at most ~1-2 commit-delays (the chunk in
         # flight when it arrived, plus its own commit) — NEVER anywhere near
         # the whole job's span.
-        assert fg_elapsed < _COMMIT_DELAY_S * 3
-        assert fg_elapsed < whole_job_span_s / 2
+        #
+        # MEASURED AGAINST MEASURED (2026-09-05). This asserted
+        # `fg_elapsed < _COMMIT_DELAY_S * 3` and `< whole_job_span_s / 2`, and
+        # BOTH were absolute: that second variable was a computed constant
+        # (n_chunks * _COMMIT_DELAY_S), not an observation — it is deleted here
+        # rather than left unused. So the test compared
+        # one measured duration against a fixed number, and failed once in an
+        # 11,973-test run while passing alone — the box was slow, fg_elapsed
+        # inflated, and the constant did not.
+        #
+        # bg_total_s IS observed, and inflates with exactly the same load. The
+        # property this test exists for — a foreground write is not blocked for
+        # anywhere near the whole job — is a RATIO, and stating it as one keeps
+        # the same strength (bg spans ~6 delays, so /2 is the old 3-delay bound)
+        # while surviving a loaded box. Same family as DEBT-116: a wall-clock
+        # threshold standing in for an observable property.
+        assert fg_elapsed < bg_total_s / 2, (
+            f"foreground waited {fg_elapsed:.3f}s of the job's {bg_total_s:.3f}s — "
+            "a chunked background job must not block a concurrent write for "
+            "anywhere near its own span"
+        )
         # Sanity: the background job really did take multiple commit-delays,
         # so the bound above is a meaningful, non-trivial assertion.
         assert bg_total_s >= _COMMIT_DELAY_S * (n_chunks - 1)
