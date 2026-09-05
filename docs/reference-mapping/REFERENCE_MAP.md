@@ -1649,6 +1649,31 @@ a wrong verdict from a mis-wired snapshot is worse than a late one). See `design
 version literals, enumeration counts). Test **invariants** — "every model in the catalog has a
 context-length entry" — not snapshots.
 **StackOwl.** Not stated; we have numeric-limit and count assertions.
+**MEASURED 2026-09-05 — THE RULE IS RIGHT, AS STATED IT IS TOO BLUNT, AND PROSE DOES NOT
+ENFORCE IT.** An AST sweep of 1,611 test files found **937** `len(X) == <int>` assertions and
+nearly all are correct — `assert len(rows) == 1` after inserting one row is a contract about
+the operation. Narrowing to counts of collections the codebase GROWS leaves **five**, and the
+history says what they cost: `test_provider_catalog.py` bumped **15 -> 17 -> 49** (one commit
+added 32 providers and had to edit the test), `test_discovery.py` pinned `== 77` on the tool
+registry as a one-time parity check with the hand-written list discovery replaced, and
+`test_graph_reconciliation.py` asserted `== 7  # one per TRAIT_NAMES entry` — the comment
+already stating the relationship the assertion refused to. All five converted, and each
+replacement is STRONGER: the catalog now compares the loaded NAME SET to the directory it
+loads from (catching a name/filename disagreement and two files collapsing onto one key,
+neither of which a count can see), and discovery compares two POPULATIONS (77 registered, 77
+discovered, difference 0 — a count cannot tell "discovered but never registered" from
+"deliberately removed"). **THE CARVE-OUT MATTERS MORE THAN THE RULE:** two count assertions
+here are deliberate — the closed authz axis set (`== 6`) and the closed in-tree vendor set
+(`== 4`) — and for those, breaking on growth IS the function. A blunt ban would force someone
+to weaken a multi-tenancy guard, and the costs are asymmetric: the catalog error is a one-line
+edit, while deleting a closed-set assertion silently un-guards an authz enumeration and
+nothing would say so. The rule adopted is therefore narrower: **a count literal is legitimate
+when the TEST produced the number, or when the number is the subject of a stated closure
+decision; it is the anti-pattern when it passively echoes a fact owned elsewhere.** **AND IT
+IS ENFORCED, because the reference measures what prose achieves:** they state the rule in
+their contributor guide with banned examples, have NO lint rule, NO CI job and NO test for it,
+and their own suite violates it verbatim — including a file that cites the rule by name about
+150 lines from where it breaks it. See `designs/D18.6.md`.
 **Ask.** Adopt as a review rule?
 
 ### D18.7 · Installer & platform reach — `PARTIAL`

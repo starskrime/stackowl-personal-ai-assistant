@@ -26,6 +26,8 @@ Exit status is 1 when something is wrong, 0 when the file is sound.
 from __future__ import annotations
 
 import collections
+import pathlib
+import re
 import sys
 from pathlib import Path
 
@@ -51,6 +53,10 @@ _VALID_STAGE_VALUES = frozenset({
     "done", "partial", "not_started", "no_change_needed", "blocked",
     "pre_process_exception",
 })
+
+
+_ITEM_ID_RE = re.compile(r"D\d{2}\.\d+")
+_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def _describe(node: yaml.MappingNode) -> str:
@@ -213,6 +219,56 @@ def unevidenced_validate_problems(data: dict) -> list[str]:
     return problems
 
 
+def misattributed_doc_problems(data: dict) -> list[str]:
+    """An item pointing at ANOTHER item's design document.
+
+    MEASURED 2026-09-05, and the measurement is that I did it. D18.6's completed
+    stages, doc, decisions and changes were written into **D04.2's** record,
+    because the edit was anchored on a block of `not_started` stages — a shape that
+    occurs once per unworked item — instead of on the item's id. D04.2 was left
+    claiming `document: done` against `designs/D18.6.md`.
+
+    NOTHING CAUGHT IT. `stale_stage_problems` fired, but only about D18.6 still
+    reading `not_started`; the FALSELY COMPLETED item passed every check, because a
+    filled-in record with a doc and decisions is exactly what a finished item looks
+    like. The one thing that did not match was the doc's NAME, and no rule read it.
+
+    A design document is named for its item, so an item claiming a document whose
+    filename belongs to a different item is claiming someone else's work. That is
+    cheap to check and impossible to write by accident.
+    """
+    problems: list[str] = []
+    for item in data.get("items", []):
+        doc = item.get("doc")
+        if not doc or not isinstance(doc, str):
+            continue
+        ident = str(item.get("id", ""))
+        stem = pathlib.Path(doc).stem
+        if not _ITEM_ID_RE.fullmatch(stem) or stem == ident:
+            continue
+
+        # A SHARED DOCUMENT IS LEGITIMATE AND SAYS SO. `DOC_STANDARD.md` rule 1 is
+        # "one subsystem, one document", and `designs/D09.3.md` covers D09.3 and
+        # D10.2 — naming both in its header. So the test is not the filename but
+        # whether the document CLAIMS the item back. A record written into the
+        # wrong item fails that immediately: `designs/D18.6.md` mentions D04.2
+        # zero times.
+        path = _ROOT / doc
+        try:
+            body = path.read_text(encoding="utf-8")
+        except OSError:
+            problems.append(f"{ident}: claims doc {doc!r}, which does not exist.")
+            continue
+        if ident not in body:
+            problems.append(
+                f"{ident}: claims doc {doc!r}, which is named for {stem} and never "
+                f"mentions {ident}. An item cannot own another item's design "
+                "document — this is exactly what a record written into the wrong "
+                "item looks like. A genuinely shared doc names both items."
+            )
+    return problems
+
+
 def main() -> int:
     path = Path(__file__).resolve().parent.parent / "progress.yml"
     text = path.read_text(encoding="utf-8")
@@ -228,6 +284,7 @@ def main() -> int:
 
     problems.extend(stale_stage_problems(data))
     problems.extend(unevidenced_validate_problems(data))
+    problems.extend(misattributed_doc_problems(data))
 
     for item in data.get("items", []):
         ident = item.get("id", "<unknown>")

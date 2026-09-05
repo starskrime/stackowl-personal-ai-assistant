@@ -68,9 +68,27 @@ def test_real_helper_modules_are_not_imported():
 
 
 def test_discovery_registers_exactly_the_expected_catalog():
+    """Every DISCOVERED class registers, and nothing else does.
+
+    D18.6: this asserted `len(names) == 77`. That number was written to prove
+    parity with the hand-written list this discovery mechanism replaced — a
+    migration check that was valid once and has been a change detector ever
+    since, because the platform adds tools on purpose (`tool_build` mints them).
+
+    Comparing the two POPULATIONS is strictly stronger than the count was. It
+    still catches a tool silently dropped, and it additionally catches a class
+    that is discovered but fails to REGISTER — which a count cannot tell apart
+    from an intentional removal, since both just make the number smaller.
+    """
     reg = ToolRegistry.with_defaults()
     names = {t.name for t in reg.all()}
-    assert len(names) == 77, f"expected 77 tools, got {len(names)}"
+
+    discovered = discover_tool_classes()
+    assert len(names) == len(discovered), (
+        f"discovery found {len(discovered)} tool classes but the registry holds "
+        f"{len(names)} names — a class was discovered and never registered, or two "
+        "collapsed onto one name"
+    )
     # Spot-check across every registration idiom: plain, shared-store, browser
     # subclass (indirect inheritance), and a meta tool.
     for expected in ("shell", "read_file", "edit", "undo_write", "todo",

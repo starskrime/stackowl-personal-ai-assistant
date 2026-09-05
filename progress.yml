@@ -315,6 +315,49 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D18_6_2026_09_05_the_rule_is_right_but_as_stated_it_would_have_deleted_900_good_tests:
+    map_check: "D18.6 — Change-detector test ban (MISSING, wave 9, order 89). Stages verified not_started first."
+    AS_STATED_TOO_BLUNT: >-
+      937 assertions match `len(X) == <int>` across 1,611 test files, and nearly all are
+      correct — `assert len(rows) == 1` after inserting one row is a contract about the
+      operation, not a snapshot. Only FIVE count a collection the codebase grows.
+    THE_FIVE_AND_WHAT_THEY_COST: >-
+      test_provider_catalog.py (x3) had its literal bumped 15 -> 17 -> 49, and one commit
+      adding 32 providers had to edit the test to do it. test_discovery.py pinned == 77 on
+      the tool registry as a one-time parity check with the hand-written list that discovery
+      replaced. test_graph_reconciliation.py asserted == 7 with the comment "one per
+      TRAIT_NAMES entry" — already stating the relationship the assertion refused to. All
+      five converted, and every replacement is STRONGER than the count it replaced.
+    THE_CARVE_OUT_MATTERS_MORE_THAN_THE_RULE: >-
+      Two count assertions here are deliberate: the closed authz axis set (== 6) and the
+      closed in-tree vendor set (== 4). Breaking on growth IS their function, and both say so
+      in their own failure message. A blunt ban would force someone to weaken a multi-tenancy
+      guard to satisfy a lint rule, and the costs are asymmetric — the catalog error is a
+      one-line edit, while deleting a closed-set assertion silently un-guards an authz
+      enumeration and nothing would ever say so.
+    ENFORCED_BECAUSE_PROSE_MEASURABLY_ACHIEVES_NOTHING: >-
+      The reference states this rule in its contributor guide with explicit banned examples,
+      has NO lint rule, NO CI job and NO test enforcing it, and its own suite violates it
+      verbatim — including a file that cites the rule by name about 150 lines from where it
+      breaks it. A rule with no enforcer buys docstring citations.
+    THE_PANEL_DISAGREED_AND_MEASUREMENT_SETTLED_IT: >-
+      One lens judged the item housekeeping on "three instances in one file"; the other
+      measured FIVE across three files and prototyped the detector, finding two instances
+      neither the map nor I had seen. The verdict turned on the count, not on averaging the
+      two. The tool-registry == 77 decides it: it breaks the next time a tool is added, and
+      this platform mints tools at runtime.
+    MY_OWN_GUARD_FIRST_RETURNED_ZERO_AND_A_CONTROL_CAUGHT_IT: >-
+      The detector looked for provenance in the ASSERT instead of the ASSIGNMENT, so it found
+      NOTHING on a tree containing five instances. Zero flags is exactly what a working guard
+      looks like once the tree is clean, so a green run could not tell "clean" from "blind" —
+      and this programme has already shipped a guard that pointed at nothing. The positive
+      control now ships as a test inside the file.
+    EVIDENCE: >-
+      33 passed across the four affected test files (1 new tripwire); the detector yields
+      exactly ONE flag on the real tree, a genuine false positive, allowlisted with its
+      reason. Two mutants caught and restored from file copies: reintroducing the catalog
+      count, and a stale allowlist entry.
+    NEXT: "D19 domain — the next unworked map item after D18.6."
   D18_5_2026_09_05_the_gap_was_dead_and_the_detector_was_voiding_itself:
     map_check: "D18.5 — Test isolation (PARTIAL, wave 9, order 88). Stages verified not_started first."
     THREE_PREMISES_FALSE_AND_ONE_IS_A_PROGRAMME_LESSON: >-
@@ -29464,18 +29507,63 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    done
+      test:       done
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D18.6.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "AS STATED THE RULE WOULD HAVE DELETED 900 GOOD TESTS. 937 assertions match the
+         shape `len(X) == <int>` across 1,611 files; nearly all are contracts about an
+         operation. Only FIVE count a collection the codebase grows."
+      - "THE CARVE-OUT MATTERS MORE THAN THE RULE. Two count assertions are deliberate —
+         the closed authz axis set (== 6) and the closed in-tree vendor set (== 4) — and
+         breaking on growth IS their function. A blunt ban would force someone to weaken a
+         multi-tenancy guard, and the costs are asymmetric: the catalog error is a
+         one-line edit, deleting a closed-set assertion silently un-guards an authz
+         enumeration and nothing would say so."
+      - "THE ADOPTED RULE: a count literal is legitimate when the TEST produced the
+         number, or when the number is the subject of a stated closure decision. It is the
+         anti-pattern when it passively echoes a fact owned somewhere else."
+      - "ENFORCED, NOT DOCUMENTED, because the reference measures what prose achieves: the
+         rule is in their contributor guide with banned examples, there is NO lint rule, NO
+         CI job and NO test for it, and their own suite violates it verbatim — including a
+         file that cites the rule by name about 150 lines from where it breaks it."
+    changes:
+      - "tests/setup/test_provider_catalog.py — `== 49` x2 and `== 50` replaced by a NAME
+         SET comparison against the directory load() globs. Stronger: also catches a
+         declared name disagreeing with its filename, and two files collapsing onto one
+         key. History: the literal was bumped 15 -> 17 -> 49."
+      - "tests/tools/test_discovery.py — `== 77` replaced by comparing two POPULATIONS
+         (registered vs discovered; measured 77/77, difference 0). A count cannot tell
+         'discovered but never registered' from 'deliberately removed'."
+      - "tests/scheduler/test_graph_reconciliation.py — `== 7  # one per TRAIT_NAMES entry`
+         became `== len(TRAIT_NAMES)`, which is what the comment already said."
+      - "tests/test_a_count_assertion_is_not_a_snapshot.py (new, 3 tests, 1 tripwire) — the
+         AST guard, a one-entry allowlist with its reason, a staleness check on that
+         allowlist, and a POSITIVE CONTROL for the detector itself."
+      - "scripts/progress_lint.py — a new rule: an item claiming `document: done` must
+         point at a doc whose filename matches its own id. Added because THIS item's
+         completion was first written into D04.2's record by a replacement anchored on a
+         block shape that occurs many times, and nothing caught it."
+    notes: >-
+      THE PANEL DISAGREED AND MEASUREMENT SETTLED IT, not a compromise. One lens judged the
+      item housekeeping — "three instances in one file". The other measured FIVE across three
+      files and prototyped the detector, finding two instances neither the map nor I had
+      seen. The tool-registry == 77 decides it: it breaks the next time a tool is added, and
+      this platform mints tools at runtime.
+      AND MY OWN GUARD'S FIRST VERSION RETURNED ZERO FLAGS on a tree containing five
+      instances, because it looked for provenance in the ASSERT instead of the ASSIGNMENT.
+      Zero is what a working guard looks like once the tree is clean, so a green run could
+      not tell "clean" from "blind". A positive control caught it and ships as a test.
+      WHAT IS LOST, honestly: a name-set comparison cannot see an UNINTENDED file appearing —
+      a stray .yaml becomes a provider and both sides agree. The old count would have flagged
+      that, and equally all 32 intentional additions. Only a count owned by a stated closure
+      decision sees growth as growth, which is the job the two carve-outs do.
 
   - id: D18.7
     title: "Installer & platform reach"

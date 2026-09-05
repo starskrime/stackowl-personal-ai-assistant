@@ -7,12 +7,43 @@ from pathlib import Path
 import pytest
 import yaml
 
-from stackowl.setup.provider_catalog import PROTOCOLS, ProviderCatalog, ProviderEntry
+from stackowl.setup.provider_catalog import (
+    _BUNDLED_DIR,
+    PROTOCOLS,
+    ProviderCatalog,
+    ProviderEntry,
+)
 
 
-def test_catalog_loads_all_bundled_yaml_files() -> None:
+def _bundled_names() -> set[str]:
+    """The names the catalog SHOULD contain, derived from the directory it loads.
+
+    D18.6: this used to be the literal `49`, and before that `17`, and before that
+    `15`. Every provider added forced an edit here — one commit added 32 at once —
+    and the "fix" was always to bump a number, which is a test that measures the
+    tree's growth rather than any property of it.
+
+    Deriving it is also STRICTLY STRONGER than the count was. The old assertion
+    caught a YAML that failed to load; comparing the NAME SET additionally catches
+    a file whose declared `name` disagrees with its filename, and two files
+    collapsing onto one name — neither of which a count can see.
+    """
+    return {path.stem for path in _BUNDLED_DIR.glob("*.yaml")}
+
+
+def test_every_bundled_yaml_becomes_exactly_one_entry() -> None:
     entries = ProviderCatalog.load()
-    assert len(entries) == 49, f"Expected 49 bundled providers, got {len(entries)}: {[e.name for e in entries]}"
+    loaded = [e.name for e in entries]
+
+    assert len(loaded) == len(set(loaded)), (
+        f"two bundled files collapsed onto one name: "
+        f"{sorted(n for n in loaded if loaded.count(n) > 1)}"
+    )
+    assert set(loaded) == _bundled_names(), (
+        f"the catalog does not match the directory it loads.\n"
+        f"  on disk, not loaded: {sorted(_bundled_names() - set(loaded))}\n"
+        f"  loaded, not on disk: {sorted(set(loaded) - _bundled_names())}"
+    )
 
 
 def test_catalog_protocols_are_one_of_four() -> None:
@@ -69,8 +100,9 @@ def test_a_user_file_CANNOT_replace_a_bundled_entry_by_name(
     # test is inverted rather than deleted so the change of behaviour stays legible.
     assert openai_entry.label != "OpenAI (custom override)"
     assert openai_entry.base_url != "https://custom.openai.example.com/v1"
-    # Count still 49: the colliding file contributed nothing, and added nothing either.
-    assert len(entries) == 49
+    # The colliding file contributed nothing and added nothing — stated as the
+    # relationship it is, not as the literal 49 it happened to equal (D18.6).
+    assert {e.name for e in entries} == _bundled_names()
 
 
 def test_user_can_add_new_provider_beyond_bundled(
@@ -99,9 +131,12 @@ def test_user_can_add_new_provider_beyond_bundled(
     )
 
     entries = ProviderCatalog.load()
-    assert len(entries) == 50
-    names = [e.name for e in entries]
-    assert "mycompany" in names
+    names = {e.name for e in entries}
+
+    # The property is "the user's file ADDS one, and displaces nothing" — which is
+    # what `== 50` was expressing as a literal (49 bundled + 1). Written as the
+    # relationship, adding a bundled provider never touches this test (D18.6).
+    assert names == _bundled_names() | {"mycompany"}
 
 
 def test_provider_entry_rejects_unknown_protocol() -> None:

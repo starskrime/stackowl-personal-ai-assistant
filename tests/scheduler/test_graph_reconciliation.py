@@ -10,6 +10,7 @@ import pytest
 
 from stackowl.db.pool import DbPool
 from stackowl.memory.kuzu_adapter import KuzuAdapter
+from stackowl.owls.dna_defaults import TRAIT_NAMES
 from stackowl.scheduler.handlers.graph_reconciliation import GraphReconciliationHandler
 from stackowl.scheduler.job import Job
 from tests._schema_template import seed_schema
@@ -72,7 +73,10 @@ async def test_backfills_missing_dna_traits(db: DbPool, kuzu: KuzuAdapter) -> No
 
     assert result.success is True
     ids = await kuzu.list_trait_ids()
-    assert len(ids) == 7  # one per TRAIT_NAMES entry
+    # One per TRAIT_NAMES entry — asserted as that RELATIONSHIP, not as the 7 it
+    # currently equals. The comment already said this; D18.6 made the assertion
+    # say it too, so adding a trait cannot break a test that is not about traits.
+    assert len(ids) == len(TRAIT_NAMES)
 
 
 async def test_prunes_stale_skill_no_longer_in_sqlite(db: DbPool, kuzu: KuzuAdapter) -> None:
