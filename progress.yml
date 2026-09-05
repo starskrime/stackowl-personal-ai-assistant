@@ -350,6 +350,24 @@ current:
       "caught" verdicts were worthless. The harness now asserts the edit applied — and with
       that assertion, a third mutant proved a clause in my own guard was DEAD, which is now
       deleted.
+    VALIDATED_LIVE: >-
+      Restarted; newest boot 2026-09-05T16:16:18Z against a commit at 16:15:44Z. 318 records
+      since, ZERO ERROR lines, settled. The four boot markers in fourteen seconds are PAIRS
+      (…04.257/.290, …18.229/.261) — the gateway and core each logging phase 1, not a respawn
+      loop; checked rather than assumed, because a flapping platform would have invalidated
+      every measurement above it.
+      OPEN, honestly: zero outsized-round lines since boot. The detector needs a round
+      consuming >=25% of the remaining budget, and the `goal-*` lanes that produce them are
+      not currently running. It is INFO, so ordinary traffic closes it. Closing query:
+      grep "round: one round consumed a large share" in ~/.stackowl/logs/stackowl.jsonl.
+    A_TIMEZONE_ERROR_IN_MY_OWN_VALIDATE: >-
+      My probe printed "commit UTC: 11:15:44" and compared the boot against it. `git log
+      --date=format:` renders the commit's OWN offset regardless of TZ, so the real commit
+      time was 16:15:44Z — and the boot I first accepted, 16:05:53Z, actually PREDATED the
+      commit. The comparison passed only because I compared a UTC boot against a local-time
+      commit. Exactly the landmine that says check the core's start time against your last
+      commit before believing anything you measure; the instrument I used to check it was
+      itself wrong.
     NEXT: "ESC-147 and ESC-148 are the operator's; the prefix economics remain measured and unfixed."
   DEBT119_2026_09_05_the_platform_named_a_cap_that_cannot_fire:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-119 in known_debt."
