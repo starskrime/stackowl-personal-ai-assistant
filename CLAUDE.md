@@ -131,8 +131,17 @@ replace this run.
 
 Interactively, targeted paths with timeouts are still right — but **a hanging test
 is a failing test only after you have checked it is not merely slow.** `tests/db`
-is 7 minutes (102 tests, each replaying all 128 migrations); I recorded it as a
-hang at a 250s timeout and was wrong.
+is minutes, not seconds; I recorded it as a hang at a 250s timeout and was wrong.
+
+**Its mechanism, re-measured 2026-09-05, because this line used to state it
+wrongly.** It said "102 tests, each replaying all 128 migrations". There are **136**
+migrations, and the cost is not one replay per test but **46 explicit
+`MigrationRunner(` sites inside `tests/db`**. That distinction matters to anyone
+trying to make it faster: **`tests/_schema_template.py` already exists** — build the
+schema once, copy it per test — and **120 files already use it**, while **22 files
+outside `tests/db` still construct a real `MigrationRunner`**. Some of those are
+migration tests that legitimately need the real thing; the rest are the cheap win,
+and it is the built-but-not-wired shape rather than a performance mystery.
 
 **A targeted run CANNOT see a cross-cutting guard — run `./scripts/tripwires.sh`.**
 Targeted paths are picked by what the change looks related to, and a guard that
