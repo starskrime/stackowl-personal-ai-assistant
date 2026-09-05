@@ -86,8 +86,40 @@ async def test_daily_first_run_hour_matches_schedule(tmp_db: DbPool) -> None:
         "SELECT next_run_at FROM jobs WHERE handler_name = ?", ("profile_backup",),
     )
     assert len(rows) == 1
-    next_run = datetime.fromisoformat(rows[0]["next_run_at"]).astimezone()
+    # In the OPERATOR'S timezone, not the host's — see D18.5. A bare
+    # `.astimezone()` reads the machine's zone and so cannot tell a correct
+    # seeding from one computed against the wrong clock.
+    from zoneinfo import ZoneInfo
+
+    from stackowl.config.settings import cached_settings
+
+    zone = ZoneInfo(cached_settings().system.timezone)
+    next_run = datetime.fromisoformat(rows[0]["next_run_at"]).astimezone(zone)
     assert next_run.hour == 1  # daily@01:00
+
+
+async def test_a_half_hour_schedule_keeps_its_minutes(tmp_db: DbPool) -> None:
+    """`daily@04:30` must be seeded for 04:30, not 04:00.
+
+    The deleted `_next_local_hour_iso` took an HOUR only, so three schedules
+    (`daily@04:30` twice, `daily@03:30`) were seeded on the hour and the call
+    site's own comment warned that a ":30" offset "would compute the identical
+    05:00 first-run timestamp for both". Passing the schedule string to
+    `compute_next_run` removes the second, lossy notion of "when" entirely.
+    """
+    from zoneinfo import ZoneInfo
+
+    from stackowl.config.settings import cached_settings
+
+    await seed_browser_maintenance_schedules(tmp_db)
+    rows = await tmp_db.fetch_all(
+        "SELECT next_run_at FROM jobs WHERE handler_name = ?",
+        ("browser_cache_eviction",),          # seeded as daily@04:30
+    )
+    assert len(rows) == 1, "browser_cache_eviction is the daily@04:30 seed"
+    zone = ZoneInfo(cached_settings().system.timezone)
+    next_run = datetime.fromisoformat(rows[0]["next_run_at"]).astimezone(zone)
+    assert (next_run.hour, next_run.minute) == (4, 30)
 
 
 async def test_param_required_handlers_are_not_seeded(tmp_db: DbPool) -> None:

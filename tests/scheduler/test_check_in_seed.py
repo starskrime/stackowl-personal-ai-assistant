@@ -179,9 +179,23 @@ async def test_check_in_first_run_hour_follows_configured_schedule(
     )
     assert len(rows) == 1
     assert rows[0]["schedule"] == "daily@09:00"
-    # next_run_at is an ISO UTC instant for the next local 09:00 — assert the
-    # local wall-clock hour it maps back to is 9, not the old hardcoded 18.
-    next_run = datetime.fromisoformat(rows[0]["next_run_at"]).astimezone()
+    # next_run_at is an ISO UTC instant for the next 09:00 IN THE OPERATOR'S
+    # timezone (`system.timezone`, default UTC) — NOT in the host's.
+    #
+    # D18.5 changed this assertion, and deliberately. It used to convert with a
+    # bare `.astimezone()`, which resolves to whatever zone the MACHINE is in, and
+    # so it encoded the defect it was meant to guard: the seeding path computed
+    # "the next local 09:00" against the host while `compute_next_run` computed
+    # every LATER run against `system.timezone`. On a UTC server a 09:00
+    # America/Chicago check-in was seeded for 09:00Z — 04:00 for the operator —
+    # and this test passed anyway, because the host and the config happened to
+    # share an offset on the box where it was written.
+    from zoneinfo import ZoneInfo
+
+    from stackowl.config.settings import cached_settings
+
+    zone = ZoneInfo(cached_settings().system.timezone)
+    next_run = datetime.fromisoformat(rows[0]["next_run_at"]).astimezone(zone)
     assert next_run.hour == 9
 
 

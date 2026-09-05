@@ -1611,6 +1611,38 @@ once and reports `⚠ FLAKY` — treated as a bug, not noise.
 **StackOwl.** `pytest`; full runs hang on the Jetson, so we run targeted paths with timeouts.
 **Gap.** Our full suite is not runnable — Hermes' subprocess isolation is plausibly *why* theirs is.
 **Ask.** Would subprocess-per-file isolation fix our hang?
+**MEASURED 2026-09-05 — THREE OF THIS ENTRY'S PREMISES ARE FALSE, AND ONE IS A LESSON FOR
+THE WHOLE PROGRAMME.** (1) "Our full suite is not runnable" — it runs about every 1.7 hours:
+20 suite logs over 29 hours, 17 completed, median ~30:08, and today `11994 passed, 18
+skipped, 0 failed in 1856.98s, rc=0`. (2) "xdist workers" — the reference platform
+**explicitly DROPPED xdist**, under a docstring heading "Why drop xdist entirely?": *"xdist's
+persistent workers accumulate state across files, which is exactly the leakage we wanted to
+fix."* It is not in their dependencies. (3) **The error came from their own contributor guide,
+which still describes the runner as using xdist — a doc stale relative to its code, and this
+map copied it. A claim sourced from the reference's DOCUMENTATION is not evidence about the
+reference's BEHAVIOUR, and that applies to every remaining item here.**
+**WHAT WAS ACTUALLY BROKEN:** the full run is the programme's only cross-pollution detector,
+and **9 of 17 completed runs — 53% — printed `SUITE TREE CHANGED … this verdict is about NO
+SINGLE TREE`.** The 2026-09-04 fix LABELLED the moving run instead of curing it, which is
+fixing WHAT happened; a warning nobody acts on is not a fix, and nine times nobody did. A
+moving run now RE-RUNS ITSELF once (bounded) and states `SUITE TREE STILL` positively. The
+completion stamp is also now written from an EXIT trap: it used to sit below a piped
+fingerprint call inside `set -euo pipefail`, and one kept log ends with results and NO `SUITE
+DONE`, so the documented collector reports a run finished 29 hours ago as still going.
+**THE ONE NON-VACUOUS PARITY CLAUSE EARNED ITSELF IMMEDIATELY.** Credential-unsetting has
+nothing to bind to here (one harness-owned variable; every operator secret is a `file:`
+reference under a home conftest already redirects). Pinning `TZ=UTC` exposed
+`_next_local_hour_iso` — and its ROOT CAUSE was not the timezone but that it was a SECOND
+implementation: `compute_next_run` had always resolved `system.timezone` for this exact
+computation, so every job's FIRST run used one clock and every LATER run another. The
+duplicate also silently dropped MINUTES (`daily@04:30` seeded at 04:00, three schedules). It
+is DELETED and routed through the canonical function, along with `_daily_schedule_hour`, the
+dead `next_hour` parameter at 11 call sites, and the landmine note whose mine is now cleared.
+**REJECTED, with reasons, so they are not re-proposed:** subprocess-per-file isolation (it
+does not detect leakage, it makes leakage invisible — and detection is what we need),
+xdist, credential-unsetting, and a copied-snapshot run (stronger, but imports resolve
+`stackowl` from an editable install, so it only takes effect by redirecting PYTHONPATH —
+a wrong verdict from a mis-wired snapshot is worse than a late one). See `designs/D18.5.md`.
 
 ### D18.6 · Change-detector test ban — `MISSING`
 **Hermes.** A named anti-pattern: never assert on data expected to change (model catalogs, config

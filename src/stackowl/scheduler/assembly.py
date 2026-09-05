@@ -737,7 +737,7 @@ class SchedulerAssembly:
         brief_channels = list(settings.brief.channels)
         await _seed_daily_schedule(
             db, handler_name="morning_brief",
-            schedule="daily@08:00", next_hour=8,
+            schedule="daily@08:00",
             target_channels=brief_channels,
             target_addresses=_resolve_owner_addresses(settings, brief_channels),
         )
@@ -749,14 +749,13 @@ class SchedulerAssembly:
             check_in_channels = list(settings.check_in.channels)
             check_in_addresses = _resolve_owner_addresses(settings, check_in_channels)
             if check_in_addresses:
-                # check_in.schedule is USER-CONFIGURABLE (unlike the hardcoded
-                # daily@HH:MM constants of the other seeds), so derive the first-run
-                # hour FROM it — never hardcode a next_hour that could diverge from
-                # the stored schedule string. Falls back to 18 for a non-daily@ value.
-                check_in_hour = _daily_schedule_hour(settings.check_in.schedule, 18)
+                # check_in.schedule is USER-CONFIGURABLE, and the schedule STRING is
+                # all that is passed: the first run is computed from it by the same
+                # function that computes every later run, so there is no separate
+                # hour that could diverge from it. There used to be one.
                 await _seed_daily_schedule(
                     db, handler_name="check_in",
-                    schedule=settings.check_in.schedule, next_hour=check_in_hour,
+                    schedule=settings.check_in.schedule,
                     target_channels=check_in_channels,
                     target_addresses=check_in_addresses,
                 )
@@ -805,11 +804,11 @@ class SchedulerAssembly:
         # EvolutionCoordinator registers itself under handler_name="evolution_batch".
         await _seed_daily_schedule(
             db, handler_name="evolution_batch",
-            schedule="daily@02:00", next_hour=2,
+            schedule="daily@02:00",
         )
         await _seed_daily_schedule(
             db, handler_name="knowledge_prune",
-            schedule="daily@04:00", next_hour=4,
+            schedule="daily@04:00",
         )
         # Objective driver advances standing objectives one sub-goal per tick.
         # Frequent (1m) so a multi-step objective makes visible progress; each
@@ -974,32 +973,33 @@ class SchedulerAssembly:
         # that themselves delete things rather than racing them.
         await _seed_daily_schedule(
             db, handler_name="orphan_reconciliation",
-            schedule="daily@04:30", next_hour=4,
+            schedule="daily@04:30",
         )
         # Skill synthesizer runs once per day at 03:30 (between knowledge_prune
         # at 04:00 and evolution at 02:00) — needs ≥several days of outcomes
         # to find qualifying clusters, so daily is the right cadence.
         await _seed_daily_schedule(
             db, handler_name="skill_synthesizer",
-            schedule="daily@03:30", next_hour=3,
+            schedule="daily@03:30",
         )
         # Tool outcome miner runs daily at 05:00 — after all the other
         # scheduled work has populated quality scores and outcome data.
         await _seed_daily_schedule(
             db, handler_name="tool_outcome_miner",
-            schedule="daily@05:00", next_hour=5,
+            schedule="daily@05:00",
         )
         # Tool revalidation runs daily at 06:00 — deliberately a full hour after
         # tool_outcome_miner (05:00) so it judges learned tools on the freshest
-        # trust counts. NOTE: _next_local_hour_iso only supports whole hours (no
-        # minutes) — a ":30" offset from the SAME hour as another job (e.g.
-        # "05:30" here vs "05:00" above) would compute the identical 05:00
-        # first-run timestamp for both and not actually guarantee this runs
-        # second. Use a distinct hour, not a same-hour minute offset, for any
+        # trust counts. (The note that used to stand here said minutes were
+        # dropped, so a ":30" offset collapsed onto the same hour. That was true
+        # of the deleted `_next_local_hour_iso`, which took an HOUR only; the
+        # schedule string now goes to `compute_next_run` whole, so `daily@05:30`
+        # means 05:30. The mine is cleared, and a landmine note that outlives its
+        # mine sends the next reader hunting a defect that no longer exists.)
         # job that needs to run strictly after another daily job below.
         await _seed_daily_schedule(
             db, handler_name="tool_revalidation",
-            schedule="daily@06:00", next_hour=6,
+            schedule="daily@06:00",
         )
 
         # Best-effort, non-blocking: notify (never silently auto-write) if the
@@ -1304,34 +1304,38 @@ def _resolve_owner_addresses(
     return resolve_owner_addresses(settings, channels)
 
 
-def _daily_schedule_hour(schedule: str, default: int) -> int:
-    """Parse the HH from a ``daily@HH:MM`` schedule; ``default`` if not that shape.
+def _first_run_for(schedule: str) -> str:
+    """The first run of a daily schedule, computed by the SAME function as every
+    later run.
 
-    Used to keep a seeded job's first-run hour in lockstep with a
-    user-configurable ``daily@HH:MM`` schedule string (so they can never diverge).
-    A non-daily@ schedule (e.g. an interval) returns ``default``.
+    THIS USED TO BE A SECOND IMPLEMENTATION AND THAT IS WHY IT WAS WRONG.
+    ``_next_local_hour_iso(hour)`` built the next local HH:00 from
+    ``datetime.now()`` — NAIVE — and called ``.astimezone(UTC)``, which assumes
+    the HOST's timezone. Meanwhile ``compute_next_run`` (scheduler_helpers) had
+    always resolved ``settings.system.timezone`` for exactly this computation, and
+    its own docstring says the scheduler "shares the SAME tz the quiet-hours clock
+    uses". So the FIRST run of every seeded job was computed one way and every
+    SUBSEQUENT run another — `CLAUDE.md` shape 3, two copies of one rule, with the
+    wrong copy in the seeding path.
+
+    Measured 2026-09-05, both defects the duplicate carried:
+
+    * **Timezone.** On this box the host zone and ``system.timezone`` share an
+      offset, so it looked right. On the ordinary self-hosted shape — a server
+      running UTC — a 09:00 America/Chicago check-in was seeded for 09:00Z, which
+      is 04:00 for the operator.
+    * **Minutes, silently dropped.** The duplicate took only an HOUR, so
+      ``daily@04:30`` was seeded to fire at 04:00. Three schedules did this
+      (``daily@04:30`` twice and ``daily@03:30``), and the call site's own comment
+      already warned "never hardcode a next_hour that could diverge from it".
+
+    Passing the schedule STRING removes both by construction: there is no second
+    hour to keep in step, and no second notion of "local".
     """
-    if schedule.startswith("daily@"):
-        try:
-            hour = int(schedule[len("daily@"):].split(":")[0])
-        except (ValueError, IndexError):
-            return default
-        # Guard the range: _next_local_hour_iso → datetime.replace(hour=) raises
-        # for hour>23, which would abort assembly. (CheckInSettings already
-        # validates this; belt-and-suspenders for any other caller.)
-        if 0 <= hour <= 23:
-            return hour
-        return default
-    return default
+    from stackowl.config.settings import cached_settings
+    from stackowl.scheduler.scheduler_helpers import compute_next_run
 
-
-def _next_local_hour_iso(hour: int) -> str:
-    """Return the next local-time HH:00 as an ISO8601 UTC string."""
-    now = datetime.now()
-    candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-    if candidate <= now:
-        candidate += timedelta(days=1)
-    return candidate.astimezone(UTC).isoformat()
+    return compute_next_run(schedule, tz=cached_settings().system.timezone)
 
 
 _REPAIR_TARGET_SQL = (
@@ -1428,7 +1432,6 @@ async def _seed_daily_schedule(
     *,
     handler_name: str,
     schedule: str,
-    next_hour: int,
     target_channels: list[str] | None = None,
     target_addresses: dict[str, str | int] | None = None,
 ) -> None:
@@ -1468,7 +1471,7 @@ async def _seed_daily_schedule(
             schedule=schedule,
             idempotency_key=f"{handler_name}:daily",
             last_run_at=None,
-            next_run_at=_next_local_hour_iso(next_hour),
+            next_run_at=_first_run_for(schedule),
             status="pending",
             target_channels=list(target_channels),
             target_addresses=dict(target_addresses or {}),
@@ -1496,7 +1499,7 @@ async def _seed_daily_schedule(
             schedule,
             f"{handler_name}:daily",
             None,
-            _next_local_hour_iso(next_hour),
+            _first_run_for(schedule),
             "pending",
             0,
             now_iso,
@@ -1551,18 +1554,18 @@ async def seed_browser_maintenance_schedules(db: DbPool) -> None:
     # profile_backup @01:00 — recover login state from a ≤24h-old archive.
     await _seed_daily_schedule(
         db, handler_name="profile_backup",
-        schedule="daily@01:00", next_hour=1,
+        schedule="daily@01:00",
     )
     # browser_recycle @03:00 — low-traffic backstop for the FF RSS leak; the
     # runtime + 10m session sweep already self-recycle, so daily is sufficient.
     await _seed_daily_schedule(
         db, handler_name="browser_recycle",
-        schedule="daily@03:00", next_hour=3,
+        schedule="daily@03:00",
     )
     # browser_cache_eviction @04:30 — bound disk; runs after backup/recycle settle.
     await _seed_daily_schedule(
         db, handler_name="browser_cache_eviction",
-        schedule="daily@04:30", next_hour=4,
+        schedule="daily@04:30",
     )
     log.scheduler.info("[scheduler] seed_browser_maintenance_schedules: exit — 3 seeded")
 
