@@ -1440,7 +1440,19 @@ residual (TTL-0 rebind between check and connect) is now DEBT-118, which exists.
 40-char SHA; GitHub Actions pinned to SHA; CI-only pip pinned exact. Established after a real
 supply-chain compromise and reinforced after a worm campaign.
 **StackOwl.** Not stated.
-**Ask.** Cheap. Adopt?
+**ADOPTED 2026-09-05 — and it was cheap, but not where the entry implies.** MEASURED first: 44
+dependencies with **2** upper bounds, and 8 `uses:` lines with **ZERO** SHA pins — all eight on
+mutable tags (`@v4`, `@v2`, `@v5`). Two of the four clauses were VACUOUS (0 git-URL deps, 0
+CI-only pip installs) and a test now asserts they stay so. THE ACTION HALF IS THE SHARPER ONE:
+`uv.lock` is committed, so installs are already reproducible and the dependency clause protects
+the RESOLUTION step — but a lockfile does not cover CI actions at all, and
+`actions/checkout@v4` is whatever that tag points at when the job runs, with the repository's
+credentials. All 8 now pin a 40-char commit SHA (annotated tags dereferenced to the commit —
+`astral-sh/setup-uv@v5` is annotated, so pinning the tag object would have pinned nothing
+useful) with a `# v4` comment a test requires. BOUNDS DERIVED FROM THE LOCKED VERSION, not the
+floor, so the existing lock satisfies every new specifier by construction: `uv lock --check`
+resolves 210 packages and the lock diff has ZERO `version =` changes — only the
+`[package.metadata] requires-dist` block moved. See `designs/D17.5.md`.
 
 ### D17.6 · Authz & tenancy — `AHEAD`
 **Hermes.** Per-session approval + profile isolation + token locks. No principal model.

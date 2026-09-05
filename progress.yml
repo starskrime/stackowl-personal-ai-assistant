@@ -315,6 +315,25 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D17_5_2026_09_05_a_ceiling_on_every_dependency_and_a_sha_on_every_action:
+    map_check: "D17.5 — Dependency pinning policy (MISSING, wave 9). Stages verified not_started first."
+    MEASURED_FIRST: >-
+      44 dependencies with TWO upper bounds; 8 `uses:` lines with ZERO SHA pins, all on
+      mutable tags. Two of the four clauses vacuous — no git-URL deps, no CI-only pip installs.
+    THE_ACTION_HALF_IS_SHARPER_AND_THE_ENTRY_DOES_NOT_SAY_SO: >-
+      uv.lock is committed, so installs are already reproducible and the dependency clause
+      protects the RESOLUTION step. But a lockfile does not cover CI actions at all:
+      actions/checkout@v4 is whatever that tag points at when the job runs, with the
+      repository's credentials.
+    SAFETY_WAS_THE_DESIGN_CONSTRAINT: >-
+      Every ceiling derived from the LOCKED version rather than the declared floor, so the
+      existing lock satisfies each new specifier by construction. Proven: `uv lock --check`
+      resolves 210 packages, and the lock diff has ZERO `version =` changes — only the
+      [package.metadata] requires-dist block moved.
+    ONE_DETAIL_THAT_MATTERED: >-
+      astral-sh/setup-uv@v5 is an ANNOTATED tag; its ref resolves to a tag object, not a
+      commit. Dereferenced, or the pin would have named nothing useful.
+    NEXT: "D17.6 · Authz & tenancy (AHEAD, wave 9, order 83)."
   D17_4_2026_09_05_parity_holds_and_one_comment_was_claiming_to_be_tracked:
     map_check: "D17.4 — URL/path/egress guards (PARITY, wave 9). Ask: none. Stages verified not_started first."
     ALL_THREE_WIRED: >-
@@ -28605,19 +28624,46 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: "docs/reference-mapping/designs/D17.5.md"
+    doc_last_verified: "2026-09-05"
+    decisions:
+      - "BOUNDS DERIVED FROM THE LOCKED VERSION, not the declared floor, so the existing
+         uv.lock satisfies every new specifier by construction and nothing is re-resolved.
+         Proven: `uv lock --check` resolves 210 packages and the lock diff has ZERO `version =`
+         changes."
+      - "Annotated tags are dereferenced to the COMMIT. astral-sh/setup-uv@v5 is an annotated
+         tag; pinning the tag object would have pinned nothing useful."
+      - "Every pin keeps a `# v4` comment, required by a test: a bare 40-char SHA is
+         unreadable and the next reader cannot tell an upgrade from a downgrade."
+      - "Two clauses were VACUOUS (no git-URL deps, no CI-only pip installs). Recorded and
+         guarded so they stay so, rather than re-adopted as work later."
+    changes:
+      - "pyproject.toml — an upper bound on all 44 dependencies (was 2). discord.py has no lock
+         entry (optional group) so its ceiling comes from the declared floor's major."
+      - ".github/workflows/{ci-v2,release,test}.yml — all 8 action uses pinned to a 40-char
+         commit SHA with a version comment."
+      - "tests/test_every_dependency_and_action_is_bounded.py — a tripwire over both halves
+         plus the two vacuous clauses. Mutation-proven both ways."
+    notes: >-
+      MEASURED FIRST: 44 dependencies with TWO upper bounds, and 8 `uses:` lines with ZERO SHA
+      pins — all eight on mutable tags. THE ACTION HALF IS THE SHARPER ONE and the entry does
+      not say so: uv.lock is committed, so installs are already reproducible and the dependency
+      clause protects the RESOLUTION step (an unbounded >= lets the next `uv lock --upgrade`
+      accept a brand-new major, including a release published minutes ago by whoever
+      compromised the maintainer). A lockfile does not cover CI actions AT ALL —
+      actions/checkout@v4 is whatever the tag points at when the job runs, executing with the
+      repository's credentials, which is the worm-campaign shape this policy was written after.
+      SAFETY OF THE CHANGE was the design constraint: deriving each ceiling from the LOCKED
+      version means the current lock satisfies everything, verified by `uv lock --check` (210
+      packages) and by a lock diff containing zero `version =` lines — only the requires-dist
+      metadata moved.
   - id: D17.6
     title: "Authz & tenancy"
     domain: D17

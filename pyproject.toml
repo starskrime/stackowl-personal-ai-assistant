@@ -5,56 +5,56 @@ description = "StackOwl — Personal AI assistant framework with owl personas"
 requires-python = ">=3.13"
 license = { text = "MIT" }
 dependencies = [
-    "typer>=0.12.0",
-    "rich>=13.0.0",
-    "shellingham>=1.5.0",
-    "pydantic-settings>=2.3.0",
-    "pyyaml>=6.0.0",
-    "keyring>=25.0.0",
-    "aiosqlite>=0.20.0",
-    "platformdirs>=4.0.0",
-    "httpx>=0.27.0",
-    "ddgs>=6.0.0",
-    "anthropic>=0.104.1",
-    "openai>=2.38.0",
-    "google-genai>=1.0.0",
-    "textual>=8.2.7",
-    "croniter>=3.0.0",
-    "langgraph>=1.2.1",
-    "langgraph-checkpoint-sqlite>=3.1.0",
-    "ruamel-yaml>=0.19.1",
-    "sentence-transformers>=5.5.1",
-    "numpy>=2.4.6",
-    "kuzu>=0.11.3",
-    "psutil>=7.2.2",
-    "jinja2>=3.1.6",
-    "aiohttp>=3.11",
-    "python-telegram-bot>=21.0",
-    "discord.py>=2.3",
-    "slack-bolt>=1.18",
+    "typer>=0.12.0,<1",
+    "rich>=13.0.0,<16",
+    "shellingham>=1.5.0,<2",
+    "pydantic-settings>=2.3.0,<3",
+    "pyyaml>=6.0.0,<7",
+    "keyring>=25.0.0,<26",
+    "aiosqlite>=0.20.0,<1",
+    "platformdirs>=4.0.0,<5",
+    "httpx>=0.27.0,<1",
+    "ddgs>=6.0.0,<10",
+    "anthropic>=0.104.1,<1",
+    "openai>=2.38.0,<3",
+    "google-genai>=1.0.0,<3",
+    "textual>=8.2.7,<9",
+    "croniter>=3.0.0,<7",
+    "langgraph>=1.2.1,<2",
+    "langgraph-checkpoint-sqlite>=3.1.0,<4",
+    "ruamel-yaml>=0.19.1,<1",
+    "sentence-transformers>=5.5.1,<6",
+    "numpy>=2.4.6,<3",
+    "kuzu>=0.11.3,<1",
+    "psutil>=7.2.2,<8",
+    "jinja2>=3.1.6,<4",
+    "aiohttp>=3.11,<4",
+    "python-telegram-bot>=21.0,<23",
+    "discord.py>=2.3,<3",
+    "slack-bolt>=1.18,<2",
     # Upper bound <1.60: Playwright 1.60 bundles Firefox 150, whose pageerror
     # serialization assumes a `location` field that Camoufox 0.4.11's frozen
     # Firefox-135 Juggler does not send — Playwright's driver then crashes on any
     # uncaught page JS error (FF-E2-4). Lower bound >=1.59: aria_snapshot(mode="ai")
     # (the browser_snapshot ref keystone) is unavailable before 1.59. 1.59.x is the
     # only line satisfying both against Camoufox 0.4.11 (latest, frozen since Jan 2025).
-    "playwright>=1.59.0,<1.60.0",
-    "openai-whisper>=20231117",
-    "mcp>=1.0.0",
-    "google-auth-oauthlib>=1.2.0",
-    "google-auth>=2.30.0",
-    "cryptography>=42.0.0",
-    "zstandard>=0.22.0",
-    "camoufox[geoip]>=0.4.0",
-    "trafilatura>=2.0.0",
-    "pyvirtualdisplay>=3.0",
+    "playwright>=1.59.0,<2,<1.60.0",
+    "openai-whisper>=20231117,<20250626",
+    "mcp>=1.0.0,<2",
+    "google-auth-oauthlib>=1.2.0,<2",
+    "google-auth>=2.30.0,<3",
+    "cryptography>=42.0.0,<49",
+    "zstandard>=0.22.0,<1",
+    "camoufox[geoip]>=0.4.0,<1",
+    "trafilatura>=2.0.0,<3",
+    "pyvirtualdisplay>=3.0,<4",
     # PDF text extraction (E3-S4, ADR-9 primary). Pinned to a patched range:
     # <5.1 carries CVE-2023-36464 (infinite loop on malformed object streams) and
     # the quadratic-blowup advisories fixed across the 3.17/4.x line and folded
     # into 5.x. Floor at 5.4 keeps us above all known pypdf CVEs; ceiling <7 guards
     # against an unreviewed major. Pure-Python, lightweight on ARM64 (no Pillow/
     # pdfminer drag, unlike pdfplumber).
-    "pypdf>=5.4,<7",
+    "pypdf>=5.4,<7,<7",
 ]
 
 [project.scripts]
@@ -69,12 +69,12 @@ packages = ["src/stackowl"]
 
 [dependency-groups]
 dev = [
-    "mypy>=1.10.0",
-    "pre-commit>=3.7.0",
-    "pytest>=8.2.0",
-    "pytest-asyncio>=0.23.0",
-    "ruff>=0.4.0",
-    "types-PyYAML>=6.0.0",
+    "mypy>=1.10.0,<3",
+    "pre-commit>=3.7.0,<5",
+    "pytest>=8.2.0,<10",
+    "pytest-asyncio>=0.23.0,<2",
+    "ruff>=0.4.0,<1",
+    "types-PyYAML>=6.0.0,<7",
 ]
 
 [tool.mypy]
