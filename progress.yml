@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  ESC147_2026_09_05_one_round_may_no_longer_spend_the_whole_turn:
+    map_check: "No mapped item — implementing his ESC-147 answer, which overrode his own 2026-07-22 decision."
+    ROOT_CAUSE: >-
+      A units-and-scope mismatch between two live bounds. trim_messages_to_budget bounds a
+      ROUND in CHARS against the model's WINDOW (1,000,000 fallback ~ 260,000 tokens);
+      BudgetGovernor bounds a TURN in TOKENS cumulatively (500,000). Neither knew the other
+      existed, so the per-round bound sat ~4x above what the per-turn bound survives once.
+      Measured, trace goal-f6b00937: rounds grew 7,011 -> 49,135 -> 87,608 -> 162,912, and
+      that largest round — 32.6% of the entire turn budget — is ~627,000 chars, comfortably
+      under the ceiling, which never fired across all 21 rounds.
+    WHAT_SHIPPED: >-
+      round_char_budget() derives the per-round budget from what the TURN has left:
+      min(configured_chars, remaining_tokens x 3.85 x 0.5), threaded to both provider loops
+      as token_budget_fn and supplied from the live governor at all three call sites —
+      mirroring the wrapup_deadline_fn precedent that already recomputes a residual budget
+      fresh per attempt. HALF of what remains, by construction, so a turn can always afford
+      one more round; it can only ever TIGHTEN; and with no governor threaded the behaviour
+      is byte-identical to today.
+    THE_FULL_SUITE_EARNED_ITS_31_MINUTES: >-
+      My targeted runs were green twice over — tests/providers + tests/pipeline (2,604) and
+      tests/tools + tests/smoke (1,989) — and the full run still returned 7 FAILED, all in
+      tests/journeys/, a directory none of those paths touch. Adding one keyword to the
+      provider ABC broke NINE hand-written doubles across five files, surfacing as a bare
+      "goal failed: execute: TypeError" that reads like a product bug rather than a stale
+      fixture. This is the case CLAUDE.md describes and it cost 1,853 seconds to learn.
+    SO_THE_GUARD_IS_THE_REAL_DELIVERABLE: >-
+      A tripwire now parses every double stubbing complete_with_tools and fails in the ~40s
+      gate if one names fewer parameters than the ABC — unless it takes **kwargs. Measured
+      while writing it: 126 doubles are ALREADY tolerant and only 11 enumerate, and all 11
+      lacked the same three parameters (can_escalate, max_tokens, model) — latent drift that
+      predates my change. Those 11 are now tolerant too, matching the dominant pattern. The
+      doubles carried the comment "# F027/SP-4 — match the real signature" from the LAST
+      time someone threaded a keyword through; the obligation was recorded and nothing
+      enforced it.
+    TWO_INSTRUMENT_FAILURES_OF_MY_OWN: >-
+      (1) My scripted edit inserted **_kwargs AFTER the closing paren on two doubles whose
+      signature ends on the same line as its last argument. (2) Worse, my syntax gate used
+      ast.parse, which builds an AST without the duplicate-argument check — it declared a
+      file with the SAME PARAMETER TWICE completely fine. compile() catches it; ast.parse
+      does not. The cheap-gate rule is right and the cheap gate I chose was wrong.
+    EVIDENCE: >-
+      11 new tests across two files (two tripwires). tests/journeys + tests/pipeline +
+      tests/providers: 2,965 passed. Baselines held exactly (ruff 35, mypy 65). Three
+      mutants, each verified applied: dropping the min() so a round could WIDEN past the
+      window, letting a round spend ALL of what remains rather than half, and un-wiring ONE
+      provider — the same-rule-one-case-short shape the tripwire exists for.
+    NEXT: "ESC-148 (delete the dead 600s time cap) is the last small authorised one."
   DEBT122_2026_09_05_the_prefix_is_fine_for_90_percent_and_fatal_for_1:
     map_check: "No mapped item matches — evidence-led, DEBT-122. Taken because ESC-149's answer named prefix reduction THE TOP ITEM."
     ROOT_CAUSE: >-
@@ -382,6 +429,17 @@ current:
       traces exceeded 600s with one at 13.1 hours. Still strictly better than asserting a
       protection that has never fired.
     ESC_147_he_overrode_his_own_recorded_decision: >-
+      SHIPPED_2026_09_05: >-
+        DONE. `round_char_budget()` in providers/_truncate.py derives the per-round trim
+        budget from the turn's REMAINING tokens — min(configured_chars, remaining x 3.85 x
+        0.5) — threaded to both provider loops as `token_budget_fn`, mirroring the
+        `wrapup_deadline_fn` precedent that already recomputes a residual budget FRESH per
+        attempt from the live governor. Early in a turn it is ~962,500 chars, just under
+        today's 1,000,000, so ordinary work (p50 = 2 prefix rounds) is unchanged; late in a
+        turn it tightens, so the last of the budget buys several rounds instead of one. Half
+        of what remains, by construction, so a turn can ALWAYS afford one more round. It can
+        only ever TIGHTEN (min), and with no governor threaded the behaviour is
+        byte-identical to before.
       The per-round trim budget will be derived from the turn's REMAINING token budget
       rather than left at a flat 1,000,000 chars. That reverses his 2026-07-22 "pure
       backstops, not shaping ceilings" — which is precisely why it was escalated instead of

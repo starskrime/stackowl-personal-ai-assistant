@@ -193,6 +193,8 @@ class _CrashingParentProvider:
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
+        token_budget_fn: object | None = None,  # ESC-147 — match the real signature
+        **_kwargs: object,  # tolerate future ABC params — 126 doubles already do
     ) -> tuple[str, list[dict[str, Any]]]:
         # ITERATION 0 — no side effect; complete it so a checkpoint at iter 0 is
         # persisted (the last durable cursor before the crash). ctx.iteration 0->1.
@@ -261,6 +263,8 @@ class _RecoveringParentProvider:
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
+        token_budget_fn: object | None = None,  # ESC-147 — match the real signature
+        **_kwargs: object,  # tolerate future ABC params — 126 doubles already do
     ) -> tuple[str, list[dict[str, Any]]]:
         self.saw_resume = len(resume_messages) if resume_messages is not None else None
         # Re-delegate — re-derives the SAME child_task_id; the child's write W must
@@ -319,6 +323,8 @@ class _ChildProvider:
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
+        token_budget_fn: object | None = None,  # ESC-147 — match the real signature
+        **_kwargs: object,  # tolerate future ABC params — 126 doubles already do
     ) -> tuple[str, list[dict[str, Any]]]:
         # The child's durable ctx is at iteration 0 on EVERY delegation (a fresh
         # backend.run, no durable_resume_*), so the write W lands at the SAME ledger

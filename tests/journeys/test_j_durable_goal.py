@@ -147,6 +147,8 @@ class _ScriptedSecretary:
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
+        token_budget_fn: object | None = None,  # ESC-147 — match the real signature
+        **_kwargs: object,  # tolerate future ABC params — 126 doubles already do
     ) -> tuple[str, list[dict[str, Any]]]:
         self.dispatch_result = await tool_dispatcher("write_note", dict(_TOOL_ARGS))
         records = [{"name": "write_note", "args": dict(_TOOL_ARGS), "result": self.dispatch_result}]

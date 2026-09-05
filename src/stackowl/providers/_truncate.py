@@ -27,6 +27,48 @@ from stackowl.infra.observability import log
 MAX_OBSERVATION_CHARS = 100_000  # ~25k tokens; a single tool result this large is pathological
 CONTEXT_CHAR_BUDGET = 1_000_000  # ~250k tokens; fallback only, real callers pass context_chars
 
+#: Share of a turn's REMAINING token budget one round may spend (ESC-147, operator
+#: decision 2026-09-05, overriding his own 2026-07-22 "pure backstops, not shaping
+#: ceilings"). Half, so a turn can ALWAYS afford at least one more round after this
+#: one — the property that makes it safe to apply late instead of a way of strangling
+#: the final rounds.
+_ROUND_SHARE_OF_REMAINING = 0.5
+
+#: Measured chars/token for this deployment, back-derived from provider-reported
+#: `prompt_tokens` against real prompt text. NOT the folklore 4.0, which is ~4% low
+#: here and would hand each round slightly more than the turn can afford.
+_CHARS_PER_TOKEN = 3.85
+
+
+def round_char_budget(configured_chars: int, remaining_tokens: int | None) -> int:
+    """Chars ONE round may spend: the window's limit, or half of what the TURN has left.
+
+    THE MISMATCH THIS CLOSES. `trim_messages_to_budget` bounds a ROUND in CHARS against
+    the model's WINDOW; ``BudgetGovernor`` bounds a TURN in TOKENS, cumulatively. Neither
+    knew the other existed, so the per-round bound sat ~4x above what the per-turn bound
+    survives even once. MEASURED, trace ``goal-f6b00937``: rounds grew 7,011 -> 49,135 ->
+    87,608 -> 162,912 tokens; that last round was 32.6% of the entire turn budget and
+    ~627,000 chars — under the 1,000,000-char ceiling, which never fired across 21 rounds.
+
+    A SHARE OF WHAT REMAINS, not a flat number, because p50 is 2 prefix-carrying rounds:
+    a flat ceiling low enough to bind on the tail would tax the 90% of turns that were
+    never the problem. Early in a turn this is ~962,500 chars — just under today's
+    fallback, so ordinary work is unchanged; late in a turn it tightens, so the last of
+    the budget buys several rounds instead of one.
+
+    CAN ONLY TIGHTEN (``min``), so a small ``context_chars`` is never widened. ``None``
+    or a non-positive residual returns ``configured_chars`` unchanged: with no governor
+    threaded the behaviour is byte-identical to before, and at zero the governor breaches
+    on its next check anyway — trimming to nothing there would gut the request for no
+    benefit.
+    """
+    if remaining_tokens is None or remaining_tokens <= 0:
+        return configured_chars
+    return min(
+        configured_chars,
+        int(remaining_tokens * _CHARS_PER_TOKEN * _ROUND_SHARE_OF_REMAINING),
+    )
+
 # D02.6 — the floor the COMPRESS actuator will not shrink a rejected request
 # below. A provider still rejecting ~8k chars is not telling us the payload is
 # too big; compressing further would strip the conversation to hide a different

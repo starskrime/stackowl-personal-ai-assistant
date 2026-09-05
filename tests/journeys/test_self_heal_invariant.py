@@ -125,6 +125,8 @@ class _ExplodingProvider:
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
+        token_budget_fn: object | None = None,  # ESC-147 — match the real signature
+        **_kwargs: object,  # tolerate future ABC params — 126 doubles already do
     ) -> tuple[str, list[dict[str, Any]]]:
         raise RuntimeError(_PROVIDER_BLEW_UP)
 

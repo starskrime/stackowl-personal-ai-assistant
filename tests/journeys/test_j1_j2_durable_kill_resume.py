@@ -142,6 +142,8 @@ class _CrashingProvider:
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
+        token_budget_fn: object | None = None,  # ESC-147 — match the real signature
+        **_kwargs: object,  # tolerate future ABC params — 126 doubles already do
     ) -> tuple[str, list[dict[str, Any]]]:
         # ITERATION 0 — no side effect; complete it so a checkpoint at iter 0 is
         # persisted (the last durable cursor before the crash). ctx.iteration 0->1.
@@ -211,6 +213,8 @@ class _RecoveringProvider:
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
+        token_budget_fn: object | None = None,  # ESC-147 — match the real signature
+        **_kwargs: object,  # tolerate future ABC params — 126 doubles already do
     ) -> tuple[str, list[dict[str, Any]]]:
         # Prove the resume context was forwarded (B1/B2): the recovered drive
         # carries the iter-1 transcript, not a fresh start.
@@ -275,6 +279,8 @@ class _SimpleFinishingProvider:
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,  # F027/SP-4 — match the real signature
+        token_budget_fn: object | None = None,  # ESC-147 — match the real signature
+        **_kwargs: object,  # tolerate future ABC params — 126 doubles already do
     ) -> tuple[str, list[dict[str, Any]]]:
         self.calls += 1
         if on_iteration_complete is not None:

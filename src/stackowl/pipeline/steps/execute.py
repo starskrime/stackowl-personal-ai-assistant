@@ -2767,6 +2767,7 @@ async def _run_with_tools(
                 tool_dispatcher=_dispatch,
                 history=list(state.history),
                 wrapup_deadline_s=_governor.remaining_seconds(),
+                token_budget_fn=_governor.tokens_remaining,
                 **_extra,
             )
         # NON-PINNED → start at "fast" and escalate fast→…→ceiling through the gateway.
@@ -2793,6 +2794,7 @@ async def _run_with_tools(
             purpose="execute.tool_loop",
             build_tool_schemas=build_tool_schemas,
             wrapup_deadline_fn=_governor.remaining_seconds,
+            token_budget_fn=_governor.tokens_remaining,
             on_escalate=_on_tier_escalate,
             history=list(state.history),
             **_extra,
@@ -2898,6 +2900,7 @@ async def _run_with_tools(
                 resume_messages=state.durable_resume_messages,
                 resume_tool_calls=state.durable_resume_tool_calls,
                 wrapup_deadline_s=_governor.remaining_seconds(),  # F027 — bound the wrap-up
+                token_budget_fn=_governor.tokens_remaining,
                 **_durable_extra,
             )
         # 4. EXIT

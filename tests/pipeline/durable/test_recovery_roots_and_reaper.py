@@ -42,7 +42,8 @@ class _Finishing:
     async def complete_with_tools(self, user_text, system_text, tool_schemas,  # noqa: ANN001
                                   tool_dispatcher, max_iterations=8, history=None,
                                   persistence_check=None, on_iteration_complete=None,
-                                  resume_messages=None, resume_tool_calls=None):
+                                  resume_messages=None, resume_tool_calls=None,
+                                  **_kwargs):  # tolerate future ABC params
         self.calls += 1
         if on_iteration_complete is not None:
             await on_iteration_complete(ReActIterationState(

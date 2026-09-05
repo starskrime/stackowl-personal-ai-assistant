@@ -26,6 +26,7 @@ from stackowl.providers._resilient_round import _is_transport_error
 from stackowl.providers._truncate import (
     COMPRESS_FLOOR_CHARS,
     CONTEXT_CHAR_BUDGET,
+    round_char_budget,
     total_content_chars,
     trim_messages_to_budget,
     truncate_observation,
@@ -503,6 +504,7 @@ class AnthropicProvider(ModelProvider):
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,
+        token_budget_fn: Callable[[], int | None] | None = None,
         can_escalate: bool = False,
         max_tokens: int | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
@@ -672,7 +674,18 @@ class AnthropicProvider(ModelProvider):
             # Bound total context BEFORE the call. Only tool_result CONTENT is
             # elided (never the message itself), so tool_use/tool_result pairing
             # stays valid for the Anthropic API.
-            messages = trim_messages_to_budget(messages, budget)
+            # ONE ROUND MAY NOT SPEND THE WHOLE TURN (ESC-147). `budget` bounds this
+            # round against the model's WINDOW; the governor bounds the TURN in tokens.
+            # Neither knew the other, so a single round could legally take a third of the
+            # turn's budget — measured, one took 162,912 tokens (32.6%) and the flat
+            # 1,000,000-char ceiling never fired across 21 rounds. Recomputed per round
+            # from the LIVE governor, mirroring `wrapup_deadline_fn`.
+            messages = trim_messages_to_budget(
+                messages,
+                round_char_budget(
+                    budget, token_budget_fn() if token_budget_fn is not None else None
+                ),
+            )
             _t_call = time.monotonic()
 
             async def _round(_msgs: list[dict[str, Any]] = messages) -> Any:

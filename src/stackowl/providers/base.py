@@ -549,6 +549,7 @@ class ModelProvider(ABC):
         resume_messages: list[dict[str, Any]] | None = None,
         resume_tool_calls: list[dict[str, Any]] | None = None,
         wrapup_deadline_s: float | None = None,
+        token_budget_fn: Callable[[], int | None] | None = None,
         can_escalate: bool = False,
         max_tokens: int | None = None,
     ) -> tuple[str, list[dict[str, Any]]]:
