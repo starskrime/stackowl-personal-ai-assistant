@@ -353,7 +353,18 @@ current:
       mutants caught and restored from file copies — every cap reporting "steps" again (3
       failures), dropping the next-step offer (1), and re-hardcoding the literal in
       execute.py (1, the tripwire).
-    NEXT: "The prefix economics: ~31k re-sent per round with zero caching. Measurements banked."
+    VALIDATED_LIVE: >-
+      Restarted 2026-09-05T15:39:49Z against a 15:38:59Z commit — boot checked against the
+      commit, not assumed. 348 records since, ZERO ERROR lines. The live process imports the
+      new source and renders the token note correctly. CLOSED: the code is live and costs
+      nothing when quiet. OPEN, honestly: no budget breach has occurred since the restart,
+      so no REAL capped turn has yet carried the new message. It is INFO-visible and the
+      platform breached five times earlier today, so ordinary traffic closes it. Closing
+      query: grep the last "[budget] gate: cap reached" line for its `cap` field, then
+      confirm the reply delivered on that turn names THAT cap rather than "steps".
+    NEXT: "The prefix economics: ~99.5% of a ~25-31k round is unchanged prefix, re-sent with
+      zero caching (0 cached over 708M input tokens, all providers). Measurements banked;
+      ESC-146 says do NOT set the cap values until that is fixed."
   D04_6_2026_09_05_the_ask_is_confirmed_and_declined_the_actuator_lies:
     map_check: "D04.6 — Rate limiting & circuit breaking (PARITY, track verify, wave 10, order 98, dedup X9). Stages verified not_started first."
     THE_ASK_IS_CONFIRMED_ON_ITS_FACTS: >-
