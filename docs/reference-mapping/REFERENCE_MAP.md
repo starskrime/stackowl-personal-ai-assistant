@@ -855,6 +855,20 @@ a headline feature.
 Both expose discovery / scroll / browse from one tool with zero LLM cost. Hermes adds **lineage
 dedupe** across compression-split sessions and "bookend" context (first/last 3 messages of the session).
 **Ask.** Adopt bookends — cheap and clearly useful.
+**ADOPTED 2026-09-04 — on `discover`, which is where the frame was missing.** MEASURED first
+across all nine daily logs: `session_search` ran 18 times — **discover 16, browse 2, scroll 0**
+(control: 1,765 `skill_view` mentions in the same files). The live log alone said ZERO, and so
+did the control in it — it rotates daily and was 46 minutes old. A CORRECTION TO THIS ENTRY'S
+IMPLIED SHAPE: `browse` does not list sessions. All three modes are scoped to ONE session
+(`WHERE c.session_key = ?`); browse pages through a single session's messages. So bookends are
+not a session picker — they are the frame for a `discover` hit returned from the middle of a
+session with nothing to say what the session was. Two LIMIT-bounded queries, no model call
+(the "zero LLM cost" property this row is measured on), and only when there IS a hit to frame.
+They render through `_render`, which applies `redact_secrets` — deliberately, because a
+session's opening and closing turns are where a credential is most likely to sit, and a second
+formatting path would be a redaction hole of exactly the "same rule, one case short" kind.
+Mutation-proven: bypassing `_render` leaks the key and the test catches it. LINEAGE DEDUPE
+across compression-split sessions is NOT adopted and stays unbuilt. See `designs/D11.3.md`.
 
 ### D11.4 · Session export & recap — `MISSING`
 **Hermes.** `session_export_md.py`, `session_export_html.py`, `session_recap.py`, `session_filters.py`,

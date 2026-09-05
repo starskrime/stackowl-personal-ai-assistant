@@ -315,6 +315,26 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D11_3_2026_09_04_bookends_are_the_frame_for_a_hit_not_a_session_picker:
+    map_check: "D11.3 — Session-search shapes (PARITY, P3, wave 8). The Ask is a build instruction."
+    MEASURED_FIRST: >-
+      Across all nine daily logs session_search ran 18 times — discover 16, browse 2,
+      scroll 0. Control: 1,765 skill_view mentions in the same files.
+    THE_LIVE_LOG_ALONE_SAID_ZERO: >-
+      And so did the control in it. The log rotates daily and was 46 minutes old. A zero
+      whose control is also zero measures the instrument, not the system.
+    CORRECTION_TO_THE_MAPS_IMPLIED_SHAPE: >-
+      browse does NOT list sessions. All three modes carry `WHERE c.session_key = ?` — browse
+      pages through ONE session with LIMIT/OFFSET. So bookends are not a session picker; they
+      are the frame for a discover hit returned from the middle of a session with nothing to
+      say what the session was.
+    THE_REDACTION_PATH_IS_THE_DESIGN: >-
+      _render applies redact_secrets to every turn. A bookend rendered any other way would
+      leak from a session's opening and closing turns — where a task is set up and signed
+      off. Mutation-proven: a hand-rolled formatter leaks the key and the test catches it.
+    NOT_ADOPTED: "Lineage dedupe across compression-split sessions — the other half of this row."
+    VALIDATE_PARTIAL: "No bookend emitted in production yet; it fires on the next discover with a hit."
+    NEXT: "D11.4 · Session export & recap (MISSING, P2, wave 8, order 70)."
   D11_1_2026_09_04_the_model_was_recorded_one_table_over:
     map_check: "D11.1 — Session store (PARITY, P3, wave 8). Ask: none — a claim to verify."
     PARITY_HOLDS_AND_ONE_PROPERTY_IS_AHEAD: >-
@@ -25961,19 +25981,47 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
-
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial   # no bookend emitted in production yet — needs a discover with a hit
+      document:   done
+    doc: "docs/reference-mapping/designs/D11.3.md"
+    doc_last_verified: "2026-09-04"
+    decisions:
+      - "Bookends go on `discover` (16 of 18 recorded uses) — the only mode whose output is
+         inherently un-anchored. NOT a session picker: all three modes are scoped to ONE
+         session, so `browse` pages a single session rather than listing sessions."
+      - "They render through _render, which applies redact_secrets. A second formatting path
+         would leak from the two turns most likely to carry a credential."
+      - "Only when there ARE matches, and only when the session has a middle. Bookends
+         decorate a result; they never manufacture one, and never print a short session twice."
+      - "LINEAGE DEDUPE across compression-split sessions — the other half of this row — is
+         NOT adopted and stays unbuilt. Nothing measured here needed it."
+    changes:
+      - "src/stackowl/tools/knowledge/session_search.py — _BOOKEND_TURNS=3, _HEAD_SQL and
+         _TAIL_SQL (both LIMIT-bounded, deliberately not reusing the unbounded _ORDERED_SQL),
+         and _bookends() wired into _discover behind `if rows`."
+      - "tests/tools/knowledge/test_a_match_from_the_middle_gets_its_frame.py — 5 tests:
+         the frame appears, it is labelled, a short session is not printed twice, no matches
+         means no frame, and the frame is redacted. Mutation-proven twice."
+    notes: >-
+      MEASURED FIRST across all nine daily logs: session_search ran 18 times — discover 16,
+      browse 2, scroll 0. Control: 1,765 skill_view mentions in the same files. THE LIVE LOG
+      ALONE SAID ZERO and so did the control in it — it rotates daily and was 46 minutes old.
+      A zero whose control is also zero measures the instrument, not the system; the earlier
+      reading of "0 session_search lines" was exactly that. CORRECTION TO THE MAP'S IMPLIED
+      SHAPE: browse does not list sessions. All three modes carry
+      `WHERE c.session_key = ?`, so browse pages through ONE session with LIMIT/OFFSET. That
+      is why bookends are the frame for a discover hit rather than a session picker. The
+      2N+1 head fetch answers "is there a middle?" without a COUNT. THE REDACTION PATH IS THE
+      DESIGN: _render applies redact_secrets and a bookend rendered any other way would leak
+      from a session's opening and closing turns — mutation-proven, a hand-rolled formatter
+      leaks the key and the test catches it. VALIDATE PARTIAL: no bookend has been emitted in
+      production; it fires on the next discover with a hit against a session longer than six
+      turns.
   - id: D11.4
     title: "Session export & recap"
     domain: D11

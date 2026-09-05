@@ -110,6 +110,34 @@ WHERE c.session_key = ?
 ORDER BY m.created_at ASC, m.id ASC
 """
 
+#: D11.3 — how many turns of frame a `discover` result carries at each end.
+#: Three, matching the reference platform's bookends. Small on purpose: this is
+#: context for a hit, not a second result set, and every turn added is tokens
+#: spent on a question the caller did not ask.
+_BOOKEND_TURNS = 3
+
+# The session's first turns. Deliberately LIMIT-bounded rather than reusing
+# _ORDERED_SQL, which has no LIMIT because scroll needs the whole index — a
+# bookend must never be able to read a session's entire history.
+_HEAD_SQL = """
+SELECT m.id, m.role, m.content, m.created_at
+FROM messages m
+JOIN conversations c ON c.id = m.conversation_id
+WHERE c.session_key = ?
+ORDER BY m.created_at ASC, m.id ASC
+LIMIT ?
+"""
+
+# The session's last turns, newest first; re-sorted for display by the caller.
+_TAIL_SQL = """
+SELECT m.id, m.role, m.content, m.created_at
+FROM messages m
+JOIN conversations c ON c.id = m.conversation_id
+WHERE c.session_key = ?
+ORDER BY m.created_at DESC, m.id DESC
+LIMIT ?
+"""
+
 # Locate which session an anchor message belongs to (so scroll can scope itself).
 _ANCHOR_SESSION_SQL = """
 SELECT c.session_key
@@ -259,7 +287,45 @@ class SessionSearchTool(Tool):
             extra={"_fields": {"matches": len(rows)}},
         )
         header = f"{len(rows)} match(es) for {query!r} in session {vis.session_key}"
-        return self._ok(self._render(rows, header=header), t0, len(rows))
+        output = self._render(rows, header=header)
+        # BOOKENDS (D11.3). A hit from the middle of a session says nothing about
+        # what the session WAS. Only when there is a hit to frame: bookends
+        # decorate a result, they must never manufacture one.
+        if rows:
+            output += await self._bookends(db, vis.session_key)
+        return self._ok(output, t0, len(rows))
+
+    async def _bookends(self, db: DbPool, session_key: str | None) -> str:
+        """The session's opening and closing turns, or "" when it has no middle.
+
+        Two bounded queries and no model call — the "zero LLM cost" property this
+        tool is measured on.
+
+        RENDERS THROUGH ``_render``, which is the point rather than a convenience:
+        that function applies ``redact_secrets`` to every turn, and the opening
+        and closing turns of a session are the two places a credential is most
+        likely to appear — where a task is set up, and where it is signed off. A
+        second formatting path here would be a redaction hole in the shape this
+        codebase keeps finding: the same rule, one case short.
+        """
+        try:
+            # 2N+1 answers "is there a middle?" without a COUNT: fewer rows than
+            # that and the caller can already see the whole session, so a frame
+            # would just print it twice.
+            head = await db.fetch_all(_HEAD_SQL, (session_key, _BOOKEND_TURNS * 2 + 1))
+            if len(head) <= _BOOKEND_TURNS * 2:
+                return ""
+            tail = await db.fetch_all(_TAIL_SQL, (session_key, _BOOKEND_TURNS))
+        except Exception as exc:  # B5 — a frame is never worth losing the matches.
+            log.tool.warning(
+                "session_search: bookends failed — returning matches unframed",
+                exc_info=exc,
+                extra={"_fields": {"session_key": session_key}},
+            )
+            return ""
+        opens = self._render(head[:_BOOKEND_TURNS], header="session opens")
+        closes = self._render(list(reversed(tail)), header="session closes")
+        return f"\n{opens}\n{closes}"
 
     async def _discover_rows(
         self, db: DbPool, session_key: str | None, query: str, limit: int
