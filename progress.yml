@@ -341,6 +341,14 @@ current:
       tests/pipeline + tests/providers + tests/authz: 2,697 passed. Baselines held exactly
       (ruff 35, mypy 65). Every residual mention of the symbol is historical prose that says
       outright it was deleted, so no reader will hunt for a constant that is gone.
+    VALIDATED_LIVE: >-
+      Boot 2026-09-05T22:31:11Z against a commit at 22:30:36Z. 459 records. FOUR ERROR
+      lines, all the SAME gateway-unreachable condition established earlier and re-confirmed
+      here — curl to llm-gateway.dev.nera.gov:4000 still returns HTTP 000. The deletion
+      introduced nothing: the platform boots, reaches steady state, and reports the outage
+      honestly in DEGRADED mode. A deleted constant has no live effect to observe, so the
+      acceptance for this one is the absence of an import error at boot, which the 459
+      records demonstrate.
     NEXT: "All four of his answers are now shipped. The mid-turn prefix re-fit still needs his word (it contradicts D05.2)."
   ESC147_2026_09_05_one_round_may_no_longer_spend_the_whole_turn:
     map_check: "No mapped item — implementing his ESC-147 answer, which overrode his own 2026-07-22 decision."
