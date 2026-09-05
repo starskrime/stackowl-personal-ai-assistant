@@ -367,6 +367,22 @@ current:
       5 passed on the new file; 738 passed across tests/providers. Three mutants caught and
       each restored from a file copy: silencing the decline (2 failures), saying it every
       step instead of once, and letting a provider open-code the decision again.
+    VALIDATED_LIVE: >-
+      Restarted 2026-09-05T14:31:42Z, AFTER the commit at 14:29:15Z — checked, because a
+      deletion or a change is not live until the process holding the old code is gone. Since
+      that boot: ONE ERROR line, `health_sweep: UNHEALTHY subsystems detected`, and it is
+      not mine — down=[] and degraded=['store_cadence'], naming message_ledger and
+      side_effect_ledger as past their declared cadence. That is the platform's own
+      detector working, and it CORROBORATES the ESC-114 restatement above from a second
+      instrument: the ledgers are silent because the workload fell, not because anything
+      broke. The decline line itself is 0 as expected — no tool breaker has opened since
+      the change went live, which is exactly why that acceptance check is recorded OPEN
+      rather than closed.
+      MY FIRST PROBE OF THIS LOG WAS WRONG AND THE CONTROL CAUGHT IT: it looked for
+      `timestamp`/`time`/`asctime` and reported "no start marker", when the field is `ts`
+      — the same family as the `"msg": "` space and the SQL LIKE underscore. A second
+      guess, "UNHEALTHY appears only today so it is new", was also wrong: the file is
+      daily-rotated and begins at 00:00:00, so today-only means nothing.
     NEXT: "D04.6 · Rate limiting & circuit breaking (PARITY, wave 10, order 98)."
   D04_4_2026_09_05_the_document_stage_and_the_bug_the_missing_router_was_hiding:
     map_check: "D04.4 — Auxiliary-model router. Stages read 6/7 done from 2026-09-03; only `document` was open."
