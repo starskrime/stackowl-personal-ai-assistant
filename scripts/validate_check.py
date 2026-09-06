@@ -39,6 +39,8 @@ from pathlib import Path
 import yaml
 
 _ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT / "scripts"))
+from progress_lint import prose_closing_promises  # noqa: E402
 _STAGES = (
     "brainstorm", "architect", "implement", "cleanup", "test", "validate", "document",
 )
@@ -103,6 +105,7 @@ def main() -> int:
         f"\nchecked {len(items)}, CLOSEABLE {len(closeable)}, "
         f"unverifiable {len(unverifiable)}"
     )
+    _report_prose_promises(data)
     if closeable:
         print(
             "\nThese have the evidence they were waiting for. Re-read the item, confirm "
@@ -110,6 +113,38 @@ def main() -> int:
             + "\n  ".join(closeable)
         )
     return 0
+
+
+def _report_prose_promises(data: dict) -> None:
+    """Name every closing query written where nothing can execute it.
+
+    THE SAME DEAD END THIS FILE ALREADY REMOVED, one property over. The loop above
+    re-runs checks belonging to a `partial` stage or to a debt that already carries a
+    `closing_check`. Neither condition describes what a closing query IS FOR: a claim
+    whose evidence has not arrived yet. A record can be `done` or `no_change_needed`
+    and still rest on evidence its own author called provisional — and then no
+    enumeration reaches it, so the promise is never kept.
+
+    DEBT-105 is the archetype and it cost something measurable. Recorded
+    `no_change_needed` with "Closing query: re-run the same before/after split over a
+    full day of traffic on 2026-09-02", it sat four days. Run on 2026-09-06 it did not
+    overturn the decision, but it corrected the number: the recorded "77% reduction"
+    had compared telegram AFTER against the all-channel BEFORE. Like for like it is 39%.
+
+    These cannot be executed — they are prose, and several wait on traffic that has not
+    happened. They can be NAMED, every loop, which is the part that was missing.
+    """
+    promises = prose_closing_promises(data)
+    if not promises:
+        return
+    records = sorted({record for record, _field, _text in promises})
+    print(
+        f"\nPROSE PROMISES: {len(promises)} closing quer(ies) in {len(records)} "
+        "record(s), written where nothing can run them.\nThese are invisible to the "
+        "checks above. Convert one to a `closing_check` when you touch its record:"
+    )
+    for record, field, text in promises:
+        print(f"  {record:<46} {field.split('.')[-1][:26]:<26} {text[:60]}")
 
 
 if __name__ == "__main__":

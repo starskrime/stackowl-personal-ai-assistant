@@ -97,6 +97,114 @@ def entries_with_closing_checks(data: dict) -> list[tuple[str, str]]:
     return out
 
 
+#: The convention the corpus already uses to write a closing query by hand. The COLON
+#: is the discriminator and it is doing real work: ``the closing query returned 213`` is
+#: narration about a check that ran, while ``Closing query: grep ...`` is a promise that
+#: one will. Matching the bare phrase reports 117 records, nearly all of them the former.
+_PROSE_PROMISE = re.compile(r"\bclosing (?:query|check)\s*:", re.I)
+
+#: Keys whose value IS the executable check, so its text is not a prose promise.
+_EXECUTABLE_KEYS = ("closing_check", "premise_check")
+
+
+def _walk_strings(node: object, path: tuple[str, ...] = ()):
+    """Every ``(path, text)`` string in the document, at any depth."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield from _walk_strings(value, path + (str(key),))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _walk_strings(value, path + (str(index),))
+    elif isinstance(node, str):
+        yield path, node
+
+
+def prose_closing_promises(data: dict) -> list[tuple[str, str, str]]:
+    """Every ``(record, field, promise)`` written where nothing can execute it.
+
+    THE FOURTH INSTANCE OF ONE CURE, and it is here because the first three were each
+    keyed to the wrong thing. An escalation's premise aged silently until
+    ``premise_check``; a ``partial`` stage's evidence aged until ``closing_check``; a
+    design document's ``Last verified`` aged until ``doc_check.py``. Each time the fix
+    was attached to a STATUS — the entry is an escalation, the stage is partial — when
+    the property it actually protects is *this claim is not yet evidenced*, and that
+    property does not care what status the record carries.
+
+    MEASURED 2026-09-06, and the archetype is DEBT-105. It is recorded
+    ``no_change_needed``, and its own text says: "55 heavy rounds after the fix, 19 of
+    them telegram. That is a small sample and the direction is what is claimed, not the
+    magnitude. Closing query: re-run the same before/after split over a full day of
+    traffic on 2026-09-02." Four days passed. Nothing ran it, because nothing ENUMERATED
+    it: ``validate_check.py`` walks items whose stage is ``partial``, plus debts that
+    ALREADY carry a ``closing_check``. A settled record holding a prose promise is
+    invisible to the one tool built to stop promises being written in prose.
+
+    Twenty-three such records exist, each read by hand rather than counted. When the
+    query finally ran it did not overturn the decision — the fix works, and the control
+    channel barely moved — but it did correct the record: the "77% reduction" compared
+    telegram AFTER against the all-channel BEFORE, two different populations. Like for
+    like it is 39%. That is what four unenumerated days cost, and it is the cheap case.
+
+    A QUOTED promise reads as a new one — the record fixing this hit it immediately by
+    citing the archetype's words. The detector cannot tell a quotation from a commitment
+    and does not try, because guessing would make it unreliable in the one direction
+    that matters. Quote a closing query without its marker.
+
+    REPORTS, NEVER GATES, and that is the ``doc_check.py`` precedent applied on purpose.
+    A tripwire failing on all 23 would fail every unrelated change until someone wrote
+    23 queries, several of which genuinely cannot be written yet because they wait on
+    traffic that has not happened. That is how a gate gets bypassed rather than
+    satisfied. Visibility is the whole fix: the reason DEBT-105 sat is that no loop ever
+    printed it.
+    """
+    covered = _records_carrying_an_executable_check(data)
+    out: list[tuple[str, str, str]] = []
+    for path, text in _walk_strings(data):
+        if path and path[-1] in _EXECUTABLE_KEYS:
+            continue
+        match = _PROSE_PROMISE.search(text)
+        if not match:
+            continue
+        record = _record_label(data, path)
+        if record in covered:
+            # The record already has a runnable check; this prose is narration beside
+            # it, not an orphan promise. Reporting it would train the reader to skim.
+            continue
+        promise = " ".join(text[match.end():].split())
+        out.append((record, ".".join(path), promise))
+    return out
+
+
+def _record_label(data: dict, path: tuple[str, ...]) -> str:
+    """A name a human can search for, never a list index.
+
+    ``known_debt`` is a LIST, so the natural label for its entries is the position —
+    which is meaningless to a reader and changes whenever an entry is inserted above.
+    The entry's own ``id`` is the durable name, so this resolves to it and falls back
+    to the position only when there is none.
+    """
+    if not path:
+        return "<root>"
+    if path[0] in ("items", "known_debt") and len(path) > 1:
+        try:
+            entry = data[path[0]][int(path[1])]
+        except (KeyError, IndexError, ValueError, TypeError):
+            return f"{path[0]}[{path[1]}]"
+        if isinstance(entry, dict) and entry.get("id"):
+            return str(entry["id"])
+        return f"{path[0]}[{path[1]}]"
+    return path[1] if len(path) > 1 else path[0]
+
+
+def _records_carrying_an_executable_check(data: dict) -> set[str]:
+    """Records that already have a runnable check, so their prose is not an orphan."""
+    covered: set[str] = set()
+    for path, _text in _walk_strings(data):
+        if path and path[-1] in _EXECUTABLE_KEYS:
+            covered.add(_record_label(data, path))
+    return covered
+
+
 def duplicate_key_problems(text: str) -> list[str]:
     """Every key that appears twice in the SAME mapping, at any depth.
 

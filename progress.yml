@@ -315,6 +315,92 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT158_2026_09_06_a_closing_query_written_where_nothing_could_ever_run_it:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-158. Reached by finishing the
+      turn-economics commitment: the arc itself is COMPLETE (1a/2b/2d/3a/3b shipped,
+      1b and 2c declined on measurement, DEBT-119..122 and ESC-147/148 took the
+      expensive tail), and the only thing still open in it was a promise nobody kept.
+    ROOT_CAUSE: >-
+      `closing_check` was keyed to a stage STATUS — the stage is `partial` — when the
+      property it protects is "this claim is not yet evidenced", which is independent
+      of status. A record can be `done` or `no_change_needed` and still rest on
+      evidence its own author called provisional. `validate_check.py` enumerates
+      partial items plus debts that ALREADY carry a check, so a settled record holding
+      a prose promise is invisible to the one tool built to stop promises being written
+      in prose. Nothing ran it because nothing ENUMERATED it.
+    THE_FOURTH_INSTANCE_OF_ONE_CURE: >-
+      An escalation's premise aged silently until `premise_check`; a partial stage's
+      evidence until `closing_check`; a design doc's `Last verified` until
+      `doc_check.py`. Each cure was attached to a STATUS rather than to the property,
+      so each left the same disease alive one population over. This is the fourth, and
+      naming the pattern is the point: the question is never "what kind of record is
+      this", it is "does this record promise evidence it does not yet have".
+    WHAT_IT_COST_MEASURED: >-
+      DEBT-105 (turn economics, `no_change_needed`) said: "55 heavy rounds after the
+      fix, 19 of them telegram. That is a small sample and the direction is what is
+      claimed, not the magnitude" — and its closing query was to re-run the same
+      before/after split over a full day of traffic on 2026-09-02. It sat four days. Run 2026-09-06 over
+      five days of traffic at a stated threshold (input_tokens >= 15,000, the round
+      that carries the ~19,423-token tool prefix), telegram heavy-round mean output
+      went 1,055 -> 642 (-39%, n=2,107 -> 114) while the NON-telegram control moved
+      1,486 -> 1,410 (-5%). The decision HOLDS — the channel-shape fix works, it is
+      channel-specific as designed, and no output cap is needed.
+    AND_IT_CORRECTED_THE_RECORD: >-
+      The recorded "77% reduction" compared telegram AFTER (476) against the
+      ALL-CHANNEL BEFORE (2,108) — two different populations. Like for like it is 39%.
+      A denominator switch, exactly the family this codebase pays for most, sitting
+      unread in the state of record because nothing re-read it.
+    WHAT_SHIPPED: >-
+      `prose_closing_promises()` in `progress_lint.py` (ONE source, the file's own
+      stated principle — three readers already ask it rather than looping privately),
+      reported by `validate_check.py` at the end of every loop. 38 orphan promises
+      across 37 records, each named with the text of what to run. The colon is the
+      discriminator and it earns its place: matching the bare phrase reports 117
+      records, nearly all narration about a check that already ran.
+    REPORTS_NEVER_GATES_and_that_is_the_doc_check_precedent: >-
+      A tripwire failing on all 38 would fail every unrelated change until someone
+      wrote 38 queries, several of which cannot be written yet because they wait on
+      traffic that has not happened — which is how a gate gets bypassed rather than
+      satisfied. Visibility IS the fix: the reason DEBT-105 sat is that no loop ever
+      printed it. What the tripwire guards instead is the INSTRUMENT, because the whole
+      failure was an enumeration that could not see a population.
+    MY_OWN_PARSER_WAS_THE_NARROW_ONE_AGAIN: >-
+      The hand-scan that found this reported 23 records. The shipped detector finds 38,
+      because my scan walked `current` only while the real corpus includes `known_debt`
+      and `items`. Same defect as `doc_check.py` under-reporting by eleven, committed
+      while building the fix for it. Recorded rather than quietly corrected.
+    A QUOTED PROMISE READS AS A NEW ONE, and this entry hit it: >-
+      Writing the archetype's words verbatim re-reported DEBT-158 itself as making a
+      promise. The detector cannot tell a quotation from a commitment and should not
+      try — guessing at that would make it unreliable in the direction that matters.
+      The convention instead is to quote a closing query WITHOUT its marker, as this
+      record now does. Found by running the detector against the record that fixes it.
+    MUTATION_PROVEN: >-
+      Four mutants, each applied, killed, and restored from a FILE COPY: dropping the
+      colon (narration reported as a promise), removing the already-covered exclusion,
+      labelling known_debt by list position instead of `id`, and unwiring the report
+      from validate_check. The restore was re-run green. The unwiring mutant killed
+      only the end-to-end test and not the AST one, which is correct — one guards that
+      the detector is called, the other that running the loop prints it.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validate_evidence: >-
+      No src/ change — this is scripts/ and tests/ only, so no restart could show an
+      effect and none is claimed. The acceptance is that the loop's own output now
+      names the promises: `uv run python scripts/validate_check.py` prints "PROSE
+      PROMISES: 38 closing quer(ies) in 37 record(s)", and the end-to-end tripwire
+      asserts that string appears rather than trusting the call site.
+    document_reason: >-
+      No design doc: `map_check` found no mapped item, and DOC_STANDARD governs design
+      documents for mapped items. The reasoning lives in the two docstrings and the
+      guard, which is where a reader of this machinery actually looks.
   D07_3_2026_09_06_the_first_item_the_new_checker_actually_closed:
     map_check: >-
       D07.3 Background delegation & durability — was 6/7, validate `partial`, the ONLY
