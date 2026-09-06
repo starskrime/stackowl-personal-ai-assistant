@@ -1,0 +1,26 @@
+-- Migration 0138 durable-task accumulated INPUT TOKENS.
+--
+-- The sibling of 0060, and the half that was never built. 0060 persists the
+-- cumulative USD spend so the cost ceiling holds across every attempt of a durable
+-- task. The TOKEN ceiling had no such column, so its seed was read from
+-- cost_records BY TRACE ID -- and retry_actuator and goal_execution mint a fresh
+-- uuid4 trace per attempt, so the lookup missed every time and each attempt was
+-- handed the full max_input_tokens budget again.
+--
+-- MEASURED 2026-09-06 on the live database. On 2026-09-02 between 14:00 and 15:30
+-- the goal goal-goal_execution-7b6da65e ran NINE traces, 162 model calls and
+-- 4,172,113 input tokens -- 66 percent of that entire day's 6,346,818 -- and never
+-- completed. Seven of the nine individually exceeded the 500,000 cap that was
+-- supposed to bound the whole task. 362 million input tokens in total have flowed
+-- through goal- retry- and recover- traces, which are exactly the prefixes that
+-- mint a new id per attempt.
+--
+-- Cost was immune to all of it because cost seeds on task_id off the 0060 column.
+-- This is that column, for tokens, so both meters answer to the same key: the
+-- DURABLE TASK, which is the thing the budget exists to bound.
+--
+-- Additive only: existing rows default to 0 (no prior tokens recorded), so a task
+-- created before this migration simply starts cumulative accounting now.
+-- NOTE no semicolons inside comments per the runner split gotcha.
+
+ALTER TABLE tasks ADD COLUMN accumulated_input_tokens INTEGER NOT NULL DEFAULT 0;

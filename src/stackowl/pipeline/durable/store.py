@@ -955,6 +955,58 @@ class DurableTaskStore(OwnedRepository):
         )
 
 
+    async def get_accumulated_input_tokens(self, task_id: str) -> int:
+        """Return the cumulative INPUT TOKENS billed across ALL attempts.
+
+        The sibling of :meth:`get_accumulated_cost`, and the half that did not
+        exist. Its absence is why the token ceiling was seeded from the per-ATTEMPT
+        trace id and therefore reset to 0 on every retry — see migration 0138 for
+        the 4,172,113-token measurement that found it. Owner-scoped; a task missing
+        for the bound owner (or a row predating migration 0138) returns ``0``.
+        """
+        log.tasks.debug(
+            "[tasks] store.get_accumulated_input_tokens: entry",
+            extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+        )
+        rows = await self._fetch_owned(self._table, "task_id = ?", (task_id,))
+        if not rows:
+            return 0
+        raw = rows[0].get("accumulated_input_tokens")
+        value = 0 if raw is None else int(raw)
+        log.tasks.debug(
+            "[tasks] store.get_accumulated_input_tokens: exit",
+            extra={"_fields": {"task_id": task_id, "accumulated_input_tokens": value}},
+        )
+        return value
+
+    async def set_accumulated_input_tokens(self, task_id: str, tokens: int) -> None:
+        """Persist the cumulative input tokens for ``task_id`` (owner-scoped).
+
+        Same contract as :meth:`set_accumulated_cost`: the caller passes the
+        governor's ABSOLUTE cumulative total (prior attempts + this attempt), so the
+        value is monotonic and idempotent if an iteration is replayed — never an
+        additive delta that could double-count. Fails loud on a missing/wrong-owner
+        row so a "durable" write cannot silently no-op. Negatives floor at 0.
+        """
+        safe = max(0, int(tokens))
+        log.tasks.debug(
+            "[tasks] store.set_accumulated_input_tokens: entry",
+            extra={"_fields": {
+                "task_id": task_id, "owner_id": self._owner_id, "tokens": safe,
+            }},
+        )
+        sql = (
+            f"UPDATE {self._table} SET accumulated_input_tokens = ? "  # noqa: S608 — table from class
+            "WHERE owner_id = ? AND task_id = ?"
+        )
+        await self._require_owned(task_id, op="set_accumulated_input_tokens")
+        await self._execute_owned(sql, [safe, self._owner_id, task_id])
+        log.tasks.info(
+            "[tasks] store.set_accumulated_input_tokens: saved",
+            extra={"_fields": {"task_id": task_id, "accumulated_input_tokens": safe}},
+        )
+
+
     # ---- the ONE loop ---------------------------------------------------
 
     async def update_achievement(self, task_id: str, achievement: str) -> None:

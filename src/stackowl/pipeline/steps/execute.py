@@ -2619,15 +2619,32 @@ async def _run_with_tools(
     # input tokens across 137 model calls under ONE trace_id, against a 20-step
     # ceiling; steps bound a single attempt's loop and nothing bounded the task.
     #
-    # Read from cost_records rather than a new column: the tokens are already
-    # recorded there per trace, so a column would be a SECOND writer for a fact
-    # the system already stores. Same best-effort contract as the cost seed — any
-    # failure seeds 0 and the turn proceeds.
+    # SEEDED FROM THE DURABLE TASK, exactly as cost is twenty lines above.
+    #
+    # This read used to go to cost_records BY TRACE ID, reasoning that "the tokens
+    # are already recorded there per trace, so a column would be a SECOND writer".
+    # Per-trace is precisely why it could not work: `retry_actuator.py` and
+    # `goal_execution.py` mint `f"retry-{uuid4}"` / `f"goal-{uuid4}"` per ATTEMPT,
+    # so the lookup missed every time, the seed was 0, and every retry was handed
+    # the whole allowance again. MEASURED 2026-09-06 — on 2026-09-02 the goal
+    # `goal-goal_execution-7b6da65e` spent 4,172,113 input tokens over NINE traces,
+    # 66% of that day's entire bill, seven of them individually over the 500k cap.
+    # Cost was immune the whole time because cost keys on the task. Same best-effort
+    # contract: any failure seeds 0 and the turn proceeds.
     _prior_input_tokens = 0
-    if state.task_id is not None and _services.cost_tracker is not None:
+    if state.task_id is not None and _services.db_pool is not None:
         try:
-            _totals = await _services.cost_tracker.get_turn_token_totals(state.trace_id)
-            _prior_input_tokens = int(_totals[0]) if _totals else 0
+            # Local imports mirroring the cost seed above: those are scoped to ITS
+            # try-block, so they are not in scope here.
+            from stackowl.pipeline.durable.store import DurableTaskStore
+            from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
+
+            _token_store = DurableTaskStore(
+                _services.db_pool, state.durable_owner_id or DEFAULT_PRINCIPAL_ID
+            )
+            _prior_input_tokens = await _token_store.get_accumulated_input_tokens(
+                state.task_id
+            )
         except Exception as exc:  # noqa: BLE001 — best-effort seed; never block the turn
             log.tasks.error(
                 "[tasks] execute: prior token-total read failed — seeding 0",
@@ -2873,6 +2890,11 @@ async def _run_with_tools(
             try:
                 await session.store.set_accumulated_cost(
                     task_id, _governor.current_cost_usd()
+                )
+                # The token meter is persisted on the SAME callback as cost, so the
+                # two can never again drift into answering different keys.
+                await session.store.set_accumulated_input_tokens(
+                    task_id, _governor.current_input_tokens()
                 )
             except Exception as exc:  # noqa: BLE001 — never break the drive on cost I/O
                 log.tasks.error(

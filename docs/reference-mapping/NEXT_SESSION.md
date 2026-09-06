@@ -121,7 +121,8 @@ STANDING RULES
     do_not_push_to_git_research_only/ — gitignored, NEVER push it.
   - No vendor names in src/, tests/ or scripts/ — say "the reference platform".
   - FIND FACTS YOURSELF. Never ask Bakir what you could measure.
-  - Never a full `pytest` run — it hangs on this box. Targeted paths + timeout.
+  - Targeted paths + timeout for the edit loop. The full run does NOT hang: ~32 minutes,
+    green (12230 passed, 0 failed, 2026-09-06). Launch `./scripts/full_suite.sh` detached.
     A hanging test is a failing test. Pre-existing red is IN scope.
     (tests/tools/{knowledge,meta,scheduling} are SLOW, not hanging: 585 pass in
     13m25s, ~5s of fixture setup per test.)

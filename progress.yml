@@ -14477,6 +14477,96 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-128
+    found: 2026-09-06
+    what: >-
+      THE TURN TOKEN BUDGET WAS KEYED TO THE ATTEMPT WHILE ITS PURPOSE IS TO BOUND THE
+      TASK, so every retry was handed the whole allowance again. In execute.py the seed
+      GATED on `state.task_id` and then LOOKED UP by `state.trace_id`; `retry_actuator.py`
+      and `goal_execution.py` mint `f"retry-{uuid4}"` / `f"goal-{uuid4}"` per attempt, so
+      the lookup missed every time and `_prior_input_tokens` was 0 on every attempt.
+      Twenty-five lines above, the COST seed keys on `state.task_id` off the
+      `accumulated_cost_usd` column from migration 0060 — so cost was bounded across the
+      whole task the entire time and tokens never were.
+    the_measurement: >-
+      From `cost_records` on the live box. On 2026-09-02 between 14:00 and 15:30 the goal
+      `goal-goal_execution-7b6da65e` ran NINE distinct traces, 162 model calls and
+      4,172,113 input tokens — 66% of that entire day's 6,346,818 — and never completed;
+      SEVEN of the nine individually exceeded the 500,000 cap that was supposed to bound
+      the whole task. It recurred on 2026-09-05 (`recover-cf91d7c8c8d0`, 577,864 after a
+      725,381 predecessor). Structurally, 362M input tokens have flowed through `goal-`
+      (1,752 traces / 187M), `retry-` (4,148 / 118M) and `recover-` (161 / 57M) — exactly
+      the prefixes that mint a new id per attempt, i.e. the paths where the seed is always
+      0. The governor's own docstring claims this was FIXED, citing a 3,893,308-token
+      incident "under ONE trace_id"; it was fixed only for the shape that REUSES a trace
+      id, and on the shape that mints a new one it recurred at 86% of its original size
+      AFTER the fix. That is the falsifier for "self-healing proves the root-cause fix".
+    why_it_was_possible: >-
+      A comment stating the very property that broke it. The seed read cost_records rather
+      than a column because "the tokens are already recorded there per trace, so a column
+      would be a SECOND writer for a fact the system already stores" — and PER TRACE is
+      precisely why it cannot span attempts. Cost is also already in cost_records and
+      still uses a column, so the tree's own precedent contradicted the reasoning. Nothing
+      compared the two meters, which is CLAUDE.md shape #3: two copies of one rule and
+      nothing asking whether they agree.
+    what_shipped: >-
+      Migration 0138 adds `tasks.accumulated_input_tokens`, the exact sibling of 0060.
+      `DurableTaskStore.get_/set_accumulated_input_tokens` mirror the cost pair including
+      the fail-loud owner check and the absolute-not-delta contract. The seed now reads
+      the task, and the token total is persisted on the SAME checkpoint callback as cost
+      so the two can never drift into different keys again. `get_turn_token_totals` is
+      NOT retired — `consolidate.py:58` still uses it legitimately for this turn's display
+      line, which is a per-trace question.
+    the_guard_reads_the_CALL_not_the_text: >-
+      `tests/pipeline/durable/test_the_budget_bounds_the_task_not_the_attempt.py` walks the
+      AST of execute.py and asserts both cumulative seeds are called with the SAME
+      attribute. A string check would pass the moment someone wrote `task_id` in a comment,
+      and the defect was one call passing a different attribute of the same object 25 lines
+      from the correct one. Mutation-proven: reverting the seed to `trace_id` fires two
+      assertions.
+    a_landmine_that_would_have_shipped_this_INERT: >-
+      The next free migration number was 0137, and the live `schema_migrations` already
+      holds a `0137` row with NO file on disk (137 rows, last file 0136). `runner.py:42-45`
+      records why: a 0137 was written to add `schema_migrations.sql_checksum`, judged the
+      wrong home and moved into the runner's bootstrap after the row had been applied here.
+      `_pending()` selects versions "present on disk and absent from schema_migrations", so
+      a `0137_*.sql` would be SKIPPED on this box and APPLIED on every fresh clone —
+      silently divergent schemas, with no error on either side. That is a defect in the
+      NUMBERING SCHEME shipped to every install, not in one machine's data. Numbered 0138;
+      0137 is now reserved with its reason by
+      `tests/db/test_a_migration_number_the_ledger_already_claims_is_never_reused.py`,
+      which also refuses any UNDECLARED gap so a future author can tell a free number from
+      a burned one. Deleting the row is a write to the live migration ledger and stays the
+      operator's call — ESC-142, which now has a consequence attached.
+  - id: DEBT-129
+    found: 2026-09-06
+    what: >-
+      MEASURED BY THE PANEL AND DELIBERATELY NOT ACTED ON, recorded so the measurements are
+      not re-derived. (a) 29 items claim `architect: done` or `document: done` with no
+      design document, 26 of them inside the "102 of 112 complete" headline, against
+      PROCESS.md:185-186 ("No item reaches `done` without a document"). The panel split
+      them: 19 have `architect: no_change_needed` (nothing was designed), ~10 shipped code.
+      D08.3 is NOT one of them — `D08.1.md:9` declares "Absorbs: D08.3" and re-verifies its
+      half, so it needs a `doc:` link, not a document. (b) `current` is 230 keys and
+      1,035,605 bytes, 42% of a 2.5MB progress.yml, append-only — and it is the evidence
+      `progress_lint` accepts, so pruning it (which failure mode #4 requires) would flip 14
+      items from evidenced to unevidenced. (c) The escalation queue arrives at 11.3/day and
+      drains at 3.6/day, 54 open, oldest 7 days — so filing another is not a way to get an
+      answer, which is why this loop filed none.
+    why_no_flip_of_the_29: >-
+      All five lenses rejected it and two showed it is not expressible: `closing_check` is a
+      SINGLE item-level string, and D07.2/D12.4/D15.6 already spend theirs on `validate`, so
+      one field would have to return one verdict for two unrelated questions. A
+      document-stage check could also only ever ask `test -f`, which is a to-do list run as
+      29 subprocesses at the head of every loop.
+    what_WAS_corrected_here: >-
+      The three method documents that still told the loop the full suite "hangs on this
+      box" — PROCESS.md:251, SESSION_PROMPT.md:92, NEXT_SESSION.md:124 — while CLAUDE.md:102
+      asserts that correction reached "all five surfaces". It had reached two. This is the
+      rule whose earlier half-correction left TEN tests red, recurring inside its own fix.
+      Also PROCESS.md's baseline prose said ruff 39 / mypy 78 against a gate of 35/65.
+      Twelve further copies survive in dated `docs/superpowers/plans` and `specs` artifacts;
+      those are historical records rather than live instructions and were left alone.
   - id: DEBT-127
     found: 2026-09-06
     what: >-

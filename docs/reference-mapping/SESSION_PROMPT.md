@@ -89,7 +89,9 @@ STANDING RULES (full list in progress.yml `rules`):
   - Never disable or remove a user-facing feature without asking, even when the backing
     store is gone.
   - Finished features ship ON, not dormant behind a flag.
-  - Targeted test paths with timeouts — never a full pytest run, it hangs on this box.
+  - Targeted test paths with timeouts for the edit loop. The full run does NOT hang — it
+    takes ~32 minutes and is green (12230 passed, 0 failed, 2026-09-06). Launch it
+    detached via ./scripts/full_suite.sh and collect the verdict later.
     A HANGING TEST IS A FAILING TEST; do not file it as slowness.
   - Restart with ./start.sh and verify via ~/.stackowl/logs/stackowl.jsonl, not a PID.
     A DELETION IS NOT LIVE UNTIL THE PROCESS HOLDING THE OLD CODE IS GONE.
