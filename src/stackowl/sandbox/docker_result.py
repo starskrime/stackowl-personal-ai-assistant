@@ -68,9 +68,18 @@ def classify_docker_outcome(
             network_enabled=spec.network, duration_ms=duration_ms,
         )
 
-    log.tool.debug(
+    # INFO, for the reason recorded at the sibling line in bwrap.py: every failure path
+    # in this backend is INFO or ERROR and the SUCCESS path was DEBUG, so the one
+    # outcome an operator needs — untrusted code ran in the cage and completed — was the
+    # only invisible one. `backend` matters more here than anywhere: this tier is the
+    # ROOTFUL one, where the seccomp filter is load-bearing rather than belt-and-braces,
+    # so which cage ran is a materially different security claim.
+    log.tool.info(
         "[sandbox.docker] run: exit",
-        extra={"_fields": {"exit_code": code, "duration_ms": duration_ms, "stdout_len": len(stdout)}},
+        extra={"_fields": {
+            "exit_code": code, "duration_ms": duration_ms, "stdout_len": len(stdout),
+            "backend": backend_name, "caps_applied": str(spec.caps),
+        }},
     )
     return ExecResult.ok(
         stdout=stdout, stderr=stderr, exit_code=code if code is not None else -1,

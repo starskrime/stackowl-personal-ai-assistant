@@ -26160,6 +26160,14 @@ items:
     notes: null
 
   - id: D06.3
+    closing_check: |-
+      # SCOPED TO TODAY, the day the INFO line shipped. The single historical confined
+      # run predates it, so an unbounded count would report CLOSEABLE on evidence that
+      # could not possibly have carried the field - DEBT-125 exactly.
+      n=$(./scripts/log_since.sh 2026-09-06 'sandbox.bwrap] run: exit')
+      d=$(./scripts/log_since.sh 2026-09-06 'sandbox.docker] run: exit')
+      t=$((n + d))
+      [ "$t" -gt 0 ] && echo "CLOSEABLE $t confined run(s) recorded at INFO since 2026-09-06" || echo "OPEN 0 confined runs since the INFO line shipped - the cage has run ONCE in the whole retained window and that run predates the line; ESC-150 is what makes an unattended confined run possible at all"
     title: "Confinement depth"
     domain: D06
     verdict: AHEAD
@@ -26173,17 +26181,58 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial
+      document:   done
+    doc: docs/reference-mapping/designs/D06.3.md
+    doc_last_verified: "2026-09-06 against commit 0eca53b6 — Verification RUN: 172 passed; both binaries present; probe/1/0/0/1247"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        THE ASK ANSWERED ITSELF ("Keep. Ours is genuinely stronger") AND THE ITEM STILL
+        FOUND SOMETHING. All six claimed capabilities — seccomp, cgroup, mounts, scratch,
+        governor, privileged tool channel — exist as dedicated modules in a 20-module
+        package and all six are wired. What none of them did was leave a record when they
+        WORKED: both backends log every FAILURE at INFO or ERROR (wall-time, OOM, killed by
+        signal, cgroup refusal, spawn failure) while the SUCCESS path of each logged
+        `run: exit` at DEBUG. Production runs at INFO, so the one outcome an operator most
+        needs — untrusted model-generated code ran to completion inside the cage and it
+        worked — was the only invisible one. Same asymmetry as D07.3, one subsystem over.
+      - >-
+        ESC-150 IS WHAT MADE IT URGENT. Until 2026-09-05 a confined run required a human to
+        approve it, so the consent prompt was itself the record. That carve-out now grants
+        execute_code unattended precisely BECAUSE this cage is contract-backed — the grant
+        is logged at INFO, and the execution it authorised was not. Both `run: exit` lines
+        raised to INFO and given `backend` and `caps_applied`, because "a confined run
+        happened" is not a fact until it names WHICH cage, and a caps_applied nothing prints
+        is an assertion rather than evidence for the caps-or-refuse invariant.
+      - >-
+        THE MAP'S ONE-LINER BLURS A DELIBERATE SPLIT, and the document corrects it. bwrap is
+        the PRIMARY backend and has NO seccomp filter on purpose: it is rootless, and
+        docker.py states the argument in its own header — the seccomp filter is
+        "load-bearing and MANDATORY here (unlike the rootless bwrap backend, where a userns
+        already contains an escape)". Docker is the rootful network tier. Two threat models,
+        two mitigations; a reader who takes "we have seccomp" as a property of every run
+        draws the wrong conclusion about the path that actually gets used.
+      - >-
+        MEASURED, and it is the number that frames everything else: the sandbox is assembled
+        and probed on EVERY boot (812 assemblies, 814 probes) and has RUN ONCE — `chose
+        bwrap` 1, `chose Docker` 0, `no backend available` 0, ptc channel started 1. seccomp
+        and cgroup appear ZERO times at any level in the retained logs. All this depth is
+        aimed at ~0.5% of the code the platform executes (D06.1: execute_code 1 allow / 27
+        deny against shell 205 calls, 33 interpreter launches). That is the cost of the
+        maximum-autonomy model, not a defect — but it is the ratio any further spend here
+        should be judged against.
+      - >-
+        Three mutants from file copies, each verified APPLIED: bwrap success back to DEBUG,
+        docker dropping caps_applied, and a FAILURE path demoted to debug (the control, which
+        proves the suite distinguishes levels rather than asserting everything is INFO). All
+        three caught, restored, re-run green. tests/sandbox 172 passed; ruff and mypy clean
+        on the package.
     notes: null
 
   - id: D06.4

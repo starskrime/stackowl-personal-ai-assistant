@@ -262,9 +262,29 @@ class BwrapSandbox(SandboxBackend):
                 message=f"the run was killed by signal {signal_num} (memory cap or external kill)",
                 backend_used=self.name, caps_applied=spec.caps, duration_ms=duration,
             )
-        log.tool.debug(
+        # INFO, NOT DEBUG, and the asymmetry it fixes is the whole of D06.3. Every
+        # FAILURE path in this file is INFO or ERROR — wall-time exceeded, OOM-killed,
+        # killed by signal, cgroup recipe refused, spawn failed — while the SUCCESS path
+        # sat at DEBUG. Production runs at INFO, so an operator could see the cage
+        # catching something and never see the cage working: untrusted, model-generated
+        # code ran to completion inside the confinement and it worked.
+        #
+        # ESC-150 MADE THAT LIVE. Until 2026-09-05 a confined run needed a human to
+        # approve it, so the consent prompt was itself the record. That carve-out now
+        # grants execute_code unattended precisely BECAUSE this cage is contract-backed
+        # — the grant is logged at INFO and the execution it authorised was not.
+        #
+        # `backend` and `caps_applied` are here because "a confined run happened" is not
+        # a fact until it names WHICH confinement: this backend is rootless-userns with
+        # no seccomp (deliberately — a userns already contains an escape) while Docker is
+        # rootful and its seccomp filter is load-bearing. A caps_applied that nothing
+        # prints is an assertion, not evidence for the caps-or-refuse invariant (#2).
+        log.tool.info(
             "[sandbox.bwrap] run: exit",
-            extra={"_fields": {"exit_code": code, "duration_ms": duration, "stdout_len": len(stdout)}},
+            extra={"_fields": {
+                "exit_code": code, "duration_ms": duration, "stdout_len": len(stdout),
+                "backend": self.name, "caps_applied": str(spec.caps),
+            }},
         )
         return ExecResult.ok(
             stdout=stdout, stderr=stderr, exit_code=code if code is not None else -1,
