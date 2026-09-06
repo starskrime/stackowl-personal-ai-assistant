@@ -25,6 +25,22 @@ from stackowl.paths import StackowlHome
 log = logging.getLogger("stackowl.db")
 
 _PRAGMAS = [
+    # FIRST, AND THE ORDER IS THE POINT. `journal_mode=WAL` takes a database
+    # lock; every statement before this line runs on sqlite3's DEFAULT 5s wait,
+    # not the 15s configured below. MEASURED 2026-09-06 with a fresh database
+    # and a writer holding BEGIN EXCLUSIVE for 8s: with this pragma third, the
+    # open FAILED after 5.01s — the default, exactly — while with it first the
+    # open succeeded after 7.98s. Under a burst shorter than 5s both behave
+    # identically, so this costs nothing in the safe case.
+    #
+    # WHAT IT COST: from 2026-09-03T09:24:43, 35 `pool._open_inside_lock:
+    # connect failed`, 34 of them `database is locked` thrown in this very
+    # loop, and 49 `[loop] tick failed` beginning at the SAME SECOND — the ONE
+    # loop unable to open a connection, 39 times on that day alone. The comment
+    # below reasons carefully about the SIZE of the timeout and never about
+    # WHEN it takes effect, and its reasoning is about execute()/fetch_all()
+    # retries, which is a different code path from connection setup.
+    "PRAGMA busy_timeout=15000",
     "PRAGMA journal_mode=WAL",
     "PRAGMA foreign_keys=ON",
     # LAT.4 (batch background writes into chunked transactions): this WAL /
@@ -41,7 +57,7 @@ _PRAGMAS = [
     # burst (SkillsAssembly's ~24-40s skill-catalog scan writing ~300 rows from
     # the OTHER process), and a confirmed-live liveness-heartbeat write failed
     # both attempts. 15000ms per attempt gives real headroom over that burst.
-    "PRAGMA busy_timeout=15000",
+    # (The pragma itself now runs FIRST — see the note at the top of this list.)
     # THE DATABASE FILE NEEDS A DECAY LEG TOO (2026-08-22). SQLite never returns a
     # freed page to the OS unless something asks; with auto_vacuum=NONE nothing
     # ever could. Measured on the live box before this shipped: a 922 MB file of

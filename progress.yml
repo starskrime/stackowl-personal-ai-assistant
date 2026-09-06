@@ -14477,6 +14477,62 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-151
+    closing_check: |-
+      # ABSENCE over a window, and its ambiguity is stated in the OPEN message
+      # rather than hidden: the fault needs a contention burst LONGER than 5s to
+      # appear, and I cannot manufacture one in production. What CAN be said is
+      # that the failure fired 35 times across two days before the fix.
+      n=$(./scripts/log_since.sh 2026-09-06 'pool._open_inside_lock: connect failed')
+      [ "$n" -gt 0 ] && echo "OPEN the open STILL fails under contention ($n) - the fix is insufficient" || echo "OPEN 0 contended-open failures since the fix; the code IS live-evidenced, but a zero here needs a >5s writer burst to mean anything"
+    stages:
+      validate: partial
+    found: 2026-09-06
+    what: >-
+      THE WAITING POLICY WAS SET AFTER THE STATEMENT THAT NEEDED TO WAIT. `_PRAGMAS` ran
+      `journal_mode=WAL` FIRST and `busy_timeout=15000` THIRD. `journal_mode=WAL` takes a
+      database lock, so it ran on sqlite3's DEFAULT 5-second wait, never the 15 seconds
+      configured three lines below it.
+    what_it_cost: >-
+      From 2026-09-03T09:24:43, decaying over two days: 35 `pool._open_inside_lock: connect
+      failed`, THIRTY-FOUR of them `sqlite3.OperationalError: database is locked` thrown at
+      pool.py:219 - the pragma loop itself - and 49 `[loop] tick failed - the loop continues`
+      beginning at the SAME SECOND. The ONE loop could not open a connection 39 times on
+      2026-09-03 alone.
+    MY_FIRST_MEASUREMENT_WAS_WRONG_AND_MORE_DRAMATIC: >-
+      The first probe passed `sqlite3.connect(timeout=0)` and reported the current order
+      failing "after 0.00s - it never waits". `aiosqlite.connect()` passes no timeout, so the
+      real default is FIVE SECONDS and the 0.00s was my own artifact. Recorded because the
+      wrong number was the more compelling story and would have shipped a false account of a
+      real bug.
+    the_honest_measurement: >-
+      Fresh database per attempt, a writer holding BEGIN EXCLUSIVE. Holding 8s: current order
+      FAILED after 5.01s with `database is locked`; busy_timeout-first succeeded after 7.98s.
+      Holding 1s: both OK after 0.94s, so the change costs nothing in the safe case. The
+      failure landing at 5.01s - the DEFAULT, exactly - is the fingerprint that the configured
+      15s was never in effect. The pragma block's own comment cites SkillsAssembly's 24-40s
+      catalogue scan writing from the other process, which no 5-second budget survives.
+    the_reasoning_that_was_there_was_about_a_DIFFERENT_CODE_PATH: >-
+      Fifteen lines of comment argue the SIZE of the timeout - 5000ms vs 15000ms, two attempts
+      vs one - and every word of it is about `execute()`/`fetch_all()` retrying via
+      `retry_once_on_dead_handle`. None of it is about connection SETUP, where the pragmas
+      themselves run. The care went to the number and none to when it takes effect.
+    WHY_THERE_IS_NO_INTEGRATION_TEST_and_it_was_written_first: >-
+      A test that holds BEGIN EXCLUSIVE past the default and then opens a real DbPool
+      reproduces the bug exactly and HANGS the suite - this package's fixtures replay
+      migrations against the database the holder has locked, so the two deadlock. It ran past
+      120s and was killed twice. An earlier 0.4s version PASSED against the unfixed code, which
+      is worse: vacuous, because the default already covers 0.4s. The shipped guard is the
+      structural invariant (busy_timeout is first, journal_mode is after it), which is the
+      property that must not regress, runs in 0.09s, and is marked tripwire.
+    mutation_proven: >-
+      Putting `journal_mode` back in front fails the guard; deleting `busy_timeout` entirely
+      fails it. Restored from a file copy; 2 passed, 126 across tests/db.
+    what_else_the_cause_reaches: >-
+      Configuration applied in a LIST has an order, and an order is a contract nobody wrote
+      down. Anywhere this tree sets policy by executing statements in sequence, the question is
+      which statements run before the policy they depend on - and the answer is invisible
+      because a list looks like a set.
   - id: DEBT-150
     found: 2026-09-06
     what: >-
