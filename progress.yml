@@ -30033,17 +30033,56 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: docs/reference-mapping/designs/D13.3.md
+    doc_last_verified: "2026-09-06 against commit 097c73af — Verification RUN: split_process default=True with its stated reason; the ipc docstring as quoted; the live log carries both socket:cli and headless"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        THE ASK CONTAINED A FALSE PREMISE ABOUT OUR OWN SIDE, and correcting it IS the answer.
+        The map recorded us as "Textual in-process, plus an EventBus for live progress" — that
+        describes the MONO path. We already run a two-process split, `runtime.split_process`
+        defaults TRUE, and it is what this deployment is running right now: the live log
+        carries both `socket:cli` (core) and `headless` (gateway). Map line corrected in this
+        change; this is the SECOND map inaccuracy about our own tree found in three items,
+        after D14.3's disclosure line.
+      - >-
+        SAME TRANSPORT FAMILY, DIFFERENT SEAM, BETTER REASON. `ipc/__init__.py`: "A DURABLE
+        gateway process holds client connections (TUI, channels) and a RESTARTABLE core
+        process runs the agent logic; they talk over a local unix-domain socket using
+        newline-delimited JSON frames." Theirs is newline-delimited JSON-RPC over stdio — the
+        same shape. Their seam is a LANGUAGE boundary (TypeScript owns the screen); ours is a
+        LIFECYCLE one, and it is what makes self-modification safe: a platform that rewrites
+        its own code must restart to load it, and if the process holding the user connection
+        is the one being replaced, every self-improvement drops the conversation. CodeWatcher
+        exec-replaces the core while the gateway keeps the socket.
+      - >-
+        THE CORE IS DELIBERATELY UNAWARE. socket_adapter.py: "In the split, the core runs the
+        ENTIRE existing pipeline unchanged." The frames "mirror the existing in-process seams
+        with no semantic change", so `split_process=False` runs the same code. That is also
+        the strongest evidence D13.2's rule already holds — the core runs the whole pipeline
+        and the gateway holds only I/O.
+      - >-
+        WHAT REMAINS IN-PROCESS COST EXACTLY ONE INCIDENT, and the fix was not another
+        process. Textual runs inside the gateway; HeadlessCliAdapter's docstring records
+        2026-08-14: "the gateway sat at 100.3% CPU — a whole core, continuously — and a py-spy
+        profile put ~95% of it in Textual's Linux input driver", a busy-wait on EOF because
+        start.sh gives it stdin at /dev/null. The cure was a ROLE split (keep the `cli`
+        channel and its contract, drop the terminal). A process split would not have helped —
+        the busy-wait would have burned a core over there instead.
+      - >-
+        DECISION: NO CHANGE. The split the Ask asks about exists, is on by default, uses the
+        same transport family and is drawn at the seam that matters for a self-modifying
+        platform. Splitting the SCREEN into a third process would buy a language separation we
+        do not need — single-language by design — at the cost of another boundary to keep
+        semantically identical. The `DIVERGENT` verdict stands, but the divergence is the SEAM,
+        not the transport.
     notes: null
 
   - id: D13.4

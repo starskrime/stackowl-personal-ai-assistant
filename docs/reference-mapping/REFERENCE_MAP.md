@@ -1181,7 +1181,13 @@ or composer is not. Anything added to the TUI appears in the dashboard automatic
 ### D13.3 · TUI transport — `DIVERGENT`
 **Hermes.** Newline-delimited JSON-RPC over stdio between Node (screen) and Python (sessions, tools,
 model calls, slash logic). TypeScript owns the screen; Python owns everything else.
-**StackOwl.** Textual in-process, plus an EventBus for live progress.
+**StackOwl.** *(CORRECTED 2026-09-06 — this line described only the mono path.)* We ALSO
+split, over newline-delimited JSON frames on a unix socket (`ipc/frames.py`), with
+`runtime.split_process` defaulting **True**. The seam differs: theirs is a LANGUAGE
+boundary (TypeScript owns the screen), ours is a LIFECYCLE one — a durable gateway holds
+connections while a restartable core runs the agent logic and exec-replaces itself on code
+change. Textual runs in-process *within the gateway*, with an EventBus for live progress.
+See `designs/D13.3.md`.
 **Ask.** In-process is simpler and works. Any reason to split?
 
 ### D13.4 · Editor integration (ACP) — `MISSING`
