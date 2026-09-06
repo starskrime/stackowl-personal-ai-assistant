@@ -28128,13 +28128,6 @@ items:
     notes: null
 
   - id: D10.3
-    closing_check: |-
-      # SCOPED TO THE DAY THIS SHIPPED (2026-09-04). An unbounded count is satisfied by
-      # history: this check first reported CLOSEABLE on evidence that PREDATED the
-      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
-      # null bytes) and warns when the window is truncated by rotation.
-      n=$(./scripts/log_since.sh 2026-09-04 '"matched_on": "semantic"')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x semantic-twin suppression since 2026-09-04" || echo "OPEN 0 x semantic-twin suppression since 2026-09-04 - no proposed lesson has resembled an existing one above 0.90"
     title: "Active vs. optional skills"
     domain: D10
     verdict: MISSING
@@ -28153,10 +28146,10 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial   # the gate has not yet fired in production — needs a synthesis run
+      validate:   done      # fired in production 2026-09-06, twice, at 0.9145 and 0.9135
       document:   done
     doc: "docs/reference-mapping/designs/D10.3.md"
-    doc_last_verified: "2026-09-04"
+    doc_last_verified: "2026-09-06 against commit c27dbde7 — Verification RE-RUN: 5 passed; tests/skills tests/learning 648 passed 0 failed; the closing query returns 2"
     decisions:
       - "THE SPLIT IS NOT BUILT and stays MISSING. 39 skills is nowhere near the reference's
          69/111, and splitting a catalogue whose problem is REDUNDANCY would produce a
@@ -28170,6 +28163,30 @@ items:
       - "Narrowed to the LEARNED corpus, the same population the lexical rungs read. A
          proposed lesson resembling a BUILTIN skill has nothing to reinforce."
     changes:
+      - >-
+        2026-09-06 VALIDATE CLOSED — THE GATE FIRED IN PRODUCTION, TWICE, AND CAUGHT WHAT THE
+        LEXICAL RUNGS COULD NOT. At 08:32:06Z a proposed `rca-evidence-lesson-verifier`
+        reinforced `verify_rca_evidence` at similarity 0.9145; at 08:35:18Z
+        `evidence_only_rca_verifier` did the same at 0.9135. Both INFO, both against a rung
+        that shipped 2026-09-04, so the evidence POST-DATES the change — the bound DEBT-125
+        exists to enforce.
+      - >-
+        `matched_on: "semantic"` IS THE LOAD-BEARING FIELD, and it is why these two count. The
+        lexical rungs run FIRST and set matched_on to `base` or `canonical` when they match, so
+        "semantic" means both looked at these names and missed. Two more duplicate skills would
+        be sitting in the corpus without this rung. Verified by hand before believing the
+        checker, per the rule written after D07.2 and D15.6 both produced false CLOSEABLEs.
+      - >-
+        WHERE THE SIMILARITIES LAND IS ITSELF THE FINDING: 0.9145 and 0.9135, a hair above the
+        0.90 threshold. The precision-over-recall choice recorded in the Decision section is
+        doing its work AT THE MARGIN rather than in the comfortable middle, which is the case
+        to re-read if that threshold is ever raised.
+      - >-
+        AND THE DOC CARRIED A STALE EXPECTATION. Its step 2 said "expect: 637 passed"; it now
+        reads 648 as later items added tests. Replaced with "0 failed" plus a note that a count
+        growing with the suite is stale the moment it is written — the same lesson D06.3 hit
+        with the boot-probe counter. The closing_check was deleted with the close, per the
+        mirror rule from DEBT-125: a check on a non-partial item is a write with no reader.
       - "src/stackowl/skills/synthesizer.py — _semantic_twin() added as a third rung on
          _reinforce_if_known; _SEMANTIC_TWIN_MIN=0.90 with its measurement in the comment;
          the INFO line now carries matched_on and similarity; the call site builds the same
