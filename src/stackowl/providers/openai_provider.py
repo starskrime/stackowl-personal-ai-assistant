@@ -962,7 +962,15 @@ class OpenAIProvider(ModelProvider):
                         log.engine.warning(
                             "[openai] complete_with_tools: loop guard tripped — "
                             "repeated identical calls, breaking to wrap-up",
-                            extra={"_fields": {"provider": self._name}},
+                            extra={"_fields": {
+                                "provider": self._name,
+                                # The signature that actually broke, and how far
+                                # the turn got. Without these the line named only
+                                # the vendor — the one fact nobody diagnosing a
+                                # stuck turn needs.
+                                "tripped_on": guard.tripped_on(),
+                                "calls": len(all_calls),
+                            }},
                         )
                         messages.append({"role": "user", "content": f"OBSERVATION: {capped}"})
                         # S3 — guard trip on ReAct path: fire before break so
@@ -1153,7 +1161,11 @@ class OpenAIProvider(ModelProvider):
                 log.engine.warning(
                     "[openai] complete_with_tools: loop guard tripped — "
                     "repeated identical calls, breaking to wrap-up",
-                    extra={"_fields": {"provider": self._name}},
+                    extra={"_fields": {
+                        "provider": self._name,
+                        "tripped_on": guard.tripped_on(),
+                        "calls": len(all_calls),
+                    }},
                 )
                 break
             if iter_native_directives:
@@ -1175,7 +1187,17 @@ class OpenAIProvider(ModelProvider):
 
         log.engine.warning(
             "[openai] complete_with_tools: max_iterations reached",
-            extra={"_fields": {"provider": self._name}},
+            extra={"_fields": {
+                "provider": self._name,
+                # `calls` is what separates "spun on one tool" from "did fifty
+                # legitimate things and ran out of budget". The auto-escalate
+                # branch twenty lines up has always reported it; this branch and
+                # the trip branches did not, which is why 27 stuck traces in the
+                # retained window had to be diagnosed by joining the log to
+                # task_outcomes.tool_sequence by hand.
+                "calls": len(all_calls),
+                "tripped_on": guard.tripped_on(),
+            }},
         )
         # Phase F — graceful max-out: never return empty. Make ONE final model call
         # WITHOUT tools after a global, language-agnostic wrap-up directive so the

@@ -417,6 +417,25 @@ class LoopGuard:
         """True when any signature has reached break_at repeats."""
         return any(c >= self._break_at for c in self._counts.values())
 
+    def tripped_on(self) -> str | None:
+        """The signature that actually reached ``break_at``, or None.
+
+        WHY A BOOL WAS NOT ENOUGH. `tripped()` told the caller THAT to stop and
+        nothing about what to say — so the provider's warning could only report
+        its own name, and 12 loop trips plus 33 max-outs in the retained window
+        were undiagnosable from their own log lines. This returns the offending
+        signature so the line that stops the turn can name its cause.
+
+        It names the OFFENDER, not the busiest tool: a turn that calls one tool
+        many times with DIFFERENT arguments has many signatures of count 1 and
+        trips nothing, which is the headhunter case (46 web_searches, 46
+        distinct queries, real work) that the signature keying exists to permit.
+        """
+        for sig, count in self._counts.items():
+            if count >= self._break_at:
+                return sig
+        return None
+
 
 def _first_balanced_object(s: str) -> str | None:
     start = s.find("{")
