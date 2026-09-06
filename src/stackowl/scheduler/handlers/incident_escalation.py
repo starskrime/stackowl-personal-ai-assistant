@@ -1103,6 +1103,17 @@ class IncidentEscalationHandler(JobHandler):
             list(outcomes), min_size=self._recurrence_threshold,
             capability_tag_lookup=self._capability_tag_lookup,
         )
+        # ONE FINDING PER TICK, NOT ONE PER CLUSTER. Both suppressions below used
+        # to log from inside this loop, so six stable clusters restated one
+        # unchanged condition six times every ten minutes: measured 2026-09-06,
+        # 6,647 suppression lines across 1,043 ticks — 6.4 lines to say one thing
+        # — and 5,579 of them from the unattributed branch alone, 1% of a 559,697
+        # record log. The aggregated shape was already chosen and justified in
+        # this same file for `already diagnosed within 24h`; these two simply did
+        # not follow it. Collected here, reported once after the loop, still at
+        # INFO because this IS the evidence for why no incident was raised.
+        skipped_unattributed: list[dict[str, object]] = []
+        skipped_not_anomalous: list[dict[str, object]] = []
         for cluster in clusters:
             sig = outcome_signature(
                 cluster.capability_class, cluster.failure_class,
@@ -1132,18 +1143,12 @@ class IncidentEscalationHandler(JobHandler):
             # "recurring", and noise rows must never dilute the narrative.
             precise_outcomes = self._precisely_attributed_outcomes(cluster)
             if len(precise_outcomes) < self._recurrence_threshold:
-                log.scheduler.info(
-                    "[scheduler] incident_escalation: too few precisely-attributed "
-                    "rows to recur on — skipping (co-occurrence noise diluted the "
-                    "raw cluster)",
-                    extra={"_fields": {
-                        "capability": cluster.capability_class,
-                        "failure_class": cluster.failure_class,
-                        "cluster_size": cluster.size,
-                        "precise_count": len(precise_outcomes),
-                        "threshold": self._recurrence_threshold,
-                    }},
-                )
+                skipped_unattributed.append({
+                    "capability": cluster.capability_class,
+                    "failure_class": cluster.failure_class,
+                    "cluster_size": cluster.size,
+                    "precise_count": len(precise_outcomes),
+                })
                 continue
             # THE DENOMINATOR GATE. Recurring is necessary and not sufficient:
             # a capability the platform leans on will always recur. It is an
@@ -1157,19 +1162,13 @@ class IncidentEscalationHandler(JobHandler):
             if rates is not None:
                 z = rates.z_score(cluster.capability_class)
                 if z < _ANOMALY_Z:
-                    log.scheduler.info(
-                        "[scheduler] incident_escalation: capability fails no more "
-                        "than the platform does — not an incident",
-                        extra={"_fields": {
-                            "capability": cluster.capability_class,
-                            "failure_class": cluster.failure_class,
-                            "failures": rates.failures.get(
-                                cluster.capability_class, 0),
-                            "turns": rates.turns.get(cluster.capability_class, 0),
-                            "pooled_rate": round(rates.pooled_rate(), 4),
-                            "z": round(z, 2), "bar": _ANOMALY_Z,
-                        }},
-                    )
+                    skipped_not_anomalous.append({
+                        "capability": cluster.capability_class,
+                        "failure_class": cluster.failure_class,
+                        "failures": rates.failures.get(cluster.capability_class, 0),
+                        "turns": rates.turns.get(cluster.capability_class, 0),
+                        "z": round(z, 2),
+                    })
                     continue
             samples = tuple(
                 f"- trace={o.trace_id} tools={list(o.tool_sequence)} "
@@ -1190,6 +1189,47 @@ class IncidentEscalationHandler(JobHandler):
                     f"self-heal (retry/substitution/floor) that already ran.\n"
                     + "\n".join(samples)
                 ),
+            )
+
+        # The two per-tick suppression findings, in the shape `already diagnosed
+        # within 24h` established above: a COUNT plus the list, so one line says
+        # both that clusters were dropped and which ones. Emitted only when there
+        # is something to report — a tick that suppressed nothing says nothing.
+        if skipped_unattributed:
+            log.scheduler.info(
+                "[scheduler] incident_escalation: too few precisely-attributed "
+                "rows to recur on — skipped (co-occurrence noise diluted the "
+                "raw clusters)",
+                extra={"_fields": {
+                    "suppressed": len(skipped_unattributed),
+                    "threshold": self._recurrence_threshold,
+                    "capabilities": sorted(
+                        {str(c["capability"]) for c in skipped_unattributed}
+                    )[:8],
+                    "signatures": sorted(
+                        f'{c["capability"]}:{c["failure_class"]}'
+                        f'({c["precise_count"]}/{c["cluster_size"]})'
+                        for c in skipped_unattributed
+                    )[:8],
+                }},
+            )
+        if skipped_not_anomalous:
+            log.scheduler.info(
+                "[scheduler] incident_escalation: capability fails no more "
+                "than the platform does — not an incident",
+                extra={"_fields": {
+                    "suppressed": len(skipped_not_anomalous),
+                    "bar": _ANOMALY_Z,
+                    "pooled_rate": round(rates.pooled_rate(), 4) if rates else None,
+                    "capabilities": sorted(
+                        {str(c["capability"]) for c in skipped_not_anomalous}
+                    )[:8],
+                    "signatures": sorted(
+                        f'{c["capability"]}:{c["failure_class"]}(z={c["z"]},'
+                        f'{c["failures"]}/{c["turns"]})'
+                        for c in skipped_not_anomalous
+                    )[:8],
+                }},
             )
 
         # SOURCE 3 — recurring BRIDGED substitution (migration 0077,

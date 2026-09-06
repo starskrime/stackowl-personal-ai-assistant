@@ -14477,6 +14477,77 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-145
+    closing_check: |-
+      # Keyed on the "suppressed" FIELD on this message - the aggregated line
+      # carries it and the per-cluster line never did, so a hit proves the NEW
+      # shape ran (DEBT-138's rule). Not keyed on the message text, which is
+      # nearly unchanged and fired 5,579 times BEFORE the fix.
+      n=$(./scripts/log_since.sh 2026-09-06 'too few precisely-attributed.*"suppressed"')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n aggregated suppression line(s)" || echo "OPEN 0 incident_escalation ticks with a suppression since the fix; the code IS live-evidenced"
+    stages:
+      validate: partial
+    found: 2026-09-06
+    what: >-
+      SIX CLUSTERS SUPPRESSED FOR ONE REASON WERE SIX LOG LINES, EVERY TEN MINUTES, FOR NINE
+      DAYS. `incident_escalation` drops a failure cluster for three reasons and logged them in
+      TWO different shapes inside one function: `already diagnosed within 24h` aggregates
+      (`{"suppressed": N, "signatures": [...]}`, 743 lines) while `too few precisely-attributed
+      rows` (5,579) and `capability fails no more than the platform does` (325) logged once PER
+      CLUSTER.
+    measured: >-
+      6,647 suppression lines across 1,043 ticks - 6.4 lines to say one thing - naming the SAME
+      six stable capability clusters. 5,579 of them from the unattributed branch alone, which
+      is 1.0% of a 559,697-record log. The log is this programme's primary instrument and
+      CLAUDE.md's own rule is "count incidents, not log lines"; this is that error committed by
+      the EMITTER rather than by the reader.
+    the_root_cause_is_TWO_SHAPES_not_volume: >-
+      The correct pattern was already chosen, written and justified 1,200 lines up in the SAME
+      file, and the other two branches did not follow it. Defect shape 3 - two copies of one
+      rule - with the weaker copies on the hot path. So the fix is not a new policy: the two
+      branches now collect into a list and report after the loop in the shape the third one
+      already uses.
+    why_AGGREGATION_and_not_DEBUG: >-
+      Demoting these would be the D08.1 defect this programme has paid for three times:
+      production runs at INFO, and "the self-heal loop suppressed six clusters this tick" is
+      exactly the evidence someone needs to explain why no incident was ever raised. The
+      finding stays at INFO; one tick now emits one line carrying the whole picture instead of
+      a fragment of it. Guarded by a test that fails if either line drops below INFO.
+    SIX_HUNTS_THAT_MEASURED_CLEAN_recorded_so_they_are_not_re_derived: >-
+      (1) Twelve of fourteen partials read "0 since the fix", so the platform looked idle - it
+      is not: the scheduler ticks on cadence and most due jobs are sweeps that never call a
+      model, which is why cost_records does not grow. (2) The circuit breaker looked damning at
+      29 opens / 53 recovery attempts / TWO successes, but 0 of 40 failed probes had a
+      successful NeraAiRaw call within 60s, so the provider really was down and the breaker is
+      honest. (3) notification_digest/objective_driver/incident_escalation ran 8/27/4 times
+      since the restart with zero model calls - all legitimately short-circuiting
+      (`due_count 0`, `advanced 0`, `already diagnosed`). (4) The precise-attribution gate looked
+      structurally dead at 169 attributed rows out of 10,748 failed - but 10,414 of those made
+      NO tool call, so nothing could be attributed; of the 334 that DID run tools, 166 (50%) are
+      attributed and the guard is working as designed. That 1.6% was my own denominator error.
+      (5) Handler registry re-registered 32,458 times and skills reloaded 30,171 times, looking
+      like a reload loop - it is CodeWatcher doing its job across 664 exec-replaces during an
+      active development day. (6) `assembly.build: entry` 4,392 vs `handlers registered` 876
+      looked like a 5:1 abort rate - it was my substring aggregating FIVE different assemblies
+      (memory 884, notifications 877, consent 877...), each with matching entry/exit.
+    the_test_s_OWN_instrument_was_wrong_first: >-
+      The loop-depth assertion PASSED against the unfixed code. `_log_calls_with` and
+      `_enclosing_loop_depth` each re-parsed the module, so the `child is target` identity check
+      compared nodes from two DIFFERENT ASTs and could never match. It was exposed only because
+      a sibling assertion failed. Fixed with one cached parse - "a test that passes immediately
+      may be vacuous", committed by the test's own instrument, and the third instrument error
+      of this session after `tuple(row)` yielding column names and SQLite's space-vs-T date
+      comparison.
+    mutation_proven: >-
+      Demoting the aggregated line to DEBUG fails the INFO test; reporting the count while
+      dropping WHICH clusters fails the signatures test. Restored from a file copy; 7 passed,
+      572 across tests/scheduler.
+    what_else_the_cause_reaches: >-
+      A log line inside a loop states a per-ITEM fact about a per-TICK decision. The reader
+      wants "what did this tick suppress"; the emitter answered "this cluster was suppressed",
+      once per cluster, forever - so the volume grows with the WIDTH of the condition while the
+      information stays constant. Anywhere a summary is assembled by the reader rather than the
+      writer, the same shape is available.
   - id: DEBT-144
     validate_result: >-
       HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 17:51:34Z after
