@@ -315,6 +315,45 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D06_2_2026_09_05_hibernation_answers_a_question_this_architecture_never_asks:
+    map_check: "D06.2 Serverless/hibernating environments — MISSING, P2, wave 10 order 100, 0/7. Next by order; D06.1 which blocked it is complete."
+    THE_ASK_WAS_ANSWERED_NOT_ESCALATED: >-
+      "Relevant to your deployment story, or out of scope for self-hosted?" reads like
+      product intent, but three independent pieces of evidence settle it and none is a
+      preference. Escalating would have handed him a question his own recorded rules
+      already answer — the exact cost the queue exists to avoid.
+    ARCHITECTURE_THERE_IS_NOTHING_TO_HIBERNATE: >-
+      Hibernation solves a problem created by PERSISTENCE: a sandbox that survives between
+      sessions occupies a machine and bills for it, so you pay to make it sleep. StackOwl's
+      do not survive at all. docker_argv.py builds `docker run --name <container>` per call
+      and its own comment records the guarantee — "Removal is instead guaranteed by the
+      backend's `docker rm -f` in a `finally` … No container is ever left behind." A sandbox
+      exists for the duration of one execute_code call. There is no idle sandbox, so there
+      is no idle cost to remove.
+    ECONOMICS_AND_POLICY: >-
+      "Costs nearly nothing between sessions" is a claim about per-second cloud billing; on
+      one always-on Jetson the between-sessions cost is electricity and is unchanged. And
+      Modal and Daytona are commercial SaaS, against two standing rules the programme's own
+      record quotes verbatim — "no vendor names in shipped code", "self-hosted/open-source
+      only".
+    THE_LOCAL_ANALOGUE_ALREADY_RUNS: >-
+      sandbox_sweep, every 10 minutes, 1,225 executions in the retained logs, reaping scratch
+      dirs, stackowl-sbx-* containers and bwrap cgroup scopes older than a 1h TTL (~120x the
+      30s max wall time, so a live run is never reaped). Not "hibernate the idle thing" but
+      "nothing idle should exist, and a crash's leftovers are collected".
+    WHAT_WOULD_BE_ACTIVELY_WRONG: >-
+      Read as "suspend StackOwl itself when nobody is talking to it", hibernation breaks what
+      the platform IS: health_sweep every 5 minutes, sandbox_sweep every 10, proactive
+      delivery and the durable task loop all run unattended. That is a property to protect,
+      not a gap to close. Trigger to revisit: deployment onto per-second-billed infra where
+      the whole PROCESS idles between conversations.
+    MY_OWN_VERIFICATION_LINE_WAS_WRONG_FIRST: >-
+      The document shipped a check `grep -rin "modal|daytona" … # 0`. It returns SEVENTEEN,
+      and every hit is a false positive — "multimodal", "modality", "modal overlays" in the
+      TUI. The claim was true and the query was not, which is the "429 matches token counts"
+      family. Corrected to ask for the IMPORT and the DEPENDENCY (both 0) and the trap is
+      written into the doc so the next reader running its Verification is not misled.
+    NEXT: "D06.3 Confinement depth (AHEAD, wave 10 order 101) is next by order."
   D06_1_IMPLEMENT_2026_09_05_the_safe_path_was_shut_and_the_unsafe_one_was_open:
     map_check: "D06.1 implement — recorded no_change_needed PENDING the ESC-150 answer he has now given, so it reopens and closes."
     WHAT_SHIPPED: >-
@@ -25710,15 +25749,15 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: "docs/reference-mapping/designs/D06.2.md"
+    doc_last_verified: "2026-09-05"
     decisions: []
     changes: []
     notes: null

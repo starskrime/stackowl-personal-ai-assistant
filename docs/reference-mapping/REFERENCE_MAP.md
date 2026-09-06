@@ -491,6 +491,14 @@ unattended. Not built; not filed as debt.
 the marketing claim "costs nearly nothing between sessions" is this feature.
 **StackOwl.** None.
 **Ask.** Relevant to your deployment story, or out of scope for self-hosted?
+**Answered 2026-09-05 — `docs/reference-mapping/designs/D06.2.md`.** Out of scope, and not
+on preference: StackOwl's sandboxes are strictly PER-CALL (`docker run` + a guaranteed
+`docker rm -f` in a `finally` — "No container is ever left behind"), so there is no idle
+sandbox to hibernate. The "costs nearly nothing between sessions" claim is about
+per-second cloud billing; on an always-on Jetson the idle cost is electricity. Both
+integrations are commercial SaaS, against the standing "self-hosted/open-source only" and
+"no vendor names in shipped code" rules. `sandbox_sweep` (every 10m, 1,225 runs) is the
+local analogue and already runs.
 
 ### D06.3 · Confinement depth — `AHEAD`
 **Hermes.** Docker/Singularity isolation; no seccomp/cgroup layer of their own.
