@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
@@ -332,6 +333,38 @@ async def _summarize_unless_floor(
     return await _summarize_if_terse(text, services, state)
 
 
+#: A machine-written honesty suffix that must survive delivery verbatim.
+#:
+#: WHY THIS IS SEPARATE FROM THE FLOOR SKIP. `_summarize_if_terse` already refuses
+#: to rewrite a FLOOR, because a model paraphrasing a guarantee is how a promise
+#: became a fabrication (2026-08-29, test_a_floor_is_never_rewritten_by_a_model).
+#: A budget-capped turn is NOT a floor: it is a real partial answer with an honesty
+#: suffix appended, so it took the summariser path and the suffix was compressed
+#: away. MEASURED 2026-09-06: of the capped turns since the 2026-08-24 report for
+#: which log evidence survives, EVERY silent one had been summarised (4 of 4),
+#: against 0 of 58 that kept their note. The most recent reached Telegram the same
+#: day — a substantive answer with nothing to say it had been cut short, which is
+#: precisely the report that created the note in the first place.
+#:
+#: The note is SPLIT OFF rather than the summarisation being skipped: the owner
+#: asked for terse output, and the sentence itself is fixed machine text with
+#: nothing to compress. The user keeps both their preference and the truth.
+_STOP_NOTE_RE = re.compile(r"\s*\[stopped:[^\]]*\]\s*\Z")
+
+
+def _rejoin(body: str, note: str) -> str:
+    """Re-attach a stop note to a body, with no note meaning byte-identical output."""
+    return f"{body}\n\n{note}" if note else body
+
+
+def _split_stop_note(text: str) -> tuple[str, str]:
+    """Return ``(body, note)`` — ``note`` is "" when there is no trailing note."""
+    m = _STOP_NOTE_RE.search(text)
+    if m is None:
+        return text, ""
+    return text[: m.start()].rstrip(), m.group(0).strip()
+
+
 async def _summarize_if_terse(
     text: str, services: StepServices, state: PipelineState,
 ) -> str:
@@ -350,6 +383,13 @@ async def _summarize_if_terse(
     registry = services.provider_registry
     if registry is None:
         return text
+
+    # The honesty suffix never reaches the summariser, so it cannot be compressed
+    # away; it is re-attached to whatever comes back, including every early return.
+    text, _stop_note = _split_stop_note(text)
+    if not text.strip():
+        # Nothing but the note — there is no body to compress.
+        return _stop_note
 
     from stackowl.interaction.classifier_base import resolve_fixed_tier, safe_complete
     from stackowl.providers.base import Message
@@ -380,20 +420,23 @@ async def _summarize_if_terse(
             "[pipeline] deliver: length_terse summarizer failed — delivering full text",
             extra={"_fields": {"trace_id": state.trace_id}},
         )
-        return text
+        return _rejoin(text, _stop_note)
     compressed = (outcome.result.content or "").strip()
     if not compressed:
         log.gateway.warning(
             "[pipeline] deliver: length_terse summarizer returned empty — delivering full text",
             extra={"_fields": {"trace_id": state.trace_id}},
         )
-        return text
+        return _rejoin(text, _stop_note)
     log.gateway.info(
         "[pipeline] deliver: length_terse summarized",
         extra={"_fields": {"trace_id": state.trace_id, "before_len": len(text),
-                           "after_len": len(compressed)}},
+                           "after_len": len(compressed),
+                           # Names the guarantee that survived, so a future silent
+                           # stop is one grep away instead of a database join.
+                           "stop_note_preserved": bool(_stop_note)}},
     )
-    return compressed
+    return _rejoin(compressed, _stop_note)
 
 
 async def _complete_turn(state: PipelineState, services: StepServices) -> str:

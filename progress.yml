@@ -14477,6 +14477,69 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-140
+    found: 2026-09-06
+    what: >-
+      THE NOTE THAT SAYS A TURN WAS CUT SHORT WAS BEING COMPRESSED AWAY BEFORE DELIVERY.
+      `execute` appends "[stopped: ...]" to a budget-capped partial; `deliver`'s terse
+      summariser then fed the whole reply to a fast-tier model and shipped its rewrite. The
+      user is told a cut-off turn is a complete answer — which is exactly the report that
+      created the note.
+    the_measurement: >-
+      Of the 74 budget-capped turns since Bakir's 2026-08-24 report, 50 told the user
+      plainly, 14 delivered an honest apology floor, and TEN said something else — a
+      substantive answer with nothing to indicate it had been cut off. Correlated against
+      the logs: of the silent ones for which log evidence still exists, EVERY ONE had been
+      summarised (4 of 4), against 0 of 58 that kept their note. The oldest retained log is
+      2026-08-28, so the four older silent turns are unknowable rather than
+      counter-evidence. The most recent reached Telegram on 2026-09-06 at 14:05:04 —
+      "[budget] gate: cap reached" at 14:05:01, "deliver: length_terse summarized" at
+      14:05:04, delivered.
+    why_the_EXISTING_protection_missed_it: >-
+      `_summarize_unless_floor` already refuses to compress a FLOOR — added 2026-08-29
+      after a model paraphrased a guarantee into a falsehood
+      (`test_a_floor_is_never_rewritten_by_a_model`). A budget-capped turn is NOT a floor:
+      it is a genuine partial answer with an honesty suffix, so it took the summariser
+      path. Same seam, same failure, one class of text not covered — an actuator wired on
+      only some paths.
+    and_the_existing_TEST_asserted_the_wrong_seam: >-
+      `test_a_budget_stop_is_never_silent` pins the note by reading the SOURCE of
+      execute.py — `assert "_backstop_note" in branch`. It verifies the note is WRITTEN.
+      Nothing verified it is DELIVERED, so a later step could remove it with every test
+      still green. The platform's own rule is that a task is complete when its outcome
+      reached its DESTINATION; the guarantee was asserted at the producer.
+    what_shipped: >-
+      `_summarize_if_terse` splits a trailing "[stopped: ...]" off before the model sees it
+      and re-attaches it on EVERY exit — success, summariser failure, and empty response.
+      Splitting rather than skipping compression: the owner asked for terse output and the
+      sentence is fixed machine text with nothing to compress, so the user keeps both the
+      preference and the truth. One regex covers all THREE markers (`stop_note_for`, the
+      user-requested stop, and the explicit operator cap), so this protects the whole
+      guarantee family rather than one note. The success line now carries
+      `stop_note_preserved`, so a future silent stop is one grep away.
+    the_fix_is_at_the_LAST_transforming_seam_and_that_was_checked: >-
+      After `_enforce_output_prefs` only delivery steps run, and the proactive fallback —
+      the path today's silent turn actually took — applies deterministic style only:
+      `deliverer.py:311` states "terse style does NOT summarise here". So
+      `_summarize_if_terse` is the single place the note could die.
+    two_of_my_own_errors_caught_by_the_work: >-
+      (1) My preflight asserted `'import re' in source` and passed — on a substring of an
+      unrelated import; `re` was not imported at all and the module failed to load. A
+      loose pattern reported as a fact, the same class as SQL `LIKE '_'`. (2) I wrapped the
+      two failure exits and forgot the SUCCESS return, so the note was still dropped on the
+      normal path — caught by the test written first, which is what tests-first is for.
+    the_gate_refused_the_first_commit: >-
+      ruff rose 35 -> 36 (I001, an unsorted import block) because of where I placed the
+      new `import re`, and the chained gate blocked the commit — nothing was pushed. That
+      is the second time this session the gate has stopped a commit of mine and the second
+      time it was right. Fixed with `ruff --fix` on that file alone, baseline verified back
+      at 35, and the suite re-run afterwards because the fix relocated a TYPE_CHECKING
+      import.
+    mutation_tested: >-
+      Removing the split reproduces the original defect (2 assertions fire); re-attaching
+      only on the happy path fires the failure-exit test. Backup taken AFTER the fix this
+      time, restore verified by grep — DEBT-139's lesson applied. tests/pipeline +
+      tests/notifications: 2011 passed.
   - id: DEBT-139
     found: 2026-09-06
     what: >-
