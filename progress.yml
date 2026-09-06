@@ -14358,6 +14358,50 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-126
+    found: 2026-09-06
+    what: >-
+      THE PLATFORM COULD NOT MEASURE HOW DEEP ITS OWN CONVERSATIONS GO. Every nudge
+      interval is a count of turns ON A LANE, and `[pipeline] execute: turn context
+      composed` is INFO and fires on every single turn — so it is the natural instrument
+      for "has any lane ever reached ten turns?", the question D09.4's validate has been
+      waiting on since 2026-09-02. It carried `trace_id, channel, shaped, nudged` and NO
+      `session_key`. A trace id is unique per TURN, so grouping by it reports every lane
+      as exactly one turn deep.
+    the_wrong_answer_it_produced: >-
+      "68 lanes, max depth 4, ZERO lanes reached 10." That read as a settled answer and
+      was an artefact of the missing field. The nudge's OWN log line does carry
+      session_key, and it says 47 lanes have fired the interval-4 memory nudge, the
+      deepest SIXTEEN times — roughly 64 turns — with NINE lanes past 10. The two
+      readings disagree by more than an order of magnitude and the wrong one came from
+      the line built for the question. CLAUDE.md's rule exactly: print the real shape
+      before you filter it, because a missing field does not announce itself —
+      `f.get("session_key")` returns None and the fallback quietly answers a different
+      question.
+    and_the_second_defect_in_the_same_line: >-
+      `nudged` was `bool(nudge)` — the MEMORY nudge alone — while the SKILL nudge is
+      composed onto the same context a few statements above and appeared nowhere, so its
+      delivery could not be counted at all. One name over two mechanisms, reporting one
+      of them, is indistinguishable from the other never running. Now `nudged` and
+      `skill_nudged` are separate, and a test asserts each label reports its OWN
+      mechanism rather than merely that both names exist — `"nudged": bool(skill_nudge)`
+      would satisfy every name-based assertion while reporting the wrong thing under
+      both labels.
+    what_this_says_about_D09_4: >-
+      Its zero is HONEST BEHAVIOUR, not a defect. The nine deep lanes are all autonomous
+      recovery/incident lanes (owl:secretary:recovery:task-, incident-,
+      owl:rca_gatherer:recovery:retry-) and every one predates the 2026-09-04 counting
+      fix; they went quiet after 09-02 as the platform stabilised, and there have been
+      zero memory-nudge fires since 09-03 against real traffic. The skills nudge is
+      correctly wired on the same seam, counts on every turn whether or not the tool is
+      presented, and simply has not seen a lane reach 10 since it began counting. Its
+      closing-check reason was rewritten to say that, because it used to blame restart
+      windows.
+    mutation_tested: >-
+      Two mutants from a file copy, each verified APPLIED: `session_key` removed, and the
+      two nudge labels crossed. Both caught, restored, re-run green. The crossed-labels
+      mutant is the one that matters — it is invisible to any test that only checks
+      field names.
   - id: DEBT-125
     found: 2026-09-06
     what: >-
@@ -27399,7 +27443,7 @@ items:
       # change it validates. log_since.sh also carries the grep -a fix (the logs hold
       # null bytes) and warns when the window is truncated by rotation.
       n=$(./scripts/log_since.sh 2026-09-02 '[skills] nudge')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge since 2026-09-02 - needs 10 turns on ONE lane inside a restart window; the memory nudge (interval 4, prefix [curated]) is a different line and must not be counted here"
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge since 2026-09-02 - MEASURED 2026-09-06 and the blocker is not what this note used to say. Nine lanes HAVE passed 10 turns in one boot window - the memory nudge fires every 4 and resets, and the deepest lane fired it 16 times, about 64 turns - but every one of them is an autonomous recovery or incident lane (owl:secretary:recovery:task-, incident-, owl:rca_gatherer:recovery:retry-) and all of them predate the 2026-09-04 counting fix. Those lanes went quiet after 09-02 as the platform stabilised: zero memory-nudge fires since 09-03 against real traffic. So this is waiting on a DEEP lane, not on a long human conversation, and the counter is correct meanwhile. The memory nudge (interval 4, prefix [curated]) is a different line and must not be counted here"
     title: "Skill-creation nudges"
     domain: D09
     verdict: MISSING

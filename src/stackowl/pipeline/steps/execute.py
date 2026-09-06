@@ -1303,9 +1303,27 @@ def _turn_context_prefix(
     # shape — the model is composing blind, which is the 2026-08-31 defect.
     log.engine.info(
         "[pipeline] execute: turn context composed",
+        # SESSION_KEY, BECAUSE trace_id CANNOT ANSWER THE QUESTION THIS LINE IS ASKED.
+        # Every nudge interval is a count of turns ON A LANE, and this INFO line fires
+        # on every turn — so it is the natural place to ask "how deep did any lane
+        # get?". It carried only `trace_id`, which is unique per TURN, so grouping by
+        # it reports every lane as exactly one turn deep. Measured 2026-09-06 that
+        # produced "68 lanes, max depth 4, none reached 10" and read as a settled
+        # answer; the nudge's own line, which does carry session_key, says the deepest
+        # lane fired the interval-4 nudge SIXTEEN times — about 64 turns — and nine
+        # lanes passed 10. An order of magnitude, and the wrong number came from the
+        # line built for the question. A missing field does not announce itself.
+        #
+        # AND THE TWO NUDGES ARE REPORTED SEPARATELY. `nudged` was `bool(nudge)` — the
+        # memory nudge alone — while the skill nudge is composed onto this same context
+        # a few statements above and appeared nowhere, so its delivery could not be
+        # counted at all. One name over two mechanisms, reporting one of them, is
+        # indistinguishable from the other never running.
         extra={"_fields": {"trace_id": state.trace_id, "channel": state.channel,
+                           "session_key": state.session_key,
                            "shaped": channel_shape(state.channel) is not None,
-                           "nudged": bool(nudge)}},
+                           "nudged": bool(nudge),
+                           "skill_nudged": bool(skill_nudge)}},
     )
     return f"{context}\n\n{state.input_text}"
 
