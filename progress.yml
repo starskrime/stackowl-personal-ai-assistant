@@ -376,6 +376,15 @@ current:
       try — guessing at that would make it unreliable in the direction that matters.
       The convention instead is to quote a closing query WITHOUT its marker, as this
       record now does. Found by running the detector against the record that fixes it.
+    AND_MY_FIRST_GUARD_PUT_A_48_MINUTE_HANG_IN_THE_GATE: >-
+      The end-to-end test ran `validate_check.py` against THIS repo, which executes
+      every `closing_check` in the record as a shell command with a 180s timeout each
+      — sixteen of them, inside the gate that runs on every commit, against the live
+      database and log files. It passed, so nothing would have said so until a check
+      hung. Rebuilt to run against a fixture tree (the script derives its root from its
+      own location, so relocating it is enough): 12.65s -> 7.59s, hermetic, and the
+      unwiring mutant was re-killed afterwards because a mutation proof does not
+      survive a rewrite of the test it proved.
     MUTATION_PROVEN: >-
       Four mutants, each applied, killed, and restored from a FILE COPY: dropping the
       colon (narration reported as a promise), removing the already-covered exclusion,

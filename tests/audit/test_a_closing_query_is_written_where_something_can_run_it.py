@@ -171,14 +171,45 @@ class TestTheReportIsActuallyWired:
         )
 
     @pytest.mark.tripwire
-    def test_the_loop_actually_prints_them(self) -> None:
-        """The end-to-end control: the assertion above proves a call exists in the
-        source, not that running the script reaches it."""
+    def test_the_loop_actually_prints_them(self, tmp_path: Path) -> None:
+        """The end-to-end control: the assertion above proves a call EXISTS in the
+        source, not that running the script reaches it. The unwiring mutant proved
+        both are needed — deleting the call site left the AST test green.
+
+        RUN AGAINST A FIXTURE TREE, NOT THIS REPO, and that is not fastidiousness.
+        `validate_check.py` executes every `closing_check` in the record as a shell
+        command with a 180s timeout each. Pointing it at the real `progress.yml` from
+        inside the gate — which runs on every commit — buys a dependency on the live
+        database and log files, and a worst case of sixteen checks x 180s. The script
+        derives its root from its own location, so a fixture tree relocates it
+        entirely: the wiring is still proven, by the cheapest thing that can prove it.
+        """
+        (tmp_path / "scripts").mkdir()
+        for name in ("validate_check.py", "progress_lint.py"):
+            (tmp_path / "scripts" / name).write_text(
+                (_ROOT / "scripts" / name).read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        (tmp_path / "progress.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "items": [],
+                    "known_debt": [],
+                    "current": {"rec": {"note": "Closing query: grep the INFO line."}},
+                }
+            ),
+            encoding="utf-8",
+        )
+
         out = subprocess.run(
-            [sys.executable, str(_ROOT / "scripts" / "validate_check.py")],
-            cwd=_ROOT, capture_output=True, text=True, timeout=600,
+            [sys.executable, str(tmp_path / "scripts" / "validate_check.py")],
+            cwd=tmp_path, capture_output=True, text=True, timeout=120,
         )
 
         assert "PROSE PROMISES" in out.stdout, (
-            f"the report did not appear in the loop's output:\n{out.stdout[-2000:]}"
+            "the report did not appear in the loop's output:\n"
+            f"{out.stdout[-2000:]}\n{out.stderr[-1000:]}"
+        )
+        assert "grep the INFO line." in out.stdout, (
+            "the report named a record but not the query to run, which is the friction "
+            f"that kept these unread:\n{out.stdout}"
         )
