@@ -14478,6 +14478,18 @@ upcoming:
 
 known_debt:
   - id: DEBT-151
+    validate_result: >-
+      HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 21:22:16Z after
+      commit bd1aded0 at 21:21:17Z - checked against the boot line, never a PID - and the tree
+      the core loaded reports `_PRAGMAS[0] == "PRAGMA busy_timeout=15000"`. Nine
+      `pool.open: exit - connection established` lines and ZERO
+      `pool._open_inside_lock: connect failed` since.
+      THE ZERO IS NOT YET EVIDENCE AND THE CHECK SAYS SO. This fault needs a writer holding a
+      lock for LONGER than five seconds, and I cannot manufacture that in production; a quiet
+      box produces the same zero as a fixed one. What carries the claim is the direct
+      measurement (8s hold: 5.01s failure before, 7.98s success after) and the tripwire on the
+      ordering. The check is kept because a NON-zero would falsify the fix, which is the half a
+      zero can never do.
     closing_check: |-
       # ABSENCE over a window, and its ambiguity is stated in the OPEN message
       # rather than hidden: the fault needs a contention burst LONGER than 5s to
