@@ -14477,6 +14477,47 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-138
+    found: 2026-09-06
+    what: >-
+      A CLOSING CHECK CAN BE BOUNDED, ITS LINE CAN EXIST, AND IT CAN STILL PROVE NOTHING —
+      because the code it replaced would have satisfied it too. DEBT-128's check grepped
+      "token budget seeded from prior attempts" and reported CLOSEABLE on four seedings
+      across two durable tasks. Both attempts of each task shared ONE trace id
+      (`recover-task-<suffix>` reuses its suffix rather than minting a uuid4), which is
+      exactly the shape the OLD code handled: `get_turn_token_totals(trace_id)` would have
+      found those rows as well. I nearly closed the item on evidence that cannot tell the
+      fix from its predecessor.
+    it_closed_anyway_on_a_different_question: >-
+      `tasks.accumulated_input_tokens` was created by the fix's own migration 0138 and has
+      exactly ONE writer, `set_accumulated_input_tokens`, so a non-zero value is impossible
+      without the new code — and two tasks carry one (265,722 and 145,208). That proves the
+      writer ran; the four INFO lines with matching growing seeds prove the reader fed the
+      governor. The trace-difference case needs no production sample at all, because the
+      fix REMOVED the trace from the lookup and an AST tripwire pins that it is called with
+      `task_id` and never `trace_id`. A structural guarantee does not need traffic.
+    the_family_now_has_THREE_variants: >-
+      Satisfied by HISTORY (DEBT-125, fixed with date bounds); evidence that CANNOT EXIST
+      (DEBT-127, fixed by asking the loggers); and satisfied by a case the OLD CODE HANDLED
+      TOO. A date bound answers WHEN, not BY WHAT. The rule — prefer evidence only the new
+      code could produce: a new column, a new log FIELD, a new message — is now written in
+      the skill beside the other two.
+    the_state_of_the_LIVE_checks_measured: >-
+      Of the ten log-based patterns now open, FOUR embed a fragment introduced by their own
+      fix (D03.2, D09.4, D11.3, DEBT-132) and are strong by construction. TWO (D14.4,
+      DEBT-136) embed a new JSON FIELD added with the fix — I built them that way
+      deliberately after DEBT-132. The remaining four patterns across three items (D06.3
+      twice, D07.2, D16.5) rest on the date bound alone, which discriminates in time but
+      not in cause; D07.2 at least reasons about this in its own comment.
+    NO_GUARD_SHIPPED_AND_THE_PROXY_IS_WHY: >-
+      The obvious check — "was the pattern introduced before the fix?" via `git log -S` —
+      is measurably unreliable, and it misled ME twice while measuring this. First it split
+      patterns on `.*` and judged only the first half, discarding the discriminating
+      fragment. Corrected, it still mislabelled D14.4 and DEBT-136 as weak because their
+      discriminating fragments are JSON rendered at LOG time and appear in no source file.
+      A guard that cries wolf on correct work is the failure this programme keeps paying
+      for, so this stays a rule applied by the loop rather than one a script enforces —
+      recorded plainly rather than implied.
   - id: DEBT-137
     found: 2026-09-06
     what: >-
@@ -14983,18 +15024,31 @@ known_debt:
       NOT retired — `consolidate.py:58` still uses it legitimately for this turn's display
       line, which is a per-trace question.
     validate: >-
-      PARTIAL. Migration 0138 IS live — 138 rows in the live schema_migrations, last three
-      0136/0137/0138, and `tasks.accumulated_input_tokens` exists on the box; the platform
-      restarted at 05:12:56 against a 05:12:33 commit with 0 ERRORs. What is NOT yet
-      evidenced is the claim itself: that a SECOND attempt of a durable task begins already
-      carrying what earlier attempts spent. That needs a real retry to occur.
-    closing_check: |
-      # The seed had NO log line, so this check could not have existed — the exact trap
-      # DEBT-127 shipped a guard for, met the very next day while writing the check that
-      # guard demands. An INFO line was added FIRST, then this. Bounded to the day it
-      # shipped: the fix is what makes a non-zero seed possible at all.
-      n=$(./scripts/log_since.sh 2026-09-06 'token budget seeded from prior attempts')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n attempt(s) began carrying prior-attempt tokens" || echo "OPEN 0 retried durable tasks since the fix shipped; the column and migration ARE live-evidenced"
+      DONE, 2026-09-06, and the CLOSEABLE was verified rather than believed. Four seedings
+      across two durable tasks: task-5b15942dc453 seeded with 88,196 prior tokens at
+      14:02:07 and 175,721 at 14:03:52; task-d0a3e6b57520 with 20,765 then 59,626. A second
+      attempt demonstrably begins carrying what the first spent, and `tasks` holds a
+      non-zero `accumulated_input_tokens` for exactly those two rows (265,722 and 145,208).
+    the_grep_ALONE_would_have_been_a_FALSE_POSITIVE_and_I_nearly_took_it: >-
+      Both attempts of each task share ONE trace id — the `recover-task-<suffix>` prefix
+      reuses a stable suffix rather than minting a uuid4. That is precisely the shape the
+      OLD code already handled: `get_turn_token_totals(trace_id)` would have found the
+      prior rows too, so this sample does not by itself distinguish the fix from what it
+      replaced. A check satisfied by a case both versions handle is the "satisfied by
+      history" defect one dimension over.
+    what_ACTUALLY_discriminates_and_why_it_closes: >-
+      `accumulated_input_tokens` was created by migration 0138 and has exactly ONE writer,
+      `set_accumulated_input_tokens`. A non-zero value is therefore impossible without the
+      new code, and two tasks carry one — so the new WRITER ran in production, and the four
+      INFO lines with matching growing values prove the new READER fed the governor. The
+      trace-difference case needs no production sample at all, because the fix REMOVED the
+      trace from the lookup: `test_the_budget_bounds_the_task_not_the_attempt` walks the
+      AST and asserts the seed is called with `task_id` and never `trace_id` (6 passed
+      today). Structural guarantees do not need traffic to demonstrate them.
+    if_it_ever_needs_re_verifying: >-
+      Ask the DB, not the log: `SELECT COUNT(*) FROM tasks WHERE accumulated_input_tokens
+      > 0` is the discriminating question, because that column cannot be written by any
+      code that predates the fix. The log line is corroboration, not proof.
     the_guard_reads_the_CALL_not_the_text: >-
       `tests/pipeline/durable/test_the_budget_bounds_the_task_not_the_attempt.py` walks the
       AST of execute.py and asserts both cumulative seeds are called with the SAME

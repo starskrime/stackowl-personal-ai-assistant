@@ -213,6 +213,33 @@ the closing query first; I ran it, got 0, and read the 0 as provisional.
 LOGGERS — every log-based pattern must be a string some `log.*` call actually emits, at
 INFO or above. A string merely PRESENT in the tree proves nothing about the logs.
 
+**PREFER EVIDENCE ONLY THE NEW CODE COULD PRODUCE.** A check can be bounded, and its
+line can exist, and it can STILL not close anything — because the code you replaced
+would have satisfied it too. MEASURED 2026-09-06: DEBT-128's check grepped for "token
+budget seeded from prior attempts" and reported CLOSEABLE on four seedings across two
+tasks. But both attempts of each task shared ONE trace id (`recover-task-<suffix>`
+reuses its suffix), and that is exactly the shape the OLD code already handled —
+`get_turn_token_totals(trace_id)` would have found those rows as well. The check was
+satisfied by a case that cannot tell the fix from its predecessor.
+
+It closed anyway, on a DIFFERENT question: `tasks.accumulated_input_tokens` was created
+by the fix's own migration and has exactly one writer, so a non-zero value is impossible
+without the new code. **That is the shape to reach for** — a new column, a new log
+FIELD, a new message — not a pre-existing line that merely fires again.
+
+This is the third variant of one family, and naming all three together is the point:
+satisfied by HISTORY (DEBT-125, fixed with date bounds), evidence that CANNOT EXIST
+(DEBT-127, fixed by asking the loggers), and satisfied by a case the OLD CODE HANDLED
+TOO. A date bound answers *when*, not *by what*.
+
+No guard is shipped for this and the reason is recorded: the obvious proxy — "was the
+pattern introduced before the fix?" — is measurably unreliable. Run against the live
+checks it mislabelled D14.4 and DEBT-136 as weak, because their discriminating
+fragments (`"remedies": ["`, `"recurring": true`) are JSON rendered at LOG time and
+appear in no source file. A check that cries wolf on correct work is the failure this
+programme keeps paying for, so this stays a rule you apply rather than one a script
+enforces.
+
 **If you cannot write the check, the premise is too vague — fix the premise.** D11.3's
 evidence was a frame rendered as text to the model and logged NOWHERE, so no volume of
 traffic could ever have closed it: the DEBUG-evidence failure above, one step worse. Being
