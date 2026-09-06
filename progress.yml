@@ -14521,6 +14521,17 @@ known_debt:
       never applied. NOT observed here: this box has no systemd unit and `_sd_notify`
       self-skips without NOTIFY_SOCKET, so the restart path is inert locally while
       shipping armed to any systemd deployment.
+    validate: >-
+      PARTIAL. Live at 06:41:29 against a 06:41:06 commit with 0 ERRORs, and the widened
+      window is in the running code. What is NOT yet evidenced is the effect: a probe that
+      misses the FIRST window and answers inside the SECOND. That needs a real slow probe,
+      which happened 63 times in nine days but cannot be summoned.
+    closing_check: |
+      # The re-probe line was reworded to name the wider window, so this pattern only
+      # matches code shipped by DEBT-132 — a hit proves the new path ran in production,
+      # not merely that a re-probe happened at some point in history.
+      n=$(./scripts/log_since.sh 2026-09-06 're-probing with a')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n slow probe(s) got the wider second window" || echo "OPEN 0 slow probes since the fix shipped; the code IS live-evidenced"
     three_instrument_errors_of_my_own_in_this_diagnosis: >-
       Recorded because they are the same shape as the defect. (1) I labelled
       `health_sweep: bound to the live pipeline services — a recovered provider now clears
