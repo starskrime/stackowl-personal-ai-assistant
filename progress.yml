@@ -14478,6 +14478,20 @@ upcoming:
 
 known_debt:
   - id: DEBT-146
+    stages:
+      validate: done
+    validate_result: >-
+      VERIFIED END-TO-END, 2026-09-06, and no restart applies - this item changes no runtime
+      code, so the honest question is whether the GUARD actually runs in the gate rather than
+      whether a process picked it up. It does: the gate went from "135 passed, 2 skipped"
+      (gate8/gate9, the previous loop) to "138 passed, 2 skipped" - exactly the three tripwires
+      added, plus one deselected for the unmarked vacuity control. Then proved it BITES: adding
+      `uv run stackowl doctor` to the README made `pytest -m tripwire` fail on
+      test_every_stackowl_command_it_names_exists, and restoring from a file copy returned it to
+      green. A guard that runs but cannot fail is decoration; this one runs and fails.
+      NOTE ON THE NUMBERS: gate10 and gate11 both read 138 because the test file already existed
+      when gate10 ran (14:00 vs 14:03). Checked rather than assumed - an identical before/after
+      count is exactly the shape of a guard that was never collected.
     found: 2026-09-06
     what: >-
       THE REPOSITORY PEOPLE ARE TOLD TO CLONE HAD NO README. Measured 2026-09-06 against the
