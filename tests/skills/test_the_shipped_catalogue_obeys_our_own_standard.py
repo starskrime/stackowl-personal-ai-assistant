@@ -18,12 +18,20 @@ them with an LLM would put generated content into the repository". So the only
 place they can be fixed is here, by hand, in the repo — which is why this guard
 lives beside them rather than in the migrator.
 
-WHAT THIS ENFORCES AND WHAT IT DOES NOT. The description rule is enforced: the 14
-files now conform (longest 56). The BODY rules — the seven required sections and
-their order — are not, because 14 files still violate them and arming a rule the
-tree fails would block every commit in the repo. That is DEBT-130's lesson applied
-to my own guard: land the rule in the same change as the compliance, never before
-it. The sections backlog is recorded in DEBT-137 with its measurement.
+WHAT THIS ENFORCES. The WHOLE standard — name, frontmatter and body — because the
+tree now satisfies all of it. The description rule was armed first, on 2026-09-06,
+when only the descriptions had been fixed; the BODY rules (seven required sections,
+in order) were deliberately left disarmed that day because 14 files still failed
+them and arming a rule the tree fails blocks every commit in the repo. They are
+armed here, in the same change that makes them true — which is the order DEBT-130
+paid for.
+
+The restructure MOVED content rather than rewriting it: `## Steps` became
+`## Procedure` verbatim, `Pitfalls` and `Verification` kept their text and were
+reordered, and the four genuinely-absent sections were derived from what each file
+already said — its `when_to_use` frontmatter, the tools its steps name, and the
+rules implicit in its own Pitfalls. That the learned catalogue meets this standard
+25/25 is what proved it achievable rather than aspirational.
 
 The descriptions were shortened rather than deleted, and nothing was lost: the
 standard already gives the detail a home in `when_to_use`, which every one of these
@@ -75,6 +83,21 @@ def _shipped() -> list[tuple[str, dict[str, object]]]:
     return out
 
 
+def _all_violations(name: str, fields: dict[str, object], body: str) -> list[object]:
+    """Every BLOCKING violation the real validator reports for one shipped skill.
+
+    Name, frontmatter and body together: the defect was a standard enforced at one
+    door and not another, so a guard that checked only part of it would leave the
+    same gap in miniature.
+    """
+    vs = (
+        list(std.validate_name(name))
+        + list(std.validate_frontmatter(fields))
+        + list(std.validate_body(body))
+    )
+    return list(std.blocking(vs))
+
+
 def _description_violations(fields: dict[str, object]) -> list[object]:
     """Only the description rule, asked of the REAL validator.
 
@@ -91,6 +114,33 @@ def _description_violations(fields: dict[str, object]) -> list[object]:
 
 
 class TestShippedDescriptionsConform:
+    @pytest.mark.tripwire
+    def test_the_whole_shipped_catalogue_passes_the_whole_standard(self) -> None:
+        """THE RULE, armed in the change that makes it true.
+
+        Not "most of it" and not "the parts that were cheap": every shipped skill
+        passes name, frontmatter and body, because a standard the platform enforces
+        on everyone else's writes has to hold for the writes it ships itself.
+        """
+        offenders = {}
+        for d in sorted(_BUILTIN.iterdir()):
+            p = d / "SKILL.md"
+            if not p.exists():
+                continue
+            text = p.read_text(encoding="utf-8")
+            m = re.match(r"^---\n(.*?)\n---\n(.*)$", text, re.S)
+            if m is None:
+                offenders[d.name] = ["no frontmatter block"]
+                continue
+            vs = _all_violations(d.name, _frontmatter(text), m.group(2))
+            if vs:
+                offenders[d.name] = [f"{v.rule}: {str(v)[:70]}" for v in vs]
+
+        assert not offenders, (
+            "these SHIPPED skills violate the standard the platform enforces on "
+            f"everyone else's writes: {offenders}"
+        )
+
     @pytest.mark.tripwire
     def test_no_shipped_skill_exceeds_the_description_cap(self) -> None:
         offenders = {

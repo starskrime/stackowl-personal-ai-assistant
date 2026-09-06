@@ -8,7 +8,8 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Memory Curation
+## When to Use
+After a session that surfaced facts or preferences worth keeping long-term, or when the user explicitly asks to remember something. Also use on a periodic curation pass to promote staged facts and remove stale or duplicate entries.
 
 Conversation-only context evaporates when the session ends. This skill steers
 deliberate, verified storage of durable facts and preferences so that future
@@ -16,8 +17,24 @@ sessions benefit from what was learned. The background consolidation worker also
 runs automatically, but this skill drives intentional curation when the user or
 the assistant identifies something worth preserving right now.
 
-## Steps
+## Prerequisites
+- The `memory` tool for storing facts and preferences.
+- `reflect_now` to trigger deliberate consolidation.
+- Something genuinely durable to store — not session scratch.
 
+## How to Run
+1. Identify what is worth keeping beyond this session.
+2. Store each fact with the `memory` tool.
+3. Trigger consolidation with `reflect_now`.
+4. Recall it back to confirm retention.
+
+## Quick Reference
+- Store what outlives the session; leave working state alone.
+- A write is not a memory until it can be recalled.
+- Consolidate deliberately rather than hoping it happens.
+- Verify by reading back, not by trusting the write.
+
+## Procedure
 1. **Identify what is worth storing.** Separate durable facts (preferences,
    decisions, recurring patterns, stable context about the user or their
    environment) from transient conversation detail (one-off intermediate values,
@@ -38,21 +55,7 @@ the assistant identifies something worth preserving right now.
    confirm it appears in the result. Do not tell the user something was
    remembered until this step confirms it.
 
-## Verification
-
-Before claiming anything was remembered:
-
-- The recall step in Step 4 must return the stored item (or an item equivalent
-  in meaning). If the store declined or the recall returns nothing, do not
-  claim success — report the failure honestly and suggest the user try again or
-  check storage limits.
-- Do not conflate a successful `memory` call with confirmed persistence; only
-  a successful recall proves the item survived consolidation.
-- If `reflect_now` reports an error, note it; the background worker may still
-  consolidate later, but that is uncertain and should be communicated as such.
-
 ## Pitfalls
-
 - **Storing transient detail as durable.** One-off values, intermediate
   calculations, or conversation-specific context pollute the memory store and
   reduce retrieval quality. Only store things that will be useful in a future
@@ -69,3 +72,15 @@ Before claiming anything was remembered:
 - **Over-curating a single session.** Bulk-storing every detail from a long
   conversation creates noise. Be selective: prefer a few high-signal durable
   items over many low-signal ones.
+
+## Verification
+Before claiming anything was remembered:
+
+- The recall step in Step 4 must return the stored item (or an item equivalent
+  in meaning). If the store declined or the recall returns nothing, do not
+  claim success — report the failure honestly and suggest the user try again or
+  check storage limits.
+- Do not conflate a successful `memory` call with confirmed persistence; only
+  a successful recall proves the item survived consolidation.
+- If `reflect_now` reports an error, note it; the background worker may still
+  consolidate later, but that is uncertain and should be communicated as such.

@@ -8,7 +8,8 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Recover and Retry After Tool Failures
+## When to Use
+When a tool call returns an error, a shell command exits non-zero, or a fetch fails, and the task cannot be completed without recovering from that failure.
 
 A single tool failure mid-task does not have to abort the whole goal — but
 recovering blindly or hiding the failure behind a cheerful message is worse than
@@ -20,8 +21,24 @@ Note: the platform also performs automatic substitution and retries on certain
 failure classes. This skill steers the model to cooperate with that mechanism,
 not fight it by retrying the same tool indefinitely.
 
-## Steps
+## Prerequisites
+- The failing tool's error text, read rather than skimmed.
+- An in-bounds alternative tool where one exists.
+- A failure that is genuinely mid-task, not a refused request.
 
+## How to Run
+1. Read the error carefully.
+2. Try an in-bounds, non-consequential alternative.
+3. Retry the original once if the failure looked transient.
+4. Stop and report honestly if it still fails.
+
+## Quick Reference
+- One retry, not a loop — repeated identical calls are not recovery.
+- An alternative must be in-bounds and non-consequential.
+- Hiding a failure behind a cheerful message is worse than stopping.
+- Report what failed and what was tried, not just that it failed.
+
+## Procedure
 1. **Read the error carefully.** Do not retry immediately. Identify whether the
    failure is transient (timeout, rate-limit, temporary network issue) or
    structural (wrong path, missing permission, bad input). The recovery path
@@ -44,21 +61,7 @@ not fight it by retrying the same tool indefinitely.
    different input). Never paper over a consequential failure with a vague
    "I ran into a small issue" summary.
 
-## Verification
-
-Before reporting recovery as successful, confirm:
-
-- The alternative or retry actually produced the needed result — not just a
-  non-error response. An empty result that looks like success is still a
-  failure.
-- No consequential action (write, delete, send) was retried more than once
-  without the user being informed, since each attempt may have had a side
-  effect.
-- If the recovery failed, the report names the original tool, the error, the
-  alternative tried, and the outcome of the alternative.
-
 ## Pitfalls
-
 - **Retrying a consequential action blindly.** If `shell` ran a destructive
   command and returned an error, running it again without understanding the
   error can double the damage. Read the error first.
@@ -71,3 +74,15 @@ Before reporting recovery as successful, confirm:
   non-consequential. Using a different write tool to paper over a write failure
   (e.g. writing to a different path than requested) without telling the user is
   a scope violation.
+
+## Verification
+Before reporting recovery as successful, confirm:
+
+- The alternative or retry actually produced the needed result — not just a
+  non-error response. An empty result that looks like success is still a
+  failure.
+- No consequential action (write, delete, send) was retried more than once
+  without the user being informed, since each attempt may have had a side
+  effect.
+- If the recovery failed, the report names the original tool, the error, the
+  alternative tried, and the outcome of the alternative.

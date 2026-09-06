@@ -8,7 +8,8 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Web Automation
+## When to Use
+When the target information or action lives behind a browser interaction that a plain HTTP fetch cannot reach — e.g. a login-gated page, a JS-rendered table, a multi-step form, or a page that requires clicking before data appears.
 
 Static fetches only see the HTML the server sends on first load. Pages that
 render content via scripts, require interaction before revealing data, or sit
@@ -16,8 +17,24 @@ behind a session must be driven with browser tools. This skill enforces a
 snapshot-before-act, verify-after-act discipline so that no action is reported
 as successful without evidence that the page actually reached the expected state.
 
-## Steps
+## Prerequisites
+- `browser_navigate` and `browser_snapshot` for the page.
+- `browser_click` / `browser_type` when interaction is required.
+- A target that a plain HTTP fetch genuinely cannot reach.
 
+## How to Run
+1. Navigate to the target URL with `browser_navigate`.
+2. Take a structural snapshot with `browser_snapshot`.
+3. Interact with `browser_click` / `browser_type` as needed.
+4. Close or clean up the session when done.
+
+## Quick Reference
+- Use the browser only when a static fetch cannot see the content.
+- Snapshot before interacting — act on structure, not a guess.
+- Every opened session is closed, or the runtime leaks.
+- Extract what was rendered, not what the HTML promised.
+
+## Procedure
 1. **Navigate to the target URL with `browser_navigate`.** Pass the full URL.
    Wait for the page to signal readiness before proceeding; if the page is
    slow, call `browser_wait_for` with an appropriate selector or timeout.
@@ -43,23 +60,7 @@ as successful without evidence that the page actually reached the expected state
    long-lived browser context was opened, so it does not leak into subsequent
    turns.
 
-## Verification
-
-Before reporting the outcome:
-
-- Re-take a snapshot after every significant interaction and confirm the page
-  reached the expected state (correct URL, expected element visible, form
-  confirmation shown) — do not rely on a click or submit having "worked"
-  without re-checking.
-- Confirm extracted data is non-empty, correctly typed, and clearly comes from
-  the target page rather than a stale snapshot or an error page.
-- If a navigation redirected to an unexpected URL (e.g. a login wall), surface
-  that fact rather than silently returning empty results.
-- Never claim a form was submitted or a button was clicked if the post-action
-  snapshot does not confirm the expected outcome.
-
 ## Pitfalls
-
 - **Acting on a stale snapshot.** Always re-snapshot after navigation or
   interaction before reading element state. A snapshot taken before a click is
   useless for confirming the click worked.
@@ -73,3 +74,17 @@ Before reporting the outcome:
 - **Ignoring redirects.** A navigation that lands on a different URL than
   requested (login page, CAPTCHA, error page) must be surfaced, not silently
   treated as the intended page.
+
+## Verification
+Before reporting the outcome:
+
+- Re-take a snapshot after every significant interaction and confirm the page
+  reached the expected state (correct URL, expected element visible, form
+  confirmation shown) — do not rely on a click or submit having "worked"
+  without re-checking.
+- Confirm extracted data is non-empty, correctly typed, and clearly comes from
+  the target page rather than a stale snapshot or an error page.
+- If a navigation redirected to an unexpected URL (e.g. a login wall), surface
+  that fact rather than silently returning empty results.
+- Never claim a form was submitted or a button was clicked if the post-action
+  snapshot does not confirm the expected outcome.

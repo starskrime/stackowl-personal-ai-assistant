@@ -8,15 +8,32 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Write Your Own Skill
+## When to Use
+When a multi-step task succeeded and the procedure is general enough to be worth capturing — so the same sequence can be recalled and applied to similar future requests without rediscovering it.
 
 When a multi-tool sequence succeeds, capturing it as a reusable skill means the
 same procedure is available in future sessions without rediscovering it. This
 skill guides that capture step: what to include, how to call the synthesis tool,
 and how to confirm the skill was actually persisted.
 
-## Steps
+## Prerequisites
+- `synthesize_skills` to persist the drafted skill (consent-gated).
+- `skills_list` to check the procedure is not already captured.
+- A multi-tool sequence that actually SUCCEEDED.
 
+## How to Run
+1. Decide whether the sequence is worth capturing.
+2. Draft the skill content before calling the tool.
+3. Call `synthesize_skills` with that draft.
+4. Confirm the skill was persisted.
+
+## Quick Reference
+- Capture procedures that succeeded, never ones that failed.
+- Draft first — the tool records what you give it, verbatim.
+- Check `skills_list` so you extend rather than duplicate.
+- Confirm persistence from the result, not from the call.
+
+## Procedure
 1. **Decide whether the sequence is worth capturing.** A sequence is worth a
    skill if it: (a) worked end-to-end, (b) is general enough to apply to at
    least one other plausible future request, and (c) is non-trivial — more than
@@ -39,18 +56,7 @@ and how to confirm the skill was actually persisted.
    skill was saved if the tool declined, was cancelled by the user, or returned
    an error.
 
-## Verification
-
-Before claiming the skill was written, confirm:
-
-- `synthesize_skills` returned a success result (not a consent refusal or
-  an error).
-- The new skill appears in the output of `skills_list`.
-- The stored content includes procedure steps, at least one pitfall, and a
-  verification check — not just a description of the outcome.
-
 ## Pitfalls
-
 - **Capturing a failed or uncertain sequence.** Only synthesise a skill from
   a sequence that demonstrably worked. A skill built from a partially-successful
   or uncertain execution will mislead future uses.
@@ -63,3 +69,12 @@ Before claiming the skill was written, confirm:
 - **Duplicating an existing skill.** Check `skills_list` before synthesising.
   If a skill already covers the procedure, prefer updating it (note the
   successful run) rather than creating a near-duplicate.
+
+## Verification
+Before claiming the skill was written, confirm:
+
+- `synthesize_skills` returned a success result (not a consent refusal or
+  an error).
+- The new skill appears in the output of `skills_list`.
+- The stored content includes procedure steps, at least one pitfall, and a
+  verification check — not just a description of the outcome.

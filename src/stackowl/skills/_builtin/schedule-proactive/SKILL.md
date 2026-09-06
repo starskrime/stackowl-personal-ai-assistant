@@ -8,7 +8,8 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Schedule a Proactive Goal or Reminder
+## When to Use
+When the user asks to be reminded of something, wants a recurring check-in, or wants the assistant to proactively act on a goal at a future time or on a repeating schedule.
 
 A request to "remind me every Monday" or "check in on my project weekly"
 requires a durable, persisted job — not a promise held only in the current
@@ -16,8 +17,23 @@ session. This skill uses the `cronjob` tool to create a real scheduled entry
 so the goal fires even after the session ends, and enforces confirmation before
 telling the user the schedule is set.
 
-## Steps
+## Prerequisites
+- The `cronjob` tool to create the durable job.
+- A schedule and goal text the user has actually confirmed.
+- A destination the job can deliver to.
 
+## How to Run
+1. Clarify the schedule and goal text if ambiguous.
+2. Create the job with the `cronjob` tool.
+3. Confirm creation from the tool's own result.
+
+## Quick Reference
+- A promise held only in this session is not a schedule.
+- Ambiguous timing is clarified before the job is created, not after.
+- Confirm from the tool result, not from having called it.
+- A job with no destination cannot deliver anything.
+
+## Procedure
 1. **Clarify the schedule and goal text if ambiguous.** Before creating the
    job, confirm: (a) the recurrence pattern (e.g. daily at 09:00, every Monday,
    first day of the month); (b) the goal or message text the job should deliver;
@@ -38,21 +54,7 @@ telling the user the schedule is set.
    it. This gives the user something concrete to verify against if the reminder
    does not fire.
 
-## Verification
-
-Before telling the user a schedule is active:
-
-- The `cronjob` tool result must contain a job ID or success status. If it
-  reports an error or returns no ID, the job was not created — do not claim
-  it was scheduled.
-- Repeat the schedule back to the user in plain language (e.g. "every Monday
-  at 09:00") so they can catch any misparse of the cron expression before the
-  first trigger fires.
-- Never say "I've scheduled that" if the tool call has not yet been made or
-  returned an error.
-
 ## Pitfalls
-
 - **Claiming a schedule that did not persist.** A session-scoped reminder that
   is not backed by a `cronjob` tool call will not fire after the session ends.
   Always use the tool; never simulate scheduling with a conversational promise.
@@ -68,3 +70,15 @@ Before telling the user a schedule is active:
 - **Duplicate jobs.** Creating the same reminder twice (e.g. because the user
   asked again) creates duplicate noise. Check whether an equivalent job already
   exists before creating a new one.
+
+## Verification
+Before telling the user a schedule is active:
+
+- The `cronjob` tool result must contain a job ID or success status. If it
+  reports an error or returns no ID, the job was not created — do not claim
+  it was scheduled.
+- Repeat the schedule back to the user in plain language (e.g. "every Monday
+  at 09:00") so they can catch any misparse of the cron expression before the
+  first trigger fires.
+- Never say "I've scheduled that" if the tool call has not yet been made or
+  returned an error.

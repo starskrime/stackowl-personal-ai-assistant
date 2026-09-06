@@ -8,15 +8,32 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Deep Research with Source Verification
+## When to Use
+When the user asks a factual question that requires more than one source to answer reliably — especially when the answer may be contested, time-sensitive, or consequential enough to warrant source verification.
 
 Single-source answers are fragile: sources disagree, pages are outdated, and a
 confident-sounding wrong answer is worse than a hedged uncertain one. This skill
 enforces a multi-angle search, source-fetching, cross-check, and cite-everything
 discipline before any claim reaches the user.
 
-## Steps
+## Prerequisites
+- `web_search` for multi-angle querying and `web_fetch` for sources.
+- `browser_navigate` / `browser_snapshot` when a page needs interaction.
+- At least two independent sources must be reachable.
 
+## How to Run
+1. Run several `web_search` queries from different angles.
+2. Fetch the strongest sources with `web_fetch`.
+3. Cross-check each claim across those sources.
+4. Synthesise with inline citations and a stated confidence level.
+
+## Quick Reference
+- One authoritative-looking result is not enough — cross-check.
+- Every claim traces to a URL fetched in THIS session, not to recall.
+- Surface contradictions between sources; never resolve them silently.
+- Confidence reflects source coverage, not tone.
+
+## Procedure
 1. **Run several `web_search` queries from different angles.** A minimum of
    three queries covering different framings of the question (e.g. the claim
    itself, a counter-claim, a "how do I verify X" angle). Record which queries
@@ -38,20 +55,7 @@ discipline before any claim reaches the user.
    high (multiple independent sources agree), medium (one strong source, others
    indirect), or low (sources conflict or evidence is thin).
 
-## Verification
-
-Before delivering the answer, confirm:
-
-- Every non-obvious claim in the reply is traceable to a URL that was actually
-  fetched in this session — not recalled from training data.
-- Contradictions between sources are surfaced, not resolved by silent selection.
-- The confidence level honestly reflects the source coverage: do not mark
-  "high confidence" if only one source was fetched or if sources disagreed.
-- If a fetch failed or returned no useful content, the gap is noted rather than
-  filled with an unsourced claim.
-
 ## Pitfalls
-
 - **Single-source answers.** One search result that looks authoritative is not
   enough. Always cross-check with at least one additional independent source
   before stating a claim as fact.
@@ -66,3 +70,14 @@ Before delivering the answer, confirm:
 - **Ignoring contradictions.** When sources disagree, picking one silently
   misleads the user. Surface the disagreement and let the user decide how much
   weight to put on each source.
+
+## Verification
+Before delivering the answer, confirm:
+
+- Every non-obvious claim in the reply is traceable to a URL that was actually
+  fetched in this session — not recalled from training data.
+- Contradictions between sources are surfaced, not resolved by silent selection.
+- The confidence level honestly reflects the source coverage: do not mark
+  "high confidence" if only one source was fetched or if sources disagreed.
+- If a fetch failed or returned no useful content, the gap is noted rather than
+  filled with an unsourced claim.

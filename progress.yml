@@ -14543,6 +14543,25 @@ known_debt:
       defect. Nothing was lost in the shortening: the standard already gives the detail a
       home in `when_to_use`, which every one of these files carries and which is not
       capped.
+    COMPLETED_2026_09_06_the_body_rules_are_now_armed: >-
+      All 14 shipped skills restructured into the standard's seven sections, in order, and
+      the guard now enforces the WHOLE standard — name, frontmatter and body — because the
+      tree finally satisfies all of it. Full validator over the catalogue: 14 files, ZERO
+      blocking violations of any rule. Bodies run 60-88 lines against a 200-line soft cap.
+    what_made_it_safe_to_do_by_hand: >-
+      The learned catalogue meets this standard 25 of 25, in the required order — which is
+      what proved it achievable rather than aspirational, and gave a house template to
+      follow instead of my own invention. And the restructure MOVED content rather than
+      rewriting it: `## Steps` became `## Procedure` verbatim, `Pitfalls` and
+      `Verification` kept their text and were reordered, and the four absent sections were
+      DERIVED from what each file already said — its `when_to_use` frontmatter, the tools
+      its own steps name, and the rules implicit in its own Pitfalls. That is the
+      distinction the migrator's docstring draws when it warns that "a regex would produce
+      conforming skills that no longer describe what they do".
+    mutation_tested_on_the_newly_armed_rules: >-
+      Renaming a required section fires the guard; reordering Pitfalls and Verification
+      fires it. Restores by file copy, final re-run green at 5 passed. tests/skills +
+      tests/startup: 619 passed.
     what_is_NOT_enforced_yet_and_why: >-
       The BODY rules — the seven required sections and their order — are recorded, not
       armed: 14 files still violate them (sections 14, section_order 13 after this

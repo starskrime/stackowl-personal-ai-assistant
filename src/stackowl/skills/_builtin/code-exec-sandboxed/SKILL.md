@@ -8,7 +8,8 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Sandboxed Code Execution
+## When to Use
+When a task needs to run code to compute a value, parse or transform data, or execute a quick script. Use this skill to ensure the code actually runs and the output is observed before being reported.
 
 Running code and assuming it succeeded is not the same as running code and
 reading what it actually produced. This skill enforces the discipline of
@@ -16,8 +17,25 @@ capturing and inspecting real stdout, stderr, and exit status before claiming
 any computed result — so silent failures, non-zero exits, and wrong outputs are
 caught before they reach the user.
 
-## Steps
+## Prerequisites
+- `execute_code` for running the snippet.
+- `process` and `wait` for long-running or background work.
+- The snippet must be written before it is run — never improvised inline.
 
+## How to Run
+1. Write the code snippet.
+2. Run it with `execute_code`.
+3. For long-running work, use `process` + `wait`.
+4. Capture stdout, stderr and the exit status.
+5. Report what was actually observed.
+
+## Quick Reference
+- Running code and ASSUMING success is not running code.
+- A non-zero exit status is a result to report, not an error to retry blindly.
+- stderr is evidence even when stdout looks right.
+- Quote the observed output rather than describing it.
+
+## Procedure
 1. **Write the code snippet.** Keep the script minimal and focused on the
    specific computation or transformation needed. Avoid side effects beyond the
    intended output. If the script needs input data, embed it directly or load it
@@ -41,8 +59,20 @@ caught before they reach the user.
    the captured output. Quote the relevant stdout lines directly rather than
    paraphrasing.
 
-## Verification
+## Pitfalls
+- **Ignoring a non-zero exit status.** The most dangerous failure mode: the run
+  fails silently and the agent reports an assumed result. Always gate on exit
+  status before extracting output.
+- **Assuming silent success.** An empty stdout is not a success signal. Check
+  that the expected output is actually present before proceeding.
+- **Running unbounded jobs synchronously.** Calling `execute_code` on a long
+  computation blocks and may time out. Use `process` + `wait` for any job that
+  might run more than a few seconds.
+- **Paraphrasing instead of quoting output.** Reporting a "cleaned up" version
+  of the output introduces transcription errors. Quote the relevant lines
+  directly.
 
+## Verification
 Before reporting any computed value to the user:
 
 - **Check the exit status first.** A non-zero exit status means the code did
@@ -57,17 +87,3 @@ Before reporting any computed value to the user:
 - **Never report a computed result you did not observe in the output.** If the
   output is empty or missing the expected value, say so rather than filling it
   in from inference.
-
-## Pitfalls
-
-- **Ignoring a non-zero exit status.** The most dangerous failure mode: the run
-  fails silently and the agent reports an assumed result. Always gate on exit
-  status before extracting output.
-- **Assuming silent success.** An empty stdout is not a success signal. Check
-  that the expected output is actually present before proceeding.
-- **Running unbounded jobs synchronously.** Calling `execute_code` on a long
-  computation blocks and may time out. Use `process` + `wait` for any job that
-  might run more than a few seconds.
-- **Paraphrasing instead of quoting output.** Reporting a "cleaned up" version
-  of the output introduces transcription errors. Quote the relevant lines
-  directly.

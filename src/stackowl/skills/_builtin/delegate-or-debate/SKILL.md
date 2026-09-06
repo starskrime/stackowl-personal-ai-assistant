@@ -8,7 +8,8 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Delegate or Debate
+## When to Use
+When a task exceeds what a single generalist pass can handle well — either because it needs a specialist owl, because diverse independent drafts improve quality, or because a structured multi-round debate is needed to reach a synthesized position.
 
 Routing a task to the right handler — a specialist, a mixture of independent
 drafts, or a structured debate — produces better outcomes than always answering
@@ -16,8 +17,24 @@ in a single generalist pass. This skill provides a DECISION recipe for choosing
 among the three modes, then enforces honest reporting of the child result before
 it is relayed to the user.
 
-## Steps
+## Prerequisites
+- `delegate_task` for a specialist and `mixture_of_agents` for parallel drafts.
+- A task large enough that one generalist pass would do it badly.
+- The mode must be chosen before invoking anything.
 
+## How to Run
+1. Classify the task: specialist, mixture, or debate.
+2. Invoke the chosen mechanism.
+3. Collect and inspect the result.
+4. Relay it to the user.
+
+## Quick Reference
+- Choose the mode first; invoking both is waste, not rigour.
+- A delegated result is inspected before it is relayed.
+- Debate is for contested judgement, not for extra volume.
+- The user sees one answer, not the machinery behind it.
+
+## Procedure
 1. **Classify the task into one of three modes:**
 
    - **Single specialist subtask** — the task has a clear domain owner (e.g.
@@ -51,20 +68,7 @@ it is relayed to the user.
    (e.g. "the specialist returned…", "the debate synthesised…"). Do not
    present the child result as your own unaided answer.
 
-## Verification
-
-Before relaying the child result:
-
-- Confirm the result is non-empty and coherent — an empty string, a timeout
-  error, or a child task that reported failure is not a usable result.
-- If the child task returned a degraded result (partial failure, some sub-steps
-  failed), surface that degradation honestly rather than presenting the output
-  as fully successful.
-- Do not relay a child result that was never received (e.g. a fire-and-forget
-  call with no response collected). Wait for the response before reporting.
-
 ## Pitfalls
-
 - **Delegating trivial work.** The overhead of delegation (routing, context
   transfer, result collection) is not worth it for a simple factual question or
   a one-sentence task. Use delegation for tasks that genuinely benefit from a
@@ -80,3 +84,14 @@ Before relaying the child result:
   question wastes resources and latency. Running a single-specialist delegate
   for a question that genuinely needs diverse perspectives produces a weaker
   answer. Match the mode to the task's actual needs.
+
+## Verification
+Before relaying the child result:
+
+- Confirm the result is non-empty and coherent — an empty string, a timeout
+  error, or a child task that reported failure is not a usable result.
+- If the child task returned a degraded result (partial failure, some sub-steps
+  failed), surface that degradation honestly rather than presenting the output
+  as fully successful.
+- Do not relay a child result that was never received (e.g. a fire-and-forget
+  call with no response collected). Wait for the response before reporting.

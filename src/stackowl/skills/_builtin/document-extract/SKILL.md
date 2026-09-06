@@ -8,7 +8,8 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Document Extraction
+## When to Use
+When the user needs specific structured data extracted from a document (e.g. a table of figures, a list of named entities, specific fields from a form), not a general summary. For long-document summarisation, use the chunked-pdf-summary skill instead.
 
 Summarisation collapses a document into prose. Extraction pulls specific
 structured content — tables, named fields, lists, numerical values — out of
@@ -16,8 +17,24 @@ it verbatim. This skill enforces loading, locating, extracting, and
 spot-checking the result so that hallucinated fields and silent truncation are
 caught before they reach the user.
 
-## Steps
+## Prerequisites
+- `pdf` or `read_file` to load the document.
+- `execute_code` when the extracted data needs reshaping.
+- A specific extraction target — extraction is not summarisation.
 
+## How to Run
+1. Load the document with `pdf` or `read_file`.
+2. Locate the target sections.
+3. Extract the content verbatim.
+4. Assemble and return the structured result.
+
+## Quick Reference
+- Extraction preserves the source's wording; summarisation does not.
+- Name the target before reading, or you will summarise by accident.
+- Return structure (tables, fields, lists), not prose about structure.
+- A field that is absent is reported absent, never inferred.
+
+## Procedure
 1. **Load the document with `pdf` or `read_file`.** For PDF files, use the
    `pdf` tool. For plain-text, markdown, CSV, or other text formats, use
    `read_file`. Note the total page or line count so truncation can be
@@ -40,24 +57,7 @@ caught before they reach the user.
    Include page or section references so the user can locate each value in
    the source document.
 
-## Verification
-
-Before delivering the extracted result:
-
-- **Spot-check extracted values against the source text.** Pick two or three
-  extracted values at random and confirm they appear verbatim (or with only
-  formatting normalisation) in the loaded document content. If a value cannot
-  be traced to a source page, remove it — do not guess.
-- **Report coverage.** State how many pages or sections were searched and
-  whether any could not be parsed (e.g. scanned images, password-protected
-  pages, corrupted sections). Do not silently omit unparseable pages.
-- **Do not invent fields.** Every field in the extracted output must have a
-  corresponding source location. If a requested field is not present in the
-  document, say so explicitly rather than substituting a plausible-sounding
-  value.
-
 ## Pitfalls
-
 - **Hallucinating fields not in the document.** The most common failure mode:
   the model "fills in" a field it expects to see but that is absent from the
   source. The spot-check step exists specifically to catch this — treat any
@@ -76,3 +76,18 @@ Before delivering the extracted result:
 - **Missing page references.** Extracted values without source references are
   unverifiable by the user. Always include page numbers or section identifiers
   alongside extracted content.
+
+## Verification
+Before delivering the extracted result:
+
+- **Spot-check extracted values against the source text.** Pick two or three
+  extracted values at random and confirm they appear verbatim (or with only
+  formatting normalisation) in the loaded document content. If a value cannot
+  be traced to a source page, remove it — do not guess.
+- **Report coverage.** State how many pages or sections were searched and
+  whether any could not be parsed (e.g. scanned images, password-protected
+  pages, corrupted sections). Do not silently omit unparseable pages.
+- **Do not invent fields.** Every field in the extracted output must have a
+  corresponding source location. If a requested field is not present in the
+  document, say so explicitly rather than substituting a plausible-sounding
+  value.

@@ -8,15 +8,33 @@ author: stackowl-builtin
 license: MIT
 ---
 
-# Plan and Track Multi-Step Goals
+## When to Use
+When the user asks for a multi-step task (migrate, refactor, set up, investigate) where losing track of completed vs. pending work would cause rework or missed steps.
 
 Long tasks fail not because the individual steps are hard but because the plan
 drifts from reality — steps are skipped, marked done prematurely, or the scope
 changes without the plan reflecting it. This skill enforces a single-source-of-
 truth plan that stays in sync with actual work throughout the task.
 
-## Steps
+## Prerequisites
+- `update_plan` to record and revise the ordered subtasks.
+- A goal with enough steps that drift is possible.
+- Exactly one step may be `in_progress` at a time.
 
+## How to Run
+1. Lay out the ordered subtasks.
+2. Mark exactly one step `in_progress`.
+3. Complete it before moving on.
+4. Re-plan when the scope changes.
+5. Report progress in the final reply.
+
+## Quick Reference
+- One `in_progress` step at a time — parallel claims hide drift.
+- Mark done only after the step actually finished.
+- Scope change means re-plan, not silent extension.
+- The final reply states what was done and what was not.
+
+## Procedure
 1. **Lay out the ordered subtasks.** Call `update_plan` at the start with the
    full list of steps the task requires. Be specific enough that each step has
    a clear completion criterion, but do not over-plan — add detail as you learn
@@ -39,18 +57,7 @@ truth plan that stays in sync with actual work throughout the task.
    which steps completed, which were skipped (with reason), and whether any are
    still outstanding.
 
-## Verification
-
-Before calling the task done, confirm:
-
-- The plan has no step that is simultaneously `in_progress` and `done`.
-- Every step that the user asked for is either `done` or explicitly accounted
-  for (skipped with reason, deferred with explanation).
-- The plan in the tracking store matches the actual state — if a step was
-  completed without being marked done, correct the record before reporting.
-
 ## Pitfalls
-
 - **Skipping ahead.** Starting step 3 while step 2 is still `in_progress`
   invalidates the single-in-progress invariant and makes it impossible to
   resume correctly if interrupted.
@@ -62,3 +69,12 @@ Before calling the task done, confirm:
 - **Stale plans.** Scope changes that are not reflected in the plan leave future
   steps incoherent. Always call `update_plan` when the goal changes, even if
   only the order of steps shifts.
+
+## Verification
+Before calling the task done, confirm:
+
+- The plan has no step that is simultaneously `in_progress` and `done`.
+- Every step that the user asked for is either `done` or explicitly accounted
+  for (skipped with reason, deferred with explanation).
+- The plan in the tracking store matches the actual state — if a step was
+  completed without being marked done, correct the record before reporting.
