@@ -11339,6 +11339,41 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_154_the_AI_Act_disclosure_nobody_has_ever_seen_and_whether_you_want_hints:
+      raised: 2026-09-06
+      question: >-
+        TWO decisions on the onboarding surface. (1) `setup/disclosure.py` renders an EU AI
+        Act disclosure, is imported by NOTHING in src/, and has been shown ZERO times. Wire
+        it, or retire it? (2) The reference platform shows a one-time hint the first time a
+        user hits a behaviour fork (messaging while a turn runs, the first long-running
+        tool), tracked once per install. We have no such mechanism. Do you want one?
+      why_evidence_cannot_settle_it: >-
+        The first is legal, not technical: whether this deployment owes an AI Act disclosure
+        depends on who uses it and where, which no measurement here can answer, and deleting
+        a compliance artefact on my own judgement is not a call I should make. The second is
+        product appetite for a surface nobody has been able to experience.
+      the_measurement_to_decide_on: >-
+        `disclosure` is the ONLY one of 9 modules in setup/ with zero src importers; five
+        tests keep it green and reached. Its text is real (localize.py:12 holds the key) and
+        has never rendered. `/onboarding` itself has 0 invocations in the retained window and
+        the 3-step wizard has 1 run — expected on a single-owner install set up once, before
+        log retention. There is no once-per-install flag anywhere; infra/nudge.py is a
+        per-lane interval counter in process memory that resets on every restart, and boots
+        ran 66-181 per day during development.
+      recommendation: >-
+        On (1): decide, do not defer — an unshown legal notice is the worst of both, since it
+        looks like compliance in the tree and provides none in production. If it is owed, the
+        wizard's final step is the natural place; if not, delete the module and its five
+        tests together, per "retired means deleted". On (2): the cheapest honest version is
+        ONE hint at the message-while-running fork, since that is the behaviour most likely
+        to confuse a new user and the platform already detects it (reply-to-inflight STEER).
+        Its flag must live in config or the DB, never in memory — the gateway and core are
+        separate processes and both restart often.
+      blocked_until_answered: >-
+        Nothing. D14.3 is closed as an audit; these are the decisions it produced.
+      premise_check: |-
+        n=$(grep -rn "AiActDisclosure" --include=*.py src 2>/dev/null | grep -vc "setup/disclosure.py")
+        [ "$n" -gt 0 ] && echo "EXPIRED the disclosure now has $n caller(s) in src" || echo "HOLDS the disclosure is still imported by nothing in src"
     ESC_153_which_of_the_five_absent_capabilities_are_worth_building:
       raised: 2026-09-06
       question: >-
@@ -30127,17 +30162,57 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: docs/reference-mapping/designs/D14.3.md
+    doc_last_verified: "2026-09-06 against commit ee5d1b41 — Verification RUN: the docstring is the AI Act line; src grep returns nothing; only tests/test_story_12_2.py references it; both log counts 0"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        THE MAP DESCRIBED OUR OWN TREE WRONGLY, and only reading the file found it. Its
+        StackOwl line called `setup/disclosure.py` "progressive disclosure". Its first line is
+        `"""AiActDisclosure — EU AI Act disclosure management."""` — a localised LEGAL notice
+        with per-session show-tracking, nothing to do with revealing features gradually. The
+        map line is corrected in this change.
+      - >-
+        AND THAT MODULE IS BUILT, TESTED AND UNREACHABLE. Measured across all 9 modules in
+        `setup/`: `disclosure` is the ONLY one with ZERO importers in src/. Five tests in
+        tests/test_story_12_2.py construct AiActDisclosure and assert get_text() returns
+        non-empty English and German text, so it has coverage, passes, and is reached by
+        nothing but its own tests — CLAUDE.md shape #5, with the tests doing the work of
+        making it look alive. Its localisation key exists (localize.py:12), so the text is
+        real; it has simply never been shown: `disclosure` appears 0 times in every retained
+        log.
+      - >-
+        NOT DELETED, AND THAT IS DELIBERATE. "Retired means deleted" governs code that was
+        retired; this was never wired. An EU AI Act disclosure encodes a legal obligation
+        someone added on purpose, and whether this deployment owes one is not an engineering
+        question. ESC-126 hit the identical fork for `/quiet`'s notification_overrides on
+        2026-09-05 and was escalated rather than decided; this follows that precedent as
+        ESC-154.
+      - >-
+        THE ASK ANSWERED as far as evidence reaches: there is NO once-per-install hint
+        mechanism. The nearest thing, infra/nudge.py, is a per-lane INTERVAL counter in
+        process memory — it fires every N turns and resets on restart, the opposite of "once
+        per install, ever". Whether hints are wanted at all is appetite, so it forms the
+        second half of ESC-154. The design constraint is already known and recorded: the
+        gateway and core are separate processes, so a hint flag must live in config or the
+        database, never in memory.
+      - >-
+        AN INSTRUMENT WARNING, because it produced a wrong number here first. Counting the
+        string "onboarding" across the logs returns 828, and every one is the boot-time
+        `assembly.register_all_commands: exit` line listing all 34 command names — not an
+        invocation. The real figure is `onboarding.handle` = 0. Same family as counting "429"
+        and matching token counts: ask for the EVENT, not the word.
+      - >-
+        Nothing built — implement/test/validate no_change_needed. Both open questions are
+        genuinely the operator's (a legal notice, and product appetite for hints), and the
+        diagnosis behind each is complete rather than deferred.
     notes: null
 
   - id: D14.4

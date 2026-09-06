@@ -1216,7 +1216,8 @@ Hermes 84 slash + 39 CLI subcommand modules. StackOwl 33 slash + 10 CLI groups.
 user hits a behavior fork** (message-while-running, first long-running tool), tracked in config under
 `onboarding.seen.<flag>`, shown once per install ever. Deliberately dependency-free so CLI and gateway
 can both import it.
-**StackOwl.** `setup/` is a 3-step wizard + `setup/disclosure.py` (progressive disclosure).
+**StackOwl.** `setup/` is a 3-step wizard + `/onboarding`, a button-driven replay wizard.
+*(CORRECTED 2026-09-06: this line said `setup/disclosure.py` was "progressive disclosure". It is not — it is the EU AI Act legal notice, and nothing in `src/` imports it. See `designs/D14.3.md` and ESC-154.)*
 **Ask.** Add just-in-time hints alongside the wizard?
 
 ### D14.4 · Doctor — `PARTIAL`
