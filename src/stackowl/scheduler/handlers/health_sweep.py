@@ -307,6 +307,15 @@ class HealthSweepHandler(JobHandler):
                     "job_id": job.job_id,
                     "down": [s.name for s in down],
                     "degraded": [s.name for s in degraded],
+                    # WHICH OF THEM TOLD THE OPERATOR WHAT TO DO (D14.4). The remedy
+                    # itself travels in the outbound alert and in JobResult.output —
+                    # neither of which is a log — so before this field there was NO
+                    # observable record that a remedy had been attached at all. D14.4's
+                    # first closing check grepped the logs for the alert text and could
+                    # never have succeeded: `_compose_alert` RETURNS that string, and
+                    # nothing logs it. Naming the subsystems here is what turns "did the
+                    # 2am alert carry a fix?" into a question the logs can answer.
+                    "remedies": [s.name for s in (*down, *degraded) if s.remedy],
                 }
             },
         )

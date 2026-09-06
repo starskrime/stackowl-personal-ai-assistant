@@ -14477,6 +14477,78 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-127
+    found: 2026-09-06
+    what: >-
+      A CLOSING CHECK THAT RETURNS 0 IS AMBIGUOUS, and nothing distinguished the two
+      meanings. It can mean "the event has not happened yet" — which is what OPEN is for —
+      or "the evidence being asked for cannot ever appear", which is not an open question
+      at all but a dead end wearing one. D14.4's check, written by me earlier today,
+      was the second kind.
+    the_measurement: >-
+      Its check grepped the logs for `health sweep found unhealthy`. That string lives at
+      health_sweep.py:489 as the first line of the message `_compose_alert` RETURNS — it
+      goes to the outbound alert sink and to JobResult.output, and NOTHING LOGS IT.
+      Meanwhile the sweep detected unhealthy subsystems 735 times (3 of them that day) and
+      the phrase appeared in the logs ZERO times, ever. Confirmed structurally: an AST walk
+      of every logging call in src/ finds no message literal containing it. I also checked
+      whether JobResult.output is persisted — job_results has a result_text column and 2,352
+      rows, but ZERO health_sweep rows — so the alert text is nowhere queryable at all.
+    the_root_cause_is_how_I_READ_the_zero: >-
+      I ran the closing query, got 0, and read it as "hasn't happened yet" without asking
+      whether it could ever be anything else. The skill already said "run the closing query
+      before you need it"; running it is not enough if a 0 is accepted as provisional. This
+      is the D11.3 defect — evidence that cannot exist — committed ONE DAY after the rule
+      against it was written into the skill.
+    what_shipped: >-
+      `tests/audit/test_a_closing_check_looks_for_evidence_that_can_exist.py` asks the
+      LOGGERS, not the file: for every log-based closing_check it walks the AST of every
+      logging call in src/ and asserts the pattern is a string some call can actually emit,
+      and that it is emitted at INFO or above rather than DEBUG only. A string that is
+      merely PRESENT in the tree — returned, stored, rendered — proves nothing about the
+      logs, and that is the distinction the guard exists to make. Its control tests both
+      directions: a known INFO line must be found, and `health sweep found unhealthy` must
+      NOT be.
+    the_audit_found_a_second_one_and_it_was_a_FALSE_POSITIVE: >-
+      The guard flagged D09.4's `[skills] nudge` too. That one is legitimate: TurnNudge logs
+      `f"{self.label}: due"` and the label is passed at skills/nudge.py:46, so the string
+      never appears as a literal at the call site. PROOF the indirection reaches the logs —
+      the SIBLING label "[curated] nudge" runs the identical code path and has produced 98
+      log lines. Rather than weaken the guard I declared an exemption that must cite its
+      evidence, with three hygiene tests over the exemption list itself: every entry states
+      a PROOF, no entry may survive once a direct emitter exists, and no entry may name a
+      pattern no check uses.
+    the_fix_to_D14_4: >-
+      The detection line `UNHEALTHY subsystems detected` IS logged, so it now carries a
+      `remedies` field naming the subsystems whose status had one. That turns "did the 2am
+      alert carry a fix?" into a question the logs can answer, and D14.4's check greps
+      `UNHEALTHY subsystems detected.*"remedies": \["` — a message with a real emitter plus
+      the field, so the guard accepts it and a 0 now genuinely means "not yet".
+    and_then_I_WALKED_INTO_THE_SAME_SHAPE_AGAIN_one_layer_over: >-
+      The rewritten check was dated 2026-09-07 — TOMORROW. That is not merely a typo, and
+      it is not the empty window it looks like: `log_since.sh` filters by FILENAME, and the
+      current file is `stackowl.jsonl` with no date in its name, so it is ALWAYS in the
+      window. Measured 2026-09-06, `log_since.sh 2026-09-07 scheduler` returned 5,660 — the
+      identical count an unbounded grep returns. A future bound therefore produces an
+      UNBOUNDED count, so the check would have read CLOSEABLE on lines emitted before the
+      fix shipped. That is DEBT-125's own defect coming back through the one path its date
+      bound never covered, and the guard I had just built could not see it because it asks
+      about the PATTERN and says nothing about the WINDOW.
+    fixed_at_the_cause_in_the_script: >-
+      `log_since.sh` now REFUSES a future bound (stderr + exit 2) rather than answering it,
+      because a bound it cannot honour must fail loudly instead of returning a number that
+      merely looks bounded — nothing can have shipped tomorrow, so it is always a mistake.
+      A static tripwire in the same audit file catches it at the GATE, where the check is
+      written, rather than at validate time. Mutation-proven: dating a check 2027-01-01
+      fires it, and the restore was a file copy.
+    mutation_tested_and_one_restore_FAILED_SILENTLY: >-
+      Three mutants: a check reverted to the unloggable string (caught), an exemption
+      stripped of its evidence (caught), and a check pointed at a DEBUG-only line (caught).
+      The second restore used `git checkout` on an UNTRACKED file with `|| true` after it —
+      the exact landmine the skill records — so the mutant SAT IN THE TREE and the final
+      re-run printed "1 failed" instead of green. That final re-run is the only reason it
+      was noticed; it is not optional, and this is the second time this programme has paid
+      for that lesson.
   - id: DEBT-126
     found: 2026-09-06
     what: >-
@@ -30382,8 +30454,14 @@ items:
       # when a subsystem is actually unhealthy, and the boot after this shipped had
       # ok=15/15. Scoped to the day it shipped, because the alert line has existed for
       # months and an unbounded count would report CLOSEABLE on pre-change evidence.
-      n=$(./scripts/log_since.sh 2026-09-06 'health sweep found unhealthy')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n alert(s) since the remedy shipped - check one carries a → line" || echo "OPEN 0 unhealthy sweeps since 2026-09-06, so the alert path has not rendered a remedy in production; the CLI half IS live-evidenced"
+      # REWRITTEN 2026-09-06. The first version grepped for 'health sweep found
+      # unhealthy' and COULD NEVER HAVE CLOSED: _compose_alert RETURNS that string to
+      # the alert sink and to JobResult.output, and nothing logs it — the sweep found
+      # unhealthy subsystems 735 times while that phrase appeared in the logs zero
+      # times, ever. The detection line IS logged, so the observable question is
+      # whether a remedy was attached to it.
+      n=$(./scripts/log_since.sh 2026-09-06 'UNHEALTHY subsystems detected.*"remedies": \["')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n unhealthy sweep(s) carried a remedy since 2026-09-06" || echo "OPEN 0 unhealthy sweeps with a remedy since the field shipped; the CLI half IS live-evidenced"
     title: "Doctor"
     domain: D14
     verdict: PARTIAL

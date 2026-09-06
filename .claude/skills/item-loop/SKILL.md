@@ -202,6 +202,17 @@ D15.6's check asked for a file containing both `notification_overrides` and `SEL
 `store_cadence.py` names the table in a cadence declaration and says SELECT about something
 else. A conjunction across a whole file is not a statement.
 
+**A ZERO IS AMBIGUOUS — make sure the evidence CAN exist.** A check returning 0 means
+either "not yet" or "never possible", and only one of those is an open question. MEASURED
+2026-09-06: D14.4's check grepped the logs for `health sweep found unhealthy`, a string
+`_compose_alert` RETURNS to the alert sink and which nothing logs — the sweep found
+unhealthy subsystems 735 times while that phrase appeared in the logs zero times, ever. It
+would have read OPEN forever. Written by me hours after this very section told me to run
+the closing query first; I ran it, got 0, and read the 0 as provisional.
+`tests/audit/test_a_closing_check_looks_for_evidence_that_can_exist.py` now asks the
+LOGGERS — every log-based pattern must be a string some `log.*` call actually emits, at
+INFO or above. A string merely PRESENT in the tree proves nothing about the logs.
+
 **If you cannot write the check, the premise is too vague — fix the premise.** D11.3's
 evidence was a frame rendered as text to the model and logged NOWHERE, so no volume of
 traffic could ever have closed it: the DEBUG-evidence failure above, one step worse. Being

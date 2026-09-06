@@ -59,6 +59,29 @@ if [[ ! "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     exit 2
 fi
 
+# A FUTURE BOUND IS UNENFORCEABLE, AND SILENTLY SO — refuse it rather than answer it.
+#
+# The date filter below applies to FILENAMES, and the current file is `stackowl.jsonl`
+# with no date in its name, so it is always in the window (deliberately — see below).
+# That makes a future bound a lie rather than an empty window: measured 2026-09-06,
+# `log_since.sh 2026-09-07 scheduler` returned 5660, the identical count an unbounded
+# grep returns, because every one of those lines is in today's file.
+#
+# So a check bounded at tomorrow reads CLOSEABLE on evidence that PREDATES the fix —
+# which is the exact defect the date bound was added to prevent (D07.2 closing on
+# events seven days older than the code they evidenced). Found by writing one: a
+# closing check was dated 2026-09-07 on 2026-09-06 and would have passed on pre-fix
+# lines. Nothing can have shipped tomorrow, so this is always a mistake, and an
+# unenforceable bound must fail loudly rather than return a number that looks bounded.
+today="$(date -u +%F)"
+if [[ "$since" > "$today" ]]; then
+    echo "log_since: '$since' is in the FUTURE (today is $today). The bound cannot be" \
+         "honoured — the current log file has no date in its name and is always in" \
+         "the window, so this would count pre-fix lines as evidence." >&2
+    echo 0
+    exit 2
+fi
+
 shopt -s nullglob
 stamped=("$dir"/stackowl-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl)
 
