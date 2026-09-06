@@ -14478,6 +14478,16 @@ upcoming:
 
 known_debt:
   - id: DEBT-147
+    validate_result: >-
+      HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 19:23:40Z after
+      commit 54292c44 at 19:22:44Z, so the enriched lines ARE the code now running - checked
+      against the boot line, never a PID - and the new accessor answers in the running tree:
+      `tripped_on` returns `browser_navigate|{"url": "x"}` for a guard driven past break_at.
+      The closing check reads OPEN at 0 and that is correct rather than disappointing: it needs
+      a turn to max out or trip the guard, which takes a long turn, and the platform has been
+      quiet since the restart. The zero is "not yet" and CAN become non-zero, because the
+      fields are emitted by log.engine.warning calls in src - the level rule this programme has
+      paid for three times.
     closing_check: |-
       # Keyed on the "calls" FIELD, which this item added to these lines - the old
       # ones carried only "provider", so a hit proves the NEW code ran (DEBT-138).
