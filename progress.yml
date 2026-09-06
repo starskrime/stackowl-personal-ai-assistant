@@ -14477,6 +14477,54 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-150
+    found: 2026-09-06
+    what: >-
+      SEVEN VERIFICATION STEPS PINNED A TEST COUNT OVER A WHOLE PACKAGE, so adding a test
+      anywhere falsified the document. FOUR had already drifted: D10.1 `tests/skills` pinned
+      474 and D10.4 pinned 484 for the IDENTICAL command against an actual 495; D10.7 pinned
+      871 against 885; D16.4 pinned "58 passed (was 55)" for `pytest -m tripwire` against 139 -
+      2.4x off. The other three (sandbox 172, agents 125, knowledge 205) were right only
+      because nobody had added a test there lately, not by construction.
+    the_root_cause_is_that_the_DOC_ROTS_BECAUSE_THE_PROGRAMME_WORKS: >-
+      A count over a package changes whenever anyone adds a test - which is the normal,
+      desirable output of this programme. So the record decays as a SIDE EFFECT of doing the
+      work, and D10.1 vs D10.4 shows the mechanism in one line: two documents froze different
+      numbers for one command on the days they were written.
+    the_correct_shape_was_ALREADY_THE_NORM_and_already_in_the_same_files: >-
+      THIRTEEN wide steps already assert `expect: 0 failed` against seven that pinned a count,
+      and D03.2 does BOTH three lines apart - a single-file `expect: 14 passed`, then
+      `pytest tests/pipeline/steps tests/memory` / `expect: 0 failed`. Defect shape 3 with the
+      correct copy already dominant. DEBT-133 named this same disease for LOG counts ("SHAPE,
+      NOT A PINNED COUNT") and fixed one; nobody then looked at the TEST counts.
+    the_guard_is_DELIBERATELY_NARROW_and_the_control_says_so: >-
+      22 single-file counts are LEFT ALONE. A count over one file changes only when that file
+      changes - and then its document is being edited anyway - so it pins the coverage the
+      document is actually about. Flagging those would make the guard noise AND delete real
+      information, so a control test asserts at least 15 of them survive.
+    the_guard_produced_a_FALSE_POSITIVE_first_and_it_is_pinned_as_a_test: >-
+      The first walker reported D03.2:131 as an offender. It is a line CONTINUATION - `... \`
+      then `-q -k "WIRED"` - and the walker had mistaken the continuation for the command.
+      Backslash joins now happen before anything else, and `test_the_walker_joins_line_
+      continuations` pins exactly that case, because a guard that cries wolf on correct work
+      is the failure this repo pays for most often.
+    mutation_proven: >-
+      Three mutants, each verified APPLIED: re-pinning a package-wide count fires the rule;
+      removing the continuation join brings the false positive back; widening `_is_wide` to
+      everything takes three tests red at once. Restored from file copies; 4 passed.
+    full_suite_SEVENTH_GREEN_on_this_work: >-
+      Launched on the clean committed tree BEFORE any edit of this loop and collected after -
+      12,312 passed, 17 skipped, 0 failed in 2146.47s (rc=0), header commit=9362d909
+      dirty_files=0, "SUITE TREE STILL". Three src changes had landed since the last full run
+      (health, providers, incident_escalation) and the full run is the only detector for
+      cross-test pollution. The SKIP COUNT FELL 18 -> 17, which is DEBT-149's unconditional
+      skip becoming a real test - a number moving in the right direction for a reason the
+      record can name.
+    what_else_the_cause_reaches: >-
+      Any document that records a MEASUREMENT rather than a PROPERTY is dated the moment it is
+      written, and the more active the area the faster it rots. The question worth carrying:
+      does this expectation describe something that SHOULD stay constant, or something that
+      merely WAS constant when I looked?
   - id: DEBT-149
     found: 2026-09-06
     what: >-

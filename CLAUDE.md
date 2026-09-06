@@ -99,6 +99,7 @@ at a process table. Measured, in order:
 | 2026-09-06 | **`12197 passed, 18 skipped, 0 failed in 1928.85s` (rc=0)** — fourth green |
 | 2026-09-06 | **`12215 passed, 18 skipped, 0 failed in 1941.48s` (rc=0)** — fifth green |
 | 2026-09-06 | **`12284 passed, 18 skipped, 0 failed in 1979.40s` (rc=0)** — sixth green, `SUITE TREE STILL` |
+| 2026-09-06 | **`12312 passed, 17 skipped, 0 failed in 2146.47s` (rc=0)** — seventh green; skips 18→17, an unconditional skip became a real test |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so
