@@ -103,11 +103,12 @@ def test_ordinary_non_secret_text_is_unchanged() -> None:
 
 
 def test_identifier_keys_are_not_redacted() -> None:
-    from stackowl.infra.observability import _is_sensitive
+    from stackowl.infra.observability import _IDENTIFIER_KEYS, _is_sensitive
 
-    for name in ("session_key", "resume_session_key", "identity_key", "owner_key",
-                 "scope_key", "idempotency_key", "occurrence_key", "delegate_key",
-                 "channel_key", "stream_key", "request_key"):
+    # ASKS THE ALLOWLIST RATHER THAN RESTATING IT. These 11 names were a literal
+    # copy of `_IDENTIFIER_KEYS`; adding a twelfth would have exempted a name from
+    # redaction with nothing testing that the exemption was intended.
+    for name in sorted(_IDENTIFIER_KEYS):
         assert not _is_sensitive(name), f"{name} is an identifier, not a credential"
 
 

@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import pytest
 
+from stackowl.pipeline.durable.agent_task import DELIVERED_STATUSES
+
 pytestmark = pytest.mark.asyncio
 
 
@@ -68,7 +70,10 @@ async def _complete(store: object, *, status: str, result: str = "OK") -> None:
 
 
 class TestAnAnswerThatArrivedIsUnchanged:
-    @pytest.mark.parametrize("status", ["completed", "delivered", "suppressed"])
+    # ASKS `DELIVERED_STATUSES` RATHER THAN RESTATING IT. A literal copy stops
+    # covering the authority the moment a status is ADDED — silently, because the
+    # test still passes over the three it already knows. Sorted for a stable id.
+    @pytest.mark.parametrize("status", sorted(DELIVERED_STATUSES))
     async def test_a_delivered_answer_completes_and_is_never_requeued(
         self, status: str
     ) -> None:

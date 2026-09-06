@@ -14477,6 +14477,48 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-141
+    found: 2026-09-06
+    what: >-
+      THREE TESTS HELD A LITERAL COPY OF A CONSTANT `src/` ALREADY DEFINES, so a value
+      ADDED to the constant would silently never be covered. Found by hunting the shape
+      that turned the suite red the loop before: for every module-level UPPERCASE
+      constant holding 3+ strings, which test literals equal that set EXACTLY while never
+      referencing the constant.
+    the_three: >-
+      `_IDENTIFIER_KEYS` (11 names) — the REDACTION allowlist, restated in
+      test_observability_redaction; a twelfth name would have been exempted from
+      redaction with nothing testing the exemption was intended. `DELIVERED_STATUSES` —
+      restated as a parametrize list guarding "a delivered answer is never requeued", i.e.
+      never sending the user a duplicate. `_VALID_CLASSES` — restated in a loop whose
+      docstring promised it "covers all three class tokens", a promise a fourth class
+      would silently falsify. All three now ask the constant.
+    DEBT_139_WAS_THE_LUCKY_CASE: >-
+      That one failed LOUDLY — 13 failures, a red suite — only because a value was
+      RENAMED. A pure ADDITION is silent: the constant grows, the literal still matches
+      everything it names, the test still passes, and the new value is simply uncovered.
+      The loud version cost half a loop; the silent version costs nothing until it
+      matters, which is worse.
+    the_guard_is_DELIBERATELY_NARROW: >-
+      It flags only EXACT set equality between a test literal and a src constant, and only
+      when the test never REFERENCES the constant. A test using SOME of a constant's
+      values as inputs is normal: the first pass of this measurement reported 26 hits by
+      counting scattered values and 24 were legitimate; narrowing to literal collections
+      gave 10; requiring exact equality gave 3, all genuine. A guard that cries wolf on
+      correct work is the failure this repo keeps paying for.
+    AND_MY_FIRST_GUARD_SURVIVED_ITS_OWN_MUTANT: >-
+      It skipped a file when the constant's name appeared anywhere in the SOURCE TEXT —
+      and the fixed test's own docstring says "Asks `_VALID_CLASSES` rather than restating
+      it", so restoring the literal left the file skipped and the guard green. That is the
+      guard-matches-its-own-comment defect for the FOURTH time here (a date regex matching
+      "also"; an unbounded-grep guard passing because its comment named the helper it
+      checked for; a closing-check guard reading its own explanation). Fixed by asking the
+      AST which identifiers the file actually REFERENCES rather than searching prose. The
+      mutant is caught now; it was not before, and only mutation testing said so.
+    also_caught_before_committing_this_time: >-
+      ruff flagged I001 on the router test's import — the same unsorted-import mistake as
+      DEBT-140, but found by running ruff BEFORE the gate rather than by the gate refusing
+      the commit. src baseline unchanged at 35.
   - id: DEBT-140
     found: 2026-09-06
     what: >-

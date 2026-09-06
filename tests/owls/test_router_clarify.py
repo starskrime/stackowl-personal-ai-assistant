@@ -15,7 +15,7 @@ import pytest
 
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.owls.registry import OwlRegistry
-from stackowl.owls.router import RouteResult, SecretaryRouter
+from stackowl.owls.router import _VALID_CLASSES, RouteResult, SecretaryRouter
 from stackowl.pipeline.state import PipelineState
 from stackowl.providers.mock_provider import MockProvider
 from stackowl.providers.registry import ProviderRegistry
@@ -99,8 +99,13 @@ def test_bare_class_token_on_line3_yields_no_question() -> None:
 
 
 def test_bare_class_token_variants_all_yield_no_question() -> None:
-    """Covers all three class tokens appearing as the sole line-3 content."""
-    for token in ("conversational", "standard", "clarify"):
+    """Covers EVERY class token appearing as the sole line-3 content.
+
+    Asks `_VALID_CLASSES` rather than restating it. The docstring used to promise
+    "all three" beside a literal copy of the set, so a fourth class would have been
+    uncovered AND that promise silently false.
+    """
+    for token in sorted(_VALID_CLASSES):
         raw = f"secretary\nclarify\n{token}"
         question = _r()._parse_clarify_question(raw, "clarify")
         assert question is None, f"Token {token!r} should not become a question, got {question!r}"
