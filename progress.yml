@@ -14478,6 +14478,19 @@ upcoming:
 
 known_debt:
   - id: DEBT-153
+    validate_result: >-
+      HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 21:55:38Z after
+      commit bb4d51e6 at 21:54:39Z - checked against the boot line, never a PID. On the RUNNING
+      tree: both messages are present, `cold_start` defaults to False, and an AST read of
+      `_checkpoint_validate_and_promote` confirms the `_learning_store.restore` CALL and the
+      `return False` are in the SHARED body, not inside either message arm - the fail-closed
+      guarantee I nearly broke.
+      MY FIRST LIVE CHECK WAS A BAD INSTRUMENT AND SAID "restore is shared: False". It compared
+      `src.index("restore")` against `src.index("shadow gate REJECTED")`, and the word "restore"
+      appears in a COMMENT far above the call. A substring index is not a structural fact;
+      re-checked with the AST, which asks the question the string could not.
+      The check reads OPEN at 0: it needs an evolution batch to hit a cold start, which
+      happened ~5x/day before the fix, so it should close on its own within a day.
     closing_check: |-
       # Keyed on "no verdict", a message this item INTRODUCED. The old code emitted
       # only "shadow gate REJECTED" on this branch, so a hit proves the new path ran
