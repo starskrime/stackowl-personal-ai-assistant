@@ -40,7 +40,12 @@ _DESIGNS = _ROOT / "docs" / "reference-mapping" / "designs"
 #: lines. Parsed structurally rather than by searching the whole file — a
 #: whole-text search for "Last verified" finds it in prose too, and reported 83 of
 #: 84 documents compliant when only 35 carry the actual header.
-_FIELD = re.compile(r">\s*\*\*([A-Za-z ]+):\*\*\s*(.*)")
+#: The field NAME may carry a qualifier — twelve documents write `Source (new):`,
+#: `Source (changed):`, `Source (to change):`, `Source (subject)`. The first
+#: version of this pattern was `[A-Za-z ]+`, so a parenthesis made the whole line
+#: invisible and D05.1 — which carries a good `Last verified` AND two Source
+#: fields — was filed as having neither.
+_FIELD = re.compile(r">\s*\*\*([A-Za-z ()]+):\*\*\s*(.*)")
 
 
 def _header(text: str) -> dict[str, str]:
@@ -52,6 +57,29 @@ def _header(text: str) -> dict[str, str]:
         elif out and not line.strip().startswith(">"):
             break
     return out
+
+
+def _source_fields(head: dict[str, str]) -> str:
+    """Every `Source*` field joined — not just the one spelled exactly `Source`.
+
+    A document that splits its sources across `(new)` and `(changed)` is
+    describing both, so dating it by one half would be arbitrary.
+    """
+    return " ".join(v for k, v in head.items() if k.startswith("Source"))
+
+
+def _resolve(path: str) -> str | None:
+    """A cited path, tried at the repo root and then under `src/stackowl`.
+
+    The variant documents cite `tools/registry.py` and
+    `providers/_resilient_round.py` — relative to the package, not the repo — and
+    a root-only resolver reported every one of them as non-existent, which is why
+    they could not be dated by any path they named.
+    """
+    for cand in (_ROOT / path, _ROOT / "src" / "stackowl" / path):
+        if cand.exists():
+            return str(cand.relative_to(_ROOT))
+    return None
 
 
 def _sources_last_changed(paths: list[str]) -> str:
@@ -74,12 +102,12 @@ def main() -> int:
     for doc in docs:
         head = _header(doc.read_text(encoding="utf-8"))
         verified = head.get("Last verified", "")
-        source = head.get("Source", "")
+        source = _source_fields(head)
         date = re.search(r"(\d{4}-\d{2}-\d{2})", verified)
         # Only paths that EXIST — a document citing a moved file cannot be dated
         # by it, and guessing would be worse than saying so.
         cited = [p for p in re.findall(r"`([A-Za-z0-9_./-]+)`", source) if "/" in p]
-        real = [p for p in cited if (_ROOT / p).exists()]
+        real = [r for p in cited if (r := _resolve(p))]
         if not date:
             unmeasurable.append((doc.name, "no dated `Last verified` in the header"))
             continue

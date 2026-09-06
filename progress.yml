@@ -14477,6 +14477,43 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-157
+    found: 2026-09-07
+    what: >-
+      THE PARSER WAS THE DEFECT AGAIN, ONE FILE OVER, ONE LOOP LATER. `doc_check.py` shipped
+      reporting 51 of 84 documents UNMEASURABLE - it could not date them, so their
+      `Last verified` claim went unchecked. Read as a property of the corpus that says most
+      design documents are undocumented. Measured, most of it was mine: 25 documents were
+      resolvable under the old rules and 36 under the widened ones.
+    two_widenings_both_measured: >-
+      (1) `Source (...)` VARIANTS - twelve documents write `Source (new):`, `Source (changed):`,
+      `Source (to change):`, `Source (subject)`, and the field regex `[A-Za-z ]+` made a
+      parenthesis invisible. D05.1 carries a good `Last verified` AND two Source fields and was
+      filed as having NEITHER. (2) src-RELATIVE PATHS - those same documents cite
+      `tools/registry.py` and `providers/_resilient_round.py`, relative to the package rather
+      than the repo, and a root-only resolver reported every one as non-existent.
+    THE_BLINDNESS_WAS_HIDING_STALENESS_NOT_ABSENCE: >-
+      checked 33 -> 45, unmeasurable 51 -> 39, and STALE 14 -> 25. ELEVEN more stale documents
+      were inside the set the tool could not read. A report that cannot see a population reports
+      it as clean.
+    what_this_does_NOT_claim_and_the_number_that_stays: >-
+      THIRTY-FOUR documents use a different genre entirely - `**Item.** / **Ask.** / **Answer.**`
+      prose with no blockquote header at all (D04.2, D04.3 and the rest of that wave). They stay
+      unmeasurable, and that is a real divergence between DOC_STANDARD and practice rather than
+      a parser bug. Recorded rather than papered over: 50 documents use the blockquote genre, 34
+      do not, and the standard describes one of them.
+    mutation_proven_including_the_OVER_widening: >-
+      Reverting the field regex fails the measurable-corpus test; resolving at the repo root
+      only fails it too; and resolving EVERYTHING - which would make staleness unfalsifiable -
+      fails the absent-path control. That third mutant is the one worth having: a resolver
+      widened until nothing is missing measures nothing. Restored from a file copy; 7 passed,
+      102 across tests/audit.
+    what_else_the_cause_reaches: >-
+      This is DEBT-156's lesson in the very next file: a guard is only as wide as its parser,
+      and I wrote this one against the STANDARD's ideal shape rather than the corpus's actual
+      one. The general form: any tool that reads a convention will silently under-report
+      wherever the convention was written down more loosely than the tool assumes - and the
+      under-report looks exactly like compliance.
   - id: DEBT-156
     found: 2026-09-07
     what: >-

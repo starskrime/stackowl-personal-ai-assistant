@@ -196,10 +196,15 @@ uv run python scripts/doc_check.py      # which design docs went stale
 `Last verified: <date>, against commit <sha>` beside a `Source:`, which makes
 staleness checkable — and nothing checked it, so the claim aged exactly as an
 escalation's premise aged before `premise_check` and a `partial` stage's evidence
-aged before `closing_check`. MEASURED 2026-09-06 over 84 documents: **15 stale**,
-D01.1 and D01.7 by six weeks. It reports STALE and UNMEASURABLE separately and
-names both — 51 documents carry no parseable `Source`, and a stale count that
-hid them would be the denominator error this programme pays for most. It is NOT
+aged before `closing_check`. MEASURED 2026-09-07 over 84 documents: **25 stale, 45
+measurable, 39 unmeasurable**. It reports STALE and UNMEASURABLE separately and
+names both — a stale count that hid the unmeasurable would be the denominator
+error this programme pays for most. **The first version read 15 stale / 51
+unmeasurable, and eleven of that difference was MY PARSER, not the corpus**: it
+missed `Source (new):`-style variants and src-relative paths, so documents that
+had followed the convention were filed as having no header at all. The remaining
+39 are a real divergence — 34 documents use an `**Item.** / **Ask.**` prose genre
+DOC_STANDARD does not describe. It is NOT
 a gate: 15 of 33 measurable docs are stale today, and a tripwire would fail every
 unrelated change until someone re-read fifteen documents, which is how a gate gets
 bypassed rather than satisfied.
