@@ -549,6 +549,10 @@ class StoreCadenceContributor:
                 extra={"_fields": {
                     "measured": report.measured,
                     "empty": report.empty,
+                    # NAMED, not merely counted. "2 empty" cannot be acted on;
+                    # this session had to re-derive the registry against the live
+                    # database by hand to learn which two.
+                    "empty_tables": list(report.empty_tables),
                     "unreadable": report.unreadable,
                     "latency_ms": round(latency_ms, 1),
                 }},

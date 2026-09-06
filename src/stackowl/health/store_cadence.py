@@ -259,6 +259,17 @@ class CadenceReport:
     """
 
     silent: tuple[SilentStore, ...]
+    #: The stores the check LOOKED AT and found empty, by name.
+    #:
+    #: `empty` alone is a denominator and cannot be acted on: to learn which
+    #: stores were skipped, someone had to re-derive the whole registry against
+    #: the live database by hand. The data was already in the loop below and was
+    #: discarded one line before it could be reported.
+    #:
+    #: NAMES ONLY WHAT WAS EXAMINED. A store with no cadence limit or no clock is
+    #: skipped BEFORE the empty test, so naming it would report something never
+    #: measured — the instrument lying in the other direction.
+    empty_tables: tuple[str, ...]
     measured: int
     empty: int
     unreadable: int
@@ -269,6 +280,7 @@ async def cadence_report(db: object, *, now: float | None = None) -> CadenceRepo
     stamp = time.time() if now is None else now
     silent = await silent_stores(db, now=stamp)
     measured = empty = unreadable = 0
+    empty_tables: list[str] = []
     for decl in DECLARATIONS:
         if decl.cadence.max_silence_days is None or decl.clock is None:
             continue
@@ -282,12 +294,14 @@ async def cadence_report(db: object, *, now: float | None = None) -> CadenceRepo
         raw = rows[0]["t"] if rows else None
         if raw is None:
             empty += 1
+            empty_tables.append(decl.table)
         elif _as_epoch(raw) is None:
             unreadable += 1
         else:
             measured += 1
     return CadenceReport(
-        silent=tuple(silent), measured=measured, empty=empty, unreadable=unreadable,
+        silent=tuple(silent), empty_tables=tuple(sorted(empty_tables)),
+        measured=measured, empty=empty, unreadable=unreadable,
     )
 
 

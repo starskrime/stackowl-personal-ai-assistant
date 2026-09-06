@@ -14477,6 +14477,53 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-148
+    closing_check: |-
+      # Keyed on the "empty_tables" FIELD, which this item added - the ok-line
+      # carried only the COUNT before, so a hit proves the new code ran
+      # (DEBT-138's rule). Not keyed on the message, which fires every sweep.
+      n=$(./scripts/log_since.sh 2026-09-06 'store_cadence: ok.*"empty_tables"')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n sweep(s) named their empty stores" || echo "OPEN 0 clean cadence sweeps since the fix; the code IS live-evidenced"
+    stages:
+      validate: partial
+    found: 2026-09-06
+    what: >-
+      THE CADENCE CHECK COUNTED EMPTY STORES AND NEVER SAID WHICH. `silent_stores` skips a
+      store whose clock reads NULL with the comment "empty table: a QUESTION, not an answer.
+      Not this check's." Measured 2026-09-06: NO OTHER CHECK OWNS THAT QUESTION -
+      `cadence_report` is the registry's only consumer, so the deferral points at nothing.
+      `CadenceReport` already carried `empty` as a count and the ok-line already printed it,
+      but a count cannot be acted on: learning WHICH stores were skipped meant re-deriving the
+      whole registry against the live database by hand, which is exactly what this session did.
+      The data was in the loop and was discarded one line before it could be reported.
+    THE_OBVIOUS_FIX_WAS_MEASURED_AND_REJECTED: >-
+      "Report a never-written store whose cadence expects writes" sounds right and would have
+      had an exemption list equal to its entire population. Of 14 empty declared stores, THREE
+      are RETIRED (expected empty) and NINE are ON_DEMAND or SEED with max_silence_days=None -
+      skipped at the FIRST guard, not the empty-table one. That leaves exactly TWO with both a
+      cadence and a clock, and both are explained: `cache_breakpoint_probes` records only
+      positives while this deployment reports no cache stats at all (operator decision,
+      ESC-149), and `notification_queue` is written only when a notification is BATCHED rather
+      than delivered, which requires focus mode - never engaged, and `notification_overrides`
+      is empty for the same reason (D15.6 / ESC-126). A guard whose every finding is an
+      exemption is decoration that cries wolf on correct work, which is the failure this repo
+      pays for most often. The skip stays; only the reporting changed.
+    the_measurement_that_settled_it: >-
+      The scope shrank twice under measurement and both narrowings are the point. "17 empty
+      tables" became "14 declared", then "2 actually invisible", then "0 unexplained". Each
+      step was a denominator being checked rather than assumed - the same discipline that
+      turned this session's 202x lift into 32x and its "169 of 10,748" into "166 of 334".
+    mutation_proven: >-
+      Naming every declared store rather than only the examined ones fails the
+      only-what-was-looked-at test; dropping the sort fails the stability test (a set rendered
+      into a log line must not churn between sweeps or a reader diffing two of them sees
+      movement that is not there). Restored from a file copy; 4 passed, 101 across tests/health.
+    what_else_the_cause_reaches: >-
+      A denominator is reported as a NUMBER when the thing it counts is a SET, and the set is
+      what the reader needs. `CadenceReport`'s own docstring argues that a result must carry
+      its denominator or it can lie - and it was right, and then discarded the only version of
+      that denominator anyone could act on. The same question is worth asking of every count
+      this platform logs: is the set still in scope when the number is written?
   - id: DEBT-147
     validate_result: >-
       HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 19:23:40Z after
