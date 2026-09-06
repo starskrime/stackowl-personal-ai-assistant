@@ -29962,17 +29962,58 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   no_change_needed
+      document:   done
+    doc: docs/reference-mapping/designs/D14.1.md
+    doc_last_verified: "2026-09-06 against commit a024863a — Verification RUN: 5 passed; tests/commands 390 passed 0 failed; the premise grep returns nothing"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        THE ASK IS ANSWERED **NO**, on measurement rather than preference. It proposes
+        `cli_only`/`gateway_only` surface flags to "remove per-channel special-casing", and
+        there is none to remove: `grep` for a hardcoded command list across src/
+        (KNOWN_COMMANDS, COMMAND_LIST, _COMMANDS =, commands = [) returns NOTHING, all five
+        consumers derive from the one registry, and `build_bot_commands` filters nothing by
+        surface — it only coerces names to Telegram limits and drops duplicates. Those flags
+        would be a seat for a problem this codebase does not have.
+      - >-
+        WHAT THE MEASUREMENT FOUND INSTEAD. The rule `test_tier_meta.py` calls the "honesty
+        guarantee" — the subcommands declared in meta are exactly the ones handle()
+        implements — was enforced by THIRTEEN hand-written per-command files. Of 34 command
+        classes, 14 declare subcommands (the only ones where the rule means anything) and 13
+        of those 14 had a guard. `preferences_command` did not. NOTHING HAD GONE WRONG, which
+        is exactly why it went unnoticed: declared and dispatched agree there.
+      - >-
+        AND THE FIX IS NOT A FOURTEENTH FILE. A rule kept by remembering to write a file is
+        one case short the moment someone forgets, and the fourteenth would have left the
+        identical hole for the fifteenth command. `test_every_command_meta_is_guarded.py`
+        DISCOVERS every command and refuses any that declares subcommands without a guard —
+        plus three generic locks hoisted from what the thirteen files each asserted privately
+        (no duplicate subcommand names, every subcommand has a summary, subcommands imply
+        verb grammar). All three hold across 34 commands, so they are regression guards, and
+        the file carries a vacuity control asserting it found >=30 commands and >=10 with
+        subcommands — a discovery that silently returned nothing would pass by measuring an
+        empty set.
+      - >-
+        RECORDED, NOT BUILT: `SubCommand` has no `hidden` flag, and provider_command.py
+        documents EIGHT subcommands (add-pick, add-token, add-model, add-tier, menu,
+        edit-menu, edit-field, model-add-execute) omitted from its metadata tuple for that
+        reason — internal steps of guided flows reachable only via generated buttons. It is a
+        real gap in the metadata vocabulary that costs nothing today (those steps are MEANT
+        to be unlisted) and would touch every consumer to serve one command. The trigger to
+        build it is a second command needing the same trick.
+      - >-
+        Three mutants from file copies, each verified APPLIED: meta declaring a subcommand
+        handle() does not dispatch, a subcommand losing its summary, and the per-command
+        guard file going missing. All caught, restored, re-run green. VALIDATE IS
+        no_change_needed rather than done: this item changed no runtime behaviour, so there is
+        nothing a restart could show — its claims are about the tree and are asserted by
+        tests. tests/commands 390 passed. ruff 35, mypy 65.
     notes: null
 
   - id: D14.2
