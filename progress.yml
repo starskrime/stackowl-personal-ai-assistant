@@ -14477,6 +14477,58 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-133
+    found: 2026-09-06
+    what: >-
+      A DOCUMENT ABOUT INSTRUMENT TRAPS GOT ITS OWN TRAP WRONG. D13.4 records that
+      `grep '"tool": "X"'` put `run_claude_code_demo` top at 629 for a tool its own report
+      lists as never invoked — correct — and then explained the 629 as
+      "`registry.register: thin tool description` warnings emitted at boot FOR EVERY
+      REGISTERED TOOL". Re-measured 2026-09-06: all 640 such lines carry the SAME message
+      and name EXACTLY ONE tool. The warning fires for a description too thin for
+      `tool_search` to rank, not for every tool, so the count is one dead tool x 640 boots,
+      not many tools x a few.
+    why_the_correction_matters_more_than_the_arithmetic: >-
+      Read the first way, 629 is boot noise to be ignored. Read correctly it is a single
+      LEARNED tool with zero invocations in 29,142 recorded tool uses, occupying a slot in
+      the presented set and announcing itself every boot since June — which is exactly the
+      accumulation `LearnedToolLoader` was built to make visible. The generalisable lesson,
+      now written into the document: WHEN YOU CATCH YOUR INSTRUMENT LYING, MEASURE THE LIE
+      TOO. Explaining a wrong number with a guess produces a second wrong number that is
+      harder to spot, because it arrives wearing a correction.
+    the_pinned_count_had_also_drifted: >-
+      Its Verification said `expect: 629`; the true figure is 640 three days later, because
+      the number grows by one on every boot. Replaced with a SHAPE — every hit is the
+      warning, none is an invocation — which is both stable and the actual lesson. This is
+      the third time a pinned count over a growing series has gone stale here (D10.3
+      637->648, D06.3 813->814, now D13.4 629->640). MEASURED across the design docs: 66
+      `expect:` lines carry a number and SEVEN of them assert it over a log — D09.1, D10.1,
+      D12.3, D13.1, D13.4 (fixed here) and D17.1 twice. The other six are recorded rather
+      than changed, because each needs its own measurement to pick a stable shape and
+      rewriting six documents I had not verified is exactly the sloppiness this entry is
+      about.
+    four_threads_that_measured_CLEAN_recorded_so_they_are_not_re_derived: >-
+      (1) Design-doc staleness: only 3 dead file references across 121 cited paths in 83
+      documents, far too small to justify the freshness scanner the panel proposed. (2)
+      "The platform should not need a restart to detect the LLM is alive":
+      `clear_degraded_if_a_provider_is_back` exists, its `provider:`-prefixed precondition
+      really can match (contributors.py:787,800), and no boot has entered degraded mode
+      since the binding went live at 02:20 — so its zero is "not yet", not "never". (3) The
+      apology cascade calls the provider ~3.8 times per apology during an outage, which
+      looked like a fallback depending on the thing that failed; MEASURED median 0.01s to
+      exhaustion, so the registry fails fast, there are no round-trips and no user-visible
+      cost. Hypothesis killed by measurement. (4) A stray `SKILL.md` at
+      `~/.stackowl/skills/trending-research-owl` warns on every boot and is never loaded —
+      but it is a legacy artifact dated 2026-06-27 and every live writer uses
+      `skills_root/<valid source>`, so there is no active defect.
+    what_IS_still_open_and_is_the_operators_call: >-
+      `report_never_invoked` writes a LOG LINE and nothing else. `LearnedToolLoader`'s
+      docstring says retiring a learned capability "is the operator's call, not a
+      loader's", which is right — but the decision has never actually been PUT to him,
+      only logged. Choosing where it should appear (health surface, proactive message, a
+      dashboard that does not exist) is product intent tangled with ESC-152, so it is
+      recorded here rather than decided unilaterally or filed as escalation #55 into a
+      queue that drains at 3.6/day against 11.3/day of arrivals.
   - id: DEBT-132
     found: 2026-09-06
     what: >-
