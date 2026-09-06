@@ -14402,6 +14402,42 @@ known_debt:
       StepServices instance. That instance is the latch. The handler is now BOUND to it by
       the orchestrator (`bind_live_services`), an unbound sweep logs a WARNING rather than
       doing nothing quietly, and a test drives the real `execute()` instead of the helper.
+    AND_THE_SECOND_ATTEMPT_WAS_MISORDERED_which_the_LIVE_BOOT_caught: >-
+      The binding was placed 175 lines after `services` was constructed, which looked
+      right and was not: `health_sweep` is not in the handler registry there, because
+      SchedulerAssembly.build() — the call that constructs and registers it — runs
+      LATER, at orchestrator:1865. The boot log said so on its own, twice, because the
+      unbound path added in the previous attempt is loud and the warning enumerated
+      every handler that WAS registered. mypy caught a second fault in the same block
+      first: `HandlerRegistry.all()` returns a LIST and the code called
+      `.all().get("health_sweep")`, which would have raised AttributeError every boot,
+      been swallowed by the surrounding except, and left the sweep bound to nothing
+      behind a plausible-looking error line — the same shape as the
+      `ChannelRegistry.instance().names()` call that never existed. Binding now happens
+      beside the Task 7 RCA wiring on the same mutable `services`, taking the handler
+      off `scheduler_components.health_sweep_handler`, which is typed — so the registry
+      lookup, its isinstance guard and the try/except all go away.
+    live_validate: >-
+      RESTARTED 2026-09-05 against ad2f1c64 and measured on THAT boot only (log line
+      mark 4432, so nothing older is counted). bound=2 (gateway + core), NOT-bound
+      warnings=0, health_sweep handler-not-registered=0, sweeps completed=2,
+      aggregator collects=2 (ok=15 total=15), floored turns=0, ERRORs=0, provider probe
+      `NeraAiRaw [openai]: ok (628ms)`. The 0 unbound warnings AFTER two completed
+      sweeps is the load-bearing number: it is the sweep reaching the latch check with
+      a real services object, which is precisely what the two previous attempts did not
+      do. NOTE the instrument: the exit line is job-id suffixed
+      (`health_sweep-f2d80205: exit — completed`), so the obvious grep for
+      `health_sweep.execute: exit` returns 0 against a sweep that ran twice.
+    acceptance_STILL_OPEN: >-
+      "The latch actually clears after a real outage" is NOT evidenced and is recorded
+      OPEN rather than claimed. `providers no longer degraded` returns 0 this boot —
+      correctly, because the provider never went down, so the latch was never set. That
+      is a zero over a zero denominator and it is not a pass. The closing query is
+      `grep -c "providers no longer degraded" ~/.stackowl/logs/stackowl.jsonl` after the
+      next provider outage, with `providers degraded — flooring turn` NOT rising
+      afterwards and no restart in between. Inducing one deliberately was declined: the
+      only lever here is the VPN, and each `gp-vpn.service` start sends a DUO push, so
+      manufacturing an outage unattended risks locking the account.
     mutation_tested: >-
       Four mutants planted from file copies, each verified APPLIED before running: dropping the
       attendance gate (caught, 3 tests), dropping the event from the declaration (caught, 2),
