@@ -14477,6 +14477,53 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-134
+    found: 2026-09-06
+    what: >-
+      DESIGN DOCUMENTS PINNED COUNTS OF THINGS THAT KEEP HAPPENING, so their Verification
+      sections go false by simply leaving the platform running. MEASURED across the design
+      docs: 66 `expect:` lines carry a number; of those asserted over a log or a live
+      table, FOUR were counts of a growing series and TWO WERE ALREADY FALSE — D09.1
+      expected `never=16` against a real 15, and D12.3 expected `telegram 107 / cli 13`
+      against 110 / 14. Both were correct when written days earlier.
+    the_one_worth_remembering: >-
+      D09.1's expectation went stale because a never-invoked tool was FINALLY INVOKED. The
+      pinned count would have reported a FAILURE for exactly the event the item existed to
+      encourage. That is the sharpest possible statement of why a count is the wrong
+      assertion: it cannot tell progress from regression.
+    why_this_is_harm_and_not_pedantry: >-
+      A Verification section is what the `validate` stage EXECUTES and what a reviewer
+      copies into a terminal. One that fails when nothing is wrong sends the next reader
+      hunting a defect that does not exist — the cost CLAUDE.md already records for a stale
+      landmine note, and which it says this programme has paid once. It also teaches the
+      reader to distrust the section, which is worse than deleting it.
+    what_shipped: >-
+      All four converted to SHAPES that say more than the counts did: a SET ("the channel
+      set is exactly {rca, telegram, cli}, and nothing else"), an ABSENCE or BOUND ("0 log
+      lines for all three", "every refusal predates commit X"), or a RELATION ("0 <= never
+      <= registered, and `all` names a non-zero never-invoked set"). Re-run and verified:
+      both channel sets match exactly, both scopes report, and the consent split still has
+      a non-zero deny. The rule is written into DOC_STANDARD beside the Verification
+      template, where the next author reads it.
+    the_numbers_are_KEPT_where_they_belong: >-
+      A dated measurement in the prose ("121 decisions in nine days: 83 allow, 38 deny") is
+      evidence and stays; asserting the same figure as today's expected output is what goes
+      wrong. Each corrected expectation now records BOTH readings and their dates, so the
+      drift itself is part of the record rather than erased.
+    what_I_deliberately_did_NOT_build: >-
+      A static tripwire. Every formulation I tried flags legitimate stable numbers —
+      `count=1` for the one stray skill dir, `expect: 0 failed`, and the ISO dates inside
+      D17.1's boundary assertion. A guard that fires on correct documents is the
+      "guard that passes on a known-wrong state" failure wearing the opposite face, and
+      this programme has already recorded that a check nobody trusts is the reason nobody
+      looks. The rule is therefore written and enforced by review, and this entry says so
+      plainly rather than pretending a guard exists.
+    the_earlier_count_of_SEVEN_was_my_own_heuristic_and_was_wrong: >-
+      DEBT-133 recorded "seven `expect:` lines assert a number over a log". Reading them in
+      context, only FOUR are counts of a growing series: D10.1 asserts a path and
+      `count=1`, which is a shape, and D17.1's second check is a boundary ("every refusal
+      predates commit X") that SHOULD break if a new refusal appears. Checking what a
+      denominator is made of applies to my own findings too.
   - id: DEBT-133
     found: 2026-09-06
     what: >-

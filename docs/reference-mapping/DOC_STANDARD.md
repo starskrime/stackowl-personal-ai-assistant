@@ -104,6 +104,29 @@ The commands that prove this works, with the output that counts as pass. This se
 what the `validate` stage executes. If a reviewer cannot copy this section into a terminal
 and get a yes/no, it is not finished.
 
+**Expect a SHAPE, never a count of something that can happen again.** A running platform
+grows its logs, its sessions and its tool uses, so `expect: 629` is true on the day it is
+written and false afterwards — and a Verification section that fails sends the next reader
+hunting a defect that does not exist. MEASURED 2026-09-06: of the numbers pinned over a log
+or a live table across these documents, **two were already false** — D09.1 expected
+`never=16` against a real 15, and D12.3 expected `telegram 107 / cli 13` against 110 / 14.
+Both had been correct when written, days earlier. This is the fourth instance of the same
+defect (D10.3 637→648, D06.3 813→814, D13.4 629→640, now these).
+
+D09.1 is the one worth remembering: its expectation went stale because a never-invoked tool
+was **finally invoked** — so the pinned count would have reported a FAILURE for exactly the
+event the item existed to encourage.
+
+The stable forms, all of which say more than a count did:
+
+* a **set** — "the channel set is exactly {rca, telegram, cli}, and nothing else";
+* an **absence or bound** — "0 log lines for all three", "every refusal predates commit X";
+* a **relation** — "0 ≤ never ≤ registered, and `all` names a non-zero never-invoked set".
+
+Keep the number where it belongs: a **dated measurement** in the prose ("121 decisions in
+nine days: 83 allow, 38 deny") is evidence and stays. Asserting that same number as today's
+expected output is what goes wrong.
+
 ## Related
 
 - Map items: `D01.1`, `D01.7`
