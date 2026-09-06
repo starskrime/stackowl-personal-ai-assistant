@@ -139,7 +139,7 @@ Duplicate keys silently swallow whole records. This has already happened.
   opposite.** MEASURED every time since: `6 failed, 11440 passed in 1885.47s`
   (2026-09-01), `10 failed, 11853 passed in 1775.99s` (2026-09-03), then GREEN three
   runs running — `12123 passed, 0 failed in 1880.78s` (2026-09-05) and `12170 passed,
-  18 skipped, 0 failed in 1911.85s` (2026-09-06). The false claim survived HERE after
+  18 skipped, 0 failed in 1911.85s` (2026-09-06). Sixth green 2026-09-06: `12284 passed, 18 skipped, 0 failed in 1979.40s` (rc=0), `SUITE TREE STILL`. The false claim survived HERE after
   `CLAUDE.md` was corrected, and because this file is what the loop reads on every
   invocation, no invocation ever ran it — which is how TEN tests sat red, every one of
   them a retired thing whose tests stayed behind. "It hangs" reads as *impossible*, so

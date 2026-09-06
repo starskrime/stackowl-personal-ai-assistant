@@ -14478,6 +14478,16 @@ upcoming:
 
 known_debt:
   - id: DEBT-144
+    validate_result: >-
+      HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 17:51:34Z after
+      commit 3615af7f at 17:50:16Z, so the fix IS the code now running - checked against the
+      boot line, never a PID - and the scheduler dispatched sandbox_sweep and
+      task_liveness_sweep to completion under it. The closing check reads OPEN at 0, correctly:
+      it needs a recurring job to exhaust its retries on a TRANSIENT failure, which requires an
+      outage. FULL SUITE GREEN on this exact tree: 12,284 passed, 18 skipped, 0 failed in
+      1979.40s (rc=0), header commit=3615af7f dirty_files=0, "SUITE TREE STILL" - the sixth
+      consecutive green and the only detector that could have caught a scheduler change
+      polluting another package.
     closing_check: |-
       # Keyed on "recurring occurrence RETAINED" - a message this item INTRODUCED.
       # The old code emitted only "RE-ARMED to next slot" on this branch, so a
