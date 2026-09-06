@@ -14477,6 +14477,54 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-136
+    found: 2026-09-06
+    what: >-
+      `replay_missed` HAD A READER, A COLUMN AND NO WRITER. `Scheduler.recover` re-arms
+      overdue jobs at boot and DISPATCHES a missed one inside a 24h window, but for a
+      RECURRING job only when the flag is set — `if (job.replay_missed or not
+      self._is_recurring(job)) and inside_window`. Measured 2026-09-06: the flag is 0 on
+      all 144 rows, `replay_missed=True` appears in exactly ONE place in the whole tree (a
+      test), and it is on no tool, command or config surface. So the condition reduced to
+      `not self._is_recurring(job)` and a recurring job that missed its slot never ran that
+      occurrence. CLAUDE.md names the shape and its corollary: "a feature ships ON — if
+      nothing sets the flag, you shipped decoration".
+    the_cost_is_not_hypothetical: >-
+      On 2026-09-05 `goal_execution-88f54aa1` (daily@17:00, a goal the operator asked for)
+      failed three times at 22:00/22:05/22:11 against AllProvidersUnavailableError,
+      exhausted its three retries inside ten minutes (_MAX_RETRIES=3, _RETRY_DELAY_MIN=5),
+      and advanced to next_run_at a full day later. The provider came back that night and
+      nothing ran it. The replay path itself is live — "recover: replaying missed job" has
+      fired 3 times since 2026-08-28 — but only ever for one-shots, which replay
+      regardless.
+    why_a_WRITER_and_not_a_flipped_default: >-
+      The right answer differs by kind of job, which is exactly what the flag is for. A
+      user-created recurring goal (`created_by=cronjob` — four live rows: daily@17:00 and
+      two daily@09:00) missed inside the window is the same data loss the one-shot branch
+      already refuses to accept ("deferring it is data loss, not a benign reschedule"). A
+      platform sweep seeded by assembly.py runs every few minutes, so replaying a missed
+      tick buys nothing. Flipping the default would have erased that distinction; adding
+      the writer at the user-created call sites preserves it.
+    what_shipped: >-
+      Both `create_job` call sites in `tools/scheduling/cronjob.py` now pass
+      `replay_missed=True`. Platform seeding is untouched — `_seed_daily_schedule` uses
+      `insert_job`, never `create_job`, so it keeps the default by construction. The guard
+      reads the AST for the KEYWORD, because the defect was an argument that was ABSENT and
+      absence is what a text search cannot see.
+    MY_OWN_CONTROL_WAS_VACUOUS_AND_THE_MUTANT_EXPOSED_IT: >-
+      The control asserting "a platform sweep does NOT opt in" iterated `create_job(...)`
+      calls in assembly.py — of which there are NONE — so it asserted over an empty list
+      and could never fail. I only found out because the mutation attempt could not be
+      APPLIED: there was nothing to mutate. Replaced with a claim the file can actually
+      violate (the flag is not mentioned in assembly.py at all), plus a size check so a
+      failed read cannot pass as a clean one. That is the second time in two loops that
+      mutation testing caught a guard of mine that could not fail, and both times the
+      signal was the mutant surviving rather than any review.
+    mutation_tested: >-
+      Three mutants, all caught after the control was repaired: dropping the writer from
+      one call site fires the writer test, adding the flag to assembly.py fires the
+      control, and removing `job.replay_missed` from the reader fires the vacuity guard.
+      Restores by file copy; final re-run green at 3 passed.
   - id: DEBT-135
     found: 2026-09-06
     what: >-

@@ -423,6 +423,13 @@ class CronjobTool(Tool):
                 "owl": owl,
                 **({"run_once": True} if one_shot else {}),
             },
+            # THE USER ASKED FOR THIS ONE, so a missed slot is data loss rather
+            # than a benign reschedule — the same reasoning `recover` already
+            # applies to one-shots. Without this the flag is unreachable: measured
+            # 2026-09-06, `replay_missed` was 0 on all 144 rows and set to True in
+            # exactly one place in the tree, a test. A platform sweep keeps the
+            # default — its next tick is minutes away, so replaying buys nothing.
+            replay_missed=True,
             primary_channel=channel,
             target_channels=target_channels,
             target_addresses=target_addresses,
@@ -520,6 +527,13 @@ class CronjobTool(Tool):
             handler_name=handler,
             schedule=schedule,
             params={**params_extra, "created_by": CREATED_BY_TAG, "owl": owl},
+            # THE USER ASKED FOR THIS ONE, so a missed slot is data loss rather
+            # than a benign reschedule — the same reasoning `recover` already
+            # applies to one-shots. Without this the flag is unreachable: measured
+            # 2026-09-06, `replay_missed` was 0 on all 144 rows and set to True in
+            # exactly one place in the tree, a test. A platform sweep keeps the
+            # default — its next tick is minutes away, so replaying buys nothing.
+            replay_missed=True,
             primary_channel=channel,
             target_channels=target_channels,
             target_addresses=target_addresses,
