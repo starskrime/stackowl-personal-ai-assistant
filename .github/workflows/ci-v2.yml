@@ -3,10 +3,40 @@ name: CI v2
 on:
   push:
     branches: [release/v2, main]
+  # `main` is the branch this programme commits to. Until 2026-09-06 this listed
+  # release/v2 only, so a pull request against main triggered NOTHING — a review
+  # with no verification behind it.
   pull_request:
-    branches: [release/v2]
+    branches: [release/v2, main]
 
 jobs:
+
+  gate:
+    name: cross-cutting gate (tripwires)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+        with:
+          version: "latest"
+          enable-cache: true
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: uv sync
+
+      # THE SAME SCRIPT AN AGENT RUNS, not a re-listing of what it contains.
+      # `scripts/tripwires.sh` calls itself "the gate that must pass before ANY
+      # commit" and argues that "a rule that says 'remember to run the tripwires'
+      # is the same rule that already failed twice". It was still the remembering
+      # rule, because nothing scheduled it: measured 2026-09-06, no workflow ran
+      # pytest at all, so none of the 56 tripwire files and neither progress_lint
+      # ever executed in CI. A check that never runs also never fails, which is
+      # why its silence read like success.
+      - name: The gate
+        run: ./scripts/tripwires.sh
   lint-and-boundaries:
     name: ${{ matrix.platform }}
     strategy:

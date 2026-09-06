@@ -14477,6 +14477,58 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-130
+    found: 2026-09-06
+    what: >-
+      THE ENFORCEMENT LAYER WAS BUILT AND NEVER SCHEDULED. This programme is good at
+      turning a prose rule into an executable one — progress_lint, tripwires.sh,
+      validate_check, escalation_check, map_check, claim_check, and 56 files carrying
+      `@pytest.mark.tripwire`. Every one of them fired only when an agent voluntarily
+      typed the command. Measured 2026-09-06: `.git/hooks/` holds no installed hook (only
+      the shipped samples); `.pre-commit-config.yaml` is not installed locally; and
+      `.github/workflows/ci-v2.yml` — which DOES run pre-commit (ruff, mypy strict, file
+      length) and the B1-B6 boundary scripts — runs NO pytest at all, so none of the
+      tripwire files and neither progress_lint has ever executed in CI. Its
+      `pull_request` trigger also named `release/v2` only, so a PR against `main` — the
+      branch this programme commits to — triggered nothing whatsoever.
+    why_this_shape_is_invisible: >-
+      CLAUDE.md failure mode #5, built but not wired, applied to the ENFORCEMENT layer,
+      which is the one place it cannot be seen: a check that never runs also never fails,
+      so its silence is indistinguishable from success. `tripwires.sh` opens by calling
+      itself "the gate that must pass before ANY commit" and argues that "a rule that says
+      'remember to run the tripwires' is the same rule that already failed twice. This is
+      the executable version." It was still the remembering rule, because nothing
+      scheduled it. `.pre-commit-config.yaml` already records a prior instance in the same
+      family: its mypy hook ran `cd v2 &&` after the v2->root migration and "failed every
+      time, taking the whole pre-commit run — and the B1-B9 boundary checks behind it —
+      down with it".
+    what_shipped: >-
+      A `gate` job in ci-v2.yml running `./scripts/tripwires.sh` — THE SAME SCRIPT an
+      agent runs, not a re-listing of what it contains, so the two cannot drift into
+      different ideas of what the gate is. The pull_request trigger now includes `main`.
+      `tests/test_the_gate_runs_somewhere_other_than_an_agents_memory.py` asserts the
+      wiring, and asserts it about the workflow file that ships to every clone rather
+      than about a local hook — a hook installed here would fix THIS SETUP; the workflow
+      fixes the platform.
+    feasibility_was_MEASURED_not_assumed: >-
+      Six tripwire files reference StackowlHome, the live logs or default_db_path, so the
+      gate might have needed the operator's box. Read statically first (all are static
+      scans or use tmp_path/STACKOWL_HOME overrides; none calls default_db_path), then
+      RUN: `STACKOWL_HOME=<empty dir> uv run pytest -m tripwire` gives 127 passed, 2
+      skipped in 94s. The gate runs in a clean environment.
+    and_a_workflow_left_by_a_RETIRED_TREE: >-
+      `.github/workflows/test.yml` ran `npm ci`, `npm run build` and `npm test` across
+      three operating systems on every push and PR to main. There is no root
+      `package.json` — the only one in the tree is inside `do_not_push_to_git_research_only/`
+      — so it could never succeed. It is the residue of the v2->root migration and should
+      have been deleted with it (RETIRED MEANS DELETED); a job that is always red is how a
+      REAL red job stops being read. DELETED. I can state it CANNOT pass because the tree
+      says so; I did NOT verify it has been failing, because `gh` is not installed on this
+      box and I have no run history — that limit is recorded rather than papered over.
+    mutation_tested: >-
+      Three mutants, each firing exactly one assertion: the gate step replaced with an
+      echo, the PR trigger reverted to release/v2 only, and a Node workflow reintroduced.
+      Restores by file copy; final re-run green at 4 passed.
   - id: DEBT-128
     found: 2026-09-06
     what: >-
