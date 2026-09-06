@@ -11434,6 +11434,15 @@ current:
         D13.2, D13.3 and D13.4 (the chat-experience rule, TUI transport, editor/ACP
         integration) all presuppose an answer about which surfaces exist. Nothing else is
         blocked; D13.1's measurable half shipped.
+      also_decided_by_this_answer_D14_5_theming: >-
+        Added 2026-09-06. D14.5 asks "personality-as-product — matters for Jarvis for
+        everyone?" and that is the SAME decision seen from the other end: terminal-only for
+        one operator makes skins decoration, a dashboard for non-terminal users makes chrome
+        part of the product. Recorded here rather than as its own escalation so the question
+        is asked once. MEASURED: we have no user-facing skin system at all (glyphs.py and
+        color_caps.py detect terminal CAPABILITY, they take no preference; UISettings has no
+        colour, banner or branding key), while personality-as-BEHAVIOUR is substantial — owl
+        DNA, per-channel enforced output style, learned output preferences.
       premise_check: |-
         n=$(grep -ah 'turn context composed' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c '"channel": "\(slack\|discord\|whatsapp\)"')
         [ "$n" -gt 0 ] && echo "EXPIRED an unused adapter has now carried $n turn(s)" || echo "HOLDS slack/discord/whatsapp still at zero turns"
@@ -30312,17 +30321,57 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: docs/reference-mapping/designs/D14.5.md
+    doc_last_verified: "2026-09-06 against commit 27fede15 — Verification RUN: both docstrings as quoted; the ui_settings grep returns nothing; the lexicon grep returns nothing; the refusal line is present"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        "THEMING" IS THREE THINGS WITH THREE DIFFERENT ANSWERS, and separating them is the
+        whole finding. SKINS (banner colours, spinner faces, tool prefix, response box,
+        branding, switched at runtime) are genuinely absent. THE PET/MASCOT half was already
+        classified in D14.2 as not a capability. AFFECTION DETECTION over a curated English
+        lexicon is DELIBERATELY REFUSED here, and that refusal is stated in the code that
+        replaces it.
+      - >-
+        WHAT LOOKS ADJACENT AND IS NOT. `tui/glyphs.py` is "a BMP glyph registry with ASCII
+        fallbacks for non-Unicode terminals" and `tui/color_caps.py` "detects terminal color
+        capability tier" — both adapt the platform TO the terminal, neither takes a user
+        preference. UISettings carries language, tui_version, reduced_motion,
+        command_suggestions, semantic_command_search and command_hints: one accessibility
+        toggle and five behaviour switches, with no colour, banner or branding key anywhere
+        (the grep returns nothing).
+      - >-
+        AND PERSONALITY-AS-BEHAVIOUR IS SUBSTANTIAL, which the Ask phrase hides. Owl DNA
+        gives each owl its persona, `/style` shows the enforced output style per channel, and
+        output preferences are learned from real feedback. What is missing is visual chrome,
+        not character.
+      - >-
+        THE THIRD PART IS A DECISION ALREADY MADE, not a gap. FeedbackClassifier's docstring
+        refuses their approach and cites the memory: "LLM-semantic, multilingual, no keyword
+        lists. Per [[feedback_no_hardcoded_english]] the platform is multilingual, so we do
+        NOT match English words against the user's MESSAGE." No praise or affection lexicon
+        exists anywhere in src. Adopting theirs would mean a user writing "gracias" or
+        "спасибо" is not heard. Their version is cheaper — no model call — and that is the
+        trade they took; ours costs a fast-tier classification and works in any language.
+        Same shape as D14.2's /blueprint.
+      - >-
+        NO NEW ESCALATION, DELIBERATELY. Whether personality-as-product matters is downstream
+        of ESC-152 ("which surfaces matter, and who is this for"): terminal-only for one
+        operator makes skins decoration; a dashboard for non-terminal users makes chrome part
+        of the product. A separate entry would put the same decision in front of him twice,
+        which is the cost the queue premise-check discipline exists to avoid. Noted on
+        ESC-152 instead.
+      - >-
+        Nothing built — implement/test/validate no_change_needed. Verification RUN: both
+        docstrings as quoted, the ui_settings look-grep returns nothing, the lexicon grep
+        returns nothing, and the refusal line is present where it is enforced.
     notes: null
 
   - id: D15.1
