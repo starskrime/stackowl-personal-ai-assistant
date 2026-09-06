@@ -14477,6 +14477,54 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-152
+    closing_check: |-
+      # Keyed on "owes no addressee", a message this item INTRODUCED. The old code
+      # emitted only the false "answer not delivered" on this branch, so a hit
+      # proves the new path ran (DEBT-138's rule).
+      n=$(./scripts/log_since.sh 2026-09-06 'owes no addressee')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n deferred turn(s) reported honestly" || echo "OPEN 0 deferred-unaddressed stream-misses since the fix; the code IS live-evidenced"
+    stages:
+      validate: partial
+    found: 2026-09-06
+    what: >-
+      A WARNING CLAIMED 89 LOST ANSWERS THAT WERE NEVER LOST. `[deliver] stream-miss: no
+      durable fallback available - answer not delivered` fired 180 times in the retained
+      window, 89 of them on user-facing owl lanes (`owl:secretary:recovery:*`,
+      `owl:jobmarket:recovery:*`), each with `has_deliverer: true, has_target: false` and a
+      real body - 917 characters in one case. Read at face value: 89 answers computed and
+      thrown away.
+    IT_WAS_FALSE_and_the_platform_already_knew: >-
+      Traced line by line for recover-task-c628837 on 2026-09-05 - 19:00:21 "[loop] turn
+      defers delivery and has no addressee - claiming NO destination"; 19:03:47
+      "[notifications] router.deliver: delivered"; 19:12:05 the miss warning; 19:12:39 "[loop]
+      task COMPLETE - its outcome reached its destination". The loop DECIDED there was no
+      addressee, the job's own path delivered, the task completed. All 89 user-facing misses
+      carry a task-COMPLETE or no-addressee decision in the same window.
+    the_rule_already_existed_NAMED_and_DOCUMENTED_in_the_same_subsystem: >-
+      `durable/turn_task.destination_for_turn` states it exactly: "deferred AND unaddressed =>
+      owes nothing => None. Everything else keeps today's behaviour byte-for-byte, including
+      the deliberately loud case of an interactive turn that lost its address - that is a real
+      defect and must not be silently nulled into a clean completion." The deliver step never
+      asked it, though `state.defer_delivery` is in scope at that very branch. Defect shape 3
+      for the FOURTH time this session, and the only one where the correct copy is a named
+      function rather than a nearby line.
+    the_LOUD_case_stays_loud_and_a_mutant_proves_it: >-
+      This is not "log less". A turn that WAS supposed to reach someone and did not still
+      warns that the answer was not delivered. The mutation pair is the proof and it fires in
+      OPPOSITE directions: silencing every miss fails the loud-case control, and ignoring
+      `defer_delivery` again restores the false alarm.
+    WHAT_IT_COST_IS_THE_POINT: >-
+      This warning sent a whole loop chasing a data-loss bug that had not happened - measuring
+      lanes, joining traces, reading the recovery reconstruction path, before the timeline
+      disproved it. A warning that cries wolf is how a real one gets ignored, and this one was
+      the most alarming sentence in the log.
+    what_else_the_cause_reaches: >-
+      A log line states a conclusion ("answer not delivered") that the code at that point is
+      not entitled to draw: the deliver step knows its own inputs, not whether anyone was owed
+      an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
+      observed, the same over-claim is available - and the condition here was simply
+      `reply_target is None`, which is true of both the defect and the design.
   - id: DEBT-151
     validate_result: >-
       HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 21:22:16Z after

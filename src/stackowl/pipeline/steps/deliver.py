@@ -500,6 +500,36 @@ async def _proactive_fallback(
     # resolved the destination, so a missing live writer there is a true terminal
     # miss with nowhere to push. Likewise an empty body or no deliverer.
     if deliverer is None or state.reply_target is None or not body:
+        # A TURN THAT OWES NOBODY AN ANSWER HAS NOT LOST ONE. `turn_task`
+        # already writes this rule down — "deferred AND unaddressed ⇒ owes
+        # nothing" — and the loop logs the decision at the turn's START
+        # ("turn defers delivery and has no addressee"). This branch never
+        # asked, so it claimed a loss instead, 89 times on user-facing lanes.
+        #
+        # MEASURED, traced line by line for recover-task-c628837 on 2026-09-05:
+        # the loop claimed no destination at 19:00:21, the job's own path
+        # delivered at 19:03:47, this line cried loss at 19:12:05, and the task
+        # was COMPLETE — "its outcome reached its destination" — at 19:12:39.
+        # Nothing was lost; the sentence was false, and disproving it cost a
+        # full loop of investigation.
+        #
+        # THE LOUD CASE STAYS LOUD, deliberately: a turn that WAS supposed to
+        # reach someone and did not is still a WARNING below. turn_task's own
+        # words — it "must not be silently nulled into a clean completion".
+        if state.defer_delivery and state.reply_target is None:
+            log.gateway.info(
+                "[deliver] stream-miss: turn defers delivery and owes no "
+                "addressee — nothing to push, delivery is owned elsewhere",
+                extra={
+                    "_fields": {
+                        "request_id": state.trace_id,
+                        "session_key": state.session_key,
+                        "channel": state.channel,
+                        "body_len": len(body),
+                    }
+                },
+            )
+            return None
         log.gateway.warning(
             "[deliver] stream-miss: no durable fallback available — answer not delivered",
             extra={
