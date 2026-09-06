@@ -32146,16 +32146,45 @@ items:
       cleanup:    no_change_needed
       test:       done
       validate:   done
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      document:   done
+    doc: docs/reference-mapping/designs/N01.md
+    doc_last_verified: "2026-09-06 against commit 979354d7 — Verification RUN, all three steps: 9 passed; registered at morning_brief.py:131; 3 briefs / 3 assemblies / 0 read-failures / 0 no-history"
     decisions:
     - "THE FIRST ITEM IN THE `N` NAMESPACE. progress.yml held exactly one namespace (D, 111 items, every one a reference-map domain). A native item gets N so it can never be mistaken for a gap against someone else's architecture, and NO WAVE, because waves sequence the port and this is not part of it — it is scheduled on its own merits."
     - "NOT D09.1. The closest mapped item is 'Background review fork', whose gap is 'learning is not tied to the moment the lesson exists, and does not see the live conversation' — per-turn review with a live conversation in front of it. Dreaming is periodic and reflexive: the agent thinking about ITSELF when nobody is talking to it. Different trigger, different subject."
     - "IT INHERITS THE DreamWorker SLOT. All five of that handler's phases were fact work and were deleted with the extraction pipeline (D08.1), but the handler, its 30-minute schedule and its checkpoint/resume machinery were built for exactly this shape of work. It is UNSCHEDULED until there is real work, because a job waking every 30 minutes to do nothing produces run records that read as a healthy loop — the failure ADR-19 exists to kill."
     findings:
     - "Likely a ROOT-CONCEPT-sized idea rather than one feature: it spans memory (what is worth remembering about itself), skills (what it can do and what it should learn), owl DNA (how it changes), and the scheduler (when it thinks). ADR-19 had that shape and turned one framing into six interventions, so an ADR before items is worth considering at brainstorm time."
-    changes: []
+    changes:
+      - >-
+        2026-09-03 (commit a8bba310) — SHIPPED AS A BRIEF SECTION, NOT A NIGHTLY JOB.
+        `GrowthAssembler` (brief/assemblers.py:738-935, 198 lines) compares the last 7 days
+        against the 7 before over owner-scoped `task_outcomes` and `skills`, and assembles
+        the sentence FROM the numbers. Deterministic on purpose: handing a model its own
+        history would produce a paragraph about growth whether or not any growth happened,
+        which is the overclaim this platform has spent weeks learning not to make.
+      - >-
+        IT DELIBERATELY DID NOT FILL THE DreamWorker SEAT. That handler and its 30-minute
+        schedule were deleted 2026-09-01 under "retired means deleted", and re-creating them
+        would produce run records that read as a healthy loop while doing nothing — the
+        failure ADR-19 exists to kill. The brief already runs daily, guards each section, and
+        delivers through one seam measured reaching him.
+      - >-
+        2026-09-06 DOCUMENT CLOSED to DOC_STANDARD at docs/reference-mapping/designs/N01.md,
+        and its Verification section was RUN rather than trusted: 9 tests pass; the assembler
+        is registered at morning_brief.py:131 (not merely written); and since it shipped there
+        have been 3 briefs, 3 growth assemblies, 0 read-failures and 0 no-history omissions —
+        100% coverage with neither degrade path taken. The live payloads are tabulated in the
+        document, including 2026-09-05 where success FELL week over week (0.806 vs 0.812) and
+        the section reported it, which is invariant 2 working in production rather than in a
+        test.
+      - >-
+        THE ITEM WAS ALREADY DONE AND ONLY LOOKED UNFINISHED. Five stages read `done` over an
+        EMPTY record — no changes, no doc — which is the same bulk-marked shape as D07.2 and
+        D12.4, and its own notes said "no design work done deliberately". Measuring first was
+        what separated them: `DreamWorker` really is deleted, but the work landed somewhere
+        else entirely, and the code says so at brief/assemblers.py:765. A zero-evidence record
+        is a QUESTION about where the work went, not an answer that it never happened.
     notes: >-
       Recorded 2026-08-10 during D08.1's grilling session. No design work done
       deliberately: the brainstorm should start from Bakir's own framing above,
