@@ -1,0 +1,34 @@
+-- Migration 0139 — backfill replay_missed for goals the OPERATOR created.
+--
+-- DEBT-136 gave `replay_missed` the writer it never had: both create_job call sites
+-- in tools/scheduling/cronjob.py now pass replay_missed=True, so a recurring goal the
+-- user asked for replays a run missed inside the 24h window instead of skipping it.
+--
+-- That fix only reaches jobs created AFTERWARDS. Measured 2026-09-06 on the live
+-- database, the four existing user-created goals still carry 0:
+--
+--   goal_execution-88f54aa1  daily@17:00   replay_missed=0
+--   goal_execution-fe17107f  every 1h      replay_missed=0
+--   goal_execution-7b6da65e  daily@09:00   replay_missed=0
+--   goal_execution-ee1bdd4c  daily@09:00   replay_missed=0
+--
+-- So on the one installation that actually has the problem the fix would be inert --
+-- the same shipped-decoration shape one layer over, which is why this is a migration
+-- and not a note. 88f54aa1 is the job that failed three times on 2026-09-05 against
+-- AllProvidersUnavailableError and then waited a full day.
+--
+-- SCOPED BY WHO CREATED IT, not by handler. `created_by=cronjob` is stamped into the
+-- params by the tool the operator drives. Platform sweeps seeded by assembly.py carry
+-- no such tag and are untouched -- their next tick is minutes away, so replaying a
+-- missed one buys nothing. Dry-run on the live database: 4 rows of 144.
+--
+-- json_extract rather than LIKE: `created_by` CONTAINS underscores and `_` is a
+-- wildcard in LIKE, which is a trap this repo has already paid for once. Migration
+-- 0075 uses json_extract the same way.
+--
+-- Additive and idempotent: re-running sets the same rows to the same value, and a row
+-- the operator later turns off is only re-enabled if this migration is re-applied,
+-- which the ledger prevents.
+-- NOTE no semicolons inside comments per the runner split gotcha.
+
+UPDATE jobs SET replay_missed = 1 WHERE json_extract(params, '$.created_by') = 'cronjob';

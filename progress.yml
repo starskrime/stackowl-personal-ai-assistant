@@ -14511,6 +14511,16 @@ known_debt:
       `insert_job`, never `create_job`, so it keeps the default by construction. The guard
       reads the AST for the KEYWORD, because the defect was an argument that was ABSENT and
       absence is what a text search cannot see.
+    the_fix_would_have_been_INERT_on_the_only_box_that_has_the_problem: >-
+      The writer only reaches jobs created afterwards. Measured after the restart, all
+      four existing user goals still carried replay_missed=0 — so on this installation
+      nothing would have changed, which is the shipped-decoration shape one layer over.
+      Migration 0139 backfills them, scoped by `json_extract(params,'$.created_by') =
+      'cronjob'` (the tag the operator-driven tool stamps), not by handler: dry-run on the
+      live database touches 4 rows of 144 and leaves every platform sweep alone.
+      json_extract rather than LIKE because `created_by` contains underscores and `_` is a
+      LIKE wildcard — a trap already paid for once here. Additive, not destructive: it
+      enables a bounded replay, deletes nothing.
     MY_OWN_CONTROL_WAS_VACUOUS_AND_THE_MUTANT_EXPOSED_IT: >-
       The control asserting "a platform sweep does NOT opt in" iterated `create_job(...)`
       calls in assembly.py — of which there are NONE — so it asserted over an empty list
