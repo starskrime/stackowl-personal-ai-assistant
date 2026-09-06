@@ -475,10 +475,25 @@ class HealthSweepHandler(JobHandler):
 def _compose_alert(
     down: Sequence[HealthStatus], degraded: Sequence[HealthStatus]
 ) -> str:
-    """Human-readable operator alert summarising the unhealthy subsystems."""
+    """Human-readable operator alert summarising the unhealthy subsystems.
+
+    CARRIES THE REMEDY WHEN THERE IS ONE (D14.4). This is the 2am surface: an alert that
+    says only what broke makes the reader go and find out what to do, at the worst
+    possible moment. A remedy the alert drops is a remedy that does not exist when it is
+    needed most.
+
+    The `→` clause is appended ONLY when a remedy is set. Most contributors have none —
+    a growing prompt prefix has no command that fixes it — and a dangling arrow on every
+    other line would teach the reader to stop seeing it.
+    """
     parts: list[str] = ["⚠ StackOwl health sweep found unhealthy subsystems:"]
     for s in down:
-        parts.append(f"  ✗ {s.name}: down — {s.message or 'no detail'}")
+        parts.append(f"  ✗ {s.name}: down — {s.message or 'no detail'}{_fix(s)}")
     for s in degraded:
-        parts.append(f"  ⚠ {s.name}: degraded — {s.message or 'no detail'}")
+        parts.append(f"  ⚠ {s.name}: degraded — {s.message or 'no detail'}{_fix(s)}")
     return "\n".join(parts)
+
+
+def _fix(s: HealthStatus) -> str:
+    """The remedy clause, or nothing at all when no action is known."""
+    return f"\n      → {s.remedy}" if s.remedy else ""

@@ -116,6 +116,11 @@ class GraphContributor:
             name="graph",
             status="down",
             message=self._reason or "knowledge graph unavailable",
+            remedy=(
+                "the Kuzu native layer did not load — on ARM this is usually a missing "
+                "or mismatched wheel; reinstall dependencies (`uv sync`) and re-run "
+                "`stackowl health`"
+            ),
             latency_ms=latency_ms,
         )
 
@@ -148,6 +153,10 @@ class DbContributor:
                 name="db",
                 status="down",
                 message=f"database not found: {self._db_path}",
+                remedy=(
+                    "run `stackowl db migrate` to create it, or check STACKOWL_HOME "
+                    "points at the install you mean"
+                ),
                 latency_ms=0.0,
             )
         try:
@@ -593,6 +602,10 @@ class FilesystemContributor:
                     name="filesystem",
                     status="down",
                     message=f"{label} missing: {path}",
+                    remedy=(
+                        "create the directory, or check STACKOWL_HOME points at the "
+                        "install you mean — every path derives from it"
+                    ),
                     latency_ms=(time.monotonic() - t0) * 1000,
                 )
         latency_ms = (time.monotonic() - t0) * 1000
@@ -623,6 +636,10 @@ class BrowserContributor:
             return HealthStatus(
                 name="browser", status="degraded",
                 message="runtime not constructed",
+                remedy=(
+                    "expected from the CLI — the runtime lives in the serve process; "
+                    "use /browser inside the running platform for live status"
+                ),
                 latency_ms=(time.monotonic() - t0) * 1000,
             )
         if not getattr(runtime, "available", False):
@@ -630,6 +647,10 @@ class BrowserContributor:
             return HealthStatus(
                 name="browser", status="down",
                 message=f"unavailable: {reason}",
+                remedy=(
+                    "the browser binary auto-installs at startup; check the reason "
+                    "above and the startup log for browser_install"
+                ),
                 latency_ms=(time.monotonic() - t0) * 1000,
             )
         cold = getattr(runtime, "cold_start_ms", None)

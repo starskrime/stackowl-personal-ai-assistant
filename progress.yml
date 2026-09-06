@@ -30229,17 +30229,58 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   done
+      document:   done
+    doc: docs/reference-mapping/designs/D14.4.md
+    doc_last_verified: "2026-09-06 against commit 63059348 — Verification RUN: 9 passed; 698 passed 0 failed; the CLI prints the browser remedy and exits 1; every JSON entry carries the key, 1 of 5 with a value"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        THE ASK WAS HALF RIGHT AND THE MISSING HALF WAS TOTAL. Ours diagnoses better — a live
+        aggregator plus a reachability census that asks whether a capability can be REACHED,
+        not merely registered. But `HealthStatus` carried name/status/message/latency_ms and
+        NOTHING ELSE across 72 construction sites, so a contributor that KNEW the fix had
+        nowhere to put it. Every message is a diagnosis ("database not found: {path}",
+        "runtime not constructed", "{label} missing: {path}") and both surfaces an operator
+        reads rendered exactly that and stopped, with the CLI then exiting 1.
+      - >-
+        SHIPPED: `HealthStatus.remedy: str | None = None`, defaulted so all 72 sites are
+        byte-for-byte unaffected, populated for the five failures whose fix is genuinely
+        known (db not found -> `stackowl db migrate`; a missing directory -> STACKOWL_HOME;
+        the graph -> the ARM wheel; and both browser states), and rendered in BOTH surfaces:
+        `stackowl health` (text and JSON) and `_compose_alert`, which is the 2am one. A
+        remedy the alert drops is a remedy that does not exist when it is needed most.
+      - >-
+        `None` IS A REAL ANSWER AND THE COMMON ONE, and a test pins it. prefix_growth,
+        unattributed_spend and store_cadence report measurements about the platform's own
+        behaviour — "the prompt prefix is growing" has no command that fixes it. Filling
+        those in would be inventing advice, and A FIELD THAT IS ALWAYS POPULATED IS A FIELD
+        READERS LEARN TO SKIM. The value is precisely that a remedy appearing means there is
+        something to do; the `→` clause is omitted entirely when there is none, so no
+        dangling marker trains the eye past it.
+      - >-
+        THE ROW THAT EARNS IT IMMEDIATELY is `browser: degraded — runtime not constructed`,
+        which fires on EVERY `stackowl health` run from a terminal because the runtime lives
+        in the serve process. The single most-seen degraded line in this platform looked like
+        a fault and was not; it now says so.
+      - >-
+        LIVE VALIDATE, on the real command rather than a test: `uv run stackowl health`
+        prints the browser remedy under its row and exits 1, and `--json` carries the key on
+        every entry (1 of 5 with a value). Both were run again as the document Verification
+        section. Note the exit code was first read through a pipe, which returns `tail`'s
+        status and not the command's — the same decoupling the gate rule warns about, caught
+        and re-measured.
+      - >-
+        Three mutants from file copies, each verified APPLIED: the db remedy dropped, the
+        alert no longer rendering it, and a remedy INVENTED for a measurement degradation
+        ("try turning it off and on again"). All three caught — the third is the anti-noise
+        guard, and it is the one that keeps the field meaningful. tests/health tests/scheduler
+        tests/cli 698 passed. ruff 35, mypy 65.
     notes: null
 
   - id: D14.5

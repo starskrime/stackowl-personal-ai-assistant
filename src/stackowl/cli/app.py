@@ -349,6 +349,7 @@ def health(
                 "name": s.name,
                 "status": s.status,
                 "message": s.message,
+                "remedy": s.remedy,
                 "latency_ms": round(s.latency_ms, 1),
             }
             for s in statuses
@@ -359,6 +360,11 @@ def health(
             icon = "✓" if s.status == "ok" else ("⚠" if s.status == "degraded" else "✗")
             msg = f"  {s.message}" if s.message else ""
             typer.echo(f"{icon}  {s.name:<30} {s.status:<10} {s.latency_ms:>6.0f}ms{msg}")
+            # D14.4 — the "how to fix it" half. Indented under its own line so the
+            # status table stays scannable, and printed ONLY when a remedy exists:
+            # most contributors report measurements no operator command can change.
+            if s.remedy:
+                typer.echo(f"      → {s.remedy}")
 
     if any(s.status != "ok" for s in statuses):
         sys.exit(1)
