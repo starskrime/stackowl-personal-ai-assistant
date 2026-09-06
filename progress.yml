@@ -14525,6 +14525,19 @@ known_debt:
       REAL red job stops being read. DELETED. I can state it CANNOT pass because the tree
       says so; I did NOT verify it has been failing, because `gh` is not installed on this
       box and I have no run history — that limit is recorded rather than papered over.
+    validate_and_its_honest_limit: >-
+      TWO CLAIMS, and only one of them is observable from this box. That the workflow
+      DECLARES the gate is proven and re-provable: the guard is itself
+      `@pytest.mark.tripwire`, so it runs inside the very gate it describes, and it fails
+      if the step, the trigger or the Node-workflow deletion is reverted (all three
+      mutation-proven). That GitHub ACTUALLY RUNS it is NOT verifiable here — `gh` is not
+      installed, so I have no run history, and I cannot even confirm Actions is enabled
+      on the repository. NO `closing_check` is recorded for that half ON PURPOSE: any
+      check I could write would call `gh`, find it absent, and print OPEN forever — which
+      is precisely the dead end DEBT-127 exists to prevent, and manufacturing one to look
+      thorough would be worse than naming the limit. What would settle it: the operator
+      opening the Actions tab on the next push to `main`, or `gh` being installed here.
+      No `src/` changed, so no restart was needed for anything to become live.
     mutation_tested: >-
       Three mutants, each firing exactly one assertion: the gate step replaced with an
       echo, the PR trigger reverted to release/v2 only, and a Node workflow reintroduced.
