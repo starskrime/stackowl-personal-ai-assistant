@@ -1,6 +1,6 @@
 ---
 name: media-generate
-description: Generate an image, produce speech audio, or analyze an image — and deliver the resulting artifact to the user.
+description: Generate or analyse an image, or produce speech audio.
 when_to_use: When the user wants an image created, speech or audio produced from text, or an image described and analyzed. Covers generation (image, audio) and perception (vision analysis) tasks, always ending with delivery of the artifact or findings.
 version: 0.1.0
 tags: [image, audio, speech, vision, media, generation]

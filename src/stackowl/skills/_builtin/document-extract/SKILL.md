@@ -1,6 +1,6 @@
 ---
 name: document-extract
-description: Use to pull specific structured content out of a document — tables, fields, lists, or other targeted data — beyond a plain summary.
+description: Pull structured data out of a document.
 when_to_use: When the user needs specific structured data extracted from a document (e.g. a table of figures, a list of named entities, specific fields from a form), not a general summary. For long-document summarisation, use the chunked-pdf-summary skill instead.
 version: 0.1.0
 tags: [document, extraction, pdf, parsing, structured-data]

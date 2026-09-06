@@ -1,6 +1,6 @@
 ---
 name: deep-research
-description: Use when a question needs multiple sources, cross-checked claims, inline citations, and an explicit confidence judgement. Runs several search queries from different angles, fetches the strongest sources, and synthesises a cited answer.
+description: Answer from multiple cross-checked, cited sources.
 when_to_use: When the user asks a factual question that requires more than one source to answer reliably — especially when the answer may be contested, time-sensitive, or consequential enough to warrant source verification.
 version: 0.1.0
 tags: [research, web-search, citations, fact-checking]

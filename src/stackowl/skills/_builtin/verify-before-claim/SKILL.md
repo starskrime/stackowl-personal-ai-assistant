@@ -1,6 +1,6 @@
 ---
 name: verify-before-claim
-description: Use before telling the user a task is done, a file was written, or a fix works. Re-reads the artifact and re-runs the check so the reply is grounded in a fresh observation, not intent.
+description: Re-check the artifact before claiming a task is done.
 when_to_use: Before asserting that a file was written, a command succeeded, a test passes, or any other task is complete — whenever the reply would claim a result rather than describe an attempt.
 version: 0.1.0
 tags: [verification, honesty, quality]

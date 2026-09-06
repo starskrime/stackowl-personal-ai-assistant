@@ -1,6 +1,6 @@
 ---
 name: code-exec-sandboxed
-description: Run code (compute, parse, transform data, quick scripts) safely and report the real output — not assumed output.
+description: Run code safely and report its real output.
 when_to_use: When a task needs to run code to compute a value, parse or transform data, or execute a quick script. Use this skill to ensure the code actually runs and the output is observed before being reported.
 version: 0.1.0
 tags: [code, execution, scripting, compute, sandbox]

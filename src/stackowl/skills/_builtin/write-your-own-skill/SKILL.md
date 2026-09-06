@@ -1,6 +1,6 @@
 ---
 name: write-your-own-skill
-description: Use after completing a non-trivial multi-tool task worth reusing. Calls the synthesize_skills tool (consent-gated) to codify the successful sequence into a reusable learned skill.
+description: Codify a successful multi-tool sequence as a skill.
 when_to_use: When a multi-step task succeeded and the procedure is general enough to be worth capturing — so the same sequence can be recalled and applied to similar future requests without rediscovering it.
 version: 0.1.0
 tags: [skill-authoring, learning, synthesis]

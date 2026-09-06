@@ -1,6 +1,6 @@
 ---
 name: chunked-pdf-summary
-description: Use when the user asks to summarize a long document (PDF, transcript, article > ~20 pages or > ~30k tokens). Splits, summarizes each chunk with the fast tier, then recursively re-summarizes.
+description: Summarise a long document by chunking, then merging.
 when_to_use: User uploads or references a long document and asks for a summary, brief, key points, or executive overview.
 version: 0.1.0
 tags: [summarization, long-context, pdf]

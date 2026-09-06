@@ -1,6 +1,6 @@
 ---
 name: schedule-proactive
-description: Use when the user wants a recurring goal, reminder, check-in, or proactive notification on a schedule.
+description: Schedule a recurring goal, reminder or check-in.
 when_to_use: When the user asks to be reminded of something, wants a recurring check-in, or wants the assistant to proactively act on a goal at a future time or on a repeating schedule.
 version: 0.1.0
 tags: [scheduling, proactive, reminders, recurring, cronjob]

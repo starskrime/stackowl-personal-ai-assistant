@@ -1,6 +1,6 @@
 ---
 name: recover-and-retry
-description: Use when a tool call fails or returns an error mid-task. Guides the structured recovery sequence — read the error, try an alternative, retry once if transient, then report honestly if still failing.
+description: Recover from a failed tool call, then retry or report.
 when_to_use: When a tool call returns an error, a shell command exits non-zero, or a fetch fails, and the task cannot be completed without recovering from that failure.
 version: 0.1.0
 tags: [recovery, error-handling, resilience]

@@ -1,6 +1,6 @@
 ---
 name: plan-and-track
-description: Use when a goal requires multiple ordered steps that must be decomposed, tracked, and updated as scope changes. Keeps the active plan honest and in sync with actual progress.
+description: Decompose a multi-step goal and keep the plan current.
 when_to_use: When the user asks for a multi-step task (migrate, refactor, set up, investigate) where losing track of completed vs. pending work would cause rework or missed steps.
 version: 0.1.0
 tags: [planning, tracking, multi-step]

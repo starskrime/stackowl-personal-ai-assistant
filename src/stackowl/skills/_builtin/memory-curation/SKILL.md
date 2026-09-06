@@ -1,6 +1,6 @@
 ---
 name: memory-curation
-description: Use to deliberately store, consolidate, and verify durable facts and preferences — either after a session rich with keeper information or on a periodic curation pass.
+description: Store, consolidate and verify durable facts.
 when_to_use: After a session that surfaced facts or preferences worth keeping long-term, or when the user explicitly asks to remember something. Also use on a periodic curation pass to promote staged facts and remove stale or duplicate entries.
 version: 0.1.0
 tags: [memory, curation, preferences, knowledge, facts]

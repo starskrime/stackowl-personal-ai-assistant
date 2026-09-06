@@ -1,6 +1,6 @@
 ---
 name: channel-fallback
-description: Deliver a message or file to the user through an alternate channel when the primary channel send fails, and record which channel succeeded.
+description: Deliver via another channel when the primary send fails.
 when_to_use: When a message or file must reach the user but the primary channel send attempt fails or is unavailable. Ensures delivery is attempted on alternate reachable channels before reporting the outcome, and is honest if all channels fail.
 version: 0.1.0
 tags: [delivery, channel, fallback, messaging, reliability]

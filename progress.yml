@@ -14477,6 +14477,49 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-137
+    found: 2026-09-06
+    what: >-
+      THE PLATFORM SHIPPED A SKILL CATALOGUE THAT VIOLATED ITS OWN AUTHORING STANDARD,
+      100%. `standard.py` defines the standard and `gated_skill_write` enforces it — on
+      WRITES. The 14 builtin skills under `skills/_builtin/` were never a write: they are
+      files in the repository, seeded to disk at boot, so they enter the catalogue through
+      the one door the validator does not watch. Measured by running the REAL validator
+      over them: all 14 carried blocking violations in three kinds — description (20),
+      sections (14), section_order (13) — and every description exceeded the 60-character
+      cap, from 102 to 235 chars.
+    why_the_migrator_cannot_help_and_is_right_not_to: >-
+      `SkillStandardMigrator` excludes builtins deliberately: "those are shipped files
+      under version control, and rewriting them with an LLM would put generated content
+      into the repository". So the only place they can be fixed is the repo, by hand. That
+      is also why its candidate set is clean — measured 2026-09-06, the 20 learned active
+      skills it WOULD process all already conform on the description rule (max 59). The
+      backlog is entirely in the shipped half, which nothing was watching.
+    what_shipped: >-
+      All 14 descriptions rewritten to conform (235->50, 198->54, 190->52 …; longest now
+      56) and a tripwire that asks the REAL validator rather than re-implementing the
+      60-character cap — a second copy of that number would be the same shape as the
+      defect. Nothing was lost in the shortening: the standard already gives the detail a
+      home in `when_to_use`, which every one of these files carries and which is not
+      capped.
+    what_is_NOT_enforced_yet_and_why: >-
+      The BODY rules — the seven required sections and their order — are recorded, not
+      armed: 14 files still violate them (sections 14, section_order 13 after this
+      change), and arming a rule the tree fails would block every commit in the repo. That
+      is DEBT-130's lesson applied to my own guard: land the rule in the same change as
+      the compliance, never before it. Rewriting 14 skill BODIES is a comprehension task
+      the migrator itself warns about — "a regex would produce conforming skills that no
+      longer describe what they do, which is worse than non-conforming ones that do" — so
+      it is its own item rather than a hasty pass at the end of this one.
+    I_NEARLY_SHIPPED_A_VACUOUS_GUARD_AGAIN: >-
+      The first draft filtered violations on `v.code == "description"`. `Violation` has no
+      `code` field — it has `rule` — so the filter would have returned an empty list for
+      every skill and passed over nothing. I only caught it by reading the dataclass:
+      my earlier measurement used `getattr(v, "code", None) or getattr(v, "rule", None)`
+      and had silently fallen back to `.rule`, so the output LOOKED like `.code` worked.
+      A getattr chain with a fallback hides which branch answered. Mutation-proven both
+      ways: restoring one long description fires the guard, and reverting the filter to
+      `.code` fires the control that proves the rule can still reject.
   - id: DEBT-136
     found: 2026-09-06
     what: >-

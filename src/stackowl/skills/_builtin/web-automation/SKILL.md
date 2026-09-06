@@ -1,6 +1,6 @@
 ---
 name: web-automation
-description: Use when a task requires driving a website — navigating pages, reading rendered content, filling forms, clicking elements, or extracting structured data from a live page.
+description: Drive a website: navigate, read, fill forms, extract.
 when_to_use: When the target information or action lives behind a browser interaction that a plain HTTP fetch cannot reach — e.g. a login-gated page, a JS-rendered table, a multi-step form, or a page that requires clicking before data appears.
 version: 0.1.0
 tags: [browser, web, automation, extraction, forms]

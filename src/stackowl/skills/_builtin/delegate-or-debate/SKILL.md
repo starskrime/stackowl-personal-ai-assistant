@@ -1,6 +1,6 @@
 ---
 name: delegate-or-debate
-description: Use when a task is large enough to benefit from a specialist, or when multiple perspectives or a structured debate would produce a better answer than a single pass.
+description: Delegate to a specialist, or debate for a better answer.
 when_to_use: When a task exceeds what a single generalist pass can handle well — either because it needs a specialist owl, because diverse independent drafts improve quality, or because a structured multi-round debate is needed to reach a synthesized position.
 version: 0.1.0
 tags: [delegation, multi-agent, debate, parliament, specialist]
