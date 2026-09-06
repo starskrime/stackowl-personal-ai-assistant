@@ -14478,15 +14478,18 @@ upcoming:
 
 known_debt:
   - id: DEBT-145
-    closing_check: |-
-      # Keyed on the "suppressed" FIELD on this message - the aggregated line
-      # carries it and the per-cluster line never did, so a hit proves the NEW
-      # shape ran (DEBT-138's rule). Not keyed on the message text, which is
-      # nearly unchanged and fired 5,579 times BEFORE the fix.
-      n=$(./scripts/log_since.sh 2026-09-06 'too few precisely-attributed.*"suppressed"')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n aggregated suppression line(s)" || echo "OPEN 0 incident_escalation ticks with a suppression since the fix; the code IS live-evidenced"
     stages:
-      validate: partial
+      validate: done
+    validate_result: >-
+      CLOSED LIVE, 2026-09-06, and VERIFIED by reading the line rather than trusting a count.
+      Restarted with ./start.sh; the core booted 18:45:15Z after commit 182e4fe1 at 18:44:16Z,
+      checked against the boot line and never a PID. The 18:48:45 tick emitted ONE aggregated
+      line where the old code emitted six: {"suppressed": 6, "threshold": 3, "capabilities":
+      ["browser_extract","browser_navigate","read_file","search_files","todo","web_search"],
+      "signatures": ["browser_extract:stop(0/6)","browser_navigate:stop(2/8)",...]}. It carries
+      MORE than the six lines did - the whole set plus each cluster's precise/total ratio - and
+      now sits beside the `already diagnosed` line in the identical shape. The tick's
+      suppression output went from 6+ lines to 1.
     found: 2026-09-06
     what: >-
       SIX CLUSTERS SUPPRESSED FOR ONE REASON WERE SIX LOG LINES, EVERY TEN MINUTES, FOR NINE
