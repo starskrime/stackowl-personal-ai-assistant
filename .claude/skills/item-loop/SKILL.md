@@ -132,7 +132,10 @@ Duplicate keys silently swallow whole records. This has already happened.
   construction, not by reading. Targeted paths are chosen by what the change
   looks related to, and a CROSS-CUTTING guard never looks related to anything — which
   is how an unscoped `task_outcomes` read and three stale allowlist entries both
-  shipped. The gate takes ~40s and runs everything marked `@pytest.mark.tripwire`
+  shipped. The gate takes **~2 minutes** (MEASURED 2026-09-06: 133s wall,
+  `138 passed, 2 skipped` in 105.88s — it was ~40s when there were far fewer
+  guards, and a stale duration is why a gate gets skipped) and runs everything
+  marked `@pytest.mark.tripwire`
   plus `progress_lint` and both baselines.
 
   **The full run does NOT hang — it takes ~30 minutes, and this line used to say the

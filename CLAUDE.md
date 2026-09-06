@@ -154,7 +154,7 @@ protects the whole repo looks related to nothing. Two defects shipped exactly th
 way: `usage_report.py` read the owner-governed `task_outcomes` with no `owner_id`
 predicate (that item ran `tests/tools/meta` and `tests/startup`; the tripwire lives in
 `tests/tenancy`), and deleting six modules left three of their entries in the
-owner-scope allowlist. The gate is ~40 seconds and runs everything marked
+owner-scope allowlist. The gate is **~2 minutes** and runs everything marked
 `@pytest.mark.tripwire` plus `progress_lint`, `ruff` and `mypy`. Mark a new guard with
 that marker and it joins automatically — the marker is the source, not a path list.
 

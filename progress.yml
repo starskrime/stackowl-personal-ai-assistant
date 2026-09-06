@@ -14477,6 +14477,51 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-146
+    found: 2026-09-06
+    what: >-
+      THE REPOSITORY PEOPLE ARE TOLD TO CLONE HAD NO README. Measured 2026-09-06 against the
+      operator's standing MANDATORY rule - "people will download it from github and setup in
+      their machines" - there was no README.md at all, so a fresh clone had no front door.
+    the_capability_was_never_the_problem: >-
+      The CLI is complete for a new user and always was: `init` (creates ~/.stackowl and applies
+      every migration), `setup --minimal | --demo | --channel <name>`, `validate-config` (loads
+      the config and resolves every provider secret), `start`, `stop`, `install-service`,
+      `backup`, `export`, `import`, plus `health`, `trace`, `providers`, `db`. Nothing pointed
+      at any of it. That is defect shape 5 - built but not wired - applied to the front door,
+      and it is the largest gap between this platform and its stated distribution model.
+    THE_GUARD_IS_THE_DELIVERABLE_NOT_THE_PROSE: >-
+      A README is a set of claims about the tree, written once and diverging from it silently -
+      the same disease as an escalation whose premise ages or a `partial` with no runnable
+      check. Both were cured here by making the claim EXECUTABLE (`premise_check`,
+      `closing_check`), so this gets the same cure: every `stackowl <cmd>` the README names must
+      exist in the real Typer app, every path it names must be present, and the Python version
+      it states must be the one pyproject requires. Marked `@pytest.mark.tripwire` so it runs on
+      every gate.
+    what_the_guard_DELIBERATELY_does_not_claim: >-
+      It does not check the instructions WORK on a clean machine - no test here can, and
+      pretending otherwise would be the "a fixture that cannot show the bug proves nothing"
+      failure. It checks the weaker honest property: the README never names something the tree
+      does not have. A command that exists can still be wrong; a command that does not exist is
+      wrong for certain, and that is what a README actually dies of.
+    mutation_proven: >-
+      Three mutants, each caught by its own assertion and restored from a file copy: promising
+      `stackowl doctor` (a plausible command - D14.4 is literally titled "Doctor" - that does
+      NOT exist); pointing at `./scripts/setup_everything.sh`; and stating Python 3.11 against
+      pyproject's >=3.13. Vacuity control asserts the extractors see >=5 commands and >=4 paths;
+      it FIRED during development, catching that the path regex only read inline-backticked
+      paths and so missed every path inside a fenced bash block - the ones a user actually runs.
+    a_stale_number_was_found_and_corrected_in_THREE_copies: >-
+      Writing the "developing" section forced a measurement of the gate: it takes 133s wall
+      (138 passed, 2 skipped in 105.88s), not the "~40 seconds" that CLAUDE.md and the item-loop
+      skill BOTH still claimed - true when there were far fewer guards. Corrected in all three
+      places from the one measurement, because correcting one copy of a rule is not correcting
+      the rule, and a stale duration is exactly why someone skips a gate.
+    what_else_the_cause_reaches: >-
+      Every claim this repository makes about ITSELF is unguarded unless something executes it.
+      The programme already learned this twice for its own machinery and fixed it twice with a
+      runnable field; the README is the same shape aimed at a stranger instead of at the loop,
+      which is why it went missing entirely rather than merely going stale.
   - id: DEBT-145
     stages:
       validate: done
