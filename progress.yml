@@ -29789,14 +29789,6 @@ items:
     notes: null
 
   - id: D13.1
-    closing_check: |-
-      # ASSERTS A REAL SURFACE VALUE, not merely that the field exists. Written twice:
-      # counting the boot LINE returned 27 (it fires every boot regardless), and asking
-      # for the field PRESENCE returned 2 - both artefacts of my own half-finished edits
-      # that CodeWatcher picked up mid-item, one logging surface "unknown" and one a bare
-      # "cli". The field existing is not the field being right.
-      n=$(./scripts/log_since.sh 2026-09-06 'starting CLI adapter.*"surface": "\(tui\|headless\|raw\|socket:\)')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n boot(s) named a real surface" || echo "OPEN 0 boots have named a real surface since 2026-09-06 - the final code is not yet the running code"
     title: "Surface count"
     domain: D13
     verdict: PARTIAL
@@ -29815,7 +29807,7 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial
+      validate:   done
       document:   done
     doc: docs/reference-mapping/designs/D13.1.md
     doc_last_verified: "2026-09-06 against commit c5716724 — Verification RUN: 9 passed; 1118 passed 0 failed; rca 112 / telegram 65 / cli 8"
@@ -29857,6 +29849,17 @@ items:
         default I briefly had) and one a bare "cli" (the base default, before the socket
         override). The field existing is not the field being right. DEBT-125 was about
         scoping to a DATE; this is the same rule one level deeper — scope to a VALUE.
+      - >-
+        VALIDATE CLOSED ON MEASURED EVIDENCE. Restarted against c625d74f; both processes now
+        name themselves and they name themselves DIFFERENTLY: the core logs
+        `surface: "socket:cli"` and the gateway logs `surface: "headless"`, 0 ERRORs on that
+        boot. That is the gateway+core pair which has made more than one count in this
+        programme read as double what it was, finally distinguishable in the record. The full
+        progression is visible in today's log and worth keeping: 25 boots with NO field, then
+        one "unknown" and one bare "cli" (both artefacts of my own half-finished edits picked
+        up by CodeWatcher mid-item), then the two real values. The closing_check was deleted
+        with the close, per the mirror rule added in DEBT-125 — a check on a non-partial item
+        is a write with no reader, because validate_check only iterates partial stages.
       - >-
         Three mutants from file copies, each verified APPLIED: surface hardcoded so it
         ignores `_mode`, the boot line dropping the field, and the contract default replaced
