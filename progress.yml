@@ -14478,6 +14478,17 @@ upcoming:
 
 known_debt:
   - id: DEBT-152
+    validate_result: >-
+      HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 21:38:03Z after
+      commit adf53b95 at 21:37:03Z - checked against the boot line, never a PID - and
+      `inspect.getsource(deliver._proactive_fallback)` on the running tree confirms BOTH halves:
+      it consults `state.defer_delivery` AND still contains "answer not delivered" for the loud
+      case. Verifying the loud half matters as much as the quiet one, because the failure mode
+      of this fix is over-correction.
+      The check reads OPEN at 0: it needs a deferred turn to hit a stream-miss, which needs a
+      recovery drive on a scheduled job. The jobmarket goal runs daily at 19:00 and produced
+      exactly this shape on 09-05 and 09-06, so this should close on its own within a day
+      rather than waiting on a user.
     closing_check: |-
       # Keyed on "owes no addressee", a message this item INTRODUCED. The old code
       # emitted only the false "answer not delivered" on this branch, so a hit
