@@ -4201,46 +4201,39 @@ class StartupOrchestrator:
         # "dangling half-edge" bug (registered-but-unreachable) that shipped green
         # for check_in / event_bridge / goal_execution.
         #
-        # DECLARED_EVENT_PUBLISHERS — the set of bus events some module actually
-        # EMITS. It is empty today: event_bridge._ALLOWED_EVENTS is empty (WS-D
-        # moved proactivity onto the durable seam). Re-adding a bridge subscriber
-        # (an event in _ALLOWED_EVENTS) REQUIRES adding its publisher name here,
-        # or the audit will (correctly) flag it as a dangling subscription.
+        # The publisher declaration lives in wiring_audit.declared_event_publishers.
+        # This comment used to say "it is empty today: event_bridge._ALLOWED_EVENTS
+        # is empty" — it has held four events since DEBT-7, and a stale note about an
+        # empty set is exactly what stops the next reader checking. Adding a bridge
+        # subscriber REQUIRES declaring its publisher there, and the tripwire in
+        # tests/startup/test_an_event_contract_is_not_four_string_literals.py now
+        # fails when it does not, instead of the boot log reporting it as dangling.
         try:
             from stackowl.notifications.event_bridge import _ALLOWED_EVENTS
-            from stackowl.providers.conversation_cost_report import COST_REPORT_EVENT
-            from stackowl.providers.cost_tracker import (
-                BUDGET_EXCEEDED_EVENT,
-                BUDGET_WARNING_EVENT,
-            )
             from stackowl.scheduler.base import HandlerRegistry
-            from stackowl.startup.wiring_audit import audit_scheduler_wiring
+            from stackowl.startup.wiring_audit import (
+                audit_scheduler_wiring,
+                declared_event_publishers,
+            )
 
             # DEBT-7 — this was `frozenset()`, so the dangling-event check
             # compared subscribers against NOTHING and could only ever answer
             # "dangling". It flagged the two budget events correctly by
             # accident and would have said the same about perfectly-wired ones,
             # which also means it could never have caught a genuinely NEW
-            # dangling subscription. Both budget thresholds are emitted by
-            # providers/cost_tracker.py; the cost report by
-            # providers/conversation_cost_report.py. Anything added to
-            # event_bridge._ALLOWED_EVENTS needs its publisher declared here.
-            # Each entry is the PUBLISHER's own exported constant, so this set
-            # cannot drift from what is actually emitted: delete an emitter and
-            # this import fails at boot rather than the audit quietly reporting a
-            # dead subscription as wired. Two of these were bare literals, which
-            # is the same hand-maintained mirror DEBT-7 already paid for once in
-            # the opposite direction.
-            declared_event_publishers: frozenset[str] = frozenset({
-                BUDGET_EXCEEDED_EVENT,
-                BUDGET_WARNING_EVENT,
-                COST_REPORT_EVENT,
-            })
+            # dangling subscription.
+            #
+            # The declaration itself moved to wiring_audit.declared_event_publishers
+            # on 2026-09-05. It lived HERE, as a local, which meant no test and no
+            # gate could read it — so a subscription added with a real publisher
+            # behind it still had to wait until the next boot to discover that this
+            # list had not been updated. A declaration nothing can compare is not a
+            # declaration; it is a second copy waiting to drift.
             wiring_report = await audit_scheduler_wiring(
                 db_pool,
                 HandlerRegistry.instance(),
                 allowed_events=_ALLOWED_EVENTS,
-                declared_publishers=declared_event_publishers,
+                declared_publishers=declared_event_publishers(),
             )
             log.info(
                 "[startup] gateway: scheduler wiring audited",

@@ -360,16 +360,27 @@ class FailClosedPrompter:
 _PROVENANCE_CATEGORIES = frozenset({"authority_widening", "owl_build"})
 
 
-def _gateway_channels() -> frozenset[str]:
-    """Channel names the gateway currently holds a live adapter for.
+def _gateway_channels_or_unknown() -> frozenset[str] | None:
+    """Channel names the gateway currently holds a live adapter for, or None.
 
     This is the provenance claim the platform can actually make. A turn arriving on a
     registered adapter came through the operator's own configured, authenticated
     ingress; a turn with no such origin — a scheduled sweep, an MCP caller, a webhook,
     an internal sub-goal — did not.
 
-    Never raises: an origin we cannot establish is not an origin we trust, so a lookup
-    failure yields the empty set and the caller fails closed.
+    Never raises. **``None`` means the registry could not be READ; an empty set means
+    it was read and holds nothing.** Those were one value until 2026-09-05 and the
+    conflation was a live hazard, because the two readers of this helper interpret
+    absence in OPPOSITE directions:
+
+      * provenance asks "did a human vouch for this?" — absence means NO, refuse;
+      * the confined carve-out asks "could a human have been asked?" — absence means
+        NOBODY IS THERE, grant.
+
+    So one unreadable registry would have failed CLOSED for the first and OPEN for the
+    second, from the same return value. Each caller must therefore be able to see the
+    unknown case and fail closed in its own direction. This is CLAUDE.md shape #3 — two
+    readings of one rule — and the safety of both depends on telling them apart.
     """
     try:
         from stackowl.channels.registry import ChannelRegistry
@@ -385,11 +396,22 @@ def _gateway_channels() -> frozenset[str]:
         )
     except Exception as exc:
         log.tool.warning(
-            "[consent] could not read the gateway's channels — treating this origin "
-            "as UNOFFICIAL",
+            "[consent] could not read the gateway's channels — attendance is UNKNOWN "
+            "and every caller must fail closed in its own direction",
             exc_info=exc,
         )
-        return frozenset()
+        return None
+
+
+def _gateway_channels() -> frozenset[str]:
+    """The provenance view: an origin we cannot establish is not one we trust.
+
+    Unknown collapses to empty here deliberately — for THIS question the two mean the
+    same thing (no vouching origin), which is exactly why the collapse looked harmless
+    when it was the helper's only behaviour.
+    """
+    channels = _gateway_channels_or_unknown()
+    return channels if channels is not None else frozenset()
 
 
 class AutonomousPrompter:
@@ -478,7 +500,39 @@ class AutonomousPrompter:
         # best-effort and the log is the only guaranteed trace. Refusing the grant when
         # undeliverable was rejected — it would rebuild the original defect in a new
         # costume and break any fresh clone that has not configured a channel.
+        #
+        # AND IT IS GATED ON ATTENDANCE, not merely on the contract. The first version
+        # of this carve-out asked only "is the tool confined?", which broke the C-6
+        # invariant that an unwired channel cannot escalate an always-ask action: with
+        # the Slack socket up but its prompter unregistered, `RoutingPrompter` falls
+        # through to here and a WIRING FAULT would have become a silent auto-grant on a
+        # channel where the operator was sitting right there.
+        #
+        # THE ROOT CAUSE IS OLDER THAN THE CARVE-OUT and is worth naming, because the
+        # carve-out only exposed it. This class is named for a condition none of its
+        # callers guarantee: `RoutingPrompter` routes here whenever a channel has no
+        # prompter, which covers BOTH "nobody can be asked" (the rca lane) and "somebody
+        # can be asked and we failed to wire the asking" (Slack). While every always-ask
+        # request was refused, conflating them was harmless — deny was right either way —
+        # so the assumption sat in the name and nothing tested it. The moment one grant
+        # was added, the two meanings came apart. Attendance is therefore established
+        # from EVIDENCE, the same live registry the provenance rule reads, and an
+        # unreadable registry counts as attended so this fails closed.
         if not req.allow_relaxation and runs_confined(req.tool_name):
+            channels = _gateway_channels_or_unknown()
+            attended = channels is None or (bool(req.channel) and req.channel in channels)
+            if attended:
+                log.tool.warning(
+                    "[consent] confined execution REFUSED — this turn arrived on a "
+                    "channel the gateway holds, so a human COULD have been asked and "
+                    "no prompter is wired for it",
+                    extra={"_fields": {
+                        "tool": req.tool_name, "category": req.category,
+                        "channel": req.channel,
+                        "registry_readable": channels is not None,
+                    }},
+                )
+                return ConsentScope.DENY
             log.tool.info(
                 "[consent] confined execution granted with no human attached — the "
                 "run cannot reach the host",

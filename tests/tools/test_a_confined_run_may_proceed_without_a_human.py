@@ -143,3 +143,104 @@ def test_the_notification_event_has_ONE_spelling() -> None:
         "the bridge spells the event name as a literal — import the publisher's "
         "constant instead, or a rename leaves it subscribing to a name nobody sends"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Attendance — the gate that keeps a wiring fault from becoming an auto-grant   #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_a_live_channel_with_no_prompter_still_REFUSES() -> None:
+    """THE REGRESSION THIS EXISTS TO STOP, found by `tests/startup` after the first
+    version of the carve-out shipped.
+
+    `RoutingPrompter` routes to `AutonomousPrompter` whenever a channel has no
+    prompter registered — which covers TWO different worlds it cannot tell apart:
+    the rca lane, where nobody can be asked, and a live Slack socket whose prompter
+    B3 failed to wire, where the operator is sitting right there. Keyed on the
+    confinement contract alone, the carve-out granted both, turning a wiring fault
+    into a silent unattended execution on an interactive channel and breaking the
+    C-6 invariant that an unwired channel cannot escalate an always-ask action.
+    """
+    from stackowl.channels.registry import ChannelRegistry
+    from stackowl.tools.consent import AutonomousPrompter
+
+    class _LiveAdapter:
+        channel_name = "slack"
+
+        async def send(self, chunks: object) -> None: ...
+        async def send_text(self, text: str, **kw: object) -> None: ...
+        async def receive(self) -> object: ...
+
+    registry = ChannelRegistry.instance()
+    registry.register(_LiveAdapter())  # type: ignore[arg-type]
+    try:
+        scope = await AutonomousPrompter().prompt(ConsentRequest(
+            tool_name="execute_code", channel="slack", session_key="slack:1",
+            allow_relaxation=False,
+        ))
+        assert scope is ConsentScope.DENY
+    finally:
+        registry.reset()
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_registry_counts_as_ATTENDED(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FAILS CLOSED ON THE INSTRUMENT, not just on the answer.
+
+    `_gateway_channels()` returned the empty set both when the registry was EMPTY and
+    when it could not be READ. Provenance reads that as "no vouching origin" and
+    refuses — correct. This carve-out reads absence as "nobody is there" and grants —
+    so one unreadable registry would have failed closed for one caller and OPEN for
+    the other, from the same value. Hence `_gateway_channels_or_unknown`, and hence
+    this test drives the REAL registry rather than the helper: a double standing in
+    front of the guard cannot test the guard.
+    """
+    from stackowl.channels import registry as reg
+    from stackowl.tools.consent import AutonomousPrompter
+
+    def _boom() -> object:
+        raise RuntimeError("registry gone")
+
+    monkeypatch.setattr(reg.ChannelRegistry, "instance", staticmethod(_boom))
+
+    scope = await AutonomousPrompter().prompt(ConsentRequest(
+        tool_name="execute_code", channel="rca", session_key="incident-x",
+        allow_relaxation=False,
+    ))
+    assert scope is ConsentScope.DENY, (
+        "attendance could not be established and the run was granted anyway"
+    )
+
+
+def test_unknown_and_empty_are_DISTINGUISHABLE(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The distinction the split helper exists to preserve, asserted directly so a
+    later 'simplification' back to one function is caught here rather than in a
+    consent decision.
+
+    A first draft of this test asserted `x is not None or True`, which is true for
+    every possible value — it would have passed against the unsplit helper it was
+    written to protect. Both branches are now driven against the real registry.
+    """
+    from stackowl.channels import registry as reg
+    from stackowl.tools import consent as mod
+
+    # READ, and holding nothing: empty set, NOT None.
+    reg.ChannelRegistry.instance().reset()
+    assert mod._gateway_channels_or_unknown() == frozenset()
+
+    # UNREADABLE: None from the attendance view, empty from the provenance view.
+    def _boom() -> object:
+        raise RuntimeError("registry gone")
+
+    monkeypatch.setattr(reg.ChannelRegistry, "instance", staticmethod(_boom))
+    assert mod._gateway_channels_or_unknown() is None, (
+        "an unreadable registry is indistinguishable from an empty one — the "
+        "confined carve-out would read it as 'nobody is there' and grant"
+    )
+    assert mod._gateway_channels() == frozenset(), (
+        "the provenance view must still collapse unknown to empty and refuse"
+    )

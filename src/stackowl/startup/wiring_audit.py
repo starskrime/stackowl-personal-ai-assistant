@@ -243,3 +243,38 @@ def audit_owl_wiring(
         }},
     )
     return report
+
+
+def declared_event_publishers() -> frozenset[str]:
+    """The bus events some module in this tree actually EMITS.
+
+    WHY THIS IS A FUNCTION HERE RATHER THAN A LOCAL IN THE ORCHESTRATOR. It was a
+    local, buried inside `_phase_gateway`, and on 2026-09-05 that cost a live defect:
+    `consent.confined_execution_granted` was added to the bridge's subscriptions with
+    a real publisher behind it, the declaration a hundred lines away was not updated,
+    and the boot audit would have reported a correctly-wired subscription as DANGLING
+    forever. Nothing could have caught it before boot, because a declaration inside a
+    function body is unreachable to every test and every gate.
+
+    Lifting it here makes the two halves comparable in ~40 seconds instead of at the
+    next restart — see the tripwire in
+    tests/startup/test_an_event_contract_is_not_four_string_literals.py, which asserts
+    this set covers everything the bridge subscribes.
+
+    Each entry is the PUBLISHER's own exported constant, never a literal, so the set
+    cannot drift from what is emitted: delete an emitter and this import fails at boot
+    rather than the audit quietly reporting a dead subscription as wired.
+    """
+    from stackowl.providers.conversation_cost_report import COST_REPORT_EVENT
+    from stackowl.providers.cost_tracker import (
+        BUDGET_EXCEEDED_EVENT,
+        BUDGET_WARNING_EVENT,
+    )
+    from stackowl.tools.consent import CONFINED_EXEC_GRANTED_EVENT
+
+    return frozenset({
+        BUDGET_EXCEEDED_EVENT,
+        BUDGET_WARNING_EVENT,
+        COST_REPORT_EVENT,
+        CONFINED_EXEC_GRANTED_EVENT,
+    })

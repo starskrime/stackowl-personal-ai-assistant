@@ -14325,6 +14325,76 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-123
+    found: 2026-09-05
+    what: >-
+      THE PLATFORM COULD ONLY SELF-HEAL A PROVIDER OUTAGE IF A HUMAN TALKED TO IT.
+      Operator-reported: "that is a bug platform should not need to restart to detect llm
+      alive". The shape is narrower and worse than "it needs a restart".
+      `_maybe_reprobe_providers` exists and is wired, and its own docstring records the
+      original defect it fixed — but it clears the boot-time `providers_degraded` latch ONLY
+      from `_dispatch_turn`, the inbound-MESSAGE path. Every other turn (a scheduled job, the
+      durable task loop, the RCA lane) reads the value stamped onto StepServices at boot
+      (orchestrator.py:1676) and floors. Recovery therefore required the one thing that is
+      absent exactly when recovery matters most on a platform built for unattended work.
+    evidence: >-
+      Measured 2026-09-05 while the VPN was down for hours. `ProviderContributor.health_check()`
+      probed every configured provider on the 5-minute health sweep throughout, got an answer
+      every time, and returned only a HealthStatus — nothing connected that verdict to the
+      latch. 6 "flooring turn" events. One component knew, another needed it, nothing joined
+      them: this repo's most-recorded defect shape (CLAUDE.md #1, an actuator wired on only
+      some paths).
+    fix: >-
+      `clear_degraded_if_a_provider_is_back()` in scheduler/handlers/health_sweep.py, called
+      from `execute()` before the down/degraded aggregation. NOT a second prober — the sweep
+      already probes, already runs, already aggregates; this stops it discarding the answer.
+      Fails closed: no provider status in the sweep means nothing was learned about providers,
+      and `degraded` is not `ok`. Announced at INFO, because a latch that clears itself
+      silently is indistinguishable from one that never cleared.
+    ALSO_FIXED_BECAUSE_THE_SAME_CAUSE_REACHED_THEM: >-
+      Running tests/startup for the first time on this change surfaced two live defects from
+      the preceding consent commit, both the same root shape — a fact asserted in one place
+      that nothing could compare against.
+      (1) CONSENT, and it was a SAFETY regression. The ESC-150 carve-out was keyed on the
+      confinement contract alone, but `RoutingPrompter` routes to `AutonomousPrompter` for BOTH
+      "nobody can be asked" (the rca lane) and "somebody can be asked and we failed to wire the
+      asking" (a live Slack socket whose prompter B3 did not register). While every always-ask
+      request was refused, conflating them was harmless — deny was right either way — so the
+      assumption sat in the CLASS NAME and nothing tested it; the first grant pulled the two
+      apart and a wiring fault would have become a silent auto-grant on an interactive channel,
+      breaking the C-6 invariant. Attendance is now established from the live ChannelRegistry,
+      and `_gateway_channels()` was split because it returned the empty set both when the
+      registry was EMPTY and when it could not be READ — safe for the provenance reader, which
+      treats absence as "no vouching origin", and unsafe for this one, which treats absence as
+      "nobody is there". One unreadable registry would have failed closed for one and OPEN for
+      the other from the same value.
+      (2) WIRING AUDIT. The new event was subscribed with a real publisher and emit behind it,
+      but `declared_event_publishers` was a LOCAL inside `_phase_gateway`, so the boot audit
+      would have reported a correctly-wired subscription as DANGLING forever, discoverable only
+      by restarting. Moved to `wiring_audit.declared_event_publishers()` so a tripwire can
+      compare it against what the bridge subscribes — a declaration nothing can compare is not
+      a declaration.
+    tests_that_were_themselves_the_defect: >-
+      Three guards were repaired rather than satisfied. The Slack fail-closed test asserted
+      "before the socket starts" while starting no socket and registering no adapter, so it
+      described the unattended case and passed for a reason unrelated to Slack; it now
+      registers a live adapter. The event-contract test compared `_ALLOWED_EVENTS` against a
+      hand-written set of imported constants — a FOURTH copy of the list whose triplication
+      that file exists to forbid — and failed a fourth event that complied with the rule
+      perfectly; it now derives ownership from the tree by AST and asserts the rule. And
+      `test_orchestrator_declares_the_events_it_actually_publishes` was DELETED, not moved: it
+      grepped orchestrator.py for the literal strings the neighbouring tripwire forbids
+      outside their owning module, so the two guards demanded opposite things and it pinned the
+      declaration's ADDRESS rather than its content.
+    mutation_tested: >-
+      Four mutants planted from file copies, each verified APPLIED before running: dropping the
+      attendance gate (caught, 3 tests), dropping the event from the declaration (caught, 2),
+      re-spelling an event as a literal in the bridge (caught), and — found by that third
+      mutant — the literal-copy tripwire stripped `= "<name>"` from EVERY module, exempting a
+      duplicate definition, which is the exact duplicate it forbids. Narrowing the exemption to
+      the owner then produced a false positive, because modules were keyed by dotted name in one
+      half of the comparison and by path in the other, so an owner that was also in the chain
+      reported its own definition as a re-spelling. Fixed, re-mutated, restored, re-run green.
   - id: DEBT-122
     found: 2026-09-05
     what: >-

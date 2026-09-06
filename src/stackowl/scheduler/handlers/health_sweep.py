@@ -27,6 +27,54 @@ from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
 
 
+def clear_degraded_if_a_provider_is_back(
+    statuses: Sequence[HealthStatus], services: object | None
+) -> bool:
+    """Clear the boot-time providers-degraded latch when the sweep proves a provider ok.
+
+    WHY THIS LIVES IN THE SWEEP. `_maybe_reprobe_providers` already re-heals the latch,
+    but only from `_dispatch_turn` — the inbound-MESSAGE path. Every other turn (a
+    scheduled job, the durable task loop, the RCA lane) reads the value stamped onto
+    `StepServices` at boot and floors. So the platform could self-heal a provider outage
+    ONLY IF A HUMAN TALKED TO IT, which is backwards for unattended work: recovery
+    matters most exactly when nobody is there to trigger it. Operator-reported 2026-09-05
+    after a VPN outage left the platform degraded for hours while `ProviderContributor`
+    probed successfully every five minutes and discarded the answer. Six turns floored.
+
+    NOT A SECOND PROBER. The sweep already probes every provider and already runs; this
+    only stops it throwing the verdict away — one component asking the other rather than
+    a new engine.
+
+    FAILS CLOSED. Requires an explicit `ok` from a `provider:` contributor. A sweep with
+    no provider status has learned nothing about providers, and `degraded` is not `ok` —
+    the probe distinguishes those deliberately. Never raises: this runs inside the sweep
+    that every other subsystem's alerting depends on.
+
+    Returns True only when it actually cleared the latch.
+    """
+    try:
+        if services is None or not getattr(services, "providers_degraded", False):
+            return False
+        healthy = [
+            s for s in statuses
+            if s.name.startswith("provider:") and s.status == "ok"
+        ]
+        if not healthy:
+            return False
+        services.providers_degraded = False  # type: ignore[attr-defined]
+        log.scheduler.info(
+            "[scheduler] health_sweep: providers no longer degraded — a provider "
+            "answered the sweep, so turns resume without waiting for a message",
+            extra={"_fields": {"recovered": [s.name for s in healthy]}},
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — must never wedge the sweep
+        log.scheduler.warning(
+            "[scheduler] health_sweep: degraded-latch check failed", exc_info=exc,
+        )
+        return False
+
+
 class AlertRecord(Protocol):
     """The durable record of what the operator has already been paged about.
 
@@ -145,6 +193,19 @@ class HealthSweepHandler(JobHandler):
                 output=None,
                 error=str(exc),
                 duration_ms=duration_ms,
+            )
+
+        # A RECOVERED PROVIDER MUST NOT WAIT FOR A HUMAN. The boot-time latch cleared
+        # only on the inbound-message path, so scheduled and durable turns floored until
+        # someone typed something. The sweep already holds the verdict.
+        try:
+            from stackowl.pipeline.services import get_services
+
+            clear_degraded_if_a_provider_is_back(statuses, get_services())
+        except Exception as exc:  # noqa: BLE001 — never wedge the sweep
+            log.scheduler.warning(
+                "[scheduler] health_sweep: could not reach services to clear the "
+                "degraded latch", exc_info=exc,
             )
 
         down = [s for s in statuses if s.status == "down"]

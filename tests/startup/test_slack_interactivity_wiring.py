@@ -219,14 +219,46 @@ async def test_slack_consent_no_prompter_registered_fails_closed() -> None:
     If B3 ever fails to register the prompter on consent_routing before the
     socket starts, a consent request must fail CLOSED (deny), never silently
     auto-allow. This mirrors the Telegram register-before-start invariant.
+
+    THE FIXTURE NOW REPRODUCES ITS OWN PREMISE, and until 2026-09-05 it did not.
+    The sentence above says "before the SOCKET STARTS" — the danger is a live Slack
+    channel with an unwired prompter, a human sitting right there and nobody asking
+    them. The setup started no socket and registered no adapter, so what it actually
+    described was Slack not running AT ALL, which is the unattended case and a
+    different question entirely. It passed anyway, because every always-ask request
+    was refused regardless of channel; the assertion could not tell the two worlds
+    apart and so was never really about Slack.
+
+    That mattered the moment ESC-150 let a CONFINED tool proceed unattended. Registering
+    the adapter is what makes this test exercise the invariant it claims: the gateway
+    holds `slack`, therefore a human could have been asked, therefore the missing
+    prompter is a WIRING FAULT and consent must fail closed — not an unattended lane
+    where proceeding is the operator's recorded decision.
     """
-    consent_routing = RoutingPrompter()  # nothing registered for "slack"
-    req = ConsentRequest(
-        channel="slack", session_key="slack:sess1",
-        tool_name="execute_code", summary="x", allow_relaxation=False,
-    )
-    scope = await asyncio.wait_for(consent_routing.prompt(req), timeout=_WAIT)
-    assert scope == ConsentScope.DENY, "an unwired Slack consent must fail closed"
+    from stackowl.channels.registry import ChannelRegistry
+
+    class _LiveSlackAdapter:
+        """The socket is up: the gateway holds a Slack adapter. Only the PROMPTER
+        is missing, which is precisely the B3 failure this guards."""
+
+        channel_name = "slack"
+
+        async def send(self, chunks: object) -> None: ...
+        async def send_text(self, text: str, **kw: object) -> None: ...
+        async def receive(self) -> object: ...
+
+    registry = ChannelRegistry.instance()
+    registry.register(_LiveSlackAdapter())  # type: ignore[arg-type]
+    try:
+        consent_routing = RoutingPrompter()  # nothing registered for "slack"
+        req = ConsentRequest(
+            channel="slack", session_key="slack:sess1",
+            tool_name="execute_code", summary="x", allow_relaxation=False,
+        )
+        scope = await asyncio.wait_for(consent_routing.prompt(req), timeout=_WAIT)
+        assert scope == ConsentScope.DENY, "an unwired Slack consent must fail closed"
+    finally:
+        registry.reset()
 
 
 # ---- CLARIFY round-trip over the wired path -----------------------------------

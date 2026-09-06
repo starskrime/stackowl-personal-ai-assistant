@@ -15,7 +15,6 @@ dangling subscription, because every subscription already looked dangling.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from stackowl.scheduler.base import HandlerRegistry
@@ -57,14 +56,18 @@ async def test_an_undeclared_publisher_is_still_reported_dangling() -> None:
     assert report.dangling_events == ["nobody_emits_this"]
 
 
-def test_orchestrator_declares_the_events_it_actually_publishes() -> None:
-    """CostTracker emits both budget thresholds and conversation_cost_report
-    emits the cost report. All three must be declared, or every boot warns
-    about working wiring forever."""
-    src = Path("src/stackowl/startup/orchestrator.py").read_text(encoding="utf-8")
-
-    assert "declared_event_publishers: frozenset[str] = frozenset()" not in src
-    for event in ("budget_exceeded", "budget_80pct_alert"):
-        assert event in src, f"{event} is emitted but not declared"
-    # The cost report is declared via its module constant rather than a literal.
-    assert "COST_REPORT_EVENT" in src
+# ``test_orchestrator_declares_the_events_it_actually_publishes`` was DELETED on
+# 2026-09-05, not moved. It read orchestrator.py as text and asserted the literal
+# strings "budget_exceeded" and "budget_80pct_alert" appeared in it — a SIXTH spelling
+# of the event names, and one that directly contradicted the neighbouring rule in
+# test_an_event_contract_is_not_four_string_literals.py, which forbids exactly those
+# literals outside their owning module. Two guards demanding opposite things is worse
+# than either alone: satisfying one breaks the other, and the pair pins the
+# declaration's ADDRESS rather than its content, which is why moving the declaration
+# somewhere testable broke it.
+#
+# What it was trying to protect is now asserted properly, one file over, as
+# ``test_the_declaration_covers_everything_the_bridge_SUBSCRIBES``: the declared set
+# must cover everything the bridge subscribes. That is the real property, it holds
+# wherever the declaration lives, and it cannot be satisfied by a string appearing in
+# a comment.
