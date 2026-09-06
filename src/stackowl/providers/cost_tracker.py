@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 from stackowl.db.pool import DbPool
 from stackowl.events.bus import EventBus
 from stackowl.infra.observability import log
+from stackowl.infra.trace import TraceContext
 from stackowl.providers.cost_tracker_helpers import _MAX_TRACKED_TURNS, TurnCostLedger
 from stackowl.providers.pricing.loader import PricingLoader
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
@@ -237,6 +238,32 @@ class CostTracker(OwnedRepository):
         # these rows are aggregated (D01.6 metric 3 sums them), and a SUM over a
         # mix of real and fallback dollars cannot be made honest afterwards.
         priced = self._pricing.is_priced(model, is_local=is_local)
+
+        # ATTRIBUTION FALLBACK. An absent argument means "ask the turn I am
+        # running in", never "belongs to nothing".
+        #
+        # MEASURED 2026-09-06: 67,433 of 130,840 rows carried trace_id = ''
+        # (127,097,221 input tokens) because these are DEFAULT arguments and a
+        # caller that forgets one is recorded as belonging to nothing, silently.
+        # The residual writer is the achievement judge, which — like thirteen
+        # other classifiers — issues its call through the shared
+        # `safe_complete` helper that has no trace parameter to pass. Threading
+        # an argument through fifteen call sites would fix fifteen and lose the
+        # sixteenth, so the fallback belongs HERE, at the one seam they share.
+        #
+        # `TraceContext` is the same ambient context that puts `trace_id` on
+        # every log line; it was simply never consulted at the cost seam.
+        # Explicit arguments still win: delegated children and MoA proposers
+        # deliberately record under the PARENT's trace so the turn ledger sums
+        # the whole turn, and a fallback must never fight a caller that knows
+        # better.
+        if not (trace_id and session_key and conversation_id and owl_name):
+            ambient = TraceContext.get()
+            trace_id = trace_id or (ambient.get("trace_id") or "")
+            session_key = session_key or (ambient.get("session_key") or "")
+            conversation_id = conversation_id or (ambient.get("conversation_id") or "")
+            owl_name = owl_name or (ambient.get("owl_name") or "")
+
         record = CostRecord(
             provider_name=provider_name, model=model,
             input_tokens=input_tokens, output_tokens=output_tokens,

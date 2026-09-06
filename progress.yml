@@ -14477,6 +14477,68 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-143
+    found: 2026-09-06
+    what: >-
+      HALF OF ALL RECORDED MODEL SPEND COULD NOT NAME THE TURN THAT CAUSED IT. `cost_records`
+      holds 130,840 rows and 67,433 of them carry `trace_id = ''` - 127,097,221 input tokens
+      attributed to nothing. Not NULL, so every query written `WHERE trace_id IS NOT NULL`
+      counted them as named; the blanks only appeared when a per-trace grouping produced one
+      giant nameless bucket of 67,433 calls.
+    the_shape_is_a_DEFAULT_ARGUMENT: >-
+      `CostTracker.record()` declares `trace_id: str = ""` - and the same for `session_key`,
+      `conversation_id` and `owl_name`, all four blank on exactly these rows. A caller that
+      forgets one is recorded as belonging to nothing, silently, with no error and no warning.
+      An absent argument meant "belongs to nothing" when it should have meant "ask the turn I
+      am running in".
+    what_made_it_reach_so_far: >-
+      Fourteen classifiers and judges - the router, the intent/retry/retrieval/feedback
+      classifiers, the achievement judge and writer, the delivery gate, the critic scorer, the
+      acceptance judge, the shadow validator, evolution - issue their model calls through ONE
+      shared helper, `interaction.classifier_base.safe_complete`, and that helper has no trace
+      parameter at all. None of them COULD pass a trace even if each remembered to. Threading
+      an argument through fifteen call sites would have fixed fifteen and lost the sixteenth,
+      which is why the fallback went at the seam they share.
+    THE_MECHANISM_THAT_KNEW_THE_ANSWER_WAS_NEVER_ASKED: >-
+      `infra.trace.TraceContext` holds an ambient `trace_id` ContextVar and carries
+      `session_key`, `conversation_id` and `owl_name` beside it. It is what puts `trace_id` on
+      every line of the very log file this defect was measured from. The cost seam simply never
+      consulted it. Defect shape 5 - built but not wired - at the one seam where the cost of
+      not wiring it is measured in tokens.
+    the_residual_was_small_LIVE_and_traceable: >-
+      A cliff on 2026-08-30 took blanks from 33.8% of the day's rows to 3.6% then 0.4% - an
+      earlier trace-propagation fix. What survived is ~1-2% a day and it is LIVE (most recent
+      2026-09-06T02:50Z): small `NeraAiRaw` calls of ~180-244 tokens with session and
+      conversation blank too. Correlated against the log at those timestamps the writer is the
+      achievement judge - a `195in/15out` cost line one millisecond before
+      "turn_achievement_writer.write: criterion written". Naming the writer is what proved the
+      cause rather than guessing it.
+    it_also_makes_the_BUDGET_more_honest: >-
+      The turn ledger (`_turn_ledger.add`) runs AFTER this fallback, so classifier spend now
+      counts toward the turn it belongs to instead of vanishing. Measured before shipping, so
+      this is a stated consequence and not a surprise: the blank rows are median 573 input
+      tokens, p95 5,138, max 91,783 - small against a turn whose p99 is ~700k, and counting
+      them is strictly more correct than a bound that cannot see them.
+    mutation_proven: >-
+      Removing the fallback (the defect restored) fails the attribution test; letting the
+      ambient OVERRIDE an explicit argument fails the precedence test - the second matters
+      because delegated children and MoA proposers deliberately record under the PARENT's
+      trace so the turn ledger sums the whole turn, and a fallback that fought them would
+      corrupt exactly the number it was added to fix. Restored from a file copy; 4 passed,
+      843 passed across providers/budget/cost-smoke.
+    what_else_the_cause_reaches: >-
+      A default argument that means "absent" is indistinguishable from one that means
+      "unknown", and only the second is a question anyone will ever ask. The generalisable
+      form: where a value has an AMBIENT source of truth, the seam should consult it and the
+      argument should be the override - not the other way round. This is the same lesson as
+      DEBT-142 one layer up (a helper returning a verdict cannot be half-used; one returning a
+      pattern can), and it is why the fix is 27 lines at one seam rather than an edit in
+      fifteen files.
+    the_instrument_lied_here_too_and_it_is_recorded: >-
+      The first version of this item's test read the row with `tuple(row)`, which on a
+      mapping-like row yields the column NAMES - every assertion compared against the string
+      "trace_id" and three tests failed for a reason that had nothing to do with the code. The
+      same shape as the defect: something that looks like data and is actually a label.
   - id: DEBT-142
     found: 2026-09-06
     what: >-
