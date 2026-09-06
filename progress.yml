@@ -11339,6 +11339,37 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_153_which_of_the_five_absent_capabilities_are_worth_building:
+      raised: 2026-09-06
+      question: >-
+        D14.2 walked all 84 reference commands. Five name a capability we lack that is NOT
+        already mapped: /branch (branch a session to explore another path), /snapshot
+        (config+state snapshots), /queue (hold a prompt until the current turn ends),
+        /suggestions (review suggested automations, accept/dismiss) and /kanban (a
+        multi-human collaboration board). Which, if any, do you want?
+      why_evidence_cannot_settle_it: >-
+        Each is a capability nobody here has ever been able to ask for, so usage data is
+        structurally silent — there is no "times the user wanted to branch a session" to
+        count. This is appetite, not measurement.
+      the_measurement_to_decide_on: >-
+        84 theirs against 34 ours is NOT a fifty-command hole: 28 of the 75 theirs-only
+        commands are the same capability under another name, 25 are terminal display toggles
+        or hosted-product billing, and /rollback is already D06.4 with ESC-113 on its
+        priority. The residue is these five plus two mascot commands.
+      recommendation: >-
+        /kanban presumes multiple humans and this platform is single-owner by construction
+        (owner_id on every query) — recommend declining rather than deferring. /queue is the
+        cheapest of the rest and the closest to something the loop already has, since a
+        queued prompt is a task with a "wait for the current turn" dependency rather than a
+        new engine. /suggestions is the most interesting: the platform already MINES
+        automation candidates (capability_gap_escalation, tool_outcome_miner) and has nowhere
+        to show them, so it is closer to a surface for existing work than to new work.
+        /branch and /snapshot are genuine features with no existing substrate.
+      blocked_until_answered: >-
+        Nothing. D14.2 is closed as an audit; this is the residue it produced.
+      premise_check: |-
+        n=$(grep -rl "branch_session\|state_snapshot\|queue_next_turn\|kanban" src/stackowl --include=*.py 2>/dev/null | wc -l)
+        [ "$n" -gt 0 ] && echo "EXPIRED one of the five now has an implementation" || echo "HOLDS all five still absent"
     ESC_152_which_surfaces_matter_and_is_a_dashboard_worth_building:
       raised: 2026-09-06
       question: >-
@@ -30030,17 +30061,56 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: docs/reference-mapping/designs/D14.2.md
+    doc_last_verified: "2026-09-06 against commit 120c0930 — Verification RUN: their CommandDefs 84; 5 passed; the absent-capability grep returns nothing"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        A COUNT IS NOT A GAP, and that is the finding. 84 theirs against 34 ours reads like
+        a fifty-command hole; the walk finds SIX genuinely-absent capabilities, one of which
+        (`/rollback`) is already mapped as D06.4 with its priority open as ESC-113. Measured:
+        84 CommandDefs, 34 command classes, 9 names in common, 75 theirs-only.
+      - >-
+        OF THE 75: twenty-eight are the same capability under a different name, each verified
+        by naming the MODULE that provides it rather than by matching the word — /agents is
+        /owls, /compress is memory/conversation_compressor.py (imported by classify.py:677),
+        /steer is the reply-to-inflight router, /yolo is AutonomousPrompter, /goal and
+        /subgoal are objectives, /moa is the mixture_of_agents tool. Twenty-five more are
+        terminal display toggles (/battery, /skin, /statusbar, /timestamps ...) or bound to
+        their hosted product (/subscription, /topup, /codex-runtime). Counting those as
+        capability gaps would inflate the hole by two-thirds.
+      - >-
+        LOCATING A CAPABILITY BY NAME IS WHAT THIS AUDIT ALMOST GOT WRONG. Two probes came
+        back "present" and were not: `/profile` matched
+        scheduler/handlers/profile_backup.py, which tars BROWSER profile directories, and
+        `/suggestions` matched tools/planning/todo.py, where the word is a did-you-mean typo
+        hint. Every "we have this" row in the document names the module, so the claim can be
+        re-checked rather than believed.
+      - >-
+        GENUINELY ABSENT AND NOT ALREADY MAPPED: /branch (branch a session to explore another
+        path), /snapshot (config+state snapshots, distinct from D06.4 file checkpoints),
+        /queue (hold a prompt until the turn ends — we have STEER, which interrupts, and
+        durable tasks, which run work), /suggestions (review suggested automations) and
+        /kanban (a multi-human board, which presumes something this single-owner platform is
+        not). Escalated as ESC-153 — product priority, not a measurement.
+      - >-
+        /blueprint IS ABSENT AND DELIBERATELY EXCLUDED FROM THAT LIST because it contradicts
+        a standing decision: this assistant SELF-EXTENDS, designing and registering its own
+        tools and skills rather than instantiating hand-written templates. A blueprint
+        catalogue is the hand-built path that rule refuses. /hatch and /pet generate mascot
+        characters and are not capabilities.
+      - >-
+        NOTHING BUILT — implement/test/validate are no_change_needed. The deliverable is the
+        walk itself, and the six-versus-fifty correction is the reason the Ask asked for it.
+        Verification RUN: their count 84, our discovery guard 5 passed (its vacuity control
+        asserts >=30 commands were found), and the absent-capability grep returns nothing.
     notes: null
 
   - id: D14.3
