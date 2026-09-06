@@ -14477,6 +14477,52 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-154
+    found: 2026-09-06
+    what: >-
+      "LAST VERIFIED AGAINST COMMIT X" WAS A CLAIM NOTHING RE-CHECKED. `DOC_STANDARD` requires
+      every design document to carry `Last verified: YYYY-MM-DD, against commit <sha>` beside a
+      `Source:` naming the files it describes - a pairing that makes staleness CHECKABLE. Nothing
+      checked it. MEASURED over 84 documents: FIFTEEN are stale, their cited sources last changed
+      AFTER the date the document claims verification, D01.1 and D01.7 by six weeks.
+    the_THIRD_instance_of_ONE_cure: >-
+      An escalation's premise aged silently until `premise_check`; a `partial` stage's evidence
+      was a dead end until `closing_check`. Both were cured by making the claim EXECUTABLE, and
+      the skill says so in its own words. A design document's `Last verified` is the same disease
+      in the third place, and `scripts/doc_check.py` is the same cure - run beside the other two
+      at the start of a loop.
+    it_reports_TWO_populations_and_never_conflates_them: >-
+      33 measurable, 15 stale, and FIFTY-ONE UNMEASURABLE - documents with no parseable `Source`
+      in the header, which are neither fresh nor stale. They are NAMED, not just counted, which
+      is DEBT-148's lesson applied one level up: a "15 stale" that quietly hid 51 unmeasurable
+      would be the denominator error this programme pays for most often.
+    NOT_a_gate_and_the_reason_is_measured: >-
+      15 of 33 measurable documents are stale today. A tripwire would fail the gate on every
+      unrelated change until someone re-read fifteen documents, which is how a gate gets
+      bypassed rather than satisfied. It is a REPORT, like `escalation_check` and
+      `validate_check`, where a human decides what to re-verify.
+    THE_PARSER_WAS_WRONG_TWICE_and_that_is_the_finding_behind_the_finding: >-
+      A whole-text search for "Last verified" reported 83 of 84 documents compliant; a header
+      parser reported 35. My two measurements DISAGREED and I stopped rather than ship either.
+      Resolved by reading the outlier: `BROWSER-BACKENDS.md` writes `**Status.**` as PROSE
+      instead of the prescribed `> **Status:**` blockquote, so the phrase appears in its body
+      while the header is absent. Both numbers were right about different questions and only one
+      is about DOC_STANDARD. Structure, not substring - and the test pins exactly that case.
+    mutation_proven: >-
+      Making the parser read the whole file instead of stopping at the body fails the
+      header-stops-at-the-body test (the 83-vs-35 error itself); counting the unmeasurable
+      without naming them fails the two-populations test. Restored from a file copy; 5 passed.
+    full_suite_EIGHTH_GREEN: >-
+      Launched on the clean committed tree BEFORE any edit this loop and collected after -
+      12,327 passed, 17 skipped, 0 failed in 1987.61s (rc=0), header commit=e9d85833
+      dirty_files=0, "SUITE TREE STILL". Three src changes had landed since the last full run
+      (db pool pragma order, deliver, dna evolution).
+    what_else_the_cause_reaches: >-
+      Every artefact in this repository that records WHEN it was last checked against something
+      else has the same exposure, and the tell is the same: a date written by hand next to a
+      thing that moves on its own. The programme has now found three - escalations, partial
+      validates, design docs - and the cure has been identical each time, which is itself the
+      argument for looking for a fourth.
   - id: DEBT-153
     validate_result: >-
       HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 21:55:38Z after

@@ -142,7 +142,7 @@ Duplicate keys silently swallow whole records. This has already happened.
   opposite.** MEASURED every time since: `6 failed, 11440 passed in 1885.47s`
   (2026-09-01), `10 failed, 11853 passed in 1775.99s` (2026-09-03), then GREEN three
   runs running — `12123 passed, 0 failed in 1880.78s` (2026-09-05) and `12170 passed,
-  18 skipped, 0 failed in 1911.85s` (2026-09-06). Sixth green 2026-09-06: `12284 passed, 18 skipped, 0 failed in 1979.40s` (rc=0), `SUITE TREE STILL`. Seventh 2026-09-06: `12312 passed, 17 skipped, 0 failed in 2146.47s` (rc=0) — the skip count FELL because an unconditional skip became a real test. The false claim survived HERE after
+  18 skipped, 0 failed in 1911.85s` (2026-09-06). Sixth green 2026-09-06: `12284 passed, 18 skipped, 0 failed in 1979.40s` (rc=0), `SUITE TREE STILL`. Seventh 2026-09-06: `12312 passed, 17 skipped, 0 failed in 2146.47s` (rc=0) — the skip count FELL because an unconditional skip became a real test. Eighth 2026-09-06: `12327 passed, 17 skipped, 0 failed in 1987.61s` (rc=0). The false claim survived HERE after
   `CLAUDE.md` was corrected, and because this file is what the loop reads on every
   invocation, no invocation ever ran it — which is how TEN tests sat red, every one of
   them a retired thing whose tests stayed behind. "It hangs" reads as *impossible*, so
@@ -189,7 +189,20 @@ start of a loop:
 
 ```bash
 uv run python scripts/validate_check.py
+uv run python scripts/doc_check.py      # which design docs went stale
 ```
+
+**`doc_check.py` is the THIRD instance of one cure.** `DOC_STANDARD` requires
+`Last verified: <date>, against commit <sha>` beside a `Source:`, which makes
+staleness checkable — and nothing checked it, so the claim aged exactly as an
+escalation's premise aged before `premise_check` and a `partial` stage's evidence
+aged before `closing_check`. MEASURED 2026-09-06 over 84 documents: **15 stale**,
+D01.1 and D01.7 by six weeks. It reports STALE and UNMEASURABLE separately and
+names both — 51 documents carry no parseable `Source`, and a stale count that
+hid them would be the denominator error this programme pays for most. It is NOT
+a gate: 15 of 33 measurable docs are stale today, and a tripwire would fail every
+unrelated change until someone re-read fifteen documents, which is how a gate gets
+bypassed rather than satisfied.
 
 **Why this is executable and not a note.** The rule above was written down and never
 enforced. MEASURED 2026-09-06: ten stages were `partial`, all of them `validate`, and NOT
