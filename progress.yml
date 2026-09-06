@@ -14478,14 +14478,18 @@ upcoming:
 
 known_debt:
   - id: DEBT-148
-    closing_check: |-
-      # Keyed on the "empty_tables" FIELD, which this item added - the ok-line
-      # carried only the COUNT before, so a hit proves the new code ran
-      # (DEBT-138's rule). Not keyed on the message, which fires every sweep.
-      n=$(./scripts/log_since.sh 2026-09-06 'store_cadence: ok.*"empty_tables"')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n sweep(s) named their empty stores" || echo "OPEN 0 clean cadence sweeps since the fix; the code IS live-evidenced"
     stages:
-      validate: partial
+      validate: done
+    validate_result: >-
+      CLOSED LIVE 2026-09-06, verified by reading the record rather than trusting the count.
+      Restarted with ./start.sh; the core booted 19:39:24Z after commit 52bd19cd at 19:38:25Z,
+      checked against the boot line and never a PID. The 19:44:24 sweep emitted
+      {"measured": 27, "empty": 2, "empty_tables": ["cache_breakpoint_probes",
+      "notification_queue"], "unreadable": 0} - naming exactly the two stores this session had
+      to derive by hand, which is the entire point of the change.
+      THE DEFECT IS VISIBLE IN THE SAME LOG. The three sweeps at 19:18:21, 19:28:41 and
+      19:34:11 all predate the boot and read {"measured": 27, "empty": 2} with no names - the
+      old code, the count with no set, in production. Before and after sit four lines apart.
     found: 2026-09-06
     what: >-
       THE CADENCE CHECK COUNTED EMPTY STORES AND NEVER SAID WHICH. `silent_stores` skips a
