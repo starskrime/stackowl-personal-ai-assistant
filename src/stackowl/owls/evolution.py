@@ -613,6 +613,43 @@ class EvolutionCoordinator(JobHandler):
         # consecutive non-regressions on a held-out replay of real interactions.
         result = await self._shadow_validator.validate(manifest.name, manifest, safe_dna)
         if not result.passed:
+            # ONE BRANCH, TWO MESSAGES — and the branch is one on purpose.
+            #
+            # A FIRST CUT SPLIT THIS INTO `if cold_start: ... elif not passed:`
+            # and would have shipped a far worse bug than the one it fixed:
+            # FR-10's restore-and-reaffirm and the `return False` below live in
+            # this block, so a cold start would have fallen through to
+            # `_persist_dna(safe_dna)` and PROMOTED AN UNVALIDATED CANDIDATE —
+            # precisely what "fail closed" exists to prevent. The behaviour must
+            # be identical; only what we SAY about it differs.
+            #
+            # NOT A REJECTION — there was nothing to judge. The validator's
+            # cold-start branch already says so at INFO ("insufficient held-out
+            # sample") and already fails CLOSED, which is right. What was wrong
+            # is that this caller turned "I could not judge" into "REJECTED" at
+            # ERROR: measured 2026-09-06, 63 of 69 rejections had fewer replays
+            # than the required consecutive non-regressions and ELEVEN replayed
+            # nothing at all, so an operator reading five ERRORs a day concluded
+            # the self-improvement loop was producing bad hypotheses when those
+            # owls simply had no replayable history yet.
+            #
+            # Story 2.7's decision that a gate rejection must be loud is
+            # untouched: it is about a candidate that was actually JUDGED, and a
+            # cold start never was. The genuine-regression branch below is still
+            # ERROR, still greppable, still carries `failures`.
+            if result.cold_start:
+                log.owls.info(
+                    "[dna] coordinator.promote: no verdict — too little held-out "
+                    "history to judge this candidate",
+                    extra={"_fields": {
+                        "owl": manifest.name,
+                        "checkpoint_id": checkpoint_id,
+                        "n_replayed": result.n_replayed,
+                        "n_consecutive_required": (
+                            self._shadow_validator.n_consecutive_required
+                        ),
+                    }},
+                )
             # Story 2.7 (AC #1) — ERROR, not WARNING: a gate rejection must be
             # visible without a human specifically going looking for it. The
             # message text is held stable/greppable (never varied between
@@ -621,20 +658,25 @@ class EvolutionCoordinator(JobHandler):
             # (truncated per this repo's sensitive-data convention) so "the
             # specific non-regression that failed" is IN the record, not just
             # a count.
-            log.owls.error(
-                "[dna] coordinator.promote: shadow gate REJECTED",
-                extra={"_fields": {
-                    "owl": manifest.name,
-                    "checkpoint_id": checkpoint_id,
-                    "n_replayed": result.n_replayed,
-                    "consecutive_non_regressions": result.consecutive_non_regressions,
-                    "n_consecutive_required": self._shadow_validator.n_consecutive_required,
-                    "failures": [
-                        {**f, "input_text": str(f.get("input_text", ""))[:200]}
-                        for f in result.failures
-                    ],
-                }},
-            )
+            else:
+                log.owls.error(
+                    "[dna] coordinator.promote: shadow gate REJECTED",
+                    extra={"_fields": {
+                        "owl": manifest.name,
+                        "checkpoint_id": checkpoint_id,
+                        "n_replayed": result.n_replayed,
+                        "consecutive_non_regressions": (
+                            result.consecutive_non_regressions
+                        ),
+                        "n_consecutive_required": (
+                            self._shadow_validator.n_consecutive_required
+                        ),
+                        "failures": [
+                            {**f, "input_text": str(f.get("input_text", ""))[:200]}
+                            for f in result.failures
+                        ],
+                    }},
+                )
             # FR-10 — restore-and-reaffirm is a STRUCTURAL guarantee, not a no-op
             # skipped just because today's call ordering happens to make it
             # redundant (persist never ran pre-gate). See Story 2.6 Dev Notes:

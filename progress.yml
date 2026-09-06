@@ -14477,6 +14477,61 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-153
+    closing_check: |-
+      # Keyed on "no verdict", a message this item INTRODUCED. The old code emitted
+      # only "shadow gate REJECTED" on this branch, so a hit proves the new path ran
+      # (DEBT-138's rule). Cold starts occurred ~5x/day before the fix, so this
+      # should close on its own within a day.
+      n=$(./scripts/log_since.sh 2026-09-06 'promote: no verdict')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n cold start(s) reported as no-verdict rather than rejection" || echo "OPEN 0 cold-start promotions since the fix; the code IS live-evidenced"
+    stages:
+      validate: partial
+    found: 2026-09-06
+    what: >-
+      SIXTY-NINE "SHADOW GATE REJECTED" ERRORS, AND 63 OF THEM WERE ARITHMETICALLY IMPOSSIBLE.
+      `[dna] coordinator.promote: shadow gate REJECTED` reads as a DNA candidate evaluated and
+      found to regress the owl. The fields say otherwise: 63 of 69 had `n_replayed` BELOW
+      `n_consecutive_required` (3), so the verdict was settled before any replay ran, and
+      ELEVEN replayed nothing at all (`n_replayed: 0`). An operator reading five of these a day
+      concludes the self-improvement loop produces bad hypotheses; the truth is those owls have
+      no replayable history yet, which is a different problem with a different fix.
+    the_callee_already_knew_and_already_said_so: >-
+      `ShadowValidator` has a cold-start branch that logs
+      "[shadow] validate: exit - cold start, insufficient held-out sample" at INFO and returns
+      `passed=False` DELIBERATELY - "fails CLOSED (not a vacuous pass, not a crash)". That
+      decision is right and is untouched. What was wrong is the CALLER turning "I could not
+      judge" into "REJECTED" at ERROR - a conclusion the callee explicitly declined to draw.
+      Same shape as DEBT-152 one subsystem over, and the fifth defect-shape-3 of this session.
+    it_is_NOT_historical: >-
+      A DIFFERENT cause of the same rejection - replays hitting ToolCallLeakError because the
+      isolation harness wires no tools - was found and fixed 2026-09-01 (the validator's own
+      docstring records it); promotions begin 09-02 and there are six. The cold-start
+      rejections continued every single day regardless: FIVE on 2026-09-06.
+    I_NEARLY_SHIPPED_A_FAR_WORSE_BUG: >-
+      The first cut split the branch as `if cold_start: ... elif not passed: ...`. FR-10's
+      restore-and-reaffirm AND the `return False` live inside that block, so a cold start would
+      have fallen THROUGH to `_persist_dna(safe_dna)` and PROMOTED AN UNVALIDATED CANDIDATE -
+      the exact opposite of the fail-closed guarantee the cold-start branch exists to provide.
+      Caught by reading what FOLLOWED the branch before trusting the edit. The shipped form is
+      one branch with two messages: identical behaviour, different sentence.
+    AND_MY_FIRST_TEST_FOR_THAT_WAS_DECORATION: >-
+      It walked the AST and asserted "restore" and "return False" appear in the branch body -
+      which stays true when an early `return False` is inserted ABOVE the restore. BOTH mutants
+      SURVIVED it. Presence in a block is not reachability, and only running the code can tell
+      the difference. Replaced with tests that DRIVE `_checkpoint_validate_and_promote` with a
+      scripted validator; all three mutants now die, including the two that had survived.
+    mutation_proven: >-
+      Returning early before the restore fails the fail-closed test; never distinguishing a
+      cold start fails it too; treating everything as a cold start fails the loud-case control
+      (Story 2.7's ERROR-level rejection must survive). Restored from a file copy; 6 passed,
+      361 across tests/owls.
+    what_else_the_cause_reaches: >-
+      A caller collapses a callee's THREE outcomes - passed, judged-and-failed, could-not-judge
+      - into the two its return type offers, and then names the collapsed thing after the more
+      alarming half. Anywhere a boolean carries a verdict that had more than two possible
+      meanings, the same loss is available; the cure is to widen the RESULT, not to re-derive
+      the missing case at the call site.
   - id: DEBT-152
     validate_result: >-
       HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 21:38:03Z after

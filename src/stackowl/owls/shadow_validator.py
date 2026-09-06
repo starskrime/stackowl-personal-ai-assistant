@@ -87,6 +87,19 @@ class ShadowValidationResult:
     consecutive_non_regressions: int
     n_replayed: int
     failures: tuple[dict[str, object], ...]
+    #: True when there was too little history to judge at all — NOT a verdict on
+    #: the candidate. The cold-start branch below already logs this at INFO and
+    #: already fails CLOSED (deliberately: not a vacuous pass, not a crash); what
+    #: was missing is that the CALLER could not tell the two apart and reported
+    #: "shadow gate REJECTED" at ERROR either way. Measured 2026-09-06: 63 of 69
+    #: rejections had `n_replayed` BELOW the required consecutive count — eleven
+    #: of them replayed nothing at all — so the verdict was settled before any
+    #: replay ran, and not one was a rejection the candidate could have avoided.
+    #:
+    #: Set HERE rather than re-derived by the caller from `n_replayed < required`:
+    #: the validator knows which branch it took, and a second copy of that
+    #: comparison is a second thing that can disagree.
+    cold_start: bool = False
 
 
 def _eligible_for_replay(outcomes: list[TaskOutcome]) -> list[TaskOutcome]:
@@ -209,7 +222,7 @@ class ShadowValidator:
             )
             return ShadowValidationResult(
                 passed=False, consecutive_non_regressions=0,
-                n_replayed=len(eligible), failures=(),
+                n_replayed=len(eligible), failures=(), cold_start=True,
             )
 
         held_out = eligible[: self._sample_size]
