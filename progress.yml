@@ -30216,6 +30216,13 @@ items:
     notes: null
 
   - id: D14.4
+    closing_check: |-
+      # THE CLI HALF IS LIVE-EVIDENCED; THIS IS THE ALERT HALF. `_compose_alert` only runs
+      # when a subsystem is actually unhealthy, and the boot after this shipped had
+      # ok=15/15. Scoped to the day it shipped, because the alert line has existed for
+      # months and an unbounded count would report CLOSEABLE on pre-change evidence.
+      n=$(./scripts/log_since.sh 2026-09-06 'health sweep found unhealthy')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n alert(s) since the remedy shipped - check one carries a → line" || echo "OPEN 0 unhealthy sweeps since 2026-09-06, so the alert path has not rendered a remedy in production; the CLI half IS live-evidenced"
     title: "Doctor"
     domain: D14
     verdict: PARTIAL
@@ -30234,7 +30241,7 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   done
+      validate:   partial
       document:   done
     doc: docs/reference-mapping/designs/D14.4.md
     doc_last_verified: "2026-09-06 against commit 63059348 — Verification RUN: 9 passed; 698 passed 0 failed; the CLI prints the browser remedy and exits 1; every JSON entry carries the key, 1 of 5 with a value"
@@ -30275,6 +30282,14 @@ items:
         section. Note the exit code was first read through a pipe, which returns `tail`'s
         status and not the command's — the same decoupling the gate rule warns about, caught
         and re-measured.
+      - >-
+        AND I CORRECTED MY OWN VALIDATE. I first wrote `done` on the strength of the CLI
+        evidence, which is real: `stackowl health` prints the browser remedy and exits 1 on
+        this host. But the item claims BOTH surfaces render it, and `_compose_alert` only
+        runs when a subsystem is actually unhealthy — the boot after this shipped reported
+        ok=15/15, 0 ERRORs, sweep bound, running code newer than the commit (boot 07:22:23Z
+        against commit 07:21:35Z). So the alert half is proven by test and NOT in production,
+        and the stage is `partial` with a closing check scoped to today rather than `done`.
       - >-
         Three mutants from file copies, each verified APPLIED: the db remedy dropped, the
         alert no longer rendering it, and a remedy INVENTED for a measurement degradation
