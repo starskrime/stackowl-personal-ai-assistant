@@ -30654,6 +30654,14 @@ items:
       validate:   partial
       document:   done
     doc: docs/reference-mapping/designs/D12.4.md
+    validate_result: >-
+      HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted at 17:12:32Z,
+      after commit c23c6691 at 17:11:37Z, so the instrumentation IS the code now running -
+      checked against the boot line, never a PID. The telegram adapter registered and is
+      receiving. The closing check reads OPEN at 0, and that zero is now "not yet" rather
+      than "impossible": the summary is emitted by a log.telegram.info call in src, which
+      the closing-check guard verifies, so the FIRST real Telegram turn closes it. Before
+      this item no volume of traffic could have.
     doc_last_verified: 2026-09-06 @ b78670d6
     decisions:
       - >-
