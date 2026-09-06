@@ -14397,6 +14397,21 @@ known_debt:
       presented, and simply has not seen a lane reach 10 since it began counting. Its
       closing-check reason was rewritten to say that, because it used to blame restart
       windows.
+    live_validate: >-
+      RESTARTED against d42fc02a and measured on that boot only (log line mark 7795). The
+      running process started 23:56:20, the commit is 23:55:57 — 23 seconds earlier — so
+      the new code IS the code running, which is the check that has to come before any
+      other. ERRORs 0, health_sweep bound 2 (gateway + core, the previous item still
+      holding), provider `NeraAiRaw [openai]: ok`.
+    acceptance_OPEN_not_claimed: >-
+      The new fields are UNEXERCISED: `turn context composed` has fired 0 times in the 15
+      minutes since the restart, because no turn has happened — no message arrived and no
+      scheduled lane ran. So "the line now carries the lane" is proven structurally (an
+      AST test over the call, mutation-proven both ways) and NOT yet in production. The
+      closing query is `grep -a "turn context composed" ~/.stackowl/logs/stackowl.jsonl |
+      tail -1` showing `session_key` and `skill_nudged` in its fields. Recording this as
+      open rather than reading a clean boot as a working feature: "the turn succeeded" is
+      not "my change works", and here not even a turn has succeeded yet.
     mutation_tested: >-
       Two mutants from a file copy, each verified APPLIED: `session_key` removed, and the
       two nudge labels crossed. Both caught, restored, re-run green. The crossed-labels
