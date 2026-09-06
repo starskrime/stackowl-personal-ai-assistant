@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.tui._tcss import strip_comments
+
 pytestmark = pytest.mark.tui
 
 _STYLES_DIR = (
@@ -34,10 +36,6 @@ _PERMITTED_MOTION_SELECTORS: frozenset[str] = frozenset(
 
 _MOTION_PROPERTY_RE = re.compile(r"\b(transition|animation)\s*:", re.IGNORECASE)
 
-
-def _strip_comments(text: str) -> str:
-    """Remove /* ... */ blocks so commented examples don't trip the scanner."""
-    return re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
 
 
 def _split_blocks(text: str) -> list[tuple[str, str]]:
@@ -64,7 +62,7 @@ def _split_blocks(text: str) -> list[tuple[str, str]]:
 
 def test_base_stylesheet_has_six_transitions() -> None:
     """Base stylesheet declares each of the 5 motion CSS classes exactly once."""
-    body = _strip_comments(_BASE_TCSS.read_text(encoding="utf-8"))
+    body = strip_comments(_BASE_TCSS.read_text(encoding="utf-8"))
     blocks = _split_blocks(body)
     selectors = [sel for sel, _ in blocks]
     for permitted in _PERMITTED_MOTION_SELECTORS:
@@ -77,7 +75,7 @@ def test_no_ad_hoc_transitions_in_tcss_files() -> None:
     """No ``transition:``/``animation:`` outside the 5 permitted blocks."""
     violations: list[str] = []
     for path in _STYLES_DIR.rglob("*.tcss"):
-        body = _strip_comments(path.read_text(encoding="utf-8"))
+        body = strip_comments(path.read_text(encoding="utf-8"))
         blocks = _split_blocks(body)
         for selector, block_body in blocks:
             if _MOTION_PROPERTY_RE.search(block_body) is None:

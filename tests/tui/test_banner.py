@@ -10,6 +10,7 @@ import pytest
 from stackowl.tui.i18n import clear_translations, localize
 from stackowl.tui.i18n_strings import install_default_translations
 from stackowl.tui.widgets.banner import Banner
+from tests.tui._tcss import has_rgb_literal, hex_literals
 
 pytestmark = pytest.mark.tui
 
@@ -22,8 +23,6 @@ _TCSS_PATH = (
     / "stackowl.tcss"
 )
 
-_HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
-_RGB_RE = re.compile(r"rgba?\s*\(")
 _LOGO_RE = re.compile(r'text:\s*"([^"]*)"')
 
 
@@ -69,8 +68,8 @@ def test_banner_css_docks_top_height_9() -> None:
 
 def test_banner_css_uses_only_tokens() -> None:
     css = Banner.DEFAULT_CSS
-    assert not _HEX_RE.search(css), "Banner CSS must not contain hex literals"
-    assert not _RGB_RE.search(css), "Banner CSS must not contain rgb(...) literals"
+    assert not hex_literals(css), "Banner CSS must not contain hex literals"
+    assert not has_rgb_literal(css), "Banner CSS must not contain rgb(...) literals"
 
 
 def test_banner_tagline_localized() -> None:

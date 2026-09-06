@@ -7,7 +7,6 @@ Sibling of ``test_story_8_5.py`` — split to keep each file under the
 from __future__ import annotations
 
 import dataclasses
-import re
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +20,7 @@ from stackowl.tui.messages import (
 from stackowl.tui.widgets.evolution_badge import EvolutionBadge
 from stackowl.tui.widgets.evolution_inspection_panel import EvolutionInspectionPanel
 from stackowl.tui.widgets.toast_notification import ToastNotification
+from tests.tui._tcss import has_rgb_literal, hex_literals
 
 pytestmark = pytest.mark.tui
 
@@ -124,12 +124,7 @@ def test_evolution_inspection_load_records_owl_and_traits() -> None:
 # ---------------------------------------------------------------------------
 
 
-_HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
-_RGB_RE = re.compile(r"rgba?\s*\(")
 
-
-def _strip_comments(text: str) -> str:
-    return re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
 
 
 @pytest.mark.parametrize(
@@ -138,9 +133,9 @@ def _strip_comments(text: str) -> str:
 )
 def test_tcss_files_are_token_pure(tcss_path: Path) -> None:
     assert tcss_path.is_file()
-    body = _strip_comments(tcss_path.read_text(encoding="utf-8"))
-    assert not _HEX_RE.search(body), f"Hex literal found in {tcss_path.name}"
-    assert not _RGB_RE.search(body), f"rgb()/rgba() literal in {tcss_path.name}"
+    body = tcss_path.read_text(encoding="utf-8")
+    assert not hex_literals(body), f"Hex literal found in {tcss_path.name}"
+    assert not has_rgb_literal(body), f"rgb()/rgba() literal in {tcss_path.name}"
 
 
 # ---------------------------------------------------------------------------

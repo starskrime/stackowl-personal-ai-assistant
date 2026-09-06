@@ -14477,6 +14477,49 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-142
+    found: 2026-09-06
+    what: >-
+      A REQUIREMENT DOCUMENTED IN TWO COPIES AND ABSENT FROM THE THIRD. Four `tests/tui`
+      files scanned Textual CSS for literal colours. `_HEX_RE`/`_RGB_RE` were defined
+      identically in THREE of them and `_strip_comments` in THREE. Two of the copies strip
+      `/* ... */` before scanning and say why — "those legitimately can include hex
+      examples" — and `test_banner.py` carried the regexes WITHOUT the stripping. The
+      rationale existed twice; the behaviour it justified existed twice out of three.
+    it_is_LATENT_not_live: >-
+      Measured before touching anything: `Banner.DEFAULT_CSS` is 448 chars and contains no
+      comments, and the canonical `stackowl.tcss` has 5 comment blocks with 0 hex literals
+      inside them. Nothing was failing. Recorded as latent deliberately rather than written
+      up as a live failure, because the record is the deliverable and the next reader must
+      not go hunting a defect that was not firing.
+    MY_FIRST_FIX_WAS_DECORATION_AND_THE_MUTANT_SAID_SO: >-
+      The obvious move — hoist the three primitives into a shared `_tcss.py` and have all
+      four files import them — changed NOTHING. `test_banner.py` still called
+      `HEX_RE.search(css)` on unstripped text, and the mutant (a commented-out `#ff0000` in
+      `Banner.DEFAULT_CSS`) failed IDENTICALLY before and after. Deduplicating the pieces of
+      a two-step sequence does not deduplicate the SEQUENCE, and the sequence — strip, THEN
+      scan — was the part being forgotten. I would have shipped a clean-looking diff that
+      fixed nothing; only the mutation run distinguished them.
+    the_actual_fix_makes_the_step_unforgettable: >-
+      `hex_literals()` and `has_rgb_literal()` strip internally, and `_HEX_RE`/`_RGB_RE` are
+      module-PRIVATE. Exporting the raw patterns beside the safe helpers would have left the
+      unsafe composition available and equally convenient, which is exactly how the third
+      copy came to differ. All four call sites now ask a question that cannot be asked
+      wrongly. `strip_comments` stays exported for the one caller wanting a stripped BODY
+      rather than a verdict.
+    mutation_proven_both_directions: >-
+      Mutant A, a commented-out colour example: PASSES with the fix, FAILS against
+      `test_banner.py` exactly as it was before this item — so the fix does something real.
+      Mutant B, a genuine uncommented `color: #ff0000`: still FAILS — so the guard was
+      strengthened, not loosened into uselessness. Restored from file copies; final re-run
+      341 passed.
+    what_else_the_cause_reaches: >-
+      This is defect shape 3 — two copies of one rule — in its quietest form: the copies
+      were not contradictory, one was merely INCOMPLETE, so no test disagreed with another
+      and nothing could notice. The generalisation worth keeping is that hoisting shared
+      CONSTANTS is safe and near-worthless, while the thing actually worth hoisting is the
+      shared SEQUENCE of steps. A helper that returns a verdict cannot be half-used; a
+      helper that returns a pattern can.
   - id: DEBT-141
     found: 2026-09-06
     what: >-
