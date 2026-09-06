@@ -632,17 +632,52 @@ async def test_guard_memory_command_registered_via_orchestrator(
         return SimpleNamespace(router=SimpleNamespace(), proactive_deliverer=SimpleNamespace())
 
     async def _fake_scheduler_build(*_a: object, **_k: object) -> object:
-        # register_all_commands reads .scheduler + .morning_brief_handler.
-        # Task 7 (incident-escalation RCA wiring) also reads
-        # .incident_escalation_handler unconditionally right after this
-        # build() call returns (orchestrator.py) — omitting it here crashes
-        # the fake boot with AttributeError before this guard ever reaches
-        # its real assertions.
-        return SimpleNamespace(
-            scheduler=SimpleNamespace(),
-            morning_brief_handler=SimpleNamespace(),
-            supervisor=SimpleNamespace(),
-            incident_escalation_handler=SimpleNamespace(),
+        """THE REAL DATACLASS, for exactly the reason recorded above its sibling.
+
+        This was a `SimpleNamespace` carrying whichever four fields the orchestrator
+        had last been caught reading, and its own comment recorded that history one
+        field at a time: `.scheduler` and `.morning_brief_handler` for
+        register_all_commands, then `.incident_escalation_handler` when Task 7 began
+        reading it "unconditionally right after this build() call returns".
+
+        THE FIX FOR THE CLASS WAS ALREADY WRITTEN, twelve lines up, for
+        MemoryComponents — "constructing the real type is the fix for the CLASS, not
+        the field: a new required field now fails HERE, immediately, with a TypeError
+        that names it, instead of surfacing as a stale-double AttributeError somewhere
+        downstream". It was applied to one double and not to its neighbour, which is
+        this codebase's most-repeated shape: the same rule, one case short.
+
+        So the fifth field arrived the hard way. On 2026-09-06 the orchestrator began
+        binding the live pipeline services onto `health_sweep_handler`; SchedulerComponents
+        has FOURTEEN required fields and this double had four, so the boot died with
+        `'types.SimpleNamespace' object has no attribute 'health_sweep_handler'` — in
+        tests/journeys, a directory no targeted run of that change ever executed, found
+        only by the 32-minute full suite.
+
+        `health_sweep_handler` is a REAL handler rather than a namespace stub, because
+        the orchestrator CALLS `bind_live_services` on it: a stub with a lambda would
+        make a rename of that method invisible here, which is the same drift one level
+        down.
+        """
+        from stackowl.scheduler.assembly import SchedulerComponents
+        from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
+
+        _unused = SimpleNamespace  # fields this guard never touches
+        return SchedulerComponents(
+            scheduler=_unused(),  # type: ignore[arg-type]
+            supervisor=_unused(),  # type: ignore[arg-type]
+            morning_brief_handler=_unused(),  # type: ignore[arg-type]
+            check_in_handler=_unused(),  # type: ignore[arg-type]
+            knowledge_prune_handler=_unused(),  # type: ignore[arg-type]
+            tool_pruning_handler=_unused(),  # type: ignore[arg-type]
+            goal_execution_handler=_unused(),  # type: ignore[arg-type]
+            objective_driver_handler=_unused(),  # type: ignore[arg-type]
+            reflection_writer_handler=_unused(),  # type: ignore[arg-type]
+            skill_synthesizer_handler=_unused(),  # type: ignore[arg-type]
+            tool_outcome_miner_handler=_unused(),  # type: ignore[arg-type]
+            tool_revalidation_handler=_unused(),  # type: ignore[arg-type]
+            health_sweep_handler=HealthSweepHandler(_unused()),  # type: ignore[arg-type]
+            incident_escalation_handler=_unused(),  # type: ignore[arg-type]
         )
 
     # Wrap the SINGLE registration entry: run the REAL registration (so /memory

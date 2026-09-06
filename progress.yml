@@ -14325,6 +14325,108 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-125
+    found: 2026-09-06
+    what: >-
+      A CLOSING CHECK WITH NO LOWER TIME BOUND IS SATISFIED BY HISTORY. Every log-based
+      `closing_check` written for DEBT-124 counted matches across ALL retained logs. On
+      the mechanism's first real use D07.2 reported CLOSEABLE on 4 hits of
+      `depth>0 child denied spawn/delegate tool` — and all four are dated 2026-08-28,
+      while the code they were supposedly evidencing shipped 2026-09-04 (commit
+      8750d046), SEVEN DAYS LATER. The check answered "this works in production" using
+      events that predate the work entirely. Believed, it would have advanced an item to
+      done on evidence of something else.
+    the_cause_and_what_else_it_reaches: >-
+      It is the honest-validate rule's own named failure — "a fix that worked in tests and
+      never fired in production" — reached by a different road, and CLAUDE.md's denominator
+      rule one level up: a non-zero count is not a measurement of what the count is MADE
+      OF, and a raw count over a ROTATING log is made of whatever is still on disk. It
+      reached all seven log-based checks, not just D07.2; the other six happened to have no
+      pre-change evidence lying around, which is luck, not correctness.
+    what_shipped: >-
+      `scripts/log_since.sh <YYYY-MM-DD> <pattern>` takes the window as a REQUIRED
+      argument, so a log-based check cannot be written without naming the day its subject
+      shipped. All seven checks rewritten with their measured ship dates (D03.2 2026-08-30,
+      D07.2/D07.3/D10.3/D16.5 2026-09-04, D09.4 2026-09-02, D11.3 2026-09-05, each from
+      `git log -S` on the exact line, not from the item's prose). D07.2 correctly flips
+      CLOSEABLE -> OPEN. Two tripwires: no closing check may read the logs without going
+      through the helper, and every date it names must parse.
+    two_instrument_lessons_are_now_in_ONE_place: >-
+      `grep -a`, because the live logs contain NULL BYTES and without it a pattern present
+      in the file and present in src counts 0 across all ten daily files — measured today,
+      and the control that exposed it was a second pattern known to be present. And a
+      stderr warning when the requested date predates the oldest retained log, because a 0
+      from a truncated window means "rotated away", not "never happened".
+    the_guard_read_its_own_COMMENT_three_times: >-
+      Worth recording because it is the same mistake in three costumes inside one file.
+      The date guard reported the word "also" as a malformed date, matching
+      `log_since.sh also carries the grep -a fix` in a check's explanatory comment. The
+      unbounded-grep guard SURVIVED its mutant: a check reverted to a raw
+      `grep ~/.stackowl/logs/stackowl.jsonl` was reported compliant, because the comment
+      above it still said "log_since.sh". And the ContextVar tripwire in DEBT-123 did the
+      same thing yesterday. There is now ONE `_command_only()` stripper and both guards
+      ask the COMMAND. A guard satisfied by prose describing the rule is worse than no
+      guard: the prose is exactly what a careless edit leaves behind.
+    AND_THE_BOUND_ALONE_WAS_NOT_ENOUGH_for_D12_4: >-
+      Bounding its check made it report CLOSEABLE on 4 hits, and reading them by hand
+      showed all four are the line "[telegram] adapter.edit_message: edit failed - fail
+      open". Counting a FAILURE as evidence that in-place editing WORKS is the
+      denominator error a second time in the same session, and it is why the skill now
+      says verify a CLOSEABLE before believing it. There is no INFO line for a
+      SUCCESSFUL edit at all (entry is DEBUG), so the behaviour is unobservable from the
+      logs as they stand. The deeper reason a behaviour check cannot settle D12.4 is that
+      it has NO SHIPPED CHANGE: the map Ask is unanswered and the record is empty, so
+      there is nothing whose effect could be measured. Its check now asks the state of
+      record instead, and reports OPEN with that reason.
+    a_side_observation_not_a_claim: >-
+      Those 4 telegram edit attempts all FAILED (fail-open), on 2026-08-29, 08-31 and
+      09-05. Whether that is a defect cannot be said from here, because the entry line is
+      DEBUG so the success rate is unobservable. Recorded as an observation for whoever
+      works D12.4, not as a finding.
+    THE_GATE_STOPPED_THIS_COMMIT_and_that_is_the_point: >-
+      `tripwires.sh` printed TRIPWIRES FAILED and the commit did not go out, because it
+      was chained to the gate rather than to `git add`. The offender was
+      `test_no_shell_script_reimplements_the_home`: log_since.sh hardcoded
+      `$HOME/.stackowl/logs` instead of asking StackowlHome, which D18.3 forbids because a
+      shell script re-deriving the home acts on a different instance than the process it
+      is asking about. `full_suite.sh` already resolves exactly this directory the right
+      way. A cross-cutting guard looks related to nothing, so no targeted run for a
+      progress.yml change would ever have chosen that path — which is precisely why the
+      gate is not optional.
+    mutation_tested: >-
+      Four mutants from file copies, each verified APPLIED: a check reverted to an
+      unbounded grep (SURVIVED first, which is what found the comment defect above; caught
+      after the fix), a malformed date, `grep -a` dropped from the helper, and the window
+      filter disabled. Caught, restored, re-run green.
+  - id: DEBT-123-FALLOUT
+    found: 2026-09-06
+    what: >-
+      THE FULL SUITE CAUGHT A REGRESSION I SHIPPED, and nothing smaller could have.
+      `12,159 passed, 1 failed` on ONE stable tree (commit 4f437303, 32m27s):
+      `tests/journeys/test_memory_fix_guards.py::test_guard_memory_command_registered_via_orchestrator`
+      died on `'types.SimpleNamespace' object has no attribute 'health_sweep_handler'`.
+      DEBT-123's binding reads that field off `scheduler_components`; the test doubles
+      `SchedulerAssembly.build` with a namespace carrying 4 of the dataclass's 14 required
+      fields. Targeted runs of that change covered tests/startup, tests/scheduler and
+      tests/health — never tests/journeys, because a journey directory looks related to
+      nothing.
+    the_cause_was_already_written_TWELVE_LINES_UP: >-
+      The same file fixed this exact shape for its MemoryComponents double on 2026-09-01 and
+      recorded the reasoning verbatim — "constructing the real type is the fix for the
+      CLASS, not the field: a new required field now fails HERE, immediately, with a
+      TypeError that names it, instead of surfacing as a stale-double AttributeError
+      somewhere downstream." It was applied to one double and not to its neighbour. The
+      scheduler double's own comment records it accreting fields one AttributeError at a
+      time (`.scheduler`, `.morning_brief_handler`, then `.incident_escalation_handler`
+      when Task 7 began reading it). Mine was the fifth, the hard way. Same rule, one case
+      short — CLAUDE.md shape #3 sitting inside shape #2.
+    fix: >-
+      The double is now the REAL `SchedulerComponents`, with SimpleNamespace placeholders
+      only for fields this guard never touches, so a new required field fails here with a
+      TypeError naming it. `health_sweep_handler` is a real `HealthSweepHandler` rather than
+      a stub, because the orchestrator CALLS `bind_live_services` on it and a lambda stub
+      would make a rename of that method invisible — the same drift one level down. Two
+      mutants (a field removed; the handler back to a namespace) both caught.
   - id: DEBT-124
     found: 2026-09-06
     what: >-
@@ -23232,8 +23334,12 @@ items:
 
   - id: D03.2
     closing_check: |-
-      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c '\[context\] a single call used')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x mid-turn compression" || echo "OPEN 0 x mid-turn compression - no turn has been long enough to compress"
+      # SCOPED TO THE DAY THIS SHIPPED (2026-08-30). An unbounded count is satisfied by
+      # history: this check first reported CLOSEABLE on evidence that PREDATED the
+      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # null bytes) and warns when the window is truncated by rotation.
+      n=$(./scripts/log_since.sh 2026-08-30 'a single call used')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x mid-turn compression since 2026-08-30" || echo "OPEN 0 x mid-turn compression since 2026-08-30 - no turn has been long enough to compress"
     title: "Conversation compression"
     domain: D03
     verdict: MISSING
@@ -26036,8 +26142,12 @@ items:
 
   - id: D07.2
     closing_check: |-
-      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c 'depth>0')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x child depth exclusion" || echo "OPEN 0 x child depth exclusion - no delegated child has been offered a spawn tool"
+      # SCOPED TO THE DAY THIS SHIPPED (2026-09-04). An unbounded count is satisfied by
+      # history: this check first reported CLOSEABLE on evidence that PREDATED the
+      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # null bytes) and warns when the window is truncated by rotation.
+      n=$(./scripts/log_since.sh 2026-09-04 'depth>0 child denied')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x child depth exclusion enforced at dispatch since 2026-09-04" || echo "OPEN 0 x child depth exclusion enforced at dispatch since 2026-09-04 - no delegated child has attempted a spawn/delegate tool SINCE THE PIN SHIPPED - the 4 hits over all retained logs are all dated 2026-08-28, seven days BEFORE commit 8750d046"
     title: "Delegation roles & depth"
     domain: D07
     verdict: PARTIAL
@@ -26066,8 +26176,12 @@ items:
 
   - id: D07.3
     closing_check: |-
-      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c 'this delegation is PROCESS-LOCAL')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x non-durable delegation warned" || echo "OPEN 0 x non-durable delegation warned - no delegation from a non-durable parent yet"
+      # SCOPED TO THE DAY THIS SHIPPED (2026-09-04). An unbounded count is satisfied by
+      # history: this check first reported CLOSEABLE on evidence that PREDATED the
+      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # null bytes) and warns when the window is truncated by rotation.
+      n=$(./scripts/log_since.sh 2026-09-04 'this delegation is PROCESS-LOCAL')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x non-durable delegation warned since 2026-09-04" || echo "OPEN 0 x non-durable delegation warned since 2026-09-04 - no delegation from a non-durable parent since the line shipped"
     title: "Background delegation & durability"
     domain: D07
     verdict: PARTIAL
@@ -27215,8 +27329,12 @@ items:
 
   - id: D09.4
     closing_check: |-
-      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c '\[skills\] nudge')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge" || echo "OPEN 0 x skills nudge - needs 10 turns on ONE lane inside a restart window; the memory nudge (interval 4, prefix [curated]) is a different line and must not be counted here"
+      # SCOPED TO THE DAY THIS SHIPPED (2026-09-02). An unbounded count is satisfied by
+      # history: this check first reported CLOSEABLE on evidence that PREDATED the
+      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # null bytes) and warns when the window is truncated by rotation.
+      n=$(./scripts/log_since.sh 2026-09-02 '[skills] nudge')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge since 2026-09-02 - needs 10 turns on ONE lane inside a restart window; the memory nudge (interval 4, prefix [curated]) is a different line and must not be counted here"
     title: "Skill-creation nudges"
     domain: D09
     verdict: MISSING
@@ -27709,8 +27827,12 @@ items:
 
   - id: D10.3
     closing_check: |-
-      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c '"matched_on": "semantic"')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x semantic-twin suppression" || echo "OPEN 0 x semantic-twin suppression - no proposed lesson has resembled an existing one above 0.90"
+      # SCOPED TO THE DAY THIS SHIPPED (2026-09-04). An unbounded count is satisfied by
+      # history: this check first reported CLOSEABLE on evidence that PREDATED the
+      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # null bytes) and warns when the window is truncated by rotation.
+      n=$(./scripts/log_since.sh 2026-09-04 '"matched_on": "semantic"')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x semantic-twin suppression since 2026-09-04" || echo "OPEN 0 x semantic-twin suppression since 2026-09-04 - no proposed lesson has resembled an existing one above 0.90"
     title: "Active vs. optional skills"
     domain: D10
     verdict: MISSING
@@ -28971,8 +29093,12 @@ items:
       denominator, the FTS improvement is unevidenced in production.
   - id: D11.3
     closing_check: |-
-      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c 'session_search: bookends rendered')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x discover hit framed" || echo "OPEN 0 x discover hit framed - the INFO line exists as of 2026-09-06; before that this was unclosable by construction"
+      # SCOPED TO THE DAY THIS SHIPPED (2026-09-05). An unbounded count is satisfied by
+      # history: this check first reported CLOSEABLE on evidence that PREDATED the
+      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # null bytes) and warns when the window is truncated by rotation.
+      n=$(./scripts/log_since.sh 2026-09-05 'session_search: bookends rendered')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x discover hit framed since 2026-09-05" || echo "OPEN 0 x discover hit framed since 2026-09-05 - the INFO line only exists from 2026-09-05; before that this was unclosable by construction"
     title: "Session-search shapes"
     domain: D11
     verdict: PARITY
@@ -29269,8 +29395,29 @@ items:
       Their only callers are tests.
   - id: D12.4
     closing_check: |-
-      e=$(grep -rhc "adapter.edit_message: entry\|adapter.edit_message_to_text: entry" ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | paste -sd+ | bc)
-      [ "${e:-0}" -gt 0 ] && echo "CLOSEABLE $e in-place edits - the Ask (edit vs successive posts) is answered by behaviour" || echo "OPEN 0 in-place edits - the map Ask is still unanswered and this item has an EMPTY record: no changes, no decisions, no doc"
+      # NOT A LOG COUNT, and the first two attempts at one were both wrong. An
+      # unbounded grep was caught by the guard in
+      # tests/audit/test_a_closing_check_cannot_be_satisfied_by_history.py; bounding
+      # it then reported CLOSEABLE on 4 hits which, read by hand, are ALL the line
+      # "[telegram] adapter.edit_message: edit failed - fail open". Counting a
+      # FAILURE as evidence that in-place editing works is the denominator error
+      # twice in one day. There is no INFO line for a SUCCESSFUL edit at all - entry
+      # is DEBUG - so the behaviour is unobservable from the logs as they stand.
+      #
+      # And the deeper reason a behaviour check cannot settle this: unlike its
+      # neighbours, D12.4 has NO SHIPPED CHANGE. The map Ask (edit in place, or post
+      # successive messages) is still unanswered and the record is empty, so there is
+      # nothing whose effect could be measured. The honest check is the state of
+      # record itself.
+      uv run python - <<'PY'
+      import yaml
+      item = next(i for i in yaml.safe_load(open("progress.yml"))["items"]
+                  if i["id"] == "D12.4")
+      has = any(item.get(f) for f in ("doc", "changes", "decisions", "notes"))
+      print("CLOSEABLE the item now records evidence" if has else
+            "OPEN the map Ask is unanswered and the record is EMPTY - no doc, no "
+            "changes, no decisions, no notes, so there is no shipped change to validate")
+      PY
     title: "Streaming to chat platforms"
     domain: D12
     verdict: PARTIAL
@@ -30752,8 +30899,12 @@ items:
       logging; gmail.py has 31 statements through a plain module logger.
   - id: D16.5
     closing_check: |-
-      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c 'mcp.client.discover_tools: exit')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x MCP server discovery" || echo "OPEN 0 x MCP server discovery - MCP has never run; no server is configured"
+      # SCOPED TO THE DAY THIS SHIPPED (2026-09-04). An unbounded count is satisfied by
+      # history: this check first reported CLOSEABLE on evidence that PREDATED the
+      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # null bytes) and warns when the window is truncated by rotation.
+      n=$(./scripts/log_since.sh 2026-09-04 'mcp.client.discover_tools: exit')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x MCP server discovery since 2026-09-04" || echo "OPEN 0 x MCP server discovery since 2026-09-04 - MCP has never run; no server is configured"
     title: "MCP"
     domain: D16
     verdict: PARITY
