@@ -14477,6 +14477,56 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-135
+    found: 2026-09-06
+    what: >-
+      `current` is 1,035,605 bytes — 41% of a 2,524,353-byte progress.yml, 230 keys,
+      append-only. That is PROCESS.md's own failure mode #4 running inside the state of
+      record. It had never been pruned, and the reason is structural: the block does TWO
+      jobs under ONE keyspace. Measured 2026-09-06: 64 keys are per-item evidence that
+      `unevidenced_validate_problems` accepts as proof of a `done` claim — for FOURTEEN
+      items (D07.1/2/4/5/6, D12.4/5/6/7, D15.1/2/3/4/5) it is the ONLY evidence there is —
+      and 166 are a loop journal (DEBT…, ESC…, OPERATOR_ANSWERED…, SYNC…) that nothing
+      depends on. Nobody could tell which was which by looking, so nobody pruned.
+    I_BUILT_A_GUARD_ON_A_FALSE_PREMISE_AND_THE_MUTANT_CAUGHT_IT: >-
+      I reasoned that pruning a load-bearing key would silently un-evidence a `done` claim
+      because the linter only asks "is there ANY evidence", and wrote
+      `tests/audit/test_the_record_can_be_pruned_without_losing_evidence.py` to catch it.
+      The mutation test SURVIVED: renaming a load-bearing key left all four assertions
+      green, because the guard derived the load-bearing set from the very file it then
+      checked and so asked a tautology. That is the same "a guard that cannot fail" defect
+      this session has been removing, written by me. Then the premise itself measured
+      FALSE: with the key renamed, `progress_lint` failed immediately with "D07.1:
+      validate: done and document: done with no evidence", and
+      `test_progress_lint_sees_every_duplicate.py` already covers that case synthetically.
+      The protection existed all along.
+    so_the_guard_was_DELETED_not_repaired: >-
+      Shipping a redundant tautological test would have been worse than shipping nothing —
+      it adds a second copy of a rule and a green tick that means nothing. Retired means
+      deleted applies to code written twenty minutes ago. The docstring that carried the
+      false premise was rewritten to record what was measured instead, because a comment
+      asserting a protection that is not there is the same lie one layer down.
+    and_the_gate_caught_my_deletion_being_incomplete: >-
+      Deleting the test file left `tests/audit/__pycache__/…​.pyc` behind, and
+      `test_no_bytecode_outlives_its_source` failed the gate — so the commit did NOT go
+      out. Exactly the chaining the skill mandates, doing its job on me: retired means
+      deleted extends to bytecode, because a stale .pyc is still importable. Worth
+      recording because it is the first time in this session the gate has refused a commit
+      of mine, and it refused it for a real reason.
+    what_ACTUALLY_shipped: >-
+      Visibility, which is what was genuinely missing. `progress_lint` now prints
+      "current: 230 keys — 14 load-bearing (an item's ONLY evidence), 216 journal and
+      prunable" on every clean run, so 94% of that megabyte is now known-safe to remove
+      and the prune is a decision someone can act on rather than a risk nobody takes.
+      `load_bearing_current_keys()` names the subset, and `_EVIDENCE_FIELDS` is now ONE
+      constant shared with `unevidenced_validate_problems` so the two cannot drift into
+      different ideas of what evidence is — a disagreement there would mark a load-bearing
+      key prunable, which is the one way this could do harm.
+    the_prune_itself_is_NOT_done_and_is_deliberately_yours: >-
+      Deleting 216 keys from the state of record is data deletion under the stop-and-brief
+      rule, and the journal is the programme's own history. The measurement says it is
+      safe; whether to do it, and whether the journal should be archived elsewhere rather
+      than dropped, is your call. Nothing is blocked on it — the file is large, not broken.
   - id: DEBT-134
     found: 2026-09-06
     what: >-

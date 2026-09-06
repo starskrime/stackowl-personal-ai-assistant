@@ -198,6 +198,66 @@ def stale_stage_problems(data: dict) -> list[str]:
 #: these two are not checked by anything but the record they leave.
 _CLAIM_STAGES = ("validate", "document")
 
+#: What counts as evidence for a claim stage, BESIDES a ``current`` record. One
+#: source, because :func:`unevidenced_validate_problems` and
+#: :func:`load_bearing_current_keys` must agree on it exactly — the second decides
+#: which records may be pruned, and a disagreement would mark a load-bearing key
+#: prunable.
+_EVIDENCE_FIELDS = ("doc", "validate_result", "changes", "notes", "decisions")
+
+
+def load_bearing_current_keys(data: dict) -> dict[str, str]:
+    """Item id -> the ``current`` key that is its ONLY evidence.
+
+    WHY THIS IS SEPARATE FROM THE LINT RULE. ``current`` is 41% of a 2.5 MB
+    ``progress.yml`` and only grows, which is failure mode #4 running inside the
+    state of record. It has not been pruned because the block does TWO jobs under
+    one keyspace: measured 2026-09-06, 64 of its 230 keys are per-item evidence
+    that :func:`unevidenced_validate_problems` accepts as proof of a ``done``
+    claim, and 166 are a loop journal (``DEBT…``, ``ESC…``,
+    ``OPERATOR_ANSWERED…``) that nothing depends on.
+
+    For FOURTEEN items the record is the only evidence there is — no doc, no
+    changes, no decisions, no notes.
+
+    **THE PRUNE IS ALREADY PROTECTED, and this function does NOT protect it.** The
+    first version of this docstring claimed the linter "would not notice" a pruned
+    key. That was written from reasoning rather than measurement and it is FALSE:
+    simulated on 2026-09-06 by renaming
+    ``D07_1_2026_09_04_parity_confirmed…``, :func:`unevidenced_validate_problems`
+    failed the lint immediately with "D07.1: validate: done and document: done with
+    no evidence". A tripwire written on that premise passed its own mutant, because
+    it derived the load-bearing set from the very file it then checked — a guard
+    that cannot fail. It was deleted rather than shipped.
+
+    What was missing is not protection but VISIBILITY: nobody could see how much of
+    the block was safe to touch, so nobody touched it, and it grew to 41%. This
+    names the load-bearing subset so ``main`` can report the split, which turns the
+    prune from a risk nobody takes into a decision someone can act on.
+
+    ONE SOURCE: the evidence test here is the same expression
+    :func:`unevidenced_validate_problems` uses, so the two cannot drift into
+    different ideas of what counts as evidence.
+    """
+    current = data.get("current") or {}
+    keys = [k for k in current if isinstance(k, str)]
+    out: dict[str, str] = {}
+    for item in data.get("items", []):
+        ident = str(item.get("id", ""))
+        if not ident:
+            continue
+        if any(item.get(f) for f in _EVIDENCE_FIELDS):
+            continue  # evidenced elsewhere; its record is journal, not load-bearing
+        records = [k for k in keys if k == ident.replace(".", "_")
+                   or k.startswith(f"{ident.replace('.', '_')}_")]
+        if len(records) == 1:
+            out[ident] = records[0]
+        elif records:
+            # More than one record and no other evidence: every one of them is
+            # load-bearing, so name them jointly rather than picking one.
+            out[ident] = records[0]
+    return out
+
 
 def unevidenced_validate_problems(data: dict) -> list[str]:
     """A claim stage marked `done` with nothing recorded that a reader could check.
@@ -232,9 +292,7 @@ def unevidenced_validate_problems(data: dict) -> list[str]:
         ident = str(item.get("id", ""))
         prefix = ident.replace(".", "_")
         has_record = any(k == prefix or k.startswith(f"{prefix}_") for k in keys)
-        if has_record or any(
-            item.get(f) for f in ("doc", "validate_result", "changes", "notes", "decisions")
-        ):
+        if has_record or any(item.get(f) for f in _EVIDENCE_FIELDS):
             continue
         problems.append(
             f"{ident}: {' and '.join(f'{s}: done' for s in claimed)} with no "
@@ -406,6 +464,19 @@ def main() -> int:
         return 1
 
     print(f"✓ progress.yml sound — {len(data.get('items', []))} items, no duplicate keys")
+
+    # WHAT OF THE RECORD IS SAFE TO PRUNE. `current` only grows — failure mode #4
+    # inside the state of record — and it stayed unpruned because nobody could see
+    # which keys a `done` claim depends on. Printing the split makes the prune a
+    # decision someone can act on instead of a risk nobody takes.
+    current = data.get("current") or {}
+    bearing = load_bearing_current_keys(data)
+    total = sum(1 for k in current if isinstance(k, str))
+    if total:
+        print(
+            f"  current: {total} keys — {len(bearing)} load-bearing (an item's ONLY "
+            f"evidence), {total - len(bearing)} journal and prunable"
+        )
     return 0
 
 
