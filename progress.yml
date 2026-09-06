@@ -14511,6 +14511,28 @@ known_debt:
       the migrator itself warns about — "a regex would produce conforming skills that no
       longer describe what they do, which is worse than non-conforming ones that do" — so
       it is its own item rather than a hasty pass at the end of this one.
+    THE_RESTART_CAUGHT_A_DEFECT_I_HAD_JUST_INTRODUCED: >-
+      After the first restart 13 of 14 descriptions had reached the live catalogue and
+      `web-automation` still read 170 chars. The cause was my own rewrite: I had written
+      "Drive a website: navigate, read, fill forms, extract." and the COLON makes the YAML
+      frontmatter invalid — "mapping values are not allowed here" — so `load_all` logged
+      "skill invalid — skipping" and the stale row survived untouched. A second restart
+      confirmed it was stuck rather than lagging.
+    and_my_GUARD_PASSED_THE_BROKEN_FILE: >-
+      Because it parsed frontmatter with a regex that splits on the FIRST colon, it read
+      the description as "Drive a website" — 16 characters, conforming — while the real
+      loader refused the file outright. A double that parses more leniently than the thing
+      it stands for reports a green that means nothing; this is defect shape #2, test
+      doubles that stopped resembling the real thing. Fixed by using the SAME parser
+      (`yaml.safe_load`) rather than a better regex, and by adding the assertion that
+      actually matters: every shipped SKILL.md must PARSE, because a file the loader skips
+      never reaches the catalogue and every other check then passes over a skill that was
+      silently dropped. Mutation-proven: reintroducing the colon fires three assertions.
+    validate_is_DONE_and_live: >-
+      After the fix and a restart, all 14 builtin rows in the live catalogue are at or
+      under the 60-character cap — 0 over, longest 56 — so the change reached production
+      rather than only the repo. This is the second loop running where the mandatory
+      restart-and-verify step caught something a green test suite had not.
     I_NEARLY_SHIPPED_A_VACUOUS_GUARD_AGAIN: >-
       The first draft filtered violations on `v.code == "description"`. `Violation` has no
       `code` field — it has `rule` — so the filter would have returned an empty list for

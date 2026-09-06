@@ -36,6 +36,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -46,15 +48,22 @@ from stackowl.skills import standard as std  # noqa: E402
 
 
 def _frontmatter(text: str) -> dict[str, object]:
+    """Parse the frontmatter with REAL YAML, the way the loader does.
+
+    THE FIRST VERSION SPLIT ON THE FIRST COLON, and that is how this guard passed
+    a file the loader rejects. A description of "Drive a website: navigate, read,
+    fill forms, extract." is invalid YAML — "mapping values are not allowed here" —
+    so `load_all` logged "skill invalid — skipping" and the stale row survived,
+    while this test read the description as "Drive a website" (16 chars) and called
+    it conforming. A double that parses more leniently than the thing it stands for
+    reports a green that means nothing; the fix is to use the same parser, not a
+    better regex.
+    """
     m = re.match(r"^---\n(.*?)\n---\n", text, re.S)
     if not m:
         return {}
-    fields: dict[str, object] = {}
-    for line in m.group(1).splitlines():
-        if ":" in line and not line.startswith((" ", "\t")):
-            k, v = line.split(":", 1)
-            fields[k.strip()] = v.strip()
-    return fields
+    loaded = yaml.safe_load(m.group(1))
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _shipped() -> list[tuple[str, dict[str, object]]]:
@@ -104,6 +113,27 @@ class TestShippedDescriptionsConform:
         assert all(f.get("description") for _n, f in shipped), (
             "a shipped skill has no description at all — the parser is broken"
         )
+
+    @pytest.mark.tripwire
+    def test_every_shipped_skill_is_valid_yaml(self) -> None:
+        """The failure that actually bit: a file the loader REFUSES never reaches the
+        catalogue at all, so its old row survives and every other check here passes
+        over a skill that was silently skipped."""
+        broken = {}
+        for d in sorted(_BUILTIN.iterdir()):
+            p = d / "SKILL.md"
+            if not p.exists():
+                continue
+            m = re.match(r"^---\n(.*?)\n---\n", p.read_text(encoding="utf-8"), re.S)
+            if m is None:
+                broken[d.name] = "no frontmatter block"
+                continue
+            try:
+                yaml.safe_load(m.group(1))
+            except Exception as exc:  # noqa: BLE001 — the message is the point
+                broken[d.name] = str(exc)[:90]
+
+        assert not broken, f"the loader will skip these entirely: {broken}"
 
     def test_the_validator_would_still_reject_an_over_long_one(self) -> None:
         """The control in the other direction: the rule can fail, so a pass means
