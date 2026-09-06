@@ -14517,6 +14517,19 @@ known_debt:
       so the two can never drift into different keys again. `get_turn_token_totals` is
       NOT retired — `consolidate.py:58` still uses it legitimately for this turn's display
       line, which is a per-trace question.
+    validate: >-
+      PARTIAL. Migration 0138 IS live — 138 rows in the live schema_migrations, last three
+      0136/0137/0138, and `tasks.accumulated_input_tokens` exists on the box; the platform
+      restarted at 05:12:56 against a 05:12:33 commit with 0 ERRORs. What is NOT yet
+      evidenced is the claim itself: that a SECOND attempt of a durable task begins already
+      carrying what earlier attempts spent. That needs a real retry to occur.
+    closing_check: |
+      # The seed had NO log line, so this check could not have existed — the exact trap
+      # DEBT-127 shipped a guard for, met the very next day while writing the check that
+      # guard demands. An INFO line was added FIRST, then this. Bounded to the day it
+      # shipped: the fix is what makes a non-zero seed possible at all.
+      n=$(./scripts/log_since.sh 2026-09-06 'token budget seeded from prior attempts')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n attempt(s) began carrying prior-attempt tokens" || echo "OPEN 0 retried durable tasks since the fix shipped; the column and migration ARE live-evidenced"
     the_guard_reads_the_CALL_not_the_text: >-
       `tests/pipeline/durable/test_the_budget_bounds_the_task_not_the_attempt.py` walks the
       AST of execute.py and asserts both cumulative seeds are called with the SAME

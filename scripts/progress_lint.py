@@ -72,6 +72,31 @@ def _describe(node: yaml.MappingNode) -> str:
     return f"line {node.start_mark.line + 1}"
 
 
+def entries_with_closing_checks(data: dict) -> list[tuple[str, str]]:
+    """Every ``(label, closing_check)`` in the record, items AND known_debt.
+
+    ONE SOURCE, because there are now three readers — ``validate_check.py`` and two
+    audit guards — and the previous shape had each of them iterate ``items`` on its
+    own. Adding a second population to three private loops is the two-copies defect
+    this file exists to catch, so the union lives here and the readers ask.
+
+    Evidence-led work is recorded in ``known_debt`` rather than as an item, so its
+    claims had no way to be re-checked: a `partial` item gets ``validate_check.py``
+    re-running its query every loop, and a debt got a paragraph. That is the same
+    dead-end DEBT-124 removed for items, one population over.
+    """
+    out: list[tuple[str, str]] = []
+    for item in data.get("items", []):
+        check = (item.get("closing_check") or "").strip()
+        if check:
+            out.append((str(item.get("id")), check))
+    for debt in data.get("known_debt", []) or []:
+        check = (debt.get("closing_check") or "").strip()
+        if check:
+            out.append((str(debt.get("id")), check))
+    return out
+
+
 def duplicate_key_problems(text: str) -> list[str]:
     """Every key that appears twice in the SAME mapping, at any depth.
 

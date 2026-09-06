@@ -2645,6 +2645,20 @@ async def _run_with_tools(
             _prior_input_tokens = await _token_store.get_accumulated_input_tokens(
                 state.task_id
             )
+            if _prior_input_tokens > 0:
+                # THE EVIDENCE THAT THE FIX FIRED, at INFO because production runs
+                # at INFO. A non-zero seed is the whole claim: this attempt begins
+                # already carrying what earlier attempts of the SAME task spent.
+                # Written before the closing check that needs it, per the rule that
+                # a check whose evidence cannot exist reads OPEN forever.
+                log.tasks.info(
+                    "[tasks] execute: token budget seeded from prior attempts",
+                    extra={"_fields": {
+                        "task_id": state.task_id,
+                        "trace_id": state.trace_id,
+                        "prior_input_tokens": _prior_input_tokens,
+                    }},
+                )
         except Exception as exc:  # noqa: BLE001 — best-effort seed; never block the turn
             log.tasks.error(
                 "[tasks] execute: prior token-total read failed — seeding 0",

@@ -30,12 +30,16 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import yaml
 
 _ROOT = Path(__file__).resolve().parents[2]
+
+sys.path.insert(0, str(_ROOT / "scripts"))
+from progress_lint import entries_with_closing_checks as _record_checks  # noqa: E402
 _SCRIPT = _ROOT / "scripts" / "log_since.sh"
 
 
@@ -144,13 +148,13 @@ class TestEveryLiveCheckUsesIt:
         """
         data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
         offenders: list[str] = []
-        for item in data.get("items", []):
-            check = _command_only(item.get("closing_check") or "")
+        for ident, raw in _record_checks(data):
+            check = _command_only(raw)
             if not check.strip():
                 continue
             reads_logs = "stackowl.jsonl" in check or "stackowl*.jsonl" in check
             if reads_logs and "log_since.sh" not in check:
-                offenders.append(str(item.get("id")))
+                offenders.append(ident)
         assert not offenders, (
             "these closing checks read the logs without a ship-date bound, so they can "
             f"report CLOSEABLE on evidence older than the change: {offenders}"
@@ -162,9 +166,9 @@ class TestEveryLiveCheckUsesIt:
         looking healthy — an OPEN that can never become CLOSEABLE."""
         data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
         bad: list[str] = []
-        for item in data.get("items", []):
-            code = _command_only(item.get("closing_check") or "")
+        for ident, raw in _record_checks(data):
+            code = _command_only(raw)
             for date in re.findall(r"log_since\.sh\s+(\S+)", code):
                 if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
-                    bad.append(f"{item.get('id')}: {date!r}")
+                    bad.append(f"{ident}: {date!r}")
         assert not bad, "\n  ".join(bad)

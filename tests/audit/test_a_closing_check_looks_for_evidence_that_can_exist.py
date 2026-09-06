@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -43,6 +44,9 @@ import yaml
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC = _ROOT / "src" / "stackowl"
+
+sys.path.insert(0, str(_ROOT / "scripts"))
+from progress_lint import entries_with_closing_checks as _record_checks  # noqa: E402
 
 #: Levels that exist in production. DEBUG does not.
 _PRODUCTION_LEVELS = {"info", "warning", "error", "critical", "exception"}
@@ -126,12 +130,15 @@ def _emitters(pattern: str) -> list[tuple[str, str]]:
 
 
 def _checks() -> list[tuple[str, str]]:
+    """Every closing check in the record — items AND known_debt.
+
+    Asks `progress_lint.entries_with_closing_checks` rather than iterating `items`
+    itself. This used to be a private loop over `items`, which meant a check written
+    against evidence-led work in `known_debt` escaped every guard in this file: the
+    one place a new check would be least reviewed was the one place nothing looked.
+    """
     data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
-    return [
-        (str(i.get("id")), i["closing_check"])
-        for i in data.get("items", [])
-        if (i.get("closing_check") or "").strip()
-    ]
+    return _record_checks(data)
 
 
 class TestEveryLogPatternHasAnEmitter:

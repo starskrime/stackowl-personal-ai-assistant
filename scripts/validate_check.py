@@ -50,6 +50,15 @@ def main() -> int:
         item for item in data.get("items", [])
         if any((item.get("stages") or {}).get(s) == "partial" for s in _STAGES)
     ]
+    # Evidence-led work lives in `known_debt`, not in `items`, so its claims used to
+    # have no re-runnable check at all — the dead end DEBT-124 removed for items,
+    # one population over. A debt carrying a `closing_check` is now re-run beside
+    # them, labelled by its own id.
+    items += [
+        dict(d, stages={"validate": "partial"})
+        for d in (data.get("known_debt", []) or [])
+        if (d.get("closing_check") or "").strip()
+    ]
 
     print(f"partial stages: {len(items)} item(s)\n")
     closeable: list[str] = []
