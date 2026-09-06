@@ -214,6 +214,49 @@ Not negotiable, from Bakir's long-standing preferences. The full list is `rules`
   branches on who the provider is will be wrong for one of them.
 - No hardcoded English keyword lists. Cross-platform. Runs on all hardware.
 
+### One clock, one format
+
+**Adopted 2026-09-06, after the split produced two wrong answers in ten minutes.**
+
+**A moment in time is stored as an ISO-8601 string in UTC.** Not a Unix epoch number,
+not a local-time string. New columns only — the legacy epoch columns are named below
+and deliberately left alone.
+
+This is not a style preference. The database already stores time both ways —
+`jobs.run_at` is ISO text, `task_outcomes.captured_at` is an epoch REAL — and **nothing
+in the column name distinguishes them**, because both are `*_at`. SQLite compares either
+against anything without an error, so the wrong format does not fail, it *answers*:
+
+```sql
+SELECT substr(captured_at,1,10), COUNT(*) FROM task_outcomes GROUP BY 1
+```
+
+returns rows keyed `9999`, `9998`, `9997` — the leading digits of an epoch — and reads
+exactly like counts per day. That query was run on 2026-09-06, believed, and was
+meaningless. In a programme whose method is measuring this database, a store that
+answers the wrong question without erroring is the instrument lying, and it is the same
+family as the `"msg": "` space and `LIKE 'incident_%'`.
+
+**The convention had already settled and was simply never written.** Measured across the
+shipped migrations: 89 time-ish declarations are TEXT, 28 are REAL, and the split is
+chronological — the last epoch column is migration **0107**, and all nine time columns
+added since (0115–0128) are ISO. So the practice was right, unwritten, and unenforced:
+the same shape as "the full suite hangs", which survived in three method documents after
+being corrected, and as the baselines that read 39/78 here against a gate of 35/65.
+
+`tests/db/test_time_is_stored_one_way.py` enforces it against the **migrations**, not the
+live database — the migrations are what ships to every clone, and CI has no database, so
+a guard needing the operator's box would be a guard that never runs.
+
+**Reading a legacy table? Compare against an epoch number, not a date string.** The
+epoch columns live in migrations at or below 0107 and include `task_outcomes.captured_at`
+and `.scored_at`, `reflections.created_at`, `tool_heuristics.*`, `skills.loaded_at` /
+`.updated_at` / `.last_used_at` / `.state_changed_at`, `audit_log.timestamp`,
+`callback_log.processed_at`, `user_preferences.updated_at`, `undelivered_outbox.*`,
+`skill_ownership.attached_at` and `approach_rating_pending.created_at`. They are NOT
+migrated: rewriting historical timestamps in the state of record is a destructive
+migration and therefore the operator's decision. Naming them is what removes the hazard.
+
 ### A surface never owns the conversation
 
 **Adopted 2026-09-06 (D13.2), before surface #4 rather than after it.**
