@@ -136,13 +136,24 @@ Duplicate keys silently swallow whole records. This has already happened.
   plus `progress_lint` and both baselines.
 
   **The full run does NOT hang — it takes ~30 minutes, and this line used to say the
-  opposite.** MEASURED twice: `6 failed, 11440 passed in 1885.47s` (2026-09-01) and
-  `10 failed, 11853 passed in 1775.99s` (2026-09-03). The false claim survived HERE after
+  opposite.** MEASURED every time since: `6 failed, 11440 passed in 1885.47s`
+  (2026-09-01), `10 failed, 11853 passed in 1775.99s` (2026-09-03), then GREEN three
+  runs running — `12123 passed, 0 failed in 1880.78s` (2026-09-05) and `12170 passed,
+  18 skipped, 0 failed in 1911.85s` (2026-09-06). The false claim survived HERE after
   `CLAUDE.md` was corrected, and because this file is what the loop reads on every
   invocation, no invocation ever ran it — which is how TEN tests sat red, every one of
   them a retired thing whose tests stayed behind. "It hangs" reads as *impossible*, so
   nobody tries. Run `./scripts/full_suite.sh` (detached, stamped log) and collect it
   later; a foreground timeout kills it mid-run, which is all "hangs" ever was.
+
+  **A verdict is only about ONE tree, and editing during the run voids it.** The script
+  says so itself: `SUITE TREE STILL` means the fingerprint held, `SUITE TREE CHANGED
+  DURING THE RUN` means it did not. Measured 2026-09-06: a run failed on
+  `test_pid_cleanup_handler_no_longer_raises_systemexit`, which reads
+  `inspect.getsource(orchestrator)` FROM DISK — the file had been edited mid-run, so the
+  failure was an artefact and the verdict void. Launch it, then keep your hands off the
+  tree until it prints, or you will spend thirty minutes buying a number that means
+  nothing.
 
   Targeted paths stay right for the edit loop, but the full run is the ONLY detector for
   cross-test pollution and for a retirement that left its tests behind — and no tripwire

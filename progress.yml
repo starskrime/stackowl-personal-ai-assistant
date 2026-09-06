@@ -315,6 +315,39 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  D07_3_2026_09_06_the_first_item_the_new_checker_actually_closed:
+    map_check: >-
+      D07.3 Background delegation & durability — was 6/7, validate `partial`, the ONLY
+      item whose closing check reported CLOSEABLE. Now 7/7.
+    WHAT_CLOSED_IT: >-
+      `./scripts/log_since.sh 2026-09-04 "this delegation is PROCESS-LOCAL"` returns 1,
+      dated 2026-09-05, at INFO, carrying `has_parent_task: false, has_react_ctx: false,
+      has_db: true` — exactly the fall-open branch the document describes. The item's
+      change was raising that line from DEBUG to INFO on 2026-09-04, so the evidence
+      post-dates the change it validates. Verified by hand before being believed, which is
+      the skill's own rule after D07.2 and D15.6 both produced false CLOSEABLEs.
+    THE_MEASUREMENT_FOUND_THE_OTHER_HALF: >-
+      `delegate_task: durable child scope resolved` has fired ZERO times, and the zero is
+      real rather than a level artefact — `git log -S` shows it has been `log.tool.info`
+      since 2026-06-17. NO DELEGATION FROM A DURABLE PARENT HAS OCCURRED in the retained
+      window. For months this code path could log only the case that never happens, which
+      is precisely why raising the other branch was the whole item. Recorded in the
+      document too, so a green validate is not read as "both branches proven": the durable
+      half is verified by TESTS, not by traffic.
+    VERIFICATION_RUN_NOT_TRUSTED: >-
+      Step 1 `tests/tools/agents` 125 passed, matching the documented count exactly. Step 2
+      `tests/owls tests/pipeline/durable` 764 passed, 0 failed. Step 3 returns both boot
+      lines with counts. Doc stamped 2026-09-06 against 8c44c6e8.
+    AND_CLOSING_IT_CREATED_A_NEW_DEFECT_CLASS: >-
+      A `closing_check` is REQUIRED while a stage is partial and becomes a write with no
+      reader the moment it closes — `validate_check.py` iterates only partial items, so a
+      check left behind is never run again while still reading as live evidence.
+      `progress_lint.stale_closing_check_problems` now refuses one, the mirror of the rule
+      that requires it. D07.3 was the first instance and is the reason the rule exists.
+    THE_FULL_SUITE_IS_GREEN: >-
+      12,170 passed, 18 skipped, 0 failed, rc=0 in 1911.85s on ONE stable tree
+      (`SUITE TREE STILL`, commit 8c44c6e8). Third green run running. It also confirms the
+      journeys double fix from DEBT-123-FALLOUT.
   D06_2_2026_09_05_hibernation_answers_a_question_this_architecture_never_asks:
     map_check: "D06.2 Serverless/hibernating environments — MISSING, P2, wave 10 order 100, 0/7. Next by order; D06.1 which blocked it is complete."
     THE_ASK_WAS_ANSWERED_NOT_ESCALATED: >-
@@ -14393,6 +14426,14 @@ known_debt:
       way. A cross-cutting guard looks related to nothing, so no targeted run for a
       progress.yml change would ever have chosen that path — which is precisely why the
       gate is not optional.
+    THE_MIRROR_RULE_ADDED_2026_09_06: >-
+      Closing D07.3 created the first stale `closing_check` — required while the stage is
+      partial, a write with no reader the moment it closes, because `validate_check.py`
+      iterates only partial items. `progress_lint.stale_closing_check_problems` refuses
+      one and says to move what it proved into `changes`. The "is it wired into main()"
+      tripwire was PARAMETRISED over both rules rather than naming one: the first version
+      asserted only the partial rule, so its mirror could have shipped unwired, which is
+      the same one-case-short shape these rules exist to catch.
     mutation_tested: >-
       Four mutants from file copies, each verified APPLIED: a check reverted to an
       unbounded grep (SURVIVED first, which is what found the comment defect above; caught
@@ -26175,13 +26216,6 @@ items:
     notes: null
 
   - id: D07.3
-    closing_check: |-
-      # SCOPED TO THE DAY THIS SHIPPED (2026-09-04). An unbounded count is satisfied by
-      # history: this check first reported CLOSEABLE on evidence that PREDATED the
-      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
-      # null bytes) and warns when the window is truncated by rotation.
-      n=$(./scripts/log_since.sh 2026-09-04 'this delegation is PROCESS-LOCAL')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x non-durable delegation warned since 2026-09-04" || echo "OPEN 0 x non-durable delegation warned since 2026-09-04 - no delegation from a non-durable parent since the line shipped"
     title: "Background delegation & durability"
     domain: D07
     verdict: PARTIAL
@@ -26220,12 +26254,43 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial
+      validate:   done
       document:   done
     doc: docs/reference-mapping/designs/D07.3.md
-    doc_last_verified: null
+    doc_last_verified: "2026-09-06 against commit 8c44c6e8 — Verification RUN, all three steps: 125 passed; 764 passed 0 failed; both boot lines present with counts"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        2026-09-04 (commit a8f270fb) — THE ASYMMETRY WAS THE DEFECT. The durability rule
+        already existed in code and was correct; what was wrong is which half of it an
+        operator could see. `delegate_task: durable child scope resolved` logged at INFO
+        while the LOSSY branch — "non-durable parent, this delegation is PROCESS-LOCAL and
+        will not survive a restart" — logged at DEBUG. Production runs at INFO, so the only
+        outcome worth warning about was the invisible one. Raised to INFO.
+      - >-
+        2026-09-06 VALIDATE CLOSED, on evidence produced AFTER the change and bounded to
+        its ship date. `./scripts/log_since.sh 2026-09-04 "this delegation is
+        PROCESS-LOCAL"` returns 1, dated 2026-09-05, at INFO, carrying
+        `has_parent_task: false, has_react_ctx: false, has_db: true` — exactly the
+        fall-open branch the document describes. The bound is load-bearing: an unbounded
+        count is what made D07.2 report CLOSEABLE on evidence seven days OLDER than its
+        own fix, which is DEBT-125.
+      - >-
+        AND THE MEASUREMENT FOUND THE OTHER HALF, recorded rather than smoothed over. The
+        SAFE line `delegate_task: durable child scope resolved` has fired ZERO times, and
+        that zero is real rather than a level artefact: `git log -S` shows it has been
+        `log.tool.info` since 2026-06-17. So no delegation from a durable parent has
+        occurred in the retained window, and for months this code path could log only the
+        case that never happens — which is exactly why raising the other branch was the
+        whole item. THE DURABLE BRANCH REMAINS UNEXERCISED IN PRODUCTION: the document's
+        model is verified by tests, not by traffic, and this note exists so a green
+        validate is not read as "both branches proven".
+      - >-
+        Verification section RUN, not trusted: step 1 `tests/tools/agents` 125 passed
+        (exactly the documented count), step 2 `tests/owls tests/pipeline/durable` 764
+        passed 0 failed, step 3 returns both boot lines with counts — "launched 0
+        durable-task recoveries" and "launched 0 pending-message recoveries". Zero is the
+        correct answer there: nothing was orphaned.
     notes: null
 
   - id: D07.4

@@ -262,6 +262,36 @@ def partial_without_closing_check_problems(data: dict) -> list[str]:
     return problems
 
 
+def stale_closing_check_problems(data: dict) -> list[str]:
+    """A `closing_check` on an item that has no `partial` stage left.
+
+    THE MIRROR OF THE RULE ABOVE, and it exists because closing a stage is exactly the
+    moment the obligation reverses. While a stage is `partial` the check is REQUIRED;
+    the moment it closes, the same field becomes a write with no reader —
+    `validate_check.py` iterates only items carrying a partial stage, so a check left
+    behind is never run again and never seen, while still reading as live evidence to
+    anyone browsing the record. The thing it interrogates may have been deleted the day
+    after.
+
+    Written when D07.3's validate closed, because that close created the first instance.
+    The evidence that closed a stage belongs in the item's `changes` — prose a reader
+    can check — not in a command nothing will ever execute again.
+    """
+    problems: list[str] = []
+    for item in data.get("items", []):
+        if not (item.get("closing_check") or "").strip():
+            continue
+        stages = item.get("stages") or {}
+        if any(stages.get(s) == "partial" for s in _STAGES):
+            continue
+        problems.append(
+            f"{item.get('id', '<unknown>')}: carries a `closing_check` but has no "
+            f"'partial' stage — nothing will ever run it again. Move what it proved "
+            f"into `changes` and delete the field."
+        )
+    return problems
+
+
 def misattributed_doc_problems(data: dict) -> list[str]:
     """An item pointing at ANOTHER item's design document.
 
@@ -328,6 +358,7 @@ def main() -> int:
     problems.extend(stale_stage_problems(data))
     problems.extend(unevidenced_validate_problems(data))
     problems.extend(partial_without_closing_check_problems(data))
+    problems.extend(stale_closing_check_problems(data))
     problems.extend(misattributed_doc_problems(data))
 
     for item in data.get("items", []):

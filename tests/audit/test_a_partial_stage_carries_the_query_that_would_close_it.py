@@ -137,6 +137,44 @@ class TestTheLiveFile:
         assert not broken, "\n  ".join(broken)
 
 
+class TestAClosedStageDropsItsCheck:
+    """A `closing_check` outlives the `partial` it was written for unless something
+    says otherwise, and then it is a field with no reader — this codebase's
+    most-recorded shape, in the very file that records it.
+
+    `validate_check.py` only iterates items carrying a partial stage, so a check left
+    behind on a closed item is never run and never seen. It reads as live evidence to
+    anyone browsing the record and is not: the thing it interrogates may have been
+    deleted the day after the stage closed.
+    """
+
+    def test_a_check_left_on_a_fully_closed_item_is_flagged(self) -> None:
+        doc = _doc("done", closing_check="echo CLOSEABLE")
+
+        problems = progress_lint.stale_closing_check_problems(doc)
+
+        assert problems and "D99.9" in problems[0]
+
+    def test_a_check_on_a_still_partial_item_is_fine(self) -> None:
+        """The control — the field is REQUIRED there, so flagging it would make the
+        two rules contradict each other."""
+        assert not progress_lint.stale_closing_check_problems(
+            _doc("partial", closing_check="echo OPEN")
+        )
+
+    def test_an_item_with_no_check_at_all_is_fine(self) -> None:
+        assert not progress_lint.stale_closing_check_problems(
+            _doc("done", closing_check=None)
+        )
+
+    def test_the_live_file_carries_no_stale_check(self) -> None:
+        import yaml
+
+        data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+
+        assert not progress_lint.stale_closing_check_problems(data)
+
+
 class TestTheMechanismIsActuallyReached:
     """Built-but-not-wired is this repo's most expensive recurring defect, and a
     reporting script is its most natural habitat: nothing fails when it stops being
@@ -153,12 +191,21 @@ class TestTheMechanismIsActuallyReached:
             "and never re-read, which is the defect it was built to end"
         )
 
+    @pytest.mark.parametrize(
+        "rule",
+        ["partial_without_closing_check_problems", "stale_closing_check_problems"],
+    )
     @pytest.mark.tripwire
-    def test_progress_lint_calls_the_rule(self) -> None:
-        """The rule is only a gate if `main()` runs it. A function defined and never
-        called would leave every future partial unchecked while the file still
-        printed 'progress.yml sound'."""
+    def test_progress_lint_calls_the_rule(self, rule: str) -> None:
+        """A rule is only a gate if `main()` runs it. A function defined and never
+        called would leave every future partial unchecked while the file still printed
+        'progress.yml sound'.
+
+        PARAMETRISED over BOTH rules rather than naming one. The first version asserted
+        only the partial rule, so its mirror could have shipped unwired — which is the
+        same one-case-short shape these rules exist to catch, in the test that guards
+        them."""
         src = (_ROOT / "scripts" / "progress_lint.py").read_text(encoding="utf-8")
-        assert "problems.extend(partial_without_closing_check_problems(data))" in src, (
-            "progress_lint defines the rule but never runs it"
+        assert f"problems.extend({rule}(data))" in src, (
+            f"progress_lint defines {rule} but never runs it"
         )
