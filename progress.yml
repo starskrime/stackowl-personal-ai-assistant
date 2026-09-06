@@ -14477,6 +14477,44 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-139
+    found: 2026-09-06
+    what: >-
+      THE FULL SUITE WENT RED — 13 failed, 12,246 passed, rc=1, SUITE TREE STILL against
+      fd5cc06e — and every failure was `test_builtin_skill_body_has_required_sections`,
+      one per builtin skill DEBT-137 had just restructured. The three tier-journey tests
+      each hardcoded `("## Steps", "## Verification", "## Pitfalls")`, the three-section
+      shape the catalogue had BEFORE the authoring standard existed. `standard.py` grew
+      that list to seven; the three literals never followed. Bringing the shipped skills UP
+      to the authority (renaming `## Steps` to `## Procedure`) satisfied it and broke all
+      three restatements at once.
+    the_cause_is_two_copies_of_one_rule: >-
+      CLAUDE.md shape #3, with the authority and its restatements in different files and
+      nothing reconciling them. The fix is the one that shape always calls for: the tests
+      now ASK `standard.REQUIRED_SECTIONS` instead of restating it, so a future change to
+      the standard carries them with it rather than past them.
+    the_tests_got_STRONGER_not_merely_unbroken: >-
+      The old literal checked three headings; the standard names seven, so four required
+      sections were unguarded by these tests entirely. Mutation-proven: removing
+      `## Quick Reference` — a section the old literal never looked at — now fails the
+      tier-1 journey, and restoring the literal reproduces the original five tier-1
+      failures.
+    why_NOTHING_BEFORE_THE_FULL_RUN_CAUGHT_IT: >-
+      The journey tests carry no `@pytest.mark.tripwire`, so the ~40s gate never runs them,
+      and the targeted paths chosen for DEBT-137 (tests/skills, tests/startup) had no
+      reason to include tests/journeys — a change to skill CONTENT does not look related to
+      a journey test. That is verbatim the failure the skill warns about: "targeted paths
+      are chosen by what the change looks related to, and a CROSS-CUTTING guard never looks
+      related to anything". The full run was the only thing that could see it, which is the
+      argument for running it after every src-touching item rather than when it feels
+      warranted.
+    I_ALSO_RESTORED_FROM_THE_WRONG_BACKUP: >-
+      Mutation-testing the fix, I restored tier1 from the copy taken BEFORE the fix rather
+      than after, silently reverting my own repair — the same landmine the skill records
+      for `git checkout`, in file-copy form. It was caught only because the command printed
+      "restored to the pre-fix literal? True" as a verification step. The lesson stands
+      sharpened: take the backup AFTER the change under test, and always assert what the
+      restore actually produced.
   - id: DEBT-138
     found: 2026-09-06
     what: >-

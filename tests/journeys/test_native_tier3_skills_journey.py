@@ -23,6 +23,7 @@ import pytest
 from stackowl.db.pool import DbPool
 from stackowl.owls.registry import OwlRegistry
 from stackowl.skills.assembly import SkillsAssembly
+from stackowl.skills import standard as std
 from stackowl.skills.manifest import SkillManifest
 from stackowl.skills.skill_md import parse_skill_md
 from stackowl.tools.registry import ToolRegistry
@@ -74,9 +75,25 @@ def test_builtin_skill_manifest_parses_and_name_matches_dir(skill_name: str) -> 
 
 @pytest.mark.parametrize("skill_name", TIER3_SKILLS)
 def test_builtin_skill_body_has_required_sections(skill_name: str) -> None:
-    """Every tier-3 skill body MUST have ## Steps, ## Verification, ## Pitfalls."""
+    """Every tier-3 skill body MUST carry the standard's required sections.
+
+    ASKS `standard.REQUIRED_SECTIONS` RATHER THAN RESTATING IT. This used to
+    hardcode ("## Steps", "## Verification", "## Pitfalls") — the three-section
+    shape the catalogue had before the authoring standard existed — in this file
+    and in its two siblings. `standard.py` grew that list to seven and the three
+    literals did not follow, so the authority and its restatements disagreed and
+    nothing reconciled them.
+
+    That went unnoticed until the shipped skills were brought UP to the standard
+    on 2026-09-06: renaming `## Steps` to `## Procedure` satisfied the authority
+    and broke all three copies at once — 13 failures, in a full run, from a change
+    whose targeted paths (tests/skills, tests/startup) had no reason to include
+    tests/journeys. Two copies of one rule, exactly as CLAUDE.md shape #3 predicts,
+    and the full suite was the only thing that could see it.
+    """
     _, body = _read_builtin_skill_md(skill_name)
-    for section in ("## Steps", "## Verification", "## Pitfalls"):
+    for heading in std.REQUIRED_SECTIONS:
+        section = f"## {heading}"
         assert section in body, (
             f"Skill '{skill_name}' is missing section '{section}' in body"
         )
