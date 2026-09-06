@@ -70,15 +70,28 @@ def _steps(text: str) -> list[tuple[int, str, str]]:
     for i, ln in enumerate(joined):
         if ln is None:
             continue
-        m = re.match(r"^#\s*expect:\s*(.*)", ln.strip())
-        if not m:
+        s = ln.strip()
+        # TWO SPELLINGS, and the second was MISSED BY THE FIRST VERSION OF THIS
+        # GUARD. `expect:` is written either on its own comment line under the
+        # command, or INLINE after it (`uv run pytest tests/db -q  # expect: 102
+        # passed`). The shipped guard only parsed the first, so SEVEN wide
+        # commands kept a pinned count — including `-m tripwire # expect: 55
+        # passed (was 50)` against a true 144, the very shape D16.4 had been
+        # corrected for two loops earlier. A guard is only as wide as its parser.
+        if s.startswith("#"):
+            m = re.match(r"^#\s*expect:\s*(.*)", s)
+            if not m:
+                continue
+            cmd = ""
+            for c in reversed([x for x in joined[max(0, i - 12):i] if x is not None]):
+                if c.strip() and not c.strip().startswith("#"):
+                    cmd = c.strip()
+                    break
+            out.append((i + 1, m.group(1), cmd))
             continue
-        cmd = ""
-        for c in reversed([x for x in joined[max(0, i - 12):i] if x is not None]):
-            if c.strip() and not c.strip().startswith("#"):
-                cmd = c.strip()
-                break
-        out.append((i + 1, m.group(1), cmd))
+        m = re.search(r"#\s*expect:\s*(.*)$", s)
+        if m:
+            out.append((i + 1, m.group(1), s.split("#")[0].strip()))
     return out
 
 

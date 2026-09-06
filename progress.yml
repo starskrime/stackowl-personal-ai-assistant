@@ -14477,6 +14477,49 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-156
+    found: 2026-09-07
+    what: >-
+      THE GUARD I SHIPPED TWO LOOPS AGO HAD A HOLE, AND THE DEFECT IT WAS BUILT FOR SURVIVED
+      INSIDE IT. DEBT-150 forbade a package-wide Verification step pinning a test COUNT, and its
+      parser only read `expect:` written on its OWN comment line. Seven wide commands write it
+      INLINE - `uv run pytest tests/db -q  # expect: 102 passed` - and the guard could not see
+      one of them. Worst of all, D16.2 carried `pytest -m tripwire  # expect: 55 passed (was
+      50)` against a true 144 - 2.6x off, and the SAME shape I had corrected in D16.4 two loops
+      earlier, sitting untouched three files away in a spelling my parser did not parse.
+    measured: >-
+      tests/db 102 -> 126, plugins 104 -> 107, `-m tripwire` 55 -> 144. Two were right by luck
+      (memory 562, mcp 105) and were changed anyway, because the guard is about the shape.
+    the_lesson_is_about_GUARDS_not_about_docs: >-
+      A guard is only as wide as its parser, and a narrow parser reports a clean tree. This is
+      the third time in three loops that a sweep I believed complete was proved partial by the
+      guard failing again afterwards - four spellings of `(~N lines)`, a fifth attached to a
+      SYMBOL, and now a second spelling of `expect:`. The habit that catches it is re-running
+      the guard after the fix rather than after the belief.
+    MY_OWN_FIX_THEN_CAUSED_A_FALSE_POSITIVE: >-
+      The first annotation wrote the history inline - "expect: 0 failed (was `102 passed` ...)" -
+      and the guard flagged all seven again, because `expect:` reads to end of line and the note
+      CONTAINED the old count. Moved onto their own comment lines, which is the shape DEBT-150
+      already used for exactly this reason. A record of the old value is worth keeping; putting
+      it where the parser reads the new one is not.
+    mutation_proven_and_the_SECOND_mutant_is_the_evidence: >-
+      Restoring an inline pinned count fires the widened guard. And reverting the parser to
+      own-line-only WITH an inline count present makes the guard PASS - reproducing the exact
+      blindness that let seven survive, which is stronger evidence than the fix going green.
+      Restored from file copies; 4 passed.
+    two_validates_CLOSED_in_the_same_loop_on_production_evidence: >-
+      Traffic finally arrived. D12.4 reached 7/7 - the map item is COMPLETE - on two real
+      Telegram turns reporting `messages_sent: 1` with 46 and 104 edits, `part_count: 1` on all
+      three deliveries, and 0.47/0.51 Bot API calls per second against a 1.0/sec edit cap with 6
+      coalesced. That answers all three halves of its Ask from production rather than assertion.
+      DEBT-140 closed on `stop_note_preserved: true`, and READING it mattered: the sibling turn
+      logged `false`, which looks like a failure and is not - the field is `bool(_stop_note)`, so
+      false means the turn had NO note. Closing on the count alone would have been right by luck.
+    what_else_the_cause_reaches: >-
+      Every guard in this tree is a parser plus a rule, and only the rule gets reviewed. The
+      parser decides what the rule is ALLOWED to see, silently, and a guard that sees nothing
+      reports the same green as a tree with nothing wrong. Worth asking of the other audit
+      guards: what spelling would slip past this one?
   - id: DEBT-155
     found: 2026-09-06
     what: >-
@@ -15427,17 +15470,22 @@ known_debt:
       loose pattern reported as a fact, the same class as SQL `LIKE '_'`. (2) I wrapped the
       two failure exits and forgot the SUCCESS return, so the note was still dropped on the
       normal path — caught by the test written first, which is what tests-first is for.
+    stages:
+      validate: done
     validate: >-
-      PARTIAL. Live at 10:59:20 against a 10:58:45 commit with 0 ERRORs, and the split is
-      in the running code. NOT yet evidenced in production: a capped turn that is actually
-      summarised and keeps its note — that needs a budget cap AND a terse-style owner on
-      the same turn, which happened 4 times in the retained window.
-    closing_check: |
-      # Keyed on `stop_note_preserved`, a FIELD this fix introduced — DEBT-138's rule.
-      # Grepping "length_terse summarized" alone would be satisfied by the old code,
-      # which emitted that same line while dropping the note.
-      n=$(./scripts/log_since.sh 2026-09-06 'length_terse summarized.*"stop_note_preserved": true')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n summarised turn(s) kept their stop note" || echo "OPEN 0 capped+summarised turns since the fix; the split IS live-evidenced"
+      CLOSED ON PRODUCTION EVIDENCE 2026-09-07, and VERIFIED by reading the record rather than
+      trusting the count. At 22:54:55 a real turn logged
+      `[pipeline] deliver: length_terse summarized {"before_len": 249, "after_len": 158,
+      "stop_note_preserved": true}` - a summarised turn whose stop note survived, which is
+      exactly the loss this item fixed and which the old code could not report because the
+      FIELD is new.
+      THE SIBLING RECORD IS WHY THIS NEEDED READING, NOT COUNTING. The 22:47:19 turn logged the
+      same line with `stop_note_preserved: false`, which looks like a failure and is not: the
+      field is `bool(_stop_note)`, so false means the turn HAD NO NOTE to preserve. Closing on
+      the count alone would have been right by luck; closing on the semantics is right on
+      purpose.
+      Earlier state, kept: live at 10:59:20 against a 10:58:45 commit with 0 ERRORs and the
+      split in the running code, awaiting a turn that was both capped and terse-summarised.
     the_gate_refused_the_first_commit: >-
       ruff rose 35 -> 36 (I001, an unsorted import block) because of where I placed the
       new `import re`, and the chained gate blocked the commit — nothing was pushed. That
@@ -31437,16 +31485,6 @@ items:
       shared channels/_format and only telegram's dispatcher calls a per-channel formatter.
       Their only callers are tests.
   - id: D12.4
-    closing_check: |-
-      # Keyed on "progress.turn: streaming summary" - a message this item INTRODUCED.
-      # The old code could not emit it: the streaming path logged only failure
-      # WARNINGs, which is the whole defect. So a single hit proves the NEW code ran,
-      # and its fields answer the Ask outright (messages_sent vs edits_applied).
-      # NOT keyed on "edit_message" - that line predates the fix and its only
-      # production hits are the 4 ERRORs, which is the denominator error this item
-      # was found by.
-      n=$(./scripts/log_since.sh 2026-09-06 'progress.turn: streaming summary')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n streamed turn(s) reported their own shape" || echo "OPEN 0 telegram turns since the instrumentation shipped; the code IS live-evidenced"
     title: "Streaming to chat platforms"
     domain: D12
     verdict: PARTIAL
@@ -31465,10 +31503,22 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial
+      validate:   done
       document:   done
     doc: docs/reference-mapping/designs/D12.4.md
     validate_result: >-
+      CLOSED ON PRODUCTION EVIDENCE 2026-09-07, and VERIFIED by reading the records rather than
+      trusting the count. Two real Telegram turns reported their own shape:
+      22:47:19 {"outcome": "settled", "messages_sent": 1, "edits_applied": 46, "typing_calls":
+      23, "api_calls": 70, "elapsed_s": 148} and 22:54:55 {"messages_sent": 1, "edits_applied":
+      104, "edits_suppressed": 6, "progress_events": 15, "api_calls": 156, "elapsed_s": 308}.
+      THE ASK IS ANSWERED IN FULL, from the live logs. Edit-in-place: ONE message mutated 46
+      and 104 times - the ratio the map asked for. Successive messages: `part_count` is 1 on
+      all three real deliveries, so no answer needed splitting. Flood control, the half the Ask
+      named specifically: 0.47 and 0.51 Bot API calls per second, edits at 0.34/sec against the
+      1.0/sec cap, with 6 coalesced by the rate limiter - well inside, and now measurable
+      rather than asserted.
+      THE ORIGINAL (superseded) NOTE: 
       HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted at 17:12:32Z,
       after commit c23c6691 at 17:11:37Z, so the instrumentation IS the code now running -
       checked against the boot line, never a PID. The telegram adapter registered and is
