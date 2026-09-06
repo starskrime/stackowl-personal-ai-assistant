@@ -219,6 +219,49 @@ def unevidenced_validate_problems(data: dict) -> list[str]:
     return problems
 
 
+def partial_without_closing_check_problems(data: dict) -> list[str]:
+    """A stage recorded `partial` that does not say what evidence would close it.
+
+    THE SIBLING RULE, ONE STAGE VALUE OVER. `unevidenced_validate_problems` above
+    refuses a `done` claim with nothing behind it — "a claim nobody can check is not
+    a state of record." A `partial` is also a claim: it asserts that evidence is not
+    yet available. Nothing required it to say what availability would look like.
+
+    MEASURED 2026-09-06: ten stages in this file are `partial`, all of them
+    `validate`, and NOT ONE carried a structured field naming its closing evidence.
+    Three had a closing query written in English inside `changes:`, where nothing can
+    run it; the other seven had nothing at all. Seven items were therefore parked
+    permanently — not because the evidence was unavailable, but because no one had
+    recorded what would count as evidence, so no later pass could ever check.
+
+    This programme already solved exactly this problem for the other queue. Every
+    escalation carries a `premise_check` printing HOLDS or EXPIRED, and
+    `scripts/escalation_check.py` re-runs all of them at the start of every loop —
+    built because "an escalation got written once, with a measurement, and was never
+    looked at again." Validates got the discipline in prose and never in code.
+
+    APPLIED TO EVERY STAGE, not just `validate`. All ten partials today are validate,
+    and narrowing the rule to that fact would rebuild the blind spot the sibling rule
+    above already had to be widened out of once, when a `document: done` defect went
+    unseen because the check only ever looked at `validate`.
+    """
+    problems: list[str] = []
+    for item in data.get("items", []):
+        stages = item.get("stages") or {}
+        partial = [s for s in _STAGES if stages.get(s) == "partial"]
+        if not partial:
+            continue
+        if (item.get("closing_check") or "").strip():
+            continue
+        problems.append(
+            f"{item.get('id', '<unknown>')}: {', '.join(partial)} is 'partial' with "
+            f"no `closing_check` — a stage that cannot say what would close it can "
+            f"never be advanced by anyone. Add a one-liner printing OPEN or "
+            f"CLOSEABLE, the way every escalation carries a premise_check."
+        )
+    return problems
+
+
 def misattributed_doc_problems(data: dict) -> list[str]:
     """An item pointing at ANOTHER item's design document.
 
@@ -284,6 +327,7 @@ def main() -> int:
 
     problems.extend(stale_stage_problems(data))
     problems.extend(unevidenced_validate_problems(data))
+    problems.extend(partial_without_closing_check_problems(data))
     problems.extend(misattributed_doc_problems(data))
 
     for item in data.get("items", []):

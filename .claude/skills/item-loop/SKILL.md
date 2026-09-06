@@ -169,6 +169,34 @@ already paid for:
 - A fix that worked in tests and never fired in production, because the path that would
   trigger it was not taken. "The turn succeeded" is not "my change works."
 
+**A `partial` stage carries a `closing_check` — a one-liner printing OPEN or CLOSEABLE —
+and `progress_lint` refuses one without it.** Run this beside `escalation_check` at the
+start of a loop:
+
+```bash
+uv run python scripts/validate_check.py
+```
+
+**Why this is executable and not a note.** The rule above was written down and never
+enforced. MEASURED 2026-09-06: ten stages were `partial`, all of them `validate`, and NOT
+ONE carried a runnable field. Three had a closing query in English inside `changes:`, where
+nothing could execute it; the other SEVEN had nothing at all — so they were dead ends, not
+open questions, and no later pass could ever close them. Ten items sat at 6/7 with no
+mechanism that could advance them. The escalation queue had already been given exactly this
+cure (`premise_check`) for exactly this reason, and validates never got it. First run:
+D07.2 and D07.3 had been closeable for days.
+
+**Verify a CLOSEABLE before you believe it** — the first run also produced a false positive.
+D15.6's check asked for a file containing both `notification_overrides` and `SELECT`, and
+`store_cadence.py` names the table in a cadence declaration and says SELECT about something
+else. A conjunction across a whole file is not a statement.
+
+**If you cannot write the check, the premise is too vague — fix the premise.** D11.3's
+evidence was a frame rendered as text to the model and logged NOWHERE, so no volume of
+traffic could ever have closed it: the DEBUG-evidence failure above, one step worse. Being
+forced to write the check is what found it, and an INFO line was added so the claim became
+one reality could settle.
+
 ## Stop and brief the operator
 
 Do not proceed autonomously past any of these. Write the brief into `current.ESCALATIONS`

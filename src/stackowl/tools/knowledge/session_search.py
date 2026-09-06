@@ -325,6 +325,20 @@ class SessionSearchTool(Tool):
             return ""
         opens = self._render(head[:_BOOKEND_TURNS], header="session opens")
         closes = self._render(list(reversed(tail)), header="session closes")
+        # AT INFO, BECAUSE OTHERWISE THIS ITEM CAN NEVER BE CLOSED. D11.3's validate
+        # sat `partial` waiting for evidence that a frame had rendered in production,
+        # and the frame is TEXT returned to the model — it left no trace anywhere. No
+        # volume of traffic could have closed it, which is the same failure D08.1 paid
+        # for with a DEBUG-only evidence line, one step worse: there was no line at
+        # all. A claim whose evidence cannot exist is not a claim, it is a wish.
+        log.tool.info(
+            "session_search: bookends rendered — framed a discover hit",
+            extra={"_fields": {
+                "session_key": session_key,
+                "head_turns": len(head[:_BOOKEND_TURNS]),
+                "tail_turns": len(tail),
+            }},
+        )
         return f"\n{opens}\n{closes}"
 
     async def _discover_rows(

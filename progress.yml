@@ -14325,6 +14325,72 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-124
+    found: 2026-09-06
+    what: >-
+      A `partial` STAGE WAS A CLAIM NOBODY COULD CHECK AND NOBODY RE-READ. The loop's
+      honest-validate rule says a check you could not evidence "stays OPEN with the query
+      that would close it". Nothing enforced the second half. Measured: ten stages in
+      progress.yml are `partial`, every one of them `validate`, and NOT ONE carried a
+      structured field naming its closing evidence. Three had a closing query written in
+      English inside `changes:`, where nothing can execute it; the other SEVEN had nothing
+      at all. Those seven were not open questions, they were dead ends — no later pass
+      could close them because no one had recorded what closing would look like.
+    the_root_cause_is_that_the_cure_already_existed_one_queue_over: >-
+      This programme hit the identical problem with escalations and solved it: every entry
+      carries a `premise_check` printing HOLDS or EXPIRED, and `scripts/escalation_check.py`
+      re-runs all 51 at the start of every loop. Its own docstring states the reason — "an
+      escalation got written once, with a measurement, and was never looked at again, so its
+      premise aged silently". Validate stages got the same discipline in PROSE and never in
+      CODE. `progress_lint` already refuses a `done` claim with no evidence behind it, on
+      exactly this reasoning ("a claim nobody can check is not a state of record"); a
+      `partial` is also a claim — that evidence is not yet available — and it was exempt.
+      Same rule, one stage value short: CLAUDE.md shape #3.
+    what_shipped: >-
+      `closing_check` on all ten partial items, a one-liner printing OPEN or CLOSEABLE.
+      `progress_lint.partial_without_closing_check_problems` refuses a partial without one,
+      applied to EVERY stage rather than to `validate` — the sibling rule above had to be
+      widened out of that exact blind spot once already when a `document: done` defect went
+      unseen. `scripts/validate_check.py` runs them all, mirroring escalation_check, and the
+      loop skill invokes it beside escalation_check — a reporting script with no caller is
+      the defect it was built to end, so a tripwire asserts the skill still names it.
+    first_run_found_two_items_that_had_been_closeable_for_days: >-
+      D07.2 CLOSEABLE — 4 x `[pipeline] execute: depth>0 child denied spawn/delegate tool`,
+      the dispatch-side depth predicate enforced in production. D07.3 CLOSEABLE — 1 x
+      `delegate_task: non-durable parent — this delegation is PROCESS-LOCAL and will not
+      survive a restart`. Both verified BY HAND against the raw log lines rather than taken
+      from the checker. They are reported, NOT advanced: advancing them is two more items'
+      work and this loop works one.
+    and_the_first_run_also_produced_a_FALSE_POSITIVE: >-
+      D15.6 reported CLOSEABLE on a check asking for a file containing BOTH
+      "notification_overrides" and "SELECT". `health/store_cadence.py` names the table in a
+      cadence declaration and says SELECT about something unrelated. A conjunction across a
+      whole FILE is not a statement — the same family as counting "429" in a log and matching
+      token counts. Rewritten to ask for a reference outside the known writer and that
+      cadence line; it now correctly reports OPEN, and `/quiet` still writes a row nothing
+      reads (ESC-126). Recorded in the skill so the next reader verifies a CLOSEABLE before
+      believing it.
+    one_item_could_never_have_been_closed_at_all: >-
+      D11.3's evidence was the bookend frame, which renders as TEXT returned to the model and
+      logged NOWHERE. No volume of production traffic could ever have produced evidence for
+      it — D08.1's DEBUG-only evidence line one step worse, because there was no line at any
+      level. Being forced to write the check is what exposed it; an INFO line
+      (`session_search: bookends rendered`) was added in the same change so the claim became
+      one reality can settle. This is the "if you cannot write the check, the premise is too
+      vague — fix the premise" rule paying for itself on its first application.
+    mutation_tested: >-
+      Four mutants from file copies, each verified APPLIED before running: the rule defined
+      but never called from main(); the rule narrowed back to `validate` only; an empty
+      `closing_check` accepted as present; and the skill no longer naming the runner. All
+      four caught by a distinct test, restored, re-run green.
+    still_open: >-
+      Eight of ten remain OPEN and each now says why in one line: no turn long enough to
+      compress (D03.2), 10 turns on one lane inside a restart window (D09.4), no lesson above
+      the 0.90 twin threshold (D10.3), nothing pinned pending ESC-128 (D10.7), no framed
+      discover hit yet (D11.3), no in-place edit and the map Ask unanswered (D12.4), ESC-126
+      (D15.6), MCP never configured (D16.5). D12.4 and D07.2 additionally carry EMPTY records
+      — no changes, no decisions, no doc — while showing six stages done; that is the
+      24-missing-documents batch and is not this item.
   - id: DEBT-123
     found: 2026-09-05
     what: >-
@@ -23165,6 +23231,9 @@ items:
     notes: null
 
   - id: D03.2
+    closing_check: |-
+      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c '\[context\] a single call used')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x mid-turn compression" || echo "OPEN 0 x mid-turn compression - no turn has been long enough to compress"
     title: "Conversation compression"
     domain: D03
     verdict: MISSING
@@ -25966,6 +26035,9 @@ items:
     notes: null
 
   - id: D07.2
+    closing_check: |-
+      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c 'depth>0')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x child depth exclusion" || echo "OPEN 0 x child depth exclusion - no delegated child has been offered a spawn tool"
     title: "Delegation roles & depth"
     domain: D07
     verdict: PARTIAL
@@ -25993,6 +26065,9 @@ items:
     notes: null
 
   - id: D07.3
+    closing_check: |-
+      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c 'this delegation is PROCESS-LOCAL')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x non-durable delegation warned" || echo "OPEN 0 x non-durable delegation warned - no delegation from a non-durable parent yet"
     title: "Background delegation & durability"
     domain: D07
     verdict: PARTIAL
@@ -27139,6 +27214,9 @@ items:
     notes: null
 
   - id: D09.4
+    closing_check: |-
+      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c '\[skills\] nudge')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge" || echo "OPEN 0 x skills nudge - needs 10 turns on ONE lane inside a restart window; the memory nudge (interval 4, prefix [curated]) is a different line and must not be counted here"
     title: "Skill-creation nudges"
     domain: D09
     verdict: MISSING
@@ -27630,6 +27708,9 @@ items:
     notes: null
 
   - id: D10.3
+    closing_check: |-
+      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c '"matched_on": "semantic"')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x semantic-twin suppression" || echo "OPEN 0 x semantic-twin suppression - no proposed lesson has resembled an existing one above 0.90"
     title: "Active vs. optional skills"
     domain: D10
     verdict: MISSING
@@ -28671,6 +28752,14 @@ items:
           the pairs that already exist.
         blocked_until_answered: "The minting fix. The RE-VERDICT above stands on its own and needs no decision."
   - id: D10.7
+    closing_check: |-
+      uv run python - <<'PY'
+      import sqlite3
+      from stackowl.db.pool import default_db_path
+      c = sqlite3.connect(str(default_db_path()))
+      n = c.execute("SELECT count(*) FROM skills WHERE pinned = 1").fetchone()[0]
+      print("CLOSEABLE" if n else "OPEN", n, "pinned skills - blocked on ESC-128")
+      PY
     title: "Skill ownership per persona"
     domain: D10
     verdict: AHEAD
@@ -28881,6 +28970,9 @@ items:
       total, restricted to records AFTER 2026-08-29T09:29:56. Until that has a non-zero
       denominator, the FTS improvement is unevidenced in production.
   - id: D11.3
+    closing_check: |-
+      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c 'session_search: bookends rendered')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x discover hit framed" || echo "OPEN 0 x discover hit framed - the INFO line exists as of 2026-09-06; before that this was unclosable by construction"
     title: "Session-search shapes"
     domain: D11
     verdict: PARITY
@@ -29176,6 +29268,9 @@ items:
       shared channels/_format and only telegram's dispatcher calls a per-channel formatter.
       Their only callers are tests.
   - id: D12.4
+    closing_check: |-
+      e=$(grep -rhc "adapter.edit_message: entry\|adapter.edit_message_to_text: entry" ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | paste -sd+ | bc)
+      [ "${e:-0}" -gt 0 ] && echo "CLOSEABLE $e in-place edits - the Ask (edit vs successive posts) is answered by behaviour" || echo "OPEN 0 in-place edits - the map Ask is still unanswered and this item has an EMPTY record: no changes, no decisions, no doc"
     title: "Streaming to chat platforms"
     domain: D12
     verdict: PARTIAL
@@ -29710,6 +29805,15 @@ items:
     notes: null
 
   - id: D15.6
+    closing_check: |-
+      # FILE-LEVEL WAS A FALSE POSITIVE. This asked for files containing BOTH
+      # "notification_overrides" and "SELECT" and reported CLOSEABLE on its first
+      # run: health/store_cadence.py names the table in a cadence declaration and
+      # says SELECT about something else entirely. A conjunction across a whole
+      # file is not a statement. Ask for a REFERENCE outside the two known
+      # non-readers instead - the writer, and that cadence line.
+      r=$(grep -rn "notification_overrides" src/stackowl --include=*.py | grep -vc "commands/quiet_command.py\|health/store_cadence.py")
+      [ "$r" -gt 0 ] && echo "CLOSEABLE notification_overrides has $r reference(s) beyond its writer and the cadence declaration" || echo "OPEN /quiet still writes a row nothing reads - wire-or-retire is ESC-126"
     title: "Proactive outreach"
     domain: D15
     verdict: AHEAD
@@ -30647,6 +30751,9 @@ items:
       A third instrument note: "0 of 10 files log" measured the NAMED-LOGGER convention, not
       logging; gmail.py has 31 statements through a plain module logger.
   - id: D16.5
+    closing_check: |-
+      n=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c 'mcp.client.discover_tools: exit')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x MCP server discovery" || echo "OPEN 0 x MCP server discovery - MCP has never run; no server is configured"
     title: "MCP"
     domain: D16
     verdict: PARITY
