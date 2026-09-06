@@ -14478,6 +14478,32 @@ upcoming:
 
 known_debt:
   - id: DEBT-143
+    closing_check: |-
+      # BOUNDED BY ROW ID, not by shape and not by date. id > 130840 is the pre-fix
+      # high-water mark, so every row it selects was written by the NEW code BY
+      # CONSTRUCTION - the DEBT-138 rule.
+      #
+      # A SHAPE-BASED CHECK WAS TRIED FIRST AND MEASURED UNCLEAN. The judge path is
+      # NeraAiRaw at ~180-250 input tokens and was always blank, so "a small NeraAiRaw
+      # call that carries a trace" looked discriminating - but 9,516 such rows are
+      # already named historically, so it would have closed on the old code's work.
+      #
+      # The denominator is required: 0 blanks over 0 new rows is not a pass.
+      uv run python - <<'PY'
+      import sqlite3
+      from stackowl.db.pool import default_db_path
+      c = sqlite3.connect(str(default_db_path()))
+      n, b = c.execute("SELECT COUNT(*), COALESCE(SUM(trace_id=''),0) "
+                       "FROM cost_records WHERE id > 130840").fetchone()
+      if n < 50:
+          print(f"OPEN only {n} cost records since the fix - too few to mean anything")
+      elif b:
+          print(f"OPEN {b} of {n} post-fix rows are STILL blank - the fallback is not covering them")
+      else:
+          print(f"CLOSEABLE {n} post-fix cost records, 0 blank")
+      PY
+    stages:
+      validate: partial
     found: 2026-09-06
     what: >-
       HALF OF ALL RECORDED MODEL SPEND COULD NOT NAME THE TURN THAT CAUSED IT. `cost_records`
