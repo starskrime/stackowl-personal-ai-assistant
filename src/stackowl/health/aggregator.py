@@ -12,6 +12,29 @@ log = logging.getLogger("stackowl.health")
 
 _CONTRIBUTOR_TIMEOUT = 5.0
 
+#: The window the SECOND probe gets, and why it is wider than the first.
+#:
+#: MEASURED 2026-09-06. The re-probe exists to tell a SLOW subsystem from a DEAD
+#: one — but it was given the identical 5s cap, which asks the same question twice
+#: and mostly gets the same answer. Of 63 probes that missed the first window, 48
+#: (76%) answered on the re-probe; of the 15 that missed twice and were called
+#: ``down``, SIX were reported fully healthy again by the next sweep ~5 minutes
+#: later. The other nine were `provider:NeraAiRaw` during real DNS outages, where
+#: two strikes worked exactly as intended.
+#:
+#: The six false ones are load tail-latency, not slow subsystems: `store_cadence`
+#: answers in a median of 423ms (p90 1105ms, max 4241ms across 535 successful
+#: probes) and was cut off at exactly 5.0s twice; `provider_registry` "answered in
+#: ~600ms all day". A second window at 2x the first sits comfortably beyond the
+#: slowest successful probe ever recorded, so a merely-loaded box gets to answer
+#: while a genuinely dead subsystem still fails and is still called down — the
+#: distinction `_TIMEOUT_ATTEMPTS` was built to make, now actually made.
+#:
+#: The cost is bounded and tiny: `collect()` gathers CONCURRENTLY, so the worst
+#: case is one contributor's 5s + 10s rather than a sum, against the scheduler's
+#: `_HANDLER_TIMEOUT_SEC` of 1200s.
+_CONTRIBUTOR_RETRY_TIMEOUT = _CONTRIBUTOR_TIMEOUT * 2
+
 #: How many timed-out probes it takes to call a subsystem DOWN.
 #:
 #: MEASURED 2026-08-31: ``provider_registry`` answered in ~600ms all day and
@@ -93,25 +116,27 @@ class HealthAggregator:
         """
         name = contributor.contributor_name
         log.info(
-            "[health] aggregator: %s did not answer in %.0fs — re-probing before "
-            "calling it down", name, _CONTRIBUTOR_TIMEOUT,
+            "[health] aggregator: %s did not answer in %.0fs — re-probing with a "
+            "%.0fs window before calling it down",
+            name, _CONTRIBUTOR_TIMEOUT, _CONTRIBUTOR_RETRY_TIMEOUT,
         )
         try:
             status = await asyncio.wait_for(
-                contributor.health_check(), timeout=_CONTRIBUTOR_TIMEOUT,
+                contributor.health_check(), timeout=_CONTRIBUTOR_RETRY_TIMEOUT,
             )
         except TimeoutError:
             latency_ms = (time.monotonic() - t0) * 1000
             log.warning(
-                "[health] aggregator: %s timed out TWICE after %.0fms — down",
-                name, latency_ms,
+                "[health] aggregator: %s timed out TWICE (%.0fs then %.0fs) after "
+                "%.0fms — down",
+                name, _CONTRIBUTOR_TIMEOUT, _CONTRIBUTOR_RETRY_TIMEOUT, latency_ms,
             )
             return HealthStatus(
                 name=name,
                 status="down",
                 message=(
                     f"health check timed out twice "
-                    f"(>{_CONTRIBUTOR_TIMEOUT:.0f}s each)"
+                    f"(>{_CONTRIBUTOR_TIMEOUT:.0f}s, then >{_CONTRIBUTOR_RETRY_TIMEOUT:.0f}s)"
                 ),
                 latency_ms=latency_ms,
             )

@@ -14477,6 +14477,63 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-132
+    found: 2026-09-06
+    what: >-
+      THE HEALTH RE-PROBE ASKED THE SAME QUESTION TWICE. `_confirm_timeout` exists to tell
+      a SLOW subsystem from a DEAD one — a timeout says something about the probe, not the
+      subsystem — but it re-probed with the IDENTICAL 5s cap. On a loaded box the second
+      answer is the first answer, so a merely-slow contributor was reported `down`.
+    the_measurement: >-
+      Of 63 probes that missed the first window, 48 (76%) answered on the re-probe, so the
+      re-probe is doing real work. Of the 15 that missed BOTH and were called `down`, SIX
+      were reported fully healthy again at the next sweep about five minutes later —
+      `provider_registry` twice on 2026-08-31, `store_cadence` on 09-04 and 09-06, and
+      `provider:NeraAiRaw` twice on 09-05. The other NINE were `provider:NeraAiRaw` during
+      real DNS/VPN outages and were still flagged at the following sweep, so two strikes
+      worked there exactly as its author reasoned. A 40% false-down residual, not a broken
+      mechanism.
+    why_those_six_were_false: >-
+      Load tail-latency, not slow subsystems. `store_cadence` answers in a median of 423ms
+      (p90 1105ms, max 4241ms across 535 successful probes) and was cut off at exactly
+      5.0s twice; `provider_registry` "answered in ~600ms all day" per its own recorded
+      measurement. Every one of those sits far inside a 10s window.
+    what_shipped: >-
+      `_CONTRIBUTOR_RETRY_TIMEOUT = _CONTRIBUTOR_TIMEOUT * 2`. The second probe gets a
+      wider window than the first, so a loaded box gets to answer while a genuinely dead
+      subsystem still fails and is still called `down`. Cost is bounded and negligible:
+      `collect()` gathers CONCURRENTLY so the worst case is one contributor's 5s + 10s,
+      against the scheduler's `_HANDLER_TIMEOUT_SEC` of 1200s.
+    it_REFINES_a_recorded_decision_rather_than_contradicting_it: >-
+      `_TIMEOUT_ATTEMPTS`'s comment argues "a genuinely dead subsystem fails the second
+      attempt too", and that is TRUE — it is why the nine real outages were caught. What
+      it did not say is that a merely-slow one fails the second attempt too when the
+      second attempt is given the same budget. I checked this before changing anything,
+      because the two-strike rule is a recorded decision with a measurement behind it and
+      weakening it would have been the wrong move. The verdict is unchanged; only the
+      window the re-probe gets is wider.
+    what_it_reaches: >-
+      Every contributor, and further than noise. `is_live()` returns False on ANY `down`
+      and gates the systemd watchdog: `_ping_loop` skips the WATCHDOG=1 ping "so systemd
+      can restart the unit". `_is_live` deliberately fails OPEN when a probe RAISES
+      because "a broken probe must never cause a false restart" — but a timeout does not
+      raise, so the aggregator handed the watchdog a confident `down` and that protection
+      never applied. NOT observed here: this box has no systemd unit and `_sd_notify`
+      self-skips without NOTIFY_SOCKET, so the restart path is inert locally while
+      shipping armed to any systemd deployment.
+    three_instrument_errors_of_my_own_in_this_diagnosis: >-
+      Recorded because they are the same shape as the defect. (1) I labelled
+      `health_sweep: bound to the live pipeline services — a recovered provider now clears
+      the latch` as a RECOVERY event; it is a BOOT line about the mechanism, and I would
+      have reported 37 recoveries that never happened. (2) and (3) I twice asked "what did
+      the NEXT sweep say" and matched the sweep that CONTAINS the event, because its log
+      line lands in the same second — the answer only became true after requiring a 60s
+      gap. Print the real shape before you filter it, and a "next event" needs a gap.
+    mutation_tested: >-
+      Two mutants. Setting the retry window back equal to the first fired two assertions;
+      pointing the retry at `_CONTRIBUTOR_TIMEOUT` reproduced the exact production line
+      ("store_cadence timed out TWICE ... after 10010ms — down") and fired the new test.
+      Restores by file copy; final re-run green at 10 passed.
   - id: DEBT-131
     found: 2026-09-06
     what: >-

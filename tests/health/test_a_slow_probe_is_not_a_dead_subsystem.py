@@ -42,6 +42,7 @@ import asyncio
 import pytest
 
 from stackowl.health.aggregator import (
+    _CONTRIBUTOR_RETRY_TIMEOUT,
     _CONTRIBUTOR_TIMEOUT,
     HealthAggregator,
 )
@@ -66,7 +67,18 @@ class _Probe:
         outcome = self._script[min(self.attempts, len(self._script) - 1)]
         self.attempts += 1
         if outcome == "hang":
-            await asyncio.sleep(_CONTRIBUTOR_TIMEOUT * 3)
+            # Longer than BOTH windows, derived from the constants rather than
+            # a literal: a hand-picked 15s silently became a race the moment the
+            # retry window widened to 10s.
+            await asyncio.sleep((_CONTRIBUTOR_TIMEOUT + _CONTRIBUTOR_RETRY_TIMEOUT) * 2)
+        if outcome == "slow_but_answers":
+            # Past the FIRST window, inside the second — the case the whole
+            # re-probe exists for, and the one it could not express while both
+            # windows were the same length.
+            await asyncio.sleep(_CONTRIBUTOR_TIMEOUT * 1.4)
+            return HealthStatus(
+                name=self._name, status="ok", message=None, latency_ms=1.0,
+            )
         if outcome == "raise":
             raise RuntimeError("the provider registry is genuinely broken")
         return HealthStatus(
@@ -137,9 +149,10 @@ async def test_a_DEGRADED_answer_is_taken_at_face_value() -> None:
     assert probe.attempts == 1
 
 
-async def test_the_retry_is_BOUNDED_by_the_same_timeout() -> None:
-    """Worst case is two probe windows, not an unbounded wait — the sweep must
-    still finish inside the scheduler's handler ceiling."""
+async def test_the_retry_is_BOUNDED() -> None:
+    """Worst case is the two windows, not an unbounded wait — the sweep must
+    still finish inside the scheduler's handler ceiling (1200s, so the margin is
+    enormous; the point is that it is BOUNDED, not that it is short)."""
     probe = _Probe("provider_registry", ["hang", "hang"])
     loop = asyncio.get_running_loop()
     t0 = loop.time()
@@ -147,7 +160,29 @@ async def test_the_retry_is_BOUNDED_by_the_same_timeout() -> None:
     await _collect(probe)
 
     elapsed = loop.time() - t0
-    assert elapsed < _CONTRIBUTOR_TIMEOUT * 2 + 2.0, f"took {elapsed:.1f}s"
+    budget = _CONTRIBUTOR_TIMEOUT + _CONTRIBUTOR_RETRY_TIMEOUT + 2.0
+    assert elapsed < budget, f"took {elapsed:.1f}s, budget {budget:.1f}s"
+
+
+async def test_the_SECOND_window_is_wider_than_the_first() -> None:
+    """THE FIX. Re-probing with the identical cap asks the same question twice.
+
+    MEASURED 2026-09-06: 15 subsystems were called `down` after missing both
+    windows, and SIX were fully healthy again at the next sweep ~5 minutes later.
+    `store_cadence` answers in a median of 423ms and was cut off at exactly 5.0s
+    twice; a box under load needs a wider second window to answer at all.
+    """
+    assert _CONTRIBUTOR_RETRY_TIMEOUT > _CONTRIBUTOR_TIMEOUT
+
+
+async def test_a_probe_past_the_first_window_but_inside_the_second_is_NOT_down() -> None:
+    """The case the re-probe exists for, which it could not previously express."""
+    probe = _Probe("store_cadence", ["slow_but_answers", "slow_but_answers"])
+
+    status = await _collect(probe)
+
+    assert status.status == "ok", status.message
+    assert probe.attempts == 2, "the re-probe should have been the answering one"
 
 
 async def test_liveness_is_not_tripped_by_ONE_slow_probe() -> None:
