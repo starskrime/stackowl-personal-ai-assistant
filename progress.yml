@@ -14386,6 +14386,22 @@ known_debt:
       grepped orchestrator.py for the literal strings the neighbouring tripwire forbids
       outside their owning module, so the two guards demanded opposite things and it pinned the
       declaration's ADDRESS rather than its content.
+    THE_FIRST_FIX_WAS_DECORATION_AND_THIS_IS_HOW: >-
+      SHIPPED IN e012e348 AND INERT. `execute()` resolved the latch through
+      `get_services()`, but `pipeline.services._ctx` is a ContextVar and `get_services()`
+      returns a FRESH EMPTY StepServices on LookupError — so from the scheduler's own task
+      context the sweep received a brand-new object whose latch is False by default. It
+      returned immediately, every five minutes, forever: no log, no error, no effect. The
+      exact defect shape the change exists to fix, reproduced inside the fix. Every unit
+      test stayed green because they hand the helper a services double, and the tripwire
+      asserted the CALL EXISTS — which was true the whole time. Measured, not guessed:
+      scheduler assembly runs at orchestrator:1251 and the live `services` is built at
+      :1625, so there was never an object for `get_services()` to find, and
+      `self._providers_degraded` is never cleared by anything — `_maybe_reprobe_providers`
+      only RETURNS the new state and the dispatch loop writes it onto that one shared
+      StepServices instance. That instance is the latch. The handler is now BOUND to it by
+      the orchestrator (`bind_live_services`), an unbound sweep logs a WARNING rather than
+      doing nothing quietly, and a test drives the real `execute()` instead of the helper.
     mutation_tested: >-
       Four mutants planted from file copies, each verified APPLIED before running: dropping the
       attendance gate (caught, 3 tests), dropping the event from the declaration (caught, 2),

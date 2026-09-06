@@ -164,6 +164,27 @@ class HealthSweepHandler(JobHandler):
         self._alert_state: dict[str, tuple[str, float]] = {}
         self._alert_record = alert_record
         self._state_loaded = False
+        # THE LIVE `StepServices` THE DISPATCH LOOP READS — bound after construction,
+        # because it does not exist yet. Scheduler assembly runs at orchestrator:1251
+        # and that object is built at :1625, so there is nothing to pass in here. Same
+        # ordering problem, and the same cure, as `healers=ChannelHealers(...)` above:
+        # resolve when the sweep LOOKS, not when this assembly runs.
+        self._live_services: object | None = None
+        self._warned_unbound = False
+
+    def bind_live_services(self, services: object) -> None:
+        """Hand the sweep the one ``StepServices`` the gateway's dispatch loop reads.
+
+        Called by the orchestrator once that object exists. Without it the degraded
+        latch cannot be cleared and the platform is back to self-healing only when a
+        human sends a message — so an unbound sweep SAYS so rather than doing nothing
+        quietly.
+        """
+        self._live_services = services
+        log.scheduler.info(
+            "[scheduler] health_sweep: bound to the live pipeline services — a "
+            "recovered provider now clears the degraded latch unattended",
+        )
 
     @property
     def handler_name(self) -> str:
@@ -198,15 +219,25 @@ class HealthSweepHandler(JobHandler):
         # A RECOVERED PROVIDER MUST NOT WAIT FOR A HUMAN. The boot-time latch cleared
         # only on the inbound-message path, so scheduled and durable turns floored until
         # someone typed something. The sweep already holds the verdict.
-        try:
-            from stackowl.pipeline.services import get_services
-
-            clear_degraded_if_a_provider_is_back(statuses, get_services())
-        except Exception as exc:  # noqa: BLE001 — never wedge the sweep
+        #
+        # IT READS THE BOUND OBJECT, NEVER `get_services()`, and the first version of
+        # this fix got that wrong in a way worth recording. `pipeline.services._ctx` is
+        # a ContextVar and `get_services()` returns a FRESH EMPTY `StepServices` on
+        # LookupError — so from the scheduler's own task context it handed back a new
+        # object whose latch is False by default, the check returned immediately, and
+        # the whole repair was decoration that could never log, never fail and never
+        # fire. That is the exact defect shape this change exists to fix, reproduced
+        # inside the fix; unit tests passed throughout because they call the function
+        # with a services double. The latch that matters is the single instance built
+        # at orchestrator:1625 and shared by every turn.
+        if self._live_services is None and not self._warned_unbound:
+            self._warned_unbound = True
             log.scheduler.warning(
-                "[scheduler] health_sweep: could not reach services to clear the "
-                "degraded latch", exc_info=exc,
+                "[scheduler] health_sweep: NOT bound to the live pipeline services — "
+                "a recovered provider will keep waiting for a human message; "
+                "orchestrator must call bind_live_services()",
             )
+        clear_degraded_if_a_provider_is_back(statuses, self._live_services)
 
         down = [s for s in statuses if s.status == "down"]
         degraded = [s for s in statuses if s.status == "degraded"]

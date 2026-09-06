@@ -1675,6 +1675,42 @@ class StartupOrchestrator:
             sticky_route_cache=sticky_route_cache,
             providers_degraded=self._providers_degraded,
         )
+
+        # THE SWEEP NEEDS THIS EXACT OBJECT. `services` is built once here and shared
+        # by every turn the dispatch loop runs, so it — not `self._providers_degraded`,
+        # which nothing ever clears, and not `get_services()`, which is a per-turn
+        # ContextVar — is the live degraded latch. The health sweep already probes
+        # every provider every 5 minutes; binding it here is what lets a recovered
+        # provider resume unattended work instead of waiting for someone to send a
+        # message. Scheduler assembly ran ~400 lines above, before this existed.
+        try:
+            from stackowl.scheduler.base import HandlerRegistry as _HR
+            from stackowl.scheduler.handlers.health_sweep import HealthSweepHandler
+
+            # `all()` returns a LIST of handlers, not a dict — this was written as
+            # `.all().get("health_sweep")`, which would have raised AttributeError on
+            # every boot, been swallowed by the except below, and left the sweep bound
+            # to nothing while logging a plausible-looking error. Same shape as the
+            # `ChannelRegistry.instance().names()` call that did not exist.
+            _sweep = next(
+                (h for h in _HR.instance().all() if isinstance(h, HealthSweepHandler)),
+                None,
+            )
+            if _sweep is not None:
+                _sweep.bind_live_services(services)
+            else:
+                log.warning(
+                    "[startup] gateway: health_sweep handler not registered — a "
+                    "recovered provider will wait for a human message",
+                    extra={"_fields": {
+                        "registered": [h.handler_name for h in _HR.instance().all()],
+                    }},
+                )
+        except Exception as exc:
+            log.error(
+                "[startup] gateway: could not bind health_sweep to live services",
+                exc_info=exc, extra={"_fields": {}},
+            )
         # E8-S1 — construct the SINGLE A2ADelegator AFTER services exists (it reads
         # the shared governor + a2a_queue off services), then inject it back onto
         # the same mutable StepServices so the delegate_task tool reaches THIS
