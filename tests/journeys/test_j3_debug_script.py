@@ -64,6 +64,16 @@ from stackowl.pipeline.services import StepServices
 from stackowl.pipeline.state import PipelineState
 from stackowl.pipeline.streaming import StreamRegistry
 from stackowl.providers.base import CompletionResult, Message
+from stackowl.sandbox.bwrap import BwrapSandbox
+from stackowl.sandbox.capability import SandboxCapability
+from stackowl.sandbox.cgroup import CgroupRecipe
+from stackowl.sandbox.selector import SandboxSelector
+from stackowl.tools.consent import (
+    ConsentPolicy,
+    ConsentRequest,
+    ConsentScope,
+    RoutingPrompter,
+)
 from stackowl.tools.registry import ConsequentialActionGate, ToolRegistry
 
 USER_ID = 434343
@@ -146,6 +156,7 @@ class _ScriptedSecretary:
         self.search_out: str = ""
         self.read_out: str = ""
         self.edit_out: str = ""
+        self.after_src: str = ""
         self.located_path: str = ""
         self.derived_bug_line: str = ""
         self.final: str = ""
@@ -232,20 +243,31 @@ class _ScriptedSecretary:
 
 
 class _FakeProviderRegistry:
-    def __init__(self, p: _ScriptedSecretary) -> None:
+    """Matches the REAL ProviderRegistry's return SHAPES, not just its names.
+
+    `get` returns a provider; `get_by_tier` and `get_with_cascade` return
+    `(provider, model)` — `registry.py:465/523/557`. This double returned a bare
+    provider from all three, so `resolve_cascade_tier` (which returns
+    `get_with_cascade(tier)` VERBATIM) handed the router something it could not
+    unpack: `TypeError: cannot unpack non-iterable`. The E3 arc never took that
+    branch, so the drift sat here harmlessly until the E11 arc did — a test
+    double that stopped resembling the real thing, which is defect shape 2.
+    """
+
+    def __init__(self, p: object) -> None:
         self._p = p
 
-    def get(self, name: str) -> _ScriptedSecretary:
+    def get(self, name: str) -> object:
         return self._p
 
-    def get_by_tier(self, tier: str) -> _ScriptedSecretary:
-        return self._p
+    def get_by_tier(self, tier: str) -> tuple[object, str]:
+        return (self._p, "scripted")
 
-    def get_with_cascade(self, preferred_tier: str) -> _ScriptedSecretary:
+    def get_with_cascade(self, preferred_tier: str) -> tuple[object, str]:
         # The router/critical_failure steps resolve via cascade; route them to the
         # single scripted secretary so the REAL router runs clean (no swallowed
         # AttributeError — keeps the no-hidden-errors discipline).
-        return self._p
+        return (self._p, "scripted")
 
 
 @dataclass
@@ -255,7 +277,11 @@ class _Env:
     scanner: GatewayScanner
     backend: AsyncioBackend
     stream_registry: StreamRegistry
-    provider: _ScriptedSecretary
+    provider: object
+    #: The consent prompter, when this env wired one (the E11 arc). Held here
+    #: rather than dug out of ConsentPolicy's internals, which the first cut did
+    #: and which broke on a private name.
+    prompter: object | None = None
 
 
 @pytest.fixture(autouse=True)
@@ -290,7 +316,48 @@ async def _turn(env: _Env, text: str) -> str:
     return "".join(m["text"] for m in env.bot.messages[before:] if m["reply_markup"] is None)
 
 
-def _build(provider: _ScriptedSecretary) -> _Env:
+class _ApprovingPrompter:
+    """Stands in for the human at the consent prompt — approves ONCE, and records.
+
+    `execute_code` is consequential, so the REAL consent gate fires. Faking the
+    HUMAN is legitimate here (a journey test cannot type into Telegram); faking
+    the GATE would not be, so the real `ConsequentialActionGate` and
+    `ConsentPolicy` still run and a regression that stopped asking would be
+    caught by `asked` being empty.
+    """
+
+    def __init__(self) -> None:
+        self.asked: list[ConsentRequest] = []
+
+    async def prompt(self, req: ConsentRequest) -> ConsentScope:
+        self.asked.append(req)
+        return ConsentScope.ONCE
+
+
+def _bwrap_live() -> bool:
+    """True iff a REAL bwrap run can isolate AND enforce caps on this host.
+
+    Same probe J11 uses. Measured on this box 2026-09-06: True, and J11's six
+    live-sandbox tests pass — which is half of why the E11 arc below stopped
+    being skipped.
+    """
+    import shutil
+
+    if shutil.which("bwrap") is None:
+        return False
+    if not SandboxCapability.probe().bwrap_viable:
+        return False
+    cg_ok, _why = CgroupRecipe.delegation_available()
+    return bool(cg_ok)
+
+
+_NEEDS_BWRAP = pytest.mark.skipif(
+    not _bwrap_live(),
+    reason="real bwrap sandbox not viable on this host (live-run outcomes)",
+)
+
+
+def _build(provider: object, *, sandboxed: bool = False) -> _Env:
     # The SAME adapter drives inbound (the user's bug report) AND outbound (the
     # agent's fix confirmation).
     adapter = TelegramChannelAdapter(TelegramSettings(allowed_user_ids=frozenset({USER_ID})))
@@ -299,17 +366,33 @@ def _build(provider: _ScriptedSecretary) -> _Env:
     adapter._bot_user_id = 999
     adapter._bot_username = ""
 
+    # `execute_code` is CONSEQUENTIAL and consent-gated, and it refuses outright
+    # without a sandbox selector ("no sandbox_selector wired — refusing"). The
+    # E11 arc therefore needs both; the E3 arc above needs neither, so both stay
+    # optional and that arc's wiring is byte-identical to what it always was.
+    approving = _ApprovingPrompter() if sandboxed else None
+    if approving is not None:
+        routing = RoutingPrompter()
+        routing.register("telegram", approving)
+        consent_gate = ConsequentialActionGate(ConsentPolicy(prompter=routing))
+    else:
+        consent_gate = ConsequentialActionGate()  # edit is 'write' — no consent fires
     services = StepServices(
         provider_registry=_FakeProviderRegistry(provider),  # type: ignore[arg-type]
         tool_registry=ToolRegistry.with_defaults(),  # REAL search_files/read_file/edit
-        consent_gate=ConsequentialActionGate(),  # edit is 'write' — no consent fires
+        consent_gate=consent_gate,
         stream_registry=StreamRegistry(),
         owl_registry=OwlRegistry.with_default_secretary(),
+        # REAL SandboxSelector with the REAL bwrap backend — the code genuinely
+        # runs in the cage, or this arc proves nothing about reproducing a bug.
+        sandbox_selector=(
+            SandboxSelector(backends=[BwrapSandbox(enabled=True)]) if sandboxed else None
+        ),
     )
     return _Env(
         adapter=adapter, bot=bot, scanner=GatewayScanner(owl_registry=None),
         backend=AsyncioBackend(services=services), stream_registry=services.stream_registry,  # type: ignore[arg-type]
-        provider=provider,
+        provider=provider, prompter=approving,
     )
 
 
@@ -383,28 +466,199 @@ async def test_j3_debug_failing_script_locate_and_fix(
     )
 
 
-@pytest.mark.skip(
-    reason="E11 execute_code not shipped — reproduce + confirm-green steps complete "
-    "this journey when E11 lands."
-)
+# --- THE ONLY AI MOCK for the E11 arc: a debugger that REPRODUCES before fixing --
+
+
+class _ScriptedDebugger:
+    """Drives the full J3 loop: reproduce RED -> fix -> re-run GREEN.
+
+    Every step below is the REAL tool through the REAL dispatcher; only this
+    provider is scripted.
+
+      1. read_file      — read the user's buggy script (real, workspace-confined).
+      2. execute_code   — run THAT CONTENT plus a check that asserts the correct
+                          behaviour. It FAILS: the bug is reproduced, in the cage.
+      3. edit           — fix the buggy line ON DISK (real EditTool).
+      4. execute_code   — the SAME check against the fixed content. It PASSES.
+
+    WHY THERE IS NO SECOND read_file. A repeat call with identical arguments is
+    exactly what the platform's loop guard exists to stop, and it DID: the
+    second read returned the guard's directive instead of the file, which then
+    went into the sandbox and died as a SyntaxError. The guard was right. So the
+    post-fix source is derived by applying the same one-line replacement, and
+    the test asserts that derived text equals the file ON DISK byte-for-byte —
+    which proves the executed code IS the file's content more explicitly than a
+    re-read would, since a re-read only proves the two calls agreed.
+
+    WHY THE CONTENT TRAVELS AS CODE RATHER THAN A PATH. The bwrap backend mounts
+    only its OWN per-run scratch workspace — the user's workspace is deliberately
+    never bind-mounted, which is the sandbox's whole point. So "run the user's
+    script" can only mean "run what read_file actually returned", and that is
+    also what keeps the arc honest: the code executed is DERIVED from the real
+    read, so a broken read_file or a broken edit cannot false-pass.
+    """
+
+    protocol = "anthropic"
+
+    @property
+    def name(self) -> str:
+        return "secretary"
+
+    def __init__(self) -> None:
+        self.reproduce_out: str = ""
+        self.confirm_out: str = ""
+        self.edit_out: str = ""
+        self.after_src: str = ""
+        self.located_path: str = ""
+        self.final: str = ""
+
+    @staticmethod
+    def _check(source: str) -> str:
+        """The SAME check both times — the transition is the business outcome."""
+        return (
+            source
+            + "\n"
+            + "assert classify_sign(0) == \"negative\", (\n"
+            + "    \"REPRODUCED: classify_sign(0) returned \" + classify_sign(0)\n"
+            + ")\n"
+            + "print(\"GREEN\")\n"
+        )
+
+    @staticmethod
+    def _failed(raw: str) -> bool:
+        """Did the sandboxed run FAIL? Read the record, never the prose."""
+        try:
+            record = json.loads(raw).get("record", {})
+        except (json.JSONDecodeError, AttributeError):
+            return True
+        return int(record.get("exit_code", 1)) != 0
+
+    async def complete_with_tools(  # noqa: ANN001
+        self, *, user_text, system_text, tool_schemas, tool_dispatcher, history=None, **_kw
+    ):
+        calls: list[dict] = []
+        self.located_path = f"src/{_SCRIPT_NAME}"
+
+        # 1. READ the user's script (real, workspace-confined).
+        read_args = {"path": self.located_path}
+        before_src = await tool_dispatcher("read_file", read_args)
+        calls.append({"name": "read_file", "args": read_args, "result": before_src})
+
+        # 2. REPRODUCE: run the real content + the check, in the real sandbox.
+        repro_args = {"code": self._check(before_src), "language": "python"}
+        self.reproduce_out = await tool_dispatcher("execute_code", repro_args)
+        calls.append({"name": "execute_code", "args": repro_args, "result": self.reproduce_out})
+
+        # 3. FIX it on disk — the derived line, exactly as the live arc above does.
+        bug_line = before_src.splitlines()[_BUG_LINE_NO - 1].strip()
+        edit_args = {
+            "path": self.located_path,
+            "old_string": bug_line,
+            "new_string": bug_line.replace(">=", ">"),
+        }
+        self.edit_out = await tool_dispatcher("edit", edit_args)
+        calls.append({"name": "edit", "args": edit_args, "result": self.edit_out})
+
+        # 4. CONFIRM GREEN: the SAME check, against the fixed content. The test
+        #    asserts `after_src` equals the file on disk, so this is not a
+        #    constant standing in for reality.
+        self.after_src = before_src.replace(bug_line, edit_args["new_string"])
+        confirm_args = {"code": self._check(self.after_src), "language": "python"}
+        self.confirm_out = await tool_dispatcher("execute_code", confirm_args)
+        calls.append({"name": "execute_code", "args": confirm_args, "result": self.confirm_out})
+
+        self.final = (
+            "Reproduced the failure, fixed the comparison, and re-ran the same "
+            "check — it now passes."
+        )
+        return (self.final, calls)
+
+    async def complete(self, messages: list[Message], model: str, **kwargs: object) -> CompletionResult:
+        # The FULL result contract, as the live arc's provider does — a partial
+        # one raises a pydantic ValidationError inside the REAL router, which
+        # then falls back and swallows the cause.
+        return CompletionResult(
+            content="I'll reproduce the failure, fix it, and re-run the check.",
+            input_tokens=8,
+            output_tokens=10,
+            model="secretary-model",
+            provider_name="secretary",
+            duration_ms=1.0,
+        )
+
+
+@_NEEDS_BWRAP
 async def test_j3_reproduce_and_confirm_green_with_execute_code(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """E11 continuation of J3 — the sandboxed reproduce + confirm-green steps.
 
-    When ``execute_code`` ships (E11), this completes the full J3 loop the PRD
-    describes, with NO new business logic faked beyond the AI provider:
+    UNSKIPPED 2026-09-06, and the skip is why this exists. It carried
+    ``reason="E11 execute_code not shipped"`` in TWO places — the decorator and
+    the body's first statement — while `execute_code` had shipped at
+    `tools/code/execute_code.py` with 42 recorded invocations, and J11's six
+    real-sandbox tests pass on this host. The function beneath those two claims
+    was a docstring and nothing else.
 
-      1. search_files/read_file locate the buggy script (as in the live arc above).
-      2. execute_code (sandboxed) RUNS the script and REPRODUCES the failure
-         (e.g. an assert that classify_sign(0) == "negative" fails) — proving the bug
-         is real before touching it.
-      3. edit fixes the buggy line on disk (as in the live arc above).
-      4. execute_code RE-RUNS the same check and it now passes — confirm-green,
-         proving the fix actually resolves the reported failure end-to-end.
-
-    Business outcome to assert here: the SAME sandboxed check transitions from
-    RED (step 2) to GREEN (step 4) across the real edit — i.e. the user's script
-    is demonstrably fixed by running it, not just by inspecting the diff.
+    Business outcome: the SAME sandboxed check transitions from RED to GREEN
+    across the real edit — the user's script is demonstrably fixed by RUNNING it,
+    not by inspecting the diff.
     """
-    pytest.skip("E11 execute_code not shipped")
+    home = tmp_path / "home"
+    ws = home / "workspace"
+    (ws / "src").mkdir(parents=True)
+    monkeypatch.setattr(StackowlHome, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(StackowlHome, "workspace", classmethod(lambda cls: ws))
+
+    script_path = ws / "src" / _SCRIPT_NAME
+    script_path.write_text(_BUGGY_SCRIPT, encoding="utf-8")
+    assert _BUG_TOKEN in script_path.read_text(encoding="utf-8")
+
+    env = _build(_ScriptedDebugger(), sandboxed=True)
+    reply = await _turn(
+        env,
+        f"This script {script_path} throws on line {_BUG_LINE_NO} — fix it.",
+    )
+    dbg: _ScriptedDebugger = env.provider  # type: ignore[assignment]
+
+    # ===================================================================
+    # BUSINESS OUTCOME — RED then GREEN, from the SAME check, in the REAL cage.
+    # Asserted on the sandbox's own exit_code, not on prose, so a sandbox that
+    # silently refused to run cannot read as a pass.
+    # ===================================================================
+    assert dbg.reproduce_out, "the reproduce step never ran"
+    assert dbg._failed(dbg.reproduce_out), (
+        "BUSINESS OUTCOME FAIL: the check did not FAIL against the buggy script, so "
+        f"the bug was never reproduced. execute_code returned: {dbg.reproduce_out!r}"
+    )
+    assert not dbg._failed(dbg.confirm_out), (
+        "BUSINESS OUTCOME FAIL: the same check still fails after the fix — the edit "
+        f"did not resolve the reported failure. execute_code returned: {dbg.confirm_out!r}"
+    )
+
+    # THE CONFIRM STEP RAN THE FILE'S ACTUAL CONTENT. Without this the GREEN
+    # result would only prove that some string passes the check.
+    on_disk = script_path.read_text(encoding="utf-8")
+    assert dbg.after_src == on_disk, (
+        "the confirmed-green code is not what is on disk — the GREEN result proves "
+        f"nothing about the user's file.\n  ran: {dbg.after_src!r}\n disk: {on_disk!r}"
+    )
+
+    # The fix is real and on disk, not merely reported.
+    assert _FIX_TOKEN in on_disk and _BUG_TOKEN not in on_disk, (
+        f"the file on disk was not actually fixed: {on_disk!r}"
+    )
+
+    # The user was told, over the real transport.
+    assert reply.strip(), "the user received nothing"
+
+    # THE CAGE WAS REALLY ASKED. execute_code is consequential, so the REAL
+    # consent gate must have prompted — an empty list here means the gate was
+    # bypassed and this arc proved less than it claims.
+    assert env.prompter is not None and env.prompter.asked, (  # type: ignore[union-attr]
+        "execute_code ran without the REAL consent gate ever prompting"
+    )
+    assert any(
+        "execute_code" in str(getattr(r, "tool_name", "") or getattr(r, "summary", ""))
+        for r in env.prompter.asked  # type: ignore[union-attr]
+    ), f"the gate prompted, but not for execute_code: {env.prompter.asked}"  # type: ignore[union-attr]

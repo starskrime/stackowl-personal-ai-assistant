@@ -14477,6 +14477,60 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-149
+    found: 2026-09-06
+    what: >-
+      A TEST WAS SKIPPED WAITING FOR SOMETHING THAT HAD ALREADY SHIPPED. J3's E11 continuation
+      carried `@pytest.mark.skip(reason="E11 execute_code not shipped")` AND, as the body's
+      first statement, `pytest.skip("E11 execute_code not shipped")` - two copies of one claim,
+      and the claim was FALSE. `execute_code` ships at `tools/code/execute_code.py` with 42
+      recorded invocations in `task_outcomes`, and J11's six real-bwrap tests pass on this host
+      (bwrap_viable True, cgroup delegation available). The function beneath those two claims
+      was a docstring and NOTHING ELSE - empty scaffolding "for later".
+    the_ROOT_CAUSE_is_the_SHAPE_not_the_staleness: >-
+      `@pytest.mark.skip` states a fact about the world ONCE, at authoring time, and nothing
+      ever asks again. `@pytest.mark.skipif(<expr>)` states a CONDITION the runner re-evaluates
+      every run, so it un-skips itself the moment the world changes. This programme has cured
+      this exact disease TWICE by making the claim executable - `premise_check` for escalations
+      whose premise aged silently, `closing_check` for `partial` stages that were dead ends
+      rather than open questions. An unconditional skip is the THIRD instance, and the one that
+      sat inside the test suite where a stale claim looks like coverage.
+    what_shipped: >-
+      The journey is IMPLEMENTED, not deleted - deleting would have dropped a PRD journey whose
+      only blocker was gone. It reads the user's buggy script, runs that content plus a check
+      in the REAL bwrap cage (it FAILS - the bug is reproduced), edits the line on disk, and
+      re-runs the SAME check (it PASSES). Plus a tripwire forbidding unconditional skips
+      anywhere in tests/, which is the "why" fix.
+    THE_SANDBOX_CANNOT_SEE_THE_USERS_FILE_and_that_is_the_point: >-
+      The bwrap backend mounts only its OWN per-run scratch workspace; the user's workspace is
+      never bind-mounted. So "execute_code RUNS the script" can only mean "runs what read_file
+      returned", which is also what keeps the arc honest - and the test asserts the executed
+      source equals the file ON DISK byte-for-byte, which proves more than a re-read would.
+    THE_PLATFORM_S_OWN_LOOP_GUARD_CORRECTED_MY_FIRST_DESIGN: >-
+      The first version re-read the file after the edit. Two identical `read_file` calls in one
+      turn is exactly what the loop guard exists to stop, and it DID: the second read returned
+      the guard's directive instead of the file, which went into the sandbox and died as a
+      SyntaxError. The guard was right and the test was wrong.
+    a_TEST_DOUBLE_had_drifted_from_the_real_contract: >-
+      `_FakeProviderRegistry.get_with_cascade` returned a bare provider; the real one returns
+      `(provider, model)` (registry.py:557), and `resolve_cascade_tier` returns it VERBATIM -
+      so the REAL router raised "cannot unpack non-iterable". The E3 arc never took that branch,
+      so the drift sat harmless until the E11 arc did. Defect shape 2, found by using the double
+      on a new path rather than by inspecting it.
+    mutation_proven_and_one_mutant_DID_NOT_APPLY: >-
+      Three mutants, each verified APPLIED before its result was believed: EditTool writing the
+      original back FAILED the test; a no-op fix FAILED it; `execute_code` always reporting
+      exit_code 0 FAILED it - so the test reads the real exit code, not prose. The FIRST attempt
+      at the EditTool mutant printed "anchor found: False" and the test passed; that pass was
+      discarded rather than counted, which is DEBT-136's lesson applied in the moment.
+      The guard has its own mutant: reintroducing an unconditional skip makes it fire.
+      Restored from file copies; 5 passed, 355 across tests/journeys.
+    what_else_the_cause_reaches: >-
+      Any assertion about the world that is written as a CONSTANT rather than a PROBE stops
+      being true silently and looks like diligence while it does. The suite now forbids the
+      test-shaped version; the same question is worth asking wherever this tree hardcodes a
+      fact it could measure - which is the standing "prefer dynamic discovery" rule arriving at
+      the same place from the other direction.
   - id: DEBT-148
     stages:
       validate: done
