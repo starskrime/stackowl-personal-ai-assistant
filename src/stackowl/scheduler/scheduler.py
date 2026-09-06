@@ -790,12 +790,65 @@ class JobScheduler(SupervisedTask):
         # Recurring job: re-arm onto the next cadence slot instead of dying.
         now_iso = datetime.now(UTC).isoformat()
         next_run = compute_next_run(job.schedule, tz=self._tz)
+
+        # THE OTHER HALF OF ESC-53. Re-arming to the cadence slot keeps the JOB
+        # alive and loses the OCCURRENCE. For a one-shot that loss was visible —
+        # the row died — and ESC-53 fixed it with a widening ladder because
+        # "whether work survived a transient blip was being decided by CADENCE,
+        # which has nothing to do with whether the work still needs doing." A
+        # recurring row survives, so the same loss leaves no wreckage.
+        #
+        # MEASURED 2026-09-06 over the 9-day retained window: 17 recurring
+        # occurrences re-armed after exhausting retries, EIGHT of them
+        # `goal_execution` — the operator's own goals, ~1/day. The arithmetic
+        # makes it inevitable: _MAX_RETRIES=3 at _RETRY_DELAY_MIN=5 is a
+        # 15-minute budget, and the outage that consumed those eight ran 4h13m
+        # (22:11 -> 02:24). The provider returned 20 hours before the next slot
+        # and nothing asked the job to try again.
+        #
+        # So the recurring branch now asks the SAME questions the one-shot branch
+        # asks — `is_permanent` over `classify_failure`, and the SAME ladder —
+        # and arms `retry_at`, which exists precisely to mean "try sooner"
+        # without touching the canonical cadence (F113: NEVER touch next_run_at).
+        #
+        # CAPPED AT THE CADENCE SLOT, which is the one way this could make things
+        # worse. The claim query reads
+        #   CASE WHEN retry_at IS NOT NULL THEN retry_at <= ? ELSE next_run_at <= ?
+        # so retry_at MASKS next_run_at. A rung landing after the next slot would
+        # DELAY the schedule it was added to protect, so a retry is armed only
+        # when it lands strictly earlier. A frequent job keeps its own cadence.
+        early_retry_at: str | None = None
+        failure_class = classify_failure(last_error)
+        if not is_permanent(failure_class):
+            idx = min(new_failure_count - 1, len(_ONE_SHOT_REARM_BACKOFF_SEC) - 1)
+            delay = _ONE_SHOT_REARM_BACKOFF_SEC[idx]
+            candidate = (datetime.now(UTC) + timedelta(seconds=delay)).isoformat()
+            if candidate < next_run:
+                early_retry_at = candidate
+
         await self._db.execute(
             "UPDATE jobs SET status = 'pending', last_run_at = ?, next_run_at = ?, "
-            "retry_count = 0, retry_at = NULL, failure_count = ?, "
+            "retry_count = 0, retry_at = ?, failure_count = ?, "
             "last_error = ? WHERE job_id = ?",
-            (now_iso, next_run, new_failure_count, last_error, job.job_id),
+            (now_iso, next_run, early_retry_at, new_failure_count, last_error, job.job_id),
         )
+        if early_retry_at is not None:
+            # INFO, not DEBUG: this line is the evidence that a recurring
+            # occurrence survived a transient fault, and production runs at INFO.
+            log.heartbeat.info(
+                "[scheduler] %s: recurring occurrence RETAINED — early retry before the next slot",
+                job.job_id,
+                extra={
+                    "_fields": {
+                        "job_id": job.job_id,
+                        "handler": job.handler_name,
+                        "failure_class": failure_class or "unknown",
+                        "attempt": new_failure_count,
+                        "retry_at": early_retry_at,
+                        "next_run": next_run,
+                    }
+                },
+            )
         log.heartbeat.warning(
             "[scheduler] %s: max retries reached — recurring job RE-ARMED to next slot",
             job.job_id,

@@ -143,7 +143,24 @@ async def test_recurring_job_rearmed_after_max_retries(
     assert row["status"] == "pending", "recurring job must return to pending, not stay failed"
     # Retry counter reset for the fresh occurrence.
     assert int(row["retry_count"]) == 0
-    assert row["retry_at"] is None
+    # `retry_at` MAY now be armed, and this assertion changed deliberately on
+    # 2026-09-06. It used to read `is None`, which described the implementation of
+    # the day rather than F-60's guarantee: F-60 is that the job does not go dark
+    # and the cadence survives, both still asserted above and below.
+    #
+    # A recurring job that exhausted its retries on a TRANSIENT failure now also
+    # gets an early attempt on the shared backoff ladder — measured, 17 occurrences
+    # were lost in 9 days, 8 of them the operator's goals. See
+    # test_a_recurring_job_does_not_lose_an_occurrence.py.
+    #
+    # What must still hold is the CAP: the claim query lets `retry_at` mask
+    # `next_run_at`, so an armed retry landing at or after the cadence slot would
+    # DELAY the schedule F-60 exists to protect.
+    if row["retry_at"] is not None:
+        assert row["retry_at"] < row["next_run_at"], (
+            "an early retry landed at or after the cadence slot it masks — that "
+            f"delays the schedule instead of protecting it: {dict(row)}"
+        )
     # next_run_at advanced to a FUTURE slot (the schedule survives).
     next_run = datetime.fromisoformat(row["next_run_at"])
     assert next_run > datetime.now(UTC), "next_run_at must be advanced into the future"

@@ -14477,6 +14477,77 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-144
+    closing_check: |-
+      # Keyed on "recurring occurrence RETAINED" - a message this item INTRODUCED.
+      # The old code emitted only "RE-ARMED to next slot" on this branch, so a
+      # single hit proves the NEW path ran (DEBT-138's rule). NOT keyed on the
+      # re-arm line, which fired 17 times BEFORE the fix and would close on the
+      # defect itself.
+      n=$(./scripts/log_since.sh 2026-09-06 'recurring occurrence RETAINED')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n recurring occurrence(s) kept an early retry" || echo "OPEN 0 recurring jobs have exhausted retries on a transient failure since the fix; the code IS live-evidenced"
+    stages:
+      validate: partial
+    found: 2026-09-06
+    what: >-
+      A RECURRING JOB THAT FAILED ON A TRANSIENT OUTAGE LOST THE WHOLE OCCURRENCE. When the
+      within-occurrence retries exhausted, `_mark_failed` re-armed the row to its NEXT CADENCE
+      SLOT with `retry_at = NULL`. The JOB survived - which is what F-60 promised and what made
+      the loss invisible - but that day's run simply never happened.
+    measured: >-
+      Over the 9-day retained log window (2026-08-28 .. 2026-09-05): 17 recurring occurrences
+      re-armed after exhausting retries, EIGHT of them `goal_execution` - the operator's own
+      goals, roughly one a day. The rest: incident_escalation 4, retry_sweep 3,
+      objective_driver 1, reflection_writer 1. The one-shot ladder ESC-53 built fired 0 times
+      in the same window, so this branch is where the losses actually are.
+    the_arithmetic_made_it_INEVITABLE: >-
+      `_MAX_RETRIES = 3` at `_RETRY_DELAY_MIN = 5` is a FIFTEEN-MINUTE retry budget. The
+      failure that consumed 8 of the 17 was AllProvidersUnavailableError, and that outage ran
+      2026-09-05T22:11 -> 2026-09-06T02:24, FOUR HOURS THIRTEEN MINUTES. Every retry was
+      scheduled to be spent while the outage was still happening. The provider returned 20
+      hours before the job's next slot and nothing asked it to try again.
+    it_is_the_OTHER_HALF_of_ESC_53: >-
+      ESC-53 fixed exactly this for ONE-SHOTS, and its own write-up names the recurring branch
+      as the correct half because "the job itself is never given up on". The job is not given
+      up on; the OCCURRENCE is. For a one-shot the row died and the loss was visible (54 lost
+      rollover summaries); for a recurring row the loss leaves no wreckage. Its principle -
+      "whether work survived a transient blip was being decided by CADENCE, which has nothing
+      to do with whether the work still needs doing" - was written for one branch and is true
+      of both.
+    the_fix_adds_no_new_policy: >-
+      The recurring branch now asks the SAME questions the one-shot branch already asks -
+      `is_permanent` over `classify_failure` - and uses the SAME ladder
+      (`_ONE_SHOT_REARM_BACKOFF_SEC`) and the SAME slot (`retry_at`, which exists precisely to
+      mean "try sooner" without touching the canonical cadence, F113's "NEVER touch
+      next_run_at"). No second table, no second predicate, no new config.
+    THE_CAP_IS_THE_PART_THAT_COULD_HAVE_BACKFIRED: >-
+      The claim query reads `CASE WHEN retry_at IS NOT NULL THEN retry_at <= ? ELSE
+      next_run_at <= ? END`, so `retry_at` MASKS `next_run_at`. An uncapped ladder rung landing
+      after the next slot would DELAY the very schedule this protects - a fix that made things
+      worse for frequent jobs. So a retry is armed only when it lands strictly earlier, and an
+      hourly job keeps its hour. Found by reading the claim query rather than by a test
+      failing.
+    an_EXISTING_test_had_to_change_and_it_is_recorded: >-
+      `test_f60_rearm_recurring_on_failure` asserted `retry_at is None` after the re-arm. That
+      described the implementation of the day, not F-60's guarantee - which is that the job
+      does not go dark and the cadence survives, both still asserted. The line was replaced
+      with the invariant that still holds and must: an armed retry is strictly before the
+      cadence slot. Weakening it to nothing would have removed the only guard on the masking
+      hazard above.
+    mutation_proven: >-
+      Three mutants, each caught by the test that owns its property, restored from a file copy:
+      dropping the permanence check (the no-decay failure) took 2 red INCLUDING the pre-existing
+      F-60 one-shot test; dropping the cadence cap took the frequent-job test; advancing
+      `next_run_at` instead of arming `retry_at` took the cadence-untouched test. 565 passed
+      across tests/scheduler.
+    what_else_the_cause_reaches: >-
+      A fix written for the branch where the damage was VISIBLE, left off the branch where the
+      same damage is silent. The one-shot lost its row and someone counted 54 of them; the
+      recurring job lost only an occurrence, and nothing counts those - the 17 above had to be
+      recovered from a log line whose own text calls the re-arm a success. The generalisable
+      form: when a repair is conditioned on a SHAPE (one-shot vs recurring) rather than on the
+      CAUSE (was this failure transient?), the branch that was not in front of you keeps the
+      bug.
   - id: DEBT-143
     closing_check: |-
       # BOUNDED BY ROW ID, not by shape and not by date. id > 130840 is the pre-fix
