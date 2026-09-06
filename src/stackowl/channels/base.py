@@ -35,6 +35,25 @@ class ChannelAdapter(ABC):
     @abstractmethod
     def channel_name(self) -> str: ...
 
+    @property
+    def surface(self) -> str:
+        """WHAT the user is actually looking at, when that differs from the channel.
+
+        For almost every adapter these are the same thing and this default is correct:
+        the surface of the Telegram adapter is Telegram. It exists because ONE channel
+        name covers TWO surfaces — `cli` is both the Textual TUI and the headless
+        no-terminal adapter — and `channel_name` cannot distinguish them because it is
+        the ROUTING identity: consent provenance, the clarify gateway, proactive
+        delivery and browser/sessions.py all key on it.
+
+        Defaulting to `channel_name` rather than to a placeholder is deliberate. A
+        default of "unknown" would mean an adapter that forgot to answer looks
+        identical to one that genuinely has nothing to add, which is the silent-fallback
+        shape this codebase keeps paying for. Every adapter has an honest answer here
+        by construction.
+        """
+        return self.channel_name
+
     @abstractmethod
     async def receive(self) -> IngressMessage:
         """Block until the next user message is available."""

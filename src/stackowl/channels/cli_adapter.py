@@ -122,6 +122,25 @@ class CLIAdapter(ChannelAdapter):
     def channel_name(self) -> str:
         return "cli"
 
+    @property
+    def surface(self) -> str:
+        """WHICH cli surface this is — "tui" or "raw" — alongside the routing name.
+
+        D13.1 asks "which surfaces matter?" and the platform could not answer it about
+        its own two terminal surfaces: this adapter and `HeadlessCliAdapter` both answer
+        ``channel_name == "cli"``, and they MUST. That string is the routing identity —
+        consent provenance reads it through `_gateway_channels()`, the clarify gateway
+        registers under it, proactive delivery addresses it, and browser/sessions.py
+        branches on it. Renaming to report better would be a security-relevant change
+        made for a reporting reason.
+
+        So the surface rides ALONGSIDE the identity, never instead of it. It is DERIVED
+        from the `_mode` the constructor already chose rather than set independently: a
+        second string free to disagree with the behaviour it describes is the
+        two-copies-of-one-rule shape, and this one would disagree silently.
+        """
+        return "tui" if self._mode == "fullzone" else "raw"
+
     def _next_request_id(self) -> str:
         """Mint a unique, non-empty request_id (= trace_id) for this session.
 
@@ -303,6 +322,12 @@ class HeadlessCliAdapter(ChannelAdapter):
     @property
     def channel_name(self) -> str:
         return "cli"
+
+    @property
+    def surface(self) -> str:
+        """No terminal at all — see :meth:`CLIAdapter.surface` for why this sits beside
+        `channel_name` rather than replacing it."""
+        return "headless"
 
     async def run(self) -> None:
         """Park until cancelled. NOT a poll loop — that would move the spin, not

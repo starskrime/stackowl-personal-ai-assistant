@@ -11339,6 +11339,38 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_152_which_surfaces_matter_and_is_a_dashboard_worth_building:
+      raised: 2026-09-06
+      question: >-
+        D13.1's Ask, verbatim: "Which surfaces matter? A dashboard is often what makes a
+        platform feel real to non-terminal users." The reference platform has six surfaces;
+        we have three. Do you want a non-terminal surface, and if so which?
+      why_evidence_cannot_settle_it: >-
+        It is product intent about who the platform is FOR. Usage data can say what HAS been
+        used; it cannot say what you would use if it existed, and every surface here was
+        built before there were users to measure.
+      the_measurement_to_decide_on: >-
+        Turns carried across the whole retained window: telegram 65, cli 8, rca 112
+        (autonomous, not a surface). SLACK, DISCORD AND WHATSAPP ARE BUILT AND HAVE CARRIED
+        ZERO — three adapters, no traffic, the same shape as ESC-143's three unused
+        protocols. There is NO non-terminal surface at all. And `cli` was two surfaces
+        sharing one name until this item; it is now distinguishable, so the question can be
+        re-measured honestly from the next boot onward.
+      recommendation: >-
+        Decide the three unused messaging adapters FIRST, before adding a fourth surface.
+        "Retired means deleted" points at removing what has never carried a turn; the
+        counter-argument is that they are cheap and a future user may want Slack. That is
+        your call, not a measurement. On the dashboard itself: if it is wanted, the
+        reference platform's shape is the one to copy — it embeds its REAL TUI over a PTY
+        WebSocket rather than reimplementing the chat UI, which is also what D13.2's "do not
+        rebuild the chat experience" rule asks for.
+      blocked_until_answered: >-
+        D13.2, D13.3 and D13.4 (the chat-experience rule, TUI transport, editor/ACP
+        integration) all presuppose an answer about which surfaces exist. Nothing else is
+        blocked; D13.1's measurable half shipped.
+      premise_check: |-
+        n=$(grep -ah 'turn context composed' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | grep -c '"channel": "\(slack\|discord\|whatsapp\)"')
+        [ "$n" -gt 0 ] && echo "EXPIRED an unused adapter has now carried $n turn(s)" || echo "HOLDS slack/discord/whatsapp still at zero turns"
     ESC_150_does_runs_anywhere_matter_when_confined_execution_is_already_gated_shut:
       resolution: >-
         ANSWERED 2026-09-05: GRANT CONFINED RUNS UNATTENDED. A bwrap/Docker run becomes autonomously grantable; unconfined `shell` keeps needing a human. NOT YET IMPLEMENTED — it relaxes the consent gate so code executes unattended, and that design should be seen before it ships. He did NOT pick remote backends, so SSH/Modal/Daytona stay unbuilt; D06.1's document already records what they would have to satisfy. UNBLOCKS D06.1 implement and D06.2 once built.
@@ -29757,6 +29789,14 @@ items:
     notes: null
 
   - id: D13.1
+    closing_check: |-
+      # ASSERTS A REAL SURFACE VALUE, not merely that the field exists. Written twice:
+      # counting the boot LINE returned 27 (it fires every boot regardless), and asking
+      # for the field PRESENCE returned 2 - both artefacts of my own half-finished edits
+      # that CodeWatcher picked up mid-item, one logging surface "unknown" and one a bare
+      # "cli". The field existing is not the field being right.
+      n=$(./scripts/log_since.sh 2026-09-06 'starting CLI adapter.*"surface": "\(tui\|headless\|raw\|socket:\)')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n boot(s) named a real surface" || echo "OPEN 0 boots have named a real surface since 2026-09-06 - the final code is not yet the running code"
     title: "Surface count"
     domain: D13
     verdict: PARTIAL
@@ -29770,17 +29810,58 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   partial
+      document:   done
+    doc: docs/reference-mapping/designs/D13.1.md
+    doc_last_verified: "2026-09-06 against commit c5716724 — Verification RUN: 9 passed; 1118 passed 0 failed; rca 112 / telegram 65 / cli 8"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        THE ASK IS PRODUCT INTENT AND IS ESCALATED (ESC-152), but the measurable half was
+        answered and it found a defect. Turns carried across the whole retained window:
+        telegram 65, cli 8, rca 112 (autonomous). SLACK, DISCORD AND WHATSAPP HAVE CARRIED
+        ZERO — three adapters built and never used, the same shape as ESC-143.
+      - >-
+        AND `cli` IS NOT ONE SURFACE. `CLIAdapter` (the 4-zone Textual TUI) and
+        `HeadlessCliAdapter` (no terminal at all) both answer `channel_name == "cli"`, and
+        they MUST: that string is the ROUTING identity, read by consent provenance through
+        `_gateway_channels()`, by the clarify gateway, by proactive delivery and by
+        browser/sessions.py. Renaming it to report better would be a security-relevant
+        change made for a reporting reason. `ChannelAdapter.surface` was added ALONGSIDE it,
+        DERIVED from the `_mode` the constructor already chose rather than set separately.
+      - >-
+        THE DISTINCTION WAS ALREADY COMPUTED AND THROWN AWAY. `CLIAdapter.__init__` sets
+        `_mode` to "fullzone" or "raw" and logs it at DEBUG. The INFO line named no surface,
+        so the only way to tell was SUBTRACTION: 815 `starting CLI adapter` lines minus 195
+        "stdin is not a TTY" lines implied 620 TUI boots. A fact reachable only by knowing
+        which two numbers to subtract is not a fact the record carries — DEBT-126 one item
+        earlier, same shape.
+      - >-
+        THE LIVE LOG FOUND A THIRD BINDING I HAD NOT SEEN. orchestrator.py:2110 binds
+        `SocketChannelAdapter(core_conn, channel_name="cli")` in the split-process CORE role,
+        the branch most boots here actually take, and under the base default it reported a
+        bare "cli" — reading as "a cli surface with nothing to add" when no terminal is
+        attached to that process at all. It now says `socket:<channel>`. That gateway+core
+        pairing is why boot markers appear twice in these logs, which has made more than one
+        count in this programme read as double what it was.
+      - >-
+        THE CLOSING CHECK HAD TO BE WRITTEN TWICE AND THAT IS THE LESSON. Counting the boot
+        LINE returned 27 immediately — it fires every boot regardless of the field. Asking
+        for the field PRESENCE returned 2, and both were artefacts of my own half-finished
+        edits picked up by CodeWatcher mid-item: one boot logged surface "unknown" (a getattr
+        default I briefly had) and one a bare "cli" (the base default, before the socket
+        override). The field existing is not the field being right. DEBT-125 was about
+        scoping to a DATE; this is the same rule one level deeper — scope to a VALUE.
+      - >-
+        Three mutants from file copies, each verified APPLIED: surface hardcoded so it
+        ignores `_mode`, the boot line dropping the field, and the contract default replaced
+        by a placeholder. All caught, restored, re-run green. 9 tests here; tests/channels
+        tests/startup tests/tui 1118 passed. ruff 35, mypy 65.
     notes: null
 
   - id: D13.2

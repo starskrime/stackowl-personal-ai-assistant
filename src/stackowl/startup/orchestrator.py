@@ -4155,7 +4155,18 @@ class StartupOrchestrator:
             )
 
         # 4. STEP — start the CLI loop and block on the adapter
-        log.info("[startup] gateway: starting CLI adapter")
+        # NAME THE SURFACE. Until 2026-09-06 this line said only that a CLI adapter
+        # started, and the two cli surfaces — the Textual TUI and the headless
+        # no-terminal adapter — are indistinguishable by `channel_name` because that
+        # string is the ROUTING identity and must stay "cli" for both. The only way to
+        # tell them apart was SUBTRACTION: 815 of these lines minus 195 "stdin is not a
+        # TTY" lines implies 620 TUI boots. A fact reachable only by knowing which two
+        # numbers to subtract is not a fact the record carries, and D13.1's whole Ask is
+        # "which surfaces matter?".
+        log.info(
+            "[startup] gateway: starting CLI adapter",
+            extra={"_fields": {"surface": adapter.surface}},
+        )
         # CORE's driver is the inbound-frame loop (no TUI to receive from);
         # mono/gateway drive the channel-receive loop. Both submit via turn_client.
         loop_task = asyncio.create_task(

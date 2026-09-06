@@ -69,6 +69,21 @@ class SocketChannelAdapter(ChannelAdapter):
         self._inbox: asyncio.Queue[IngressMessage] = asyncio.Queue()
 
     @property
+    def surface(self) -> str:
+        """``socket:<channel>`` — this is the CORE proxying a channel the GATEWAY holds.
+
+        The base default (``channel_name``) would report a bare "cli" here, which reads
+        as "a cli surface with nothing to add" when the truth is a third, distinct
+        answer: no terminal is attached to THIS process at all; it is the split-process
+        core talking to the gateway over a socket.
+
+        That distinction is not cosmetic — it is why boot markers appear in PAIRS across
+        this deployment's logs (gateway + core), which has made more than one count in
+        this programme read as double what it was.
+        """
+        return f"socket:{self.channel_name}"
+
+    @property
     def channel_name(self) -> str:
         return self._channel
 
