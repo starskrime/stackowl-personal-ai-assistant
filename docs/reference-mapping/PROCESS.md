@@ -213,6 +213,33 @@ Not negotiable, from Bakir's long-standing preferences. The full list is `rules`
   Bakir runs a single LiteLLM gateway; his users run a hundred different backends. Code that
   branches on who the provider is will be wrong for one of them.
 - No hardcoded English keyword lists. Cross-platform. Runs on all hardware.
+
+### A surface never owns the conversation
+
+**Adopted 2026-09-06 (D13.2), before surface #4 rather than after it.**
+
+A surface — TUI, CLI, Telegram, Slack, a dashboard, an editor plug-in — turns input into an
+`IngressMessage` and renders `ResponseChunk`s. That is its whole job. Sessions, transcript,
+tool loop, model calls and slash routing live behind the `ChannelAdapter` seam, and there is
+exactly ONE turn entry point.
+
+**The one exception, and it is narrow.** A surface may build the minimal `PipelineState` a
+slash COMMAND needs, because commands dispatch through one `CommandRegistry` that every
+surface shares — `channels/slack/slash_bridge.py` and `channels/telegram/command_buttons.py`
+do exactly this and nothing more. A surface may never build state to RUN A TURN: that is a
+second conversation, and the second one is where the transcript, the session and the tool
+loop quietly fork.
+
+**Why this is adopted while we have no dashboard.** The reference platform reached the same
+rule from the other direction — its dashboard EMBEDS the real TUI through a PTY rather than
+reimplementing the chat in React — and its value is entirely in being decided before the
+surface exists. Ours is stated about the seam instead of about embedding, because our
+conversation was never in the TUI to embed.
+
+The payoff is the same one their PTY buys: **anything added to the pipeline appears on every
+surface automatically.** Enforced by
+`tests/channels/test_a_surface_never_owns_the_conversation.py`, so it is a check rather than
+an intention.
   *Bitten on 2026-08-08:* the skill standard's "don't instruct raw shell" rule matched bare
   `\b(grep|sed|awk|cat|ls|find)\b` anywhere in a document, so **"Use this to find the failing
   job"** was a shell instruction. It rejected a valid rewrite in the first live migration batch.

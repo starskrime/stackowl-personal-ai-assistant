@@ -29956,17 +29956,67 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  done
+      cleanup:    no_change_needed
+      test:       done
+      validate:   no_change_needed
+      document:   done
+    doc: docs/reference-mapping/designs/D13.2.md
+    doc_last_verified: "2026-09-06 against commit 891b6456 — Verification RUN: 5 passed; 782 passed 0 failed; the rule is present once in PROCESS.md"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        I HAD CALLED THIS BLOCKED AND IT WAS NOT. Three D13 items were noted as waiting on
+        ESC-152; re-reading them, only D13.4 (is coding-in-editor part of the vision?) is
+        genuinely product intent. D13.2 asks to ADOPT A RULE, which is worth most before the
+        surface decision rather than after it, and D13.3 is derivable. The blocking claim was
+        mine, made in passing, and correcting it is the reason this item could be worked.
+      - >-
+        ADOPTED, AND THE TIMING IS THE POINT. A rule about surface sprawl is worth almost
+        nothing once surface #4 exists with its own transcript, and a great deal while there
+        are three and the property still holds by accident. ESC-152 is open on whether to
+        build a dashboard; whatever that answer is, the sprawl is now bounded before the work
+        starts.
+      - >-
+        WE COULD NOT COPY THEIR MECHANISM, and the reason is structural. Their dashboard
+        EMBEDS the TUI over a PTY because their chat LIVES in the TUI. Ours never did — it
+        lives behind the ChannelAdapter seam — so our rule is about the SEAM: a surface turns
+        input into an IngressMessage and renders ResponseChunks, and sessions, transcript,
+        tool loop, model calls and slash routing sit behind that line. Same guarantee, and
+        cheaper to keep: implementing ChannelAdapter is the path of least resistance, so
+        obeying the rule is easier than breaking it.
+      - >-
+        MEASURED — the tree already obeys it, which is why locking it now costs nothing.
+        IngressMessage is constructed in 10 modules (7 under channels/, plus 3 declared
+        intake-path modules); there is ONE turn entry point, `_dispatch_turn`, which
+        pipeline/durable/agent_task.py SHARES behind a generic _IntakeAdapter rather than
+        opening a second; and exactly 2 channels/ modules build a PipelineState —
+        slack/slash_bridge.py (6 registry references, 0 pipeline-runner) and
+        telegram/command_buttons.py (5 and 0), both dispatching a slash command through the
+        one CommandRegistry. For contrast objectives/driver.py builds turn state with ZERO
+        registry references: an autonomous driver legitimately running a turn, which is not a
+        surface.
+      - >-
+        THE EXCEPTION IS THE RULE CONTENT. A surface may build the minimal state a COMMAND
+        needs, because commands dispatch through one registry every surface shares. It may
+        never build state to run a TURN — that is a second conversation, and the second one is
+        where the transcript, the session and the tool loop quietly fork.
+      - >-
+        WRITTEN WHERE IT IS READ AND ENFORCED WHERE IT MATTERS. The rule is in PROCESS.md's
+        standing rules and a tripwire asserts it is still there — a rule enforced only by a
+        test is invisible to the human it is for. Three mutants, each verified applied and
+        then removed: a new channels/ module building turn state and calling a pipeline runner
+        (2 assertions fired), a module outside the seam constructing an IngressMessage (1),
+        and the rule heading deleted from PROCESS.md (1). The suite also carries a vacuity
+        control (>=8 ingress builders, >=5 in channels/) so a discovery returning nothing
+        cannot pass by measuring an empty set.
+      - >-
+        validate is no_change_needed: this item changed no runtime behaviour — a static
+        architectural property, checked at test time. A violation is a code change, not an
+        event, so there is nothing a restart could show. tests/channels tests/startup 782
+        passed.
     notes: null
 
   - id: D13.3
