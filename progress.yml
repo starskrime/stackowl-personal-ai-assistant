@@ -14530,6 +14530,20 @@ known_debt:
       failed read cannot pass as a clean one. That is the second time in two loops that
       mutation testing caught a guard of mine that could not fail, and both times the
       signal was the mutant surviving rather than any review.
+    validate: >-
+      PARTIAL. Live at 08:16:43 against a 08:16:06 commit with 0 ERRORs; migration 0139
+      applied (139 rows, last three 0137/0138/0139) and all four user goals now read
+      replay_missed=1 with zero non-cronjob rows touched. What is NOT yet evidenced is the
+      EFFECT: a recurring job actually replaying a missed run. That needs a miss to happen
+      while the platform is down or the provider unreachable at the slot.
+    closing_check: |
+      # The replay line could not distinguish a recurring replay from a one-shot, and a
+      # one-shot replays regardless — so a bare grep would be satisfied by the branch
+      # this item did NOT change (the D15.6 false-positive shape). A `recurring` field
+      # was added FIRST so the check can name the branch that only DEBT-136 made
+      # reachable.
+      n=$(./scripts/log_since.sh 2026-09-06 'replaying missed job.*"recurring": true')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n recurring job(s) replayed a missed run" || echo "OPEN 0 recurring replays since the fix shipped; the flag and migration ARE live-evidenced"
     mutation_tested: >-
       Three mutants, all caught after the control was repaired: dropping the writer from
       one call site fires the writer test, adding the flag to assembly.py fires the

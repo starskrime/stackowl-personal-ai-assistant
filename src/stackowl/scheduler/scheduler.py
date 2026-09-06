@@ -1038,7 +1038,18 @@ class JobScheduler(SupervisedTask):
             if (job.replay_missed or not self._is_recurring(job)) and inside_window:
                 log.scheduler.info(
                     "[scheduler] recover: replaying missed job",
-                    extra={"_fields": {"job_id": job.job_id}},
+                    extra={"_fields": {
+                        "job_id": job.job_id,
+                        # WHICH BRANCH REPLAYED IT. A one-shot replays regardless;
+                        # a RECURRING job replays only because `replay_missed` is
+                        # set, which nothing could set until DEBT-136. Without this
+                        # field the two are indistinguishable in the logs and any
+                        # check for "the flag now does something" would be
+                        # satisfied by a one-shot — a false positive of exactly the
+                        # D15.6 shape.
+                        "recurring": self._is_recurring(job),
+                        "replay_missed": job.replay_missed,
+                    }},
                 )
                 await self._run_job(job)
                 replayed += 1
