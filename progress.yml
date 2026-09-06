@@ -11434,6 +11434,18 @@ current:
         D13.2, D13.3 and D13.4 (the chat-experience rule, TUI transport, editor/ACP
         integration) all presuppose an answer about which surfaces exist. Nothing else is
         blocked; D13.1's measurable half shipped.
+      also_decided_by_this_answer_D13_4_editor_ACP: >-
+        Added 2026-09-06. D13.4 asks "is coding-in-editor part of the vision, or is StackOwl a
+        life/ops assistant?" — an ACP server is surface #4 by another name, so it is one
+        specific answer to the question above rather than a separate one. THE MEASUREMENT TO
+        DECIDE ON, from task_outcomes.tool_sequence (84 tools, 29,142 uses): research is 57%
+        (web_search 9,831 + web_fetch 6,850); coding tools are 16.4% but 3,088 of that is
+        `shell` and 942 `read_file` — running and reading. AUTHORING, which is what an editor
+        serves, is 258 uses (0.9%): write_file 228, apply_patch 20, edit 10. `claude_code` has
+        4 uses and `git` has ZERO, ever. If an editor surface is wanted, D13.2's rule says it
+        arrives as a ChannelAdapter, not as a second agent with its own permission model —
+        their ACP adapter brings its own auth, edit approval, permissions and provenance,
+        four subsystems this platform already has.
       also_decided_by_this_answer_D14_5_theming: >-
         Added 2026-09-06. D14.5 asks "personality-as-product — matters for Jarvis for
         everyone?" and that is the SAME decision seen from the other end: terminal-only for
@@ -30099,17 +30111,51 @@ items:
     blocks: []
     dedup_target: null
     stages:
-      brainstorm: not_started
-      architect:  not_started
-      implement:  not_started
-      cleanup:    not_started
-      test:       not_started
-      validate:   not_started
-      document:   not_started
-    doc: null
-    doc_last_verified: null
+      brainstorm: done
+      architect:  done
+      implement:  no_change_needed
+      cleanup:    no_change_needed
+      test:       no_change_needed
+      validate:   no_change_needed
+      document:   done
+    doc: docs/reference-mapping/designs/D13.4.md
+    doc_last_verified: "2026-09-06 against commit c54556f8 — Verification RUN: total 29142, authoring 258, git 0, claude_code 4; the log trap returns 629 across the full glob"
     decisions: []
-    changes: []
+    changes:
+      - >-
+        THE ASK IS VISION AND IS NOT ANSWERED HERE. What the measurement settles is what the
+        platform actually does with its hands. From `task_outcomes.tool_sequence` — the same
+        store the platform's own usage_report reads — 84 distinct tools, 29,142 total uses.
+        RESEARCH dominates: web_search 9,831 + web_fetch 6,850 = 16,681, 57% of everything.
+      - >-
+        "CODING TOOLS: 16.4%" IS TRUE AND MISLEADING, which is why the split matters. Of 4,788
+        coding-tool uses, shell is 3,088 and read_file 942 — running and reading, i.e. OPS.
+        AUTHORING, the thing an editor integration exists to serve, is write_file 228 +
+        apply_patch 20 + edit 10 = 258 uses, 0.9% of all tool activity. `claude_code`, whose
+        entire purpose is driving a coding agent, has FOUR. `git` has ZERO, ever. The platform
+        reads, searches, runs commands and remembers; it edits files rarely and versions them
+        never.
+      - >-
+        THE INSTRUMENT WAS WRONG TWICE AND BOTH WRONG ANSWERS WERE CONFIDENT. Grepping
+        `"tool": "X"` over the logs put `run_claude_code_demo` TOP at 629 — a tool the
+        platform's own report lists as NEVER INVOKED; those 629 are
+        `registry.register: thin tool description` warnings emitted at boot for every
+        registered tool. Then `[pipeline] execute: tool dispatch ok` returned 0, because it is
+        `log.engine.debug` at execute.py:2314 and production runs at INFO — THE LOGS CANNOT
+        ANSWER THIS QUESTION AT ALL. The store can, and does.
+      - >-
+        AND THE VERIFICATION COMMAND DISAGREED WITH ITS OWN PROSE on first writing: it grepped
+        `stackowl.jsonl` (today) and returned 26 while the text claimed 629 (the full glob).
+        Corrected to the glob that produced the number. A count is not a count until its
+        window is stated — DEBT-125's lesson, met again from a different direction.
+      - >-
+        DECISION ESCALATED UNDER ESC-152 RATHER THAN AS A NEW ENTRY. An ACP server is surface
+        #4 by another name, and ESC-152 already asks "do you want a non-terminal surface, and
+        if so which?" — an editor plug-in is one specific answer to that. Stated plainly for
+        whoever answers: an editor integration serves AUTHORING, and authoring is 0.9% of what
+        this platform does. Not an argument that coding does not matter — 4,788 uses is real
+        work — but that work is READING AND RUNNING, which an editor does not improve, rather
+        than writing in a project, which it does.
     notes: null
 
   - id: D14.1
