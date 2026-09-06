@@ -1102,8 +1102,8 @@ channels are the operator's to keep or retire. See `designs/D12.3.md`.
 **Hermes.** `gateway/stream_consumer.py` — bridges sync agent callbacks to async delivery: queue the
 deltas, then **progressively edit a single message** via the edit transport (universally supported
 on Telegram/Discord/Slack), rate-limited and buffered. Plus draft streaming where supported.
-**StackOwl.** `ResponseChunk` with `kind=answer|progress` and a progress renderer.
-**Ask.** Do we edit-in-place, or post successive messages? (Affects flood-control, which has bitten us.)
+**StackOwl.** *(re-measured 2026-09-06.)* **We already edit in place.** `TelegramProgressView` drives ONE status message per turn through the edit transport, rate-limited under Telegram's ~1 edit/sec cap and coalesced, with the answer delivered as a separate clean message and the status collapsed to a footer (plus `abort()`, an honest failure footer they have no equivalent for). Successive messages happen only for an answer past the 4096-char cap. The old line here — "`ResponseChunk` with `kind=answer|progress` and a progress renderer" — described the plumbing, not the behaviour.
+**Ask.** ~~Do we edit-in-place, or post successive messages?~~ **ANSWERED: edit-in-place.** The item was never a design gap but an OBSERVABILITY one — the streaming path's only log lines sat on failure branches, so its sole production trace was 4 ERRORs saying an edit FAILED. Instrumented 2026-09-06; see `designs/D12.4.md`.
 
 ### D12.5 · Turn lease / concurrency correctness — `PARITY`
 **Hermes.** `gateway/turn_lease.py` — serializes the load→run→flush region **per session_id**, because

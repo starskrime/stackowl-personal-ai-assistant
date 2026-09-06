@@ -78,6 +78,14 @@ class TelegramProgressView:
         self._current_text: str | None = None
         self._progress_count = 0
         self._ticker_task: asyncio.Task[None] | None = None
+        # Counters behind the per-turn summary. They exist because the ANSWER to
+        # "edit in place, or successive messages?" is a ratio (one message, N
+        # edits) and the flood-control half of it is a total (every Bot API call
+        # a turn spends). Neither is derivable from the failure-only WARNINGs
+        # this module used to be observable through.
+        self._edits_applied = 0
+        self._edits_suppressed = 0
+        self._typing_calls = 0
 
     # -- lifecycle ----------------------------------------------------------- #
 
@@ -128,16 +136,23 @@ class TelegramProgressView:
         """Stop the ticker and collapse the status into a '✓ done in Ns' footer."""
         await self.stop()
         if self._status_message_id is None:
-            return  # nothing was ever shown (fast turn) — leave the chat clean
+            # Nothing was ever shown (fast turn) — leave the chat clean, but SAY
+            # so: api_calls=0 is the flicker guard working, and reporting only
+            # the branch that showed something would make the cheapest turns the
+            # invisible ones.
+            self._log_turn_summary("never_shown")
+            return
         try:
             elapsed = int(round(self._clock() - self._started_at))
             footer = vocabulary.done_footer(elapsed, self._lang)
             await self._edit_status(self._chat_id, self._status_message_id, footer)
+            self._edits_applied += 1
         except Exception as exc:  # noqa: BLE001
             log.telegram.warning(
                 "[telegram] progress.settle: footer edit failed — continuing",
                 exc_info=exc, extra={"_fields": {"chat_id": self._chat_id}},
             )
+        self._log_turn_summary("settled")
 
     async def abort(self) -> None:
         """Stop the ticker and mark the status honestly FAILED.
@@ -149,14 +164,57 @@ class TelegramProgressView:
         """
         await self.stop()
         if self._status_message_id is None:
+            self._log_turn_summary("never_shown")
             return  # nothing was ever shown — leave the chat clean
         try:
             elapsed = int(round(self._clock() - self._started_at))
             footer = vocabulary.abort_footer(elapsed, self._lang)
             await self._edit_status(self._chat_id, self._status_message_id, footer)
+            self._edits_applied += 1
         except Exception as exc:  # noqa: BLE001
             log.telegram.warning(
                 "[telegram] progress.abort: footer edit failed — continuing",
+                exc_info=exc, extra={"_fields": {"chat_id": self._chat_id}},
+            )
+        self._log_turn_summary("aborted")
+
+    def _log_turn_summary(self, outcome: str) -> None:
+        """ONE INFO line per turn describing what the streaming path spent.
+
+        THIS IS THE EVIDENCE FOR D12.4's ASK and it is deliberately at INFO:
+        production runs at INFO, and the only prior trace of edit-in-place was
+        four ERROR lines saying an edit FAILED. A claim whose sole evidence is
+        its own failure branch is unanswerable by any volume of traffic.
+
+        One line per TURN, not per edit — at ~1 edit/sec a 50s turn would emit
+        fifty lines to state one ratio. `messages_sent` against `edits_applied`
+        is the edit-in-place answer; `api_calls` is the flood-control answer.
+
+        Best-effort like everything else here: a summary that could raise would
+        turn an observability line into a way to lose a turn.
+        """
+        try:
+            elapsed = int(round(self._clock() - self._started_at))
+            messages_sent = 1 if self._status_message_id is not None else 0
+            log.telegram.info(
+                "[telegram] progress.turn: streaming summary",
+                extra={
+                    "_fields": {
+                        "chat_id": self._chat_id,
+                        "outcome": outcome,
+                        "messages_sent": messages_sent,
+                        "edits_applied": self._edits_applied,
+                        "edits_suppressed": self._edits_suppressed,
+                        "typing_calls": self._typing_calls,
+                        "progress_events": self._progress_count,
+                        "api_calls": messages_sent + self._edits_applied + self._typing_calls,
+                        "elapsed_s": elapsed,
+                    }
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — observability never breaks a turn
+            log.telegram.warning(
+                "[telegram] progress.turn: summary failed — continuing",
                 exc_info=exc, extra={"_fields": {"chat_id": self._chat_id}},
             )
 
@@ -203,8 +261,10 @@ class TelegramProgressView:
         if self._status_message_id is None:
             return
         if self._last_edit_at is not None and (now - self._last_edit_at) < self._edit_min_interval_s:
+            self._edits_suppressed += 1  # coalesced: this is what keeps us under the cap
             return
         await self._edit_status(self._chat_id, self._status_message_id, self._decorated_text(now))
+        self._edits_applied += 1
         self._last_edit_at = now
 
     async def _maybe_typing(self, now: float) -> None:
@@ -213,6 +273,7 @@ class TelegramProgressView:
             or (now - self._last_typing_at) >= self._typing_reissue_interval_s
         ):
             await self._send_typing(self._chat_id)
+            self._typing_calls += 1
             self._last_typing_at = now
 
     def _decorated_text(self, now: float) -> str:

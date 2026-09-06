@@ -30624,29 +30624,15 @@ items:
       Their only callers are tests.
   - id: D12.4
     closing_check: |-
-      # NOT A LOG COUNT, and the first two attempts at one were both wrong. An
-      # unbounded grep was caught by the guard in
-      # tests/audit/test_a_closing_check_cannot_be_satisfied_by_history.py; bounding
-      # it then reported CLOSEABLE on 4 hits which, read by hand, are ALL the line
-      # "[telegram] adapter.edit_message: edit failed - fail open". Counting a
-      # FAILURE as evidence that in-place editing works is the denominator error
-      # twice in one day. There is no INFO line for a SUCCESSFUL edit at all - entry
-      # is DEBUG - so the behaviour is unobservable from the logs as they stand.
-      #
-      # And the deeper reason a behaviour check cannot settle this: unlike its
-      # neighbours, D12.4 has NO SHIPPED CHANGE. The map Ask (edit in place, or post
-      # successive messages) is still unanswered and the record is empty, so there is
-      # nothing whose effect could be measured. The honest check is the state of
-      # record itself.
-      uv run python - <<'PY'
-      import yaml
-      item = next(i for i in yaml.safe_load(open("progress.yml"))["items"]
-                  if i["id"] == "D12.4")
-      has = any(item.get(f) for f in ("doc", "changes", "decisions", "notes"))
-      print("CLOSEABLE the item now records evidence" if has else
-            "OPEN the map Ask is unanswered and the record is EMPTY - no doc, no "
-            "changes, no decisions, no notes, so there is no shipped change to validate")
-      PY
+      # Keyed on "progress.turn: streaming summary" - a message this item INTRODUCED.
+      # The old code could not emit it: the streaming path logged only failure
+      # WARNINGs, which is the whole defect. So a single hit proves the NEW code ran,
+      # and its fields answer the Ask outright (messages_sent vs edits_applied).
+      # NOT keyed on "edit_message" - that line predates the fix and its only
+      # production hits are the 4 ERRORs, which is the denominator error this item
+      # was found by.
+      n=$(./scripts/log_since.sh 2026-09-06 'progress.turn: streaming summary')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n streamed turn(s) reported their own shape" || echo "OPEN 0 telegram turns since the instrumentation shipped; the code IS live-evidenced"
     title: "Streaming to chat platforms"
     domain: D12
     verdict: PARTIAL
@@ -30667,11 +30653,52 @@ items:
       test:       done
       validate:   partial
       document:   done
-    doc: null
-    doc_last_verified: null
-    decisions: []
-    changes: []
-    notes: null
+    doc: docs/reference-mapping/designs/D12.4.md
+    doc_last_verified: 2026-09-06 @ b78670d6
+    decisions:
+      - >-
+        EDIT-IN-PLACE, CONFIRMED AND UNCHANGED. `TelegramProgressView` drives ONE status
+        message per turn through the edit transport, rate-limited under Telegram's ~1
+        edit/sec cap, with the answer delivered as a separate clean message and the status
+        collapsed to a footer. That is the reference platform's design at the same seam. The
+        one place we genuinely post SUCCESSIVE messages is a long answer past Telegram's
+        4096-char cap, where `TelegramMessageSplitter` splits and `part_count` says how far.
+      - >-
+        THE ITEM WAS NEVER A DESIGN GAP. It was an OBSERVABILITY gap that made the Ask
+        unanswerable, which is why six stages stood over an empty record. Measured across the
+        full retained window: `send_status` 0 lines (its success path logs nothing), every
+        `progress_render.py` line a failure WARNING, and the only production trace of
+        edit-in-place being 4 ERRORs saying an edit FAILED. A zero that means "impossible"
+        rather than "not yet".
+    changes:
+      - >-
+        `progress_render.py` - per-turn counters (`edits_applied`, `edits_suppressed`,
+        `typing_calls`) and ONE INFO line at teardown, "[telegram] progress.turn: streaming
+        summary", carrying outcome / messages_sent / edits_applied / edits_suppressed /
+        typing_calls / progress_events / api_calls / elapsed_s. Per TURN, not per edit: at ~1
+        edit/sec a 50s turn would emit fifty lines to state one ratio.
+      - >-
+        `settle()` and `abort()` now report the NEVER-SHOWN branch they used to return from.
+        A turn inside the flicker guard shows nothing, and `api_calls=0` is the number that
+        proves the guard works - reported only when something was displayed, the cheapest
+        turns would have been the invisible ones.
+      - >-
+        `adapter.py` - "send_text: decision split" promoted DEBUG -> INFO. `part_count` is
+        the successive-messages half of the same Ask, hidden by the same cause and reading
+        zero in production while answers were being split.
+      - >-
+        `tests/channels/telegram/test_the_streaming_path_says_what_it_did.py` - 7 tests.
+        Mutation-proven: demoting the summary to DEBUG (the defect itself) takes 5 of 6 red,
+        dropping the suppressed-edit counter 1, restoring the early return 1.
+    notes: >-
+      WHAT MADE THIS POSSIBLE, AND WHAT ELSE IT REACHES. A subsystem whose every log line
+      sits on a failure branch is invisible while healthy, so the only thing production can
+      ever tell you about it is that it broke. Both halves of this Ask were hidden by that
+      one cause - the status path through failure-only WARNINGs, the answer path through a
+      DEBUG level - and neither was a coincidence of this file. This is the THIRD instance in
+      the programme (D08.1's fourth acceptance check, D11.3's unlogged frame, now D12.4),
+      which makes it a class rather than three accidents: the rule that catches it is that a
+      claim's evidence line must be INFO and must be RUN before it is needed.
 
   - id: D12.5
     title: "Turn lease / concurrency correctness"

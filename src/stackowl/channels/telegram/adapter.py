@@ -756,7 +756,13 @@ class TelegramChannelAdapter(ChannelAdapter):
             )
             return None
         parts = self._splitter.split(text)
-        log.telegram.debug(
+        # INFO, not DEBUG: `part_count` IS the "successive messages" half of
+        # D12.4's Ask — a long answer over Telegram's 4096-char cap becomes N
+        # messages, and N is what flood control actually spends. At DEBUG this
+        # read zero in production while answers were being split, so the
+        # question was unanswerable by construction. One line per outbound
+        # message (~109 across the retained window) is not a volume concern.
+        log.telegram.info(
             "[telegram] adapter.send_text: decision split",
             extra={"_fields": {"part_count": len(parts)}},
         )
