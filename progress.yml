@@ -26228,6 +26228,16 @@ items:
         maximum-autonomy model, not a defect — but it is the ratio any further spend here
         should be judged against.
       - >-
+        LIVE VALIDATE, and it is PARTIAL on purpose. Restarted against b9058262: the running
+        process booted 2026-09-06T05:36:24Z against a commit at 05:35:36Z, so the new code IS
+        the code running — the check that must precede any other measurement — with 0 ERRORs
+        on that boot. The new INFO line has fired ZERO times, correctly: it needs a confined
+        run, the cage has run ONCE in the entire retained window, and that run predates the
+        line by months. The closing check is scoped to 2026-09-06 for that reason; an
+        unbounded one would report CLOSEABLE on evidence that could not have carried the
+        field, which is DEBT-125 applied to my own item. I had written `validate: done` first
+        and corrected it before committing.
+      - >-
         Three mutants from file copies, each verified APPLIED: bwrap success back to DEBUG,
         docker dropping caps_applied, and a FAILURE path demoted to debug (the control, which
         proves the suite distinguishes levels rather than asserting everything is INFO). All
