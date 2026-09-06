@@ -36,7 +36,7 @@ than brevity.
 
 > **Status:** design | building | live
 > **Map item:** D01.7
-> **Source:** `src/stackowl/<path>` (~N lines)
+> **Source:** `src/stackowl/<path>`, `src/stackowl/<other>`
 > **Config:** `<section>` in `stackowl.yaml`
 > **Last verified:** YYYY-MM-DD, against commit `<sha>`
 
@@ -151,7 +151,17 @@ expected output is what goes wrong.
    these documents.
 5. **Prose in the body, not comments in code.** If an explanation is long enough to need a
    paragraph, it belongs here with a one-line pointer from the code.
-6. **`Last verified` is a date and a commit.** Not "recently". Re-verify when you touch the
+6. **`Source` names the PATH, never the size.** This template used to say
+   `(~N lines)` and fourteen documents obliged. MEASURED 2026-09-06: THIRTEEN of the
+   fourteen were wrong, one by 630 lines — `curated.py` was recorded at 531 and had
+   grown to 1,161, so the document handed its reader a component half the real size
+   before they opened it. A line count is a MEASUREMENT and rots every time the file
+   is edited, which is the programme working; the path is a PROPERTY and does not.
+   Same finding as DEBT-150's package-wide `expect: N passed`, one level up, and the
+   fix has to be here rather than in the documents — a standard that prescribes a
+   rotting field keeps producing them however many are corrected.
+
+7. **`Last verified` is a date and a commit.** Not "recently". Re-verify when you touch the
    subsystem; if you cannot, move the status to `stale` rather than leaving a confident lie.
 
 ---

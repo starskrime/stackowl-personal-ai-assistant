@@ -14477,6 +14477,56 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-155
+    found: 2026-09-06
+    what: >-
+      THE STANDARD ITSELF PRESCRIBED A FIELD THAT CANNOT STAY TRUE. `DOC_STANDARD`'s template
+      says `> **Source:** ``src/stackowl/<path>`` (~N lines)`, so every document is asked to
+      record a MEASUREMENT that rots the moment the file is edited. Fourteen documents obliged.
+      THIRTEEN OF THE FOURTEEN WERE WRONG - `curated.py` recorded at 531 lines had grown to
+      1,161, so D08.1 handed its reader a component HALF its real size before they opened it.
+      The fourteenth was off by one; not a single count was right, and the nearest was nearest
+      by accident.
+    it_is_DEBT_150_one_level_up: >-
+      Two loops ago a package-wide `expect: N passed` rotted because ADDING A TEST is the
+      programme working. A `(~N lines)` rots because EDITING THE CODE is. There the fix was to
+      assert a shape; here the fix has to be in the STANDARD, because a template that
+      prescribes a rotting field keeps producing them however many documents are corrected -
+      correcting one copy of a rule is not correcting the rule.
+    FIVE_SPELLINGS_and_the_last_two_were_found_by_the_guard_failing: >-
+      `(437 lines)`, `(239)`, `(~93 lines)` and `(133 lines, new)` - the fourth survived the
+      first sweep because the pattern expected `(N)` or `(N lines)`, and the FIFTH,
+      `assemblers.py::LearningAssembler (~93 lines)`, survived two sweeps because the pattern
+      required the backtick to close right after `.py`. Each was found by the guard still
+      failing after a sweep I believed complete. D09.6's count is RIGHT today and was removed
+      anyway: the guard is about the shape, not about today's luck.
+    THREE_MODULE_COUNTS_WERE_ALSO_WRONG_and_one_was_RIGHT_and_kept: >-
+      Beyond the line counts, four headers pinned module/class counts. Measured: sandbox 21 ->
+      20, setup 9 -> 10, commands 34 -> 37 - all wrong, all dropped. D13.1's "4 messaging
+      adapters + cli_adapter.py" measured CORRECT (discord, slack, telegram, whatsapp;
+      SocketChannelAdapter is the IPC transport and ChannelAdapter the base) and was KEPT: it
+      names a SET, which is a property, not a size. Recorded because leaving it needed a
+      measurement rather than a shrug.
+    D01_1_re_verified_and_its_PREMISE_was_false: >-
+      The staleness report built last loop named D01.1 as the oldest (verified 2026-07-27,
+      sources changed 09-02), so this loop re-verified it. Its "Why this exists" asserted that
+      on an OpenAI-protocol gateway "prefix caching is automatic on a byte-identical prefix" -
+      and `providers/base.py` records that same sentence as "an ASSUMPTION stated as a fact",
+      unfalsifiable because returning False from `supports_cache_breakpoints` means no marker
+      is sent, so no positive can be observed, so the probe that records only positives can
+      never contradict it. THE CLAIM REMOVED ITS OWN FALSIFIER. Measured here:
+      `cached_input_tokens` is 0 across 130,865 cost records. ESC-149 (2026-09-05) decided to
+      assume it is NOT cached. The document now says the freeze is justified by the WORK it
+      avoids - measurable - and not by a discount nobody on this box can observe. Stale count
+      15 -> 14.
+    mutation_proven: >-
+      Putting a line count back into a document fires the guard; putting `(~N lines)` back into
+      DOC_STANDARD fires the root-cause test. Restored from file copies; 4 passed.
+    what_else_the_cause_reaches: >-
+      A STANDARD is a claim about every artefact that follows it, so a defect in a template is
+      multiplied by its adoption rather than contained. This one produced fourteen wrong
+      numbers from one line of guidance. The question worth carrying to the rest of
+      DOC_STANDARD and PROCESS.md: which other prescribed field records something that MOVES?
   - id: DEBT-154
     found: 2026-09-06
     what: >-
