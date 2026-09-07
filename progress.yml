@@ -17714,6 +17714,76 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-211
+    found: 2026-09-07
+    what: >-
+      D06.1 NAMED ITS OWN REOPEN TRIGGERS AND BOTH FIRED TWO DAYS AGO WITHOUT REACHING THE
+      PAGE. Its Decision read "The trigger to reopen is an answer to ESC-150, or the consent
+      posture changing so that confined execution can be granted without a human." On
+      2026-09-05 Bakir answered ESC-150 — grant confined runs unattended, notify each time —
+      and `caa01d3d` shipped it. The live validate for that change went into progress.yml
+      under a key NAMED FOR D06.1 (`docs(D06.1)` in the commit subject) and never touched
+      the D06.1 document.
+    why_not_what: >-
+      A document that writes down its own expiry condition and is not re-read when the
+      condition fires is worse than one that never wrote it, because the stated trigger
+      makes the page look self-maintaining. The cause is the same fifth-surface failure this
+      programme keeps paying for, in its sharpest form yet: the commit that invalidated the
+      document carried the document's own ID in its subject line, and still edited only
+      progress.yml. Nothing connects "this item's premise changed" to "this item's page".
+    what_else_that_cause_reaches: >-
+      Every design document that states a reopen or re-measure condition in prose.
+      doc_check's STALE report catches a SOURCE FILE moving; it cannot see a PREMISE
+      expiring, because the premise here is an operator decision recorded in progress.yml,
+      not a line of code. That gap is real and is NOT closed by this item — see the note
+      under NO_GUARD_BUILT.
+    the_decision_was_reopened_and_re_argued_not_restated: >-
+      The premise that carried the old argument is gone; a different one carries the same
+      conclusion, and the document now says so. Measured 2026-09-07 across every retained
+      log: confined runs still 1; execute_code consent still 27 deny / 1 allow, so the
+      carve-out is LIVE AND UNEXERCISED; unconfined interpreter launches 33 -> 45; shell
+      calls 205 -> 544; sandbox assemblies 950, of which one has ever run. Removing the
+      consent constraint did not make backends the constraint — which is exactly what the
+      document predicted, now tested rather than asserted. The NEW reopen trigger is a
+      FIRING, not an answer: the first unattended confined run that actually executes.
+    THE_HEADLINE_RATIO_WAS_THE_WRONG_DENOMINATOR: >-
+      D06.1 said "the confinement investment is aimed at 0.5% of code execution (1 confined
+      call against 205 shell calls, 33 of which launched an interpreter)". 1/205 is 0.5%,
+      but 205 is SHELL CALLS and the same sentence says only 33 executed code. The confined
+      share of CODE EXECUTION was 1 of 34 — 2.9%, six times the stated figure. The number
+      was computed against the population that was easy to count rather than the one the
+      sentence named, which is this programme's most expensive habit turned on its own
+      summary line. Re-measured: 2.2% of code executions, 0.18% of 545 shell calls, 0.1% of
+      950 assemblies — all three now printed side by side so the ratio cannot be quoted from
+      the wrong one. THREE surfaces carried it (D06.1, D06.3, progress.yml) and all three
+      are corrected in this change; progress.yml's is ANNOTATED rather than rewritten,
+      because it is the dated record of what was measured, and the measurement is what was
+      wrong.
+    a_dangling_subscription_that_was_already_fixed_and_I_checked_rather_than_assumed: >-
+      The boot audit reported `DANGLING event subscription
+      'consent.confined_execution_granted' — subscribed but NO module declares it as a
+      publisher` TEN times. Read as-is that is the notification half of Bakir's answer dead
+      on arrival. DATE-BOUNDED instead: all ten fall between 2026-09-05T23:22Z and
+      2026-09-06T01:50Z, and `declared_event_publishers()` already carries
+      CONFINED_EXEC_GRANTED_EVENT — the fix lifted the declaration out of a function body
+      where no test could reach it. The two most recent boots report 0 dangling over 38
+      handlers, a real denominator. Recorded because an undated count of that line would
+      have filed a resolved defect as a live one.
+    NO_GUARD_BUILT_and_the_gap_is_named: >-
+      A detector for "a document whose stated reopen condition has fired" would have to read
+      prose conditions and match them against operator decisions in progress.yml — not
+      mechanically translatable, and the same reason no guard exists for "the check names
+      the wrong event". What IS mechanical and already exists: the commit that invalidates a
+      document usually names it. `docs(D06.1)` edited progress.yml only. A guard on
+      "commit subject names Dxx.y but the diff does not touch designs/Dxx.y.md" is buildable
+      and would have caught this one — recorded as the concrete next candidate rather than
+      built here, because its false-positive rate is unmeasured and this programme does not
+      ship guards it has not aimed.
+    verification_rerun: >-
+      tests/sandbox 172 passed (was 163; D06.3 added the success-path level tests); bwrap
+      /usr/bin/bwrap and docker /usr/bin/docker both present; five log measurements re-run
+      with `-a` and, where they pick one record, `| sort` before the tail.
+    stages: {brainstorm: done, architect: done, implement: no_change_needed, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-210
     found: 2026-09-07
     what: >-
@@ -31795,7 +31865,12 @@ items:
         bwrap` 1, `chose Docker` 0, `no backend available` 0, ptc channel started 1. seccomp
         and cgroup appear ZERO times at any level in the retained logs. All this depth is
         aimed at ~0.5% of the code the platform executes (D06.1: execute_code 1 allow / 27
-        deny against shell 205 calls, 33 interpreter launches). That is the cost of the
+        deny against shell 205 calls, 33 interpreter launches). [WRONG DENOMINATOR,
+        corrected 2026-09-07 and left in place as the record: 205 is SHELL CALLS, and the
+        same parenthesis says only 33 of them executed code. Against CODE EXECUTIONS the
+        confined share was 1 of 34 = 2.9%, six times the figure stated. Re-measured
+        2026-09-07: 2.2% of code executions, 0.18% of 545 shell calls, 0.1% of 950 sandbox
+        assemblies. The conclusion is unchanged; the number is not.] That is the cost of the
         maximum-autonomy model, not a defect — but it is the ratio any further spend here
         should be judged against.
       - >-
