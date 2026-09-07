@@ -144,6 +144,22 @@ def bind_turn_context(state: PipelineState, services: StepServices) -> TurnBindi
     )
 
 
+def sync_turn_owl(owl_name: str | None) -> None:
+    """Keep the trace's owl pointed at the state's, after a step may have re-routed.
+
+    THE STATE IS AUTHORITATIVE AND THE TRACE HOLDS A COPY — defect shape 3, two
+    copies of one fact. ``bind_turn_context`` sets the copy from ``state.owl_name``
+    before any step runs; triage re-routes by returning ``state.evolve(owl_name=...)``
+    at four separate sites, and the copy never moved. Cost rows read the copy.
+
+    Called from the ONE place the state advances — right after a step returns — so a
+    fifth routing path, or a new step that re-routes, is covered without being
+    remembered. Both backends call it: fixing a single step loop would be the same
+    two-copies defect committed by the fix.
+    """
+    TraceContext.set_owl_name(owl_name)
+
+
 async def unbind_turn_context(
     bindings: TurnBindings, state: PipelineState, services: StepServices, *, backend_name: str,
 ) -> int:

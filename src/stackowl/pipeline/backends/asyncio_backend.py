@@ -14,6 +14,7 @@ from stackowl.pipeline.backends.shared import (
     bind_turn_context,
     close_step_accounting,
     run_delivery_gate,
+    sync_turn_owl,
     unbind_turn_context,
 )
 from stackowl.pipeline.progress.emitter import bind_turn_callback as bind_progress_callback
@@ -56,6 +57,9 @@ class AsyncioBackend(OrchestratorBackend):
             try:
                 async with TraceContext.span(f"step.{step_name}"):
                     current = await step_fn(current)
+                # Triage may have re-routed this turn to a different owl. The state is
+                # authoritative; the trace holds the copy that every cost row reads.
+                sync_turn_owl(current.owl_name)
                 duration_ms = (time.monotonic() - step_t0) * 1000
                 step_durations.append((step_name, duration_ms))
                 log.engine.info(

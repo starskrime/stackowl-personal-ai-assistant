@@ -186,6 +186,27 @@ class TraceContext:
             cls._parent_span_id.reset(parent_token)
 
     @classmethod
+    def set_owl_name(cls, owl_name: str | None) -> None:
+        """Point the trace at the owl that is actually RUNNING this turn.
+
+        ``start()`` binds ``owl_name`` from the state before any step has run, which
+        is the LANE's owl. Triage may then route the turn to a different one, and
+        every cost row reads this ContextVar (``providers/base.py``), so without a
+        mid-turn update the bill goes to whoever owns the lane. MEASURED 2026-09-07:
+        162 of 363 routed turns — 45% — went to an owl other than the lane's.
+
+        A blank is IGNORED rather than written. A step that carries no owl means "I
+        did not change it", never "there is no owl": losing the attribution is never
+        worth losing the row.
+
+        Sets without a token on purpose. ``reset()`` restores through the token
+        ``start()`` returned, which a later plain ``set()`` does not invalidate, so
+        teardown still puts back exactly what was there before the turn.
+        """
+        if owl_name:
+            cls._owl_name.set(owl_name)
+
+    @classmethod
     def creation_ceiling(cls) -> BoundsSpec | None:
         """The acting turn's creation_ceiling (parent ceiling for delegated children).
 

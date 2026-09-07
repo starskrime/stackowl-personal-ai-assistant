@@ -26,7 +26,12 @@ from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
 from stackowl.pipeline.backends.base import OrchestratorBackend
 from stackowl.pipeline.backends.langgraph_callbacks import LoggingCallback
-from stackowl.pipeline.backends.shared import bind_turn_context, run_delivery_gate, unbind_turn_context
+from stackowl.pipeline.backends.shared import (
+    bind_turn_context,
+    run_delivery_gate,
+    sync_turn_owl,
+    unbind_turn_context,
+)
 from stackowl.pipeline.registry import PIPELINE_STEPS, StepFn
 from stackowl.pipeline.services import StepServices, get_services
 from stackowl.pipeline.state import PipelineState, StepError, user_goal
@@ -340,6 +345,8 @@ class LangGraphBackend(OrchestratorBackend):
             current = current.evolve(pipeline_step=step_name)
             try:
                 next_state = await step_fn(current)
+                # Same sync as the asyncio loop — see shared.sync_turn_owl.
+                sync_turn_owl(next_state.owl_name)
                 return {"pipeline_state": next_state}
             except Exception as exc:
                 error_msg = format_step_error(step_name, exc)

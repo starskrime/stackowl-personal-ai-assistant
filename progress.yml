@@ -315,6 +315,74 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT164_2026_09_07_cost_was_billed_to_the_lane_owl_not_the_owl_that_ran:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-164. Found by re-verifying D01.7, the
+      oldest stale design document, and following its broken verification query into
+      D01.1's invariant.
+    HOW_IT_SURFACED: >-
+      D01.7's step 5 fails outright with `no such column: session_id` — migration 0121
+      renamed it to `conversation_id` on 2026-08-21 at the operator's instruction ("i do
+      not like how we have session_key and session_id. Lets keep only one which is
+      correct"), and the documents that teach the vocabulary were never updated. D01.1's
+      step 3 carries the same broken name, which meant D01.1's CENTRAL INVARIANT —
+      COUNT(DISTINCT prompt_hash) per conversation == 1, the frozen-prompt guarantee
+      ESC-155 rests on — had been unrunnable for three weeks.
+    THE_INVARIANT_RUN_AT_LAST: >-
+      Corrected to `conversation_id`: 1,775 conversations, 10,468 calls, 61 violations.
+      Sixty are August legacy; ONE was from the previous evening.
+    ROOT_CAUSE: >-
+      `bind_turn_context` calls `TraceContext.start(owl_name=state.owl_name)` BEFORE any
+      step runs, so it captures the LANE's owl. Triage then re-routes by returning
+      `state.evolve(owl_name=...)` — at four separate sites — and nothing re-binds the
+      trace copy. `providers/base.py:390` reads `ctx.get("owl_name")` for every cost row,
+      so the bill goes to whoever owns the lane. Defect shape 3: two copies of one fact,
+      and only one of them moves.
+    WHAT_MAKES_IT_SHARP: >-
+      `providers/base.py` ALREADY KNEW. The comment above that read says `owl_name` exists
+      because "grouping by conversation_id alone counts a correct design as a violation" —
+      per-owl grouping was built for exactly this case and could never work, because the
+      value it grouped on was wrong. Built but not wired, shape 5, one layer in.
+    MEASURED_SCALE: >-
+      Of 363 `[pipeline] triage: routed` records whose lane could be parsed, 162 — 45% —
+      routed to an owl other than the lane's: secretary -> jobmarket 110, -> mailbutler
+      27, -> headhunter 11, verifier -> secretary 7, -> scout 6, -> syshealth 1. Every one
+      billed the wrong owl. The live example is conversation 20260906_174450_49c9d55a: 57
+      calls at 13,795 prompt chars as secretary, then 6 at 12,241 after triage routed to
+      syshealth, all 63 rows recorded owl_name=secretary.
+    WHAT_I_RULED_OUT_BEFORE_BLAMING_ROUTING: >-
+      Not a restart — one process since 21:55Z covers the whole conversation. Not a
+      session boundary — the sweep in that window logged `count: 0`, i.e. it finalized
+      NOTHING, and the next resolve took the `existing` branch. I first read
+      "session.sweep: finalized" as a boundary and was wrong; the FIELDS said otherwise.
+      Reading the fields rather than the message name is what prevented a wrong fix.
+    THE_FIX_IS_AT_THE_ONE_PLACE_THE_STATE_ADVANCES: >-
+      `TraceContext.set_owl_name()` plus `shared.sync_turn_owl()`, called right after
+      `step_fn` returns. Patching triage would mean patching four return sites and
+      trusting the fifth to remember. A blank is ignored rather than written — a step
+      with no owl means "unchanged", never "no owl". AND BOTH STEP LOOPS CALL IT:
+      asyncio_backend and langgraph_backend both await step functions, so fixing one
+      would have been the same two-copies defect committed by its own fix.
+    MUTATION_PROVEN_AND_MY_GUARD_WAS_VACUOUS_FIRST: >-
+      Four mutants, restored from FILE COPIES. Dropping the sync from either backend
+      SURVIVED the first version of the two-copies tripwire, because it tested
+      `"sync_turn_owl" in text` and the IMPORT satisfied that string — a guard against
+      two copies, satisfied by a copy. Rewritten to require a Call node in the AST, both
+      mutants die. The other two (a no-op setter, and letting a blank erase the owl) were
+      killed by the behavioural tests.
+    WHERE_THE_RUNNABLE_HALF_LIVES: >-
+      In `known_debt` as DEBT-164, not here. I first wrote the `closing_check` into this
+      `current` entry and `validate_check.py` did not run it — it enumerates items with a
+      partial stage plus known_debt entries carrying a check, and a `current` narrative is
+      neither. That is precisely the defect DEBT-158 built the reporter for, committed by
+      me while fixing its cousin. Moved rather than duplicated: one source for the check.
+    validate_evidence: >-
+      Restarted and live-evidenced; the effect needs a turn that triage routes ACROSS
+      owls, which happened 162 times historically but cannot be summoned. The closing
+      check is keyed on a row shape the old code could not produce.
+    document_reason: >-
+      D01.7 and D01.1 both corrected in place: the retired `session_id` replaced with
+      `conversation_id` in their verification queries, and both re-stamped.
   DEBT163_2026_09_07_the_verification_step_failed_on_correct_behaviour:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-163. Taken by working the largest real
@@ -15044,6 +15112,37 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-164
+    found: 2026-09-07
+    what: >-
+      Cost was billed to the LANE's owl, not the owl that ran the turn.
+      `bind_turn_context` binds `TraceContext(owl_name=state.owl_name)` before any step
+      runs; triage re-routes by returning `state.evolve(owl_name=...)` at four sites and
+      nothing re-bound the trace copy, which is what every cost row reads
+      (`providers/base.py:390`). MEASURED: 162 of 363 routed turns — 45% — went to an owl
+      other than the lane's. Fixed by syncing the trace owl right after each step returns,
+      in BOTH step loops via `shared.sync_turn_owl`.
+    stages:
+      validate: partial
+    validate_result: >-
+      Code is live-evidenced and the targeted suites are green (2,649 passed across
+      tests/pipeline and tests/providers; 34 in the backends). The EFFECT needs a turn
+      that triage routes across owls, which happened 162 times historically but cannot be
+      summoned.
+    closing_check: |
+      # Keyed on a row only the FIXED code can write: a cost row whose owl_name is NOT the
+      # owl named in its own session_key. Before the fix that was impossible — owl_name was
+      # copied from the lane at bind time — so a single hit proves the new path ran.
+      n=$(uv run python -c "
+      import sqlite3, re
+      from stackowl.paths import StackowlHome
+      c = sqlite3.connect(str(StackowlHome.workspace() / 'stackowl.db'))
+      k = 0
+      for sk, owl in c.execute(\"SELECT session_key, owl_name FROM cost_records WHERE recorded_at >= '2026-09-07' AND owl_name != '' AND session_key LIKE 'owl:%'\"):
+          m = re.match(r'owl:([^:]+):', sk)
+          if m and m.group(1) != owl: k += 1
+      print(k)")
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n cost row(s) billed the routed owl, not the lane" || echo "OPEN 0 cross-owl routed turns since the fix; the code IS live-evidenced"
   - id: DEBT-157
     found: 2026-09-07
     what: >-
