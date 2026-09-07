@@ -315,6 +315,52 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT173_2026_09_07_the_second_never_producible_count_and_why_no_guard_follows:
+    map_check: >-
+      D05.3 — a MAPPED item and the oldest stale document. Its defect was DIAGNOSED in
+      DEBT-172 and deliberately left for this loop rather than swept into that item.
+    VERIFICATION_RUN: >-
+      Step 2 14 passed against a recorded 15. Step 3's wiring test 5 passed EXACTLY as
+      recorded. Step 5's neighbours have grown — `tests/tools/meta` 245 from 157,
+      `tests/infra` 229 from 143 — and are now asserted as `0 failed` rather than pinned.
+      doc_check STALE 22 -> 21.
+    THE_SECOND_NEVER_PRODUCIBLE_COUNT: >-
+      Checked the same three ways as D05.2's: fourteen tests at this document's OWN commit
+      `fc052e79`, no parametrize, the file untouched since, fourteen today. So "15 passed"
+      was never producible by that command — not stale, never true.
+    AND_IT_DIFFERS_FROM_D05_2_IN_A_WAY_WORTH_KEEPING: >-
+      D05.2's "13" had a clean mechanism: it is the exact count of
+      `tests/tools/test_presentation.py`, a neighbour whose name differs by one word. This
+      one has NO such explanation — no file in `tests/infra/` holds fifteen. So it is an
+      off-by-one, or a test that existed uncommitted while the section was run. The
+      document now claims only what can be proven: that no COMMITTED state of that file
+      could yield the number. Resisting the tidier story is the point; inventing a
+      mechanism to match the sibling would be exactly the "explaining a wrong number with
+      a guess" failure this programme already paid for once.
+    NO_GUARD_AND_THE_REASON_IS_MEASURED: >-
+      A guard comparing a recorded single-file count to TODAY's count fires on legitimate
+      growth — which is precisely why the existing
+      `test_a_doc_does_not_pin_a_count_that_grows_by_design` restricts itself to
+      PACKAGE-WIDE steps. A guard comparing against the count at the document's own commit
+      would be precise, but re-stamping moves that commit forward, so it decays into the
+      first one within a loop. The defect is a transcription error at authoring time and
+      the cure that works is the one already mandated: RUN the section rather than trust
+      it. That is what caught both, one loop apart.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change, so no restart could show an effect and none is
+      claimed. Every step was RUN. The never-producible claim rests on three independent
+      checks and stops exactly where the evidence stops.
+    document_reason: >-
+      D05.3 IS the document, corrected and re-stamped 2026-09-07, with the miscount named
+      in the step itself and the absent explanation stated rather than invented.
   DEBT172_2026_09_07_a_recorded_number_that_the_command_could_never_have_produced:
     map_check: >-
       D05.2 — a MAPPED item and the oldest stale document. Verification RUN, not trusted.
