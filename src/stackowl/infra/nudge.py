@@ -50,7 +50,9 @@ class TurnNudge:
     label: str
     _seen: dict[str, int] = field(default_factory=dict, init=False)
 
-    def note_turn(self, lane: str, *, deliverable: bool = True) -> str | None:
+    def note_turn(
+        self, lane: str, *, deliverable: bool = True, seed: int | None = None
+    ) -> str | None:
         """Count a turn on *lane*; return the text when a nudge is due.
 
         Args:
@@ -72,6 +74,25 @@ class TurnNudge:
         """
         try:
             key = lane or ""
+            # SEED ON FIRST SIGHT, from a count that OUTLIVES THE PROCESS.
+            #
+            # The in-process counter is deliberate and documented above, and for the
+            # memory nudge at interval 4 it works: MEASURED 2026-09-07 over six days,
+            # 15 (boot, lane) pairs reached four. At interval 10 it CANNOT work — 291
+            # boots against 429 turns, and the deepest pair ever reached NINE. The
+            # skill nudge has therefore fired zero times in its entire life, and the
+            # docstring's "the intervals absorb it" is true at 4 and false at 10.
+            #
+            # `sessions.completed_turns` already holds this number durably and reaches
+            # ten on 13 of 129 sessions, peaking at 46. Keeping a second, weaker copy
+            # of a fact the platform already stores is the DEBT-164 shape; seeding asks
+            # the durable one instead.
+            #
+            # Only on FIRST sight, so a deep lane becomes due once rather than on every
+            # turn forever, and everything else this class owns — suppression, and
+            # `note_action`'s reset — keeps working on the seeded lane unchanged.
+            if key not in self._seen and seed is not None and seed > 0:
+                self._seen[key] = int(seed)
             count = self._seen.get(key, 0) + 1
             if count < max(1, self.interval):
                 self._seen[key] = count

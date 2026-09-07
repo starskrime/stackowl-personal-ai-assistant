@@ -47,13 +47,23 @@ _SKILL_NUDGE = TurnNudge(
 )
 
 
-def note_turn(lane: str, presented_tools: frozenset[str] | None) -> str | None:
+def note_turn(
+    lane: str,
+    presented_tools: frozenset[str] | None,
+    turns_so_far: int | None = None,
+) -> str | None:
     """Count a turn; return the nudge when one is due AND the tool is reachable.
 
     Args:
         lane: The conversation lane to count against.
         presented_tools: Names the model can actually call this turn. ``None``
             means unknown, and yields no nudge — see the module docstring.
+        turns_so_far: The lane's DURABLE turn count (``sessions.completed_turns``),
+            used to seed the in-process counter the first time this process sees the
+            lane. Without it this nudge could never fire at all: measured 2026-09-07,
+            291 boots against 429 turns and a deepest (boot, lane) depth of NINE
+            against an interval of TEN, so the counter was erased before it matured
+            every single time. ``None`` keeps the old count-from-zero behaviour.
 
     Returns:
         The nudge text, or ``None``. Never raises.
@@ -64,7 +74,7 @@ def note_turn(lane: str, presented_tools: frozenset[str] | None) -> str | None:
     # counter advanced on a small minority of turns and no lane ever reached the
     # interval: 0 firings in 407 turns. Fails closed on the TEXT, never on time.
     deliverable = presented_tools is not None and SKILL_TOOL in presented_tools
-    return _SKILL_NUDGE.note_turn(lane, deliverable=deliverable)
+    return _SKILL_NUDGE.note_turn(lane, deliverable=deliverable, seed=turns_so_far)
 
 
 def note_skill_written(lane: str) -> None:

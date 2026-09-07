@@ -1227,6 +1227,7 @@ def _turn_context_prefix(
     now: datetime.datetime | None = None,
     *,
     presented_tools: frozenset[str] | None = None,
+    turns_so_far: int | None = None,
 ) -> str:
     """The VOLATILE tier, prefixed to this turn's user text (D01.1 stage 2).
 
@@ -1287,7 +1288,9 @@ def _turn_context_prefix(
     try:
         from stackowl.skills.nudge import note_turn as _skill_note_turn
 
-        skill_nudge = _skill_note_turn(state.session_key, presented_tools)
+        skill_nudge = _skill_note_turn(
+            state.session_key, presented_tools, turns_so_far=turns_so_far
+        )
     except Exception as exc:  # no-hidden-errors: never cost the turn its text
         log.engine.error(
             "[pipeline] execute: skill nudge FAILED — continuing without it",
@@ -1492,6 +1495,26 @@ async def _run_with_tools(
     # E1-S4 — capability_profile gating: a per-owl presented tool set (base ∪ groups
     # ∪ pins ∪ tool_search). The BOUNDS check (effective = owl ∩ ceiling ∩ envelope)
     # is now in _dispatch via compute_effective_bounds (E2-S2); this block is ONLY for
+    # D09.4 — the lane's DURABLE turn count, read ONCE per turn and threaded to the
+    # skill nudge. Its in-process counter is erased on every boot, and MEASURED
+    # 2026-09-07 over six days there were 291 boots against 429 turns with a deepest
+    # (boot, lane) depth of NINE against an interval of TEN — so the nudge had fired
+    # zero times in its entire life. `sessions.completed_turns` survives restarts and
+    # reaches ten on 13 of 129 sessions. Best-effort: a reminder may never cost a turn
+    # its answer, so any failure here simply means "no seed", which is the old
+    # behaviour rather than an outage.
+    _turns_so_far: int | None = None
+    try:
+        _sess_store = getattr(get_services(), "session_store", None)
+        if _sess_store is not None and state.session_key:
+            _entry = await _sess_store.get(state.session_key)
+            if _entry is not None:
+                _turns_so_far = int(getattr(_entry, "completed_turns", 0) or 0)
+    except Exception as exc:  # no-hidden-errors: logged, never fatal
+        log.engine.warning(
+            "[pipeline] execute: durable turn count unavailable — skill nudge unseeded",
+            exc_info=exc, extra={"_fields": {"session_key": state.session_key}},
+        )
     # DNA-gated presentation (a different, weaker control — presentation, not authz).
     owl_registry = get_services().owl_registry
     if owl_registry is not None:
@@ -2810,6 +2833,7 @@ async def _run_with_tools(
                 # skill nudge was silent on every pinned turn.
                 user_text=_turn_context_prefix(
                     state, presented_tools=_presented_names(tool_schemas),
+                    turns_so_far=_turns_so_far,
                 ),
                 system_text=state.system_prompt,
                 tool_schemas=tool_schemas,
@@ -2834,6 +2858,7 @@ async def _run_with_tools(
             # actually being callable this turn rather than merely registered.
             user_text=_turn_context_prefix(
                 state, presented_tools=_presented_names(tool_schemas),
+                turns_so_far=_turns_so_far,
             ),
             system_text=state.system_prompt,
             tool_schemas=tool_schemas,
@@ -2945,6 +2970,7 @@ async def _run_with_tools(
                 # passed, nudge permanently silent for every durable turn.
                 user_text=_turn_context_prefix(
                     state, presented_tools=_presented_names(tool_schemas),
+                    turns_so_far=_turns_so_far,
                 ),
                 system_text=state.system_prompt,
                 tool_schemas=tool_schemas,

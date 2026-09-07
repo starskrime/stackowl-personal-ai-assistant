@@ -315,6 +315,76 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT166_2026_09_07_the_nudge_counter_reset_faster_than_its_own_interval:
+    map_check: >-
+      D09.4 — a MAPPED item, 6/7 with `validate: partial`. Reached from Bakir's question
+      "why does the platform not follow self evolved agent which should be better on each
+      run due to learning", which I answered with measurement and then took the defect
+      the answer named.
+    ROOT_CAUSE: >-
+      `TurnNudge` keeps an IN-PROCESS per-lane turn counter, erased on every boot. The
+      skill nudge's interval is 10. MEASURED 2026-09-07 over six days of logs: 291 core
+      boots against 429 turns, and the deepest (boot, lane) pair ever reached NINE. So
+      zero pairs ever reached ten, while FIFTEEN reached four — which is exactly why the
+      memory nudge at interval 4 has fired 99 times and this one has fired ZERO in its
+      entire life. `infra/nudge.py` says "the intervals absorb it", citing 34 boots a day;
+      at ~48 a day that is true at 4 and false at 10. The interval and the reset rate are
+      not independent and nothing checked they still stood in the right relation.
+    THE_RECORDED_DIAGNOSIS_WAS_WRONG_AND_I_CORRECTED_IT: >-
+      D09.4's own note said it was "waiting on a DEEP lane, not on a long human
+      conversation, and the counter is correct meanwhile". The counter was not correct. A
+      previous pass asserted that rather than measuring boots against lane depth.
+    WHY_IT_MATTERS_BEYOND_ONE_NUDGE: >-
+      D09.1 measured that the model will not VOLUNTEER meta-work, but complies about a
+      quarter of the time when ASKED — and 77% of all memory writes follow a nudge. The
+      nudge is the only mechanism proven to make this agent do meta-work. Wired for
+      memory it works; for skills it could never fire. That is the concrete reason the
+      platform remembers but never GENERALISES: measured the same day, `evolve_now` 0
+      invocations ever, `synthesize_skills` 0, `skill_create` 0, `committed_facts` 0 rows
+      against 230 staged.
+    THE_FIX_ASKS_THE_DURABLE_SOURCE: >-
+      `sessions.completed_turns` already holds this number, survives restarts, reaches
+      ten on 13 of 129 sessions and peaks at 46. The nudge was keeping a second, weaker
+      copy of a fact the platform already stores — the DEBT-164/165 shape a third time.
+      `TurnNudge.note_turn` now takes a `seed`, applied ONLY on first sight of a lane, so
+      suppression and `note_action`'s reset keep working unchanged and a deep lane becomes
+      due once rather than every turn. `execute.py` reads the count once per turn from
+      `services.session_store` and threads it to the three `_turn_context_prefix` sites.
+    THE_IMPERFECTION_STATED_NOT_HIDDEN: >-
+      A restart re-seeds from a count that keeps climbing, so a lane that just wrote a
+      skill can be nudged again sooner than the interval intends. That is a mild
+      over-nudge against a mechanism that currently never fires at all. The memory nudge
+      passes no seed and is byte-for-byte unchanged — deliberately, because at interval 4
+      it demonstrably works and changing a working mechanism is risk without a measured
+      need.
+    MUTATION_PROVEN_AND_MY_GUARD_WAS_VACUOUS_A_SECOND_LOOP_RUNNING: >-
+      Four mutants, restored from FILE COPIES. Cutting the link between execute.py and the
+      nudge SURVIVED the first version of the wiring test, because it asked whether ANY
+      call in the file passed `turns_so_far` — and the three `_turn_context_prefix` calls
+      satisfy that. A guard against built-but-not-wired, satisfied by a neighbouring wire,
+      exactly as DEBT-165's was satisfied by an import. It now names the callee.
+    AST_PARSE_IS_NOT_A_SUFFICIENT_SYNTAX_GATE: >-
+      A scripted edit duplicated `turns_so_far=` at two call sites because the 16-space
+      pattern is a SUBSTRING of the 20-space one. Repeated keyword arguments are rejected
+      at COMPILE time, not parse time, so `ast.parse()` — the gate CLAUDE.md prescribes —
+      reported the file clean while `compile()` rejected it, and the tests passed because
+      none of them imports that module. A `compile()` check is now a test.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: done
+    validate_evidence: >-
+      tests/skills + tests/pipeline 2,391 passed; baselines held at ruff 35 / mypy 65.
+      Restarted and live-evidenced. The EFFECT stays OPEN honestly: it needs one real turn
+      on a lane whose `completed_turns` is already >= 10, and ZERO turns have happened
+      since the restart — the denominator, stated.
+    document_reason: >-
+      D09.4's closing check is corrected in place to name the real blocker, replacing the
+      "waiting on a deep lane" note that was wrong.
   DEBT165_2026_09_07_the_bound_copy_class_closed_and_the_scan_that_took_three_tries:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-165. This is DEBT-164's mandated other
@@ -30181,7 +30251,7 @@ items:
       # OPEN even after the nudge fired. The waiting-on-a-deep-lane analysis below
       # was done by grepping the logs directly and still stands.
       n=$(./scripts/log_since.sh 2026-09-02 '\[skills\] nudge')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge since 2026-09-02 - MEASURED 2026-09-06 and the blocker is not what this note used to say. Nine lanes HAVE passed 10 turns in one boot window - the memory nudge fires every 4 and resets, and the deepest lane fired it 16 times, about 64 turns - but every one of them is an autonomous recovery or incident lane (owl:secretary:recovery:task-, incident-, owl:rca_gatherer:recovery:retry-) and all of them predate the 2026-09-04 counting fix. Those lanes went quiet after 09-02 as the platform stabilised: zero memory-nudge fires since 09-03 against real traffic. So this is waiting on a DEEP lane, not on a long human conversation, and the counter is correct meanwhile. The memory nudge (interval 4, prefix [curated]) is a different line and must not be counted here"
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge - CORRECTED 2026-09-07 (DEBT-166). The blocker was NOT 'waiting on a deep lane'; that note was wrong. The counter is IN-PROCESS and was erased on every boot: MEASURED over six days, 291 boots against 429 turns, deepest (boot,lane) depth NINE against an interval of TEN, so ZERO pairs ever reached it while fifteen reached the memory nudge's four - which is exactly why that one has 99 fires and this one has none. Now SEEDED from sessions.completed_turns, which survives restarts and reaches ten on 13 of 129 sessions (max 46). Still OPEN because it needs one real turn on such a lane, and zero turns have happened since the restart"
     title: "Skill-creation nudges"
     domain: D09
     verdict: MISSING
