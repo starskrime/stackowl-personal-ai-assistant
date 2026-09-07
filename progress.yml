@@ -315,6 +315,88 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT205_2026_09_07_the_single_file_query_hid_two_orders_of_magnitude:
+    map_check: >-
+      D01.7 — Session Lifecycle. The largest remaining BLIND AFTER MIDNIGHT population:
+      SIX single-file commands in one document, all of them log-only, so they could be run
+      and corrected while a full-suite run held src/ and tests/ off-limits.
+    WHAT_THE_GLOB_CHANGED_AND_IT_IS_NOT_COSMETIC: >-
+      Step 6 asks which branch each inbound message took. The document's header recorded
+      "existing 8 / expired 5 / new 2" from the single file; over the whole retained window
+      it is existing 71 / expired 251 / new 45. TWO ORDERS OF MAGNITUDE apart on the same
+      question — that is what a midnight-blind query costs a reader, and the failure mode
+      the criterion names ("if this is ONLY existing, no boundary is firing") is exactly
+      the kind of judgement a truncated denominator gets wrong.
+    STEP_5s_CRITERION_WAS_TOO_STRONG_AND_WOULD_READ_AS_FAILURE: >-
+      It said message_count and completed_turns non-zero "and identity_key is set". Two of
+      the four deepest lanes show identity_key NULL. MEASURED across all 133: 6 of 6
+      CHANNEL lanes and 5 of 5 other-owl lanes carry one — 100% of every lane with a human
+      origin — while RECOVERY lanes are 80 of 122. A recovery lane spawned from a
+      human-originated task inherits an identity; one spawned from a platform job has no
+      human to inherit from. The criterion now says that. Whether all 42 NULLs are of the
+      second kind is UNRESOLVED and deliberately not claimed.
+    STEP_9_HAS_AN_EXACT_CORRESPONDENCE_WORTH_KEEPING: >-
+      63 "session.rollover: old incarnation ended" against 63
+      "[memory] rollover_summary.enqueue: queued". Every ended incarnation enqueued a
+      summary; none dropped at that seam. Downstream 496 entry / 424 exit / 324 staged /
+      100 "nothing notable" / 57 "summary call failed" — the last the unreachable-provider
+      family, not a defect in this chain.
+    AND_MY_OWN_DETECTOR_MISSED_A_ROTTED_RECORD_IN_THIS_FILE: >-
+      Step 9 reads "PASS (observed 2026-07-27)" — evidence 42 days older than the retained
+      logs, exactly what EVIDENCE OLDER THAN THE LOGS exists to name, and it did NOT flag
+      it. _DATED_RUN requires the date to follow the keyword with only whitespace between,
+      so "(observed " breaks the match. The report therefore reads ZERO while at least one
+      such record exists. NOT widened in this item: loosening a pattern to catch one case
+      is how a detector starts crying wolf, and the change needs a test, which means
+      touching tests/ while a full-suite verdict is in flight. Filed so the next loop
+      widens it deliberately and with a control.
+    AND_STEP_2_NAMED_A_TEST_DELETED_TWENTY_FOUR_DAYS_AGO: >-
+      Preparing the pytest half — collect-only, no execution, safe beside the running
+      suite — showed tests/memory/test_authored_once_promotion.py DOES NOT EXIST. f3d0d85a
+      deleted it on 2026-08-14 ("remove FactPromoter — the last of the fact pipeline"), and
+      `authored_once` now appears NOWHERE in src/ or tests/: the concept was retired whole.
+      The document advertised its test for 24 days. This is the fifth-surface failure
+      CLAUDE.md names, exactly.
+    THE_STAMP_OVERSTATED_AND_THAT_IS_THE_SHARPER_POINT: >-
+      D01.7's header says "Last verified 2026-09-07 — Verification section RUN, not
+      trusted". A step naming a file this tree does not have CANNOT have been run. So the
+      2026-09-07 stamp claims more than was done — either step 2 was skipped silently or
+      its failure went unrecorded. Corrected in place rather than re-stamped over.
+    WHY_STALE_BY_DELETION_DID_NOT_CATCH_IT: >-
+      doc_check's STALE BY DELETION report only examines documents already flagged STALE
+      (sources changed after Last verified). D01.7 was stamped TODAY, so it is fresh, so
+      the deletion pass never ran on it. A freshly-verified document can still name a
+      deleted test — the gate is on the wrong property. MEASURED across the corpus: FOUR
+      missing test paths in THREE documents (D01.1 x2, D01.6, D01.7).
+    NOT_BUILT_HERE_AND_THE_REASON_IS_A_FALSE_POSITIVE_I_CAN_ALREADY_SEE: >-
+      D01.1 names tests/tools/test_registry.py AND says in the same breath "which DOES NOT
+      EXIST" — a document that has already done the work. A detector must skip a path the
+      prose DENIES, which is what map_freshness.py already does for symbols. That is a new
+      report with its own tests, and tests/ is fingerprinted by the running suite. Filed as
+      the next loop's item rather than half-built now.
+    THE_BLOCKED_HALF_RAN_AFTER_THE_SUITE_PRINTED: >-
+      Sixteenth full-suite run GREEN — 12,443 passed, 17 skipped, 0 failed in 1971.13s
+      (rc=0), SUITE TREE STILL, on dca7f6e1. Then D01.7's pytest steps: step 1
+      tests/sessions 203 passed (document said 147 — a whole package that grows, so it is
+      recorded as a shape); step 2's SURVIVOR 19 passed; step 3 test_lane_activity 19
+      passed, exact.
+    THE_25_DOES_NOT_RECONCILE_AND_I_DID_NOT_TIDY_IT: >-
+      Step 2 recorded "25 passed" for the two files together. Measured: the survivor has 19
+      test definitions then and now, and the deleted file had 5 — which is 24. I had
+      already drafted "19 + 6 = 25" before checking, and it would have been a neat sentence
+      built on an invented number. The one-test gap is most likely a parameterised case
+      collecting twice; the file is gone, so it stays a gap rather than a guess.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done,
+      cleanup: done, test: done, validate: done, document: done}
+    it_was_recorded_blocked_while_it_was_blocked: >-
+      Mid-item the stages read `blocked`, not `partial` — partial means measured-but-open
+      and carries a closing_check, and nothing had been validated yet. They moved to `done`
+      only after the three pytest steps actually ran.
+    blocked_on: >-
+      Steps 1-3 of D01.7's Verification are pytest (tests/sessions, two memory files,
+      test_lane_activity) and step 4 writes to the live DB. The 16th full-suite run is in
+      flight; running pytest beside it risks CPU contention producing an artefact failure,
+      and the fingerprint covers every src/ and tests/ .py file. Resumes when it prints.
   DEBT204_2026_09_07_the_last_rotted_check_was_a_RE_MEASURE_and_the_sum_was_never_runnable:
     map_check: >-
       D08.1 — curated memory in the prompt. The LAST entry in EVIDENCE OLDER THAN THE LOGS;

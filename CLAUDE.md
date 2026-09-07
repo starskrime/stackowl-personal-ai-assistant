@@ -120,6 +120,7 @@ at a process table. Measured, in order:
 | 2026-09-07 | **`12416 passed, 17 skipped, 0 failed in 1848.06s` (rc=0)** — green again on the fixed tree; skips 19→17 as the DNS-flaky tests ran |
 | 2026-09-07 | **`12423 passed, 17 skipped, 0 failed in 1953.18s` (rc=0)** — fourteenth; run deliberately because src had drifted one item from the last green |
 | 2026-09-07 | **`12438 passed, 17 skipped, 0 failed in 1963.61s` (rc=0)** — fifteenth green, `SUITE TREE STILL`; the tree carrying the log-rotation fix (DEBT-196) |
+| 2026-09-07 | **`12443 passed, 17 skipped, 0 failed in 1971.13s` (rc=0)** — sixteenth green, `SUITE TREE STILL`; launched because `tests/` had drifted 119 lines from the last green |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so
