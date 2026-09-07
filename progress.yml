@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT169_2026_09_07_the_constraint_probe_that_passed_for_the_wrong_reason_twice:
+    map_check: >-
+      D01.5 — a MAPPED item, 7/7, whose document was the oldest stale one I had touched
+      without finishing. DEBT-168 corrected its stale pins last loop; this ran its
+      Verification section and re-stamped it.
+    VERIFICATION_RUN_NOT_TRUSTED: >-
+      Step 1 21 passed (the document pinned 15), step 2 9 passed, step 3 767 passed (it
+      pinned 533), baselines at the gate's 35/65, step 5 the platform runs. STALE 26 -> 25.
+    THE_FINDING_IS_STEP_4_AND_IT_TOOK_THREE_ATTEMPTS: >-
+      D01.5's step 4 exists to prove the `messages.role` CHECK FIRES rather than merely
+      exists — its own comment says "Reading the DDL would only show the constraint is
+      PRESENT. Attempting the write is what proves it fires." My first probe returned
+      `IntegrityError: NOT NULL constraint failed: messages.id` and I nearly recorded that
+      as the pass. My second, with an id, returned `NOT NULL constraint failed:
+      messages.created_at`. BOTH were rejections for the wrong reason, and either would
+      have been a false pass on the exact check the document warns about.
+    WHAT_CAUGHT_IT_WAS_THE_CONTROL: >-
+      The second probe rejected `role='user'` — a VALID role — which cannot be a role
+      failure. A probe whose control also fails is measuring something else. With every
+      NOT NULL column supplied: `user` ACCEPTED, `tool` and `system` REJECTED with `CHECK
+      constraint failed: role IN ('user', 'assistant')`. All rolled back. THAT is the
+      proof; "an IntegrityError was raised" never was.
+    WHAT_ELSE_THE_CAUSE_REACHES_and_the_answer_is_DO_NOT_SWEEP: >-
+      66 Verification steps across 41 documents pin an exact pytest count, and 66 IS NOT
+      66 DEFECTS. A count written `# RAN: 533 passed` is a TRUE HISTORICAL RECORD of what
+      the author observed, which is the corpus's own stated convention — "every command
+      below has been RUN; the numbers are what they produced". DEBT-168's baseline pins
+      were different in kind: `"46 and 78 — the baselines exactly"` asserts a CURRENT fact
+      that is now false. Mass-editing 41 documents would destroy genuine history to fix a
+      defect they do not have, so the distinction is recorded instead: a pin asserting
+      what IS must track its source; a pin recording what WAS is history and stays.
+    WHAT_I_CHANGED_IN_D01_5_AND_WHY_IT_IS_AN_IMPROVEMENT_NOT_A_FIX: >-
+      I reworded its two counts to "expect: all pass" with the current figure beside them.
+      That is not a defect repair — the old text was historically true — it is a re-verifier
+      affordance: reading "RAN: 15 passed" against today's 21 forces a judgement about
+      whether that is growth or regression, and saying so removes the ambiguity. Recorded
+      as an improvement so the record does not overstate what was wrong.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change, so no restart could show an effect and none is
+      claimed. Every step was RUN against the live tree and database, including the
+      constraint probe, whose writes were rolled back.
+    document_reason: >-
+      D01.5 IS the document; re-stamped 2026-09-07 with the three-attempt account of step
+      4 in the stamp itself, so the next reader inherits the trap rather than re-entering it.
   DEBT168_2026_09_07_eleven_documents_pinned_a_baseline_that_has_since_IMPROVED:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-168. It is the UNSWEPT REMAINDER of
