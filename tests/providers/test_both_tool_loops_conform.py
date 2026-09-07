@@ -173,12 +173,17 @@ class TestTheyAgreeOnCallbackAccounting:
     first and fires it only on the genuine final-answer branch. Anthropic now does the
     same.
 
-    WHAT THIS DELIBERATELY DOES NOT DECIDE. Both loops now dispatch BEFORE the
+    WHAT THIS UNIFORMITY MADE DECIDABLE. Both loops now dispatch BEFORE the
     iteration callback on every path, so a cooperative stop lands one tool late on
     both. That was already true of the live OpenAI path; Anthropic's pre-parse callback
-    had been pre-empting the tool by accident. Making it uniform RAISES the stakes of
-    ESC-25 rather than answering it — the order question is still open, and flipping it
-    is now a single change applied to both.
+    had been pre-empting the tool by accident. Making it uniform RAISED the stakes of
+    ESC-25, and Bakir then ANSWERED it on 2026-08-21: keep dispatch first, deliberately.
+    See `test_dispatch_precedes_the_callback_on_both_BY_DECISION` below, which pins it.
+
+    This paragraph said "the order question is still open" for seventeen days AFTER that,
+    thirty lines above the docstring recording the answer — one file contradicting
+    itself. An answered escalation is deleted from the queue, so nothing re-read what
+    cited it; `escalation_check.py` now reports those sites.
     """
 
     async def test_the_native_path_agrees_on_both_count_and_order(self) -> None:

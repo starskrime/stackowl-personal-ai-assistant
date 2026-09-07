@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT193_2026_09_07_an_answered_escalation_kept_being_asked_for_seventeen_days:
+    map_check: >-
+      D04.1 — both tool loops conform. Reached from the OPEN BUT NOT TRACKED report
+      shipped in DEBT-192, which named it as an acceptance check nothing could re-ask.
+    THE_FINDING_AND_IT_WAS_ALREADY_ANSWERED: >-
+      D04.1's open row read "D5-order | Dispatch precedes the iteration callback on both
+      | OPEN — ESC-25". ESC-25 was ANSWERED BY BAKIR ON 2026-08-21 — dispatch first, on
+      both loops, deliberately, his call against my recommendation — removed from the
+      queue in 3306a340 with the answer recorded, landed in the code, and pinned by
+      test_dispatch_precedes_the_callback_on_both_BY_DECISION. The document called it
+      open in THREE places for seventeen days. ESC-26 ("where does ESC-14 land": un-fold
+      it, ESC-14 gets its own item) was answered in the same commit, shipped in 735495a3
+      with tests/pipeline/test_the_floor_never_quotes_our_own_prompt_back.py, and D04.1
+      called that open too.
+    AND_ONE_TEST_FILE_CONTRADICTED_ITSELF: >-
+      tests/providers/test_both_tool_loops_conform.py line 180 said "the order question
+      is still open" THIRTY LINES above the docstring at line 212 reading "ESC-25,
+      ANSWERED 2026-08-21". One file, both claims, neither aware of the other.
+    THE_ROOT_CAUSE_IS_THE_QUEUE_SHAPE_NOT_THE_DOCUMENT: >-
+      An OPEN escalation carries a premise_check and escalation_check.py re-runs it every
+      loop. An ANSWERED one is DELETED from the queue — so nothing re-reads the sites
+      that cited it, and each keeps asking for a decision already made. Exactly the gap
+      tests/audit/test_a_settled_decision_is_not_contradicted_by_the_record NAMED IN ITS
+      OWN DOCSTRING and deferred: "an ANSWERED escalation has no decision_check the way
+      an open one has a premise_check — recorded in the item, not built here." Seventeen
+      days is what recording-instead-of-building cost. escalation_check.py now reports
+      ANSWERED BUT STILL CALLED OPEN. First run: 10 sites over 8 escalations; after this
+      item drains D04.1's four, 5 sites over 3 (ESC-12, ESC-20, ESC-22), one per loop.
+    THE_DETECTOR_READS_THE_SENTENCE_NOT_THE_ID: >-
+      63 dangling ESC ids are cited across the live tree and MOST ARE CORRECT — an answer
+      recorded where it changed something is exactly right, so "not in the queue" alone
+      would have reported 63 findings of which ~60 are good practice. Only a
+      PRESENT-TENSE open claim is a finding. That precision cost three false positives,
+      each one token away from a real one, and each is pinned as a test: `fail-open` in
+      durable/loop.py (the word inside a hyphenated compound); "asserted while ESC-23 WAS
+      open" (a correct historical note); and a CORRECTION QUOTING THE CLAIM IT RETIRES —
+      the detector flagged the very document fixing the first case it found, because that
+      document quotes "the order question is still open" in the act of retiring it. Prose
+      WRAPS, so a line-local quote-strip still flagged it; _blank_quotes spans newlines
+      and preserves them so reported line numbers stay right.
+    D04_1_VERIFICATION_RUN_NOT_TRUSTED: >-
+      All four targeted checks exact: conformance 20 passed, escalation-visibility 10,
+      model-override 4, additive-only providers 6. The package shape (tests/providers,
+      "expect: 0 failed") re-run and recorded below.
+    changes: >-
+      docs/reference-mapping/designs/D04.1.md (three ESC-25/26 sites corrected, a section
+      recording why the answer never arrived), tests/providers/test_both_tool_loops_conform.py
+      (the self-contradicting docstring), scripts/escalation_check.py (the ANSWERED BUT
+      STILL CALLED OPEN report), tests/audit/test_an_answered_escalation_is_not_still_being_asked.py
+      (new, 4 tests, 3 mutants killed).
+    stages: {brainstorm: done, architect: no_change_needed, implement: done,
+      cleanup: done, test: done, validate: done, document: done}
   DEBT192_2026_09_07_the_check_watched_the_event_one_step_above_the_emitter:
     map_check: >-
       D04.5 — tier escalation, verdict AHEAD/keep. Its Verification section was RUN, not
