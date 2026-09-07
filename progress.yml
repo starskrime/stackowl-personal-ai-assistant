@@ -315,6 +315,94 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT162_2026_09_06_four_promises_were_waiting_on_evidence_that_had_already_arrived:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-162. This is the FIRST HARVEST of the
+      reporter DEBT-158 shipped last loop: `validate_check.py` now names the 38 closing
+      queries written where nothing can run them, and two of the four settled here were
+      surfaced by that list rather than by anyone remembering.
+    ROOT_CAUSE: >-
+      A promise waits for evidence; the evidence arrives; nothing re-checks. All four
+      below were answerable from the retained logs before this loop began — one of them
+      by 233 production records. The promise was written in prose, so no enumeration
+      reached it, and the person who would have re-run it is the person who wrote it.
+    WHAT_WAS_SETTLED_and_the_evidence: >-
+      (1) D10.6's summary promised '"[skills] injector.render: rendering summaries LEAN"
+      on the next real turn'. MEASURED 2026-09-06: 233 records across six owls
+      (secretary 50, rca_gatherer 48, hypothesis 47, verifier 47, jobmarket 37, scout 2),
+      `cap` = 4000 on every one. ZERO in August, and VERIFIED AGAINST GIT rather than
+      inferred: the line was introduced 2026-09-01 by commit dc19b973 ("D10.6 — the
+      catalogue degrades evenly, not alphabetically"), first record 2026-09-02T06:04:13Z,
+      last 2026-09-06T23:31:00Z. Evidence only the new code could produce, which is
+      DEBT-138's rule. CLOSED.
+      (2) ESC-63's first condition, '"catalog truncated by budget" should stay rare':
+      1,541 records in August (333/571/384/253 on 08-28..08-31) against ZERO in
+      September, over a real denominator of 233 renders proving the injector ran. AND THE
+      EMITTER STILL EXISTS THROUGHOUT: `git log -S` puts the truncation line in the tree
+      since 2026-06-17 (last touched 2026-08-31), so the September zero is a real
+      ABSENCE and not a removed line — the "make sure the evidence CAN exist" check,
+      run rather than assumed. SATISFIED.
+      (3) ESC-63's second condition, 'never name a skill with n_executions > 0': the
+      truncation line never fires, so this is 0 over 0 and is NOT evidence either way.
+      Recorded as unsatisfiable rather than as a pass — 19 skills do have
+      n_executions > 0, so the question is real, it simply cannot be asked while nothing
+      is being dropped.
+      (4) DEBT-122 deferred 'the tool-count cap is currently dropping tools the turn may
+      need... Recorded so it is not lost.' MEASURED: `eligible tools NOT presented` fires
+      ZERO times across the whole 10-day retained window, against 1,494
+      `[pipeline] execute: presented tools — rebuilt` presentations. All three emitters
+      are `log.tool.info`, so the evidence CAN exist and production runs at INFO. NOT
+      LIVE.
+    WHY_THE_CAP_STOPPED_BINDING_and_it_is_not_a_mystery: >-
+      D10.6 measured a 179-skill corpus. It is now 39 — the phantom-skill prune removed
+      the rest. LEAN render (name + description) is 2,719 chars against `_DEFAULT_CAP`
+      4000, so it fits and nothing is dropped; the FULL render is 13,087 chars, 3.3x
+      over, which is why every turn degrades to LEAN. Both observations have one cause
+      and it is the corpus size, not a change to the cap.
+    A_HEADROOM_HYPOTHESIS_KILLED_BY_MEASURING_THE_REAL_THING: >-
+      From the 2,719-vs-4,000 arithmetic I inferred ~1,281 chars of headroom and was
+      about to propose restoring `when_to_use` for the most-used skills inside it. The
+      log line carries the real number: `summary_cost` p50 6,599, min 5,571, max 7,463,
+      against `cap` 4000 on all 233 records. The summary tier is 1.65x OVER, not under —
+      my 2,719 was a name+description floor, not the render. There is no headroom, LEAN
+      is the correct fallback, and the estimate would have shipped a change the
+      production numbers refute. Measure the instrument's own field, not your model of it.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    outcome: >-
+      no_change_needed for src/ — nothing was found broken. The deliverable is the
+      record: four open promises replaced by measurements, with their denominators
+      stated, and one of the four explicitly marked unsatisfiable rather than passed.
+    validate_evidence: >-
+      No code changed, so no restart could show an effect and none is claimed. Every
+      number above came from the retained logs and the live database and is reproducible
+      by the commands recorded beside each claim. The full suite launched for DEBT-161
+      ran against commit 8d92987d throughout this loop's measurement and the tree was
+      deliberately NOT touched until it printed — NINTH GREEN, `12372 passed, 17 skipped,
+      0 failed in 1962.70s` (rc=0), `SUITE TREE STILL`, so the fingerprint held and the
+      verdict is about one tree. Every measurement in this entry was made read-only while
+      that run was in flight, which is why it could be made at all.
+    HYPOTHESES_KILLED_ON_THE_WAY: >-
+      (1) That the 10x activity collapse since 09-01 hid a dead lane — REFUTED, it is
+      almost entirely the INCIDENT lane falling 1,267 -> 31 (-98%), which is the intended
+      effect of DEBT-55, ESC-87 and HEALTH_FLAP, and the lane still fires. (2) That ghost
+      tool names (payloads stored in the tool NAME field, up to 1,982 chars) were live —
+      REFUTED, all 31 ghost invocations stop at 2026-08-28 and none has occurred in the
+      nine days since; the residue is historical DATA and deleting it would be a
+      stop-and-brief. (3) That 14 registered-but-never-invoked tools were dead code —
+      REJECTED as a framing: never-invoked is not unreferenced, and `git`, `evolve_now`
+      and `synthesize_skills` were already measured at zero by D13.4 and D09.1. A tool
+      the model may choose and has not is a capability, not dead code.
+    document_reason: >-
+      No design doc — `map_check` found no mapped item, and D10.6's own document is
+      already closed and verified. The settled promises are recorded in the entries that
+      made them.
   DEBT161_2026_09_06_the_record_contradicted_a_decision_the_operator_had_already_made:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-161. Reached by taking the 28 stale
