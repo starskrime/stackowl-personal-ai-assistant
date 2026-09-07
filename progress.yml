@@ -315,6 +315,123 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT168_2026_09_07_eleven_documents_pinned_a_baseline_that_has_since_IMPROVED:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-168. It is the UNSWEPT REMAINDER of
+      DEBT-163: that item fixed D01.6's step 3, which said "PASS: clean" after numeric
+      baselines were adopted, and answered "what else does this reach" for sample-scoped
+      SQL only. Pinned VALUES were the other half and I did not sweep them.
+    ROOT_CAUSE: >-
+      A baseline is a MOVING FLOOR that may FALL. Eleven design documents pinned its value
+      at the moment they were written — "RAN: 46 and 78 — the DEBT-1 / DEBT-8 baselines
+      exactly" — and the live baselines are now 35 and 65. Two more pinned a schema
+      version (0106, 0102) against a live 0139. Every one of those Verification steps
+      therefore reads as a FAILURE on a perfectly healthy tree, which is the crying-wolf
+      defect that makes a Verification section stop being run.
+    IT_IS_THE_TWO_COPIES_SHAPE_A_THIRD_TIME: >-
+      The baselines have ONE authoritative home, `scripts/tripwires.sh` lines 55 and 60
+      ("must not rise above 35" / "above 65"). Eleven documents held copies. The fix
+      points each at the gate instead of restating the number, so it cannot go stale
+      again — the same cure as DEBT-164 (state vs trace) and DEBT-166 (in-process counter
+      vs sessions.completed_turns).
+    MEASURED: >-
+      11 documents with the baseline pin (D01.1, D01.2, D01.4, D01.5, D02.6, D05.1, D05.2,
+      D05.3, D05.5, D05.6, D05.7) and 2 with a schema pin (D01.5, D01.7). After the sweep,
+      genuine residual pins: ZERO.
+    MY_RESIDUE_CHECK_FLAGGED_ITS_OWN_CORRECTION_NOTE_THREE_TIMES: >-
+      The replacement text quotes the old value — [CORRECTED ... this said "46 and 78"] —
+      so a naive residue grep reported 11 failures on a correct transform, then repeated
+      it for the schema pins. That is DEBT-158's own convention one population over: quote
+      the retired value WITHOUT its marker, or your detector cannot tell the fix from the
+      defect. The whole transformation was dry-run on COPIES in the scratchpad before the
+      tree was touched, which is the only reason this was caught before shipping.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change, so no restart could show an effect and none is
+      claimed. Acceptance is the sweep's own residue check returning zero, run after the
+      edits rather than assumed. D09.4's full suite came back ELEVENTH GREEN on the tree
+      this work waited for — `12393 passed, 17 skipped, 0 failed in 1983.63s` (rc=0),
+      `SUITE TREE STILL` — and every measurement here was read-only while it ran.
+    NOT_A_GUARD_and_the_reason: >-
+      A tripwire refusing any number in a Verification comment would fail on the many
+      legitimate ones (measured counts, row totals, token figures) — the crying-wolf
+      failure this item is about, rebuilt as a gate. What makes recurrence unlikely is
+      that the docs now name the GATE rather than a value.
+    document_reason: >-
+      Thirteen documents corrected in place with the [CORRECTED 2026-09-07] convention
+      they already use.
+  DEBT167_2026_09_07_I_told_him_the_platform_does_not_self_evolve_and_that_was_wrong:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-167. This corrects an answer I gave
+      Bakir the same night, in writing, to "why does the platform not follow self evolved
+      agent which should be better on each run due to learning". The record is the
+      deliverable and I put a materially wrong claim in it.
+    WHAT_I_SAID_THAT_WAS_WRONG: >-
+      "Every actuator that would let the platform change itself has fired approximately
+      zero times", citing evolve_now 0, synthesize_skills 0, skill_create 0,
+      committed_facts 0 rows against 230 staged. Two of those five readings were
+      misinterpreted and the headline conclusion does not survive them.
+    CORRECTION_1_the_scheduled_self_improvement_loop_RUNS: >-
+      `synthesize_skills` and `evolve_now` are MANUAL MID-TURN SHORTCUTS over engines
+      that already run on a schedule — the tool's own docstring says so: "a THIN owl-tool
+      wrapper around the EXISTING SkillSynthesizerHandler... previously reachable ONLY as
+      a daily scheduler job". MEASURED 2026-09-07 from the `jobs` table: every daily
+      learning job has run with zero failures — skill_synthesizer daily@03:30 last ran
+      2026-09-06T08:35:18, plus tool_outcome_miner, tool_revalidation, evolution_batch and
+      knowledge_prune. A zero on the shortcut says nothing about the engine.
+    CORRECTION_2_no_memory_is_stranded: >-
+      `committed_facts` at 0 rows is not a promotion step that never runs. Migration 0112
+      states the intent in its own text: "committed_facts and its FTS index are EMPTIED,
+      not dropped". `staged_facts` IS the live store and it is READ — 187
+      `staged_semantic_recall` runs in the retained window, 168 of them with at least one
+      hit, scanning ~200 rows. This is the exact near-miss CLAUDE.md already records,
+      where concluding otherwise would have stranded 361 memories, and I walked into it.
+    WHAT_SURVIVES_and_it_is_the_real_answer: >-
+      The platform DOES compound, measured by `skills.loaded_at`: 14 learned skills first
+      seen in August, 11 in September, against 14 builtins authored in May-June — and 14
+      of the learned ones have EXECUTED, 158 executions in total. Its quality trend is
+      real too: mean quality 0.464 (W30) -> 0.823 (W36), success 47% -> 74%. What that
+      curve tracks, though, is the fix arcs: the jump is W33->W34 (0.516 -> 0.781, 10.5%
+      -> 59.9%), exactly when they landed. So it improves on a SCHEDULE and by a
+      DEVELOPER; what it did not do was learn WITHIN a conversation, and that one gap was
+      real — the skill nudge, fixed the same night as D09.4/DEBT-166.
+    THREE_INSTRUMENTS_LIED_AND_I_CAUGHT_ALL_THREE_BEFORE_BUILDING: >-
+      (1) `skills.updated_at` reads 2026-09-07 02:55 on ALL 39 skills — it is a LOAD
+      stamp the loader rewrites every boot, not an update stamp; `loaded_at` is the honest
+      column and varies 05-28 through 09-04. Nothing in src/ reads `skills.updated_at`,
+      so it is a cosmetic wart rather than a live defect, and it is recorded rather than
+      fixed. (2) My scheduler-execution regex reported skill_synthesizer as never running
+      by omitting handlers it could not match — health_sweep and objective_driver were
+      missing from the same list while I had watched both run minutes earlier. (3) My
+      first grep for the synthesizer counted 2,118 hits that were almost entirely
+      "handler registered" lines, i.e. registrations, not runs.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    outcome: >-
+      no_change_needed for src/ — nothing was found broken. The deliverable is the
+      correction: an answer to the operator that overstated a defect, replaced by
+      measurements with their denominators, and three of my own instrument errors named
+      so the next reader does not repeat them.
+    validate_evidence: >-
+      Read-only throughout; every number is reproducible from the live database and the
+      retained logs by the queries recorded beside it. Taken while D09.4's full suite ran
+      against commit 9bdc7c88, and the tree was deliberately untouched until it printed.
+    document_reason: >-
+      No design doc — `map_check` found no mapped item. The correction belongs in the
+      record beside the answer it corrects.
   DEBT166_2026_09_07_the_nudge_counter_reset_faster_than_its_own_interval:
     map_check: >-
       D09.4 — a MAPPED item, 6/7 with `validate: partial`. Reached from Bakir's question

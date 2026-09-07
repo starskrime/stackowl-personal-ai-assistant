@@ -103,6 +103,7 @@ at a process table. Measured, in order:
 | 2026-09-06 | **`12327 passed, 17 skipped, 0 failed in 1987.61s` (rc=0)** — eighth green, `SUITE TREE STILL` |
 | 2026-09-07 | **`12372 passed, 17 skipped, 0 failed in 1962.70s` (rc=0)** — ninth green, `SUITE TREE STILL` |
 | 2026-09-07 | **`12378 passed, 17 skipped, 0 failed in 1988.05s` (rc=0)** — tenth green, `SUITE TREE STILL` |
+| 2026-09-07 | **`12393 passed, 17 skipped, 0 failed in 1983.63s` (rc=0)** — eleventh green, `SUITE TREE STILL` |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so
