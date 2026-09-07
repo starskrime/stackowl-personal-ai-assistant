@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT186_2026_09_07_open_items_that_closed_twenty_minutes_after_they_were_written:
+    map_check: >-
+      D10.5 — the oldest DELETION-stale document. Verification RUN, and the finding was in
+      its "Still open" list rather than its checks.
+    THE_FINDING: >-
+      Three of the four open items were answerable from evidence that has been sitting in
+      the logs since 2026-08-29 — the day the section was written. Check 5 asked for a
+      hyphenated name AND a `source:name` invocation, and BOTH HAPPENED TWENTY MINUTES
+      LATER: 17:23:59 sent `builtin:verify-before-claim` and 17:25:12 sent
+      `channel-fallback`, each landing in `skill_view`. The section was written and never
+      re-read.
+    THE_TRACE_ID_JOIN_IS_ALSO_CLOSED: >-
+      The document records that its first closing query was unrunnable — the TURN PROMPT
+      line carried no trace_id because it is emitted before TraceContext exists — and that
+      msg.trace_id was added to the line's fields. MEASURED: the first steer has
+      fields.trace_id null and the two later ones each SHARE a trace_id with their
+      skill_view (e7b4e8b8f14a, e6c1d3e144d9). That is the document's own stated PASS,
+      "both lines share one trace_id", satisfied on the next invocations after the fix.
+    THE_ROOT_CAUSE: >-
+      A `closing_check` field is re-run by validate_check.py every loop. A document's prose
+      "Still open" list is enumerated by NOTHING — the same disease DEBT-158 found for
+      prose promises in progress.yml, one population over. MEASURED across all 84 design
+      documents: this is the ONLY such section, 4 bullets. Population of one, so no guard
+      was built — the fifth n=1 generalization this session, and the pattern is itself the
+      finding about the corpus.
+    THE_ONE_THAT_STAYS_OPEN_AND_WHY: >-
+      `/skill use X ??` previews rather than runs — unit-tested, still no live evidence. My
+      first check grepped the logs for "preview", got 3 hits, and ALL THREE were
+      compute_reflection / synthesize_one "unparseable — skipping" lines with nothing to do
+      with the feature. A confident NON-zero about the wrong thing, which is the mirror
+      CLAUDE.md now records.
+    AN_ADJACENT_FINDING_RECORDED_NOT_FIXED: >-
+      The bullet asked whether staged_facts carries a skill BODY. It does not. But one row
+      of 230 carries the STEER, stored as a user turn: 'User: [/skill use] The user has
+      invoked the skill "channel-fallback"...'. So the short-term conversation buffer
+      records the AUGMENTED message rather than what the operator typed. Not a body leak
+      and not this item's bug — it means the buffer attributes a machine-composed
+      instruction to the user. What a conversation buffer should store is a design
+      question, so it is recorded rather than changed in passing.
+    TWO_INSTRUMENT_ERRORS_OF_MY_OWN: >-
+      (1) The "preview" grep above. (2) My first probe for `/help skill` reported that BOTH
+      `use` and `menu` were ABSENT — it introspected an attribute that does not exist and
+      returned an empty list, and I nearly recorded a missing feature. Reading the source
+      shows 16 SubCommand(name=...) literals with `use` first and `menu` fifteenth. Print
+      the real shape; do not trust a guessed accessor.
+    changes: >-
+      docs/reference-mapping/designs/D10.5.md only — Status updated (name handling proven),
+      three open bullets closed with evidence, one left open with a better reason, the
+      line-count and the ~L2263-2320 seam pointer dropped, re-stamped. No code.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT185_2026_09_07_the_claim_that_cost_ten_red_tests_was_still_being_handed_to_new_sessions:
     map_check: >-
       D04.1 — the oldest stale document AND deletion-stale. Verification RUN in full, and
