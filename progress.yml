@@ -315,6 +315,91 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT163_2026_09_07_the_verification_step_failed_on_correct_behaviour:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-163. Taken by working the largest real
+      backlog rather than more instrument work: 28 stale design documents, of which
+      D01.6 was the oldest (verified 2026-07-25, six weeks, 7 sources changed as
+      recently as 09-06) and the most consequential, because D01.2 cites it for "the
+      gateway reports no cache fields in any accepted shape" — load-bearing for ESC-149
+      and ESC-155.
+    ROOT_CAUSE: >-
+      D01.6's Verification step 4 read `ORDER BY id DESC LIMIT 3` over `cost_records`
+      and demanded "non-empty prompt_hash, plausible ttft_ms" of whatever three rows
+      happened to be last. It sampled a HETEROGENEOUS table — streaming turns, jobs and
+      classifier calls together — and asserted a property only some members have. It
+      passed on 2026-07-25 because the last three rows were then a streaming Telegram
+      turn. It fails today on entirely correct behaviour.
+    WHY_THE_SYSTEM_IS_FINE_and_the_code_says_so_itself: >-
+      `ttft_ms` is stamped only inside `stream()` (openai_provider.py:528), so every
+      non-streaming call — the whole tool loop — legitimately has none; 1-10% of rows per
+      day IS the streaming share. `prompt_metrics.current()` documents ("", 0) as "the
+      honest 'not measured' value — a turn that never reached assemble (a slash command,
+      a health probe) genuinely has no prompt identity", which is the ~1/3 of rows with
+      an empty `prompt_hash`. Neither is a defect; the step was.
+    THE_GENERAL_SHAPE: >-
+      A verification step that FAILS ON CORRECT BEHAVIOUR is how a Verification section
+      stops being run — the same "cries wolf" failure this programme refuses to ship in
+      guards, sitting inside the documents instead. The sound shape is to filter to a
+      HOMOGENEOUS population and then assert, or to assert an invariant that holds over
+      all of it.
+    WHAT_ELSE_THE_CAUSE_REACHES_measured_not_guessed: >-
+      A first sweep found 21 sample-scoped verification commands across 18 documents and
+      21 WAS NOT THE ANSWER. Reading them, the `tail -1` uses all grep a SPECIFIC message
+      first, so their population is already homogeneous and any member proves the
+      property — sound. Narrowed to the actual defect shape, a SQL sample with LIMIT and
+      no WHERE over a heterogeneous table, the count is ONE and it is D01.6. No guard
+      shipped: one that flagged the other 20 would be the crying-wolf failure this item
+      is about.
+    A_SECOND_STALE_CLAIM_IN_THE_SAME_DOCUMENT: >-
+      Step 3 said `uv run ruff check src/ && uv run mypy src/` with "PASS: clean." Clean
+      stopped being the standard when the programme adopted numeric baselines, so as
+      written it would read as a failure forever however healthy the tree was. Now
+      asserts the baselines — ruff 35, mypy 65, which may fall but never rise.
+    VERIFICATION_RUN_NOT_TRUSTED: >-
+      Step 1 all five columns present (run read-only rather than re-running migrations
+      against a live database, and said so). Step 2 `5 passed`. Step 3 ruff 35 / mypy 65,
+      at baseline. Step 4 rewritten, then RUN VERBATIM as written in the document:
+      hash-without-chars 0, chars-without-hash 0, cached_nonzero 0, recent session_key
+      548/563. Step 5 baseline file present, 7,871 bytes. `Last verified` re-stamped
+      2026-09-07 against a8123178; doc_check STALE 28 -> 27.
+    THE_INVARIANT_IS_REAL_AND_WAS_CHECKED_BEFORE_BEING_WRITTEN: >-
+      `stamp()` sets `prompt_hash` and `system_prompt_chars` together or not at all, so
+      neither can appear without the other. Measured across all 130,983 rows before it
+      went into the document: ZERO violations in both directions. That is a property of
+      the whole table rather than of whichever lane last spoke, which is the entire
+      correction. `cached_nonzero 0` is carried deliberately as the line that would
+      EXPIRE ESC-149 the day this gateway starts reporting cache statistics.
+    NOT_BUILT_and_recorded_instead: >-
+      `D01.6-baseline.md` — this item's own step-5 deliverable — is a deliberately FROZEN
+      historical capture ("the before-picture", 2026-07-25) whose value is that it records
+      the pre-D01.1 state. It must never be re-verified, so `Last verified` is meaningless
+      for it, yet doc_check will report it unmeasurable forever and train the reader to
+      skim that list. The corpus has a frozen-capture GENRE the staleness model does not
+      describe. Teaching doc_check that genre is its own item, not this one.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change, so no restart could show an effect and none is
+      claimed. The acceptance is doc_check's own output falling from STALE 28 to 27, and
+      the rewritten step 4 producing its stated expectations when run verbatim.
+    HYPOTHESES_KILLED_ON_THE_WAY: >-
+      (1) That `ttft_ms` at 0.6% all-time was a metric the operator asked for and never
+      got — REFUTED by reading its precondition: it is streaming-only by construction.
+      (2) That `session_key` at 29.6% all-time was a hole in cost-by-conversation
+      grouping — REFUTED by measuring per day instead: 96-100% since 08-30, and the
+      all-time figure is pure history, the "satisfied by history" error inverted into a
+      FAILURE claim satisfied by history. (3) That 21 documents shared this defect —
+      REFUTED by reading them; the real count is one.
+    document_reason: >-
+      D01.6 IS the document, corrected and re-stamped in place with its Verification
+      section run rather than trusted.
   DEBT162_2026_09_06_four_promises_were_waiting_on_evidence_that_had_already_arrived:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-162. This is the FIRST HARVEST of the
