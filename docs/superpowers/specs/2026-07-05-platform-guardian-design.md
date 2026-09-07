@@ -24,7 +24,11 @@ A project skill, `platform-guardian`, that:
 
 - Not a replacement for `systematic-debugging`, `verification-before-completion`, or `code-review` — Platform Guardian is the always-on lens that decides *when* those apply even to code the user didn't name; it delegates the actual debugging/verification mechanics to them.
 - Not a license for destructive git operations, unrelated refactors, or touching files outside `src/`/`tests/`/config.
-- Not a mandate to run the full test suite per task — `feedback_test_run_discipline` (full `pytest` hangs on this box) still applies; verification stays scoped to affected files.
+- Not a mandate to run the full test suite per task — verification stays scoped to affected
+  files. **[CORRECTED 2026-09-07: this said `feedback_test_run_discipline` (full `pytest`
+  hangs on this box) "still applies". The suite does NOT hang — ~30 min, thirteen green
+  runs — and that memory was itself corrected. Scoped verification is still the right
+  default per task; the REASON is cost, not a hang.]**
 
 ## Architecture
 

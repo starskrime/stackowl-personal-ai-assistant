@@ -132,7 +132,9 @@ Every new `except` logs (no silent catch); the cascade logs which tier/veto fire
 
 **Unit:** cascade tier/veto selection (lying judge → veto overrides; both down → structural stands); the strip-trap guard (tally reads `c["failed"]`, never re-scans); `_structurally_irrelevant` gating; the deterministic floor with zero providers; the normalized-input adapter per substitution class; browser error classification per code; the audit INSERT binding.
 
-Targeted suites only (full suite hangs on this box): `tests/pipeline tests/providers tests/tools tests/memory` + the new journey tests.
+Targeted suites for the edit loop: `tests/pipeline tests/providers tests/tools tests/memory`
++ the new journey tests. **[CORRECTED 2026-09-07: this said "(full suite hangs on this
+box)". It does not — ~30 min, run detached via `./scripts/full_suite.sh`.]**
 
 ## Build order (one effort, ordered workstreams — no deferral; cuts documented if any)
 

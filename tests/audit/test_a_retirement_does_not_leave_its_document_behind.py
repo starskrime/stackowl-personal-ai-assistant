@@ -81,11 +81,31 @@ class TestTheReportSeesTheRealCorpus:
         assert m, f"the summary line lost its deletion count:\n{out.stdout[-1500:]}"
         stale, by_deletion = int(m.group(1)), int(m.group(2))
         assert by_deletion <= stale, (out.stdout[-1500:])
-        assert by_deletion >= 5, (
-            f"only {by_deletion} deletion-stale documents found; ELEVEN of nineteen "
-            "were measured on 2026-09-07. A scanner that quietly narrows is the exact "
-            "failure this file exists to prevent — doc_check.py under-reported by "
-            "eleven that way once already"
+        # NO FLOOR ON THIS NUMBER, and the first version had one.
+        #
+        # It asserted `by_deletion >= 5` because ELEVEN of nineteen were deletion-stale
+        # when this guard was written. That is a floor on a population THIS PROGRAMME IS
+        # ACTIVELY DRAINING: every document re-verified removes one. It went 11 -> 4 over
+        # a single day of loops and then BLOCKED THE COMMIT THAT DRAINED IT — a vacuity
+        # control failing precisely because the work succeeded. It is the mirror of the
+        # rule in test_a_doc_does_not_pin_a_count_that_grows_by_design: do not pin a floor
+        # under a count that SHRINKS by design either.
+        #
+        # What must not silently narrow is the SCANNER, so that is what is asserted, by a
+        # positive control that no amount of document-fixing can drain.
+
+    def test_the_scanner_still_recognises_a_deletion_when_one_exists(self) -> None:
+        """THE VACUITY CONTROL, rewritten. A path with known deletion commits must
+        still produce hits — this fails if `_DELETION` or `_deletions_since` narrows,
+        and cannot be emptied by re-verifying documents."""
+        hits = dc._deletions_since(["src/stackowl/memory"], "2026-08-01")
+
+        assert len(hits) >= 3, (
+            f"only {len(hits)} deletion commits found under src/stackowl/memory since "
+            "2026-08-01; TEN were measured on 2026-09-07, including `5f1abbe0 chore: "
+            "delete the retired fact-store machinery`. A scanner that quietly narrows is "
+            "the exact failure this file exists to prevent — doc_check.py under-reported "
+            f"by eleven that way once already. Got: {hits[:3]}"
         )
 
     def test_the_scan_survives_a_path_git_cannot_date(self) -> None:

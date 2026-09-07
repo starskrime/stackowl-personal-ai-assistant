@@ -128,6 +128,29 @@ THIS file was corrected on 09-01 the same claim survived in
 invocation — so nothing changed and TEN more tests sat red. **Correcting one copy of a
 rule is not correcting the rule.** All five surfaces now carry these numbers.
 
+**AND THE CENSUS OF FIVE WAS ITSELF WRONG — SWEPT 2026-09-07, three days later.** Two
+MORE live surfaces still said the suite hangs: `docs/reference-mapping/designs/D04.1.md`
+("Never run a bare `pytest` on this box — it hangs") and, worse, **`SESSION_PROMPT.md`**,
+which is the prompt handed to an autonomous session and which also stated the ruff
+baseline as 37 when it is 35. The claim that cost ten red tests was still being handed to
+new sessions. The failure is one level up from the one recorded above: the correction was
+applied to a list someone REMEMBERED, not to a set someone SWEPT. Correcting the copies
+you can think of is not correcting the rule either.
+
+**The sweep, so the next person runs it instead of counting:**
+
+```bash
+grep -rn -i "it hangs\|hangs on this box\|never.*bare .pytest\|full pytest.*hangs" \
+  --include="*.md" --include="*.py" --include="*.sh" . \
+  | grep -v "do_not_push_to_git_research_only\|/.git/"
+```
+
+It returns ~19 hits and **most are correctly left alone**: `_bmad-output/` and
+`docs_archive_ralph_2026-06-30/` are dated records of what was instructed at the time, and
+rewriting them would be falsifying history. The boundary is LIVE INSTRUCTION versus
+RECORD — fix anything a future session will be told to obey; leave anything that documents
+what a past session was told.
+
 **A MEASUREMENT TAKEN ON THIS BOX WHILE THIS LOOP RUNS MAY BE MEASURING THE LOOP.**
 MEASURED 2026-09-07, chasing "why does the platform restart ~80 times a day". It
 does not, in any sense that describes the product: **715 boots over eleven retained

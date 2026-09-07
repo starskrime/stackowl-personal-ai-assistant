@@ -170,13 +170,22 @@ evidence is `partial` or `blocked` — **never `done`**.
 - **A guard you have not seen fail is not a guard. A skipped test is not evidence.**
 
 **Before you commit**
-- `ruff` **37** / `mypy` **65** in `src/` are the baselines. Check **both**, in the
+- `ruff` **35** / `mypy` **65** in `src/` are the baselines. [CORRECTED 2026-09-07 — this
+  said ruff 37; it has since improved to 35, and `scripts/tripwires.sh` is the authority.] Check **both**, in the
   **foreground**, before every commit. Neither may rise. They catch real bugs — an
   undefined name last session would have been a runtime `NameError`.
 - **Run the suites that IMPORT what you changed.**
-- **Never a bare `pytest`** — it hangs this box. Targeted paths with `timeout`.
-  Exit **143** is your own timeout; exit **124** is the `timeout` command. **A hang
-  is a failure.**
+- **The full suite does NOT hang — it takes ~30 minutes, and this line used to say the
+  opposite.** [CORRECTED 2026-09-07.] Fourteen runs since 2026-09-01, thirteen green,
+  most recently `12416 passed, 17 skipped, 0 failed in 1848.06s` (rc=0). Run
+  `./scripts/full_suite.sh` (detached, stamped) and collect it later; a FOREGROUND
+  timeout kills it mid-run, which is all "hangs" ever was. It is the only detector for
+  cross-test pollution.
+- Targeted paths with `timeout` are still right for the edit loop, and
+  `./scripts/tripwires.sh` (~2 min, run BARE and chained on `$?`) before every commit.
+  Exit **143** is your own timeout; exit **124** is the `timeout` command. **A hanging
+  test is a failing test — but only after you have checked it is not merely slow**
+  (`tests/db` is minutes, not seconds).
 - **Do not edit `src/` while a suite runs** — it invalidates the run.
 - **`/ponytail-review` your diff.**
 

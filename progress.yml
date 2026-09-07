@@ -315,6 +315,65 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT185_2026_09_07_the_claim_that_cost_ten_red_tests_was_still_being_handed_to_new_sessions:
+    map_check: >-
+      D04.1 — the oldest stale document AND deletion-stale. Verification RUN in full, and
+      the document's LAST LINE turned out to matter more than its checks.
+    THE_FINDING: >-
+      D04.1 ends "Never run a bare `pytest` on this box — it hangs. Targeted paths only."
+      That is the exact false belief CLAUDE.md records as having cost this programme TEN
+      RED TESTS and a dark multi-tenancy tripwire — and CLAUDE.md, three days earlier,
+      declared "All five surfaces now carry these numbers." THE CENSUS OF FIVE WAS WRONG.
+    THE_WORST_SURFACE_WAS_NOT_THIS_DOCUMENT: >-
+      SESSION_PROMPT.md — "session prompt for autonomous continuation", the file handed to
+      a fresh autonomous session — still said "Never a bare `pytest` — it hangs this box",
+      AND stated the ruff baseline as 37 when it is 35. So the claim that cost ten red
+      tests was still being issued as an instruction to new sessions, beside a baseline two
+      higher than the gate's.
+    THE_ROOT_CAUSE_IS_ONE_LEVEL_UP: >-
+      The recorded failure was "correcting one copy of a rule is not correcting the rule".
+      This is the next one: the correction was applied to a list someone REMEMBERED, not to
+      a set someone SWEPT. Counting five surfaces from memory and stopping is how two more
+      survived. CLAUDE.md now carries the SWEEP ITSELF — a grep the next person runs
+      instead of counting.
+    THE_BOUNDARY_THAT_MAKES_THE_SWEEP_USABLE: >-
+      The grep returns ~19 hits and MOST ARE CORRECTLY LEFT ALONE. `_bmad-output/` (10
+      files) and `docs_archive_ralph_2026-06-30/` (4) are dated records of what a past
+      session was instructed to do; rewriting them would be falsifying history. The line is
+      LIVE INSTRUCTION versus RECORD — fix what a future session will be told to obey,
+      leave what documents what a past session was told. Four surfaces were live and are
+      fixed: D04.1, SESSION_PROMPT.md, and two `docs/superpowers/specs/` files that assert
+      it in the PRESENT tense ("still applies"), one of them citing a memory that had
+      itself already been corrected.
+    D04_1_VERIFICATION_RUN: >-
+      Checks 1-4 reproduce EXACTLY — 20, 10, 4, 6 passed. Check 5 grew 681 -> 775 and
+      became a shape. The Source header pinned six line counts and FIVE had drifted (base
+      649->730, openai 1577->1680, anthropic 1235->1252, _react 433->452; only gemini 322
+      and llm_gateway 512 held) — dropped rather than re-pinned. The three provider names
+      are shorthand for `*_provider.py`, which is why doc_check could never resolve them;
+      the header now names the real files.
+    MY_OWN_GUARD_BLOCKED_THIS_COMMIT_AND_IT_WAS_RIGHT_TO_FIRE_BUT_WRONG_TO_EXIST: >-
+      The gate BLOCKED the first attempt (no commit went out) on
+      test_the_deletion_scan_finds_the_documents_that_are_actually_there — MY guard from
+      DEBT-176, asserting `by_deletion >= 5` because ELEVEN of nineteen were deletion-stale
+      the day it was written. That is a FLOOR ON A POPULATION THIS PROGRAMME IS ACTIVELY
+      DRAINING: every document re-verified removes one. It went 11 -> 4 across a day of
+      loops and then blocked the very commit that drained it — a vacuity control failing
+      precisely BECAUSE the work succeeded. It is the exact mirror of
+      test_a_doc_does_not_pin_a_count_that_grows_by_design: do not pin a floor UNDER a
+      count that shrinks by design either. Replaced with a positive control on the SCANNER
+      — `_deletions_since(["src/stackowl/memory"], "2026-08-01")` must return hits (10
+      today, including 5f1abbe0) — which no amount of document-fixing can empty. Narrowing
+      _DELETION to a never-matching word kills it plus two siblings; restored green at 5.
+    changes: >-
+      docs/reference-mapping/designs/D04.1.md (the hang claim, the line-count pins, check 5
+      as a shape, re-stamped), SESSION_PROMPT.md (the hang claim and the ruff baseline),
+      tests/audit/test_a_retirement_does_not_leave_its_document_behind.py (the drainable
+      floor replaced by a positive control),
+      CLAUDE.md (the census was wrong; the sweep and its live-versus-record boundary),
+      docs/superpowers/specs/*2 (present-tense assertions). No code.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT184_2026_09_07_a_check_that_inherited_the_preconditions_of_an_experiment:
     map_check: >-
       D16.1 — the oldest stale document AND deletion-stale. Verification RUN in full.
