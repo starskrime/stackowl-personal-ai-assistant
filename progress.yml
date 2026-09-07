@@ -17714,6 +17714,57 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-212
+    found: 2026-09-07
+    what: >-
+      D04.6's OBSERVABILITY SECTION LISTED FOUR INFO LINES AS THINGS A READER COULD GO AND
+      LOOK AT. Three of them have fired ZERO times, ever. The document gave no denominator,
+      so a reader running those greps would have got three zeros and no way to tell "the
+      back-pressure actuator is dead" from "nothing has asked it to act" — which is exactly
+      the ambiguity this item was created to remove, reproduced in its own summary.
+    the_denominator_only_became_readable_TODAY: >-
+      MEASURED 2026-09-07: 43 `[resilient_round] fault classified` records, every one
+      `cause: transport`, `recovery: retry` — ZERO rate-limit. Beside them 72 breaker
+      short-circuits and 60 half-open skips, neither of which reaches `penalize()` at all,
+      so the fault count is the correct denominator and the other 132 records are not.
+      That line has only existed at INFO since `7704628c` LANDED THIS MORNING: before it,
+      the cause of every fault sat on the 4-point DEBUG exit, so "zero rate-limit penalties"
+      and "zero rate-limit events" were literally the same reading. The pacing path has had
+      NO OPPORTUNITY, and today is the first day that sentence is checkable.
+    invariant_4_stopped_being_a_claim: >-
+      `[health] resilience_contributor: a resource is flapping — recycled repeatedly between
+      sweeps` fired once, 2026-09-07T06:35:05Z, carrying {"flapping":["db_pool+2"],
+      "threshold":2}. EXACTLY ONE firing is itself the proof of the invariant: a contributor
+      thresholding the CUMULATIVE recycle count — the shape this item replaced — would have
+      fired on every sweep after the first, and the retained logs hold one. The `+2` is the
+      delta and the label is named, so the record distinguishes the two designs rather than
+      merely being consistent with the new one.
+    why_not_what: >-
+      An Observability section is a promise that a claim is checkable. D04.6 made that
+      promise for four lines and it held for one. The cause is not carelessness — it is that
+      a line's EXISTENCE and a line's TRIGGER are different facts, and only the first has a
+      guard. `test_a_closing_check_looks_for_evidence_that_can_exist` walks the loggers and
+      would pass every one of these four: they are all emitted, all at INFO, all only
+      producible by the new code. What it cannot ask is WHETHER ANYTHING HAS EVER REACHED
+      THEM. So the rule is the one already written for closing checks — name the branch that
+      emits, and print its denominator — applied to Observability sections, which nothing had
+      applied it to.
+    what_else_that_cause_reaches: >-
+      Every design document with an Observability list. This one is now the worked example:
+      each line carries what it fired and over what population. Not built as a detector —
+      "does this log line have a denominator beside it" is a prose judgement, and a script
+      guessing at it would cry wolf on the many lines whose count IS the whole story.
+    verification_rerun: >-
+      21 passed across the three named test files (5 + 10 + 6, exactly as documented). The
+      wide path `tests/providers tests/pipeline/durable tests/infra` was NOT re-run
+      separately and the document says so: the seventeenth full-suite run was in flight on
+      this tree and executes all of it, so duplicating it would have spent the loop and
+      contended for a 7.6 GB box. `rate_limit_rpm` re-confirmed absent from the live yaml.
+    stale_population_drained: >-
+      doc_check STALE 1 -> 0. The report opened this session at 8 and is now empty: D06.2,
+      D05.4, D05.1, D08.4, D03.5, D06.1 and D04.6 were each re-verified in a loop of their
+      own, and D13.2 was re-stamped because one of those commits made it stale.
+    stages: {brainstorm: done, architect: done, implement: no_change_needed, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-211
     found: 2026-09-07
     what: >-
