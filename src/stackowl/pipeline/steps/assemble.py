@@ -281,6 +281,18 @@ async def run(state: PipelineState) -> PipelineState:
     # that vanishes on some turns forfeits the cache on every turn, which costs
     # more than the tokens it saves.
     #
+    # THAT THESIS RESTS ON A DISCOUNT NOBODY HERE CAN OBSERVE, and saying so is
+    # the honest state of it. ESC-149 (operator, 2026-09-05) settled that automatic
+    # prefix caching is a property of a BACKEND, not of a wire protocol, and this
+    # deployment reports nothing either way: measured 2026-09-06,
+    # `cached_input_tokens` is 0 across 130,983 calls and 710.9M input tokens, with
+    # `cache_stats_reported` = not_reported on 5,977 of 5,977 readings. If the
+    # discount is absent, "costs more than the tokens it saves" is UNPROVEN and the
+    # always-present catalogue is pure recurring cost — p50 frozen prefix is 13,985
+    # chars (~3,632 tokens) on every call, ~10.4M tokens re-sent since 08-31.
+    # Whether to revisit this is a capability decision and is ESC-155, not a change
+    # to make here: the behaviour is deliberately UNTOUCHED.
+    #
     # Depth is not lost. `skill_view` fetches a body when the model decides it
     # needs one, and slice 4a made that tool independent of the scoring removed
     # here — otherwise its focus hysteresis would have silently gone to zero.
@@ -463,7 +475,10 @@ async def run(state: PipelineState) -> PipelineState:
     # execute for its grounding haystacks; it simply stops being PROMPT text.
     # Measured 2026-07-27: it varied in every session observed, making it the
     # largest single source of prompt instability, and an unstable prompt
-    # forfeits the provider's automatic prefix cache with no marker to blame.
+    # forfeits the provider's automatic prefix cache with no marker to blame —
+    # a cache this deployment cannot observe at all (ESC-149; see the note on the
+    # skill catalogue above). The stability argument stands on its own; the CACHE
+    # half of it is an assumption, and is recorded here as one.
     # Depth is not lost — the registered `memory` tool is how the model reaches
     # for it when a conversation needs more than the profile (Bakir's Q5+Q12,
     # with recall_risk explicitly ACCEPTED).

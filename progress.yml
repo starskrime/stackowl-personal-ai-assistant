@@ -315,6 +315,85 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT161_2026_09_06_the_record_contradicted_a_decision_the_operator_had_already_made:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-161. Reached by taking the 28 stale
+      design documents seriously after three loops of instrument work, and picking the
+      one whose staleness could actively mislead: D01.2, verified 2026-07-25, 10 source
+      files, and about prompt-cache breakpoints — the exact subject ESC-149 later settled.
+    ROOT_CAUSE: >-
+      ESC-149 (operator, 2026-09-05) settled that automatic prefix caching is a property
+      of a BACKEND, not of a wire protocol, and that this deployment cannot observe it.
+      DEBT-122 folded that correction into `providers/base.py`. IT LANDED IN ONE OF THREE
+      PLACES. D01.2 still opened by asserting the retracted claim as fact, and
+      `pipeline/steps/assemble.py` still used it to JUSTIFY two live design decisions. A
+      correction that reaches the code and not the document leaves the stale copy where a
+      reader meets it first — defect shape 3, two copies of one rule, with the copies
+      disagreeing.
+    THE_MEASUREMENT: >-
+      2026-09-06. `cached_input_tokens` is 0 across 130,983 calls and 710,857,506 input
+      tokens; `cache_stats_reported` reads not_reported on 5,977 of 5,977 readings. The
+      frozen prefix is p50 13,985 chars (~3,632 tokens) per call, p90 15,332, and ~10.4M
+      tokens of it have been re-sent since 2026-08-31. Stated as UNOBSERVABLE, never as
+      "not cached" — the gateway reports nothing either way, which is ESC-149's framing.
+    WHAT_SHIPPED: >-
+      D01.2 corrected in place using the document's own [CORRECTED] convention, and two
+      `assemble.py` comments rewritten to state the assumption as an assumption and name
+      ESC-149. The `assemble.py` change is PROVEN comment-only: the AST before and after
+      is byte-identical. `Last verified` on D01.2 is deliberately NOT re-stamped — only
+      these claims were re-checked, not the whole document, and a fresh date would assert
+      a re-verification that did not happen.
+    WHAT_I_DID_NOT_CHANGE_AND_WHY_IT_IS_HIS_CALL: >-
+      `assemble.py` justifies the always-present skill catalogue with "a block that
+      vanishes on some turns forfeits the cache on every turn, which costs more than the
+      tokens it saves". If the discount is unobservable, that is UNPROVEN and the
+      catalogue is pure recurring cost. Changing it alters what the model sees on a chat
+      turn — a capability decision — so it is ESC-155 with the measurement attached, and
+      the behaviour is deliberately untouched. My recommendation is recorded there: KEEP
+      IT, because D01.1's stability property is load-bearing on its own and trading a
+      certainty for an unknown is the wrong direction. The honest fix was to stop CITING
+      the cache as the reason, which is what shipped.
+    WHAT_ELSE_THE_CAUSE_REACHES_and_what_I_did_NOT_build: >-
+      An OPEN escalation carries a `premise_check` asking "is this still a question?". An
+      ANSWERED one carries nothing asking "does the tree still obey the answer?" — so
+      ESC-149's decision lived only in one docstring and nothing connected it to the two
+      places saying the opposite. That is the fifth instance of the cure this programme
+      keeps re-deriving, and it is recorded here rather than built: a general
+      "decision_check" is its own item, and three loops of instrument work is enough
+      before doing the work the instruments point at.
+    MUTATION_PROVEN: >-
+      Three mutants, applied, killed and restored from a FILE COPY with the restore
+      re-run green: reverting D01.2 to its pre-correction text, reverting the
+      `assemble.py` comments, and asserting the claim in a new file.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      The `src/` change is AST-identical to its predecessor, proven by comparing
+      `ast.dump` before and after, so no behaviour could move and none is claimed; the
+      full suite is launched detached regardless because the item touched `src/`.
+      ESC-155's `premise_check` runs and reports HOLDS against the live database, so the
+      escalation is falsifiable the day the gateway starts reporting cache statistics.
+    HYPOTHESES_KILLED_ON_THE_WAY: >-
+      (1) That the platform had live unexplained ERRORs — REFUTED; the top families are
+      the documented DNS outage, and the three suspicious ones (retry_queue_store row not
+      found, success-path delivery failed, handler exceeded its timeout) are ALL
+      pre-September and already fixed. My first sweep missed that because `stackowl.jsonl`
+      had rotated to ONE line and my glob `09-0*` hid four older files — a zero over a
+      one-line denominator, twice. (2) That design-doc verification greps could be checked
+      against the loggers the way closing checks are — REFUTED, 2 of 2 flagged were false
+      positives (f-string indirection), so the guard was not built. (3) That verification
+      sections could be re-run on demand — REFUTED, 68 of 80 run pytest and 7 restart the
+      platform. (4) That the 28 stale docs were an artefact of citing whole directories —
+      REFUTED, 23 of 28 cite only precise files.
+    document_reason: >-
+      D01.2 IS the document, and it was closed to its own [CORRECTED] convention rather
+      than a new file. `map_check` found no mapped item for the work itself.
   DEBT160_2026_09_06_the_check_grepped_for_a_character_class_and_called_it_a_prefix:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-160. Reached from the 9 remaining
@@ -11606,6 +11685,48 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_155_the_frozen_prompt_buys_a_discount_nobody_here_can_observe:
+      question: >-
+        D01.1 freezes the system prompt for the life of a conversation, and the skill
+        catalogue is present on EVERY turn including chat turns, because "a block that
+        vanishes on some turns forfeits the cache on every turn, which costs more than
+        the tokens it saves" (assemble.py). ESC-149 settled that automatic prefix caching
+        is a property of a BACKEND, not a wire protocol, and this deployment cannot
+        observe it. If the discount is absent, that justification is unproven and the
+        always-present catalogue is pure recurring cost. Do you want the always-present
+        blocks revisited, or is prompt STABILITY reason enough on its own?
+      why_evidence_cannot_settle_it: >-
+        The measurement is already in and it is a NEGATIVE that cannot be resolved from
+        here — the gateway reports no cache statistics in any accepted shape, so neither
+        presence nor absence of the discount is observable on this deployment. What
+        remains is an appetite call: spend real tokens on a stability property whose
+        cash value is unknown, or trade some stability for certain savings. It also
+        changes what the model SEES on a chat turn, which is a capability decision.
+      the_measurement: >-
+        MEASURED 2026-09-06. `cached_input_tokens` is 0 across 130,983 calls and
+        710,857,506 input tokens; `cache_stats_reported` reads not_reported on 5,977 of
+        5,977 readings. The frozen prefix is p50 13,985 chars (~3,632 tokens) per call,
+        p90 15,332, and ~10.4M tokens of it have been re-sent since 2026-08-31. DEBT-122
+        separately measured the fixed prefix at 54.3% of expensive-turn input tokens.
+      recommendation: >-
+        KEEP IT AS IS, and the reason is not the cache. D01.1's stability property is
+        load-bearing on its own — one distinct prompt_hash per session is what makes a
+        turn reproducible and what several guards assert against — and the catalogue is
+        names and descriptions, not bodies. Trading that for a saving nobody can confirm
+        would spend a certainty to chase an unknown. The honest change is the one already
+        made: stop CITING the cache as the reason. If you do want the tokens back, the
+        first candidate is a per-turn catalogue on conversational lanes only, measured
+        against turn quality rather than assumed.
+      blocked_until_answered: >-
+        Nothing. The behaviour is deliberately untouched; only the retracted
+        justification was corrected, in D01.2 and in two assemble.py comments.
+      premise_check: |
+        n=$(uv run python -c "
+        import sqlite3
+        from stackowl.db.pool import default_db_path
+        c=sqlite3.connect(str(default_db_path()))
+        print(c.execute('SELECT COALESCE(SUM(cached_input_tokens),0) FROM cost_records').fetchone()[0])")
+        [ "$n" -gt 0 ] && echo "EXPIRED caching is now observable ($n cached tokens)" || echo "HOLDS no cached tokens ever reported"
     ESC_154_the_AI_Act_disclosure_nobody_has_ever_seen_and_whether_you_want_hints:
       raised: 2026-09-06
       question: >-
