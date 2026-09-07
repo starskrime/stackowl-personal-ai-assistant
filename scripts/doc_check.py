@@ -227,6 +227,42 @@ _DATED_RUN = re.compile(
 )
 
 
+#: A test path as a document writes it.
+_TEST_PATH = re.compile(r"(tests/[A-Za-z0-9_./-]+\.py)")
+
+
+def _test_paths_on_command_lines(text: str) -> list[tuple[int, str, str]]:
+    """(line_no, path, line) for every test path a reader would actually RUN.
+
+    THE SCOPING IS THE WHOLE DESIGN, and it replaces a negation regex that could not
+    have worked. A document naming a deleted test is a real defect — D01.7 advertised
+    `tests/memory/test_authored_once_promotion.py` for 24 days after `f3d0d85a` removed
+    it, through a stamp claiming the section had been RUN — but MEASURED 2026-09-07,
+    every missing path in this corpus sits in PROSE THAT DENIES IT: five sites, five
+    different phrasings ("DOES NOT EXIST", "does not exist either", "There is also no
+    X", "HAS NOT EXISTED SINCE"). `map_freshness._DENIAL` is the careful version of that
+    regex and it matches only THREE of the five, so the best available negation rule
+    would have shipped a report that is 40% wrong on a corpus with ZERO real defects.
+
+    So this does not read negation at all. A path counts only on a RUNNABLE COMMAND LINE
+    — inside a fence, not a `#` comment — because that is where a path a reader will
+    execute lives, and every denial is prose or a comment BY CONSTRUCTION. Verified both
+    ways: the rule sees 133 paths across the corpus so it is not blind, reports 0 today,
+    and against D01.7 at `2e5736b9^` it names line 387 — the real defect, caught in one
+    second where the live one took 24 days and a chance `--collect-only`.
+    """
+    out: list[tuple[int, str, str]] = []
+    fenced = False
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced or line.lstrip().startswith("#"):
+            continue
+        out.extend((i, m.group(1), line.strip()) for m in _TEST_PATH.finditer(line))
+    return out
+
+
 def _log_horizon() -> str:
     """The oldest date the retained logs can still answer for, or "" if unknowable.
 
@@ -440,6 +476,28 @@ def main() -> int:
         for name, ln, when, cmd in rotted[:12]:
             print(f"  {name}:{ln}  recorded {when}")
             print(f"      {cmd[:88]}")
+
+    watched = 0
+    gone: list[tuple[str, int, str, str]] = []
+    for doc in docs:
+        for ln, rel, line in _test_paths_on_command_lines(
+            doc.read_text(encoding="utf-8")
+        ):
+            watched += 1
+            if not (_ROOT / rel).exists():
+                gone.append((doc.name, ln, rel, line))
+    if gone:
+        print(f"\nNAMES A TEST THAT IS GONE — {len(gone)} of {watched} test path(s) on a "
+              f"runnable Verification command do not exist. A step naming a file this "
+              "tree does not have CANNOT have been run, so any 'Verification RUN' stamp "
+              "above it claims more than was done:")
+        for name, ln, rel, line in gone[:12]:
+            print(f"  {name}:{ln}  {rel}")
+            print(f"      {line[:88]}")
+    elif watched:
+        print(f"\nNAMES A TEST THAT IS GONE — none, across {watched} test path(s) on "
+              "runnable Verification commands. (The denominator is printed because a "
+              "silent detector and a clean corpus look identical.)")
 
     if unmeasurable:
         print("\nUNMEASURABLE — not fresh and not stale; nothing can date them:")

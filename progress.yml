@@ -315,6 +315,51 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT206_2026_09_07_the_population_I_filed_was_made_entirely_of_denials:
+    map_check: >-
+      No mapped item — building the detector filed last loop, after D01.7 advertised a
+      test deleted 24 days earlier through a stamp claiming the section had been RUN.
+    I_FILED_FOUR_FINDINGS_AND_ALL_OF_THEM_WERE_CORRECT_DOCUMENTS: >-
+      Last loop I recorded "FOUR missing test paths in THREE documents" as the population
+      to build against. Printed with context this loop: ALL FIVE SITES ARE DENIALS — every
+      document that names a missing test already says it is missing. "which DOES NOT
+      EXIST", "does not exist. The real files are", "does not exist either", "There is
+      also no X", "HAS NOT EXISTED SINCE 2026-08-14". The real population of defects was
+      ZERO. Another denominator taken on trust — my own filed finding, counted and not
+      decomposed, which is the error this file names more than any other.
+    AND_THE_OBVIOUS_CURE_WOULD_HAVE_BEEN_40_PERCENT_WRONG: >-
+      map_freshness._DENIAL already exists for exactly this and is carefully written —
+      "no longer exist", "does not exist", "not present", "never existed", "has been
+      removed". Run against the five real phrasings it matches THREE. So the best
+      available negation regex would have shipped a report that is 40% false positives on
+      a corpus with no defects at all. Prose negation is unbounded; a regex over it is a
+      guess at future phrasing.
+    SO_IT_READS_NO_NEGATION_AT_ALL_AND_THE_SCOPING_IS_THE_DESIGN: >-
+      A test path counts ONLY on a RUNNABLE COMMAND LINE — inside a fence, and not a `#`
+      comment. That is where a path a reader will execute lives, and every denial is prose
+      or a comment BY CONSTRUCTION. The comment half is load-bearing, not decoration: two
+      of the five denials are `#` comments INSIDE a fence, so fence-scoping alone would
+      still have reported two false positives. Same principle that fixed the EVIDENCE
+      OLDER detector one loop earlier, applied deliberately this time instead of after a
+      false positive.
+    PROVEN_BOTH_WAYS_BEFORE_IT_WAS_BUILT: >-
+      The rule sees 133 test paths across the corpus, so it is not blind. It reports 0
+      today. And run against D01.7 AT `2e5736b9^` — the tree before this session fixed it —
+      it names line 387, `tests/memory/test_authored_once_promotion.py`: the real defect,
+      in one second, where the live one took 24 days and a chance `--collect-only`. A guard
+      that cannot be shown to catch the thing it was built for is decoration.
+    THE_REPORT_PRINTS_ITS_DENOMINATOR_EVEN_WHEN_EMPTY: >-
+      "none, across 133 test path(s)". A silent detector and a clean corpus print the same
+      thing otherwise, and this session has already paid twice for a zero nobody could
+      interpret. The test asserts the capability (> 50 paths seen) rather than pinning 133,
+      which would fail on every unrelated document edit.
+    changes: >-
+      scripts/doc_check.py (_test_paths_on_command_lines and the NAMES A TEST THAT IS GONE
+      report), tests/audit/test_a_document_does_not_name_a_test_that_is_gone.py (new, 5
+      tests including all five real denial shapes verbatim and a corpus control; 3 mutants
+      killed).
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: done, document: no_change_needed}
   DEBT205_2026_09_07_the_single_file_query_hid_two_orders_of_magnitude:
     map_check: >-
       D01.7 — Session Lifecycle. The largest remaining BLIND AFTER MIDNIGHT population:
