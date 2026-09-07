@@ -1126,6 +1126,13 @@ NUDGE_INTERVAL_TURNS = 4
 #: bookkeeping. Persisting it would buy accuracy in a counter whose only job is
 #: to fire "occasionally".
 #:
+#: WHAT THOSE BOOTS ARE — MEASURED 2026-09-07. 715 boots over eleven retained days,
+#: and 504 of them (70%) are CodeWatcher re-execing the core after a `src/` edit:
+#: this programme editing the instance it is measuring. The restart rate is a fact
+#: about DEVELOPMENT, not about the platform in service. The threshold of 4 below is
+#: still the right call — it was chosen against the rate that actually occurs here —
+#: but a reader should not carry "the platform restarts constantly" away from it.
+#:
 #: THAT REASONING STILL HOLDS, but 2026-08-17 measured how far wrong it went: at
 #: 34 boots in a day the reset is not an occasional rounding error, it is the
 #: dominant term — the nudge fired ~1/day and on 08-15 not at all. The threshold

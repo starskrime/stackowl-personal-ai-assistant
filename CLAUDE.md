@@ -128,6 +128,27 @@ THIS file was corrected on 09-01 the same claim survived in
 invocation — so nothing changed and TEN more tests sat red. **Correcting one copy of a
 rule is not correcting the rule.** All five surfaces now carry these numbers.
 
+**A MEASUREMENT TAKEN ON THIS BOX WHILE THIS LOOP RUNS MAY BE MEASURING THE LOOP.**
+MEASURED 2026-09-07, chasing "why does the platform restart ~80 times a day". It
+does not, in any sense that describes the product: **715 boots over eleven retained
+days, 504 of them (70%) CodeWatcher re-execing the core after a `src/` edit** — this
+programme editing the instance it is measuring. On 09-07: 32 boots, 26 CodeWatcher,
+and the 6 remaining match the `./start.sh` runs made by hand. In a deployment where
+nobody edits `src/`, seven of every ten of those boots do not exist. The restart path
+is fully instrumented at INFO the whole way — `[runtime] code change settled →
+requesting core restart`, `[startup] core: exec-replacing with fresh code`,
+`[startup] core: code watcher armed` — so this was always answerable.
+
+**It took FIVE wrong instruments to get there, every one the same mistake: grepping
+for a COMPONENT'S NAME instead of asking what it EMITS.** "CodeWatcher" appears in
+neither of its own two decisive log lines. Along the way I "found" that the browser
+runtime was killing the process (it was a 3.0s startup step my 1-second gap
+heuristic split in half), and that `reconcile_owl_schedules` preceded every restart
+(it is a boot step, 60ms from the rest). Each looked like a finding and each
+dissolved when the RAW records were printed. This is the file's own rule about greps
+returning zero, in the mirror: a grep returning a confident NON-zero is just as
+capable of being about the wrong thing.
+
 **PROGRESS PERCENTAGE IS NOT LINEAR IN TIME — do not extrapolate from it.** MEASURED
 2026-09-04, and this note originally said the opposite because I did exactly that. A
 run sat at 21% after 17 minutes; I extrapolated ~80 minutes, checked the box, found

@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT181_2026_09_07_the_restart_rate_was_measuring_the_observer:
+    map_check: >-
+      No mapped item — evidence-led, started from a live symptom: the platform booted
+      DEGRADED with all providers unreachable, and the boot counts looked alarming.
+    WHAT_THE_SYMPTOM_TURNED_OUT_TO_BE: >-
+      Provider unreachability is CHRONIC, not new — 47 to 560 lines a day across ten
+      retained days, and the model host 192.168.1.81 does not resolve from this box.
+      Environmental, already recorded, not an item. What looked worth chasing was the
+      boot count: 81 to 135 a day.
+    THE_ANSWER_AND_IT_CORRECTS_THE_RECORD: >-
+      715 boots over eleven retained days. 504 of them (70%) are CodeWatcher re-execing
+      the core after a `src/` edit; 497 reached the exec. On 2026-09-07: 32 boots, 26
+      CodeWatcher, and the 6 remaining match the ./start.sh runs made by hand. The
+      restart rate is a fact about DEVELOPING ON THE LIVE INSTANCE, not about the
+      platform. That matters because the opposite framing is load-bearing in three
+      places — the nudge test's docstring ("291 core boots against 429 turns — the
+      platform restarts almost as often as it takes a turn"), curated.py's threshold
+      comment, and by inheritance CLAUDE.md. All three now carry the attribution.
+      THE FIXES THEY JUSTIFY ARE UNCHANGED: seeding a nudge from a durable count is
+      better than an in-process one whatever the restart rate, and NUDGE_INTERVAL_TURNS
+      = 4 was chosen against the rate that actually occurs here. Only the premise was
+      measuring the observer.
+    NO_CODE_DEFECT_WAS_FOUND_AND_THAT_IS_THE_FINDING: >-
+      The restart path is fully instrumented at INFO the whole way — "[runtime] code
+      change settled -> requesting core restart", "[startup] core: exec-replacing with
+      fresh code", "[startup] core: code watcher armed". Every boot was attributable
+      the entire time. `no_change_needed` on src.
+    FIVE_WRONG_INSTRUMENTS_IN_ONE_DIAGNOSIS_ALL_THE_SAME_MISTAKE: >-
+      Every one was grepping for a COMPONENT'S NAME instead of asking what it EMITS —
+      "CodeWatcher" appears in NEITHER of its own two decisive log lines. (1) I
+      concluded CodeWatcher logs nothing when it fires; it logs at INFO, under
+      "[runtime]". (2) Then that nothing logs the exec; it does, under "[startup]".
+      (3) A back-walk over "startup-ish modules" said reconcile_owl_schedules preceded
+      79 of 81 boots — it is a boot step 60ms from the rest. (4) A 1-second gap
+      heuristic said `[browser] runtime.start: entry` preceded ALL 169 boots and was
+      killing the process — it is a 3.0s startup step the heuristic split in half, and
+      the counts prove it completes: 716 entries, 716 exits, zero errors. (5) The
+      original alarm itself. Each looked like a finding; each dissolved the moment the
+      RAW records were printed instead of a filtered count. CLAUDE.md's rule about a
+      grep returning ZERO now has its mirror recorded: a confident NON-zero is just as
+      capable of being about the wrong thing.
+    changes: >-
+      CLAUDE.md (the attribution and the five-instrument lesson),
+      tests/skills/test_the_skill_nudge_survives_a_restart.py (its docstring premise),
+      src/stackowl/memory/curated.py (the threshold comment's premise). No behaviour
+      changes.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT180_2026_09_07_a_closing_check_that_named_the_attempt_not_the_outcome:
     map_check: >-
       No mapped item — evidence-led, from verifying a CLOSEABLE before believing it.

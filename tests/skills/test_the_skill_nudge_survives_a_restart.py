@@ -9,6 +9,18 @@ not. MEASURED 2026-09-07 over six days of logs:
 
   * 291 core boots against 429 turns — the platform restarts almost as often as it takes
     a turn;
+    WHAT THOSE BOOTS ACTUALLY ARE — MEASURED 2026-09-07, and it corrects the sentence
+    above rather than the fix below. "The platform restarts almost as often as it takes
+    a turn" reads as a property of the PLATFORM. It is a property of DEVELOPING ON THE
+    LIVE INSTANCE. Across eleven retained days: 715 boots, of which **504 were
+    CodeWatcher responding to a `src/` edit** and 497 reached the exec — 70%, this loop
+    editing the tree it is measuring. On 2026-09-07: 32 boots, 26 of them CodeWatcher,
+    and the remaining 6 match the `./start.sh` runs made by hand that day.
+
+    In a deployment where nobody edits `src/`, CodeWatcher never fires and roughly seven
+    of every ten of those boots do not happen. The seeding fix below is still right —
+    reading a durable count is better than an in-process one whatever the restart rate —
+    but the PREMISE was measuring the observer.
   * the deepest (boot, lane) pair reached NINE turns;
   * the skill nudge's interval is TEN;
   * so ZERO pairs reached it, ever, while FIFTEEN reached four — which is exactly why the
