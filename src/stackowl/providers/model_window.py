@@ -105,7 +105,7 @@ def reset_window_cache() -> None:
 #: caches for the life of the process; a floor is provisional.
 _PROVISIONAL: set[tuple[str, str]] = set()
 
-#: Module-level pooled httpx client for ollama window probes (F129). Created once
+#: Module-level pooled httpx client for native metadata window probes (F129). Created once
 #: and reused across every distinct (provider, model) probe so each probe does
 #: NOT pay full client/connection-pool setup + teardown. Lazily built; lives for
 #: the process. resolve_window memoizes per (provider, model), so the number of
@@ -285,8 +285,18 @@ async def _probe_native_window_api(base_url: str, model: str) -> int | None:
                 return val
         return None
     except Exception as exc:
+        # THE LAST VENDOR NAME ON THIS PATH, and it was the one a reader would
+        # actually see. `4cb832ac` renamed the function, deleted the URL sniff and
+        # removed the guess from both dispatch sites — and left this EMITTED string
+        # saying "ollama probe failed". The probe now runs against EVERY backend
+        # with a base_url, so a vLLM or gateway miss was being logged under another
+        # vendor's name. Prose describing the deleted guess is history and stays;
+        # a line the platform emits at runtime is not prose, and this one had become
+        # false. DEBUG is right: a miss is the expected answer from any backend that
+        # does not speak this endpoint, which is what makes the call a capability
+        # test rather than a guess.
         log.engine.debug(
-            "[model_window] ollama probe failed",
+            "[model_window] native metadata probe did not answer",
             exc_info=exc, extra={"_fields": {"url": url, "model": model}},
         )
         return None

@@ -17714,6 +17714,61 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-210
+    found: 2026-09-07
+    what: >-
+      D03.5 DESCRIBED A THREE-RUNG LADDER THAT HAS FIVE BRANCHES, AND FILED TWO WARNING
+      LINES UNDER INFO. `4cb832ac` (2026-09-05) added a native-metadata probe as the
+      FIRST probe rung — tried for any backend with a base_url — and the document did not
+      mention it at all. Its Observability section said "All at INFO" of five named lines;
+      walking the module's log.* calls shows 16 emitters, 5 INFO / 4 WARNING / 7 DEBUG,
+      and two of the five named are WARNING (`probe FAILED — using the probe-failure
+      floor`, `a rejection stated an implausible context window`). WARNING is right for
+      both — a floor instead of a measurement is a degraded state — so the correction is
+      to the document.
+    the_ladder_measured_rather_than_asserted: >-
+      Across every retained log: native metadata probe 0, openai-compatible probe 264,
+      probe-failure floor 27 (9.3% of 291 resolutions), rejection-learn 0, terminal
+      fallback 0. Every zero is labelled with WHICH KIND it is. The native probe's 0 is
+      NOT "never tried": branch 4 is reachable only when branch 2 returns falsy, so each
+      of those 264 records is itself proof the native probe was tried and missed — this
+      deployment's only backend is the LiteLLM gateway, which does not speak that
+      endpoint. The rejection-learn 0 is a genuinely unexercised path.
+    the_deduction_is_the_finding: >-
+      The native probe's MISS is logged at DEBUG, so production carries no direct record
+      that the rung was attempted. It is currently answerable only by deduction from the
+      next branch firing, and that deduction STOPS WORKING the moment a backend answers
+      the native endpoint and branch 4 stops firing for it. Recorded in the document
+      rather than fixed: raising it to INFO would add a line per (provider, model) per
+      process for an expected miss, and the rung is observable today. Named so the next
+      reader inherits the limit rather than rediscovering it.
+    a_vendor_name_survived_in_the_one_place_a_reader_would_see_it: >-
+      `4cb832ac` renamed `_probe_ollama` to `_probe_native_window_api`, deleted the
+      `":11434" in base_url or "ollama" in base_url.lower()` sniff and removed the guess
+      from both dispatch sites — and left the EMITTED string inside that function saying
+      "[model_window] ollama probe failed". The probe now runs against every backend with
+      a base_url, so a vLLM or gateway miss was logged under another vendor's name. Fixed
+      to "native metadata probe did not answer"; the pooled-client comment calling it
+      "ollama window probes" corrected the same way. Prose describing the deleted guess is
+      history and stays — that is the boundary `4cb832ac` itself established after three
+      false positives.
+    NO_GUARD_BUILT_and_the_measurement_is_why: >-
+      Population of vendor tokens in EMITTED log messages across src/: 91. Ninety of them
+      are legitimate — `[anthropic] stream: entry` is a MODULE TAG naming its own protocol
+      adapter, and per-protocol provider classes are the sanctioned shape (PROTOCOLS is
+      the transport dimension; _build_provider dispatches on config.protocol, never on a
+      name). A guard would cry wolf on 90 of 91. The real defect was narrower and not
+      mechanically detectable: a log message naming vendor X inside a function that no
+      longer has anything to do with vendor X. Fourth time this programme has reached the
+      same conclusion (DEBT-176 vocabulary, DEBT-177 DEBUG fields, DEBT-179 import-bound
+      resolvers) — recorded so it is not re-derived a fifth time.
+    verification_rerun: >-
+      9 passed (test_a_failed_probe_is_not_a_measured_window); 775 passed across
+      tests/providers; the live probe's newest record 2026-09-07T14:15:37Z, INFO, probed
+      262144 == window 262144. Two new Verification steps added and RUN: a per-rung firing
+      count with its denominators, and an AST walk that reads the log LEVELS out of the
+      module instead of out of memory — which is what found the two wrong ones.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-209
     found: 2026-09-07
     what: >-
