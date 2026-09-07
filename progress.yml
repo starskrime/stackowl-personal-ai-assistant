@@ -315,6 +315,41 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT200_2026_09_07_the_give_up_line_finally_said_what_it_gave_up_on:
+    map_check: >-
+      No mapped item — closing a `partial` validate that traffic turned CLOSEABLE, verified
+      before believing it.
+    THE_EVIDENCE_AND_ITS_CONTRAST: >-
+      DEBT-147 shipped fields onto the two lines a turn writes when it stops early. The
+      retained window holds 48 such lines: FORTY-FIVE carrying only {"provider":
+      "NeraAiRaw"} from 08-28 to 09-06 — the defect exactly as reported — and THREE on
+      2026-09-07 carrying the new fields. 14:08:23 max_iterations {"calls": 26,
+      "tripped_on": null}; 14:14:17 loop guard tripped, tripped_on naming browser_navigate
+      with its full arguments; 14:14:17 max_iterations {"calls": 23} on the same signature.
+      Trace goal-25526e71, lane goal-goal_execution-ee1bdd4c.
+    IT_IS_A_CLOSE_BECAUSE_THE_CHECK_ASKS_FOR_A_FIELD_NOT_A_MESSAGE: >-
+      The message fired 45 times BEFORE the fix, so a message-keyed check would have closed
+      on the defect itself. `calls` and `tripped_on` did not exist on these lines until this
+      item added them, and `tripped_on` could not exist at all while LoopGuard.tripped()
+      returned a bare bool. That is the DEBT-138 shape done right, two days later.
+    THE_FIRST_REAL_FIRING_SHOWS_WHAT_THE_ITEM_WAS_FOR: >-
+      The old line said "loop guard tripped, provider NeraAiRaw" and stopped. The new one
+      names the offender AND its arguments — the agent was looping on browser_navigate
+      against one linuxcareers.com job URL — and the two failure modes are now separable in
+      the log: 14:08 maxed out with tripped_on NULL (out of iterations, no repeated
+      signature) while 14:14 tripped on a repeat. One field separates "it was slow" from "it
+      was stuck".
+    A_SECOND_SCRIPTED_EDIT_MISSED_ITS_ANCHOR_AND_THE_ASSERT_CAUGHT_IT: >-
+      The first attempt to close this record assumed `stages: {validate: partial}` inline;
+      the file holds it as a two-line block, and it assumed the entry ended at the next
+      `- id:` when the neighbour is DEBT-146. The assertion failed and NOTHING was written —
+      the same protection DEBT-199 had just made a rule, working on its first use after.
+    changes: >-
+      progress.yml only — DEBT-147 validate partial -> done, with the 45-vs-3 contrast, the
+      counterfactual, the payoff, and what the evidence is not. validate_check goes 16
+      checks / 2 CLOSEABLE to 15 / 1.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: no_change_needed, validate: done, document: no_change_needed}
   DEBT199_2026_09_07_I_garbled_the_file_the_loop_reads_and_the_readback_checked_presence:
     map_check: >-
       No mapped item. Repairing a LIVE INSTRUCTION surface I damaged in the previous loop,
@@ -17932,8 +17967,34 @@ known_debt:
       n=$(./scripts/log_since.sh 2026-09-06 'max_iterations reached.*"calls"')
       m=$(./scripts/log_since.sh 2026-09-06 'loop guard tripped.*"tripped_on"')
       [ $((n+m)) -gt 0 ] && echo "CLOSEABLE $n max-out(s) and $m trip(s) now name their cause" || echo "OPEN 0 turns have maxed out or tripped the guard since the fix; the code IS live-evidenced"
+    VALIDATE_CLOSED_2026_09_07_the_enriched_lines_fired_in_production: >-
+      Three lines on 2026-09-07 carry the fields this item added, against FORTY-FIVE in the
+      retained window carrying only {"provider": "NeraAiRaw"} — 08-28 through 09-06, the
+      defect exactly as described. The new ones: 14:08:23 max_iterations with
+      {"calls": 26, "tripped_on": null}; 14:14:17 loop guard tripped with tripped_on =
+      browser_navigate|{"url": "https://www.linuxcareers.com/jobs/forward-deployed-engineer-bd5985e0c7fa", "wait_for": "load"}; and 14:14:17 max_iterations with
+      {"calls": 23} and the same signature. Trace goal-25526e71, lane
+      goal-goal_execution-ee1bdd4c.
+    WHY_THIS_IS_A_CLOSE_AND_NOT_A_LINE_FIRING_AGAIN: >-
+      The MESSAGE fired 45 times before the fix, so the check is keyed on the FIELDS instead.
+      `calls` and `tripped_on` did not exist on these lines until this item added them, and
+      `tripped_on` could not exist at all while LoopGuard.tripped() returned a bare bool —
+      evidence only the new code could produce. Verified by PRINTING all 48 records and
+      reading old against new, never by trusting the count of 3.
+    THE_PAYOFF_IS_VISIBLE_IN_THE_FIRST_REAL_FIRING: >-
+      The old line would have said "loop guard tripped, provider NeraAiRaw" and stopped. The
+      new one names the offender AND its arguments: the agent was looping on browser_navigate
+      against one linuxcareers.com job URL. And the two failure modes are now DISTINGUISHABLE
+      — 14:08 maxed out with tripped_on NULL (ran out of iterations, no repeated signature)
+      while 14:14 tripped on a repeat. One field separates "it was slow" from "it was stuck",
+      which is the question a reader of a give-up line always has.
+    WHAT_THIS_EVIDENCE_IS_NOT: >-
+      Two firings on one day on one lane. It proves the instrumentation works on the path
+      production takes; it is NOT a measurement of how often turns get stuck. And
+      `what_else_the_cause_reaches` — that every "we gave up here" line in the tree deserves
+      the same question — remains unactioned and is not claimed here.
     stages:
-      validate: partial
+      validate: done
     found: 2026-09-06
     what: >-
       WHEN A TURN STOPPED EARLY, THE LOG NAMED THE VENDOR AND NOTHING ELSE.
