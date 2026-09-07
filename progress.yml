@@ -315,6 +315,46 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT190_2026_09_07_the_outcome_check_caught_the_event_it_was_built_for:
+    map_check: >-
+      No mapped item — verifying a CLOSEABLE before believing it, which is the loop's own
+      rule and this time the check was one I rewrote three loops ago.
+    THE_CLOSE_AND_IT_DISCRIMINATES_INSIDE_ONE_SWEEP: >-
+      DEBT-132's validate is CLOSED. At 2026-09-07T11:01:22Z: "store_cadence answered on
+      the re-probe after 5060ms (ok) — BEYOND the first 5s window, so the wider window is
+      what saved it". SIXTY MILLISECONDS past the old cap, on the exact contributor the
+      original measurement named (median 423ms, max 4241ms, cut off at exactly 5.0s twice).
+      The sweep exits ok=14 total=15 with "store_cadence: ok", so the EFFECT is the one
+      claimed: a merely-slow subsystem was not called down.
+    WHY_THIS_VINDICATES_DEBT_180_RATHER_THAN_MERELY_PASSING: >-
+      Two OTHER re-probes in that same sweep answered at 4402ms (task_liveness) and 4659ms
+      (owl_ratings) — INSIDE the first window — and both logged "a slow probe", not "the
+      wider window saved it". The discrimination is visible in the same second, on live
+      traffic. And the two checks side by side on the same day: the OLD pattern
+      `re-probing with a` counts 20; the new `wider window is what saved it` counts 1. The
+      old check would have claimed all twenty, nineteen of which prove nothing. That is the
+      attempt-versus-outcome correction settled by production rather than by argument.
+    A_STRUCTURAL_FIX_THE_CLOSE_REQUIRED: >-
+      DEBT-132 carried NO `stages:` block at all, so validate_check treated it as partial
+      by default (correctly, per DEBT-180's fix) and would have re-reported it forever
+      however good the evidence. Added `stages: {validate: done}`; the report went 16
+      checks / 1 CLOSEABLE to 15 / 0. A record with no stage cannot be closed, only
+      re-announced.
+    I_GARBLED_THE_SUITE_RECORD_LAST_LOOP_AND_FIXED_IT_HERE: >-
+      My fourteenth-green insertion into SKILL.md anchored on the THIRTEENTH entry's
+      opening phrase and appended after it — mid-sentence. The anchor matched, the
+      assertion passed, and the thirteenth's trailing clause ("green again on the tree that
+      carried both fixes, and the skip count fell 19 -> 17...") ended up dangling after the
+      fourteenth. A scripted edit that SUCCEEDED and produced nonsense. THE REFINEMENT to
+      the read-back rule I have been applying: grepping for the NEW string's presence is
+      not enough — read the SURROUNDING PROSE, because an anchor is a position and a
+      sentence is a span. Repaired; both entries now read as written.
+    changes: >-
+      progress.yml (DEBT-132 validate CLOSED with its evidence, plus the stages block it
+      never had), .claude/skills/item-loop/SKILL.md (the split sentence repaired). No code,
+      no documents.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
   DEBT189_2026_09_07_the_last_deletion_stale_document_and_the_report_draining:
     map_check: >-
       D09.1 — the LAST deletion-stale document. Verification RUN in full.
@@ -18202,10 +18242,27 @@ known_debt:
       self-skips without NOTIFY_SOCKET, so the restart path is inert locally while
       shipping armed to any systemd deployment.
     validate: >-
-      PARTIAL. Live at 06:41:29 against a 06:41:06 commit with 0 ERRORs, and the widened
+      CLOSED 2026-09-07T11:01:22Z, and the evidence discriminates inside a single sweep.
+      `store_cadence answered on the re-probe after 5060ms (ok) — BEYOND the first 5s
+      window, so the wider window is what saved it`. SIXTY MILLISECONDS past the old cap,
+      on the exact contributor the original measurement named (median 423ms, max 4241ms,
+      cut off at exactly 5.0s twice). The sweep then exits `ok=14 total=15` with
+      `store_cadence: ok`, so the effect is the one claimed: a merely-slow subsystem was
+      NOT called down.
+      THE DISCRIMINATION IS VISIBLE IN THE SAME SECOND. Two other re-probes in that sweep
+      answered at 4402ms (task_liveness) and 4659ms (owl_ratings) — INSIDE the first
+      window — and both logged "a slow probe", not "the wider window saved it". The
+      sentence is claimed only where the widening mattered.
+      AND THE TWO CHECKS SIDE BY SIDE: the old pattern `re-probing with a` counts 20 on
+      the same day; `wider window is what saved it` counts 1. That is the whole
+      attempt-versus-outcome correction (DEBT-180), vindicated by production rather than
+      by argument. The sentence was introduced by 7bfa6a0c, so only the new code can emit
+      it.
+      PREVIOUSLY PARTIAL: live at 06:41:29 against a 06:41:06 commit with 0 ERRORs, and the widened
       window is in the running code. What is NOT yet evidenced is the effect: a probe that
       misses the FIRST window and answers inside the SECOND. That needs a real slow probe,
       which happened 63 times in nine days but cannot be summoned.
+    stages: {validate: done}
     closing_check: |
       # CORRECTED 2026-09-07. This grepped 're-probing with a' — the line announcing
       # the re-probe, which marks the ATTEMPT. It reported CLOSEABLE on 14 hits and
