@@ -274,6 +274,34 @@ traffic could ever have closed it: the DEBUG-evidence failure above, one step wo
 forced to write the check is what found it, and an INFO line was added so the claim became
 one reality could settle.
 
+**WATCH THE BRANCH THAT EMITS THE LINE, NOT THE EVENT THE PROSE NAMES.** A check can be
+bounded, its line can exist, only the new code can produce it — and it can still name the
+WRONG EVENT, one step upstream of the emitter. MEASURED 2026-09-07: D04.5's open check
+said it *"needs a tool breaker to open, and there have been zero such events in five
+days."* Both halves were false. **Three breakers opened after the fix shipped, one on
+the shipping day itself** — so a reader watching the named event would have seen it fire
+three times, seen no decline line, and concluded the fix was broken. And the open is not
+the trigger: `request_escalation` sits behind `progress.is_open(name)` in `_dispatch`,
+reached only when the model dispatches that tool AGAIN. **52 opens produced 12 bounces**
+— 77% of the named event never reaches the emitter, by design.
+
+The premise was written from the document's own narrative rather than from the branch
+guard above the `log.*` call. So: **find the emitter, read what guards it, and name THAT
+in the check.** The same walk that `test_a_closing_check_looks_for_evidence_that_can_exist`
+does to prove the string is emitted also lands you on the conditions that reach it — it
+asks whether the line CAN be logged; you must also ask WHEN. No guard for this either,
+for the reason recorded above: an emitter's guard chain is not mechanically translatable
+into a premise, and a script that guessed would cry wolf on correct work.
+
+**And the third defect in that same check was mechanical**: it grepped
+`~/.stackowl/logs/stackowl.jsonl`, one file, while the body of the SAME DOCUMENT cited
+twelve events measured *"across every kept log"*. The document contradicted itself across
+five sections and nothing noticed, because a midnight-blind query returns 0 and 0 reads
+as *not yet*. `doc_check.py` reports these as `BLIND AFTER MIDNIGHT` (43 commands in 22
+documents as of 2026-09-07, down from 47/23); the executable checks in `progress.yml` are
+already clean — **9 log-based checks, all 9 globbed, verified by a control that found
+them.**
+
 ## Stop and brief the operator
 
 Do not proceed autonomously past any of these. Write the brief into `current.ESCALATIONS`

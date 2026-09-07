@@ -301,6 +301,16 @@ matched the hyphen. It was about to close an acceptance check that had not fired
 Use `LIKE 'incident\_%' ESCAPE '\'`, and treat any `LIKE` over a name that CONTAINS
 `_` as wrong until proven otherwise. Same family as the `"msg": "` space.
 
+**A check must watch the branch that EMITS the line, not the event the prose names.**
+D04.5's open check said a decline line "needs a tool breaker to open, and there have
+been zero such events in five days". Three had opened since the fix shipped, one on the
+shipping day — and the open is not the trigger anyway: the emitter sits behind a
+re-dispatch guard, and **52 opens produced 12 of those**. A reader watching the named
+event would have seen it fire and concluded the fix was broken. Find the `log.*` call,
+read what guards it, name THAT. Same check also grepped `stackowl.jsonl`, one file,
+while the same document's body cited a count "across every kept log" — a midnight-blind
+query returns 0, and 0 reads as *not yet*.
+
 **Count incidents, not log lines.** "19 database-is-locked events" was 19 LINES; one
 contention moment emits four.
 

@@ -315,6 +315,85 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT192_2026_09_07_the_check_watched_the_event_one_step_above_the_emitter:
+    map_check: >-
+      D04.5 — tier escalation, verdict AHEAD/keep. Its Verification section was RUN, not
+      trusted, and one of its three checks was wrong in three separate ways.
+    EVERYTHING_REPRODUCES_EXACTLY: >-
+      Check 1: tests/providers/test_a_declined_escalation_says_so.py — 5 passed, the exact
+      recorded number. Check 2: tests/providers — 775 passed, 0 failed; the document had
+      pinned 738, a package-wide count that moves with every unrelated item, so it is now
+      `expect: 0 failed`. Check 3: describe_tier_ladder() returns NeraAiRaw/neraai-v1-raw
+      on all three rungs and tier_ladder_is_degenerate() is True — exact.
+    THE_SEVENTH_VARIANT_A_CHECK_WATCHING_THE_WRONG_EVENT: >-
+      The open acceptance check read "it needs a tool breaker to open, and there have been
+      zero such events in five days". BOTH HALVES FALSE. Measured over every kept log:
+      breakers opened 1 on 09-01, 1 on 09-02 and 1 on 09-05 — the shipping day itself — so
+      a reader watching the named event would have seen it fire three times, seen no
+      decline line, and concluded the fix was broken. And the open is NOT the trigger:
+      request_escalation sits behind progress.is_open(name) in _dispatch, reached only when
+      the model dispatches that tool AGAIN after the breaker opened. 52 opens produced 12
+      bounces — 77% of the named event never reaches the emitter, by design, because
+      containment worked and the model moved on. The premise was written from the
+      document's own prose instead of from the branch guard above the log call.
+    AND_THE_DOCUMENT_CONTRADICTED_ITSELF_ACROSS_FIVE_SECTIONS: >-
+      The check grepped ~/.stackowl/logs/stackowl.jsonl, one file, while the body of the
+      SAME DOCUMENT cited twelve requests measured "across every kept log". The core keeps
+      writing to the rotated file, so the query could only ever see today: 0, which reads
+      as "not yet". doc_check.py already reports this class — 45 commands in 23 documents
+      before this item, 43 in 22 after. The executable checks in progress.yml are clean:
+      9 log-based, all 9 globbed, verified by a control that found them rather than by a
+      zero that proved nothing.
+    THE_CORRECTED_PREMISE_IS_STRONGER_THAN_THE_ONE_IT_REPLACES: >-
+      The ladder is degenerate here, so can_escalate is False on every rung and
+      escalation_allowed reaches the decline branch on EVERY request that arrives. Each of
+      the twelve bounces WOULD have emitted exactly one decline line had the code existed —
+      it shipped 2026-09-05, they are all 08-28..08-31. So this is not a rare event awaited
+      indefinitely; it is a common one that stopped, on roughly 5x the turn volume (379-606
+      turns/day then, 46-101 now). Nor is the quiet general: provider-side breakers opened
+      151 times over 09-01..09-07 and correctly request nothing, because only a TOOL
+      breaker feeds the ladder.
+    NO_GUARD_SHIPPED_AND_THE_PRECEDENT_IS_THE_REASON: >-
+      An emitter's guard chain is not mechanically translatable into a premise, and the
+      same no-guard reasoning already recorded for the OLD-CODE variant applies: a script
+      that guessed would cry wolf on correct work, which is the failure this programme pays
+      for most. Recorded as a rule in both surfaces instead — SKILL.md (what the loop reads
+      every invocation) and CLAUDE.md — because correcting one copy of a rule is not
+      correcting the rule.
+    THE_FOURTH_DEFECT_IS_THE_MECHANICAL_ONE_AND_IT_IS_NOW_A_REPORT: >-
+      D04.5's ITEM said `validate: done` while its DOCUMENT carried an open acceptance
+      check. validate_check.py re-runs a closing check only for a `partial` stage, so
+      that OPEN was invisible to the only tool that re-asks — a claim written where
+      nothing can re-read it, the same dead end closing_check and premise_check were each
+      built to cure, one population over. MEASURED 2026-09-07: seven documents carry an
+      OPEN acceptance line and FOUR sat on items marked done (D04.1, D04.5, D05.8, D13.1
+      — five checks). doc_check.py now reports them as OPEN BUT NOT TRACKED, its THIRD
+      report, drained one per loop like STALE BY DELETION (11 -> 0) and BLIND AFTER
+      MIDNIGHT (47 -> 43). Not a gate, for the reason already recorded in that file.
+      D04.5 is reconciled here: validate -> partial with the closing_check ON THE ITEM,
+      where validate_check reads it; the report now names three documents, four checks.
+      The raw matching lines were printed and read before the count was believed — the
+      first print landed on m.start() and showed an empty line for D04.5 and nothing for
+      D13.1, which would have made a working detector look broken.
+    AND_MY_OWN_GUARD_CAUGHT_THE_REPLACEMENT_CHECK: >-
+      The first version of the new closing_check grepped the glob directly, and
+      test_no_closing_check_greps_the_logs_unbounded failed the audit package with
+      offenders ['D04.5']. Correct: an unbounded count over a rotating window is
+      satisfied by history, and the twelve pre-fix requests are exactly the history that
+      would have satisfied it. Routed through scripts/log_since.sh 2026-09-05, which
+      takes the ship date as a REQUIRED argument. The check now reads "0 decline lines
+      and 0 bounces since 2026-09-05" instead of quoting the 12 as if they counted. That
+      is the fourth time a guard written in an earlier loop has caught this one, and the
+      reason to keep writing them at the level of the INSTRUMENT.
+    changes: >-
+      docs/reference-mapping/designs/D04.5.md (open premise rewritten with the measured
+      day table, closing query moved to the glob and repointed at the bounce, check 2 made
+      a shape, a DOC_STANDARD header block added so the document is measurable at all),
+      scripts/doc_check.py (the OPEN BUT NOT TRACKED report), progress.yml (D04.5 item:
+      validate done -> partial, closing_check added, doc_last_verified restamped),
+      .claude/skills/item-loop/SKILL.md and CLAUDE.md (the seventh variant).
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: done, test: done, validate: partial, document: done}
   DEBT191_2026_09_07_a_check_whose_method_was_never_written_down:
     map_check: >-
       D10.3 — queued with a diagnosis in DEBT-189 and closed here by running its
@@ -28279,10 +28358,12 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   done
+      validate:   partial
       document:   done
     doc: "docs/reference-mapping/designs/D04.5.md"
-    doc_last_verified: "2026-09-05"
+    doc_last_verified: "2026-09-07"
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-05 'escalation declined — no stronger tier'); b=$(./scripts/log_since.sh 2026-09-05 'circuit open — tool bounced for remainder of turn'); if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n decline lines against $b bounces since the fix shipped"; else echo "OPEN — 0 decline lines and $b bounces since 2026-09-05; watch the BOUNCE, not the breaker OPEN — 52 opens produced 12 bounces, all of them 08-28..08-31"; fi
     decisions:
       - "IT SURVIVES, verified three ways rather than assumed: the gate exists and asks
          the real question; on the live configuration it answers FALSE because the

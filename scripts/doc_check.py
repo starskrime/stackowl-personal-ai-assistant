@@ -193,6 +193,48 @@ def _single_log_queries(text: str) -> list[tuple[int, str]]:
     return out
 
 
+#: An acceptance check a document itself marks OPEN. `validate_check.py` re-runs a
+#: closing check only for an item whose `validate` stage is `partial`, so a document
+#: that says OPEN while its item says `validate: done` holds a claim NOTHING can ever
+#: re-read — the same dead end `closing_check` and `premise_check` were each built to
+#: cure, one population over. MEASURED 2026-09-07: seven documents carry an OPEN
+#: acceptance line and FOUR of them sit on an item marked done, so four open questions
+#: were invisible to the only tool that re-asks them. D04.5 was one; it said "zero such
+#: events in five days" while three had occurred, and no run could have contradicted it.
+#: Anchored at line start or on a bolded `**OPEN —` so a breaker described as OPEN in
+#: prose is not swept in; the raw matching lines were printed and read before this
+#: number was believed.
+_OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\*\*OPEN\s*[—-]", re.M)
+
+
+def _open_acceptance_lines(text: str) -> list[tuple[int, str]]:
+    """(line_no, line) for every acceptance check the document marks OPEN."""
+    return [
+        (i, line.strip())
+        for i, line in enumerate(text.splitlines(), 1)
+        if _OPEN_CHECK.search(line)
+    ]
+
+
+def _validate_stages() -> dict[str, str]:
+    """item id -> its `validate` stage, or {} if progress.yml cannot be read.
+
+    Degrades to silence rather than to a wrong report: a missing PyYAML would
+    otherwise turn "four untracked open checks" into "none", which is the denominator
+    error this programme pays for most.
+    """
+    try:
+        import yaml  # noqa: PLC0415 — optional, and only this report needs it
+        data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 — a report must never end a loop
+        print(f"  (open-check report skipped: {exc})", file=sys.stderr)
+        return {}
+    return {
+        str(item.get("id")): (item.get("stages") or {}).get("validate", "")
+        for item in (data.get("items") or [])
+    }
+
+
 def main() -> int:
     docs = sorted(_DESIGNS.glob("*.md"))
     stale: list[tuple[str, str, str]] = []
@@ -256,6 +298,26 @@ def main() -> int:
             print(f"  {name}:{ln}  {line[:88]}")
         if len(single_log) > 12:
             print(f"  … and {len(single_log) - 12} more")
+
+    stages = _validate_stages()
+    untracked: list[tuple[str, int, str]] = []
+    if stages:
+        for doc in docs:
+            done = stages.get(doc.stem) == "done"
+            if not done:
+                continue
+            for ln, line in _open_acceptance_lines(doc.read_text(encoding="utf-8")):
+                untracked.append((doc.name, ln, line))
+    if untracked:
+        docs_hit = len({r[0] for r in untracked})
+        print(f"\nOPEN BUT NOT TRACKED — {len(untracked)} acceptance check(s) in "
+              f"{docs_hit} document(s) say OPEN while their item says "
+              "`validate: done`. `validate_check.py` only re-runs a check on a "
+              "`partial` stage, so nothing will ever re-ask these:")
+        for name, ln, line in untracked[:12]:
+            print(f"  {name}:{ln}  {line[:88]}")
+        if len(untracked) > 12:
+            print(f"  … and {len(untracked) - 12} more")
 
     if unmeasurable:
         print("\nUNMEASURABLE — not fresh and not stale; nothing can date them:")
