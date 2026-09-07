@@ -34411,7 +34411,7 @@ items:
       validate:   done
       document:   done
     doc: docs/reference-mapping/designs/D13.1.md
-    doc_last_verified: "2026-09-07 against commit PENDING — Verification RE-RUN: 9 passed; 1130 passed 0 failed (1118 on 09-06, a shape); channel set still exactly {rca, telegram, cli} at 131/84/9; the closing query returns 126, up from 2"
+    doc_last_verified: "2026-09-07 against commit 067bacd9 — Verification RE-RUN: 9 passed; 1130 passed 0 failed (1118 on 09-06, a shape); channel set still exactly {rca, telegram, cli} at 131/84/9; the closing query returns 126, up from 2"
     decisions: []
     changes:
       - >-
