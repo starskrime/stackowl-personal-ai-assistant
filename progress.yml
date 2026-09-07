@@ -315,6 +315,76 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT159_2026_09_06_the_staleness_check_reported_FRESH_on_sources_it_never_read:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-159. Reached from the start-of-loop
+      checks: nothing had expired, nothing was closeable, and the 16 open validates were
+      all correctly built (I read all seven "0 x event since the fix" checks in full and
+      my "inverted acceptance" hypothesis — that they wait for what the fix prevents —
+      was REFUTED; every one keys on evidence only the new code could produce, per
+      DEBT-138). doc_check was the instrument with something wrong in it.
+    ROOT_CAUSE: >-
+      `_header` read ONE LINE PER FIELD. The corpus wraps: 37 documents continue their
+      `Source:` onto following `>` lines, and a continuation matched neither branch of
+      the loop — it is not a `**Key:**` line, and it starts with `>`, so it did not end
+      the header either. It was skipped in silence. Two smaller shapes went with it: the
+      citation regex excluded `:`, so `module.py::Symbol` was not merely unresolvable but
+      INVISIBLE, and `_resolve` had no way to reduce such a citation to the file git can
+      actually date.
+    WHY_THIS_ONE_IS_DIFFERENT_IN_KIND: >-
+      doc_check's parser has now been too narrow three times, and the first two produced
+      UNMEASURABLE — visible, honest, and self-announcing. This one produced FRESH.
+      MEASURED 2026-09-06: 27 documents lost real, resolvable source paths (66 paths),
+      and THREE then reported fresh while a source they DECLARE had changed after their
+      verification date. D05.8 was verified 2026-08-30, dated by a 2026-08-29 change, and
+      the truth was 2026-09-06 — a week of drift reported as freshness. An instrument
+      that says "I cannot tell" is safe; one that answers wrongly is not.
+    WHAT_SHIPPED: >-
+      Continuation-aware `_header`, `_CITATION` with `:` in the class, and `_resolve`
+      reducing `file.py::Symbol` to the file. Measurable 45 -> 47, STALE 25 -> 28,
+      unmeasurable 39 -> 37 — the three flips and D13.4 becoming datable, exactly as
+      predicted before the change was made.
+    THE_CONTROL_IS_THE_POINT_NOT_THE_THREE_FIXES: >-
+      Each previous narrowing was widened reactively, after someone noticed, so a fourth
+      was a matter of time. The guard is DIFFERENTIAL: it re-reads each document's Source
+      region straight from the file, independently of the parser, and requires the parsed
+      field to contain every resolvable path found that way. A test that re-derives the
+      code under test proves nothing — that vacuity let a mutant survive on DEBT-122 —
+      so this is a second opinion that does not call the first. Any future narrowing,
+      whatever its shape, surfaces as a document whose declared source the instrument
+      cannot see.
+    MY_VACUITY_CONTROL_WAS_ITSELF_VACUOUS: >-
+      The first version of "documents still wrap their Source field" compared WORD COUNTS
+      between the raw region and the parsed field — which the fix makes equal by
+      construction. It passed on every document with a Source field and would have passed
+      on a corpus that had stopped wrapping entirely. Caught by asking what it would do
+      if the shape disappeared, not by a failing run. Now counts lines: 37.
+    MUTATION_PROVEN: >-
+      Three mutants, applied, killed and restored from a FILE COPY, with the restore
+      re-run green. Reverting `_header` to one line per field was caught by the
+      differential control against the REAL corpus, which is the one that matters —
+      that is the mutant standing in for the fourth narrowing.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validate_evidence: >-
+      No src/ change — scripts/ and tests/ only, so no restart could show an effect and
+      none is claimed. Acceptance is the instrument's own output: `uv run python
+      scripts/doc_check.py` reads `checked 47, STALE 28, unmeasurable 37` where it read
+      45/25/39 before, and the three documents that flipped are named in the record.
+    the_28_stale_documents_are_NOT_this_item: >-
+      Re-verifying them is the reporter's job to prompt, not this item's to do, and
+      doc_check reports rather than gates for exactly that reason. What changed here is
+      that the count is now honest: three of those 28 were previously invisible.
+    document_reason: >-
+      No design doc — `map_check` found no mapped item, and DOC_STANDARD governs design
+      documents for mapped items. The reasoning lives in the parser docstring and the
+      guard's own header.
   DEBT158_2026_09_06_a_closing_query_written_where_nothing_could_ever_run_it:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-158. Reached by finishing the

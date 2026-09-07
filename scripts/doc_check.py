@@ -45,16 +45,45 @@ _DESIGNS = _ROOT / "docs" / "reference-mapping" / "designs"
 #: version of this pattern was `[A-Za-z ]+`, so a parenthesis made the whole line
 #: invisible and D05.1 — which carries a good `Last verified` AND two Source
 #: fields — was filed as having neither.
+#: A backticked citation. `:` is IN the class so `module.py::Symbol` is seen at all;
+#: `_resolve` drops the symbol half. Excluding it did not make such a citation resolve
+#: to nothing — it made the citation invisible, so the document read as citing NOTHING.
+_CITATION = r"`([A-Za-z0-9_./:-]+)`"
+
 _FIELD = re.compile(r">\s*\*\*([A-Za-z ()]+):\*\*\s*(.*)")
 
 
 def _header(text: str) -> dict[str, str]:
+    """The blockquote header, with WRAPPED fields joined back together.
+
+    THE THIRD TIME THIS PARSER WAS TOO NARROW, and the first time it was returning a
+    wrong ANSWER rather than an honest "cannot tell". It read one line per field. The
+    corpus wraps: 47 of 84 documents continue their `Source:` onto following `>` lines,
+    and a continuation matched neither branch — it is not a `**Key:**` line, and it
+    starts with `>` so it did not break the loop either. It was simply skipped.
+
+    MEASURED 2026-09-06: 27 documents lost real, resolvable source paths that way, 66
+    paths in total. Three of them then read FRESH while a source they DECLARE had
+    changed after their verification date — D05.8 was verified 2026-08-30, the parser
+    dated it by a 2026-08-29 change, and the truth was 2026-09-06. A week of drift the
+    instrument reported as freshness.
+
+    That is the distinction worth keeping: the two earlier widenings (`Source (new):`,
+    src-relative paths) made documents UNMEASURABLE, which is visible and honest. This
+    one made them FRESH, which is neither.
+    """
     out: dict[str, str] = {}
+    last: str | None = None
     for line in text.splitlines():
-        m = _FIELD.match(line.strip())
+        stripped = line.strip()
+        m = _FIELD.match(stripped)
         if m:
-            out[m.group(1).strip()] = m.group(2).strip()
-        elif out and not line.strip().startswith(">"):
+            last = m.group(1).strip()
+            out[last] = m.group(2).strip()
+        elif stripped.startswith(">") and last is not None:
+            # A continuation of the field above. Blockquote marker off, text on.
+            out[last] = f"{out[last]} {stripped.lstrip('>').strip()}".strip()
+        elif out and not stripped.startswith(">"):
             break
     return out
 
@@ -76,6 +105,10 @@ def _resolve(path: str) -> str | None:
     a root-only resolver reported every one of them as non-existent, which is why
     they could not be dated by any path they named.
     """
+    # `module.py::Symbol` names a symbol INSIDE a file. The file is the thing git can
+    # date, and the citation is still a citation — D09.6 named its only source that way
+    # and was reported as citing nothing that exists.
+    path = path.split("::", 1)[0]
     for cand in (_ROOT / path, _ROOT / "src" / "stackowl" / path):
         if cand.exists():
             return str(cand.relative_to(_ROOT))
@@ -106,7 +139,7 @@ def main() -> int:
         date = re.search(r"(\d{4}-\d{2}-\d{2})", verified)
         # Only paths that EXIST — a document citing a moved file cannot be dated
         # by it, and guessing would be worse than saying so.
-        cited = [p for p in re.findall(r"`([A-Za-z0-9_./-]+)`", source) if "/" in p]
+        cited = [p for p in re.findall(_CITATION, source) if "/" in p]
         real = [r for p in cited if (r := _resolve(p))]
         if not date:
             unmeasurable.append((doc.name, "no dated `Last verified` in the header"))
