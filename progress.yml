@@ -14522,10 +14522,16 @@ current:
       restart, so that 0 is partly NO OPPORTUNITY. The measurement that carries
       this item is the direct render against the live corpus — 17/20 visible,
       8/8 proven skills — not the log line.
-      CLOSING QUERY: grep "catalog truncated by budget" — it should stay rare and
-      never name a skill with n_executions > 0. If it returns while the corpus is
-      near 20, the trim is no longer enough and the next lever is the cap itself,
-      which has never been measured (D10.6 records it as a constant nobody chose).
+      ANSWERED 2026-09-06 (DEBT-162) — narration now, not a promise. The first
+      condition asked that "catalog truncated by budget" stay rare: 1,541 records in
+      August against ZERO in September, over a real denominator of 233 LEAN renders
+      proving the injector still ran, and git puts that emitter in the tree since
+      2026-06-17 so the zero is a real absence rather than a removed line. SATISFIED.
+      The second condition — never name a skill with n_executions > 0 — is ZERO OVER
+      ZERO and is NOT evidence either way, because the line never fires at all; 19
+      skills do qualify, so the question is real but cannot be asked while nothing is
+      dropped. The cap was never the lever: the corpus fell 179 -> 39 skills, so LEAN
+      (2,719 chars) now fits inside the 4,000 it was already given.
     AND_IT_CORRECTED_MY_D10_6_RE_VERDICT_AN_HOUR_EARLIER: >-
       I had reported "ZERO dropped, all 21 render" for D10.6. That fixture read
       only the `description:` frontmatter and left when_to_use EMPTY — a test
@@ -31257,8 +31263,10 @@ items:
           warning, ZERO errors) but the lean-render INFO line has fired ZERO times: the
           injector only runs during prompt assembly and no conversational turn has happened
           since the restart. No information — not a pass, not a failure. What carries this
-          item is the direct render against the live corpus, not the log line. CLOSING
-          QUERY: "[skills] injector.render: rendering summaries LEAN" on the next real turn.
+          item is the direct render against the live corpus, not the log line. ANSWERED
+          2026-09-06 (DEBT-162), so this is narration and no longer a promise: the LEAN
+          render line has 233 production records across six owls, cap=4000 on every one,
+          and zero in August because dc19b973 introduced it on 2026-09-01. CLOSED.
         commits: [dc19b973]
       - date: 2026-09-02
         stage: test
