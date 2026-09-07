@@ -315,6 +315,82 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT160_2026_09_06_the_check_grepped_for_a_character_class_and_called_it_a_prefix:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-160. Reached from the 9 remaining
+      mapped items, all at `validate: partial`. D09.4's OPEN note contained something
+      that should not coexist: the deepest lane fired the MEMORY nudge 16 times (~64
+      turns) while the SKILLS nudge, interval 10, fired zero times in that same lane.
+    ROOT_CAUSE: >-
+      The check ran `log_since.sh 2026-09-02 '[skills] nudge'`. In a regex `[...]` is a
+      CHARACTER CLASS — it matches one character from {s,k,i,l} followed by " nudge".
+      The real line is `[skills] nudge: due`, whose preceding character is `]`. VERIFIED
+      against a file containing exactly that line: the check's own pattern returns 0, the
+      escaped form returns 1. So the check could never close — not because the evidence
+      cannot exist, but because the instrument could not see it. One layer below the
+      failure `TestEveryLogPatternHasAnEmitter` was built for.
+    WHY_THE_GUARD_DID_NOT_CATCH_IT_and_this_is_the_real_finding: >-
+      `test_a_closing_check_looks_for_evidence_that_can_exist.py` EXEMPTS this exact
+      pattern. `_INDIRECT_EMITTERS` carries `[skills] nudge` because the AST cannot
+      follow a label passed in by a caller — a true, well-evidenced reason. But an
+      exemption granted for reason A silently exempts from reasons B, C and D too, and
+      nothing then asked whether the pattern was even well-formed. AN EXEMPTION IS A HOLE
+      THE EXACT WIDTH OF EVERY CHECK IT SKIPS, not of the one it was written for.
+    AND_THE_GUARD_ERASED_THE_EVIDENCE_BEFORE_LOOKING: >-
+      `_log_patterns` unescapes (`\[` -> `[`) before comparing against logger literals,
+      which is correct THERE — the two mean the same character to a logger. It is
+      catastrophic as the only reader, because it destroys the one difference `grep`
+      cares about. The guard and the shell read one string two different ways: shape 3,
+      two copies of a rule, inside the instrument meant to enforce it.
+    THE_THIRD_METACHARACTER_DEFECT_IN_THIS_PROGRAMME: >-
+      `"msg": "` needs the SPACE after the colon or the regex returns empty against a
+      14MB file. In SQL LIKE, `_` is a WILDCARD, and `skill_name LIKE 'incident_%'`
+      matched `incident-evidence-brief`. Now `[` in grep. Same family, third instance.
+    WHAT_SHIPPED: >-
+      D09.4's pattern escaped, with the reason recorded as a comment beside it, and a
+      guard requiring every pattern to MATCH THE LITERAL TEXT IT IS A PATTERN FOR:
+      unescaping a pattern yields the text its author meant to find, so
+      `re.search(raw, unescaped)` must hold. That rule needs no logger, which is what
+      lets it cover the exempted patterns the emitter check cannot reach, and it catches
+      `[`, `(`, `?`, `+` and `{` alike instead of one metacharacter at a time. Validated
+      against all 36 shell patterns in the record: exactly one fails, and it is this one.
+    MEASURED_and_what_it_does_NOT_change: >-
+      `[skills] nudge` has appeared in the logs ZERO times ever, against 99 for the
+      sibling `[curated] nudge`. So D09.4 stays OPEN after this fix — its own analysis
+      (waiting on a DEEP lane, not a long human conversation) was done by grepping the
+      logs directly and still stands. What changed is that the OPEN is now honest: before
+      this, the check would have read OPEN even after the nudge fired.
+    MUTATION_PROVEN: >-
+      Two mutants, applied, killed and restored from a FILE COPY with the restore re-run
+      green: reverting the escape (the live defect) fires the main assertion, and making
+      the raw reader unescape (the guard blinding itself the way the old one was) fires
+      the vacuity control — which is exactly the job that control exists to do.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validate_evidence: >-
+      No src/ change — progress.yml and tests/ only, so no restart could show an effect
+      and none is claimed. Acceptance is empirical and was run: against a file containing
+      the literal line `[skills] nudge: due`, `grep '[skills] nudge'` returns 0 and
+      `grep '\[skills\] nudge'` returns 1; `validate_check.py` still executes D09.4 and
+      reports OPEN for the honest reason.
+    HYPOTHESES_KILLED_ON_THE_WAY: >-
+      (1) That the two nudges share a counter the memory nudge resets every 4, making
+      interval 10 unreachable — REFUTED, `TurnNudge._seen` is per-instance. (2) That the
+      nine stuck validates share an inverted acceptance model waiting for what the fix
+      prevents — REFUTED, all seven defensive checks key on evidence only the new code
+      could produce. (3) That `task_outcomes.captured_at` being a UNIX epoch while
+      `cost_records.recorded_at` is ISO was a live defect — REFUTED, every src/ caller
+      passes an epoch float and `store_cadence.py:360` already documents the hazard. My
+      own ad-hoc query was the thing that was wrong.
+    document_reason: >-
+      No design doc — `map_check` found no mapped item. The reasoning lives in the
+      guard's own docstring, which is what a reader of this machinery opens.
   DEBT159_2026_09_06_the_staleness_check_reported_FRESH_on_sources_it_never_read:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-159. Reached from the start-of-loop
@@ -29609,7 +29685,12 @@ items:
       # history: this check first reported CLOSEABLE on evidence that PREDATED the
       # change it validates. log_since.sh also carries the grep -a fix (the logs hold
       # null bytes) and warns when the window is truncated by rotation.
-      n=$(./scripts/log_since.sh 2026-09-02 '[skills] nudge')
+      # BRACKETS ESCAPED 2026-09-06 (DEBT-160). Until then this read '[skills] nudge',
+      # where [...] is a regex CHARACTER CLASS matching one of {s,k,i,l} before
+      # ' nudge' — so it could never match '[skills] nudge: due' and would have read
+      # OPEN even after the nudge fired. The waiting-on-a-deep-lane analysis below
+      # was done by grepping the logs directly and still stands.
+      n=$(./scripts/log_since.sh 2026-09-02 '\[skills\] nudge')
       [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge since 2026-09-02 - MEASURED 2026-09-06 and the blocker is not what this note used to say. Nine lanes HAVE passed 10 turns in one boot window - the memory nudge fires every 4 and resets, and the deepest lane fired it 16 times, about 64 turns - but every one of them is an autonomous recovery or incident lane (owl:secretary:recovery:task-, incident-, owl:rca_gatherer:recovery:retry-) and all of them predate the 2026-09-04 counting fix. Those lanes went quiet after 09-02 as the platform stabilised: zero memory-nudge fires since 09-03 against real traffic. So this is waiting on a DEEP lane, not on a long human conversation, and the counter is correct meanwhile. The memory nudge (interval 4, prefix [curated]) is a different line and must not be counted here"
     title: "Skill-creation nudges"
     domain: D09

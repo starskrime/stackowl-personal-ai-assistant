@@ -115,6 +115,20 @@ def _log_patterns(check: str) -> list[str]:
     return [p.replace("\\[", "[").replace("\\]", "]").replace("\\", "") for p in pats]
 
 
+def _raw_log_patterns(check: str) -> list[str]:
+    """The patterns EXACTLY as the shell receives them — backslashes intact.
+
+    `_log_patterns` unescapes, because it compares against logger message literals
+    where `\\[` and `[` mean the same character. That normalisation is right there and
+    catastrophic here: it ERASES the difference between a correctly escaped pattern and
+    a broken one, which is precisely the difference `grep` cares about.
+    """
+    code = "\n".join(
+        ln for ln in check.splitlines() if not ln.lstrip().startswith("#")
+    )
+    return re.findall(r"log_since\.sh\s+\S+\s+'([^']+)'", code)
+
+
 def _log_bounds(check: str) -> list[str]:
     """The date bounds a closing check passes to `log_since.sh`."""
     code = "\n".join(
@@ -224,6 +238,74 @@ class TestTheExemptionListIsItselfHonest:
         assert set(_INDIRECT_EMITTERS) <= used, (
             f"exempt patterns no closing check uses: {set(_INDIRECT_EMITTERS) - used}"
         )
+
+
+class TestAPatternMatchesTheTextItIsAPatternFor:
+    """THE INSTRUMENT'S OWN METACHARACTERS, and this programme has now paid for them
+    three times.
+
+    `"msg": "` needs the SPACE after the colon or a regex returns empty against a 14MB
+    file. In SQL `LIKE`, `_` is a WILDCARD, and `skill_name LIKE 'incident_%'` matched
+    `incident-evidence-brief`. And MEASURED 2026-09-06, the third: D09.4's closing check
+    grepped for `[skills] nudge`, where `[...]` is a CHARACTER CLASS. It matches one
+    character from {s,k,i,l} followed by " nudge"; the real line is `[skills] nudge: due`,
+    whose preceding character is `]`. Verified against a file containing exactly that
+    line: the check's own pattern returns 0, the escaped form returns 1.
+
+    So the check could never close. Not because the evidence cannot exist — the sibling
+    `[curated] nudge` has 99 lines — but because the instrument could not SEE it. That is
+    one layer below the failure `TestEveryLogPatternHasAnEmitter` above was built for.
+
+    AND THE GUARD ABOVE EXEMPTED IT. `_INDIRECT_EMITTERS` carries `[skills] nudge`
+    because the AST cannot follow a label passed in by a caller — a true and
+    well-evidenced reason. But an exemption granted for reason A silently exempts from
+    reasons B, C and D as well, and nothing then asked whether the pattern was even
+    well-formed. That is the general shape worth keeping: an exemption is a hole the
+    exact width of every check it skips, not the one it was written for.
+
+    THE RULE NEEDS NO LOGGER, which is what makes it cover the exempt patterns too: a
+    pattern must match the literal text it is a pattern FOR. Unescaping a pattern yields
+    the text its author meant to find, so `re.search(raw, unescaped)` must hold. It
+    catches `[`, `(`, `?`, `+` and `{` alike, rather than one metacharacter at a time.
+    """
+
+    @pytest.mark.tripwire
+    def test_every_pattern_matches_its_own_literal_text(self) -> None:
+        broken: dict[str, str] = {}
+        for item_id, check in _checks():
+            for raw in _raw_log_patterns(check):
+                literal = (
+                    raw.replace("\\[", "[").replace("\\]", "]").replace("\\", "")
+                )
+                try:
+                    if not re.search(raw, literal):
+                        broken[f"{item_id}: {raw!r}"] = (
+                            f"does not match the text it targets ({literal!r}) — a "
+                            "metacharacter is being read as syntax"
+                        )
+                except re.error as exc:
+                    broken[f"{item_id}: {raw!r}"] = f"is not a valid regex: {exc}"
+
+        assert not broken, (
+            "these closing checks grep for a pattern that cannot match the line they "
+            f"name, so they read OPEN whatever production does:\n  {broken}"
+        )
+
+    def test_the_rule_sees_a_real_population(self) -> None:
+        """VACUITY CONTROL. If no raw pattern parsed, the assertion passes over
+        nothing — the failure mode this whole file exists to prevent."""
+        raws = [r for _i, c in _checks() for r in _raw_log_patterns(c)]
+
+        assert len(raws) >= 4, f"only parsed {len(raws)} raw patterns"
+        assert any("\\[" in r for r in raws), (
+            "no pattern escapes a bracket any more; either the corpus changed or the "
+            "raw reader has started unescaping, which is the defect itself"
+        )
+
+    def test_the_rule_would_catch_the_defect_it_was_written_for(self) -> None:
+        """The control in the other direction: a rule that cannot fail is decoration."""
+        assert not re.search("[skills] nudge", "[skills] nudge")
+        assert re.search(r"\[skills\] nudge", "[skills] nudge")
 
 
 class TestNoCheckBoundsAtAFutureDate:
