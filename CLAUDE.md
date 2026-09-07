@@ -342,6 +342,14 @@ FUNCTION-LOCAL import because it matched `lstrip()`ed lines. `pytest --collect-o
 over the whole tree and `ast.parse()` found both in seconds; a test run would have
 found them late and noisily. Cheap gate first, then tests.
 
+**A scripted edit REPLACES A SPAN; it never inserts at an offset.** MEASURED
+2026-09-07: an insertion at "the next newline after the anchor" landed INSIDE a
+sentence, because in a hard-wrapped paragraph a newline is not a sentence boundary —
+and it garbled `SKILL.md`, the file the loop reads on every invocation. The read-back
+was `grep -c` on the inserted number, which returned 1: that proves the text landed and
+nothing about WHERE. Name both ends (`assert old in s` then `replace(old, new, 1)`) and
+read back the SPAN, not a count.
+
 **Never build a commit message through `printf`.** A `%` in "36%" was read as a
 format specifier and silently truncated the message mid-sentence, losing the
 paragraph that mattered — and the commit was already pushed, where rewriting

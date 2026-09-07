@@ -149,7 +149,7 @@ Duplicate keys silently swallow whole records. This has already happened.
   opposite.** MEASURED every time since: `6 failed, 11440 passed in 1885.47s`
   (2026-09-01), `10 failed, 11853 passed in 1775.99s` (2026-09-03), then GREEN three
   runs running — `12123 passed, 0 failed in 1880.78s` (2026-09-05) and `12170 passed,
-  18 skipped, 0 failed in 1911.85s` (2026-09-06). Sixth green 2026-09-06: `12284 passed, 18 skipped, 0 failed in 1979.40s` (rc=0), `SUITE TREE STILL`. Seventh 2026-09-06: `12312 passed, 17 skipped, 0 failed in 2146.47s` (rc=0) — the skip count FELL because an unconditional skip became a real test. Eighth 2026-09-06: `12327 passed, 17 skipped, 0 failed in 1987.61s` (rc=0). Ninth 2026-09-07: `12372 passed, 17 skipped, 0 failed in 1962.70s` (rc=0), `SUITE TREE STILL` — run while the tree was deliberately untouched for the whole 32 minutes, which is the only way that verdict means anything. Tenth 2026-09-07: `12378 passed, 17 skipped, 0 failed in 1988.05s` (rc=0), `SUITE TREE STILL`. Eleventh 2026-09-07: `12393 passed, 17 skipped, 0 failed in 1983.63s` (rc=0), `SUITE TREE STILL`. Twelfth 2026-09-07: **RED — `9 failed, 12405 passed, 19 skipped in 2308.06s` (rc=1), `SUITE TREE STILL`** — the streak ended, and the run EARNED its place: it was deliberately moved onto the tree the previous item SHIPPED rather than the one before it, because that item deleted a module. Four failures were a regression introduced hours earlier (a process-wide singleton whose cache key omitted its root — three passed ALONE and failed TOGETHER, the cross-test-pollution signature nothing else detects) and five were a unit test doing live DNS through an SSRF guard that binds its resolver at import. Both fixed in DEBT-179. **A green streak is not evidence that the next run is green; running it BEFORE the change would have found neither.** Thirteenth 2026-09-07: `12416 passed, 17 skipped, 0 failed in 1848.06s` (rc=0), `SUITE TREE STILL` — green again on the tree that carried both fixes, and the skip count fell 19 -> 17, corroborating the transient-DNS diagnosis: two tests that SKIPPED during the red run execute again. Fourteenth 2026-09-07: `12423 passed, 17 skipped, 0 failed in 1953.18s` (rc=0), `SUITE TREE STILL` — launched deliberately because `src/` had drifted ONE item from the last green, which is the right reason to spend 32 minutes and the only one that makes the verdict worth having. The false claim survived HERE after Fifteenth 2026-09-07: `12438 passed, 17 skipped, 0 failed in 1963.61s` (rc=0), `SUITE TREE STILL` — on the tree carrying the log-rotation fix, and the run was protected by HOLDING FOUR COMMITS for 33 minutes: the fingerprint covers every `src/` and `tests/` .py file, so a single edit would have printed SUITE TREE CHANGED and voided it. Waiting is cheaper than re-running.
+  18 skipped, 0 failed in 1911.85s` (2026-09-06). Sixth green 2026-09-06: `12284 passed, 18 skipped, 0 failed in 1979.40s` (rc=0), `SUITE TREE STILL`. Seventh 2026-09-06: `12312 passed, 17 skipped, 0 failed in 2146.47s` (rc=0) — the skip count FELL because an unconditional skip became a real test. Eighth 2026-09-06: `12327 passed, 17 skipped, 0 failed in 1987.61s` (rc=0). Ninth 2026-09-07: `12372 passed, 17 skipped, 0 failed in 1962.70s` (rc=0), `SUITE TREE STILL` — run while the tree was deliberately untouched for the whole 32 minutes, which is the only way that verdict means anything. Tenth 2026-09-07: `12378 passed, 17 skipped, 0 failed in 1988.05s` (rc=0), `SUITE TREE STILL`. Eleventh 2026-09-07: `12393 passed, 17 skipped, 0 failed in 1983.63s` (rc=0), `SUITE TREE STILL`. Twelfth 2026-09-07: **RED — `9 failed, 12405 passed, 19 skipped in 2308.06s` (rc=1), `SUITE TREE STILL`** — the streak ended, and the run EARNED its place: it was deliberately moved onto the tree the previous item SHIPPED rather than the one before it, because that item deleted a module. Four failures were a regression introduced hours earlier (a process-wide singleton whose cache key omitted its root — three passed ALONE and failed TOGETHER, the cross-test-pollution signature nothing else detects) and five were a unit test doing live DNS through an SSRF guard that binds its resolver at import. Both fixed in DEBT-179. **A green streak is not evidence that the next run is green; running it BEFORE the change would have found neither.** Thirteenth 2026-09-07: `12416 passed, 17 skipped, 0 failed in 1848.06s` (rc=0), `SUITE TREE STILL` — green again on the tree that carried both fixes, and the skip count fell 19 -> 17, corroborating the transient-DNS diagnosis: two tests that SKIPPED during the red run execute again. Fourteenth 2026-09-07: `12423 passed, 17 skipped, 0 failed in 1953.18s` (rc=0), `SUITE TREE STILL` — launched deliberately because `src/` had drifted ONE item from the last green, which is the right reason to spend 32 minutes and the only one that makes the verdict worth having. Fifteenth 2026-09-07: `12438 passed, 17 skipped, 0 failed in 1963.61s` (rc=0), `SUITE TREE STILL` — on the tree carrying the log-rotation fix, and the run was protected by HOLDING FOUR COMMITS for 33 minutes: the fingerprint covers every `src/` and `tests/` .py file, so a single edit would have printed SUITE TREE CHANGED and voided it. Waiting is cheaper than re-running. The false claim survived HERE after
   `CLAUDE.md` was corrected, and because this file is what the loop reads on every
   invocation, no invocation ever ran it — which is how TEN tests sat red, every one of
   them a retired thing whose tests stayed behind. "It hangs" reads as *impossible*, so
@@ -317,6 +317,35 @@ and move to work that is not blocked:
 
 Commit at sub-story granularity when green. Merge to main and push when the item is green.
 Never push `do_not_push_to_git_research_only/`.
+
+## A scripted edit REPLACES A SPAN — it never inserts at an offset
+
+**MEASURED 2026-09-07, and it is the second time in one session.** The rule already
+here — read the file back after a scripted edit — was followed, and it still went
+wrong, because I read back the WRONG PROPERTY.
+
+The edit appended a sentence to the full-suite history by finding an anchor and
+inserting at the next newline:
+
+    i = s.index(anchor) + len(anchor)
+    j = s.index("\n", i)          # <- assumes the sentence ends at the line break
+    s = s[:j] + add + s[j:]
+
+**In a hard-wrapped paragraph a newline is not a sentence boundary.** The insertion
+landed inside "The false claim survived HERE after `CLAUDE.md` was corrected",
+splitting it, and THIS FILE — the one the loop reads on every invocation — shipped
+reading "...survived HERE after Fifteenth 2026-09-07: `12438 passed...".
+
+The read-back was `grep -c "12438"`, which returned 1. **That proves the text landed.
+It proves nothing about WHERE.** A count is not a position.
+
+So: **name both ends.** `assert old in s` then `s.replace(old, new, 1)` cannot split a
+sentence, because the span you are replacing is explicit and the assertion fails loudly
+when the file does not hold what you think it holds. An offset computed from an anchor
+is a guess about where a sentence ends, and prose wraps.
+
+And when you read back, read back the SPAN — print the sentence that now surrounds your
+change, not a count of the token you inserted.
 
 ## Mutation-testing restores from a FILE COPY, never from git
 

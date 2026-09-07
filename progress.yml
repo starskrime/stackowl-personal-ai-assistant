@@ -315,6 +315,51 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT199_2026_09_07_I_garbled_the_file_the_loop_reads_and_the_readback_checked_presence:
+    map_check: >-
+      No mapped item. Repairing a LIVE INSTRUCTION surface I damaged in the previous loop,
+      and fixing the cause rather than the sentence.
+    WHAT_SHIPPED_BROKEN: >-
+      Recording the fifteenth full-suite run split a sentence in
+      .claude/skills/item-loop/SKILL.md — the file every invocation of this loop reads. It
+      shipped reading "The false claim survived HERE after Fifteenth 2026-09-07: `12438
+      passed...`", with the rest of that sentence — "`CLAUDE.md` was corrected, and because
+      this file is what the loop reads on every invocation" — orphaned on the next line. It
+      was in the commit that pushed at 5f14b349 and was read back to me verbatim by the
+      NEXT invocation, which is how it was caught.
+    THE_MECHANISM_IS_EXACT_AND_IT_IS_NOT_MIS_ANCHORING: >-
+      The edit found an anchor and inserted at the NEXT NEWLINE after it —
+      `i = s.index(anchor) + len(anchor); j = s.index("\n", i)`. In a hard-wrapped
+      paragraph a newline is NOT a sentence boundary, so the insertion point fell mid
+      sentence. An offset computed from an anchor is a GUESS about where a sentence ends;
+      prose wraps and the guess was wrong.
+    AND_THE_READBACK_CHECKED_THE_WRONG_PROPERTY: >-
+      This session had already adopted "read the file back after a scripted edit", and I
+      DID: `grep -c "12438"` returned 1. That proves the text LANDED. It proves nothing
+      about WHERE. A count is not a position — which is the same denominator error this
+      file records everywhere else, applied to my own instrument. The cure recorded in both
+      surfaces: name both ends (`assert old in s` then `replace(old, new, 1)`, which cannot
+      split a sentence because the span is explicit and the assertion fails loudly), and
+      read back the SPAN — print the sentence that now surrounds the change.
+    SECOND_TIME_IN_ONE_SESSION_AND_THAT_IS_THE_POINT: >-
+      Earlier today the same file was garbled by anchoring on a sentence PREFIX, and the
+      lesson recorded then was "an anchor is a position, a sentence is a span". That was
+      true and insufficient: it told me what went wrong without changing the TECHNIQUE. A
+      rule that names a mistake but leaves the dangerous construct available gets made
+      again. The construct is now named and replaced.
+    SWEPT_NOT_REMEMBERED: >-
+      Both rule files scanned for the same split shape (a conjunction or preposition
+      immediately followed by a new sentence's opening): 0 hits in each. Every other edit
+      to these files today used `assert old in s` + replace, which is span-explicit and
+      safe by construction — the offset insertion was used exactly once, and once was
+      enough.
+    changes: >-
+      .claude/skills/item-loop/SKILL.md (sentence restored, the fifteenth-run entry moved
+      to where it belongs, and a new section "A scripted edit REPLACES A SPAN — it never
+      inserts at an offset"), CLAUDE.md (the same rule, short form, beside the printf one
+      it is a sibling of).
+    stages: {brainstorm: done, architect: no_change_needed, implement: done,
+      cleanup: done, test: done, validate: done, document: done}
   DEBT198_2026_09_07_the_seed_reads_the_one_table_that_does_not_hold_the_lanes:
     map_check: >-
       D09.4 — Turn Nudges. Reached from doc_check (STALE, verified 09-02 against sources
