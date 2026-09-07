@@ -373,6 +373,113 @@ class TestADocumentsVerificationCommandCanActuallyRun:
         )
 
 
+class TestADocumentsVerificationReadsAFieldProductionRecords:
+    """The level question, for documents — the population the guard above skips.
+
+    The class above asks whether a Verification grep can MATCH. This asks whether
+    what it matches can EXIST, which is the same cure one population over, and the
+    third time this file has applied it.
+
+    WHY, measured 2026-09-07. D02.6's Verification ends with a `jq` reading
+    `.fields.recovery` and the note "Not proven live". Its own text then explains
+    why it never could be: "that line is `log.engine.debug`, and production runs at
+    INFO — which is why the `cause` field appears zero times in 15 days of logs".
+    The document diagnosed the defect, filed it as a parenthetical, and left the
+    query. A month later `recovery` appeared **zero times in 580,225 records** across
+    ten retained days. Not "not yet" — impossible.
+
+    A FIELD, NOT A MESSAGE, which is why nothing already here caught it. The closing
+    check guard asks whether a grepped MESSAGE LITERAL is emitted at INFO. D02.6 does
+    not grep a message; it selects a field key off a JSON record. So the same defect
+    walked past a guard built for it, wearing a different shape.
+
+    THE CORPUS IS REAL: 20 design documents read `.fields.X` in a fenced Verification
+    block, roughly 60 distinct keys between them, against 576 keys in `src/` that no
+    INFO-or-above call ever emits. The intersection is now empty, and it is empty
+    BECAUSE of this item — `recovery` was its only member.
+    """
+
+    @staticmethod
+    def _debug_only_field_keys() -> set[str]:
+        """Field keys emitted by `log.*.debug` and by nothing at INFO or above."""
+        levels: dict[str, set[str]] = {}
+        for path in _SRC.rglob("*.py"):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except SyntaxError:  # pragma: no cover — a file mid-edit
+                continue
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)):
+                    continue
+                level = node.func.attr
+                if level not in _PRODUCTION_LEVELS | {"debug"}:
+                    continue
+                for kw in node.keywords:
+                    if kw.arg != "extra" or not isinstance(kw.value, ast.Dict):
+                        continue
+                    for key, val in zip(kw.value.keys, kw.value.values):
+                        if not (isinstance(key, ast.Constant)
+                                and key.value == "_fields"
+                                and isinstance(val, ast.Dict)):
+                            continue
+                        for fk in val.keys:
+                            if isinstance(fk, ast.Constant) and isinstance(fk.value, str):
+                                levels.setdefault(fk.value, set()).add(level)
+        return {k for k, lv in levels.items() if lv == {"debug"}}
+
+    @staticmethod
+    def _fields_read_by_documents() -> dict[str, set[str]]:
+        docs = _ROOT / "docs" / "reference-mapping" / "designs"
+        out: dict[str, set[str]] = {}
+        for doc in sorted(docs.glob("*.md")):
+            keys: set[str] = set()
+            for block in re.findall(r"```[a-z]*\n(.*?)```", doc.read_text("utf-8"), re.S):
+                keys |= set(re.findall(r"\.fields\.(\w+)", block))
+            if keys:
+                out[doc.name] = keys
+        return out
+
+    @pytest.mark.tripwire
+    def test_no_document_proves_itself_with_a_field_only_DEBUG_emits(self) -> None:
+        debug_only = self._debug_only_field_keys()
+        offenders = {
+            name: sorted(keys & debug_only)
+            for name, keys in self._fields_read_by_documents().items()
+            if keys & debug_only
+        }
+
+        assert not offenders, (
+            "these documents rest their `Last verified` stamp on a log field that "
+            "production never records, so the query can only ever return nothing — "
+            f"the D02.6 failure, restored: {offenders}"
+        )
+
+    def test_the_sweep_sees_both_populations(self) -> None:
+        """VACUITY CONTROL. The assertion above passes trivially if either side is
+        empty — and both sides are computed, so both can silently go blank."""
+        debug_only = self._debug_only_field_keys()
+        read = self._fields_read_by_documents()
+
+        assert len(debug_only) >= 100, (
+            f"only {len(debug_only)} debug-only field keys found; 576 on 2026-09-07"
+        )
+        assert len(read) >= 12, (
+            f"only {len(read)} documents read a log field; 20 on 2026-09-07"
+        )
+        assert sum(len(v) for v in read.values()) >= 40, "the key census collapsed"
+
+    def test_the_field_the_item_fixed_is_now_recorded_in_production(self) -> None:
+        """THE DISCRIMINATION, named. If `recovery` slid back to DEBUG-only the
+        assertion above would fire — this states that it is the case the guard was
+        built from, so a future reader can tell the guard has teeth without
+        re-deriving the history."""
+        assert "recovery" not in self._debug_only_field_keys(), (
+            "the taxonomy's recovery action is emitted only at DEBUG again, which is "
+            "exactly the state D02.6 sat in for a month"
+        )
+
+
 class TestNoCheckBoundsAtAFutureDate:
     """THE GUARD'S OWN BLIND SPOT, found by walking into it while building the guard.
 

@@ -315,6 +315,95 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT177_2026_09_07_a_document_that_diagnosed_its_own_unfalsifiable_check_and_filed_it:
+    map_check: >-
+      D02.6 — the oldest stale document AND deletion-stale, which is the ordering
+      DEBT-176 added to doc_check yesterday, choosing this item. Verification RUN,
+      not trusted, mutations included.
+    THE_DEFECT: >-
+      D02.6's Verification ends "Not proven live" with a jq reading .fields.recovery,
+      and immediately below it the document explains why that can never return
+      anything: "that line is log.engine.debug, and production runs at INFO — which
+      is why the cause field appears zero times in 15 days of logs despite the
+      classifier running on every fault." It DIAGNOSED its own unfalsifiable check
+      and filed it as a parenthetical. MEASURED a month later: `recovery` appears
+      ZERO times across 580,225 records and ten retained days. Not "not yet" —
+      impossible. The 20 hits for '"cause":' in the same window belong to [prompt]
+      invalidate; the raw records were printed before the count was believed.
+    THE_ROOT_CAUSE_IS_PLACEMENT_NOT_THE_LEVEL: >-
+      A decision about WHICH RECOVERY TO ATTEMPT — cascade a tier, rotate a
+      credential, back off, abort — was attached to the routine 4-point EXIT line,
+      whose level is set by a logging convention (exits are DEBUG) rather than by the
+      value of what it carries. Nothing was wrong with the convention. The fix gives
+      the classification its own INFO record and leaves the exit line at DEBUG,
+      pinned in BOTH directions so the fix cannot become "promote everything".
+      Volume measured before the line was written: 81 [resilient_round] records in
+      580,225 over ten days.
+    HOW_FAR_IT_REACHES_AND_THE_GUARD: >-
+      20 design documents read a .fields.X in a fenced Verification block, ~60
+      distinct keys, against 576 keys in src/ that no INFO-or-above call emits. The
+      intersection is now EMPTY and it is empty BECAUSE of this item — `recovery` was
+      its only member. The guard was EXTENDED, not added: the closing-check guard
+      already asks the loggers, but it asks about a grepped MESSAGE LITERAL, and
+      D02.6 selects a FIELD KEY off a JSON record — so the same defect walked past a
+      guard built for it wearing a different shape. Third population for one cure in
+      that file. M16 (demote the line) fails it plus 6 of the 8 new behaviour tests.
+    THE_SECOND_CAUSE_QUIRKS_AGAIN: >-
+      The header said `Config: ProviderConfig.quirks added`, and three more sites
+      described it as the live escape hatch that justified NOT porting the reference
+      platform's English-matching classifier. 7234f3cd deleted `quirks` on 2026-08-20
+      as a write with no reader, withdrew the promise from _resilient_round.py in the
+      same commit, and NAMED THIS DOCUMENT as where the promise was made — without
+      opening it. Eighteen days. That is the second independent instance of the
+      fifth-surface failure DEBT-176 added to the retirement checklist, and the
+      stronger one: the author had the document in mind and still did not edit it. A
+      fifth site was found in tests/providers/test_failure_taxonomy.py's docstring.
+    VERIFICATION_RUN: >-
+      Step 1 31 passed, unchanged. Step 2 780 passed against a recorded 580 — a
+      package-wide count that grows by design, converted to `expect: 0 failed`.
+      Mutations restored from a file copy, green after each (39 passed): M13 1, M14 2
+      (exactly the two cascade tests), M15 2 (exactly the 408 and 529 breaker tests)
+      — all as recorded. M12 is 14 where the document said 13; all fourteen are
+      legitimately the mutation's doing and the difference is NOT claimed to be
+      explained, only named, since the file's test set changed once via 7234f3cd.
+    A_READER_TRAP_FOUND_BY_WRITING_THE_TEST: >-
+      The taxonomy table lists action MEMBER names; the log carries VALUES, and they
+      differ in one place — ROTATE_CREDENTIAL is logged as `rotate`. My first test
+      hardcoded "rotate_credential" and failed. The tests now derive the expected
+      value from RECOVERY_FOR_CAUSE rather than spelling it out.
+    A_TOOLING_LANDMINE_MEASURED: >-
+      `compile()` under the SYSTEM python3 is NOT a valid syntax gate for this tree:
+      `async def resilient_round[T](` is PEP 695 and needs 3.12+, so the system
+      interpreter reported SyntaxError on a file that is perfectly valid. It fired on
+      a patch that had ALREADY been written, so the false alarm could have been read
+      as "the edit failed" and provoked a second, corrupting edit. Syntax-gate scripted
+      edits with `uv run python`, never bare python3.
+    changes: >-
+      src/stackowl/providers/_resilient_round.py (the classification gets its own
+      INFO record), tests/providers/test_the_taxonomy_leaves_a_trace_production_can_see.py
+      (new, 8 tests), tests/audit/test_a_closing_check_looks_for_evidence_that_can_exist.py
+      (the document-field level guard, +3),
+      tests/providers/test_failure_taxonomy.py (the quirks residue in its docstring),
+      docs/reference-mapping/designs/D02.6.md (re-verified and re-stamped).
+    LIVE_VALIDATE: >-
+      ./start.sh at 2026-09-07T06:03:45Z (pid 803188, started after the 06:01:25
+      edit, so the running process holds the new code). 419 records since boot, ZERO
+      ERROR/CRITICAL. The line itself cannot be conjured: it needs a real provider
+      fault, and ten retained days carry 81 [resilient_round] records total with the
+      breaker short-circuiting most of them. So the check reads OPEN (0) and that is
+      the honest state — the point of the item is that a zero here now means "has not
+      happened yet" instead of "can never happen", which is what it meant before.
+    closing_check: >-
+      n=$(grep -h '"msg": "\[resilient_round\] fault classified"'
+      ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | wc -l); [ "$n" -gt 0 ] && echo
+      "CLOSEABLE ($n)" || echo "OPEN (0)"
+    WHY_THAT_CHECK_CANNOT_BE_SATISFIED_BY_THE_OLD_CODE: >-
+      The message string is new in this item and is emitted only by the branch it
+      added, at INFO. It appeared zero times in ten retained days beforehand, and the
+      old code emitted no INFO record on this path at all. A single hit is impossible
+      without the fix. The logger was checked, not just the tree.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
+      test: done, validate: partial, document: done}
   DEBT176_2026_09_07_the_detector_this_item_exists_to_add_could_never_fire:
     map_check: >-
       D05.7 — the oldest stale document, and doc_check now says WHY it is stale: a

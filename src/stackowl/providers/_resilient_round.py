@@ -507,6 +507,38 @@ async def resilient_round[T](
                             kind="cooldown", provider=provider,
                             detail=f"{cooldown_seconds:.0f}s",
                         )
+        _recovery = RECOVERY_FOR_CAUSE.get(cause, RecoveryAction.ABORT)
+        if cause is not FailureCause.NOT_A_FAULT:
+            # AT INFO, AND THE LEVEL IS THE POINT. This used to ride on the DEBUG
+            # exit line below, and D02.6 said so in its own text — "that line is
+            # log.engine.debug, and production runs at INFO, which is why the cause
+            # field appears zero times in 15 days of logs" — then filed it as a
+            # parenthetical and left the document's own Verification query
+            # unsatisfiable. MEASURED 2026-09-07: `recovery` appears ZERO times
+            # across 580,225 records and ten retained days, so the taxonomy's whole
+            # live evidence base was structurally unreachable.
+            #
+            # The cause was placement, not the level: a decision that says WHICH
+            # RECOVERY TO ATTEMPT was attached to the routine 4-point exit line,
+            # whose level is set by a logging convention rather than by the value of
+            # what it carries. It gets its own line instead.
+            #
+            # Volume is not a concern and was measured before writing this: ten days
+            # of logs carry 81 `[resilient_round]` records in 580,225 total.
+            log.engine.info(
+                "[resilient_round] fault classified",
+                extra={
+                    "_fields": {
+                        "provider": provider,
+                        "classified_fault": recorded,
+                        "cause": cause.value,
+                        # What the taxonomy says to DO — so a live log line answers
+                        # "why did (or didn't) this recover?" without reading the map.
+                        "recovery": _recovery.value,
+                        "exc_type": type(exc).__name__,
+                    }
+                },
+            )
         log.engine.debug(
             "[resilient_round] exit — round raised",
             extra={
@@ -514,9 +546,7 @@ async def resilient_round[T](
                     "provider": provider,
                     "classified_fault": recorded,
                     "cause": cause.value,
-                    # What the taxonomy says to DO — so a live log line answers
-                    # "why did (or didn't) this recover?" without reading the map.
-                    "recovery": RECOVERY_FOR_CAUSE.get(cause, RecoveryAction.ABORT).value,
+                    "recovery": _recovery.value,
                     "exc_type": type(exc).__name__,
                 }
             },

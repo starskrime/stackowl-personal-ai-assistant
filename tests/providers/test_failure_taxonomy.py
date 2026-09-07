@@ -3,8 +3,13 @@
 Ported from the reference platform's 22-reason failover taxonomy, which is
 genuinely hard-won incident knowledge. NOT ported: its _classify_by_message path
 (English substring matching) and its vendor-named members. Those are against
-standing rules here, and every reason they encode is reachable from a status code
-or a provider-declared quirk instead.
+standing rules here, and every reason they encode is reachable from a STATUS CODE.
+
+`ProviderConfig.quirks` was the second route this file used to name, and it is
+GONE (2026-08-20, `7234f3cd`) — a write with no reader, deleted along with the
+promise it was backing. Status codes carry the coverage on their own, which is the
+half that was always structural. See
+`test_the_quirks_escape_hatch_is_gone_not_merely_unused` below.
 
 The tests that matter most are the LAST two: they pin the rules, because the
 value of this port is that it kept them.
