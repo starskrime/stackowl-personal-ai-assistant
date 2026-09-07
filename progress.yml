@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT172_2026_09_07_a_recorded_number_that_the_command_could_never_have_produced:
+    map_check: >-
+      D05.2 — a MAPPED item and the oldest stale document. Verification RUN, not trusted.
+    VERIFICATION_RUN: >-
+      Step 1's grep still returns exactly one hit and its WRITE GAP is still ZERO on a
+      DOUBLED corpus — 20,339 outcomes with 4,189 non-empty sequences, against the
+      original 10,311 / 1,449. Step 3 5 passed (recorded 4; that file has legitimately
+      grown). doc_check STALE 23 -> 22.
+    THE_FINDING_is_not_staleness_it_is_a_number_that_was_never_true: >-
+      Step 2 records `# RAN: 13 passed` for `tests/tools/test_presentation_budget.py`. It
+      collects NINE. That is not drift: the file held nine tests AT THE VERY COMMIT this
+      document names (`c33b87b3`), has not been touched since, and uses no parametrize, so
+      thirteen was never producible by that command. Thirteen is the count of
+      `tests/tools/test_presentation.py` — the neighbouring file whose name differs by ONE
+      WORD. The COMMAND is right and the NUMBER came from somewhere else; the
+      load-bearing assertion the step describes (`request_text` gone from
+      `rank_candidates`) does live in the file actually named, at line 84.
+    WHY_THIS_IS_WORSE_THAN_A_STALE_PIN: >-
+      A stale pin was true once. This one never was, and the document's own header
+      promises "the numbers are what they produced, not what they were expected to
+      produce". A reader re-running step 2 sees 9 against a recorded 13, and the natural
+      reading — four tests were deleted — is false and would send them hunting.
+    A_THIRD_SHAPE_OF_PINNED_VALUE_the_LINE_NUMBER: >-
+      Step 1 pinned `# RAN: 532` for a grep. The line is 643 today. A line number moves
+      whenever anything ABOVE it is edited, so it dates the document against every
+      unrelated change in the file. Now asserts the SHAPE — exactly one hit.
+    WHAT_ELSE_THE_CAUSE_REACHES_measured: >-
+      Swept every Verification step naming exactly ONE test file and recording a count,
+      skipping any file with parametrize or test classes because counting is unreliable
+      there and a guard that cries wolf is the failure this repo pays for most. FOUR
+      mismatches. Two are ordinary growth (D05.2's own 4->5, D09.3 14->19). One is
+      "retired means deleted" WORKING: `tests/pipeline/test_tool_guardrails.py` went 16
+      -> 15 at `d8b8ba81 refactor(ESC-68): delete the tool-loop hard stops — they could
+      never run`, and the test went with the code. The fourth is the SAME DEFECT AS THIS
+      ONE, off by one: D05.3 records 15 for `tests/infra/test_capabilities.py`, which has
+      held 14 since its only commit and so could never have produced 15. Diagnosed here,
+      left for D05.3's own re-verification rather than swept into this item.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change, so no restart could show an effect and none is
+      claimed. The never-producible claim was checked three ways before being written:
+      the count at the document's own commit, the absence of any later change to the file,
+      and the absence of parametrize.
+    document_reason: >-
+      D05.2 IS the document, corrected and re-stamped 2026-09-07 with the mis-transcription
+      named in the step itself, so a re-runner is not left to explain a missing four.
   DEBT171_2026_09_07_the_frozen_prompt_holds_absolutely_and_the_raw_counts_hid_it:
     map_check: >-
       D01.2 — a MAPPED item and the oldest stale document, with unfinished business: I
