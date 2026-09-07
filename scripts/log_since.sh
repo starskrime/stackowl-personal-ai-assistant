@@ -35,8 +35,21 @@
 
 set -uo pipefail
 
-since="${1:?usage: log_since.sh YYYY-MM-DD <grep-pattern>}"
-pattern="${2:?usage: log_since.sh YYYY-MM-DD <grep-pattern>}"
+since="${1:?usage: log_since.sh YYYY-MM-DD <grep-pattern> [exclude-pattern]}"
+pattern="${2:?usage: log_since.sh YYYY-MM-DD <grep-pattern> [exclude-pattern]}"
+# OPTIONAL THIRD ARGUMENT — lines matching it are subtracted from the count.
+#
+# WHY IT EXISTS. Some questions are only askable as "X but not Y", and until this
+# argument they were not askable at all through this script: "ERROR lines that are NOT
+# the known unreachable-provider family" needs a CONJUNCTION, and two calls cannot
+# supply one — measured 2026-09-07, the provider patterns match 3,844 lines while ERROR
+# matches 3,612, because those patterns also appear at WARNING and INFO. Subtracting one
+# count from the other is arithmetic on two different populations.
+#
+# The gap had teeth: a check that cannot be bounded gets written UNBOUNDED, and the
+# guard that forbids that then has to be satisfied cosmetically. A tool that can express
+# the bound but not the filter pushes the author toward gaming the gate.
+exclude="${3:-}"
 # D18.3 — ONE SOURCE FOR THE HOME. This hardcoded the path and the cross-cutting
 # tripwire caught it before the commit: a shell script that re-derives ~/.stackowl acts
 # on a different instance than the process it is asking about, and no Python guard can
@@ -113,4 +126,9 @@ if [ ${#files[@]} -eq 0 ]; then
     exit 0
 fi
 
-grep -ah -- "$pattern" "${files[@]}" 2>/dev/null | wc -l | tr -d ' '
+if [ -n "$exclude" ]; then
+    grep -ah -- "$pattern" "${files[@]}" 2>/dev/null \
+        | grep -av -- "$exclude" | wc -l | tr -d ' '
+else
+    grep -ah -- "$pattern" "${files[@]}" 2>/dev/null | wc -l | tr -d ' '
+fi

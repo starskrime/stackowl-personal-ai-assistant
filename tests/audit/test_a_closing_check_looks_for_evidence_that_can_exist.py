@@ -63,6 +63,22 @@ _PRODUCTION_LEVELS = {"info", "warning", "error", "critical", "exception"}
 #: does reach the logs. A blanket "allow indirection" would defeat the guard; naming the
 #: two-line reason keeps it honest and makes a third one a decision.
 _INDIRECT_EMITTERS = {
+    '"level": "ERROR"': (
+        "A FORMATTER FIELD, not a message. `JsonlFormatter` writes `level` on EVERY "
+        "record (infra/observability.py), so no `log.*` call site can carry it as a "
+        "literal and the AST walk cannot see it by construction. PROOF it reaches the "
+        "logs: 3,630 lines match it on 2026-09-07 alone. Declared because DEBT-203 has to "
+        "ask 'ERROR lines that are not the provider family', and severity is only "
+        "expressible as the field the formatter emits."
+    ),
+    '"level": "CRITICAL"': (
+        "The same formatter field at the other severity — written by `JsonlFormatter` on "
+        "every record, so no `log.*` literal can carry it and the AST walk cannot see it. "
+        "PROOF it reaches the logs: 1 line matches on 2026-09-07, "
+        "'[loop] CRITICAL — the durable task loop has failed every tick'. It is listed "
+        "SEPARATELY rather than folded into a regex with ERROR because that one line would "
+        "otherwise be invisible inside a four-figure count."
+    ),
     "[skills] nudge": (
         "TurnNudge logs f\"{self.label}: due\" (infra/nudge.py:92) and the label is passed "
         "at skills/nudge.py:46. PROOF the indirection reaches the logs: the SIBLING label "
