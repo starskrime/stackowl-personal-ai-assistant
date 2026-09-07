@@ -207,6 +207,36 @@ def _single_log_queries(text: str) -> list[tuple[int, str]]:
 _OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\*\*OPEN\s*[—-]", re.M)
 
 
+#: A statement that some check in this document was CLOSED or RESOLVED. Its presence
+#: does not prove THIS check closed — it says which of two cases the reader is in, and
+#: that distinction is the whole value. MEASURED 2026-09-07 over the three live sites:
+#: D13.1 marks a check **OPEN** and says **CLOSED 2026-09-06** TWELVE LINES BELOW it —
+#: a status marker written before the outcome, with the outcome appended underneath and
+#: the marker never updated. D05.8's two rows carry no close statement anywhere in the
+#: document and are genuinely waiting ("0 planned envelopes ran"). Same file, same
+#: report, opposite actions. Reporting the FACT and not the verdict is the lesson the
+#: escalation report had to learn the hard way one loop earlier.
+_CLOSE_STATEMENT = re.compile(r"\*\*(CLOSED|RESOLVED)\b", re.I)
+
+
+def _close_note(body: str, open_line: int) -> str:
+    """Does this document record a close BELOW the open marker, and where?
+
+    A separate function because the live population cannot exercise both branches: after
+    D13.1 was fixed only D05.8 remains, and both of its rows are the "no close" case. A
+    mutation that hardcoded the answer changed NOTHING in the report — measured, on the
+    first attempt to prove it. A branch the corpus cannot reach is a branch only a
+    synthetic test can guard.
+    """
+    below = [
+        i for i, line in enumerate(body.splitlines(), 1)
+        if i > open_line and _CLOSE_STATEMENT.search(line)
+    ]
+    if below:
+        return f"document also says CLOSED/RESOLVED at line {below[0]}"
+    return "no close statement anywhere in this document"
+
+
 def _open_acceptance_lines(text: str) -> list[tuple[int, str]]:
     """(line_no, line) for every acceptance check the document marks OPEN."""
     return [
@@ -306,16 +336,22 @@ def main() -> int:
             done = stages.get(doc.stem) == "done"
             if not done:
                 continue
-            for ln, line in _open_acceptance_lines(doc.read_text(encoding="utf-8")):
-                untracked.append((doc.name, ln, line))
+            body = doc.read_text(encoding="utf-8")
+            for ln, line in _open_acceptance_lines(body):
+                untracked.append((doc.name, ln, f"{line}\n        -> {_close_note(body, ln)}"))
     if untracked:
         docs_hit = len({r[0] for r in untracked})
         print(f"\nOPEN BUT NOT TRACKED — {len(untracked)} acceptance check(s) in "
               f"{docs_hit} document(s) say OPEN while their item says "
               "`validate: done`. `validate_check.py` only re-runs a check on a "
               "`partial` stage, so nothing will ever re-ask these:")
+        print("     Each line says whether the SAME document also records a close — a "
+              "fact, not a verdict: a marker superseded by a CLOSED line below it is "
+              "stale prose, while one with no close anywhere is a real open question.")
         for name, ln, line in untracked[:12]:
-            print(f"  {name}:{ln}  {line[:88]}")
+            head, _, note = line.partition("\n")
+            print(f"  {name}:{ln}  {head[:88]}")
+            print(f"      {note.strip()}")
         if len(untracked) > 12:
             print(f"  … and {len(untracked) - 12} more")
 

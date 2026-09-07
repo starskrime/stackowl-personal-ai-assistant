@@ -90,3 +90,45 @@ def test_the_stage_lookup_can_actually_see_the_items() -> None:
     assert stages, "the stage lookup went blind; the report would print nothing"
     assert "D04.5" in stages, f"a known item id is missing: {sorted(stages)[:5]}"
     assert set(stages.values()) & {"done", "partial"}, "no stage value was recognised"
+
+
+@pytest.mark.tripwire
+def test_it_says_whether_the_document_also_records_a_close() -> None:
+    """The report must state a FACT about each site, never a verdict about it.
+
+    MEASURED 2026-09-07 over the three live sites, and they split exactly two ways.
+    D13.1 marked a check `**OPEN**` and said `**CLOSED 2026-09-06**` TWELVE LINES BELOW
+    it — a status marker written before the outcome, the outcome appended underneath, and
+    the marker never updated. D05.8's two rows carry no close statement anywhere in the
+    document and are genuinely waiting on "0 planned envelopes ran". Same report, opposite
+    actions, and nothing in the line itself told them apart.
+
+    So the annotation asks a question with a checkable answer — does this document record
+    a close, and where — rather than guessing which case a site is in. That is the lesson
+    the escalation report had to learn one loop earlier, when naming a verdict nearly cost
+    a live operator question.
+    """
+    from doc_check import _CLOSE_STATEMENT, _close_note
+
+    assert _CLOSE_STATEMENT.search("**CLOSED 2026-09-06** against `c625d74f`.")
+    assert _CLOSE_STATEMENT.search("**RESOLVED** — the operator chose the second option")
+    assert not _CLOSE_STATEMENT.search(
+        "the breaker closed again after the cooldown elapsed"
+    ), "an ordinary sentence about something closing is not a close STATEMENT"
+    assert not _CLOSE_STATEMENT.search(
+        "| **I1** — the configured cap binds on every path | **OPEN — no opportunity** |"
+    ), "an open row must not be read as its own close"
+
+    # BOTH BRANCHES, on a synthetic document — the live corpus can no longer reach the
+    # "also says CLOSED" one. After D13.1 was fixed only D05.8 remains and both of its
+    # rows are the "no close" case, so a mutation hardcoding the answer changed NOTHING
+    # in the report. Measured, on the first attempt to prove it.
+    superseded = "line one\n**OPEN**, and the query was written twice\nprose\n**CLOSED 2026-09-06**\n"
+    assert _close_note(superseded, 2) == "document also says CLOSED/RESOLVED at line 4"
+
+    waiting = "line one\n| **I1** | 0 envelopes | **OPEN — no opportunity** |\nmore prose\n"
+    assert _close_note(waiting, 2) == "no close statement anywhere in this document"
+
+    # A close ABOVE the marker does not supersede it — the marker came later.
+    close_first = "**RESOLVED** earlier\n**OPEN — a second, later question**\n"
+    assert _close_note(close_first, 2) == "no close statement anywhere in this document"

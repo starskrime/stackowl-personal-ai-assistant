@@ -315,6 +315,56 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT195_2026_09_07_a_status_marker_written_before_the_outcome_and_never_updated:
+    map_check: >-
+      D13.1 — surface count. Reached from the OPEN BUT NOT TRACKED report; its
+      Verification section was RUN, not trusted.
+    THE_DOCUMENT_SAID_BOTH_OPEN_AND_CLOSED_TWELVE_LINES_APART: >-
+      D13.1 line 153 marked a check **OPEN**; line 166 said **CLOSED 2026-09-06** against
+      c625d74f. The status marker was written BEFORE the outcome, the outcome was appended
+      BELOW it, and the marker was never updated — so a reader scanning for status meets
+      OPEN first and the close only if they keep reading. Third route to one shape this
+      week: an answered escalation whose citations keep asking (DEBT-193), a report that
+      named a verdict instead of a fact (DEBT-194), and now TWO PIECES OF PROSE ABOUT ONE
+      STATE where appending to the second does not touch the first.
+    THE_CLOSE_IS_REAL_AND_STRONGER_THAN_WHEN_IT_WAS_WRITTEN: >-
+      The closing query — deliberately keyed on a real surface VALUE rather than the
+      field's presence — returns 126, up from the 2 it returned on 2026-09-06 when both
+      hits were artefacts of half-finished edits. So the field has carried a real value on
+      every boot since. Verification RE-RUN in full: check 1 nine passed (exact); check 2
+      1130 passed 0 failed (1118 on 09-06 — a package count, correctly written as a shape);
+      check 3 the channel set is still EXACTLY {rca, telegram, cli}, at rca 131 / telegram
+      84 / cli 9. The counts rose as the document predicted; the SET did not change, and
+      only the set was ever the claim.
+    THE_REPORT_NOW_STATES_A_FACT_ABOUT_EACH_SITE: >-
+      OPEN BUT NOT TRACKED could not tell a stale marker from a live question — which is
+      the exact failure DEBT-194 fixed one loop earlier in the escalation report, so
+      shipping it again would have been ignoring my own lesson. Each site is now annotated
+      with whether the SAME document records a close BELOW it, and where. Measured over the
+      three live sites it splits them exactly: D13.1 superseded at line 166; D05.8's two
+      rows with no close statement anywhere, genuinely waiting on "0 planned envelopes ran".
+      A close ABOVE a marker does not supersede it — the marker came later.
+    THE_LIVE_CORPUS_CANNOT_TEST_THE_BRANCH_THAT_MATTERS: >-
+      After D13.1 was fixed only D05.8 remains and BOTH its rows are the "no close" case,
+      so a mutation hardcoding that answer changed NOTHING in the report — measured, on the
+      first attempt to prove it. The annotation was extracted into _close_note() and both
+      branches are pinned on a synthetic document. Three mutants killed: a close pattern
+      matching any occurrence of "closed", a hardcoded "no close", and counting a close
+      ABOVE the marker.
+    AND_THE_FIRST_MUTATION_RUN_WAS_ITSELF_VACUOUS: >-
+      M1's anchor did not match (shell quoting), the edit never landed, and the test
+      "passed" — I nearly recorded a mutant as killed that was never applied. Every
+      subsequent mutation reads the file back and PRINTS the mutated line before running
+      the test. Same family as the scripted-edit rule already in CLAUDE.md, met from the
+      mutation-testing side.
+    changes: >-
+      docs/reference-mapping/designs/D13.1.md (stale OPEN marker resolved, close
+      re-confirmed at 126, Verification re-run recorded, header restamped),
+      scripts/doc_check.py (_close_note annotation on every OPEN site),
+      tests/audit/test_an_open_acceptance_check_is_still_enumerated.py (+1 test, both
+      branches, 3 mutants).
+    stages: {brainstorm: done, architect: no_change_needed, implement: done,
+      cleanup: done, test: done, validate: done, document: done}
   DEBT194_2026_09_07_my_own_report_named_a_verdict_and_one_of_them_was_a_LIVE_question:
     map_check: >-
       No mapped item — draining the CITED AS OPEN report shipped in DEBT-193, and
@@ -34361,7 +34411,7 @@ items:
       validate:   done
       document:   done
     doc: docs/reference-mapping/designs/D13.1.md
-    doc_last_verified: "2026-09-06 against commit c5716724 — Verification RUN: 9 passed; 1118 passed 0 failed; rca 112 / telegram 65 / cli 8"
+    doc_last_verified: "2026-09-07 against commit PENDING — Verification RE-RUN: 9 passed; 1130 passed 0 failed (1118 on 09-06, a shape); channel set still exactly {rca, telegram, cli} at 131/84/9; the closing query returns 126, up from 2"
     decisions: []
     changes:
       - >-
