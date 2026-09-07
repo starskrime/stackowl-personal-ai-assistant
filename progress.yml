@@ -315,6 +315,113 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT178_2026_09_07_an_invariant_true_of_the_class_and_false_of_the_path:
+    map_check: >-
+      D08.1 — the oldest deletion-stale document, the ordering doc_check gained in
+      DEBT-176. Verification RUN, not trusted, mutations included.
+    THE_DEFECT: >-
+      D08.1's I5 says "consolidation failures are bounded per turn, so a fragile write
+      cannot loop the turn to budget exhaustion". MemoryTool._curated() returned a FRESH
+      CuratedMemory() on every call and _consolidation_failures lives on that object, so
+      the counter was destroyed between attempts and MAX_CONSOLIDATION_FAILURES_PER_TURN
+      = 3 was unreachable through the only path the model uses. MEASURED over ten
+      retained days: 42 at_capacity records and the `attempt` field on EVERY ONE of them
+      is 1; "giving up for this turn" has fired ZERO times, ever, and could not.
+    THE_ROOT_CAUSE: >-
+      Per-turn state on a per-call object. The second half of the same design shipped
+      dead: CuratedMemory.reset_turn(), whose docstring has said "Call at turn start"
+      since the item shipped, had ZERO production callers — harmless while the object was
+      rebuilt per call, and a cross-turn leak the moment it is shared. So the fix is both
+      halves: _curated() returns the existing shared_memory(), and reset_turn() is called
+      at turn start in _run_with_tools. Sharing was CHECKED not assumed — entries()
+      re-reads the file every call so there is no stale cache, and add() never touches
+      _snapshots, so I6 and Law 1 are unaffected.
+    WHY_EVERY_TEST_WAS_GREEN: >-
+      test_repeated_failures_go_terminal_so_the_turn_can_finish calls add() four times on
+      ONE hand-held instance. The tool's own fixture in test_memory_curated_writes.py
+      patches _curated to `lambda self: CuratedMemory(root=...)` — a new instance per
+      call, faithfully REPRODUCING the defect. Both prove the class; neither touches the
+      path production takes. The new file holds one instance and, because a fixture can
+      be written to pass either way, also asks the real _curated whether two calls return
+      the same object. M1 (revert to per-call) and M2 (drop the reset_turn call) each
+      kill exactly their own guard.
+    THE_THIRD_OUTCOME_NOTHING_REPORTS: >-
+      Correlated by trace rather than subtracted: of the 42 at_capacity asks, 24 were
+      followed in the same trace by a store/replace/remove and 18 by nothing at all. The
+      design reports two outcomes — consolidated, or gave up after N tries — and the
+      dominant third, "asked once and never came back", is reported by neither. That is
+      still true after this fix; recorded in the document rather than papered over,
+      because the fix makes the give-up line REACHABLE, not the walk-away visible.
+    RETIRED_MEANS_DELETED: >-
+      D08.1's "What is removed" list named fact_reinforcer. It was still there — 169
+      lines, ZERO imports, no test file, and scripts/never_called.py naming it "the
+      deduplicator — zero callers" the whole time. Deleted with its owner-scope allowlist
+      entry in tests/tenancy, which the comment directly above that entry predicted:
+      "removing a file and leaving its register entry is evidently the easy half to
+      forget". never_called.py's line was ANNOTATED "(DELETED 2026-09-07)" rather than
+      erased — the finding is history worth keeping. fact_promoter and
+      contradiction_detector are genuinely gone; every remaining mention is narration.
+    OTHER_DELETION_RESIDUE_IN_THE_DOCUMENT: >-
+      LanceDB was listed among the KEPT things and described as a live 229 MB table;
+      e7103672 removed the dependency, the adapter and the directory. Not importable, not
+      in pyproject. 30 files still NAME it, all in docstrings that teach from it ("the
+      pattern in EmbeddingRegistry and LanceDBAdapter") — a reader told to follow a
+      pattern in a deleted class cannot. Recorded, not swept: it is a separate shape from
+      this item's cause and worth its own pass.
+    TWO_PROCESS_FAILURES_OF_MINE_WORTH_KEEPING: >-
+      (1) My _fill helper repeated ONE string, and add() returns ok=True without growing
+      the file on a duplicate ("Entry already present"), so the while loop never
+      terminated. It hung the suite and I nearly chased it into pytest internals — the
+      async marker, the fixture, faulthandler — because a patch script had reported
+      success. (2) It had NOT succeeded: the edit never landed, its "Exit code 1" was
+      read as the pytest run's failure rather than the edit's. THE RULE: read the file
+      back after a scripted edit; a script's own success message is not evidence. This is
+      the same failure as DEBT-160, where a patch asserted and the doc findings never
+      landed. Every edit in this item is now followed by a read-back.
+    VERIFICATION_RUN: >-
+      Check 1 62 passed (doc 61). Check 2 19 files / 23,035 bytes — and `owl.md` is 2,213
+      BYTES against a 2,200 budget, which looks like an I4 violation and is not:
+      used_chars is 2,199, because the budget counts RENDERED ENTRIES not file bytes. One
+      character of headroom. Check 3 2,255 prompt records with chars reconciling. Check 4
+      committed_facts 0, staged_facts 230. Neighbours after the deletion: 815 passed, 0
+      failed across tests/memory, tests/tenancy, tests/tools/knowledge.
+    THE_MEMORY_NUDGE_IS_DELIBERATELY_NOT_SEEDED: >-
+      DEBT-176 gave TurnNudge a durable seed and wired it for the SKILL nudge. The MEMORY
+      nudge calls note_turn(session_key) with no seed, fifteen lines away in the same
+      function, with turns_so_far already in scope. That asymmetry is NOT an oversight to
+      fix silently: Bakir chose the threshold drop (10 -> 4) over persisting the counter
+      on 2026-08-17, and it worked — 99 firings over ten days against 4 in the week
+      before. Seeding would make it fire MORE, and "how often should the agent be
+      reminded" is a product judgement evidence cannot settle. ESCALATED, not decided.
+    changes: >-
+      src/stackowl/tools/knowledge/memory.py (_curated -> shared_memory),
+      src/stackowl/pipeline/steps/execute.py (reset_turn at turn start),
+      DELETED src/stackowl/memory/fact_reinforcer.py,
+      tests/tenancy/test_no_owner_scope_bypass.py (its allowlist entry),
+      scripts/never_called.py (annotated), tests/tools/knowledge/
+      test_the_consolidation_budget_survives_the_tool_call.py (new, 6 tests),
+      docs/reference-mapping/designs/D08.1.md (re-verified and re-stamped).
+    LIVE_VALIDATE: >-
+      ./start.sh at 2026-09-07T06:53:51Z (pid 816316, started after the 06:48:05 edit,
+      so the running process holds the new code AND the deleted module is gone from the
+      running image). 446 records since boot, ZERO ERROR/CRITICAL. No [curated] activity
+      yet — the give-up line needs a real turn that refuses a write three times in a row
+      against one shared instance, which cannot be conjured. The check reads OPEN (0),
+      and that zero now means "has not happened yet" rather than "cannot happen", which
+      is the whole change.
+    closing_check: >-
+      n=$(grep -h '"msg": "\[curated\] at_capacity: giving up for this turn"'
+      ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | wc -l); [ "$n" -gt 0 ] && echo
+      "CLOSEABLE ($n)" || echo "OPEN (0)"
+    WHY_THAT_CHECK_CANNOT_BE_SATISFIED_BY_THE_OLD_CODE: >-
+      The line is emitted only past MAX_CONSOLIDATION_FAILURES_PER_TURN consecutive
+      failures on ONE CuratedMemory instance. Under the old per-call construction the
+      counter could not exceed 1, so the branch was unreachable for any input — it
+      appeared zero times in ten retained days. A single hit is impossible without the
+      shared instance. It is log.memory.warning, so INFO-and-above; the logger was
+      checked, not just the tree.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done,
+      test: done, validate: partial, document: done}
   DEBT177_2026_09_07_a_document_that_diagnosed_its_own_unfalsifiable_check_and_filed_it:
     map_check: >-
       D02.6 — the oldest stale document AND deletion-stale, which is the ordering
@@ -12742,6 +12849,34 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_156_should_the_memory_nudge_be_seeded_like_the_skill_nudge:
+      question: >-
+        Should the MEMORY nudge be seeded from the durable per-lane turn count, the way
+        the SKILL nudge now is (DEBT-176)? Seeding makes it fire sooner after a restart
+        on a lane already deep in turns.
+      why_evidence_cannot_settle_it: >-
+        Evidence settles the mechanism, not the appetite. MEASURED 2026-09-07: both
+        nudges share one TurnNudge primitive and are called FIFTEEN LINES APART in the
+        same function, with turns_so_far already in scope — so seeding is free, and the
+        asymmetry reads as an oversight. It is not. Bakir chose the threshold drop
+        (10 -> 4) over persisting the counter on 2026-08-17, and it WORKED: 99 firings
+        over ten retained days against 4 in the week before. Seeding makes it fire MORE,
+        and curated.py states the trade itself — under-nudging costs a memory that could
+        have been written, over-nudging costs the user a turn cluttered with the agent
+        talking about its own bookkeeping. Which side to err on is a product judgement.
+      panel_recommendation: >-
+        LEAVE IT UNSEEDED. The firing rate says the interval already absorbs the restart
+        reset here, which is exactly why the skill nudge needed a seed and this one does
+        not: that one sat at interval 10 against a maximum of 9 turns per boot and fired
+        ZERO times, ever. Same primitive, different problem.
+      blocked_until_answered: >-
+        Nothing. Recorded so the asymmetry is not "tidied up" by a later pass that reads
+        the two call sites side by side and assumes one was forgotten.
+      premise_check: >-
+        n=$(grep -h 'curated. nudge: due' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null |
+        wc -l); [ "$n" -gt 20 ] && echo "HOLDS ($n memory-nudge firings — the interval
+        still absorbs the restart reset)" || echo "EXPIRED (only $n firings — seeding is
+        no longer a preference question)"
     ESC_155_the_frozen_prompt_buys_a_discount_nobody_here_can_observe:
       question: >-
         D01.1 freezes the system prompt for the life of a conversation, and the skill

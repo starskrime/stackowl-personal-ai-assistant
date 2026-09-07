@@ -52,7 +52,12 @@ from typing import TYPE_CHECKING
 
 from stackowl.commands.memory_helpers import forget_fact
 from stackowl.infra.observability import log
-from stackowl.memory.curated import DURABILITIES, CuratedMemory, note_write
+from stackowl.memory.curated import (
+    DURABILITIES,
+    CuratedMemory,
+    note_write,
+    shared_memory,
+)
 from stackowl.memory.trust import render_at_trust
 from stackowl.pipeline.services import get_services
 from stackowl.tools.base import Tool, ToolManifest, ToolResult
@@ -250,7 +255,23 @@ class MemoryTool(Tool):
     # which is what the system prompt actually carries.
 
     def _curated(self) -> CuratedMemory:
-        return CuratedMemory()
+        """The PROCESS-WIDE instance, and the lifetime is the whole point.
+
+        This returned a fresh ``CuratedMemory()`` on every call, so
+        ``_consolidation_failures`` — the per-turn budget that makes
+        ``MAX_CONSOLIDATION_FAILURES_PER_TURN`` mean anything — was destroyed
+        between attempts. D08.1's I5 ("consolidation failures are bounded per
+        turn, so a fragile write cannot loop the turn to budget exhaustion") was
+        therefore true of the CLASS and false of the PATH: every one of the 42
+        ``at_capacity`` records in ten retained days carries ``attempt: 1``, and
+        ``giving up for this turn`` has never fired because it cannot.
+
+        Sharing is safe and was checked, not assumed: ``entries()`` re-reads the
+        file on every call so there is no stale cache, and ``add()`` never touches
+        ``_snapshots``, so the frozen per-conversation snapshot (I6, Law 1) is
+        unaffected. ``shared_memory()`` already existed for exactly this reason.
+        """
+        return shared_memory()
 
     def _scanned(self, content: str, t0: float) -> ToolResult | None:
         """Refuse content a static scan calls dangerous. ``None`` means allowed.

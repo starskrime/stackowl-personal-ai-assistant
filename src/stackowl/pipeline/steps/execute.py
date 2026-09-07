@@ -1503,6 +1503,23 @@ async def _run_with_tools(
     # reaches ten on 13 of 129 sessions. Best-effort: a reminder may never cost a turn
     # its answer, so any failure here simply means "no seed", which is the old
     # behaviour rather than an outage.
+    # D08.1 I5 — CLEAR THE PER-TURN CONSOLIDATION BUDGET. `reset_turn()`'s
+    # docstring has said "Call at turn start" since the item shipped and
+    # NOTHING called it: the memory tool built a fresh CuratedMemory per
+    # call, so the counter was reset by construction and the method was
+    # moot. Now that writes share one instance, the counter would leak
+    # across turns and lanes without this — three refusals spread over
+    # three unrelated turns would wrongly go terminal on the fourth.
+    # Half of this design shipped; this is the other half.
+    try:
+        from stackowl.memory.curated import shared_memory as _shared_curated
+    
+        _shared_curated().reset_turn()
+    except Exception as exc:  # noqa: BLE001 — bookkeeping may never cost a turn
+        log.engine.warning(
+            "[pipeline] execute: could not reset the curated per-turn budget",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
     _turns_so_far: int | None = None
     try:
         _sess_store = getattr(get_services(), "session_store", None)

@@ -7,7 +7,7 @@ silent misroute. Each cost a measurement to find, because the code READS as
 correct: the function is right, the column is right, the parameter is right. Only
 the effect is missing.
 
-    FactReinforcer            the deduplicator — zero callers
+    FactReinforcer            the deduplicator — zero callers (DELETED 2026-09-07)
     add_relation              the only writer of RELATED_TO edges — zero callers
     is_machine_lane           "lanes that cannot contain a user fact" — zero callers
     reinforcement_count       a column whose only writer had no callers

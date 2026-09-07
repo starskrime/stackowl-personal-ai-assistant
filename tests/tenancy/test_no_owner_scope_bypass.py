@@ -267,7 +267,6 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # six, and the guard caught it the same day. Removing a file and leaving its
         # register entry is evidently the easy half to forget; this test is why it
         # cost minutes instead of months.
-        ("memory/fact_reinforcer.py", "staged_facts"),
         ("memory/sqlite_bridge.py", "committed_facts"),
         ("memory/sqlite_bridge.py", "staged_facts"),
         ("memory/sqlite_helpers.py", "committed_facts"),
