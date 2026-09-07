@@ -32389,7 +32389,7 @@ items:
       validate:   partial
       document:   done
     doc: "docs/reference-mapping/designs/D09.4.md"
-    doc_last_verified: "2026-09-07 against commit PENDING — Verification RE-RUN, not trusted: step 1 = 13 passed (was 9; the four new ones arrived with the seeding work, which is why a single-file pin is worth keeping), step 1+2 together = 651 passed 0 failed, step 3 = 0 — and the check now reports the DISTANCE: deepest seeded ingress lane 9 of 10."
+    doc_last_verified: "2026-09-07 against commit dee99e6d — Verification RE-RUN, not trusted: step 1 = 13 passed (was 9; the four new ones arrived with the seeding work, which is why a single-file pin is worth keeping), step 1+2 together = 651 passed 0 failed, step 3 = 0 — and the check now reports the DISTANCE: deepest seeded ingress lane 9 of 10."
     decisions: []
     changes:
       - "2026-09-02 THE MEASUREMENT DECIDED IT, and it refutes the obvious reading of D09.1. Across five days of rotated logs the MEMORY nudge — the same mechanism, different words — fired 96 times and 27 of those (28%) were followed by a memory write within ten minutes. More decisively, 27 of the 35 WRITES in that window (77%) followed a nudge. D09.1 measured evolve_now and synthesize_skills at ZERO all-time and concluded meta-work is never chosen; the first half is right, the inference 'so prompting cannot help' is not. The model will not VOLUNTEER meta-work; asked at the right moment it complies about a quarter of the time, and that quarter is where nearly all the writes come from."
