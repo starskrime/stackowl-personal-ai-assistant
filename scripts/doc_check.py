@@ -186,6 +186,28 @@ _SINGLE_LOG = re.compile(
     r"|stackowl\.jsonl[^\n]*\|\s*(?:grep|jq|rg|wc)\b"
 )
 
+#: The same shape with the filename left open, so it matches the glob spelling too.
+#: This is the DENOMINATOR — see `_log_query_lines`.
+_ANY_LOG = re.compile(
+    r"(?:grep|jq|rg|cat|wc|log_since)\b[^\n]*stackowl[^\s]*\.jsonl"
+    r"|stackowl[^\s]*\.jsonl[^\n]*\|\s*(?:grep|jq|rg|wc)\b"
+)
+
+
+def _log_query_lines(text: str) -> list[tuple[int, str]]:
+    """(line_no, line) for EVERY Verification command that reads a log file at all.
+
+    The denominator for BLIND AFTER MIDNIGHT. Without it a corpus where every command
+    globs correctly and a corpus this finder cannot parse print the same empty report —
+    the ambiguity that let EVIDENCE OLDER THAN THE LOGS read zero for a whole loop while
+    it was blind. `_ANY_LOG` is `_SINGLE_LOG` with the filename left open, so it sees both spellings.
+    """
+    return [
+        (i, line.strip())
+        for i, line in enumerate(text.splitlines(), 1)
+        if _ANY_LOG.search(line)
+    ]
+
 
 def _single_log_queries(text: str) -> list[tuple[int, str]]:
     """(line_no, line) for every Verification command pinned to the single log file."""
@@ -224,11 +246,68 @@ _OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\*\*OPEN\s*[—-]", re.M)
 _CLOSE_STATEMENT = re.compile(r"\*\*(CLOSED|RESOLVED)\b", re.I)
 
 
-#: A log-reading Verification command, and a date recorded beside it.
-_LOG_QUERY = re.compile(r"(?:grep|jq|cat|wc|log_since)[^\n]*stackowl[^\n]*\.jsonl")
-_DATED_RUN = re.compile(
-    r"(?:PASS|MEASURED|RAN|RE-RAN|Measured|Re-ran)\s+(\d{4}-\d{2}-\d{2})"
-)
+#: A log file, named. RETIRED `_LOG_QUERY`, which required one of five reader words on
+#: the same joined command as the path — a CO-OCCURRENCE standing in for a single token,
+#: which is the prose-whitelist defect wearing a structural disguise: the regex LOOKS
+#: like structure. MEASURED 2026-09-07: dropping the reader word raises the examined
+#: denominator from 36 dated blocks to 38 and changes NO verdict, which is what a
+#: coverage fix should look like. The 14 commands it could not see are quote-wrapped
+#: `jq` programs and two `glob.glob(...)` Python readers — a `.jsonl` under
+#: `~/.stackowl/logs` inside a fence is a log read, whatever spells the reading.
+_LOG_PATH = re.compile(r"stackowl[^\s'\"]*\.jsonl")
+
+#: A date recorded beside one. NO KEYWORD GATE — see `_evidence_older_than_the_logs`
+#: for why the six-word whitelist this replaces saw 24 of 43.
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+#: How far past a fenced block's close its result may be written. A block's reading is
+#: often a heading or a table UNDER it rather than a comment inside it — D05.8's is
+#: `### Live reading, 2026-08-22`, two lines below the closing fence — so the window has
+#: to leave the fence. It stops at the next fence regardless, whatever this number says.
+#:
+#: EIGHT IS THE TOP OF A MEASURED PLATEAU, not a taste. Swept over the live corpus, the
+#: answer is INVARIANT for 2..8 (35 dated blocks, 1 rotted) and wrong on both sides:
+#: 0 and 1 lose the only real defect, whose heading sits two lines below its fence; 12
+#: gives 2, 16 gives 3, and letting it run to the next fence — the shape a review
+#: recommended, on the reasoning that a positional bound needs no number — gives NINE,
+#: of which EIGHT are false. Those eight are the same bleed this detector was just fixed
+#: for, arriving from the other end: `*fixed 2026-08-14*` in a table of BUGS, and five
+#: hits on `**Every command below has been RUN, on 2026-07-28**` — a heading that
+#: belongs to the NEXT block and says so in its own words. An unbounded window does not
+#: read a block's evidence; it reads its neighbour's introduction.
+_TRAILING_PROSE_LINES = 8
+
+
+def _fence_commands(body: list[str]) -> list[tuple[int, str]]:
+    """(offset into `body`, joined command) for every runnable line in one fence.
+
+    Backslash continuations are joined, which is not a nicety: MEASURED 2026-09-07,
+    FIFTEEN fenced blocks in this corpus name a `.jsonl` log and are invisible to a
+    per-line matcher, because the reader sits on one line and the glob on the next.
+    Three of the five commands in the block carrying the ONE real finding are of that
+    shape. `_newest_by_pipe_position` already joins them for the same reason; this is
+    that idiom, factored so the two cannot drift apart. Joining raised the examined
+    denominator from 31 blocks to 35 and left the finding unchanged — coverage, not a
+    new verdict.
+
+    `#` comment lines are not commands. They are still read for DATES by the caller;
+    they are just not the thing a reader executes.
+    """
+    out: list[tuple[int, str]] = []
+    pending: list[str] = []
+    start = 0
+    for n, line in enumerate(body):
+        if line.lstrip().startswith("#"):
+            pending = []
+            continue
+        if not pending:
+            start = n
+        pending.append(line.rstrip())
+        if line.rstrip().endswith("\\"):
+            continue
+        out.append((start, " ".join(x.rstrip("\\") for x in pending)))
+        pending = []
+    return out
 
 
 #: A test path as a document writes it.
@@ -440,8 +519,10 @@ def _log_horizon() -> str:
     return names[0][len("stackowl-"):-len(".jsonl")] if names else ""
 
 
-def _evidence_older_than_the_logs(text: str, horizon: str) -> list[tuple[int, str, str]]:
-    """(line_no, newest recorded date, command) for checks nothing can reproduce.
+def _evidence_older_than_the_logs(
+    text: str, horizon: str
+) -> list[tuple[int, str, str, bool]]:
+    """(first command line, newest recorded date, that command, rotted) per dated BLOCK.
 
     A Verification command that reads the logs and records "PASS 2026-08-21: 8
     occurrences" is a CHECK for as long as the logs reach back that far, and a RECORD
@@ -449,35 +530,81 @@ def _evidence_older_than_the_logs(text: str, horizon: str) -> list[tuple[int, st
     as failure to anyone who runs it — the ambiguous-zero trap with a cause of its own:
     THE EVIDENCE HAD A SHORTER LIFETIME THAN THE DOCUMENT.
 
-    MEASURED 2026-09-07: four such commands across three documents, the oldest citing
-    2026-07-27 against logs that begin 2026-08-28. D16.3's is the sharpest — its evidence
-    was a throwaway plugin installed to prove the path and then REMOVED, so the line it
-    greps cannot fire again even in principle.
-
     A fresher date anywhere in the same block clears it, which is not a nicety: D08.1
     carries "RAN 2026-08-17 -> 4 firings" with "RE-RAN 2026-09-07 -> 99" on the next
     line, and flagging that would be crying wolf on a document that had already done the
     work.
+
+    TWO DEFECTS WERE MEASURED IN THE FIRST VERSION OF THIS, 2026-09-07 — one loop after
+    the report was drained to zero and reported as drained. It was reading zero because
+    it was BLIND, and nothing in the output could tell the two apart.
+
+    ONE — IT ASKED PROSE FOR A DATE THAT IS ALREADY A STRUCTURED TOKEN. It matched
+    ``(PASS|MEASURED|RAN|RE-RAN|Measured|Re-ran)\\s+<date>``: a hand-written whitelist of
+    six words over prose that is unbounded by construction. Across 84 documents it saw a
+    date beside 24 of the 43 log-query windows that carry one. The phrasings it missed
+    are not exotic — ``PASS (observed 2026-07-27)``, ``### Live reading, 2026-08-22``,
+    ``RAN: 201,``, ``All three RUN on 2026-09-04``, and ``RE-RUN`` itself, which is not
+    ``RE-RAN``. This is the SAME cause ``_test_paths_on_command_lines`` rejected one loop
+    earlier for negation, in the mirror: a regex over prose is a guess at future
+    phrasing, and the lesson was learned in one detector and not carried to its sibling
+    twenty lines away. The cure is the same — read the STRUCTURE. Every ISO date in the
+    block counts now, and ``max`` still clears, so a re-run written underneath an old
+    result silences it exactly as before.
+
+    TWO — THE WINDOW WAS TEN LINES AND BLED INTO THE NEXT COMMAND'S ANNOTATIONS. With
+    every date counting, D01.7 step 8 was flagged on step 9's ``PASS (observed
+    2026-07-27)`` — a different command, in a different fence, whose own ``RE-RUN
+    2026-09-07`` sat one line past the window's end. **Evidence attaches to a BLOCK, not
+    to a LINE.** A fenced run of commands is ONE act of measurement and its result is
+    written under it, so the window is the whole fence plus the prose that follows, and
+    it stops at the next fence. That is also what keeps the one real defect: D05.8's
+    reading is a heading two lines BELOW the closing fence, which no in-fence window
+    could ever have seen. Widening the pattern without also widening the scope would
+    have traded one blind spot for one false positive.
+
+    MEASURED with both in place: 60 blocks carry a log query, 31 carry a date, and ONE
+    is older than the horizon. Every block that carries a date is returned — the caller
+    needs the denominator, because a clean corpus and a blind detector print the same
+    empty report otherwise, which is how this defect survived a loop.
     """
     if not horizon:
         return []
     lines = text.splitlines()
-    out: list[tuple[int, str, str]] = []
-    fenced = False
-    for i, line in enumerate(lines):
-        if line.lstrip().startswith("```"):
-            fenced = not fenced
+    out: list[tuple[int, str, str, bool]] = []
+    i = 0
+    while i < len(lines):
+        if not lines[i].lstrip().startswith("```"):
+            i += 1
             continue
         # ONLY INSIDE A FENCE. A Verification command is one a reader would RUN; a
         # command quoted in prose is a description of one. The distinction is not
         # pedantic — the document that FIXES this defect has to quote the retired
         # command to explain it, and a line-scoped detector flagged that correction as
         # the defect. Same shape as the escalation report reading its own explanation.
-        if not fenced or not _LOG_QUERY.search(line):
-            continue
-        dates = _DATED_RUN.findall("\n".join(lines[i:i + 10]))
-        if dates and max(dates) < horizon:
-            out.append((i + 1, max(dates), line.strip()))
+        close = i + 1
+        while close < len(lines) and not lines[close].lstrip().startswith("```"):
+            close += 1
+        body = lines[i + 1:close]
+        commands = [
+            (i + 2 + offset, cmd)
+            for offset, cmd in _fence_commands(body)
+            if _LOG_PATH.search(cmd)
+        ]
+        if commands:
+            trailing: list[str] = []
+            k = close + 1
+            while (k < len(lines) and len(trailing) < _TRAILING_PROSE_LINES
+                   and not lines[k].lstrip().startswith("```")):
+                trailing.append(lines[k])
+                k += 1
+            dates = _ISO_DATE.findall("\n".join(body + trailing))
+            if dates:
+                newest = max(dates)
+                out.append(
+                    (commands[0][0], newest, commands[0][1].strip(), newest < horizon)
+                )
+        i = close + 1
     return out
 
 
@@ -565,8 +692,11 @@ def main() -> int:
             print(f"  {name:16} verified {verified}   sources changed {changed}")
         print()
     single_log: list[tuple[str, int, str]] = []
+    log_commands = 0
     for doc in docs:
-        for ln, line in _single_log_queries(doc.read_text(encoding="utf-8")):
+        body = doc.read_text(encoding="utf-8")
+        log_commands += len(_log_query_lines(body))
+        for ln, line in _single_log_queries(body):
             single_log.append((doc.name, ln, line))
 
     if by_deletion:
@@ -594,17 +724,25 @@ def main() -> int:
             print(f"  {name}:{ln}  {line[:88]}")
         if len(single_log) > 12:
             print(f"  … and {len(single_log) - 12} more")
+    elif log_commands:
+        print(f"\nBLIND AFTER MIDNIGHT — none, across {log_commands} log-reading "
+              "Verification command(s); every one of them globs. (The denominator is "
+              "printed because a silent detector and a clean corpus look identical.)")
 
     stages = _validate_stages()
     untracked: list[tuple[str, int, str]] = []
-    if stages:
-        for doc in docs:
-            done = stages.get(doc.stem) == "done"
-            if not done:
-                continue
-            body = doc.read_text(encoding="utf-8")
-            for ln, line in _open_acceptance_lines(body):
-                untracked.append((doc.name, ln, f"{line}\n        -> {_close_note(body, ln)}"))
+    open_markers = 0
+    staged_docs = 0
+    for doc in docs:
+        body = doc.read_text(encoding="utf-8")
+        open_markers += len(_open_acceptance_lines(body))
+        stage = stages.get(doc.stem)
+        if stage is not None:
+            staged_docs += 1
+        if stage != "done":
+            continue
+        for ln, line in _open_acceptance_lines(body):
+            untracked.append((doc.name, ln, f"{line}\n        -> {_close_note(body, ln)}"))
     if untracked:
         docs_hit = len({r[0] for r in untracked})
         print(f"\nOPEN BUT NOT TRACKED — {len(untracked)} acceptance check(s) in "
@@ -620,14 +758,23 @@ def main() -> int:
             print(f"      {note.strip()}")
         if len(untracked) > 12:
             print(f"  … and {len(untracked) - 12} more")
+    elif open_markers or staged_docs:
+        print(f"\nOPEN BUT NOT TRACKED — none, across {open_markers} OPEN acceptance "
+              f"marker(s); {staged_docs} of {len(docs)} document(s) matched a stage "
+              "entry in `progress.yml`. (Both numbers are printed because this report "
+              "goes silent in TWO ways — a clean corpus, and a corpus whose stages it "
+              "could not resolve at all. A `staged_docs` of 0 means blind, not clean.)")
 
     horizon = _log_horizon()
     rotted: list[tuple[str, int, str, str]] = []
+    dated_blocks = 0
     for doc in docs:
-        for ln, when, cmd in _evidence_older_than_the_logs(
+        for ln, when, cmd, is_rotted in _evidence_older_than_the_logs(
             doc.read_text(encoding="utf-8"), horizon
         ):
-            rotted.append((doc.name, ln, when, cmd))
+            dated_blocks += 1
+            if is_rotted:
+                rotted.append((doc.name, ln, when, cmd))
     if rotted:
         print(f"\nEVIDENCE OLDER THAN THE LOGS — {len(rotted)} Verification command(s) "
               f"in {len({r[0] for r in rotted})} document(s) record a result from BEFORE "
@@ -638,6 +785,11 @@ def main() -> int:
         for name, ln, when, cmd in rotted[:12]:
             print(f"  {name}:{ln}  recorded {when}")
             print(f"      {cmd[:88]}")
+    elif dated_blocks:
+        print(f"\nEVIDENCE OLDER THAN THE LOGS — none, across {dated_blocks} dated "
+              f"evidence block(s), against a log horizon of {horizon}. (The denominator "
+              "is printed because this report read a silent ZERO for a whole loop while "
+              "its finder was blind, and nothing in the output could say which.)")
 
     unordered: list[tuple[str, int, str]] = []
     by_position = 0

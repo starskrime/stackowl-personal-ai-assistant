@@ -315,6 +315,130 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT208_2026_09_07_the_report_declared_drained_was_reading_zero_because_it_was_blind:
+    map_check: >-
+      No mapped item — "The ground is clear." Evidence-led: the detector filed by DEBT205
+      as the next loop's job, plus two further blind spots the same measurement exposed.
+    THE_REPORT_WAS_DRAINED_TO_ZERO_AND_THE_ZERO_WAS_NOT_A_PASS: >-
+      DEBT204 closed EVIDENCE OLDER THAN THE LOGS at 1/1 -> 0 and recorded it as drained.
+      MEASURED today: it read 0 because its FINDER was blind, and the report printed
+      nothing either way. It looked for a date preceded by one of SIX hand-written words
+      (PASS|MEASURED|RAN|RE-RAN|Measured|Re-ran). Across 84 documents that saw a date
+      beside 24 of the 43 log-query windows that carry one. RE-RUN is not RE-RAN.
+    THE_ROOT_CAUSE_IS_ONE_THIS_FILE_REJECTED_ONE_LOOP_EARLIER: >-
+      A regex over PROSE standing in for a STRUCTURED TOKEN that is right there. DEBT206
+      rejected exactly this for NEGATION — "prose negation is unbounded; a regex over it
+      is a guess at future phrasing" — and shipped scoping instead. The sibling detector
+      twenty lines away in the SAME FILE kept the prose whitelist. Correcting one copy of
+      a rule is not correcting the rule, in its newest form: applying a lesson to the
+      detector that taught it is not applying the lesson.
+    AND_WIDENING_THE_PATTERN_ALONE_WOULD_HAVE_TRADED_A_BLIND_SPOT_FOR_A_FALSE_POSITIVE: >-
+      With every date counting, D01.7 step 8 was flagged on step 9's evidence — a
+      different command, in a different FENCE, whose own RE-RUN 2026-09-07 sat one line
+      past the ten-line window's end. Evidence attaches to a BLOCK, not to a LINE: a
+      fenced run of commands is ONE act of measurement and its result is written under
+      it. The window is now the fence plus the prose that follows, stopping at the next
+      fence.
+    THE_TRAILING_BOUND_IS_A_MEASURED_PLATEAU_AND_THE_REVIEW_WAS_WRONG_ABOUT_IT: >-
+      A panel lens recommended letting the window run to the next fence, reasoning that a
+      positional bound needs no number, and separately reported the constant "can never
+      bind". Both were measured against a ten-line window, not this one. SWEPT over the
+      live corpus: the answer is INVARIANT for 2..8 (35 dated blocks, 1 rotted); 0 and 1
+      LOSE the only real defect; 12 gives 2, 16 gives 3, and unbounded gives NINE of
+      which EIGHT are false — five of them hits on "**Every command below has been RUN,
+      on 2026-07-28**", a heading that introduces the NEXT block and says so. An
+      unbounded window does not read a block's evidence; it reads its neighbour's
+      introduction. Eight is the top of the plateau, and the disagreement is recorded
+      rather than averaged.
+    A_THIRD_BLIND_SPOT_THE_SAME_MEASUREMENT_FOUND: >-
+      _LOG_QUERY is per-line, so FIFTEEN fenced blocks that name a .jsonl log were
+      invisible — the reader on one line, the glob on the next. THREE of the five
+      commands in the block holding the one real finding are that shape.
+      _newest_by_pipe_position already joined continuations for the same reason; the
+      idiom is now factored as _fence_commands so the two cannot drift. Examined blocks
+      31 -> 35 (36 after the fix landed); the verdict did not change. Coverage, not a new
+      claim.
+    PROVEN_AGAINST_THE_TREE_THE_REPORT_WAS_BUILT_ON: >-
+      Replayed at 1a879d2d^ — the corpus on which DEBT-2026-09-07 recorded "four such
+      commands across three documents". OLD rule: 4. NEW rule: FIVE findings across FIVE
+      documents, reproducing every OLD one (D01.1's two lines are one block) and adding
+      D01.7:429 (2026-07-27) and D05.8:379 (2026-08-22) — two real records the report was
+      blind to on the day it was built. "OLD findings the NEW rule does not reproduce" is
+      the empty set. D01.7:429 is the record DEBT205 later found BY HAND and filed.
+    HALF_THE_REPORTS_IN_THIS_SCRIPT_WERE_SILENT_WHEN_CLEAN: >-
+      That is what let a blind zero pass for a drained one. The three NEWEST reports print
+      "none, across N"; the three OLDEST printed nothing at all. All six now print a
+      denominator. OPEN BUT NOT TRACKED gets TWO numbers, because it goes silent in two
+      ways — a clean corpus, and a corpus whose stages it could not resolve at all; a
+      staged_docs of 0 means blind, not clean.
+    THE_ONE_LIVE_FINDING_WAS_REAL_AND_IS_FIXED: >-
+      D05.8's "Live reading, 2026-08-22" — six days older than the retained logs, on a
+      document whose item says validate: done and whose I1/I2 rows read 0-over-0. Now
+      labelled A RECORD, NOT A CHECK, with a runnable re-measure beside it. I1/I2 gained
+      a real denominator: 0 over **43** `plan: envelope set` records, spread 14/1/3/6/1/4/
+      0/3/3/4/4 across all eleven retained days, so the path is alive and the zero is a
+      real absence. And the openness is now NAMEABLE rather than "no opportunity" — live
+      `tool_count_cap` is 150 against a 79-tool catalogue, so both lines are structurally
+      unreachable until the operator lowers the cap (ESC-35). Verified the clearing
+      survives a moving horizon: silent at 2026-08-28/29 and 09-05, flagging again at
+      09-08 when the re-measure itself would have rotted.
+    AND_A_FOURTH_BLIND_SPOT_THE_BLAST_RADIUS_SWEEP_FOUND_IN_MY_OWN_CHANGE: >-
+      _LOG_QUERY required one of five READER WORDS on the same joined command as the
+      path. That is a CO-OCCURRENCE standing in for a single token — the prose-whitelist
+      defect wearing a structural disguise, because the regex LOOKS like structure and
+      reads as if it were. RETIRED for _LOG_PATH. MEASURED: examined blocks 36 -> 38, and
+      NO changed verdict, which is exactly what a coverage fix should look like. The 14
+      commands it could not see are quote-wrapped `jq` programs and two `glob.glob(...)`
+      Python readers.
+    I_DID_NOT_TAKE_THE_SWEEPS_8_SITES_AT_FACE_VALUE_AND_IT_WAS_RIGHT_NOT_TO: >-
+      The sweep reported that a structure-only rule finds "8 sites in 3 documents" older
+      than the horizon where this report now says none. RE-MEASURED with the block rule:
+      ZERO. Its 8 came from a WINDOW rule — the ten-line bleed this item removed — so its
+      D01.7:448/455 and five D05.8 lines are several lines inside blocks that score once
+      and clear. Two agents, two recommendations, both measured against the shape being
+      replaced; both wrong in the same way, and only running them settled it.
+    SIX_MUTANTS_EACH_KILLED_BY_THE_TEST_BUILT_FOR_IT: >-
+      Restore the keyword gate (7 fail); unbounded trailing window (1); fence-only window
+      (1); drop continuation joining (1); filter instead of returning the denominator
+      (3); restore the reader-word co-occurrence (1). Restored from a FILE COPY each
+      time, and the final re-run is green at 16 passed — the only proof the restore
+      happened.
+    THE_BLAST_RADIUS_IS_MEASURED_AND_FILED_AS_ITS_OWN_ITEMS_NOT_AS_A_NOTE: >-
+      Same cause, eight further live instances, each with a denominator. Ranked:
+      (1) tests/audit/test_a_settled_decision_is_not_contradicted_by_the_record.py
+      `_RETRACTED` — 17 co-locating sentences, matches 6, misses 11, and FIVE are live
+      sites asserting the ESC-149-retracted premise with no retraction, one of them
+      src/stackowl/pipeline/state.py:304; its own stray-sweep never walks tests/.
+      (2) doc_check `_SINGLE_LOG` — 53 lines name the unglobbed path, it sees 31; 33
+      documents, it names 19. BLIND AFTER MIDNIGHT's headline is understated, not wrong.
+      (3) doc_check `_DELETION` over commit SUBJECTS — 43 structurally subtractive
+      commits since 2026-08-01, word list sees 19 (56% miss) and fires on 33 that
+      subtracted nothing; `git --numstat` is one flag away and this is the report
+      CLAUDE.md credits with 11 -> 2.
+      (4) never_called `_WIRING_MARKERS` — 3 paths of 842; cli/app.py, the module its own
+      docstring is written around, is excluded and carries 64 omissions.
+      (5) claim_check `_ABSENCE` — of 28 lines writing a zero before its own six nouns,
+      17 use the DIGIT and are missed; the `zero <noun>` arm is dead under \bZERO\b.
+      (6) doc_check `_OPEN_CHECK` — 11 bolded `**OPEN` markers, anchored form sees 6; the
+      anchor buys one true exclusion and costs three.
+      (7) claim_check `_CLOSING` — requires the word QUERY so it CANNOT match
+      `closing_check:`, the structured key progress_lint already knows; 4 items move.
+      (8) map_freshness `_DENIAL` — 14% FN, already superseded by scoping in the sibling.
+      NOT defects, measured so the next reader has the denominator: escalation_check
+      `_OPEN_NOW`/`_PAST_TENSE` (1 hit in 400, a false positive — genuinely prose),
+      progress_lint `_PROSE_PROMISE` (21/21), claim_check `_BUILD_GATE`, `_ABSENT_SQLITE`,
+      and `_BY_POSITION`/`_READER` (a quote-aware joiner gives the identical 5).
+      Each needs its own corpus fix and its own tests, so each is an item, not a note.
+    changes: >-
+      scripts/doc_check.py (_ISO_DATE replaces _DATED_RUN, _LOG_PATH replaces _LOG_QUERY,
+      _fence_commands,
+      _TRAILING_PROSE_LINES, block-scoped _evidence_older_than_the_logs returning a
+      denominator, _ANY_LOG/_log_query_lines, and the three missing "none, across N"
+      branches); tests/audit/test_a_check_outlives_the_logs_it_reads.py (11 -> 16 tests,
+      six mutants killed and the restore re-run green);
+      docs/reference-mapping/designs/D05.8.md (the rotted record labelled and re-measured).
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: done, document: done}
   DEBT207_2026_09_07_I_fixed_the_bug_and_left_seven_surfaces_saying_it_was_unfixed:
     map_check: >-
       D05.4 — the presented tool array. The OLDEST stale document (verified 2026-08-22,
