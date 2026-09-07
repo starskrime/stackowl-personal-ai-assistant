@@ -198,15 +198,29 @@ def build_target_aliases(owls: Iterable[tuple[str, str]]) -> dict[str, str]:
 
 
 def shared_memory() -> CuratedMemory:
-    """The process-wide curated memory.
+    """The process-wide curated memory, REBOUND IF THE HOME MOVES.
 
     Writes are stateless so a caller may construct its own; the SNAPSHOT is not,
     so anything building a system prompt must come through here or it will
     re-read the file mid-session and move the prompt underneath itself.
+
+    THE ROOT IS PART OF THE CACHE KEY, and leaving it out cost a suite. ``__init__``
+    resolves ``root or memory_dir()`` ONCE, and ``memory_dir()`` follows
+    ``StackowlHome`` — which is re-pointable. A singleton that caches the first
+    resolution forever therefore keeps writing to a directory that is no longer the
+    home, silently: a write with no reader, defect shape 1, wearing a cache.
+
+    MEASURED 2026-09-07. The full suite went red with nine failures the moment the
+    memory tool started coming through here (D08.1/DEBT-178). Three of them passed
+    ALONE and failed together — the signature of exactly this: one test built
+    ``_SHARED`` against its own temporary home, and every later test in the process
+    inherited it and searched an empty directory. Isolation is the loud symptom; the
+    quiet one is production after a home re-point.
     """
     global _SHARED  # noqa: PLW0603 — one process-wide snapshot, deliberately
-    if _SHARED is None:
-        _SHARED = CuratedMemory()
+    root = memory_dir()
+    if _SHARED is None or _SHARED._root != root:
+        _SHARED = CuratedMemory(root=root)
     return _SHARED
 
 

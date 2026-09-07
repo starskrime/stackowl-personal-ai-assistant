@@ -315,6 +315,73 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT179_2026_09_07_the_full_suite_caught_my_own_regression_and_a_network_dependent_test:
+    map_check: >-
+      No mapped item — evidence-led. The full suite was moved ONTO the tree D08.1
+      shipped rather than the one before it, precisely because that item deleted a
+      module, and it went RED: 9 failed, 12405 passed, 19 skipped, rc=1, SUITE TREE
+      STILL (so the verdict is valid) in 2308.06s. Eleven greens ended here.
+    TWO_FAMILIES_ONE_MINE: >-
+      Family A — 4 memory/journey/smoke failures — is MY regression from DEBT-178.
+      Family B — 5 in tests/tools/io/test_web_fetch.py — is a pre-existing
+      network-dependent test that a transient DNS failure exposed. Pre-existing red is
+      in scope, so both are root-caused and fixed here.
+    FAMILY_A_ROOT_CAUSE_A_SINGLETON_WHOSE_CACHE_KEY_OMITTED_THE_ROOT: >-
+      DEBT-178 routed the memory tool through shared_memory(). That function cached
+      `_SHARED = CuratedMemory()` on FIRST call, forever. CuratedMemory.__init__
+      resolves `root or memory_dir()` once, and memory_dir() follows StackowlHome —
+      which is re-pointable. So the singleton kept the first home it ever saw. THE
+      SIGNATURE WAS DIAGNOSTIC: three of the four passed ALONE and failed TOGETHER,
+      which is cross-test pollution and the one thing only the full run detects. One
+      test built _SHARED against its own temporary home and every later test in the
+      process inherited it and searched an empty directory. The production form of the
+      same bug is a write with no reader after a home re-point — defect shape 1 wearing
+      a cache. FIXED by making the root part of the cache key, not by resetting the
+      singleton in a fixture: test scaffolding would have hidden the production half.
+    FAMILY_B_ROOT_CAUSE_A_UNIT_TEST_THAT_RESOLVES_DNS: >-
+      The five web_fetch failures reported "host 'example.com' did not resolve". They
+      pass alone, and example.com resolves from this box seconds later (104.20.23.154),
+      so nothing was wrong with the code under test — a unit test was reporting the
+      network, 38 minutes into a suite running beside the live platform. The test's
+      `_wire` short-circuits navigation and reads as hermetic; web_fetch runs the SSRF
+      egress guard BEFORE navigating, and SsrfGuard.__init__ binds `_default_resolve`
+      (a live socket.getaddrinfo) at IMPORT time into the module-level _SSRF_GUARD, so
+      patching the module function could never have helped. The INSTANCE's _resolve is
+      now stubbed with a public address, which leaves the guard's POLICY running — the
+      guard path is still exercised — and removes only the lookup. tests/
+      test_e0_s2_ssrf_guard.py keeps the guard's own dedicated coverage.
+    PROVEN_BY_A_SIMULATED_OUTAGE_NOT_BY_ARGUMENT: >-
+      A temporary conftest killed socket.getaddrinfo/gethostbyname. ORIGINAL test +
+      DNS dead -> all 5 FAIL, reproducing the suite failure on demand. FIXED test + DNS
+      dead -> 5 pass. FIXED test + normal DNS -> 5 pass. The probe conftest was removed
+      and its absence verified. Without that control, "5 passed with DNS dead" would
+      have been vacuous — the probe might not have been killing anything.
+    HOW_FAR_IT_REACHES_MEASURED_AND_NO_GUARD_BUILT: >-
+      Exactly TWO modules bind a guard at import: _DEFAULT_GUARD in ssrf_guard.py and
+      _SSRF_GUARD in web_fetch.py. No test reaches _DEFAULT_GUARD's consumers without
+      stubbing a resolver. So the population of "unit test doing live DNS" is ONE, the
+      file just fixed. A tripwire over a population of one is scenery — the same
+      conclusion as DEBT-176's vocabulary sweep and DEBT-177's DEBUG-field sweep, and
+      recorded so it is not re-derived a fourth time.
+    THE_GATE_CAUGHT_MY_OWN_RESIDUE: >-
+      The first commit attempt was BLOCKED —
+      test_a_retirement_leaves_no_bytecode_behind found
+      tests/tools/io/__pycache__/conftest...pyc with no source: the DNS-outage probe
+      conftest I had created and `rm`-ed minutes earlier. A deleted file leaves
+      compiled bytecode that every recursive grep still reads, which is the
+      bytecode-level form of "retired means deleted". The gate blocked by
+      construction and no commit went out. A throwaway file in the tree needs its
+      __pycache__ cleaned too; the probe technique now carries that step.
+      MY OWN ORPHAN-FINDER WAS ALSO WRONG and nearly sent me chasing the wrong file:
+      it reconstructed sources with `s#\.cpython-[0-9]*\.pyc#.py#`, which does not
+      match `.cpython-314-pytest-9.0.3.pyc` — pytest's assertion-rewritten bytecode
+      carries an extra infix — so it reported config/test_mode.py as deleted when the
+      file is sitting on disk. Ask the guard, not a hand-rolled regex.
+    changes: >-
+      src/stackowl/memory/curated.py (shared_memory rebinds when memory_dir() moves),
+      tests/tools/io/test_web_fetch.py (stub the guard INSTANCE's resolver).
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
+      test: done, validate: done, document: no_change_needed}
   DEBT178_2026_09_07_an_invariant_true_of_the_class_and_false_of_the_path:
     map_check: >-
       D08.1 — the oldest deletion-stale document, the ordering doc_check gained in

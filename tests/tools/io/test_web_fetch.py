@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from stackowl.pipeline.services import StepServices, reset_services, set_services
+from stackowl.tools.io import web_fetch
 from stackowl.tools.io.web_fetch import WebFetchTool
 
 
@@ -53,6 +54,27 @@ def _wire(
     async def _fake_retry(op: Any, rt: Any, *, op_name: str) -> tuple[int, str]:
         return status, html
 
+    # THE SSRF GUARD RESOLVES DNS FOR REAL, and this test is not about DNS.
+    #
+    # `_wire` short-circuits navigation, so the test reads as hermetic — and it was
+    # not. `web_fetch` runs the egress guard BEFORE navigating, and
+    # `SsrfGuard.__init__` binds `_default_resolve` (a live `socket.getaddrinfo`) at
+    # IMPORT time into the module-level `_SSRF_GUARD`. So every run of these five
+    # tests did a real lookup of `example.com`.
+    #
+    # MEASURED 2026-09-07: they passed alone and ALL FIVE failed in the full suite,
+    # with "host 'example.com' did not resolve" — a transient failure on a box
+    # 38 minutes into a suite run beside the live platform. `example.com` resolves
+    # fine seconds later, so nothing was wrong with the code under test; a unit test
+    # was simply reporting the network. That is a red suite pointing at the wrong
+    # subsystem, which is expensive precisely when the suite is being trusted.
+    #
+    # The guard's POLICY still runs — a public address is fed in and must be allowed,
+    # so the guard path is still exercised. Only the lookup is stubbed, and the guard
+    # keeps its own dedicated coverage in tests/test_e0_s2_ssrf_guard.py.
+    monkeypatch.setattr(
+        web_fetch._SSRF_GUARD, "_resolve", lambda host: ["93.184.216.34"],
+    )
     monkeypatch.setattr("stackowl.tools.io.web_fetch.with_browser_retry", _fake_retry)
     monkeypatch.setattr(
         "stackowl.tools.io.web_fetch.extract_markdown",
