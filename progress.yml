@@ -315,6 +315,46 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT187_2026_09_07_the_effect_was_measured_twice_and_the_cause_never_looked_for:
+    map_check: >-
+      D05.8 — the oldest deletion-stale document. Verification RUN in full.
+    THE_FINDING: >-
+      D05.8's header already records that its headline measurement ROTTED once. It has
+      rotted AGAIN, and this time the cause is known. The 2026-08-30 correction said "now
+      2,805 turns, bimodal at 79 (the full catalogue, 1,171) and 40 (the cap, 897)".
+      MEASURED 2026-09-07 across every retained log: 1,983 turns, 1,623 at 79, and ZERO at
+      40. Both live invariants return zero — 0 `eligible tools NOT presented`, 0 `planned
+      envelope is wider` — over a denominator of 1,983 turns carrying a tool_count.
+    THE_CAUSE_AND_IT_WAS_ONE_GREP_AWAY: >-
+      The shipped default is `tool_count_cap: 40`. `~/.stackowl/stackowl.yaml` sets 150
+      (mtime 2026-08-26 18:04) and the catalogue is 79 tools. 79 < 150, so the cap CANNOT
+      BIND and the eviction path cannot run. ESC-70 measured exactly this effect on
+      2026-08-30 — "the cap IS NOT BINDING ANY MORE... ZERO at exactly 40... ZERO
+      cap-breach events" — and correctly declined to raise it further. Neither ESC-70 nor
+      D05.8 asked WHY. The operator had raised it FOUR DAYS EARLIER. The effect was
+      measured twice and the cause was never looked for.
+    WHAT_ELSE_THE_CAUSE_REACHES: >-
+      SAME FAMILY AS DEBT-181, and that is the second instance in one session: a
+      measurement taken on this box that does not check the operator's stackowl.yaml
+      overrides may be describing THIS DEPLOYMENT rather than the platform. DEBT-181 was
+      the loop measuring its own edits; this is a measurement describing one operator's
+      config line. Both look like platform facts and neither is.
+    THE_LIVE_CHECKS_ARE_NOW_UNFALSIFIABLE_AND_THE_DOCUMENT_SAYS_SO: >-
+      A zero on I2/I3 today means "the operator disabled the path", not "the invariant
+      holds" — the DEBT-184 shape (a check whose precondition no longer holds), reached by
+      configuration rather than by a discarded probe. The Verification now opens with that
+      statement, the denominator, and what would make the checks answerable again (lower
+      the cap below 79). The contract itself is still held by the tests above, which
+      construct the clipping condition directly rather than waiting for traffic.
+    ALSO_CORRECTED: >-
+      Steps 1-2 reproduce exactly (6, 4). Steps 3-4 are nine-file and six-file commands
+      that grew 45->47 and 57->60; both converted to `expect: 0 failed`. ESC-70's record in
+      progress.yml now carries the cause it never found.
+    changes: >-
+      docs/reference-mapping/designs/D05.8.md (header, live-section preamble, two steps to
+      shapes, re-stamped) and progress.yml (ESC-70 given its cause). No code.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT186_2026_09_07_open_items_that_closed_twenty_minutes_after_they_were_written:
     map_check: >-
       D10.5 — the oldest DELETION-stale document. Verification RUN, and the finding was in
@@ -16250,6 +16290,17 @@ current:
       survive. Earliest retained event: 2026-08-28T00:00:00.
       So the measurement that justified ESC-70 can no longer be reproduced, and
       neither can several I recorded today.
+    THE_CAUSE_FOUND_2026_09_07_AND_IT_WAS_ONE_GREP_AWAY: >-
+      This record measures the EFFECT — "the cap IS NOT BINDING ANY MORE" — and never asks
+      why. The cause: `~/.stackowl/stackowl.yaml` sets `orchestrator.tool_count_cap: 150`
+      (file mtime 2026-08-26 18:04) against a shipped default of 40 and a catalogue of 79
+      tools. 79 < 150, so the cap cannot clip and the eviction path cannot run. The
+      operator raised it FOUR DAYS BEFORE this escalation concluded the cap was not
+      binding. Declining to raise it further was right; not identifying a one-line
+      operator setting as the reason left D05.8 carrying a rotted headline for a week and
+      its two live invariants structurally unfalsifiable. SAME FAMILY AS DEBT-181: a
+      measurement taken on this box that does not check the operator's overrides may be
+      describing this deployment rather than the platform.
     CONFIGURED_RETENTION_IS_7_DAYS_ACTUAL_IS_2: >-
       observability.py sets backupCount from STACKOWL_LOG_RETAIN_DAYS with a
       default of 7, and getFilesToDelete keeps that many dated files. Checked: no
