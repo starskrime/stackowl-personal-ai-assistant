@@ -315,6 +315,59 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT171_2026_09_07_the_frozen_prompt_holds_absolutely_and_the_raw_counts_hid_it:
+    map_check: >-
+      D01.2 — a MAPPED item and the oldest stale document, with unfinished business: I
+      corrected its retracted ESC-149 premise on 2026-09-06 but deliberately did not
+      re-stamp, because only those claims had been checked. This ran the whole
+      Verification section and re-stamped it.
+    VERIFICATION_RUN: >-
+      Step 1 24 passed and step 3 4 passed — EXACTLY as recorded, single-file pins that
+      held for six weeks. Step 2 767, step 4 1887, baselines at the gate's 35/65, step 6
+      zero ERRORs. Step 5 schema 0139 (it recorded 0104) with `cache_breakpoint_probes`
+      still ZERO. doc_check STALE 24 -> 23.
+    THE_FINDING_the_raw_ratio_looks_alarming_and_means_nothing: >-
+      Across the retained logs `[pipeline] assemble: prompt source` reads 2,255
+      `cold_build` against 98 `cached` — 96% cold, which reads as D01.1's frozen prompt
+      being broken. It is not. Of 1,750 (conversation, owl) pairs, 1,698 assembled ONCE
+      and so had no opportunity to cache, and a further 506 assembles carry no
+      `conversation_id` at all because background and job turns have no incarnation.
+    D01_1_HOLDS_ABSOLUTELY_ON_THE_HONEST_DENOMINATOR: >-
+      Among the 52 pairs that assembled more than once, 51 are "first cold, then every
+      later one cached" and ZERO re-cold-built mid-conversation. The original stamp's "4
+      cold_build across 5 pairs" was true and far too small to mean anything; this is the
+      same claim measured over 1,750 pairs. It also matters beyond this document: ESC-155
+      recommends KEEPING the frozen prompt on the strength of its stability property, and
+      that property is now measured rather than assumed.
+    A_ZERO_THAT_GAINED_A_SECOND_REASON: >-
+      `cache_breakpoint_probes` is still empty, and the document already says zero rows IS
+      the pass (I5 forbids persisting a zero, and there is no Anthropic backend). It now
+      has a second reason: ESC-149 established this gateway reports no cache statistics in
+      any accepted shape, so no probe could be confirmed even if one were sent. Recorded
+      so a future reader does not read the empty table as a regression.
+    I_TRIPPED_THE_SAME_GUARD_TWICE_IN_TWO_LOOPS: >-
+      `test_a_doc_does_not_pin_a_count_that_grows_by_design` failed again. Last loop I put
+      a count in an `expect:` line; this loop I wrote `expect: 0 failed — ... (767 on
+      2026-09-07; it read "527 passed")` and the parenthetical STILL contains a count. The
+      guard is right both times. The convention that follows: an `expect:` line is a
+      MACHINE-READ ASSERTION, so prose and history belong on their own comment line
+      beneath it, never inside it.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change, so no restart could show an effect and none is
+      claimed. Every step was RUN against the live tree, database and logs. The freeze
+      measurement excludes the no-incarnation bucket explicitly rather than letting it
+      contaminate the ratio, which is what made the first reading look like a regression.
+    document_reason: >-
+      D01.2 IS the document, re-stamped 2026-09-07 with the re-measured freeze result in
+      the stamp itself, and its two package-wide steps converted to `expect: 0 failed`.
   DEBT170_2026_09_07_one_of_three_causes_fires_and_the_other_two_are_zero_over_zero:
     map_check: >-
       D01.4 — a MAPPED item, 7/7, and the next-oldest stale document. Its Verification
