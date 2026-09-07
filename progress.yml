@@ -315,6 +315,68 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT170_2026_09_07_one_of_three_causes_fires_and_the_other_two_are_zero_over_zero:
+    map_check: >-
+      D01.4 — a MAPPED item, 7/7, and the next-oldest stale document. Its Verification
+      section was RUN rather than trusted, and re-stamped.
+    VERIFICATION_RUN: >-
+      Step 1 52 passed (the document pinned 43), step 2 1887 passed (it pinned 1089),
+      baselines at the gate's 35/65, step 3 LIVE with 20 invalidations — 18 idempotent
+      no-ops and TWO that cleared real rows (5 and 1). doc_check STALE 25 -> 24.
+    THE_FINDING_and_it_is_a_NON_defect_worth_recording: >-
+      All 20 live invalidations carry cause `owl_build_edit`. D01.4 wires THREE causes —
+      the others are `skill_enabled`/`skill_disabled` and `owl_edit` — and both read ZERO.
+      That looks exactly like two dead paths. It is not: all 39 skills are `enabled=1` and
+      none has ever been toggled, so the skill causes have no trigger to fire on; and the
+      only `owl_edit` this document ever recorded was its OWN `d014probe` during the
+      original verification, never organic traffic. Zero over zero, twice.
+    WHY_IT_GOES_IN_THE_STAMP: >-
+      A reader who sees "1 of 3 causes fires" goes hunting and finds nothing, which is the
+      cost this programme pays whenever an honest absence is left looking like a defect.
+      The stamp now names the denominator for both, and points at step 1's 52 tests as the
+      evidence the wiring exists for all three. The rule this instance illustrates is
+      already in the record — a zero numerator over a zero denominator is not a pass
+      either — applied here in the direction that usually gets missed: it is not a FAILURE
+      either.
+    THE_GATE_CAUGHT_ME_AND_A_RULE_ALREADY_EXISTED: >-
+      My reworded counts FAILED the gate — `TRIPWIRES FAILED — do not commit`, and the
+      commit correctly did not go out, the chain holding by construction. The offender was
+      my own edit: the original read `# RAN: 43 passed`, which
+      `test_a_doc_does_not_pin_a_count_that_grows_by_design.py` IGNORES because `RAN:` is
+      history. Rewriting it as `expect: all pass (52 ...)` turned history into an
+      ASSERTION, and an assertion carrying a count over a multi-file command is precisely
+      what that guard forbids. I converted an unchecked note into a checked one and then
+      failed the check.
+    AND_IT_CORRECTS_DEBT_169: >-
+      DEBT-169 concluded "66 pinned counts, do not sweep — they are history". That was
+      COARSER THAN A RULE THIS REPO ALREADY HAD. The guard splits them precisely: a step
+      naming ONE test file pins a stable number and is left alone (22 of them), while a
+      step spanning a PACKAGE or a marker must assert `expect: 0 failed` — a SHAPE — since
+      any new test anywhere falsifies a count (7 of them, FOUR already drifted when
+      measured, D16.4 by 2.4x). I derived a blunter version of an existing rule instead of
+      looking for one. "Check existing before writing new" applies to RULES, not only to
+      code. All four steps I touched now assert `0 failed`.
+    THE_COUNTS_ARE_AN_AFFORDANCE_NOT_A_REPAIR: >-
+      Both pinned suite counts were reworded to "expect: all pass (N on 2026-09-07)",
+      following DEBT-169's distinction: a count recording what WAS is history and true,
+      but reading "43 passed" against today's 52 forces a growth-versus-regression
+      judgement the document can simply remove. Recorded as an improvement so the record
+      does not overstate what was wrong.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change, so no restart could show an effect and none is
+      claimed. Every step was RUN against the live tree, database and logs; the two
+      zero-firing causes were checked against their triggers rather than assumed dead.
+    document_reason: >-
+      D01.4 IS the document, re-stamped 2026-09-07 with the zero-over-zero finding in the
+      stamp itself.
   DEBT169_2026_09_07_the_constraint_probe_that_passed_for_the_wrong_reason_twice:
     map_check: >-
       D01.5 — a MAPPED item, 7/7, whose document was the oldest stale one I had touched
@@ -346,6 +408,15 @@ current:
       that is now false. Mass-editing 41 documents would destroy genuine history to fix a
       defect they do not have, so the distinction is recorded instead: a pin asserting
       what IS must track its source; a pin recording what WAS is history and stays.
+    CORRECTED_2026_09_07_BY_DEBT_170: >-
+      The conclusion above — "66 pins, do not sweep, they are history" — is coarser than
+      the rule this repo already enforces in
+      `tests/audit/test_a_doc_does_not_pin_a_count_that_grows_by_design.py`. That guard
+      splits the 66: a step naming ONE file pins a stable number and is left alone; a step
+      spanning a PACKAGE or marker must assert `expect: 0 failed`, because any new test
+      anywhere falsifies a count. My "do not sweep" was right about single-file pins and
+      wrong to lump the wide ones in with them. I reasoned from scratch without checking
+      for an existing rule, and the gate caught it one loop later.
     WHAT_I_CHANGED_IN_D01_5_AND_WHY_IT_IS_AN_IMPROVEMENT_NOT_A_FIX: >-
       I reworded its two counts to "expect: all pass" with the current figure beside them.
       That is not a defect repair — the old text was historically true — it is a re-verifier
