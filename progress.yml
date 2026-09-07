@@ -315,6 +315,50 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT188_2026_09_07_a_live_check_blind_to_the_file_the_core_writes_to:
+    map_check: >-
+      D03.2 — the oldest remaining deletion-stale document. Verification RUN in full.
+    THE_DEFECT: >-
+      D03.2's check 4 reads `grep -c "conversation compressed"
+      ~/.stackowl/logs/stackowl.jsonl` — the SINGLE file — and is marked "OPEN until a
+      conversation exceeds 12,000 tokens of history". MEASURED 2026-09-07: 0 on the single
+      file, 21 on the `stackowl*.jsonl` glob, and ALL 21 carry turns_after < turns_before
+      (33 -> 9, summarized: true) on 09-04, 09-05 and 09-06. The feature had been working
+      for days and the check could not see it. CLOSED.
+    WHY_THE_SINGLE_FILE_IS_ALWAYS_WRONG: >-
+      At UTC midnight the log rotates, the gateway reopens the new file, and the CORE KEEPS
+      AN OPEN DESCRIPTOR ON THE ROTATED ONE and goes on writing there
+      (project_gateway_core_dual_log_writer_bug, 2026-07-18, still unfixed). A query pinned
+      to the single filename is blind to everything the core logs after any midnight — it
+      returns 0 and looks exactly like a check that ran and passed. Not a convenience: a
+      zero that cannot be told from a pass.
+    THE_ROOT_CAUSE_AND_WHY_A_REPORT_NOT_A_GATE: >-
+      D05.8, D08.3 and D16.1 each record this lesson IN PROSE, in their own Verification
+      sections — and D03.2 had it wrong anyway. A lesson that lives as prose in individual
+      documents is re-learned per document. So doc_check.py now REPORTS it: "BLIND AFTER
+      MIDNIGHT — 47 Verification command(s) in 23 document(s)". NOT a gate, for doc_check's
+      own standing reason: a tripwire would fail every unrelated change until someone
+      rewrote twenty-three documents, which is how a gate gets bypassed rather than
+      satisfied. The deletion-stale count drained 11 -> 2 by being visible every loop; this
+      can drain the same way.
+    MY_OWN_DETECTOR_NARROWED_TWICE_BEFORE_IT_WAS_RIGHT: >-
+      First ad-hoc scan: 29 lines / 16 documents — it required a command word and missed
+      `cat` and `wc`. First shipped regex: 14 / 9 — it required the command word BEFORE the
+      filename and missed `cat ~/.stackowl/logs/stackowl.jsonl | jq`, which is the
+      commonest shape in this corpus. Correct: 47 / 23, and an INDEPENDENT count written a
+      different way agrees exactly. A detector under-reporting by two thirds is the same
+      failure doc_check already made once, when its header parser under-reported staleness
+      by eleven. Narrowing the regex back kills both new guards.
+    ALSO: >-
+      Check 1 grew 14 -> 15 and was re-pinned (single file, so a count is the right shape).
+      Checks 2 and 3 reproduce exactly (1 passed; 638 passed, 0 failed).
+    changes: >-
+      docs/reference-mapping/designs/D03.2.md (check 4 corrected and CLOSED, check 1
+      re-pinned, re-stamped), scripts/doc_check.py (the BLIND AFTER MIDNIGHT report),
+      tests/audit/test_a_closing_check_looks_for_evidence_that_can_exist.py (+2 guards,
+      both directions).
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
+      test: done, validate: done, document: done}
   DEBT187_2026_09_07_the_effect_was_measured_twice_and_the_cause_never_looked_for:
     map_check: >-
       D05.8 — the oldest deletion-stale document. Verification RUN in full.

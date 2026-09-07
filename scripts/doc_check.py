@@ -152,6 +152,47 @@ def _sources_last_changed(paths: list[str]) -> str:
         return ""
 
 
+#: A Verification COMMAND that queries the single `stackowl.jsonl` rather than the
+#: `stackowl*.jsonl` glob. Always wrong, and not merely as a convenience: at UTC midnight
+#: the log rotates, the gateway reopens the new file, and the CORE KEEPS AN OPEN
+#: DESCRIPTOR ON THE ROTATED ONE and goes on writing there
+#: (`project_gateway_core_dual_log_writer_bug`, 2026-07-18, still unfixed). A query pinned
+#: to the single filename is blind to the core after any midnight — it returns 0 and looks
+#: exactly like a check that ran and passed.
+#:
+#: MEASURED 2026-09-07: D03.2's live check read 0 on the single file and 21 on the glob,
+#: and had been reading OPEN for days while the feature worked. D05.8, D08.3 and D16.1 each
+#: record this lesson in PROSE, and D03.2 had it wrong anyway — which is the whole argument
+#: for reporting it rather than trusting it to be remembered.
+#:
+#: REPORTED, NEVER GATED, for `doc_check`'s own standing reason: 29 lines across 16
+#: documents carry it today, so a tripwire would fail every unrelated change until someone
+#: rewrote sixteen documents. That is how a gate gets bypassed rather than satisfied. The
+#: deletion-stale count went 11 -> 2 by being visible every loop; this can drain the same
+#: way.
+#: MATCHES EITHER ORDER, and the first version did not. It required the command word
+#: BEFORE the filename and so missed `cat ~/.stackowl/logs/stackowl.jsonl | jq …`, which
+#: is the commonest shape in this corpus: it reported 14 lines in 9 documents where the
+#:true answer is 29 in 16. A narrowed detector under-reporting by half is the same failure
+#: `doc_check` already made once, when its header parser under-reported staleness by
+#: eleven.
+_SINGLE_LOG = re.compile(
+    r"(?:grep|jq|rg|cat|wc|log_since)\b[^\n]*stackowl\.jsonl"
+    r"|stackowl\.jsonl[^\n]*\|\s*(?:grep|jq|rg|wc)\b"
+)
+
+
+def _single_log_queries(text: str) -> list[tuple[int, str]]:
+    """(line_no, line) for every Verification command pinned to the single log file."""
+    out: list[tuple[int, str]] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        if "stackowl*.jsonl" in line:
+            continue
+        if _SINGLE_LOG.search(line):
+            out.append((i, line.strip()))
+    return out
+
+
 def main() -> int:
     docs = sorted(_DESIGNS.glob("*.md"))
     stale: list[tuple[str, str, str]] = []
@@ -189,6 +230,11 @@ def main() -> int:
         for name, verified, changed in sorted(stale, key=lambda r: r[1]):
             print(f"  {name:16} verified {verified}   sources changed {changed}")
         print()
+    single_log: list[tuple[str, int, str]] = []
+    for doc in docs:
+        for ln, line in _single_log_queries(doc.read_text(encoding="utf-8")):
+            single_log.append((doc.name, ln, line))
+
     if by_deletion:
         print(f"STALE BY DELETION — read these first ({len(by_deletion)} of "
               f"{len(stale)}). A source these documents declare was SUBTRACTED, so "
@@ -200,6 +246,17 @@ def main() -> int:
         print()
     print(f"checked {fresh + len(stale)}, STALE {len(stale)} "
           f"({len(by_deletion)} by deletion), unmeasurable {len(unmeasurable)}")
+    if single_log:
+        docs_hit = len({r[0] for r in single_log})
+        print(f"\nBLIND AFTER MIDNIGHT — {len(single_log)} Verification command(s) in "
+              f"{docs_hit} document(s) query `stackowl.jsonl` instead of the "
+              "`stackowl*.jsonl` glob. The CORE keeps writing to the ROTATED file after "
+              "rotation, so these return 0 and look like a check that passed:")
+        for name, ln, line in single_log[:12]:
+            print(f"  {name}:{ln}  {line[:88]}")
+        if len(single_log) > 12:
+            print(f"  … and {len(single_log) - 12} more")
+
     if unmeasurable:
         print("\nUNMEASURABLE — not fresh and not stale; nothing can date them:")
         for name, why in sorted(unmeasurable):

@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import ast
 import re
+import subprocess
 import sys
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -371,6 +372,65 @@ class TestADocumentsVerificationCommandCanActuallyRun:
             "no document escapes a bracket any more — either the corpus changed or "
             "this sweep has stopped seeing the shape it exists to check"
         )
+
+
+class TestTheSingleLogFileReportSeesTheRealCorpus:
+    """A Verification command pinned to `stackowl.jsonl` is blind after any midnight.
+
+    WHY. At UTC rotation the gateway reopens the new file and the CORE KEEPS AN OPEN
+    DESCRIPTOR ON THE ROTATED ONE and goes on writing there
+    (`project_gateway_core_dual_log_writer_bug`, 2026-07-18, still unfixed). A query
+    naming the single file therefore returns 0 for anything the core logged — and a 0
+    looks exactly like a check that ran and passed.
+
+    MEASURED 2026-09-07 on D03.2: its live check read **0** on the single file and **21**
+    on the glob, every one of those 21 carrying `turns_after < turns_before`. It had read
+    OPEN for days while the feature worked perfectly. D05.8, D08.3 and D16.1 each record
+    this lesson IN PROSE — and D03.2 had it wrong anyway, which is the whole argument for
+    reporting it rather than trusting it to be remembered.
+
+    REPORTED, NEVER GATED, for doc_check's own standing reason: 47 lines across 23
+    documents carry it today, and a tripwire would fail every unrelated change until
+    someone rewrote twenty-three documents. The deletion-stale count drained 11 -> 2 by
+    being visible every loop; this can drain the same way.
+    """
+
+    @pytest.mark.tripwire
+    def test_the_report_names_the_commands_that_are_actually_there(self) -> None:
+        out = subprocess.run(
+            [sys.executable, str(_ROOT / "scripts" / "doc_check.py")],
+            cwd=_ROOT, capture_output=True, text=True, timeout=300,
+        )
+
+        assert "BLIND AFTER MIDNIGHT" in out.stdout, (
+            "doc_check no longer reports single-log-file queries, so a check that can "
+            f"only ever return 0 reads like one that passed:\n{out.stdout[-1500:]}"
+        )
+        m = re.search(r"BLIND AFTER MIDNIGHT — (\d+) Verification command", out.stdout)
+        assert m, f"the report lost its count:\n{out.stdout[-1200:]}"
+        assert int(m.group(1)) >= 20, (
+            f"only {m.group(1)} single-log commands found; FORTY-SEVEN across 23 "
+            "documents were measured on 2026-09-07. A detector that quietly narrows is "
+            "the failure this file exists to prevent — and this one narrowed TWICE while "
+            "being written: the first regex required the command word BEFORE the "
+            "filename and missed `cat …/stackowl.jsonl | jq`, reporting 14"
+        )
+
+    def test_it_does_not_flag_the_glob(self) -> None:
+        """The other direction. A detector that also matched `stackowl*.jsonl` would
+        report every correct command as broken — crying wolf on the fix itself."""
+        sys.path.insert(0, str(_ROOT / "scripts"))
+        import doc_check as dc
+
+        assert dc._single_log_queries(
+            'grep -h "x" ~/.stackowl/logs/stackowl*.jsonl | wc -l'
+        ) == []
+        assert dc._single_log_queries(
+            'grep -c "x" ~/.stackowl/logs/stackowl.jsonl'
+        ), "the single-file form is no longer detected"
+        assert dc._single_log_queries(
+            "cat ~/.stackowl/logs/stackowl.jsonl | jq -r '.msg'"
+        ), "the `cat … | jq` form — the commonest here — is not detected"
 
 
 class TestADocumentsVerificationReadsAFieldProductionRecords:
