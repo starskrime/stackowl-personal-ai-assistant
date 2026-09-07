@@ -35,6 +35,7 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DESIGNS = _ROOT / "docs" / "reference-mapping" / "designs"
+_LOGS = Path.home() / ".stackowl" / "logs"
 
 #: The blockquote header DOC_STANDARD prescribes: consecutive `> **Field:** value`
 #: lines. Parsed structurally rather than by searching the whole file — a
@@ -219,6 +220,69 @@ _OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\*\*OPEN\s*[—-]", re.M)
 _CLOSE_STATEMENT = re.compile(r"\*\*(CLOSED|RESOLVED)\b", re.I)
 
 
+#: A log-reading Verification command, and a date recorded beside it.
+_LOG_QUERY = re.compile(r"(?:grep|jq|cat|wc|log_since)[^\n]*stackowl[^\n]*\.jsonl")
+_DATED_RUN = re.compile(
+    r"(?:PASS|MEASURED|RAN|RE-RAN|Measured|Re-ran)\s+(\d{4}-\d{2}-\d{2})"
+)
+
+
+def _log_horizon() -> str:
+    """The oldest date the retained logs can still answer for, or "" if unknowable.
+
+    Read from the FILES rather than from `STACKOWL_LOG_RETAIN_DAYS`, because the
+    configured number is what retention INTENDS and the files are what it achieved.
+    MEASURED 2026-09-07: backupCount is 30 and `getFilesToDelete()` returns nothing, yet
+    only ten dated files exist — the horizon is young, not over-pruned, because a
+    deletion incident on 2026-08-30 left two and daily rotation has added one since. A
+    detector keyed on the intended 30 would have reported nothing while a third of these
+    documents cited evidence that is already gone.
+    """
+    names = sorted(p.name for p in _LOGS.glob("stackowl-*.jsonl")) if _LOGS.exists() else []
+    return names[0][len("stackowl-"):-len(".jsonl")] if names else ""
+
+
+def _evidence_older_than_the_logs(text: str, horizon: str) -> list[tuple[int, str, str]]:
+    """(line_no, newest recorded date, command) for checks nothing can reproduce.
+
+    A Verification command that reads the logs and records "PASS 2026-08-21: 8
+    occurrences" is a CHECK for as long as the logs reach back that far, and a RECORD
+    afterwards. Once the evidence rotates away the command returns 0 forever, and 0 reads
+    as failure to anyone who runs it — the ambiguous-zero trap with a cause of its own:
+    THE EVIDENCE HAD A SHORTER LIFETIME THAN THE DOCUMENT.
+
+    MEASURED 2026-09-07: four such commands across three documents, the oldest citing
+    2026-07-27 against logs that begin 2026-08-28. D16.3's is the sharpest — its evidence
+    was a throwaway plugin installed to prove the path and then REMOVED, so the line it
+    greps cannot fire again even in principle.
+
+    A fresher date anywhere in the same block clears it, which is not a nicety: D08.1
+    carries "RAN 2026-08-17 -> 4 firings" with "RE-RAN 2026-09-07 -> 99" on the next
+    line, and flagging that would be crying wolf on a document that had already done the
+    work.
+    """
+    if not horizon:
+        return []
+    lines = text.splitlines()
+    out: list[tuple[int, str, str]] = []
+    fenced = False
+    for i, line in enumerate(lines):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        # ONLY INSIDE A FENCE. A Verification command is one a reader would RUN; a
+        # command quoted in prose is a description of one. The distinction is not
+        # pedantic — the document that FIXES this defect has to quote the retired
+        # command to explain it, and a line-scoped detector flagged that correction as
+        # the defect. Same shape as the escalation report reading its own explanation.
+        if not fenced or not _LOG_QUERY.search(line):
+            continue
+        dates = _DATED_RUN.findall("\n".join(lines[i:i + 10]))
+        if dates and max(dates) < horizon:
+            out.append((i + 1, max(dates), line.strip()))
+    return out
+
+
 def _close_note(body: str, open_line: int) -> str:
     """Does this document record a close BELOW the open marker, and where?
 
@@ -358,6 +422,24 @@ def main() -> int:
             print(f"      {note.strip()}")
         if len(untracked) > 12:
             print(f"  … and {len(untracked) - 12} more")
+
+    horizon = _log_horizon()
+    rotted: list[tuple[str, int, str, str]] = []
+    for doc in docs:
+        for ln, when, cmd in _evidence_older_than_the_logs(
+            doc.read_text(encoding="utf-8"), horizon
+        ):
+            rotted.append((doc.name, ln, when, cmd))
+    if rotted:
+        print(f"\nEVIDENCE OLDER THAN THE LOGS — {len(rotted)} Verification command(s) "
+              f"in {len({r[0] for r in rotted})} document(s) record a result from BEFORE "
+              f"the oldest retained log ({horizon}). Re-running them cannot reproduce "
+              "what they claim: they return 0, and 0 reads as failure. These are RECORDS "
+              "now, not checks — date them as such, and give the reader something "
+              "runnable beside them:")
+        for name, ln, when, cmd in rotted[:12]:
+            print(f"  {name}:{ln}  recorded {when}")
+            print(f"      {cmd[:88]}")
 
     if unmeasurable:
         print("\nUNMEASURABLE — not fresh and not stale; nothing can date them:")

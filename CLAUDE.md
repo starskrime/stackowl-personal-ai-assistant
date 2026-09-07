@@ -312,6 +312,14 @@ read what guards it, name THAT. Same check also grepped `stackowl.jsonl`, one fi
 while the same document's body cited a count "across every kept log" — a midnight-blind
 query returns 0, and 0 reads as *not yet*.
 
+**A log-reading check becomes a RECORD when its evidence rotates, and then reads 0
+forever.** MEASURED 2026-09-07: four Verification commands in three documents cite
+results from before the oldest retained log — one from 2026-07-27 against logs starting
+2026-08-28 — so re-running them returns 0 and 0 reads as failure. Read the horizon from
+the FILES, not the retention setting: `backupCount` is 30 and nothing is due for
+deletion, yet only ten dated files exist. Keep something runnable beside every dated
+log measurement.
+
 **Count incidents, not log lines.** "19 database-is-locked events" was 19 LINES; one
 contention moment emits four.
 

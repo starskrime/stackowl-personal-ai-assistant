@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT202_2026_09_07_the_evidence_had_a_shorter_lifetime_than_the_document:
+    map_check: >-
+      D16.3 — Prompt contributors. The OLDEST stale document (verified 2026-08-21, sources
+      changed 2026-09-06). Verification section RUN, not read.
+    THREE_CHECKS_PASSED_EXACTLY_AND_THE_FOURTH_CANNOT_EVER_AGAIN: >-
+      Check 1: PROMPT_PART_NAMES returns the exact recorded tuple. Check 1b: 8 extension
+      points, PromptContributor gated on a capability that exists — exact. Check 2: 36
+      passed, exact. Check 3 recorded "PASS 2026-08-21: 8 occurrences" for
+      `grep 'plugin parts contributed'`; re-run 2026-09-07 it returns ZERO, and it will
+      return zero forever. Two independent reasons: the retained logs begin 2026-08-28 so
+      the evidence rotated away, AND the probe plugin was installed to prove the path and
+      then REMOVED, so the line cannot fire again even in principle.
+    THE_EIGHTH_VARIANT_AND_ITS_CAUSE_IS_TIME_NOT_WORDING: >-
+      The seven closing-check variants before this are about what a check ASKS. This one is
+      about how long the answer survives: THE EVIDENCE HAD A SHORTER LIFETIME THAN THE
+      DOCUMENT. A log-reading command that records a dated PASS is a CHECK while the logs
+      reach back that far and a RECORD afterwards — and afterwards it returns 0, which the
+      ambiguous-zero rule says reads as "not yet". MEASURED: four such commands across
+      three documents, oldest citing 2026-07-27. doc_check.py now reports EVIDENCE OLDER
+      THAN THE LOGS; after draining D16.3 it names 3 in 2 (D01.1 x2, D08.1 x1).
+    THE_HORIZON_IS_READ_FROM_THE_FILES_AND_THAT_MATTERS: >-
+      backupCount is 30, no STACKOWL_LOG_RETAIN_DAYS in the core's environ, and
+      getFilesToDelete() returns [] — retention is HEALTHY. Yet only ten dated files exist,
+      because the 2026-08-30 deletion incident left two and daily rotation has added one
+      since; it grows back to 30 by ~2026-09-27. A detector keyed on the intended 30 would
+      have reported NOTHING while three documents cited evidence already gone. Asking the
+      configuration what it INTENDS instead of the directory what it ACHIEVED is the
+      measure-the-effect rule, met on the instrument side.
+    TWO_FALSE_POSITIVES_DESIGNED_OUT_AND_BOTH_PINNED: >-
+      A FRESHER re-run in the same block clears the finding — D08.1 carries "RAN 2026-08-17
+      -> 4 firings" with "RE-RAN 2026-09-07 -> 99" on the next line, and flagging that
+      would cry wolf on a document that had already done the work. And only FENCED commands
+      count: the first version was line-scoped and flagged THIS VERY DOCUMENT'S correction,
+      because retiring a rotted check means quoting it to explain it. Same shape as the
+      escalation report reading its own explanation one loop earlier — a detector that
+      reads prose will eventually read the prose that describes it.
+    D16_3_RESTRUCTURED_RECORD_SEPARATED_FROM_CHECK: >-
+      Check 3 is now a runnable import assertion, with the behavioural proof named
+      (tests/plugins/test_a_contributor_reaches_a_real_prompt.py, already in check 2). The
+      2026-08-21 probe is kept as the dated RECORD it is, with why it is unreproducible.
+      Repaired in passing: moving that prose out of the bash fence left six lines still
+      carrying `#` comment prefixes — caught by reading the span back, which is the rule
+      from DEBT-199 working two loops later.
+    changes: >-
+      scripts/doc_check.py (_log_horizon, _evidence_older_than_the_logs, the EVIDENCE OLDER
+      THAN THE LOGS report), docs/reference-mapping/designs/D16.3.md (check 3 made
+      runnable, the probe kept as a record, comment prefixes repaired, restamped),
+      tests/audit/test_a_check_outlives_the_logs_it_reads.py (new, 5 tests incl. a horizon
+      control, 3 mutants killed), SKILL.md + CLAUDE.md (the eighth variant).
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: done, document: done}
   DEBT201_2026_09_07_the_closeable_queue_reached_zero_and_the_last_one_needed_the_LOG_not_the_TABLE:
     map_check: >-
       No mapped item — closing the last `partial` validate that traffic turned CLOSEABLE.

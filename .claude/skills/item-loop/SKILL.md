@@ -302,6 +302,29 @@ documents as of 2026-09-07, down from 47/23); the executable checks in `progress
 already clean — **9 log-based checks, all 9 globbed, verified by a control that found
 them.**
 
+**A LOG-READING CHECK BECOMES A RECORD WHEN ITS EVIDENCE ROTATES.** The seven variants
+above are all about what a check ASKS. This one is about how long the answer survives:
+**the evidence had a shorter lifetime than the document.** A command that reads the logs
+and records "PASS 2026-08-21: 8 occurrences" is a CHECK while the logs reach back that
+far and a RECORD afterwards — and afterwards it returns 0 forever, which the next reader
+takes as failure.
+
+MEASURED 2026-09-07: four such commands in three documents, the oldest citing 2026-07-27
+against logs that begin 2026-08-28. D16.3's was the sharpest — its evidence was a
+throwaway plugin installed to prove the path and then REMOVED, so the line it greps
+cannot fire again even in principle. `doc_check.py` reports these as `EVIDENCE OLDER THAN
+THE LOGS`.
+
+**Read the horizon from the FILES, never from the retention setting.** `backupCount` is
+30 and `getFilesToDelete()` returns nothing, yet only ten dated files exist — the horizon
+is YOUNG, not over-pruned, because a deletion incident on 2026-08-30 left two and daily
+rotation has added one since. A detector keyed on the intended 30 would have reported
+nothing while three documents cited evidence already gone.
+
+So when a log-based check passes, write the date beside it AND keep something runnable
+next to it — a test, or a command that proves the path still exists. When the evidence
+ages out, say so and keep the measurement as the dated record it now is.
+
 ## Stop and brief the operator
 
 Do not proceed autonomously past any of these. Write the brief into `current.ESCALATIONS`
