@@ -360,11 +360,40 @@ current:
       `sessions` cover every lane and seeding from a table that already does. That is
       settled by evidence about coupling and cost, not by preference, and it is the next
       thing this item does once the suite prints.
-    stages: {brainstorm: done, architect: done, implement: blocked, cleanup: blocked,
-      test: blocked, validate: blocked, document: blocked}
-    blocked_on: >-
-      Nothing external — the full-suite run in flight. Implementation resumes the moment it
-      prints; this record exists so the diagnosis is not re-derived.
+    THE_ANSWER_CHANGED_WHEN_THE_LAST_TWO_FACTS_LANDED: >-
+      The diagnosis above is correct and its CONCLUSION was wrong, so it is corrected here
+      rather than carried forward. Two measurements finished it. FIRST: the gate is not the
+      blocker — `skill_manage` is in `presentation._DEFAULT_BASE`, explicitly guaranteed to
+      survive the budget ("Self-extension is untouched: skill_manage, tool_build, owl_build,
+      reflect_now and evolve_now all remain guaranteed"), so `SKILL_TOOL in presented_tools`
+      passes wherever presentation runs. SECOND: the seeded ingress lane
+      `owl:secretary:telegram:dm:...` sits at completed_turns=9 AGAINST AN INTERVAL OF 10.
+      One turn short. Yesterday's seed is correct and about to work on the lane that matters.
+    SO_IMPLEMENT_IS_no_change_needed_AND_THAT_IS_THE_FINDING: >-
+      The seed missing 80% of turns is TRUE and is NOT A DEFECT. `record_completed_turn`
+      refuses to insert for an unknown lane on purpose — background work that never passed
+      ingress would otherwise "create conversations nobody had" — so incident/goal lanes
+      have no durable turn count and no other table holds one. Whether the nudge SHOULD
+      reach them is product intent: queued as ESC-157 with the measurement attached, with a
+      recommendation of NOT YET, because deciding a policy for a mechanism that has never
+      fired once in production is choosing in the dark. The DIAGNOSIS is not escalated; only
+      the decision is.
+    WHAT_I_ALMOST_SHIPPED: >-
+      On the first three measurements this looked like a clear defect — a seed reading the
+      one table that does not hold the population — and the obvious move was to repoint it
+      at `conversations` (535 lanes, covers incident). MEASURED BEFORE WRITING ANY CODE:
+      conversations rows per lane disagree with completed_turns wildly (21 turns vs 2 rows;
+      46 vs 52), because a row is a CONVERSATION, not a turn. `turn_decisions` has exactly
+      one row per lane. `cost_records` counts LLM calls. No table holds a turn count for
+      background lanes. A fix shipped on the first plausible reading would have replaced a
+      correct seed with a wrong one.
+    changes: >-
+      docs/reference-mapping/designs/D09.4.md (two midnight-blind queries to the glob, a
+      measured "why it is still zero" section, restamped), progress.yml (D09.4's
+      closing_check now REPORTS THE DISTANCE — "Deepest SEEDED ingress lane right now: 9 of
+      10" — instead of only the zero; ESC-157 queued with a premise_check).
+    stages: {brainstorm: done, architect: done, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: partial, document: done}
   DEBT197_2026_09_07_a_closeable_verified_by_printing_the_records_not_trusting_the_count:
     map_check: >-
       No mapped item — closing a `partial` validate that traffic turned CLOSEABLE, which
@@ -13942,6 +13971,38 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_157_should_the_skill_nudge_reach_BACKGROUND_lanes_at_all:
+      question: >-
+        The skill nudge can only ever fire on lanes that passed through INGRESS. Should it
+        also reach the background lanes — `incident-*` (self-heal/RCA) and `goal-*`
+        (scheduled goals) — which carry 80% of all turns?
+      why_evidence_cannot_settle_it: >-
+        Evidence sizes the gap and has; it cannot decide whether a machine lane's work
+        should become a skill. A repeatable RCA procedure is arguably exactly what a skill
+        is FOR, and the platform's self-improvement thesis says it should learn from its own
+        work. Against that: skills authored from machine lanes are not reviewed by anyone
+        before they enter the catalogue, and D10.3 already measured 10 of 25 learned skills
+        having a near-duplicate twin. More authors, more duplicates.
+      what_was_measured: >-
+        MEASURED 2026-09-07. 86 lanes took a turn across the retained logs; `sessions` holds
+        133 rows; the INTERSECTION IS 13. By turns: 45 on lanes with a session row, 184 on
+        lanes without. `sessions` is the ONLY lane-keyed table in the workspace DB holding
+        nothing but `owl:` lanes — task_outcomes covers 3,552 lanes, conversations 535,
+        turn_decisions 781. And the exclusion is DELIBERATE, not an oversight:
+        `SessionStore.record_completed_turn` refuses to insert for an unknown lane because
+        "this is called from the turn-end path, which also runs for background work that
+        never passed through ingress; inventing one there would create conversations nobody
+        had." So no durable turn count exists for background lanes and no other table holds
+        one — this cannot be fixed by pointing the seed elsewhere.
+      recommendation: >-
+        NOT YET. The ingress path is one turn from proving the mechanism works end to end
+        (the seeded Telegram lane is at 9 of 10). Prove it there first; deciding for
+        background lanes before the nudge has ever fired once would be choosing a policy for
+        a mechanism with no production evidence at all.
+      blocks: >-
+        Nothing. D09.4's acceptance check closes on the ingress path alone.
+      premise_check: >-
+        uv run python -c "import sqlite3,collections;c=sqlite3.connect('file:/home/boss/.stackowl/workspace/stackowl.db?mode=ro',uri=True);k=[r[0] for r in c.execute('SELECT session_key FROM sessions')];p=collections.Counter(x.split(':')[0].split('-')[0] for x in k);print('HOLDS sessions still holds only ingress lanes: %s' % dict(p) if set(p)=={'owl'} else 'EXPIRED sessions now covers more than owl lanes: %s' % dict(p))"
     ESC_20_should_a_scheduled_briefing_be_COMPRESSED_at_all:
       RESTORED: >-
         RESTORED TO THE QUEUE 2026-09-07. This is not a new question — it is ESC-20's
@@ -32301,8 +32362,12 @@ items:
       # ' nudge' — so it could never match '[skills] nudge: due' and would have read
       # OPEN even after the nudge fired. The waiting-on-a-deep-lane analysis below
       # was done by grepping the logs directly and still stands.
+      # RE-MEASURED 2026-09-07 (DEBT-198), and the premise is now exact rather than
+      # directional. It reports HOW CLOSE the seeded lane is, so a reader can tell
+      # "one turn away" from "structurally impossible" without re-deriving it.
       n=$(./scripts/log_since.sh 2026-09-02 '\[skills\] nudge')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge - CORRECTED 2026-09-07 (DEBT-166). The blocker was NOT 'waiting on a deep lane'; that note was wrong. The counter is IN-PROCESS and was erased on every boot: MEASURED over six days, 291 boots against 429 turns, deepest (boot,lane) depth NINE against an interval of TEN, so ZERO pairs ever reached it while fifteen reached the memory nudge's four - which is exactly why that one has 99 fires and this one has none. Now SEEDED from sessions.completed_turns, which survives restarts and reaches ten on 13 of 129 sessions (max 46). Still OPEN because it needs one real turn on such a lane, and zero turns have happened since the restart"
+      d=$(uv run python -c "import sqlite3;c=sqlite3.connect('file:/home/boss/.stackowl/workspace/stackowl.db?mode=ro',uri=True);print(max([r[0] or 0 for r in c.execute(\"SELECT completed_turns FROM sessions WHERE session_key LIKE '%telegram%'\")]+[0]))" 2>/dev/null || echo "?")
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge. The gate is NOT the blocker - skill_manage is in presentation._DEFAULT_BASE, guaranteed to survive the budget - and the mechanism works: the memory nudge fired 101 times on the same primitive at interval 4. The only blocker is the counter reaching 10. Deepest SEEDED ingress lane right now: $d of 10. The seed (9bdc7c88) covers ingress lanes only; 80% of turns are on incident/goal lanes that have no sessions row BY DESIGN (record_completed_turn refuses to invent a lane for background work), which is ESC-157, not a defect"
     title: "Skill-creation nudges"
     domain: D09
     verdict: MISSING
@@ -32324,7 +32389,7 @@ items:
       validate:   partial
       document:   done
     doc: "docs/reference-mapping/designs/D09.4.md"
-    doc_last_verified: "2026-09-02 against commit e782e6b4 — Verification RUN, not trusted: step 1 = 9 passed, step 2 = 640 passed, step 3 = 0 exactly as the document states it will be until a sustained conversation reaches ten turns."
+    doc_last_verified: "2026-09-07 against commit PENDING — Verification RE-RUN, not trusted: step 1 = 13 passed (was 9; the four new ones arrived with the seeding work, which is why a single-file pin is worth keeping), step 1+2 together = 651 passed 0 failed, step 3 = 0 — and the check now reports the DISTANCE: deepest seeded ingress lane 9 of 10."
     decisions: []
     changes:
       - "2026-09-02 THE MEASUREMENT DECIDED IT, and it refutes the obvious reading of D09.1. Across five days of rotated logs the MEMORY nudge — the same mechanism, different words — fired 96 times and 27 of those (28%) were followed by a memory write within ten minutes. More decisively, 27 of the 35 WRITES in that window (77%) followed a nudge. D09.1 measured evolve_now and synthesize_skills at ZERO all-time and concluded meta-work is never chosen; the first half is right, the inference 'so prompting cannot help' is not. The model will not VOLUNTEER meta-work; asked at the right moment it complies about a quarter of the time, and that quarter is where nearly all the writes come from."
