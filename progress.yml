@@ -315,6 +315,102 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT198_2026_09_07_the_seed_reads_the_one_table_that_does_not_hold_the_lanes:
+    map_check: >-
+      D09.4 — Turn Nudges. Reached from doc_check (STALE, verified 09-02 against sources
+      changed 09-07) and from validate_check, where its acceptance check has read OPEN
+      since it shipped. DIAGNOSIS COMPLETE, IMPLEMENTATION HELD — the 15th full-suite run
+      was in flight and its fingerprint covers every src/ and tests/ .py file, so touching
+      them would have printed SUITE TREE CHANGED and voided a verdict already 19 minutes
+      paid for.
+    THE_ZERO_IS_REAL_AND_NOT_AN_INSTRUMENT_ERROR: >-
+      "[skills] nudge: due" returns 0 on the single file AND 0 across the whole
+      stackowl*.jsonl glob, so this is genuinely "not yet", not a midnight-blind query.
+      The control is in the same grep: "[curated] nudge: due" has fired 101 times over the
+      same window (47/28/10/8/3/2/1/2 by day). Same primitive, same seam, fifteen lines
+      apart in execute.py. One fires constantly; the other has never fired in its life.
+      Note the grep also covers the SUPPRESSED variant — `f"{label}: due but SUPPRESSED"`
+      begins with the same text — so zero means no lane ever became DUE, not that it was
+      due and gated.
+    YESTERDAYS_FIX_WAS_RIGHT_AND_ITS_SEED_MISSES_85_PERCENT_OF_THE_TURNS: >-
+      9bdc7c88 (2026-09-06T21:54, live ~12h) seeds the in-process counter from
+      `sessions.completed_turns`, because 291 boots against 429 turns meant the counter was
+      erased before reaching an interval of 10. That reasoning is correct. Its evidence —
+      "reaches ten on 13 of 129 sessions, peaking at 46" — is TRUE AND ABOUT THE WRONG
+      POPULATION. MEASURED 2026-09-07: 86 lanes took a turn in the retained logs; `sessions`
+      holds 133 rows; the INTERSECTION IS 13. By turns it is starker — 45 turns on lanes
+      that have a sessions row, 184 on lanes that do not. 80% of turns are on lanes where
+      the seed resolves to None and the counter still starts at zero.
+    THE_ODD_TABLE_OUT_AND_THAT_IS_THE_TELL: >-
+      Every table in the workspace DB keyed on session_key covers the real mix —
+      task_outcomes 3552 lanes (incident 3340, owl 133, goal 48), conversations 535
+      (incident 396, owl 132), session_prompts 527, turn_decisions 781. `sessions` holds
+      133 and they are ALL `owl:`. The lanes that actually take turns today are
+      incident-* (68), owl:* (13), goal-* (4) and one Telegram user id. The seed reads the
+      ONE lane-keyed table in the database that does not contain the population it needed.
+    WHAT_MADE_THIS_POSSIBLE: >-
+      The denominator error this codebase names most, one level up: "13 of 129" is
+      non-zero, so it read as evidence the seed would work. It was never checked what those
+      13 were MADE OF. A fix reasoned from a real measurement of the wrong set is harder to
+      see than one reasoned from no measurement at all, because the number is true.
+    NOT_YET_DECIDED_AND_WHY: >-
+      Whether the skill nudge SHOULD reach incident/goal lanes is close to product intent —
+      a repeatable RCA procedure is arguably exactly what a skill is for, and the memory
+      nudge already reaches those lanes 101 times — but the fix is a choice between making
+      `sessions` cover every lane and seeding from a table that already does. That is
+      settled by evidence about coupling and cost, not by preference, and it is the next
+      thing this item does once the suite prints.
+    stages: {brainstorm: done, architect: done, implement: blocked, cleanup: blocked,
+      test: blocked, validate: blocked, document: blocked}
+    blocked_on: >-
+      Nothing external — the full-suite run in flight. Implementation resumes the moment it
+      prints; this record exists so the diagnosis is not re-derived.
+  DEBT197_2026_09_07_a_closeable_verified_by_printing_the_records_not_trusting_the_count:
+    map_check: >-
+      No mapped item — closing a `partial` validate that traffic turned CLOSEABLE, which
+      is what the validate queue exists to make possible.
+    WHAT_FLIPPED_AND_WHY_IT_IS_THE_MECHANISM_WORKING: >-
+      validate_check reported 3 CLOSEABLE at the start of this loop, up from 1 an hour
+      earlier: DEBT-136 (4 recurring replays), DEBT-147 (1 max-out) and DEBT-164 (9 cost
+      rows). Ordinary traffic turned them; nothing about them is a defect. Only DEBT-136 is
+      closed here — one item — and the other two are named so the next loop finds them
+      rather than re-discovering them. They were still climbing as this was written
+      (DEBT-147 1 -> 2, DEBT-164 9 -> 15).
+    THE_VERIFICATION_IS_THE_ITEM_NOT_THE_COUNT: >-
+      "Verify a CLOSEABLE before you believe it." The check returned 4. Printing the RAW
+      records showed six replay lines in the window, not four: the four the check counted
+      all carry `"recurring": true, "replay_missed": true`, and TWO MORE carry
+      `"recurring": false, "replay_missed": false` — rollover_summary one-shots on rows
+      with created_by=None, the branch the OLD code already handled. A bare grep for
+      "replaying missed job" would have counted six and closed on the two that prove
+      nothing. The `recurring` field DEBT-136 added first is exactly what makes the
+      difference visible, which is the "evidence only the new code could produce" rule
+      paying off two days later.
+    THE_COUNTERFACTUAL_CHECKED_IN_THE_SOURCE_NOT_ASSUMED: >-
+      scheduler.py:1091 is `if (job.replay_missed or not self._is_recurring(job)) and
+      inside_window` — for a RECURRING job the only way in is the flag. Both replayed jobs
+      are created_by='cronjob', daily@09:00, replay_missed=1: two of the FOUR rows
+      migration 0139 backfilled, against 143 rows still reading 0. Without this item's
+      writer and backfill those four lines could not exist.
+    AND_I_RECORDED_WHAT_THE_EVIDENCE_IS_NOT: >-
+      The misses were produced by RESTARTS, not an outage — four replays at 14:00:43 to
+      14:08:48 UTC against a daily@09:00 local (=14:00 UTC) slot, overdue by seconds to
+      nine minutes across CodeWatcher re-execs during another item. The branch is exercised
+      and the counterfactual holds, but this does not reproduce the originating incident
+      where a goal exhausted its retries and advanced a full day. A close that overstates
+      its evidence is the failure this queue was built to stop.
+    A_SCRIPTED_EDIT_FAILED_ITS_ANCHOR_AND_THE_ASSERTION_CAUGHT_IT: >-
+      The first attempt to rewrite the validate block asserted on a single-line string; the
+      file holds it YAML-folded across six lines, so the anchor missed and NOTHING was
+      written. The assert is why that was visible in one second instead of being read back
+      as success — the same rule CLAUDE.md records about scripted edits, met for the second
+      time today.
+    changes: >-
+      progress.yml only — DEBT-136's validate PARTIAL -> CLOSED with the counterfactual,
+      the discriminating records, and what the evidence is not. validate_check goes 17
+      checks / 3 CLOSEABLE to 16 / 2.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: no_change_needed, validate: done, document: no_change_needed}
   DEBT196_2026_09_07_the_cause_under_43_broken_queries_a_second_process_never_followed_the_rotation:
     map_check: >-
       No mapped item — "The ground is clear." Evidence-led: this is the CAUSE under
@@ -362,6 +458,19 @@ current:
       present tense — the fifth surface).
     stages: {brainstorm: done, architect: no_change_needed, implement: done,
       cleanup: done, test: done, validate: partial, document: no_change_needed}
+    VALIDATED_LIVE_THE_CODE_IS_RUNNING_THE_EFFECT_NEEDS_A_MIDNIGHT: >-
+      Restarted with ./start.sh. Commit 25568c8a at 14:09:16Z; the core armed its code
+      watcher at 14:10:16Z — checked against the boot LINE, never a PID — so the running
+      image carries the fix. 319 INFO and ZERO ERROR since that boot. What cannot be
+      evidenced yet is the EFFECT: the follow branch only runs when a UTC midnight passes
+      with two live processes on one log, and the core re-execs often enough (70% of boots
+      are CodeWatcher) that it may reopen on its own before one arrives. That is why the
+      stage is partial and the check is honest about which of those two it saw.
+    A_DIFFERENT_ITEMS_CHECK_FLIPPED_WHILE_I_WAS_HERE: >-
+      validate_check reported DEBT-136 CLOSEABLE — "3 recurring job(s) replayed a missed
+      run" — turned by ordinary traffic, not by this work. NOT actioned here: one item per
+      loop, and the loop's own rule is to VERIFY a CLOSEABLE before believing it. Recorded
+      so the next loop finds it instead of re-discovering it.
     the_closing_check_lives_in_known_debt: >-
       DEBT-196 in `known_debt`, because THAT is where validate_check.py reads them —
       it walks `items` and `known_debt`, never `current`. A check written here would
@@ -18450,11 +18559,32 @@ known_debt:
       mutation testing caught a guard of mine that could not fail, and both times the
       signal was the mutant surviving rather than any review.
     validate: >-
-      PARTIAL. Live at 08:16:43 against a 08:16:06 commit with 0 ERRORs; migration 0139
-      applied (139 rows, last three 0137/0138/0139) and all four user goals now read
-      replay_missed=1 with zero non-cronjob rows touched. What is NOT yet evidenced is the
-      EFFECT: a recurring job actually replaying a missed run. That needs a miss to happen
-      while the platform is down or the provider unreachable at the slot.
+      CLOSED 2026-09-07 — the effect is evidenced in production. Live at 08:16:43 against
+      a 08:16:06 commit with 0 ERRORs; migration 0139 applied (139 rows, last three
+      0137/0138/0139) and all four user goals read replay_missed=1 with zero non-cronjob
+      rows touched. THE EFFECT: four "[scheduler] recover: replaying missed job" lines on
+      2026-09-07, every one carrying `"recurring": true, "replay_missed": true`, across two
+      distinct jobs — goal_execution-7b6da65e and -ee1bdd4c. Both are created_by='cronjob',
+      daily@09:00, replay_missed=1: two of the FOUR rows migration 0139 backfilled, against
+      143 rows that still read 0.
+    the_counterfactual_is_what_makes_it_a_close: >-
+      scheduler.py:1091 reads `if (job.replay_missed or not self._is_recurring(job)) and
+      inside_window`. For a RECURRING job the only way in is the flag, so without this
+      item's writer and backfill those four replays could not exist — evidence only the new
+      code could produce, not a pre-existing line firing again. The log discriminates it in
+      the same window: two MORE replay lines, rollover_summary-553ed5f9 and -e2fd2188, both
+      `"recurring": false` on rows with replay_missed=0 and created_by=None. That is the
+      one-shot branch the OLD code already handled, and the check correctly excludes it.
+      Verified by PRINTING the raw records rather than trusting the count of 4.
+    WHAT_THIS_EVIDENCE_IS_NOT: >-
+      The misses were produced by RESTARTS, not by an outage. The replays are at 14:00:43,
+      14:00:49, 14:04:24 and 14:08:48 UTC against a daily@09:00 local (=14:00 UTC) slot —
+      the job was overdue by seconds to nine minutes across CodeWatcher re-execs during
+      another item. The branch is exercised exactly as designed and the counterfactual
+      holds, but the gap is thin: this does NOT reproduce the originating incident, where a
+      goal exhausted its retries and advanced a full day. Recorded so a later reader does
+      not mistake it for organic-downtime evidence.
+    stages: {validate: done}
     closing_check: |
       # The replay line could not distinguish a recurring replay from a one-shot, and a
       # one-shot replays regardless — so a bare grep would be satisfied by the branch
