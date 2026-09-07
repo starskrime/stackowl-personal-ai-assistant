@@ -315,6 +315,37 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT201_2026_09_07_the_closeable_queue_reached_zero_and_the_last_one_needed_the_LOG_not_the_TABLE:
+    map_check: >-
+      No mapped item — closing the last `partial` validate that traffic turned CLOSEABLE.
+      validate_check now reads 14 checked, ZERO CLOSEABLE: the first empty queue this
+      session, after three closes in three loops (DEBT-136, DEBT-147, DEBT-164).
+    THE_TABLE_ALONE_WOULD_NOT_HAVE_CLOSED_IT: >-
+      The check counts cost rows whose owl_name differs from the owl in their own
+      session_key — 15 today, all owl:secretary:recovery:* lanes billed to jobmarket. That
+      mismatch is necessary but NOT sufficient: it shows the two fields disagree, not that a
+      ROUTING caused the disagreement. The logs supply the missing half on both traces at
+      14:10:16-17 — "[pipeline] triage: entry" owl=secretary, then "[router] selected
+      jobmarket intent_class=standard (LLM decision, 508ms / 1192ms)", then
+      "[pipeline] triage: routed" owl=jobmarket — with the first cost row 29 seconds later.
+      Cause and effect, separately instrumented, same trace ids.
+    THE_INSTRUMENT_WAS_CHECKED_BEFORE_THE_COUNT: >-
+      The check bounds on `recorded_at >= '2026-09-07'`, a STRING comparison. If recorded_at
+      were a float epoch that comparison would silently match everything or nothing. It is
+      TEXT in ISO form, and the bound selects 209 of 131,192 rows — verified before the 15
+      was believed, not after.
+    AND_A_QUESTION_THE_EVIDENCE_SETTLED_RATHER_THAN_ESCALATED: >-
+      Should the 162 pre-fix misattributed rows be corrected? No, and it is measurable why:
+      cost_records reaches back to 2026-06-01 while the retained logs begin 2026-08-28, so
+      116,604 rows — 89% — predate any log that could say which owl ran them. A backfill
+      could reach only the newest 11% and would leave a table partly corrected, which is
+      worse than uniformly wrong because the row itself would not say which era it is from.
+      Left as-is and recorded as known-misattributed before 2026-09-07.
+    changes: >-
+      progress.yml only — DEBT-164 validate partial -> done, with the routing evidence, the
+      counterfactual, the instrument check, and the backfill question closed by measurement.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: no_change_needed, validate: done, document: no_change_needed}
   DEBT200_2026_09_07_the_give_up_line_finally_said_what_it_gave_up_on:
     map_check: >-
       No mapped item — closing a `partial` validate that traffic turned CLOSEABLE, verified
@@ -17387,8 +17418,45 @@ known_debt:
       (`providers/base.py:390`). MEASURED: 162 of 363 routed turns — 45% — went to an owl
       other than the lane's. Fixed by syncing the trace owl right after each step returns,
       in BOTH step loops via `shared.sync_turn_owl`.
+    VALIDATE_CLOSED_2026_09_07_a_routed_turn_billed_the_owl_THAT_RAN_IT: >-
+      FIFTEEN cost rows written 14:10:46 to 14:13:09 carry owl_name=jobmarket on lanes named
+      owl:secretary:recovery:rollover-19a and owl:secretary:recovery:task-e11ad40 — the
+      billed owl differs from the lane's owl, which is exactly the state this item made
+      possible. 28 candidate rows today (owl: lanes with owl_name set); 15 mismatch.
+    THE_ROUTING_IS_IN_THE_LOG_SO_THIS_IS_NOT_AN_INFERENCE: >-
+      The mismatch alone would only show that owl_name and session_key disagree; it would
+      not prove a ROUTING caused it. The logs close that gap on both traces at 14:10:16-17:
+      "[pipeline] triage: entry" with owl "secretary" (the lane), then "[router] selected
+      jobmarket intent_class=standard (LLM decision, 508ms / 1192ms)", then
+      "[pipeline] triage: routed" with owl "jobmarket". The first cost row follows 29
+      seconds later billed to jobmarket. Cause and effect, both instrumented, same traces.
+    THE_COUNTERFACTUAL: >-
+      Before the fix a mismatch was IMPOSSIBLE. bind_turn_context bound
+      TraceContext(owl_name=state.owl_name) before any step ran, and triage's four
+      state.evolve(owl_name=...) sites never re-bound the trace copy that every cost row
+      reads (providers/base.py:390) — so owl_name was the lane's owl by construction. A row
+      where they differ can only come from the new path. Evidence only the new code could
+      produce, and the instrument was checked before the count: recorded_at is TEXT in ISO
+      form, so the check's `>= '2026-09-07'` is a real date bound and not a
+      number-versus-string comparison; it selects 209 of 131,192 rows.
+    WHAT_THIS_EVIDENCE_IS_NOT: >-
+      Two traces, one day, both recovery lanes, both routed by the same decision to the same
+      owl. It proves the re-bind reaches production on the path triage takes; it is not a
+      measurement of how often cross-owl routing happens, and it says nothing about the 162
+      historical turns whose cost was misattributed before the fix — those rows are still
+      wrong in the table and are not corrected by this change.
+    AND_THE_PRE_FIX_ROWS_CANNOT_BE_CORRECTED_which_settles_that_question: >-
+      The 162 historically misattributed turns stay wrong in the table, and this is a
+      measurement rather than a shrug. cost_records spans 2026-06-01 to 2026-09-07 —
+      131,192 rows — while the retained logs begin 2026-08-28. **116,604 rows, 89%, predate
+      the oldest retained log**, so the "[pipeline] triage: routed" line that would say
+      which owl actually ran those turns no longer exists for them. A backfill could only
+      reach the newest 11%, producing a table that is PARTLY corrected — worse than
+      uniformly wrong, because nothing in the row would tell a reader which era it belongs
+      to. So the rows are left as they are and recorded as known-misattributed before
+      2026-09-07. No escalation: the evidence settles it.
     stages:
-      validate: partial
+      validate: done
     validate_result: >-
       Code is live-evidenced and the targeted suites are green (2,649 passed across
       tests/pipeline and tests/providers; 34 in the backends). The EFFECT needs a turn
