@@ -72,15 +72,37 @@ class TestTheReportSeesTheRealCorpus:
             cwd=_ROOT, capture_output=True, text=True, timeout=300,
         )
 
-        assert "STALE BY DELETION" in out.stdout, (
-            "the report no longer separates deletion-stale documents, so a document "
-            f"describing something that was removed reads like one merely behind:\n"
-            f"{out.stdout[-2000:]}\n{out.stderr[-1000:]}"
-        )
+        # ASSERT THE SUMMARY, NOT THE SECTION — and the first version asserted the
+        # section. `"STALE BY DELETION" in stdout` holds only while the population is
+        # NON-EMPTY, because doc_check prints that block under `if by_deletion:`. The
+        # count reached ZERO on 2026-09-07 when the last deletion-stale document was
+        # re-verified, and this assertion BLOCKED THE COMMIT THAT DRAINED IT.
+        #
+        # That is the SECOND assertion in this one test to fail for that reason. DEBT-185
+        # replaced a `by_deletion >= 5` FLOOR here for exactly the same cause and left this
+        # sibling standing — correcting one copy is not correcting the rule, applied to my
+        # own fix, in the same file, three commits apart.
+        #
+        # The summary line is printed unconditionally and carries the count including 0,
+        # so it is the stable thing to assert. The SECTION's presence is then checked
+        # against the count in both directions below.
         m = re.search(r"STALE (\d+) \((\d+) by deletion\)", out.stdout)
         assert m, f"the summary line lost its deletion count:\n{out.stdout[-1500:]}"
         stale, by_deletion = int(m.group(1)), int(m.group(2))
         assert by_deletion <= stale, (out.stdout[-1500:])
+
+        # The section appears exactly when there is something to show — both directions,
+        # so neither a vanished report nor a report crying wolf over an empty set passes.
+        if by_deletion:
+            assert "STALE BY DELETION" in out.stdout, (
+                f"{by_deletion} deletion-stale documents exist and the report does not "
+                f"name them, so each reads like one merely behind:\n{out.stdout[-1500:]}"
+            )
+        else:
+            assert "STALE BY DELETION" not in out.stdout, (
+                "the report names a deletion-stale section over an EMPTY set:\n"
+                f"{out.stdout[-1500:]}"
+            )
         # NO FLOOR ON THIS NUMBER, and the first version had one.
         #
         # It asserted `by_deletion >= 5` because ELEVEN of nineteen were deletion-stale

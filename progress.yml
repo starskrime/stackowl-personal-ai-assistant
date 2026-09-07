@@ -315,6 +315,67 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT189_2026_09_07_the_last_deletion_stale_document_and_the_report_draining:
+    map_check: >-
+      D09.1 — the LAST deletion-stale document. Verification RUN in full.
+    D09_1_REPRODUCES: >-
+      Check 1 grew 8 -> 11 (single file, so a count is still the right pin). Check 2 holds
+      as a shape: 369 passed, 0 failed. Check 3 passes — BOTH scopes reported, 0 <= never
+      <= registered, and `all` at never=15, which is the exact value the document recorded
+      on 2026-09-06. No absent symbols: the three deletions that made it stale left no
+      residue in it.
+    ITS_ONE_DEFECT_IS_THE_SHAPE_MADE_VISIBLE_YESTERDAY: >-
+      Check 3 read `cat ~/.stackowl/logs/stackowl.jsonl` — the SINGLE file. Here it
+      RETURNED DATA (66 records against 874 on the glob) because the report fires on every
+      boot, which is worse than an outright zero: it reads as a pass while under-counting
+      13x. Fixed to the glob. This is the first drain of DEBT-188's report: 47 -> 46.
+    THE_SWEEP_IS_COMPLETE_AND_THE_NUMBER_IS_THE_POINT: >-
+      STALE BY DELETION is now ZERO. It was ELEVEN when doc_check gained the signal
+      (DEBT-176) and has been drained one document per loop: D05.7, D02.6, D08.1, D08.2,
+      D09.3, D16.1, D04.1, D10.5, D05.8, D03.2, D09.1. Overall STALE went 25 -> 8. Every
+      one of those eleven carried at least one real defect except D05.6 and D08.2, which
+      reproduced exactly — and saying so was the finding in both cases.
+    TWO_FINDINGS_QUEUED_WITH_FULL_DIAGNOSES_NOT_PATCHED: >-
+      Sweeping all 47 blind queries against both forms found two more checks reading ZERO
+      while the thing they check fires. D10.3 `ALREADY KNOWN`: 0 single, 18 glob, and the
+      matched_on split is base 11 / canonical 5 / SEMANTIC 2 — the semantic count is
+      EXACTLY the 2 the document claims, so its query was TRUE WHEN WRITTEN and has since
+      gone blind with rotation. Different from D03.2, whose check could never see the
+      evidence at all. D04.5 `circuit open — requested tier escalation`: 0 single, 12 glob,
+      all INFO with tool/trace_id — and its SIBLING query, `escalation declined — no
+      stronger tier`, is 0 on BOTH, a genuine zero needing the ask-the-loggers treatment
+      rather than a rotation fix. NOT patched: I ran one query from each, not their
+      Verification sections, and editing a line without running the document's checks is
+      the symptom repair this loop forbids. Five more under-count without hitting zero
+      (tier ladder resolved 40->481, rendering summaries LEAN 68->301, outside any source
+      dir 33->215).
+    THE_FOURTEENTH_FULL_RUN_IS_GREEN: >-
+      12423 passed, 17 skipped, 0 failed in 1953.18s (rc=0), SUITE TREE STILL, on c97d1417.
+      Launched deliberately because src had drifted one item from the last green
+      (DEBT-180's aggregator.py INFO line) and that trade should be a choice rather than a
+      habit. It validates that change.
+    MY_OWN_GUARD_BLOCKED_THIS_COMMIT_FOR_THE_SECOND_TIME_AND_IT_IS_THE_SAME_CAUSE: >-
+      The gate BLOCKED the first attempt (no commit went out) on
+      test_the_deletion_scan_finds_the_documents_that_are_actually_there, which asserted
+      `"STALE BY DELETION" in stdout`. doc_check prints that block under `if by_deletion:`,
+      so the assertion holds only while the population is NON-EMPTY — and this very item
+      drained it to zero. A guard failing because the work SUCCEEDED, for the second time
+      in that one test: DEBT-185 replaced a `by_deletion >= 5` FLOOR there for exactly this
+      cause and LEFT THIS SIBLING STANDING. Correcting one copy is not correcting the rule,
+      applied to my own fix, in the same file, three commits apart. THE LESSON, stated so
+      it generalises: a guard must assert the INSTRUMENT'S CAPABILITY, never the
+      POPULATION'S SIZE — and "the section is present" is a size assertion wearing a
+      string. Fixed to assert the SUMMARY line, which prints unconditionally and carries
+      the count including 0, plus a both-directions check that the section appears exactly
+      when the count is non-zero. M1 (print the section over an empty set) and M2 (drop the
+      count from the summary) each kill it; restored green at 5.
+    changes: >-
+      docs/reference-mapping/designs/D09.1.md (check 1 re-pinned, check 3 moved to the glob
+      with the reason, re-stamped),
+      tests/audit/test_a_retirement_does_not_leave_its_document_behind.py (assert the
+      summary, not the section). No src.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT188_2026_09_07_a_live_check_blind_to_the_file_the_core_writes_to:
     map_check: >-
       D03.2 — the oldest remaining deletion-stale document. Verification RUN in full.
