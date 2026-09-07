@@ -315,6 +315,64 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT182_2026_09_07_a_section_whose_heading_and_body_disagreed:
+    map_check: >-
+      D08.2 — the oldest stale document AND deletion-stale, which is the ordering
+      doc_check gained in DEBT-176. Verification RUN in full, not trusted.
+    ALL_EIGHT_CHECKS_REPRODUCE: >-
+      18 / 2 / 7 / 10 / 28 passed exactly as recorded, and `[]` for the LanceDB
+      import probe. Check 6 came back BYTE-IDENTICAL to the line written on 08-15 —
+      {"active":["builtin"],"schemas_used":0,"ceiling":6,"refused":[]} — at 09:01:05Z
+      today. This is the second document in the sweep to reproduce exactly (D05.6 was
+      the first), and it is worth saying because the streak of finding defects makes
+      it tempting to keep hunting until one appears.
+    THE_CHECK_THAT_NEEDED_TRAFFIC_IS_NOW_CLOSED: >-
+      Check 7 was written on 2026-08-15 against a sample of TWO turns and asked to be
+      re-run on a later incarnation. Across all retained logs: 1,704 `index.search:
+      exit` records, the most recent carrying n_hits 3, and ZERO "recall DEGRADED"
+      lines, ever. HONEST LIMIT recorded in the document: the newest is 2026-09-04,
+      because lessons recall needs a real conversation and this box's model host has
+      been unreachable since. Evidence from a populated past, not the current
+      incarnation, and the document now says so.
+    THE_DEFECT: >-
+      Slice B's heading says "**DONE** (seams 1-3, seam 3 in four passes)" and the
+      paragraph DIRECTLY BENEATH IT said "Seams 1-2 DONE 2026-08-14; seam 3 blocked on
+      ESC-4", with the seam-3 bullet saying BLOCKED and sending the reader to an
+      escalation. The header of the same document says all eight escalations are
+      resolved. One section contradicting itself in three lines.
+    THE_ROOT_CAUSE: >-
+      When seam 3 finally landed the HEADING was updated to record it and the DETAIL
+      beneath — the part a reader acts on — was not. Correcting one copy is not
+      correcting the claim, which is the rule this programme keeps paying for, here at
+      its smallest possible scale: not two files, not two surfaces, but a heading and
+      the paragraph under it.
+    VERIFIED_BEFORE_CORRECTING_WHICH_HALF_WAS_RIGHT: >-
+      The heading was right. MEASURED 2026-09-07: no FactPromoter, Pruner or
+      DreamWorker class exists anywhere in src/, memory/ holds none of the three
+      modules, tui/widgets/memory_review_panel.py is gone, and ESC-4 (which was the
+      blocker) closed 2026-08-14. Every surviving mention of those names is a migration
+      or a comment narrating the removal.
+    HOW_FAR_IT_REACHES_MEASURED: >-
+      A sweep for sections whose HEADING says DONE while the BODY says BLOCKED/TODO
+      across all 84 design documents returns exactly ONE — this section. That is the
+      FOURTH generalization this session to measure a population of one (after the
+      vocabulary sweep, the DEBUG-field sweep and the live-DNS sweep), and the pattern
+      is itself the finding: the corpus is in better shape than the defect rate of any
+      single document suggests. No guard built; a tripwire over a population of one is
+      scenery.
+    THE_COUNT_PINNING_GUARD_CAUGHT_ME_A_THIRD_TIME: >-
+      Converting `# PASS: 10 passed` to `# expect: 10 passed` turns HISTORY into a
+      checked ASSERTION, and steps 3 and 4 each span two files, so the guard reads them
+      as wide. Fixed to `expect: 0 failed` — and it fired AGAIN, because my narration
+      "RAN 2026-09-07: 10 passed" sat on the SAME LINE as the expect and the guard reads
+      the whole line. Step 3 had escaped only because its count happened to wrap. The
+      lesson is narrow and practical: a measured count belongs on its own comment line,
+      never trailing an `expect:`.
+    changes: >-
+      docs/reference-mapping/designs/D08.2.md only — Slice B corrected, the eight
+      checks re-run and re-stamped, check 7 closed with its honest limit. No code.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT181_2026_09_07_the_restart_rate_was_measuring_the_observer:
     map_check: >-
       No mapped item — evidence-led, started from a live symptom: the platform booted
