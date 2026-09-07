@@ -315,6 +315,71 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT165_2026_09_07_the_bound_copy_class_closed_and_the_scan_that_took_three_tries:
+    map_check: >-
+      No mapped item matches — evidence-led, DEBT-165. This is DEBT-164's mandated other
+      half: what else does that same cause reach.
+    ROOT_CAUSE_RESTATED: >-
+      `bind_turn_context` copies FOURTEEN fields off PipelineState into TraceContext
+      before any step runs, and tools and the cost tracker read the TRACE, not the state.
+      Every one is a fact with two copies where only one moves.
+    THE_ANSWER_IS_NARROW_AND_MEASURED: >-
+      Of the fourteen, exactly ONE is changed by a step: `owl_name`, in `triage.py` AND
+      `dispatch.py`. Both are covered, because DEBT-164's fix went into the step loop
+      rather than into triage — and `dispatch.py` is a registered step (registry.py:36)
+      that I did not know about when I chose that location. The other twelve are never
+      touched by any step.
+    THE_FALSE_POSITIVE_THAT_MATTERED: >-
+      `creation_ceiling` looks like a second instance. It is not: `execute.py` builds
+      `state.evolve(creation_ceiling=None, task_envelope=None)` as a THROWAWAY argument
+      to `compute_effective_bounds()`, purely to decide whether a denial came from the owl
+      or from the task. It never flows on. This mattered more than most false positives —
+      it is an authz bound with five readers in `delegate_task`, `sessions_spawn`,
+      `sessions_send` and `owl_build`, so a real instance would have been a security
+      finding. Reading the code settled it; the scan could not.
+    MY_SCAN_TOOK_THREE_TRIES_AND_THE_FIRST_TWO_WOULD_HAVE_CRIED_WOLF: >-
+      (1) "any evolve kwarg" flagged creation_ceiling. (2) "an evolve inside an
+      assignment" ALSO flagged it, because it sits inside `owl_only =
+      check_effective_bounds(...)` — my argument-position theory was simply wrong. (3)
+      Only "the evolve IS the direct value of the return or assignment" separates them.
+      Shipping either of the first two would have failed a correct tree, which is the
+      failure this programme refuses.
+    WHAT_SHIPPED: >-
+      `tests/pipeline/test_a_trace_copied_fact_cannot_drift.py` — reads the bound list out
+      of `shared.py` rather than hardcoding it, so a new field joins the check the day it
+      is bound, and asserts that nothing bound-and-step-mutated is missing a sync.
+      Verified against the tree: 14 bound, 32 step-mutated, UNSYNCED empty.
+    AND_MY_CANARY_WAS_BRITTLE_BEFORE_I_SHIPPED_IT: >-
+      The first version pinned the exact mutation sites `{triage.py, dispatch.py}`, which
+      would have failed the suite the day a THIRD step legitimately re-routed — a guard
+      breaking on correct work, inside the item about not doing that. It now asserts only
+      that `owl_name` is still step-mutated AT ALL, which is what the `_SYNCED` exemption
+      actually means; the set may grow safely because the sync lives in the loop.
+    MUTATION_PROVEN: >-
+      Adding `channel="x"` to a step's returned evolve — a second bound field becoming
+      step-mutable, the exact way this class reopens — fires the guard. Restored from a
+      file copy and re-run green.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validate_evidence: >-
+      tests/ only, so no restart could show an effect and none is claimed. DEBT-164's own
+      full suite came back TENTH GREEN on the tree this guard was written against —
+      `12378 passed, 17 skipped, 0 failed in 1988.05s` (rc=0), `SUITE TREE STILL` — and
+      every measurement here was made read-only while it ran, which is why the fingerprint
+      held.
+    DEBT_164s_OPEN_IS_HONEST_and_here_is_its_denominator: >-
+      Zero turns have happened since the 02:01:45Z restart — 0 cost rows, 0
+      `[pipeline] execute: entry`, 0 routings. Its closing check waits on traffic that has
+      not arrived, not on a fix that does not work.
+    document_reason: >-
+      No design doc — `map_check` found no mapped item. The reasoning lives in the guard's
+      docstring, which is where a reader of this machinery looks.
   DEBT164_2026_09_07_cost_was_billed_to_the_lane_owl_not_the_owl_that_ran:
     map_check: >-
       No mapped item matches — evidence-led, DEBT-164. Found by re-verifying D01.7, the
