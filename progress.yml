@@ -315,6 +315,45 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT184_2026_09_07_a_check_that_inherited_the_preconditions_of_an_experiment:
+    map_check: >-
+      D16.1 — the oldest stale document AND deletion-stale. Verification RUN in full.
+    THE_DEFECT: >-
+      Check 5 greps for "hooks.register: exit" and returns ZERO across every retained log.
+      That zero cannot be read: "no plugin is installed" and "hook registration broke"
+      produce the identical result. MEASURED 2026-09-07 it is the former — the plugins
+      table holds 0 rows and ~/.stackowl/plugins is empty — and there IS a line that
+      proves the surface is alive in exactly that state: "[plugins] boot: no plugins
+      installed", 941 times, once per boot, at INFO. Added as check 5a; the original
+      became 5b with its precondition stated.
+    THE_ROOT_CAUSE_AND_IT_IS_NEW: >-
+      THE CHECK WAS WRITTEN DURING AN EXPERIMENT AND INHERITED ITS PRECONDITION. The
+      Status line claims "all six hook points are now observed on live traffic
+      (2026-08-20)", and that was TRUE — against a THROWAWAY PROBE plugin, which the
+      document itself says was used to prove the surface end to end for the first time on
+      2026-08-16. The probe was thrown away; the check outlived the condition that made
+      it answerable. This is the FIFTH variant of the closing-check family: satisfied by
+      HISTORY, evidence that CANNOT EXIST, satisfied by the OLD CODE, satisfied by the
+      ATTEMPT (DEBT-180), a STATE where an EVENT was needed (DEBT-183), and now written
+      under a PRECONDITION that no longer holds.
+    A_SECOND_CAUSE_A_COUNT_THE_BLOCKED_ITEM_WAS_ABOUT_TO_CHANGE: >-
+      Checks 1 and 2 assert "the seventh extension point" and "all seven points appear".
+      There are EIGHT: `PromptContributor` was added by dd4e5241 on 2026-08-20 — the same
+      day this document was last verified — BY THE ITEM THIS ONE BLOCKS. D16.1's header
+      says "Blocks D16.3", and D16.3's entire content is the eighth point. The number was
+      guaranteed to move before the ink dried. What this item is responsible for is
+      LifecycleHook's PRESENCE, which is what the checks assert now; check 2 became a
+      SHAPE — the two maps must agree however many points exist.
+    WHAT_REPRODUCED_EXACTLY: >-
+      Check 3, 20 passed, unchanged. Check 1's substantive claim (LifecycleHook present)
+      and check 2's mapping (LifecycleHook -> lifecycle_hooks) both hold. Check 4 grew
+      9 -> 12 and became a shape.
+    changes: >-
+      docs/reference-mapping/designs/D16.1.md only — Status precondition stated, checks 1
+      and 2 de-pinned, check 4 converted to a shape, check 5 split into 5a (answerable
+      today) and 5b (needs an installed plugin), re-stamped. No code.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT183_2026_09_07_evidence_that_was_a_state_when_it_needed_to_be_an_event:
     map_check: >-
       D09.3 — the oldest stale document AND deletion-stale. Verification RUN in full.
