@@ -315,6 +315,107 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT176_2026_09_07_the_detector_this_item_exists_to_add_could_never_fire:
+    map_check: >-
+      D05.7 — the oldest stale document, and doc_check now says WHY it is stale: a
+      DELETION touched its source. Verification RUN, not trusted, mutations included.
+    THE_DEFECT_THE_LIVE_QUERY_FOUND: >-
+      D05.7's headline argument is that we shipped THREE detectors where
+      TurnProgressTracker had one. Running the document's own "what would show it
+      live" query over ten retained days returned 201 warnings — and only TWO of the
+      four codes: repeated_exact_call_warning 155, same_tool_failure_warning 46,
+      idempotent_no_progress_warning ZERO, repeated_exact_failure_warning ZERO. The
+      first zero was not "not yet". PROVEN by running the controller at production
+      config, not by reading it — the _no_progress counter is written once, on the
+      pass where repeats == 1, and pinned at 1 forever against a threshold of 2.
+    THE_ROOT_CAUSE_IN_ONE_LINE: >-
+      after_call returned on the first detector that matched, and two detectors key
+      on the SAME signature with the GENERAL one ("same call") checked before the
+      SPECIFIC one ("same call AND same result"). A subset checked second is
+      unreachable whenever its threshold is not strictly lower — arithmetic, not
+      accident. _record_failure had it right all along (exact-failure per-signature
+      before same-tool per-tool); the asymmetry between the two halves of one method
+      is the evidence. Fixed by counting unconditionally and deciding second.
+    WHY_EVERY_TEST_WAS_GREEN: >-
+      Three tests cover the dead detector. One asserted `d.code in
+      {"idempotent_no_progress_warning", "repeated_exact_call_warning"}` — a
+      DISJUNCTION, satisfied by the detector that answered in its place. The other
+      two isolate it with exact_repeat_warn_after=99, a threshold production never
+      sets. All three green for a month while the detector was dead. This is
+      CLAUDE.md's own rule ("a test that passes immediately may be vacuous — test
+      the path production takes") in its purest form.
+    THE_GUARD: >-
+      test_every_detector_is_reachable_under_the_SHIPPED_config uses the shipped
+      defaults and NO keyword arguments, censuses the codes the module can emit, and
+      requires each to be produced by a real sequence. M13 (swap the order back)
+      kills it and the disjunction test, and nothing else — 2 failed / 15 passed.
+    THE_SECOND_CAUSE_THE_DOCUMENT_ITSELF: >-
+      D05.7 still said `hard_stop_enabled` defaults False, advertising an
+      operator-tunable flag. d8b8ba81 (2026-08-30, ESC-68) deleted it eight days
+      earlier along with before_call, _halt, halt_decision, should_halt and four
+      config fields — and updated the code, the config, the tests AND the module
+      docstring. It was a careful retirement. The cause is the CHECKLIST: "retired
+      means deleted" names code, registration, tests and job rows, and NOT the
+      design document, so by the rule's own wording every retirement was free to
+      leave its record asserting a thing that no longer exists.
+    HOW_FAR_THAT_REACHES_MEASURED: >-
+      Of the 19 stale design documents, ELEVEN were made stale by a commit that
+      SUBTRACTED something — quirks, LanceDB, retry_queue, the fact-store machinery,
+      a 600s cap, a notification cap. doc_check.py now separates them ("STALE BY
+      DELETION — read these first, 11 of 19"), because staleness by date says a
+      source MOVED and cannot say it was REMOVED: behind and actively false are
+      different kinds of wrong. The rule was corrected on BOTH surfaces — CLAUDE.md
+      and .claude/skills/item-loop/SKILL.md — because this file's own history
+      records that correcting one copy is not correcting the rule.
+    TWO_GENERALIZATIONS_MEASURED_AND_REJECTED: >-
+      (1) A "document names a symbol that no longer exists" checker: 37 of 84
+      documents name 72 absent symbols, but the list is contaminated — HASS_TOKEN
+      and _HERMES_CORE_TOOLS are the REFERENCE platform's, tool_loop_guardrails is
+      its config section, project_gateway_core_dual_log_writer_bug is a memory
+      filename. Worse, it would MISS the case that motivated it: hard_stop_enabled
+      is still in the tree, inside the prose that retires it. Not built.
+      (2) A "declared vocabulary with unproducible members" sweep, from
+      `action: str = "allow"  # allow | warn | block | halt`: the DENOMINATOR IS
+      ONE. The first run said 0 offenders and that 0 was 0-over-1 — the one case was
+      excluded because "block" and "halt" appear as quoted literals in unrelated
+      modules (reachability enforcement, stop tokens). A tripwire over a population
+      of one is scenery. The single instance was fixed in place instead.
+    ALLOWS_EXECUTION_IS_NOT_DEAD_AND_HERE_IS_THE_PROOF: >-
+      d8b8ba81's own message says should_halt, halt_decision and allows_execution
+      had zero references outside the module; it deleted the first two and kept the
+      third, which reads like leftover scaffolding. It is not. M12 — restore a halt
+      branch — turns allows_execution False and kills
+      test_there_is_NO_hard_stop_mode_at_all, and only that. It is the vocabulary a
+      falsifiable guard is written in, not a seat for a future feature. Recorded so
+      the next pass does not re-derive "zero references" and delete it.
+    changes: >-
+      src/stackowl/pipeline/tool_guardrails.py (detector ordering + docstring +
+      the block/halt vocabulary), tests/pipeline/test_tool_guardrails.py (the
+      disjunction replaced; the reachability guard and the general-code guard
+      added; 15 -> 17), scripts/doc_check.py (STALE BY DELETION),
+      tests/audit/test_a_retirement_does_not_leave_its_document_behind.py (new),
+      CLAUDE.md and .claude/skills/item-loop/SKILL.md (the fifth surface),
+      docs/reference-mapping/designs/D05.7.md (re-verified and re-stamped).
+    LIVE_VALIDATE: >-
+      ./start.sh at 2026-09-07T05:38:13Z (pid 794693, younger than the 05:37:02 edit,
+      so the running process holds the new code). 816 records since boot, ZERO
+      ERROR/CRITICAL. What CANNOT be conjured is a real turn repeating an identical
+      read-only call with an identical result, so the detector firing in production
+      stays OPEN — exactly as this document's step 5 stayed open for a month before
+      the rotated logs closed it.
+    closing_check: >-
+      n=$(grep -h '"code": "idempotent_no_progress_warning"'
+      ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | wc -l); [ "$n" -gt 0 ] && echo
+      "CLOSEABLE ($n)" || echo "OPEN (0)"
+    WHY_THAT_CHECK_CANNOT_BE_SATISFIED_BY_THE_OLD_CODE: >-
+      The code string is emitted only by the branch this item made reachable, at
+      INFO, and it appeared ZERO times across ten retained days before the fix. A
+      single hit is impossible without the new ordering — the "new field value"
+      shape DEBT-128's lesson asks for, not a pre-existing line that merely fires
+      again. The logger was checked, not just the tree: _warn calls
+      log.engine.info("[guardrails] tool-loop warning", ... code=...).
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
+      test: done, validate: partial, document: done}
   DEBT175_2026_09_07_the_document_that_reproduced_exactly_and_why_that_is_the_finding:
     map_check: >-
       D05.6 — a MAPPED item and the oldest stale document. Verification RUN, not trusted,

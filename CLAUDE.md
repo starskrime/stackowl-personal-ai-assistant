@@ -34,8 +34,9 @@ the symptom, the root cause has not been found yet.
 **Bakir, 2026-09-01: "Whatever retired should be deleted from code and we should
 never have dead code."**
 
-Retiring something means deleting its code, its registration, its tests and its
-scheduler/job rows — in the SAME change as the retirement. Not
+Retiring something means deleting its code, its registration, its tests, its
+scheduler/job rows **and the design document's claim about it** — in the SAME
+change as the retirement. Not
 registered-but-unscheduled. Not empty-but-present. Not "kept as a seat for a
 future feature". Git history holds the old code; the tree holds what runs.
 
@@ -59,6 +60,17 @@ unreferenced (**measure it**), and that removing it does not remove something
 that was *bounding* or *triggering* another component. Then delete the WRITER,
 not just the rows — a row deleted while its writer lives is re-seeded on the next
 boot (migration 0125 vs scheduler assembly, thirty-one seconds apart, every boot).
+
+**THE DOCUMENT IS THE FIFTH SURFACE, and it was missing from this list until
+2026-09-07.** `d8b8ba81` deleted the tool-loop hard stops properly — code, config
+fields, tests and the module docstring, one commit. D05.7 went on saying
+`hard_stop_enabled` defaults **False**, advertising an operator-tunable flag, for
+eight days. Not a careless retirement: a checklist that did not name the surface.
+MEASURED the same day — of 19 stale design documents, **ELEVEN were made stale by a
+commit that SUBTRACTED something** (`quirks`, LanceDB, `retry_queue`, the fact-store
+machinery, a 600s cap, a notification cap). `doc_check.py` now separates them:
+staleness by date says a source MOVED, and cannot say it was REMOVED — behind versus
+actively false are different kinds of wrong.
 
 **Find dead code while doing something else? Delete it then.** Do not file it as
 debt.

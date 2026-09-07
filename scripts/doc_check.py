@@ -115,6 +115,32 @@ def _resolve(path: str) -> str | None:
     return None
 
 
+#: A commit subject that REMOVES something. A deletion is the change most likely to
+#: leave a document asserting a thing that no longer exists — D05.7 described
+#: `hard_stop_enabled` for eight days after ESC-68 deleted it, and the module
+#: docstring and the tests were both updated in that same commit. The document was
+#: the one surface the retirement checklist did not name.
+_DELETION = re.compile(r"\b(delete|retire|remove|drop)\w*\b", re.I)
+
+
+def _deletions_since(paths: list[str], since: str) -> list[str]:
+    """Commits since `since` that touched these paths AND removed something.
+
+    Reported, never gated. Staleness answers WHEN a source moved; this answers
+    whether it moved by SUBTRACTION, which is the case where a stale document is
+    not merely behind but actively wrong.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "log", f"--since={since}", "--format=%h %s", "--", *paths],
+            capture_output=True, text=True, timeout=60, cwd=_ROOT,
+        ).stdout.splitlines()
+    except Exception as exc:  # pragma: no cover — git absent or path unreadable
+        print(f"  (deletion scan unavailable: {exc})", file=sys.stderr)
+        return []
+    return [line for line in out if _DELETION.search(line.partition(" ")[2])]
+
+
 def _sources_last_changed(paths: list[str]) -> str:
     """The commit date of the most recent change to any cited path (YYYY-MM-DD)."""
     try:
@@ -131,6 +157,7 @@ def main() -> int:
     stale: list[tuple[str, str, str]] = []
     fresh = 0
     unmeasurable: list[tuple[str, str]] = []
+    by_deletion: list[tuple[str, list[str]]] = []
 
     for doc in docs:
         head = _header(doc.read_text(encoding="utf-8"))
@@ -151,6 +178,8 @@ def main() -> int:
         changed = _sources_last_changed(real)
         if changed and changed > date.group(1):
             stale.append((doc.name, date.group(1), changed))
+            if deleted := _deletions_since(real, date.group(1)):
+                by_deletion.append((doc.name, deleted))
         else:
             fresh += 1
 
@@ -160,8 +189,17 @@ def main() -> int:
         for name, verified, changed in sorted(stale, key=lambda r: r[1]):
             print(f"  {name:16} verified {verified}   sources changed {changed}")
         print()
-    print(f"checked {fresh + len(stale)}, STALE {len(stale)}, "
-          f"unmeasurable {len(unmeasurable)}")
+    if by_deletion:
+        print(f"STALE BY DELETION — read these first ({len(by_deletion)} of "
+              f"{len(stale)}). A source these documents declare was SUBTRACTED, so "
+              "each may describe something that no longer exists:")
+        for name, commits in sorted(by_deletion):
+            print(f"  {name}")
+            for line in commits[:3]:
+                print(f"        {line}")
+        print()
+    print(f"checked {fresh + len(stale)}, STALE {len(stale)} "
+          f"({len(by_deletion)} by deletion), unmeasurable {len(unmeasurable)}")
     if unmeasurable:
         print("\nUNMEASURABLE — not fresh and not stale; nothing can date them:")
         for name, why in sorted(unmeasurable):

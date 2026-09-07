@@ -24,9 +24,16 @@ keep going: you have not found the root cause yet.
 
 ## Retired means deleted
 
-**Bakir, 2026-09-01: whatever is retired is DELETED — code, registration, tests
-and job rows, in the same change. Never a dead seat, never empty scaffolding
-"for later".** If you find dead code while working an item, delete it in that
+**Bakir, 2026-09-01: whatever is retired is DELETED — code, registration, tests,
+job rows **and the design document's claim about it**, in the same change. Never a
+dead seat, never empty scaffolding "for later".**
+
+**The document is the fifth surface and was missing from this list until
+2026-09-07.** `d8b8ba81` retired the tool-loop hard stops carefully — code, config
+fields, tests, module docstring — and D05.7 advertised the deleted
+`hard_stop_enabled` flag for eight days afterwards. Eleven of nineteen stale
+documents were made stale by a DELETION; `doc_check.py` now names them separately,
+and a deletion-stale document is the one to read first. If you find dead code while working an item, delete it in that
 item rather than filing it as debt. Measure that it is unreferenced first, and
 remove the WRITER, not just the rows.
 

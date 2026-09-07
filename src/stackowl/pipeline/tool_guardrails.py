@@ -36,6 +36,16 @@ decision is ever revisited; the reference platform documents these as opt-in
 circuit breakers for autonomous sessions, which is the case for bringing them
 back.
 
+SPECIFIC BEFORE GENERAL — the ordering invariant, added 2026-09-07 after the
+no-progress detector was found unreachable for its entire life. Detectors that
+share a key must be checked most-specific first: "same call AND same result" is a
+strict SUBSET of "same call", so checking the general one first and returning made
+the specific one impossible to reach, for any input, whenever its threshold was not
+strictly lower. MEASURED over ten days of production logs: 201 warnings fired and
+NOT ONE carried the no-progress code. ``_record_failure`` had the order right the
+whole time; the success path did not. ``after_call`` therefore counts everything
+unconditionally and only then decides.
+
 TWO DELIBERATE DIVERGENCES from the reference implementation:
 
 1. **Idempotence is read from the manifest, not a hardcoded name list.** Theirs
@@ -113,7 +123,7 @@ class ToolCallSignature:
 class ToolGuardrailDecision:
     """What the controller observed. Carries no side effects — the caller acts."""
 
-    action: str = "allow"  # allow | warn | block | halt
+    action: str = "allow"  # allow | warn — see below; block/halt were removed
     code: str = "allow"
     message: str = ""
     tool_name: str = ""
@@ -184,35 +194,62 @@ class ToolCallGuardrailController:
         self._exact_failure_counts.pop(signature, None)
         self._same_tool_failure_counts.pop(tool_name, None)
 
-        # EXACT REPEAT — the detector our previous tracker could not express.
-        # Counted on SUCCESS, which is the whole point: 46 successful searches
-        # with 46 different queries produce 46 distinct signatures and never fire;
-        # 46 successful searches with ONE query fire immediately.
+        # BOOKKEEPING IS UNCONDITIONAL; ONLY THE WARN DECISIONS ARE ORDERED.
+        #
+        # Both success detectors key on the SAME signature. The first version
+        # returned from the exact-repeat branch as soon as it fired, so the
+        # no-progress counter was written once (on the pass where ``repeats``
+        # was 1) and never read again — pinned at 1 forever, which put its
+        # threshold of 2 permanently out of reach. Counting first and deciding
+        # second is what makes both detectors observable.
+        #
+        # EXACT REPEAT counts on SUCCESS, which is the whole point: 46 successful
+        # searches with 46 different queries produce 46 distinct signatures and
+        # never fire; 46 with ONE query fire immediately.
         repeats = self._exact_repeats.get(signature, 0) + 1
         self._exact_repeats[signature] = repeats
-        if self.config.warnings_enabled and repeats >= self.config.exact_repeat_warn_after:
+
+        # IDEMPOTENT NO-PROGRESS — same read-only call, same RESULT. A mutating
+        # tool is exempt: two identical writes returning "ok" are not a loop,
+        # the effect happened twice.
+        no_progress = 0
+        if idempotent:
+            result_hash = _sha256(result or "")
+            previous = self._no_progress.get(signature)
+            no_progress = (
+                previous[1] + 1
+                if previous is not None and previous[0] == result_hash
+                else 1
+            )
+            self._no_progress[signature] = (result_hash, no_progress)
+        else:
+            self._no_progress.pop(signature, None)
+
+        if not self.config.warnings_enabled:
+            return ToolGuardrailDecision(
+                tool_name=tool_name, count=repeats, signature=signature
+            )
+
+        # SPECIFIC BEFORE GENERAL — the order ``_record_failure`` already uses.
+        # "same call AND same result" is a strict SUBSET of "same call", so
+        # checking the general detector first makes the specific one unreachable
+        # whenever its threshold is not strictly lower. That is arithmetic, not
+        # an accident, and it is why the ordering is stated rather than implied.
+        if no_progress >= self.config.no_progress_warn_after:
+            return self._warn(
+                "idempotent_no_progress_warning", tool_name, no_progress, signature,
+                f"{tool_name} returned the same result {no_progress} times. Use the "
+                "result already provided or change the query.",
+            )
+        if repeats >= self.config.exact_repeat_warn_after:
             return self._warn(
                 "repeated_exact_call_warning", tool_name, repeats, signature,
                 f"{tool_name} has been called {repeats} times with identical "
                 "arguments. Use the result you already have, or change the arguments.",
             )
-
-        if not idempotent:
-            self._no_progress.pop(signature, None)
-            return ToolGuardrailDecision(tool_name=tool_name, signature=signature)
-
-        # IDEMPOTENT NO-PROGRESS — same read-only call, same RESULT.
-        result_hash = _sha256(result or "")
-        previous = self._no_progress.get(signature)
-        count = previous[1] + 1 if previous is not None and previous[0] == result_hash else 1
-        self._no_progress[signature] = (result_hash, count)
-        if self.config.warnings_enabled and count >= self.config.no_progress_warn_after:
-            return self._warn(
-                "idempotent_no_progress_warning", tool_name, count, signature,
-                f"{tool_name} returned the same result {count} times. Use the result "
-                "already provided or change the query.",
-            )
-        return ToolGuardrailDecision(tool_name=tool_name, count=count, signature=signature)
+        return ToolGuardrailDecision(
+            tool_name=tool_name, count=repeats, signature=signature
+        )
 
     # ---------------------------------------------------------------- internals
     def _record_failure(

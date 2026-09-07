@@ -77,12 +77,23 @@ def test_unserialisable_args_do_not_raise():
 
 def test_idempotent_no_progress_warns_on_a_repeated_RESULT():
     """The detector our previous tracker was structurally blind to: it reset the
-    streak on success, so a SUCCESSFUL repeat looked like progress."""
+    streak on success, so a SUCCESSFUL repeat looked like progress.
+
+    ASSERTS THE CODE, and for a month it did not. The assertion here was
+    ``d.code in {"idempotent_no_progress_warning", "repeated_exact_call_warning"}``
+    — a disjunction, so it passed just as well when the exact-repeat detector
+    answered instead. It did answer instead, on every input, for the detector's
+    whole life: MEASURED over ten retained days of production logs, 201 warnings
+    fired and NOT ONE carried this code.
+    """
     c = _c()
     c.after_call("read_file", {"path": "a"}, "same bytes", failed=False, idempotent=True)
     d = c.after_call("read_file", {"path": "a"}, "same bytes", failed=False, idempotent=True)
     assert d.action == "warn"
-    assert d.code in {"idempotent_no_progress_warning", "repeated_exact_call_warning"}
+    assert d.code == "idempotent_no_progress_warning", (
+        "the general detector answered for the specific one, which is how this "
+        f"detector stayed unreachable while its test stayed green: {d.code}"
+    )
 
 
 def test_a_changed_result_is_progress_not_a_loop():
@@ -250,3 +261,74 @@ async def test_the_warning_reaches_the_MODEL_not_just_the_log():
     assert "[loop-guard]" in seen[1], (
         f"the repeat warning never reached the model: {seen[1]!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# THE ROOT CAUSE — a detector that cannot fire under the SHIPPED config.
+# --------------------------------------------------------------------------- #
+
+
+def test_every_detector_is_reachable_under_the_SHIPPED_config() -> None:
+    """WHAT MADE THIS POSSIBLE, made checkable.
+
+    Two of the success-path detectors key on the same signature, and the general
+    one ("same call") was checked before the specific one ("same call AND same
+    result"). A subset checked second is unreachable whenever its threshold is
+    not strictly lower — arithmetic, not accident. ``no_progress_warn_after`` and
+    ``exact_repeat_warn_after`` are both 2, so the specific detector could never
+    fire, for any input, ever.
+
+    Every test that should have caught it was written around the hole. One
+    accepted either code in a disjunction; the other two isolated the detector
+    with ``exact_repeat_warn_after=99``, a threshold production never sets. All
+    three were green for a month while the detector was dead in production.
+
+    So this test uses the SHIPPED defaults and nothing else — no keyword
+    arguments — and requires every code the controller can emit to be produced by
+    some real sequence. A detector that becomes unreachable again fails here.
+    """
+    import re
+    from pathlib import Path
+
+    module = Path("src/stackowl/pipeline/tool_guardrails.py").read_text(encoding="utf-8")
+    emittable = set(re.findall(r'"(\w+_warning)"', module))
+    assert len(emittable) >= 4, f"the code census found only {emittable}"
+
+    fired: set[str] = set()
+
+    # exact repeat: same successful call, CHANGING result
+    c = _c()
+    for i in range(4):
+        fired.add(c.after_call("web_search", {"q": "x"}, f"r{i}", failed=False, idempotent=True).code)
+
+    # idempotent no-progress: same successful call, SAME result
+    c = _c()
+    for _ in range(4):
+        fired.add(c.after_call("read_file", {"p": "a"}, "same", failed=False, idempotent=True).code)
+
+    # repeated exact failure: same failing call, identical arguments
+    c = _c()
+    for _ in range(4):
+        fired.add(c.after_call("web_fetch", {"url": "u"}, "boom", failed=True, idempotent=True).code)
+
+    # same-tool failure: failing calls with DIFFERENT arguments
+    c = _c()
+    for i in range(5):
+        fired.add(c.after_call("shell", {"cmd": f"c{i}"}, "boom", failed=True, idempotent=False).code)
+
+    unreachable = emittable - fired
+    assert not unreachable, (
+        "these detectors exist, carry a message and a threshold, and cannot fire "
+        f"under the shipped configuration: {sorted(unreachable)}"
+    )
+
+
+def test_a_changed_result_gets_the_GENERAL_code_at_production_config() -> None:
+    """The other direction, and it is what keeps the reorder honest: making the
+    specific detector reachable must not let it answer for the general one. A
+    repeated call whose RESULT changes is a repeat, not a no-progress loop."""
+    c = _c()
+    c.after_call("web_search", {"q": "x"}, "v1", failed=False, idempotent=True)
+    d = c.after_call("web_search", {"q": "x"}, "v2", failed=False, idempotent=True)
+
+    assert d.code == "repeated_exact_call_warning", d.code
