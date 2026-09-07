@@ -315,6 +315,37 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT204_2026_09_07_the_last_rotted_check_was_a_RE_MEASURE_and_the_sum_was_never_runnable:
+    map_check: >-
+      D08.1 — curated memory in the prompt. The LAST entry in EVIDENCE OLDER THAN THE LOGS;
+      draining it takes that report to zero, two loops after it was built.
+    IT_IS_A_RE_MEASURE_NOT_A_RECORD_AND_THE_LINE_PROVES_IT: >-
+      The line still fires: 2,378 records in the retained window, most recent
+      {"blocks":2,"chars":3317,"owl":"secretary"}, emitted at assemble.py:512. So unlike
+      D16.3 (probe plugin removed, unreproducible forever) this one only needed the glob
+      and a fresh number. Third distinct outcome from the same report in three loops:
+      RECORD (D16.3), RE-MEASURE WITH A NEW CRITERION (D01.1), RE-MEASURE AS WRITTEN
+      (D08.1). The report states a fact and the reader decides which — which is exactly
+      what it was built to do rather than assert.
+    THE_RECONCILIATION_WAS_PROSE_SO_NOBODY_EVER_DID_IT_TWICE: >-
+      The document asked for `chars` "equal to the sum of both files plus the block
+      labels" and stated the 2026-08-11 arithmetic (92 + 61 + 52 = 205) in a sentence. A
+      sum written in prose is not a check; it is a claim about a check. Replaced with a
+      runnable command that computes the expected number from the files on disk. RE-RUN
+      2026-09-07: expected 3,317, logged 3,317. Not merely non-zero — exact.
+    TWO_TRAPS_IN_THE_SUM_AND_BOTH_WERE_MET: >-
+      snapshot_for_prompt STRIPS, so the raw file text gives 3,319 and only the stripped
+      form reconciles — a two-character gap that reads as noise and is not. And the files
+      are 1,350 and 1,960 BYTES on disk against 1,334 and 1,933 CHARACTERS: UTF-8
+      multibyte, so `ls -la` or `wc -c` cannot reconcile and len() on decoded text can. A
+      reader reaching for the obvious instrument would have concluded the check fails.
+    changes: >-
+      docs/reference-mapping/designs/D08.1.md — the command to the glob, the reconciliation
+      made runnable, the 2026-08-11 chars:205 kept as the dated record it now is, both
+      traps named, restamped. EVIDENCE OLDER THAN THE LOGS 1/1 -> 0. BLIND AFTER MIDNIGHT
+      38/20 -> 37/20.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT203_2026_09_07_the_criterion_was_a_PROXY_and_the_other_one_encoded_an_ENVIRONMENT:
     map_check: >-
       D01.1 — SessionPrompt. In BOTH new reports: 3 midnight-blind commands and 2
