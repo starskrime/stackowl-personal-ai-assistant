@@ -364,6 +364,67 @@ def _newest_by_pipe_position(text: str) -> list[tuple[int, str, bool]]:
     return out
 
 
+#: A database query a reader cannot run: the CLI this repo does not depend on, or the
+#: zero-byte stray that sits where the database looks like it should be.
+#: `sqlite3` followed by something a shell would treat as an ARGUMENT — a quote, a path,
+#: a flag, a variable. Prose says "sqlite3 is NOT installed on this box", and the first
+#: version of this detector flagged exactly that line inside D01.2's fence: the note
+#: CORRECTING this defect, reported as an instance of it. Third time a detector in this
+#: file has read its own explanation, and scoping to fenced non-comment lines does not
+#: help when the prose is bare inside a fence. Requiring an argument shape excludes every
+#: English sentence by construction rather than by a word list.
+_ABSENT_SQLITE = re.compile(r"""(?<![\w.-])sqlite3\s+(?=["'~./$-]|\S*\.db\b)""")
+_STRAY_DB = re.compile(r"~/\.stackowl/stackowl\.db")
+
+
+def _cannot_query_the_database(text: str) -> list[tuple[int, str, str]]:
+    """(line_no, command, why) for a Verification command that cannot reach the database.
+
+    TWO FACTS ABOUT THIS BOX WERE MEASURED, WRITTEN DOWN, AND THEN IGNORED. PROCESS.md's
+    "Evidence, not assertion" section already records both — the `sqlite3` CLI is not
+    installed here, and the live database is `<workspace>/stackowl.db` while
+    `~/.stackowl/stackowl.db` is a ZERO-BYTE stray from 2026-07-25 that still sits there
+    looking canonical. It records them as the worked example of a document that would
+    have failed its own Verification section.
+
+    MEASURED 2026-09-07, three days after that section was last edited: ELEVEN
+    Verification commands across six design documents still invoked `sqlite3`, and
+    ESC-73's acceptance check named BOTH wrong things at once — `sqlite3 stackowl.db` —
+    so it could not have closed on any database content since it was written on
+    2026-08-31. The rule lived in the method document and nothing enforced it, which is
+    the same decay `premise_check` fixed for escalations and `closing_check` fixed for
+    partial stages. This is the fourth instance of one cure.
+
+    AND THE FAILURE IS SILENT BY CONSTRUCTION, which is why none of the eleven was ever
+    noticed: `command not found` goes to stderr and nothing goes to stdout, so a check
+    written as `… | wc -l` reads 0 — and 0 reads as *not yet*, never as *wrong
+    instrument*. The stray path makes the identical shape from the other direction: a
+    real file, a successful open, and no rows in it, ever.
+
+    The cure is `scripts/db_query.sh`, which resolves the path from `StackowlHome` and
+    EXITS NON-ZERO on a missing or empty database rather than returning an empty result
+    set. Flagging `sqlite3` is a repo policy, not a probe of `$PATH`: this tree queries
+    SQLite through the module everywhere in `src/`, so a document reaching for the CLI is
+    reaching for a dependency the project does not have.
+    """
+    out: list[tuple[int, str, str]] = []
+    fenced = False
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if not fenced or line.lstrip().startswith("#"):
+            continue
+        why = ""
+        if _ABSENT_SQLITE.search(line):
+            why = "invokes the `sqlite3` CLI — not a dependency of this tree"
+        elif _STRAY_DB.search(line):
+            why = "names ~/.stackowl/stackowl.db — the zero-byte stray, not the live db"
+        if why:
+            out.append((i, line.strip(), why))
+    return out
+
+
 def _log_horizon() -> str:
     """The oldest date the retained logs can still answer for, or "" if unknowable.
 
@@ -604,6 +665,32 @@ def main() -> int:
         print(f"\nNEWEST RECORD TAKEN BY PIPE POSITION — none, across {by_position} "
               "command(s) that take a record by position from the multi-file glob; every "
               "one of them sorts first. (The denominator is printed because a silent "
+              "detector and a clean corpus look identical.)")
+
+    unreachable: list[tuple[str, int, str, str]] = []
+    db_queries = sum(
+        doc.read_text(encoding="utf-8").count("db_query.sh") for doc in docs
+    )
+    for doc in docs:
+        for ln, cmd, why in _cannot_query_the_database(doc.read_text(encoding="utf-8")):
+            unreachable.append((doc.name, ln, cmd, why))
+    if unreachable:
+        print(f"\nCANNOT QUERY THE DATABASE — {len(unreachable)} Verification command(s) "
+              f"in {len({u[0] for u in unreachable})} document(s) reach for the `sqlite3` "
+              "CLI this tree does not depend on, or for the zero-byte stray at "
+              "~/.stackowl/stackowl.db. Both fail SILENTLY into an empty stdout, so a "
+              "check reading `| wc -l` returns 0 and 0 reads as *not yet*. Use "
+              "`./scripts/db_query.sh '<SQL>'`, which resolves the path from StackowlHome "
+              "and exits non-zero on a missing or empty database:")
+        for name, ln, cmd, why in unreachable[:12]:
+            print(f"  {name}:{ln}  {cmd[:88]}")
+            print(f"      {why}")
+        if len(unreachable) > 12:
+            print(f"  … and {len(unreachable) - 12} more")
+    elif db_queries:
+        print(f"\nCANNOT QUERY THE DATABASE — none, across {db_queries} database "
+              "query/queries on runnable Verification commands; every one goes through "
+              "`scripts/db_query.sh`. (The denominator is printed because a silent "
               "detector and a clean corpus look identical.)")
 
     watched = 0

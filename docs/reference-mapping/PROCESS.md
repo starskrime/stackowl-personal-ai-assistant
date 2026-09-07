@@ -157,6 +157,26 @@ three facts were wrong — the live database is at `~/.stackowl/workspace/stacko
 CLI is not installed on this box, and the test file does not exist. The document would have failed
 its own Verification section. It was caught by *running* the section rather than trusting it.
 
+**And writing that down was not enough — MEASURED 2026-09-07.** Eleven Verification commands
+across six design documents still invoked `sqlite3`, and ESC-73's acceptance check still named
+BOTH wrong things at once (`sqlite3 stackowl.db`), so it could never have closed on any database
+content. The failure is silent by construction: `command not found` goes to stderr and nothing to
+stdout, so a check written as `… | wc -l` reads **0**, and 0 reads as *not yet*. The stray at
+`~/.stackowl/stackowl.db` makes the same shape from the other direction — a zero-byte file that
+looks canonical and answers every question with nothing.
+
+**So query the database through `scripts/db_query.sh`, never `sqlite3`:**
+
+```bash
+./scripts/db_query.sh 'SELECT COUNT(*) FROM skills;'
+```
+
+It resolves the path from `StackowlHome` (one source, the rule `log_since.sh` already follows),
+opens read-only so a query helper can never be what writes the operator's database, and **exits
+non-zero if the database is missing or empty rather than returning an empty result set** — because
+the whole defect here is a nothing that reads as a number. `doc_check.py` reports any Verification
+command that still reaches for `sqlite3` or for the stray path.
+
 So:
 
 - Every source path, config key, default, and line count in a document is verified against the tree

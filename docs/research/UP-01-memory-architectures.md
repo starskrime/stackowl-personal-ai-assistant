@@ -168,5 +168,5 @@ grep -h "memory.execute" ~/.stackowl/logs/stackowl*.jsonl | \
   python3 -c "import sys,json,collections;c=collections.Counter();[c.update([json.loads(l).get('fields',{}).get('action')]) for l in sys.stdin];print(c)"
 
 # committed_facts is dead
-sqlite3 ~/.stackowl/workspace/stackowl.db "SELECT COUNT(*) FROM committed_facts"
+./scripts/db_query.sh "SELECT COUNT(*) FROM committed_facts"
 ```

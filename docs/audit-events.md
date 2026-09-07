@@ -83,7 +83,7 @@ Published to the EventBus (not the audit chain — too high-volume).
 
 ```bash
 # Last 50 audit rows
-sqlite3 ~/.stackowl/workspace/stackowl.db \
+./scripts/db_query.sh \
   "SELECT timestamp, event_type, actor, target FROM audit_log ORDER BY audit_id DESC LIMIT 50"
 
 # Signed export for sharing

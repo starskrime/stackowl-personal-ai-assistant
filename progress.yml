@@ -14007,8 +14007,19 @@ current:
       to mint a non-Latin-named skill, which has not happened and cannot be forced without
       real traffic in another language. The unit evidence is strong and the ASCII path is
       provably unchanged. CLOSING QUERY:
-      sqlite3 stackowl.db "SELECT name FROM skills WHERE name GLOB '*[^ -~]*'"
+      ./scripts/db_query.sh "SELECT name FROM skills WHERE name GLOB '*[^ -~]*'"
       More than one such row, with distinct canonical keys, closes it.
+      INSTRUMENT CORRECTED 2026-09-07. This said `sqlite3 stackowl.db "..."` and could
+      never have closed on any database content, because the `sqlite3` CLI is not
+      installed on this box and `stackowl.db` is a relative path that resolves to
+      nothing — the live database is `<workspace>/stackowl.db`, and the file at
+      `~/.stackowl/stackowl.db` that looks canonical is a ZERO-BYTE stray. Both facts
+      were already written down in PROCESS.md's "Evidence, not assertion" section, as
+      the worked example of a document that would fail its own Verification. A rule in
+      the method document with nothing enforcing it decays exactly as an escalation
+      premise did before `premise_check`. RE-RUN through the corrected instrument the
+      same day: 0 rows, against the real 359 MB database — so the check is still OPEN,
+      but for the first time it is ASKABLE rather than a dead end.
     NOT_DONE: "The memory-filename half of ESC-73 (Falcon.md / falcon.md). Bakir authorised merging them WITH A BACKUP FIRST — that is a change to his live curated memory, and it is its own item rather than a rider on a regex fix."
   OWL_DELETE_CASCADE_2026_08_31_TWO_paths_each_cleaning_a_DIFFERENT_half:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-58."
@@ -17703,6 +17714,85 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-209
+    found: 2026-09-07
+    what: >-
+      ELEVEN VERIFICATION COMMANDS AND ONE ACCEPTANCE CHECK COULD NOT REACH THE DATABASE
+      THEY ASKED ABOUT, AND THE RULE THAT SAYS SO HAS BEEN IN THE METHOD DOCUMENT SINCE
+      D01.6. The `sqlite3` CLI is not installed on this box (`command -v sqlite3` finds
+      nothing) and `~/.stackowl/stackowl.db` is a ZERO-BYTE stray from 2026-07-25 while
+      the live database is `<workspace>/stackowl.db` — 359 MB, 73 tables. PROCESS.md's
+      "Evidence, not assertion" section records BOTH facts, as its worked example of a
+      document that would fail its own Verification section. Measured while re-verifying
+      D08.4: 11 commands across six design documents still invoked `sqlite3`, and ESC-73's
+      acceptance check named both wrong things at once (`sqlite3 stackowl.db`).
+    why_not_what: >-
+      The rule lived in prose and nothing executed it. That is the identical decay
+      `premise_check` fixed for an escalation's premise, `closing_check` fixed for a
+      partial stage's evidence, and doc_check's staleness header fixed for a document's
+      sources — this is the FOURTH instance of one cure, and the first three were all
+      built for exactly this reason. Writing a fact down does not keep it true anywhere
+      but where it is written.
+    why_it_survived_being_written_down: >-
+      The failure is silent by construction. `command not found` goes to stderr and
+      nothing goes to stdout, so a check shaped `... | wc -l` reads 0 — and 0 reads as
+      *not yet*, never as *wrong instrument*. The stray path makes the identical shape
+      from the other side: a real file, a successful open, and no rows in it, ever.
+      ESC-73's check has been ACCEPTANCE_CHECK_OPEN since 2026-08-31 and could not have
+      closed on any database content in that time.
+    the_fix: >-
+      `scripts/db_query.sh '<SQL>'` — resolves the path from StackowlHome (one source,
+      the rule log_since.sh already follows and a cross-cutting tripwire already
+      enforces), opens `mode=ro` so a query helper can never be what writes the
+      operator's database, and EXITS NON-ZERO on a missing or empty database rather than
+      returning an empty result set, because the whole defect is a nothing that reads as
+      a number. All 11 sites converted and RE-RUN, not merely edited; ESC-73's check
+      re-run through it returns 0 rows against the real database, so it is still open but
+      for the first time it is ASKABLE. doc_check gained CANNOT QUERY THE DATABASE with a
+      denominator; PROCESS.md now carries the runnable answer beside the lesson.
+    the_detector_read_its_own_explanation_again: >-
+      Third time in this file. The first version flagged D01.2:397 — the note that says
+      "sqlite3 is NOT installed on this box; query through Python instead:" — which is
+      bare prose INSIDE a fence, so scoping to fenced non-comment lines could not exclude
+      it. Cured by requiring an ARGUMENT shape after the binary (a quote, a path, a flag,
+      a variable), which excludes every English sentence by construction rather than by a
+      word list. Controlled both ways: 3 real shapes caught, prose and the cure rejected.
+    a_vacuous_assertion_caught_by_MUTATION_not_by_review: >-
+      The helper guard first asserted `"mode=ro" in body`. Mutating the connect call to a
+      writable one left it GREEN, because the phrase also appears in the script's own
+      READ-ONLY BY CONSTRUCTION comment. A string present in a file proves nothing about
+      the line that runs. Re-asserted on the connect call itself; the same mutation now
+      kills it. Both mutations restored from file copies and re-run green.
+    D08_4_the_item_this_was_found_under: >-
+      D08.4 was the oldest stale document (verified 2026-08-30, sources moved 2026-09-07)
+      and its STANDING WATCH is now CLOSED on the watch's own criterion — a non-zero
+      curated-write count with no file carrying a stray delimiter. Measured: 55 curated
+      writes across every retained log (37 add, 15 replace, 3 remove), 29 of them on or
+      after the day the containment fix shipped, the most recent 2026-09-07; and I1
+      checked against the REAL PARSER rather than the raw-count proxy — 19 files, 64
+      entries, 0 violations. I3's denominator was the wrong line (it counted assemble's
+      `curated memory in prompt`, one step downstream of the branch) and now counts the
+      emitter's own sibling `[curated] snapshot: frozen`: 12 resolutions since boot, 3,760
+      across every retained log, 0 warnings ever. I3 stays OPEN as NO OPPORTUNITY with a
+      real denominator — the branch needs an unresolvable target and the live registry
+      holds 11 owls with zero non-ASCII characters between them.
+    and_349_lines_moved_under_D08_4_unrecorded: >-
+      `memory/curated.py` grew by 349 lines since `6ef4b0f5`. Two land on surfaces D08.4
+      makes claims about: a target-alias map now sits in front of I3's branch (wired at
+      orchestrator.py:895, so not a seat) and makes that branch HARDER to reach, and
+      UNTIL_CHANGED_RESERVE_SHARE bounds the tier above decay — D08.4's proportion concern
+      one tier up. Neither changes an I-invariant; both are now recorded, because a
+      document whose Source grew by 349 lines and said nothing is what stale looks like.
+    two_readings_I_corrected_before_they_reached_a_document: >-
+      (a) I read a jq stderr line as an ABORT and nearly filed "one malformed log line
+      truncates every jq query". Controlled it: jq emitted 613,032 records against 613,031
+      conforming lines, exit 0 — the instrument complained and did not lie. There is
+      exactly ONE malformed line in the whole retained corpus, 271 NUL bytes in
+      stackowl-2026-09-05.jsonl, and no evidence it is systematic. (b) I queried the owls
+      table through the `sqlite3` CLI, got "command not found", and the python fallback
+      beside it reported "0 rows with a non-ASCII character" — a 0 over a 0, from empty
+      input. That is the defect above, caught happening to me while I was measuring it.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-208
     found: 2026-09-07
     what: >-
