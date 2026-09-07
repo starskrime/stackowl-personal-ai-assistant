@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT175_2026_09_07_the_document_that_reproduced_exactly_and_why_that_is_the_finding:
+    map_check: >-
+      D05.6 — a MAPPED item and the oldest stale document. Verification RUN, not trusted,
+      mutations included.
+    THE_FINDING_IS_THAT_NOTHING_WAS_WRONG: >-
+      Seven documents into this sweep, every one had carried something — a retracted
+      premise, a step that failed on correct behaviour, a broken query, a count that was
+      never producible. D05.6 carried NOTHING. Steps 2, 3 and 5 came back EXACTLY as
+      written. That is worth recording precisely because the streak made it tempting to
+      expect a defect and go looking until one appeared.
+    THE_MUTATIONS_REPRODUCED_TO_THE_TEST_NAME: >-
+      M8 (stripper returns the description unchanged) still fails exactly FOUR:
+      a_sentence_naming_an_absent_tool_is_dropped, a_different_capability_is_NOT_exempt,
+      a_narrow_presented_set_strips_the_dangling_hints, and
+      the_first_sentence_is_never_dropped_even_when_it_names_an_absent_tool. M9 (drop the
+      same-capability exemption) still fails exactly ONE,
+      same_capability_references_are_exempt. Both restored from a FILE COPY with the suite
+      green afterwards.
+    STEP_5_HOLDS_ON_THE_STRONGER_PROPERTY: >-
+      The document claims that with the full catalog presented the hints survive. Measured,
+      the descriptions come back BYTE-IDENTICAL — `strip_dangling_references` returns the
+      same object contents, not merely a string that still contains the words. That is the
+      property the docstring actually cares about, since D05.2 memoizes this output and an
+      unnecessary rewrite would be a pointless cache difference.
+    WHAT_I_DID_NOT_CLAIM: >-
+      Step 1's premise re-measures close but not exactly — 77 registered tools matches
+      exactly, 39 schemas naming another against a recorded 40, 75 references against 78.
+      I did NOT record that as drift. My re-measurement used a different method from the
+      original (a word-boundary scan over descriptions), and description edits alone would
+      move it. A three-reference difference between two different methods is not evidence
+      of anything, and calling it drift would manufacture a finding.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change survives; both mutations were applied, measured
+      and restored from a file copy, with 12 passed afterwards as the proof the restore
+      happened. Step 4's neighbours have grown (312 from 209) and are now asserted as `0
+      failed` rather than pinned.
+    document_reason: >-
+      D05.6 IS the document, re-stamped 2026-09-07 with the mutation results named to the
+      test, and with the honest note that its premise re-measures approximately rather
+      than exactly.
   DEBT174_2026_09_07_a_security_boundary_re_proven_by_mutation_not_by_a_green_suite:
     map_check: >-
       D05.5 — a MAPPED item and the oldest stale document. It INVERTS A DEFAULT-DENY, so
