@@ -234,6 +234,76 @@ class DailyJsonlRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
     breaking log reading.
     """
 
+    def _dated_target(self) -> str:
+        """The rotated filename this handler is about to create.
+
+        Reproduces the stdlib's own computation in ``doRollover`` so the two agree on
+        which file "already rolled over" means. Kept faithful to the DST branch even
+        though ``setup_logging`` always passes ``utc=True`` — a class that lies about a
+        case it does not exercise is a trap for whoever exercises it later.
+        """
+        current_time = int(time.time())
+        t = self.rolloverAt - self.interval
+        if self.utc:
+            time_tuple = time.gmtime(t)
+        else:
+            time_tuple = time.localtime(t)
+            dst_now = time.localtime(current_time)[-1]
+            if dst_now != time_tuple[-1]:
+                time_tuple = time.localtime(t + (3600 if dst_now else -3600))
+        return self.rotation_filename(
+            self.baseFilename + "." + time.strftime(self.suffix, time_tuple)
+        )
+
+    def _follow_rotation(self, dated: str) -> None:
+        """Another process rotated first — reopen the base file and say so.
+
+        THE STDLIB LEAVES THIS HALF UNDONE, and it is the whole defect. Python 3.14's
+        ``doRollover`` refuses the rename when the dated file exists, which is right: it
+        is what stops a second process DELETING the first one's rotated log, as older
+        versions did. But it returns with the stale stream still open and ``rolloverAt``
+        still in the past, so the handler neither follows the rotation nor stops trying —
+        it keeps writing to the RENAMED INODE and re-enters this method on every record.
+
+        MEASURED 2026-09-07: `stackowl-2026-09-06.jsonl` holds 326 records dated 09-07,
+        00:00:18 to 00:36:58, ending on the core's own exec-replace line, while
+        `stackowl.jsonl` said nothing between 00:00:01 and 00:36:54. Four entry points in
+        ``cli/app.py`` call ``setup_logging``, so gateway, core and CLI each own a handler
+        on one path; only the one that wins the rename ever reopened.
+
+        The notice is INFO and goes into the file it describes, so the first records of a
+        new day name who followed whom. Production runs at INFO; evidence that only exists
+        at DEBUG has already cost this programme a claim that could never close.
+        """
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        self.stream = self._open()
+        # ADVANCE BEFORE LOGGING. The notice below re-enters this handler, and a
+        # `rolloverAt` still in the past would send it straight back into doRollover.
+        self.rolloverAt = self.computeRollover(int(time.time()))
+        # Logged through the named logger rather than written to the stream directly, so
+        # the AST walk in `test_a_closing_check_looks_for_evidence_that_can_exist` can SEE
+        # this emitter. A closing check may only wait for a string some `log.*` call
+        # actually emits; a hand-written stream line would have needed an exemption, and
+        # an exemption is a hole in the one guard that stops unclosable claims. The
+        # handler lock is an RLock, so the re-entrant emit on this thread is safe.
+        log.startup.info(
+            "[logging] another process rotated the log — reopened the current file",
+            extra={"_fields": {
+                "rotated_to": Path(dated).name,
+                "now_writing": Path(self.baseFilename).name,
+            }},
+        )
+
+    def doRollover(self) -> None:  # noqa: N802 — stdlib override
+        """Rotate, or FOLLOW a rotation another process already performed."""
+        dated = self._dated_target()
+        if os.path.exists(dated):
+            self._follow_rotation(dated)
+            return
+        super().doRollover()
+
     def getFilesToDelete(self) -> list[str]:  # noqa: N802 — stdlib override
         """Rotated files beyond ``backupCount``, oldest first.
 

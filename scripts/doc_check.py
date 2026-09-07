@@ -322,8 +322,12 @@ def main() -> int:
         docs_hit = len({r[0] for r in single_log})
         print(f"\nBLIND AFTER MIDNIGHT — {len(single_log)} Verification command(s) in "
               f"{docs_hit} document(s) query `stackowl.jsonl` instead of the "
-              "`stackowl*.jsonl` glob. The CORE keeps writing to the ROTATED file after "
-              "rotation, so these return 0 and look like a check that passed:")
+              "`stackowl*.jsonl` glob, so they see only TODAY and return 0 for anything "
+              "older — which reads as *not yet*, never as *wrong instrument*. The cause "
+              "that made this worse is FIXED (DEBT-196: a second process now follows a "
+              "rotation instead of writing on into the renamed file), but the retained "
+              "logs still hold the misplaced records, and a single-file query is blind "
+              "to every previous day regardless:")
         for name, ln, line in single_log[:12]:
             print(f"  {name}:{ln}  {line[:88]}")
         if len(single_log) > 12:

@@ -315,6 +315,58 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT196_2026_09_07_the_cause_under_43_broken_queries_a_second_process_never_followed_the_rotation:
+    map_check: >-
+      No mapped item — "The ground is clear." Evidence-led: this is the CAUSE under
+      doc_check's BLIND AFTER MIDNIGHT report, which had 43 commands in 22 documents.
+      Draining those one per loop was fixing the symptom twenty-two times.
+    THE_MEASUREMENT_THAT_NAMES_BOTH_PROCESSES: >-
+      MEASURED 2026-09-07 across three consecutive midnights.
+      stackowl-2026-09-06.jsonl holds 326 records DATED 2026-09-07, 00:00:18 to 00:36:58,
+      ending on "[startup] core: exec-replacing with fresh code" — the CORE, writing into
+      the rotated file until CodeWatcher restarted it 37 minutes later. Over the same
+      window stackowl.jsonl opened at 00:00:01 and then said NOTHING until 00:36:54, when
+      a GATEWAY line appears. Same shape the two midnights before: 748 records dated 09-06
+      inside the 09-05 file, 23 dated 09-05 inside the 09-04 file. Four entry points in
+      cli/app.py call setup_logging, so gateway, core and any CLI command each own a
+      TimedRotatingFileHandler on ONE path; rotation is an in-process rename and only the
+      winner ever reopened.
+    THE_DEFECT_IS_IN_THE_STDLIBS_OWN_MULTIPROCESS_CONCESSION: >-
+      Python 3.14's doRollover opens with `if os.path.exists(dfn): return`. That refusal is
+      RIGHT — it is what stops the second process DELETING the first one's rotated log, as
+      older versions did. But it returns with the stale stream still open and rolloverAt
+      still in the past, so the handler neither follows the rotation nor stops trying: it
+      re-enters doRollover on every subsequent record, stats the directory, returns again,
+      and writes to the renamed inode the whole time. Overriding doRollover to FOLLOW
+      instead of merely refuse is the whole fix.
+    THE_NOTICE_IS_LOGGED_NOT_WRITTEN_AND_THAT_WAS_DELIBERATE: >-
+      The first version hand-wrote the notice to the stream through the formatter. That
+      works and would have needed an _INDIRECT_EMITTERS exemption in
+      test_a_closing_check_looks_for_evidence_that_can_exist, whose AST walk only sees
+      `log.*.info(<literal>)`. An exemption is a hole in the one guard that stops
+      unclosable claims, so the notice goes through log.startup.info instead — visible to
+      the guard, no duplicated formatting, and safe because the handler lock is an RLock.
+      rolloverAt is advanced BEFORE the notice is logged, or the re-entrant emit would go
+      straight back into doRollover.
+    THE_TEST_HAD_TO_REPLICATE_PRODUCTION_WIRING_NOT_LOWER_THE_BAR: >-
+      The notice test failed at first because a bare test process leaves the `stackowl`
+      logger NOTSET — effective level WARNING — so an INFO record is dropped before it
+      reaches any handler. setup_logging sets INFO. The test now installs the follower
+      handler on the logger AND sets INFO, which is what a real process does, and states
+      the real precondition: this evidence exists only while the platform runs at INFO.
+    changes: >-
+      src/stackowl/infra/observability.py (_dated_target, _follow_rotation, doRollover
+      override), tests/infra/test_a_second_process_follows_the_rotation.py (new, 4 tests
+      including a control that a lone handler still rotates; 3 mutants killed),
+      scripts/doc_check.py (the BLIND AFTER MIDNIGHT report stated the OLD cause as
+      present tense — the fifth surface).
+    stages: {brainstorm: done, architect: no_change_needed, implement: done,
+      cleanup: done, test: done, validate: partial, document: no_change_needed}
+    the_closing_check_lives_in_known_debt: >-
+      DEBT-196 in `known_debt`, because THAT is where validate_check.py reads them —
+      it walks `items` and `known_debt`, never `current`. A check written here would
+      be a prose promise in the one place that looks like the right place. Measured
+      the same day on the escalation report: 36 such promises exist in 35 records.
   DEBT195_2026_09_07_a_status_marker_written_before_the_outcome_and_never_updated:
     map_check: >-
       D13.1 — surface count. Reached from the OPEN BUT NOT TRACKED report; its
@@ -17049,6 +17101,32 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-196
+    found: 2026-09-07
+    what: >-
+      A SECOND PROCESS NEVER FOLLOWED THE LOG ROTATION. Four entry points in cli/app.py
+      call setup_logging, so gateway, core and any CLI command each own a
+      TimedRotatingFileHandler on one ~/.stackowl/logs/stackowl.jsonl. Rotation is an
+      in-process rename: whoever fires first renames and reopens, and every other process
+      keeps an open descriptor on the RENAMED INODE. Measured over three midnights —
+      stackowl-2026-09-06.jsonl holds 326 records dated 09-07 (00:00:18 to 00:36:58,
+      ending on the core's own exec-replace line) while stackowl.jsonl said nothing
+      between 00:00:01 and 00:36:54; 748 dated 09-06 in the 09-05 file; 23 dated 09-05 in
+      the 09-04 file.
+    why_it_is_the_cause_and_not_a_symptom: >-
+      doc_check's BLIND AFTER MIDNIGHT report listed 43 Verification commands in 22
+      documents that grep the single file. Draining them one document per loop was fixing
+      the symptom twenty-two times. This is what made them wrong.
+    the_defect_precisely: >-
+      Python 3.14's doRollover returns early when the dated file already exists. That
+      refusal is correct — it stops the second process DELETING the first one's rotated
+      log — but it returns with the stale stream open and rolloverAt still in the past, so
+      the handler neither follows the rotation nor stops trying. doRollover is now
+      overridden to FOLLOW: close, reopen the base file, advance rolloverAt, and say so at
+      INFO through log.startup so the closing check has evidence that can exist.
+    stages: {validate: partial}
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-07 'another process rotated the log'); if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n follow-the-rotation notices since the fix shipped"; else echo "OPEN — 0 notices; needs a UTC midnight with BOTH gateway and core alive, and the core re-execs often enough (70% of boots are CodeWatcher) that it may reopen on its own before one arrives"; fi
   - id: DEBT-164
     found: 2026-09-07
     what: >-
