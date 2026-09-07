@@ -315,6 +315,77 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT194_2026_09_07_my_own_report_named_a_verdict_and_one_of_them_was_a_LIVE_question:
+    map_check: >-
+      No mapped item — draining the CITED AS OPEN report shipped in DEBT-193, and
+      correcting the report itself, which was the actual defect.
+    THE_REPORT_I_SHIPPED_ASSERTED_AN_INTERPRETATION_NOT_A_FACT: >-
+      DEBT-193 called it ANSWERED BUT STILL CALLED OPEN. That name asserts the CITATION
+      is the stale half. MEASURED 2026-09-07, one loop later: true of only THREE of five
+      sites. Two describe ESC-20's terse-compression half, which is GENUINELY OPEN —
+      "STILL OPEN: whether a scheduled briefing should be compressed at all", pinned by
+      test_terse_does_NOT_compress_a_scheduled_briefing — and had simply FALLEN OUT of
+      the queue. A reader trusting my name would have deleted the last live record of an
+      unanswered product question and called it tidying. Same error as the empty table
+      this codebase already names, one level up: ABSENCE IS A QUESTION, NOT AN ANSWER.
+      Renamed to CITED AS OPEN, ABSENT FROM THE QUEUE, which states the fact and names
+      both things it can mean.
+    WHY_ENTRIES_GO_MISSING_THE_ROOT_CAUSE_UNDER_THE_ROOT_CAUSE: >-
+      The queue CHANGED CONVENTION. It was a LIST that was PRUNED on answer; it is now a
+      DICT that RETAINS the entry with a `resolution` (which is exactly how escalation_check
+      filters `openq`). 480571bc (2026-08-30) restructured it and dropped every pruned
+      entry. ESC-20 was only HALF answered — its sync half shipped 2026-08-16 — and a
+      half-answered entry had NO HOME under the old convention: the moment any part
+      resolved, the whole thing looked resolved. That is why the lost one is the one that
+      was still live.
+    ESC_20_RESTORED_WITH_A_PREMISE_CHECK_AND_LIVE_NUMBERS: >-
+      Restored to ESCALATIONS (queue 56 -> 57) and it RUNS: "HOLDS long proactive sends
+      still uncompressed: 2 of 11 over 1500 chars since 2026-09-01". Measured on the INFO
+      line the shipped half emits, which carries before_len/after_len: 13 styled proactive
+      sends since 08-28, median 349 chars, and the largest — a morning_brief on 09-02 —
+      went 3,548 -> 3,524, a 0.7% reduction. One send GREW (objective, 2,466 -> 2,497).
+      So the long messages he actually receives still go out uncompressed, which is
+      precisely what the escalation said and what the shipped half never claimed to fix.
+    THE_OTHER_THREE_WERE_STALE_AND_ONE_FILE_CONTRADICTED_ITSELF_AGAIN: >-
+      ESC-12 ANSWERED 2026-08-15 (the gateway reports no cache statistics at all, so a hit
+      is structurally unobservable; ESC-149 settled the consequence on 2026-09-05 — assume
+      no caching, so the frozen prefix is a real recurring cost). Cited as open in
+      skills/store.py:421 and its test; both now say the churn matters MORE, not less.
+      ESC-22 ANSWERED 2026-08-21 — "deliver the floor already earned" — and
+      test_escalation_that_changes_nothing_is_visible.py opened by calling it "open with
+      Bakir. A test below pins that the re-run still happens" while its own
+      test_the_identical_re_run_IS_SKIPPED records the answer 85 lines later. SECOND file
+      found contradicting itself this way in two loops.
+    AND_THE_DETECTOR_ITSELF_HAD_TWO_DEFECTS_I_SHIPPED_LAST_LOOP: >-
+      FOURTH false-positive shape: rewriting the report to EXPLAIN itself made it report
+      its own docstring. A detector that reads prose will eventually read its own; that
+      file joins tests/audit in the skip list, both holding explanatory text ABOUT
+      findings rather than findings. AND IT WAS SLOW BY CONSTRUCTION: it filtered paths
+      AFTER rglob had traversed them — 122,273 paths, 48,849 candidate files, 48.3s on
+      EVERY run, essentially all of it .venv (5.7 GB, 18,988) and .uv-cache (5.8 GB,
+      21,960). Pruned by name during os.walk: 2.3s, identical 7 sites. The second attempt
+      over-corrected and dropped every DOT-directory, which would have taken .claude/skills
+      — the surface this loop reads on every invocation — dark to save nothing; the prune
+      list is now names only, and both halves are pinned by a test.
+    THE_GATE_BLOCKED_THE_FIRST_COMMIT_AND_WAS_RIGHT: >-
+      test_no_bytecode_outlives_its_source FAILED on
+      tests/audit/__pycache__/test_an_answered_escalation_is_not_still_being_asked.pyc —
+      `git mv` renames the SOURCE and leaves the compiled module behind, which is
+      "retired means deleted" one surface lower than the five that rule already names.
+      Deleted, gate re-run bare: 170 passed (was 169 + 1 failed), TRIPWIRES PASS, ruff 35,
+      mypy 65. Third time this guard has caught this loop; it is why the commit is chained
+      to $? and never to `git add`.
+    changes: >-
+      scripts/escalation_check.py (report renamed to state the fact, self-skip, os.walk
+      with a measured prune list), progress.yml (ESC-20 restored with a runnable
+      premise_check), src/stackowl/skills/store.py + tests/skills/test_esc11_*.py (ESC-12
+      answered), tests/providers/test_escalation_that_changes_nothing_is_visible.py
+      (ESC-22 answered; the docstring described the opposite of its own test),
+      tests/audit/test_an_escalation_cited_as_open_still_resolves.py (renamed from
+      test_an_answered_escalation_is_not_still_being_asked.py — the old name asserted the
+      verdict this item removed; 7 tests, 4 mutants killed).
+    stages: {brainstorm: done, architect: no_change_needed, implement: done,
+      cleanup: done, test: done, validate: done, document: no_change_needed}
   DEBT193_2026_09_07_an_answered_escalation_kept_being_asked_for_seventeen_days:
     map_check: >-
       D04.1 — both tool loops conform. Reached from the OPEN BUT NOT TRACKED report
@@ -13660,6 +13731,49 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_20_should_a_scheduled_briefing_be_COMPRESSED_at_all:
+      RESTORED: >-
+        RESTORED TO THE QUEUE 2026-09-07. This is not a new question — it is ESC-20's
+        second half, raised 2026-08-16 and never answered, which fell out of the queue on
+        2026-08-30 when `480571bc` restructured ESCALATIONS from a pruned LIST to a
+        retained DICT. Its FIRST half shipped that same week, and a half-answered entry
+        had no home under the old convention: the moment any part resolved, the whole
+        entry looked resolved and was pruned. It was found again only because two live
+        code sites still cite it as open and a report now checks that such an id resolves.
+      question: >-
+        Should a proactive/scheduled message obey the TERSE half of the user's
+        OutputStyle — i.e. be LLM-compressed before sending? The sync half (markdown,
+        tables, emoji, links) shipped 2026-08-16 and is live.
+      why_evidence_cannot_settle_it: >-
+        It is a product call about what a scheduled briefing should LOOK like, not a bug.
+        Compression costs one extra fast-tier call per scheduled send, and it would
+        rewrite an agent's deliberately-formatted briefing. Evidence can size the problem
+        and has; it cannot decide whether a 3,548-character morning brief is too long or
+        exactly right.
+      what_was_measured: >-
+        MEASURED 2026-09-07 over every retained log, on the INFO line the sync half emits
+        ("[notifications] deliverer: output style applied to a proactive message", which
+        carries before_len/after_len). 13 styled proactive sends since 2026-08-28. The
+        sync transforms move almost nothing: median 349 chars before, and the largest —
+        a morning_brief on 2026-09-02 — went 3,548 -> 3,524, a 0.7% reduction. One send
+        GREW (objective, 2,466 -> 2,497). Two of thirteen exceeded 2,000 chars. So the
+        long messages Bakir actually receives are still going out uncompressed, which is
+        precisely the gap the original escalation named; the shipped half did not close
+        it and was never claimed to.
+      recommendation: >-
+        SHIP IT FOR BRIEFINGS ONLY, behind the same OutputStyle the turn path already
+        reads. The two sends over 2,000 chars are both scheduled digests; the 349-char
+        median means the extra fast-tier call would almost never fire. But this removes
+        an agent's control over its own formatting, which is why it is his call.
+      blocks: >-
+        Nothing is blocked. It is why "make replies shorter" still looks half-done: the
+        messages he finds long are the ones terse does not reach.
+      pinned_by: >-
+        tests/notifications/test_proactive_message_obeys_output_style.py::
+        test_terse_does_NOT_compress_a_scheduled_briefing — the boundary cannot be
+        crossed without answering this.
+      premise_check: >-
+        uv run python -c "import json,glob;r=[json.loads(l) for f in sorted(glob.glob('/home/boss/.stackowl/logs/stackowl*.jsonl')) for l in open(f,errors='replace') if 'output style applied to a proactive message' in l];r=[x for x in r if x['ts'][:10]>='2026-09-01'];b=[(x.get('fields') or {}).get('before_len') or 0 for x in r];n=sum(1 for x in b if x>1500);print('HOLDS long proactive sends still uncompressed: %d of %d over 1500 chars since 2026-09-01' % (n,len(b)) if n else 'EXPIRED no proactive send over 1500 chars since 2026-09-01 in %d styled sends' % len(b))"
     ESC_156_should_the_memory_nudge_be_seeded_like_the_skill_nudge:
       question: >-
         Should the MEMORY nudge be seeded from the durable per-lane turn count, the way

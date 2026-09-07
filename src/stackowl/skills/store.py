@@ -418,8 +418,12 @@ class SkillIndexStore(OwnedRepository):
 
         FIRES ONLY ON A REAL CHANGE. Every startup re-scan calls upsert for every
         skill; invalidating on all of them would drop every memoized array on each
-        scan and cause exactly the per-turn prefix churn that ESC-12 is open to
-        fix. A no-op re-scan must stay a no-op.
+        scan and cause exactly the per-turn prefix churn this deployment can least
+        afford. ESC-12 was ANSWERED 2026-08-15 — the gateway reports no cache
+        statistics at all, so a cache hit is structurally unobservable here — and
+        ESC-149 settled the consequence on 2026-09-05: assume it does NOT cache, so
+        the frozen prefix is a real recurring cost rather than a discounted one. That
+        makes the churn worse, not moot. A no-op re-scan must stay a no-op.
         """
         if before == _COUPLING_UNREADABLE:
             return

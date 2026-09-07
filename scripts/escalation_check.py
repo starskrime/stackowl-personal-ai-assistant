@@ -28,6 +28,7 @@ Usage:  uv run python scripts/escalation_check.py
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -77,52 +78,98 @@ def _blank_quotes(text: str) -> str:
 #: `CLAUDE.md` draws for the "it hangs" sweep. `tests/audit/` is excluded for a
 #: different reason: those files quote the corpus verbatim as FIXTURES, so a detector
 #: scanning them reports its own test data back to itself.
+#: `/tests/audit/` and this file itself are excluded for the same reason: both hold
+#: EXPLANATORY text about the finding rather than the finding. The audit tests quote the
+#: corpus verbatim as fixtures; this script's own docstring has to say "ESC-20 is
+#: genuinely open" in order to tell a reader what the report means. That was the FOURTH
+#: false-positive shape, and it appeared the moment the report was rewritten to explain
+#: itself — a detector that reads prose will always eventually read its own.
 _SKIP = (
     "do_not_push_to_git_research_only", "/.git/", "docs_archive", "_bmad-output",
-    "graphify-out", "/tests/audit/",
+    "graphify-out", "/tests/audit/", "/scripts/escalation_check.py",
 )
+
+#: Directory names pruned during the walk, never entered. MEASURED 2026-09-07: the first
+#: version filtered paths AFTER `rglob("*")` had already traversed them — 122,273 paths
+#: and 48,849 candidate files, taking **48.3 seconds on every run of this script**,
+#: almost all of it reading `.venv` (5.7 GB). Pruning is not only speed: a vendored
+#: library docstring that happens to say "ESC-12 is open" would have been REPORTED as a
+#: finding in this repo's own record.
+_PRUNE = {
+    ".venv", "venv", ".git", ".uv-cache", "node_modules", "__pycache__", ".mypy_cache",
+    ".pytest_cache", ".ruff_cache", "graphify-out", "do_not_push_to_git_research_only",
+    "_bmad-output", "htmlcov", ".tox", "dist", "build", ".idea", ".vscode",
+}
+
+#: Every one of these was MEASURED, not assumed. `.venv` (5.7 GB, 18,988 candidate
+#: files) and `.uv-cache` (5.8 GB, 21,960) are the whole cost: 48.3s -> 2.3s. The
+#: dot-directories that REMAIN are the point — `.claude/skills/` is a live instruction
+#: surface the loop reads on every invocation, `.agents` and `.github` likewise, and
+#: pruning them by prefix would have taken all three dark to save nothing.
 
 
 def _still_called_open(live: set[int]) -> list[tuple[str, int, list[int], str]]:
-    """Sites calling an escalation open that is no longer in the queue.
+    """Sites calling an escalation open whose id is no longer in the queue.
 
-    WHY THIS IS THE SAME CURE AGAIN. An OPEN escalation has a `premise_check` and this
-    script re-runs it. An ANSWERED one is DELETED from the queue — so nothing re-reads
-    the sites that cited it, and every one of them keeps asking a question the operator
-    already settled. `tests/audit/test_a_settled_decision_is_not_contradicted_by_the_record`
-    named this exact gap in its own docstring and deferred building it.
+    IT REPORTS A FACT, NOT A VERDICT, and the first version of this got that wrong. It
+    was called ANSWERED BUT STILL CALLED OPEN, which asserts the citation is the stale
+    half. **Measured 2026-09-07, one loop later, that was true of only three of five
+    sites.** Two describe ESC-20's terse-compression half, which is GENUINELY OPEN —
+    "STILL OPEN: whether a scheduled briefing should be compressed at all", pinned by
+    `test_terse_does_NOT_compress_a_scheduled_briefing` — and had simply FALLEN OUT of
+    the queue. A reader trusting the old name would have deleted the last live record of
+    an unanswered product question and called it tidying. Same error one level up as the
+    empty table this codebase already names: absence is a QUESTION, not an answer.
 
-    MEASURED 2026-09-07, and the cost was 17 days: ESC-25 was answered by Bakir on
-    2026-08-21 — "dispatch first, on both loops, deliberately", his call against my
-    recommendation, removed from the queue in `3306a340` and pinned by
-    `test_dispatch_precedes_the_callback_on_both_BY_DECISION`. D04.1 went on calling it
-    OPEN in three places, and `test_both_tool_loops_conform.py` contradicted ITSELF —
-    line 180 "the order question is still open", line 212 "ANSWERED 2026-08-21".
+    So the two things it can mean are named, and neither is assumed:
+      * the escalation was ANSWERED and the citation went stale — fix the citation;
+      * the citation is RIGHT and the entry was LOST — restore the entry.
+
+    WHY ENTRIES GO MISSING AT ALL, which is the root cause and not a slip. The queue
+    changed convention: it used to be a LIST that was PRUNED on answer, and is now a DICT
+    that RETAINS the entry with a `resolution` (which is how `openq` above filters). The
+    restructure in `480571bc` (2026-08-30) dropped every pruned entry — and ESC-20, only
+    HALF answered, went with them. A half-answered escalation had no home under the old
+    convention: the moment any part resolved, the whole entry looked resolved.
+
+    WHAT IT COST, measured: ESC-25 was answered by Bakir on 2026-08-21 and D04.1 called
+    it open for seventeen days. ESC-22 was answered the same day — "deliver the floor
+    already earned" — and `test_escalation_that_changes_nothing_is_visible.py` still
+    opens by saying it is "open with Bakir" while its own
+    `test_the_identical_re_run_IS_SKIPPED` records the answer 85 lines later. That is the
+    SECOND file found contradicting itself this way.
 
     63 dangling ids are cited across the tree and MOST are correct: an answer recorded
     at the site it changed is exactly right. Only a PRESENT-TENSE open claim is a
     finding, which is why this reads the sentence and not just the id.
     """
     out: list[tuple[str, int, list[int], str]] = []
-    for path in sorted(_ROOT.rglob("*")):
-        rel = str(path.relative_to(_ROOT))
-        if path.suffix not in (".md", ".py", ".yml"):
-            continue
-        if rel == "progress.yml" or any(s in f"/{rel}" for s in _SKIP):
-            continue
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        lines = raw.splitlines()
-        unquoted_lines = _blank_quotes(raw).splitlines()
-        for i, line in enumerate(lines, 1):
-            ids = [int(n) for n in _ESC_REF.findall(line)]
-            unquoted = unquoted_lines[i - 1] if i <= len(unquoted_lines) else line
-            if not ids or not _OPEN_NOW.search(unquoted) or _PAST_TENSE.search(unquoted):
+    for dirpath, dirnames, filenames in os.walk(_ROOT):
+        # Prune by NAME only. An earlier version also dropped every dot-directory,
+        # which would have made `.claude/skills/` invisible — a LIVE INSTRUCTION surface
+        # the loop reads on every invocation. The caches that matter are named below;
+        # blanket-excluding a prefix is how a surface goes dark without anyone choosing it.
+        dirnames[:] = sorted(d for d in dirnames if d not in _PRUNE)
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            rel = str(path.relative_to(_ROOT))
+            if path.suffix not in (".md", ".py", ".yml"):
                 continue
-            if dangling := [n for n in ids if n not in live]:
-                out.append((rel, i, dangling, line.strip()))
+            if rel == "progress.yml" or any(s in f"/{rel}" for s in _SKIP):
+                continue
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            lines = raw.splitlines()
+            unquoted_lines = _blank_quotes(raw).splitlines()
+            for i, line in enumerate(lines, 1):
+                ids = [int(n) for n in _ESC_REF.findall(line)]
+                unquoted = unquoted_lines[i - 1] if i <= len(unquoted_lines) else line
+                if not ids or not _OPEN_NOW.search(unquoted) or _PAST_TENSE.search(unquoted):
+                    continue
+                if dangling := [n for n in ids if n not in live]:
+                    out.append((rel, i, dangling, line.strip()))
     return out
 
 
@@ -162,11 +209,12 @@ def main() -> int:
     live = {int(m.group(1)) for k in esc if (m := _ESC_REF.search(str(k)))}
     if stale := _still_called_open(live):
         ids = sorted({n for _f, _l, dang, _t in stale for n in dang})
-        print(f"\nANSWERED BUT STILL CALLED OPEN — {len(stale)} site(s) describe "
-              f"{len(ids)} escalation(s) as open that are no longer in the queue "
-              f"{['ESC-%d' % n for n in ids]}. An answered escalation is DELETED from "
-              "the queue, so nothing re-reads what cited it — the operator is asked "
-              "again for a decision he already made:")
+        print(f"\nCITED AS OPEN, ABSENT FROM THE QUEUE — {len(stale)} site(s) describe "
+              f"{len(ids)} escalation(s) as open whose id is not in `ESCALATIONS` "
+              f"{['ESC-%d' % n for n in ids]}. Read each before acting: EITHER it was "
+              "answered and the citation is stale (fix the citation), OR the citation "
+              "is right and the entry was LOST (restore the entry, with a "
+              "premise_check). Do not assume the first — ESC-20 was the second:")
         for rel, ln, dang, text in stale:
             print(f"  {rel}:{ln}  {['ESC-%d' % n for n in dang]}")
             print(f"        {text[:96]}")

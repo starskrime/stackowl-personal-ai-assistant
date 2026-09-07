@@ -15,7 +15,11 @@ at runtime is the intended path rather than an edge case.
 
 THE NEGATIVE TEST IS THE LOAD-BEARING ONE. Every startup re-scan calls `upsert`
 for every skill. Invalidating on all of them would drop every memoized array on
-each scan — which is precisely the per-turn prefix churn ESC-12 is open to fix.
+each scan — precisely the per-turn prefix churn this deployment can least afford.
+ESC-12 was ANSWERED 2026-08-15 (the gateway reports no cache statistics, so a hit
+is unobservable here) and ESC-149 settled the consequence on 2026-09-05: assume no
+caching, so the frozen prefix is a real recurring cost. The churn therefore matters
+MORE than when this was written, not less.
 A fix that caused the bug next door would be worse than the gap it closed.
 
 RELATIONSHIP TO D01.4, which invalidates on a skill change too and is NOT this:

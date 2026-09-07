@@ -17,10 +17,18 @@ Nothing noticed, because the log line says "step up" without ever comparing the 
 steps up TO. That is the guide-star question — "if this degrades silently, what notices?"
 — answered with "nothing", on a self-heal that costs a full turn every time it fires.
 
-THIS COMMIT CHANGES NO BEHAVIOUR. Whether a no-op escalation should deliver the floor
-from the attempt already made, or re-run anyway, changes what the user receives and is
-ESC-22, open with Bakir. A test below pins that the re-run still happens, so the question
-cannot be closed by accident. What ships here is the evidence needed to answer it.
+THE COMMIT THAT ADDED THIS FILE CHANGED NO BEHAVIOUR — it shipped the evidence needed to
+answer the question. **Bakir then answered it on 2026-08-21: DELIVER THE FLOOR ALREADY
+EARNED** — when the next tier resolves to the same (provider, model), stop discarding a
+finished attempt to re-run it identically. `test_the_identical_re_run_IS_SKIPPED` below
+pins the answer, and `test_a_REAL_escalation_still_re_runs` pins that the real case is
+untouched.
+
+This paragraph said "ESC-22, open with Bakir. A test below pins that the re-run still
+happens" for seventeen days after that — describing the OPPOSITE of what the file tests,
+85 lines above the docstring recording the answer. An answered escalation used to be
+PRUNED from the queue, so nothing re-read what cited it; `escalation_check.py` now
+reports any id cited as open that the queue cannot resolve.
 """
 
 from __future__ import annotations
