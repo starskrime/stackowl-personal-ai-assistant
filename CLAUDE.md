@@ -29,6 +29,25 @@ Before any fix is called done, answer in writing: *what made this possible, and
 what else does that same cause reach?* If the answer is only a restatement of
 the symptom, the root cause has not been found yet.
 
+## EVERY LOOP FINISHES SOMETHING
+
+**Bakir, 2026-09-07: each loop must achieve the goal for that loop and make progress.**
+
+An invocation ends with something DONE and pushed — not a diagnosis handed forward, not a
+note about what the next pass should do, not thirty minutes spent watching a test run.
+The record of the work is not the work.
+
+Ruled out, each having happened here: **diagnose and defer** (a complete diagnosis filed
+as the next loop's job — if the diagnosis is done, the fix is the same loop's job);
+**blocked as an outcome** (every stage `blocked` on a full-suite run this session
+launched itself); **polling as work**.
+
+The full suite fingerprints `src/` and `tests/` only, and it is COMMITTING that voids a
+verdict, not editing — `docs/`, `scripts/` and `progress.yml` stay free the whole time.
+So never let a wait consume the loop: work the unfingerprinted part and land it after, or
+do not launch the run until the item is otherwise finished. Prefer the smallest complete
+thing over the largest partial one.
+
 ## RETIRED MEANS DELETED
 
 **Bakir, 2026-09-01: "Whatever retired should be deleted from code and we should

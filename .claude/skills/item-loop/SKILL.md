@@ -37,6 +37,35 @@ and a deletion-stale document is the one to read first. If you find dead code wh
 item rather than filing it as debt. Measure that it is unreferenced first, and
 remove the WRITER, not just the rows.
 
+## EVERY LOOP FINISHES SOMETHING
+
+**Bakir, 2026-09-07: each loop must achieve the goal for that loop and make progress.**
+
+An invocation ends with something DONE and pushed — not a diagnosis handed forward, not
+a report of what the next loop should do, not thirty minutes of watching a test run. The
+record of the work is not the work.
+
+**These are the shapes he is ruling out, and each has happened here:**
+
+* **Diagnose and defer.** A loop measured a defect completely, wrote it up, and filed the
+  fix for "the next loop". If the diagnosis is complete, the fix is the same loop's job.
+* **Blocked as an outcome.** A loop ended with every stage `blocked` on a full-suite run
+  it had launched itself. Launching a 32-minute verdict is a CHOICE; making it the
+  loop's only content is choosing to do nothing.
+* **Polling as work.** Reading a progress bar is not progress.
+
+**So: never let a wait consume the loop.** The full suite fingerprints `src/` and
+`tests/` only — `docs/`, `scripts/` and `progress.yml` are free the whole time, and
+committing is what actually voids a verdict, not editing. If a run is in flight, do the
+part of the item that does not touch the fingerprint and land it after; if there is no
+such part, DO NOT LAUNCH THE RUN until the item is otherwise finished.
+
+**And prefer the smallest complete thing over the largest partial one.** A drained
+report, a closed check, one document corrected end to end — done, gated, pushed — beats
+a deeper investigation that ends in a note. When an item genuinely cannot finish, say so
+in one line with what would unblock it, and then FINISH SOMETHING ELSE in the same loop
+rather than reporting the block as the result.
+
 ## The one rule that makes this safe
 
 **Never write a claim into `progress.yml` or a document that you did not measure.**

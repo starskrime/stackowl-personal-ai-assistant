@@ -157,7 +157,11 @@ def _sources_last_changed(paths: list[str]) -> str:
 #: `stackowl*.jsonl` glob. Always wrong, and not merely as a convenience: at UTC midnight
 #: the log rotates, the gateway reopens the new file, and the CORE KEEPS AN OPEN
 #: DESCRIPTOR ON THE ROTATED ONE and goes on writing there
-#: (`project_gateway_core_dual_log_writer_bug`, 2026-07-18, still unfixed). A query pinned
+#: (`project_gateway_core_dual_log_writer_bug`, 2026-07-18 — FIXED IN CODE by
+#: DEBT-196 (`25568c8a`) and NOT YET PROVEN — no UTC midnight has passed since it
+#: shipped, so the follow branch has run zero times. Read the glob regardless: the
+#: retained logs still hold the misplaced records, and one file is blind to every
+#: previous day anyway). A query pinned
 #: to the single filename is blind to the core after any midnight — it returns 0 and looks
 #: exactly like a check that ran and passed.
 #:

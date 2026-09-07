@@ -315,6 +315,52 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT207_2026_09_07_I_fixed_the_bug_and_left_seven_surfaces_saying_it_was_unfixed:
+    map_check: >-
+      D05.4 — the presented tool array. The OLDEST stale document (verified 2026-08-22,
+      sources changed 2026-09-07). Verification section RUN, not trusted.
+    SEVEN_SURFACES_STILL_SAID_STILL_UNFIXED_AND_THE_FIX_WAS_MINE: >-
+      D05.4's banner cites project_gateway_core_dual_log_writer_bug as "still unfixed".
+      DEBT-196 fixed it FOUR LOOPS AGO (25568c8a). Swept rather than remembered: SEVEN live
+      surfaces carried the claim — five design documents (D05.4, D08.4, D05.8, D03.2,
+      D09.1), scripts/doc_check.py, and
+      tests/audit/test_a_closing_check_looks_for_evidence_that_can_exist.py. I corrected
+      exactly ONE of them when I shipped the fix (the BLIND AFTER MIDNIGHT report string)
+      and thought that was the surface. This is the file's own "the census of five was
+      itself wrong" failure, committed by me, four loops after reading it.
+    THE_CORRECTION_HAD_TO_PRESERVE_THE_INSTRUCTION: >-
+      The naive fix — "the bug is fixed, ignore this" — would be WRONG twice. MEASURED: the
+      fix shipped 14:09:16Z, it is now 17:26Z, NO UTC MIDNIGHT has passed, and the follow
+      branch has run ZERO times (DEBT-196's validate is partial for exactly that). And the
+      instruction to read the glob is right regardless of the fix, for two reasons that do
+      not depend on it: the retained logs still hold the records the old behaviour
+      misplaced, and a single-file query is blind to every previous day anyway. All seven
+      now say FIXED IN CODE AND NOT YET PROVEN, and still say read the glob.
+    A_RUN_ON_CAUGHT_BY_READING_THE_SPAN: >-
+      The first blockquote replacement ended mid-line, so the original sentence "A query
+      pinned to the single filename is..." continued on my last line without its `>`
+      prefix — three documents at once. Caught by reading the span back rather than
+      grepping for the inserted text, which is the rule from DEBT-199 doing its job for
+      the second time.
+    D05_4_VERIFICATION_RUN_AND_TWO_CHECKS_ARE_HONESTLY_NOT_PASSES: >-
+      Bounded to boot 14:10:13Z. I1: 0 warnings over FIVE rebuilds — a real pass with a
+      live denominator, 0-over-5 not 0-over-0. I3: no `tools array CHANGED` line this
+      incarnation, so NO OPPORTUNITY rather than success. I2: all five rows have measured
+      == basis, which this section itself says is OPEN, not PASS. Tests: cache_audit 27
+      (grew from 24), I2/I2a 21 exact — and 21 only when BOTH files are run, which is the
+      command as written.
+    AND_ONE_READING_WORTH_KEEPING: >-
+      Across those five rebuilds `tools` goes 79 -> 51 while measured/basis stay 3402.
+      Consistent by construction — the basis is the FIXED cost the array is measured
+      against, not the array — but it is the first recorded instance of the two moving
+      independently, and they are exactly the pair a reader would assume track together.
+    changes: >-
+      Five design documents, scripts/doc_check.py and one audit test (the seven "still
+      unfixed" surfaces); docs/reference-mapping/designs/D05.4.md (re-run table, test
+      counts, restamped); .claude/skills/item-loop/SKILL.md and CLAUDE.md (EVERY LOOP
+      FINISHES SOMETHING — Bakir, this loop).
+    stages: {brainstorm: done, architect: no_change_needed, implement: done,
+      cleanup: done, test: done, validate: done, document: done}
   DEBT206_2026_09_07_the_population_I_filed_was_made_entirely_of_denials:
     map_check: >-
       No mapped item — building the detector filed last loop, after D01.7 advertised a
