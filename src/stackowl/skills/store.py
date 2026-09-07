@@ -944,7 +944,7 @@ class SkillIndexStore(OwnedRepository):
         truncated to ``limit``. Skills without an embedding are skipped silently;
         returning ``[]`` is always safe (caller decides whether absence is an
         error). Suitable for the small N (≤hundreds) of skills the workspace
-        will hold — for larger corpora switch to LanceDB at the SkillsAssembly
+        will hold — a larger corpus would need a vector index at the SkillsAssembly
         layer.
         """
         # 1. ENTRY

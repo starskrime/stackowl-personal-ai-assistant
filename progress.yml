@@ -315,6 +315,53 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT191_2026_09_07_a_check_whose_method_was_never_written_down:
+    map_check: >-
+      D10.3 — queued with a diagnosis in DEBT-189 and closed here by running its
+      Verification section, which is what it was owed.
+    EVERYTHING_REPRODUCES_EXACTLY: >-
+      Check 1: 5 passed. Check 2: 663 passed, 0 failed (637 on 09-04, 648 on 09-06 — the
+      document already knew to make it a shape). Check 3: 10 of 25 learned skills have a
+      twin at >= 0.90, the exact recorded number, and the pairs are visibly the duplicates
+      it names — incident_owl_build_stop -> incident_owl_build at 0.9519, the two with
+      BYTE-IDENTICAL descriptions. The closing query returns exactly 2 on the glob, and
+      they are the two rows tabulated in the document, similarities 0.9145 and 0.9135.
+    THE_CLAIM_WAS_TRUE_AND_THE_QUERY_WENT_BLIND: >-
+      The closing query named the SINGLE log file: 0 today, 2 on the glob. Unlike D03.2 —
+      whose check could NEVER see its evidence — this one was TRUE WHEN WRITTEN on
+      2026-09-06 and went blind at the next rotation, because the core keeps writing to the
+      rotated file. Two different failures that produce the same 0.
+    THE_NEW_VARIANT_A_CHECK_WHOSE_METHOD_LIVES_NOWHERE: >-
+      Check 3 said "(see the script in this item's progress.yml record)". THE SCRIPT IS NOT
+      THERE. The record holds the RESULT — "10 of 25 learned skills have a twin the gate
+      catches at 0.90" — and no procedure, so the check could be re-QUOTED but never
+      re-RUN. I had to reconstruct it from the gate's source. That is a SIXTH variant of
+      the closing-check family: satisfied by HISTORY, evidence that CANNOT EXIST, satisfied
+      by the OLD CODE, satisfied by the ATTEMPT, a STATE where an EVENT was needed, and now
+      A METHOD THAT WAS NEVER WRITTEN DOWN. The script is now IN the document, which is
+      where every other check there already lives.
+    WHY_THE_REPLAY_IS_A_REPLICATION_AND_SAYS_SO: >-
+      The gate calls `store.semantic_recall`, and its docstring says that is deliberate —
+      "rather than a cosine written here". But `DbPool.open()` replays every migration and
+      DOES NOT RETURN INSIDE 100s, measured, so the faithful-by-call form is not runnable
+      in a working session. The store scores by plain COSINE and the embeddings are 384-dim
+      and UNIT-NORMED (norm 1.0000, checked), so read-only sqlite plus a dot product is the
+      same arithmetic. Recorded as replication rather than presented as a call.
+    LANCEDB_RESIDUE_DELETED_IN_PASSING: >-
+      Two stale references found while reading the gate, both in src/stackowl/skills/.
+      store.py told a reader to "switch to LanceDB at the SkillsAssembly layer" for larger
+      corpora — advice pointing at a dependency `e7103672` deleted. assembly.py justified a
+      LIVE content-hash gate with "even though the LanceDB upsert on unchanged content is a
+      pure no-op", so a live decision was reasoned from a store that no longer exists, and
+      in the same sentence pinned "~300 skills" against a catalogue of 39. The gate is
+      still right — the local re-embed is the cost — and the docstring now says that.
+      tests/skills: 505 passed.
+    changes: >-
+      docs/reference-mapping/designs/D10.3.md (closing query to the glob, check 3's script
+      written out, checks re-stamped), src/stackowl/skills/store.py and
+      src/stackowl/skills/assembly.py (LanceDB residue). 
+    stages: {brainstorm: done, architect: no_change_needed, implement: done,
+      cleanup: done, test: done, validate: done, document: done}
   DEBT190_2026_09_07_the_outcome_check_caught_the_event_it_was_built_for:
     map_check: >-
       No mapped item — verifying a CLOSEABLE before believing it, which is the loop's own

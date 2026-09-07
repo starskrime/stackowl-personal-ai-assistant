@@ -298,8 +298,15 @@ async def _publish_to_lessons(
 
     Skips any skill whose lesson content hash matches ``lessons_published_hash``
     (a content-hash gate, the pattern the removed summary pass also used) — without
-    this, every boot re-embeds all ~300 skills locally even though the LanceDB
-    upsert on unchanged content is a pure no-op (idempotent on ``lesson_id``).
+    this, every boot re-embeds the whole catalogue locally, and the LOCAL EMBED is
+    the cost the gate exists to avoid: the index upsert on unchanged content is a
+    pure no-op (idempotent on ``lesson_id``).
+
+    [CORRECTED 2026-09-07.] This said "even though the LanceDB upsert…"; LanceDB was
+    deleted by `e7103672` and the lessons corpus moved to SQLite + a numpy scan, so
+    the gate's stated justification named a store that no longer exists. It also said
+    "all ~300 skills" — the catalogue is 39 (14 builtin, 25 learned), so the count is
+    dropped rather than re-pinned.
     """
     from stackowl.learning.lessons_index import LessonDraft
 
