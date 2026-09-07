@@ -315,6 +315,54 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT183_2026_09_07_evidence_that_was_a_state_when_it_needed_to_be_an_event:
+    map_check: >-
+      D09.3 — the oldest stale document AND deletion-stale. Verification RUN in full.
+    THE_DEFECT: >-
+      Check 1 read the lifecycle_state histogram and said, in the document's own words,
+      "What IS comparable, and is the real claim: both runs show a non-empty `stale`
+      bucket, so decay is acting rather than merely installed." MEASURED 2026-09-07 the
+      bucket is EMPTY — {'active': 34, 'archived': 5}, 39 rows, no stale at all. A STATE
+      can be empty for two OPPOSITE reasons: everything stale has been dealt with, or
+      nothing is being moved. The document's headline claim ("decay is live, has ACTED,
+      and has CONVERGED") could no longer be read off its own evidence.
+    THE_ROOT_CAUSE: >-
+      The evidence was a STATE where the claim was about an EVENT. Same family as
+      DEBT-180's attempt-versus-outcome, one axis over: there the check named the wrong
+      MOMENT, here it names the wrong KIND. A bucket count cannot distinguish converged
+      from inert; a run that logged "changed 5" cannot be confused for either.
+    THE_REPLACEMENT_EVIDENCE_AND_IT_IS_STRONGER: >-
+      Added check 1b, which counts curator runs and runs that changed something. The
+      curator has run on ELEVEN CONSECUTIVE DAYS, once each, and three of those runs moved
+      skills — "scanned 33, changed 5", "scanned 36, changed 5", "scanned 36, changed 5
+      (archived 5)". So today's "would change 0" is CONVERGENCE with a run that did act
+      inside the same retained window to prove it, which is more than the original
+      evidence ever showed.
+    BOTH_ROOT_CAUSES_RE_MEASURED_AND_RESOLVED: >-
+      Cause 1 (nothing retired anything): 0 ever retired -> 5 archived, curator acting
+      daily. Cause 2 (the same lesson written twice): 265 numbered duplicates and one
+      skill present 21 times -> ZERO numbered duplicates, 39 distinct base names of 39
+      rows. The catalog went 421 -> 39, mostly 3f82d5d5 pruning index rows for skills
+      whose files no longer exist (147 removed live), NOT the curator deleting work — and
+      the honest signal is the ratio: the ever-executed share went from 33/421 (8%) to
+      20/39 (51%). Recorded in the document as a table so the shrink is not read as loss.
+    OTHER_DRIFT_CORRECTED: >-
+      The Source header pinned SIX line counts and FOUR had drifted (authoring 262->394,
+      manifest 78->114, assembly 457->371, knowledge_prune 133->105). Dropped rather than
+      re-pinned: a line count is a fact with a half-life and it was never the claim.
+      Check 3 converted from "14 passed" to a shape (19 now). Check 4's pinned "39 and 78"
+      corrected to point at the GATE — ruff has since improved to 35, so a pinned number
+      would read as failure on a healthy tree.
+    A_ZERO_I_CHECKED_BEFORE_BELIEVING: >-
+      My first query used a column `exec_count` that does not exist and raised. The real
+      column is `n_executions` — printed PRAGMA table_info before re-asking, rather than
+      guessing a second name.
+    changes: >-
+      docs/reference-mapping/designs/D09.3.md only — check 1 corrected, check 1b added,
+      checks 3 and 4 converted to shapes, the line-count pins dropped, an outcome table
+      added, re-stamped. No code.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT182_2026_09_07_a_section_whose_heading_and_body_disagreed:
     map_check: >-
       D08.2 — the oldest stale document AND deletion-stale, which is the ordering
