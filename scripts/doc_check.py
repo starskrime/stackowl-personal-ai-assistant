@@ -267,6 +267,103 @@ def _test_paths_on_command_lines(text: str) -> list[tuple[int, str, str]]:
     return out
 
 
+#: A pipe that takes one record by POSITION rather than by time.
+_BY_POSITION = re.compile(r"\|\s*(?:tail|head)\b")
+#: The readers a log query can be built on. Only `grep` is unordered (see below).
+_READER = re.compile(r"\b(grep|ugrep|cat|jq|wc|log_since\.sh)\b")
+
+
+def _shell_skeleton(cmd: str) -> str:
+    """`cmd` with the CONTENTS of quoted spans blanked out, lengths preserved.
+
+    Needed because the thing being matched is shell STRUCTURE — which reader owns the
+    glob, and whether a pipe follows it — and a grep PATTERN is free to contain both.
+    The first version of this detector used `[^|]*` to keep the reader and its glob in
+    one pipeline segment, and it silently missed D16.5, whose pattern is
+    `'(discover_tools|register_server_tools)'`: a regex alternation inside quotes read
+    as a shell pipe. Blanking the quotes first makes the two unconfusable instead of
+    making the regex cleverer.
+    """
+    out = list(cmd)
+    quote = ""
+    for k, ch in enumerate(cmd):
+        if quote:
+            if ch == quote:
+                quote = ""
+            else:
+                out[k] = " "
+        elif ch in "'\"":
+            quote = ch
+    return "".join(out)
+
+
+def _newest_by_pipe_position(text: str) -> list[tuple[int, str, bool]]:
+    """(line_no, command, is_sorted) for every `grep <glob> | tail`-shaped command.
+
+    `is_sorted` is returned rather than filtered so the caller can print a DENOMINATOR.
+    A detector that reports nothing and a detector that is blind look identical from the
+    outside, and this corpus has already paid for that once.
+
+    MEASURED 2026-09-07, on a measurement this loop had just made and was about to
+    write into a document. `grep -h <pattern> ~/.stackowl/logs/stackowl*.jsonl | tail -1`
+    is the idiom for "the newest record", and it is only correct if grep emits files in
+    ARGUMENT order. Under the harness this programme actually runs in, `grep` is a shell
+    function wrapping a MULTI-THREADED grep, which emits results as workers finish:
+    three identical invocations of that exact command returned last-line timestamps
+    2026-09-03, 2026-09-04 and 2026-09-03, while the true newest record was 2026-09-07.
+    The current log file landed SEVENTH of eleven in the output stream.
+
+    So this is not a stylistic note. The single-file form the `BLIND AFTER MIDNIGHT`
+    report exists to eliminate is at least ORDERED; the glob that replaces it is not, and
+    the cure for one report created the exposure for this one. A COUNT is unaffected —
+    which is exactly why it hid, because every count in this corpus is right.
+
+    THE CURE IS ONE WORD: `| sort |` before the `tail`. Every line these logs contain
+    begins `{"ts": "` (verified over the two largest retained files: 0 non-conforming
+    lines), so a lexical sort IS a chronological sort, and it is correct under an ordered
+    grep too. That invariant is asserted in the tripwire beside this, because the day a
+    writer moves `ts` off the front the cure stops working silently.
+
+    SCOPED TO `grep`, and the scope is a measurement, not caution. `cat f1 f2 | jq` and
+    `jq -c ... f1 f2` both consume their arguments in order, so the four `cat`/`jq` sites
+    in this corpus are correct as written and are NOT reported. Reporting them would be
+    the cry-wolf failure that gets a detector bypassed.
+    """
+    out: list[tuple[int, str, bool]] = []
+    fenced = False
+    pending: list[str] = []
+    start = 0
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            pending = []
+            continue
+        if not fenced or line.lstrip().startswith("#"):
+            pending = []
+            continue
+        # A command may be split across lines with a trailing backslash, and both halves
+        # matter: D16.5 carries the `grep` on one line and the glob AND the `| tail` on
+        # the next, so a per-line reader would miss it entirely.
+        if not pending:
+            start = i
+        pending.append(line.rstrip())
+        if line.rstrip().endswith("\\"):
+            continue
+        cmd = " ".join(x.rstrip("\\").strip() for x in pending)
+        pending = []
+        skeleton = _shell_skeleton(cmd)
+        m = re.search(r"stackowl\*\.jsonl", skeleton)
+        if m is None:
+            continue
+        readers = _READER.findall(skeleton[: m.start()])
+        if not readers or readers[-1] not in ("grep", "ugrep"):
+            continue
+        after = skeleton[m.end():]
+        if _BY_POSITION.search(after):
+            out.append((start, cmd, "sort" in after))
+    return out
+
+
 def _log_horizon() -> str:
     """The oldest date the retained logs can still answer for, or "" if unknowable.
 
@@ -480,6 +577,34 @@ def main() -> int:
         for name, ln, when, cmd in rotted[:12]:
             print(f"  {name}:{ln}  recorded {when}")
             print(f"      {cmd[:88]}")
+
+    unordered: list[tuple[str, int, str]] = []
+    by_position = 0
+    for doc in docs:
+        for ln, cmd, is_sorted in _newest_by_pipe_position(doc.read_text(encoding="utf-8")):
+            by_position += 1
+            if not is_sorted:
+                unordered.append((doc.name, ln, cmd))
+    if unordered:
+        print(f"\nNEWEST RECORD TAKEN BY PIPE POSITION — {len(unordered)} Verification "
+              f"command(s) in {len({u[0] for u in unordered})} document(s) pipe a "
+              "MULTI-FILE `grep` straight into `tail`/`head`, which returns the newest "
+              "record only if grep emits files in argument order. The grep this "
+              "programme actually runs under is multi-threaded and does not: three "
+              "identical runs of one such command returned 2026-09-03, 2026-09-04 and "
+              "2026-09-03 while the true newest record was 2026-09-07. Counts are "
+              "unaffected, which is why this hid. Add `| sort |` before the `tail` — "
+              "every log line begins `{\"ts\": \"`, so a lexical sort is a "
+              "chronological one, and it is correct under an ordered grep too:")
+        for name, ln, cmd in unordered[:12]:
+            print(f"  {name}:{ln}  {cmd[:96]}")
+        if len(unordered) > 12:
+            print(f"  … and {len(unordered) - 12} more")
+    elif by_position:
+        print(f"\nNEWEST RECORD TAKEN BY PIPE POSITION — none, across {by_position} "
+              "command(s) that take a record by position from the multi-file glob; every "
+              "one of them sorts first. (The denominator is printed because a silent "
+              "detector and a clean corpus look identical.)")
 
     watched = 0
     gone: list[tuple[str, int, str, str]] = []

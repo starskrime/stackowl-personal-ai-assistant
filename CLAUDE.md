@@ -316,6 +316,39 @@ key is `fields`. A regex without the space returns empty against a 14MB file —
 false negatives in one session before a control on a known-present string exposed
 the instrument rather than the system.
 
+**`grep <glob> | tail` DOES NOT GIVE YOU THE NEWEST RECORD.** MEASURED 2026-09-07,
+on a number this loop had just measured and was one edit away from writing into a
+design document as fact. In this harness `grep` is a shell FUNCTION wrapping a
+MULTI-THREADED grep, which emits results as workers finish rather than in argument
+order: three identical runs of
+`grep -h <pattern> ~/.stackowl/logs/stackowl*.jsonl | tail -1` returned last-line
+timestamps **2026-09-03, 2026-09-04 and 2026-09-03** while the true newest record was
+**2026-09-07** — the current log file landed SEVENTH of eleven in the output stream.
+`/usr/bin/grep` in a plain shell IS ordered, so the documents are right for a human
+and wrong for this loop, which is the worst possible split.
+
+**And this exposure was CREATED by the cure for the previous one.** The
+`BLIND AFTER MIDNIGHT` rule exists to move these queries off the single
+`stackowl.jsonl` onto the `stackowl*.jsonl` glob. The single file is at least
+ORDERED; multi-file is exactly the case that is not. A **count** is unaffected —
+which is why it hid, because every count in this corpus is right and nothing looked
+wrong. Only the queries that pick ONE record are damaged, and those are the ones a
+document uses to say "and here is the latest".
+
+**The cure is one word: `| sort |` before the `tail`.** Every line these logs contain
+begins `{"ts": "` (0 non-conforming lines across the two largest retained files), so
+a lexical sort IS a chronological sort, and it is correct under an ordered grep too.
+`cat f1 f2 | jq` and `jq -c … f1 f2` consume their arguments in order and need
+nothing. `doc_check.py` now reports `NEWEST RECORD TAKEN BY PIPE POSITION`, and
+`tests/audit/test_the_newest_log_record_is_not_taken_by_pipe_position.py` pins both
+the corpus and the `ts`-first property the cure depends on.
+
+**`/usr/bin/grep` has the OTHER half of this, and needs `-a`.** The same control run
+printed `binary file matches` on `stackowl-2026-09-05.jsonl` and silently returned
+**98** of that file's **110** matches — the null-byte truncation `log_since.sh`
+already bakes `-a` in for. Neither grep is safe bare: one misorders, the other
+truncates. Write `grep -ah … | sort` and both are covered.
+
 **In SQL `LIKE`, `_` is a WILDCARD.** `skill_name LIKE 'incident_%'` returned 1 row
 and the row was `incident-evidence-brief` from six weeks earlier — the underscore
 matched the hyphen. It was about to close an acceptance check that had not fired.

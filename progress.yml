@@ -17703,6 +17703,66 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-208
+    found: 2026-09-07
+    what: >-
+      `grep <glob> | tail` DOES NOT RETURN THE NEWEST RECORD, AND THE PROGRAMME'S OWN
+      CURE FOR THE PREVIOUS INSTRUMENT DEFECT IS WHAT EXPOSED IT. In this harness `grep`
+      is a shell FUNCTION wrapping a multi-threaded grep, which emits results as workers
+      finish rather than in argument order. Three identical runs of
+      `grep -h '"msg": "[tools] registry.with_defaults: discovered' ~/.stackowl/logs/stackowl*.jsonl | tail -1`
+      returned last-line timestamps 2026-09-03, 2026-09-04 and 2026-09-03 while the true
+      newest record was 2026-09-07T14:10:07Z; the current log file landed SEVENTH of
+      eleven in the output stream. Found while re-verifying D05.1 step 7, on a number
+      that was one edit away from being written into that document as fact.
+    why_not_what: >-
+      The BLIND AFTER MIDNIGHT report exists to move log queries off the single
+      `stackowl.jsonl` onto the `stackowl*.jsonl` glob. The single file is at least
+      ORDERED; multi-file is precisely the case that is not. So the cause is not "a
+      careless pipe" — it is that a fix for one instrument defect silently created the
+      conditions for another, and nothing re-asked the corrected commands whether they
+      still meant what they said.
+    what_else_that_cause_reaches: >-
+      Every measurement in this programme made by picking ONE record out of the glob.
+      COUNTS are unaffected, which is exactly why it hid — every count in the corpus is
+      right and nothing looked wrong. MEASURED: 4 live Verification commands in 4
+      documents (D03.5, D16.1, D16.3, D16.5) took a record by pipe position; the four
+      `cat`/`jq` sites (D01.7 x2, D05.4, D05.8) are correct as written because both
+      consume their arguments in order.
+    and_the_other_grep_has_the_other_half: >-
+      The control run on /usr/bin/grep printed `binary file matches` for
+      stackowl-2026-09-05.jsonl and silently returned 98 of that file's 110 matches — the
+      null-byte truncation log_since.sh already bakes `-a` in for. Neither grep is safe
+      bare: one misorders, the other truncates. `grep -ah ... | sort` covers both.
+    the_fix: >-
+      `| sort` before the `tail`, which is chronological because every log line begins
+      `{"ts": "` — 0 non-conforming lines across the two largest retained files, and the
+      formatter property is now asserted rather than assumed. Shipped: the 4 sites
+      corrected and re-run; `doc_check.py` gained NEWEST RECORD TAKEN BY PIPE POSITION
+      (quote-blanking shell skeleton, so a regex alternation inside a pattern is not read
+      as a shell pipe — the first version missed D16.5 for exactly that reason, and it
+      prints its denominator); a 6-test tripwire file; and the landmine written into BOTH
+      live instruction surfaces, CLAUDE.md and the item-loop skill.
+    D05_1_the_item_this_was_found_under: >-
+      D05.1 was the oldest stale document (verified 2026-08-30, sources moved 2026-09-04).
+      Its Verification section was re-run in full and it holds — 77 tools from discovery,
+      from with_defaults and in both live processes; the shared UndoStore/PlanStore
+      compared by identity; 203 boot assertions that the skills tree is outside the
+      model-writable workspace and 0 that it is inside; 2690 passed, 4 skipped across
+      tests/tools + tests/skills + tests/infra. TWO of its own numbers had rotted and are
+      corrected in place with the readings that replaced them (61 of 116 -> 61 of 118;
+      loaded_count 421 -> 39, corroborated on disk rather than inferred: 35 learned
+      directories, exactly 25 carrying a SKILL.md, exactly 25 registered).
+    and_the_document_had_missed_a_second_gate: >-
+      `08ce0ba4` (2026-09-04) put a PROVENANCE gate in front of the same `exec_module()`
+      call that D05.1's relocation guards, and D05.1 went on describing the relocation as
+      the only thing standing there. The two answer different questions — "can the MODEL
+      write what we run?" versus "did this arrive from an arbitrary URL?" — and the
+      relocation is a documented no-op for `installed/`, which is where `/skill add --url`
+      lands. A reader of D05.1 alone would have believed one gate guards that call and
+      could have removed the other as redundant. Both are now recorded, with their line
+      numbers and the commit that added the second.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-203
     found: 2026-09-07
     what: >-
