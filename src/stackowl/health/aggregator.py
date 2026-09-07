@@ -120,6 +120,11 @@ class HealthAggregator:
             "%.0fs window before calling it down",
             name, _CONTRIBUTOR_TIMEOUT, _CONTRIBUTOR_RETRY_TIMEOUT,
         )
+        # THE RE-PROBE NEEDS ITS OWN CLOCK. `t0` starts at the FIRST probe, which by
+        # definition already burned the full first window before we got here, so
+        # anything measured from it is always over the threshold and can prove
+        # nothing about the second attempt.
+        t1 = time.monotonic()
         try:
             status = await asyncio.wait_for(
                 contributor.health_check(), timeout=_CONTRIBUTOR_RETRY_TIMEOUT,
@@ -146,8 +151,37 @@ class HealthAggregator:
             return HealthStatus(
                 name=name, status="down", message=str(exc), latency_ms=latency_ms,
             )
-        log.info(
-            "[health] aggregator: %s answered on the re-probe (%s) — a slow probe, "
-            "not a dead subsystem", name, status.status,
-        )
+        # SAY WHEN THE WIDER WINDOW IS WHAT SAVED IT, and say it as a STRING.
+        #
+        # DEBT-132 widened the re-probe window from 5s to 10s. Its closing check
+        # grepped the line announcing the re-probe — which marks the ATTEMPT, not the
+        # OUTCOME. MEASURED 2026-09-07: it reported CLOSEABLE on 14 hits, and every
+        # one of those sweeps still ended `ok=14 total=15` because all 14 were a
+        # genuinely unreachable provider. The wider window fired 14 times and rescued
+        # nothing, while the check said the claim was evidenced.
+        #
+        # The success line below could not close it either: its wording predates the
+        # fix, so a count is satisfied by history, and it carried NO DURATION — so a
+        # re-probe answering in 2s (which the old 5s window would also have caught)
+        # was indistinguishable from one answering in 8s (which only the wider window
+        # can). A fix that moves a THRESHOLD must log the MEASUREMENT the threshold is
+        # compared against, or its effect is unfalsifiable.
+        #
+        # It is a distinct SENTENCE rather than a number to compare, because
+        # `scripts/log_since.sh` takes a grep pattern and cannot express `> 5000`.
+        # The asymmetry that made this easy to miss: the timeout branch above has
+        # logged `latency_ms` all along; only the success branch was silent.
+        reprobe_ms = (time.monotonic() - t1) * 1000
+        if reprobe_ms > _CONTRIBUTOR_TIMEOUT * 1000:
+            log.info(
+                "[health] aggregator: %s answered on the re-probe after %.0fms (%s) — "
+                "BEYOND the first %.0fs window, so the wider window is what saved it",
+                name, reprobe_ms, status.status, _CONTRIBUTOR_TIMEOUT,
+            )
+        else:
+            log.info(
+                "[health] aggregator: %s answered on the re-probe after %.0fms (%s) — "
+                "a slow probe, not a dead subsystem",
+                name, reprobe_ms, status.status,
+            )
         return status

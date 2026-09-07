@@ -56,10 +56,23 @@ def main() -> int:
     # have no re-runnable check at all — the dead end DEBT-124 removed for items,
     # one population over. A debt carrying a `closing_check` is now re-run beside
     # them, labelled by its own id.
+    # A DEBT'S OWN STAGE IS READ, NOT FABRICATED. This wrote
+    # `stages={"validate": "partial"}` unconditionally, so a debt whose validate was
+    # recorded `done` stayed in the report FOREVER — and, once its evidence arrived,
+    # as a permanent CLOSEABLE that no action could ever clear. MEASURED 2026-09-07
+    # while closing DEBT-153: the moment its stage became `done` the report still
+    # called it a partial validate needing attention. A report that cannot tell a
+    # closed claim from an open one teaches its reader to skim it, which is the exact
+    # failure the prose-promise report was built to avoid.
+    #
+    # The check itself is NOT discarded — it stays in the record as the evidence the
+    # close rests on, and other guards still re-run it. It simply stops being listed
+    # as outstanding work.
     items += [
-        dict(d, stages={"validate": "partial"})
+        dict(d, stages={"validate": (d.get("stages") or {}).get("validate", "partial")})
         for d in (data.get("known_debt", []) or [])
         if (d.get("closing_check") or "").strip()
+        and (d.get("stages") or {}).get("validate", "partial") == "partial"
     ]
 
     print(f"partial stages: {len(items)} item(s)\n")

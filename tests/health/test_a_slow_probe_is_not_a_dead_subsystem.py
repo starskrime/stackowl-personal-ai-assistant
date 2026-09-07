@@ -38,6 +38,7 @@ argument for killing the process.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -199,3 +200,61 @@ async def test_liveness_still_falls_for_a_subsystem_that_is_really_down() -> Non
     agg.register(_Probe("provider_registry", ["hang", "hang"]))
 
     assert await agg.is_live() is False
+
+
+# --------------------------------------------------------------------------- #
+# The EFFECT has to be visible, not just the attempt (DEBT-132's closing check).
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_reprobe_that_answers_BEYOND_the_first_window_says_so(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The only evidence that the WIDER window did anything.
+
+    DEBT-132's closing check grepped the line announcing the re-probe, which marks
+    the ATTEMPT. MEASURED 2026-09-07: it reported CLOSEABLE on 14 hits and every one
+    of those sweeps still ended `ok=14 total=15` — all 14 were a genuinely
+    unreachable provider. The wider window fired fourteen times and rescued nothing,
+    while the check said the claim was evidenced.
+
+    This is the case that can only happen because the second window is wider: the
+    probe answers after MORE than the first window, so the old code would have
+    called it down.
+    """
+    probe = _Probe("provider_registry", ["hang", "slow_but_answers"])
+
+    with caplog.at_level(logging.INFO, logger="stackowl.health"):
+        status = await _collect(probe)
+
+    assert status.status == "ok"
+    saved = [r for r in caplog.records if "wider window is what saved it" in r.getMessage()]
+    assert saved, (
+        "a re-probe answered beyond the first window and nothing recorded it, so the "
+        "only claim DEBT-132 makes cannot be evidenced from production logs:\n"
+        + "\n".join(r.getMessage() for r in caplog.records)
+    )
+
+
+async def test_a_reprobe_that_answers_INSIDE_the_first_window_does_NOT_say_so(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The other direction, and it is what gives the sentence meaning.
+
+    A line that fires on EVERY successful re-probe would be the same defect one step
+    over: present, at INFO, emitted only by new code — and still unable to tell the
+    wider window's work from the old window's. The first attempt times out; the
+    second answers at once, which the 5s window would also have caught.
+    """
+    probe = _Probe("provider_registry", ["hang", "ok"])
+
+    with caplog.at_level(logging.INFO, logger="stackowl.health"):
+        status = await _collect(probe)
+
+    assert status.status == "ok"
+    assert not [
+        r for r in caplog.records if "wider window is what saved it" in r.getMessage()
+    ], "the discriminating sentence fired for a re-probe the OLD window would have caught"
+    assert [
+        r for r in caplog.records if "answered on the re-probe after" in r.getMessage()
+    ], "the ordinary success line lost its duration"

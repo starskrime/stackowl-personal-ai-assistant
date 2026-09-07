@@ -117,6 +117,7 @@ at a process table. Measured, in order:
 | 2026-09-07 | **`12378 passed, 17 skipped, 0 failed in 1988.05s` (rc=0)** — tenth green, `SUITE TREE STILL` |
 | 2026-09-07 | **`12393 passed, 17 skipped, 0 failed in 1983.63s` (rc=0)** — eleventh green, `SUITE TREE STILL` |
 | 2026-09-07 | **`9 failed, 12405 passed, 19 skipped in 2308.06s` (rc=1)** — RED, streak ended; see DEBT-179 |
+| 2026-09-07 | **`12416 passed, 17 skipped, 0 failed in 1848.06s` (rc=0)** — green again on the fixed tree; skips 19→17 as the DNS-flaky tests ran |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so

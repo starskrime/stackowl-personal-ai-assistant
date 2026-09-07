@@ -213,3 +213,91 @@ class TestTheReportIsActuallyWired:
             "the report named a record but not the query to run, which is the friction "
             f"that kept these unread:\n{out.stdout}"
         )
+
+
+class TestAClosedDebtStopsBeingListedAsOutstanding:
+    """A report that cannot tell a CLOSED claim from an OPEN one is noise.
+
+    `validate_check.py` folded `known_debt` into the report by writing
+    `stages={"validate": "partial"}` UNCONDITIONALLY. The fold was right — evidence-led
+    work lives in `known_debt` and its claims deserve the same re-running — but the
+    stage was fabricated rather than read, so a debt recorded `validate: done` stayed
+    listed forever, and once its evidence arrived it became a permanent CLOSEABLE that
+    no action could clear.
+
+    MEASURED 2026-09-07 while closing DEBT-153: its stage became `done` and the report
+    still called it a partial validate needing attention. That is the same disease the
+    prose-promise report exists to prevent, one population over — a reader who sees an
+    item that never clears learns to skim the list.
+    """
+
+    @pytest.mark.tripwire
+    def test_a_debt_whose_validate_is_done_is_not_reported(self, tmp_path: Path) -> None:
+        (tmp_path / "scripts").mkdir()
+        for name in ("validate_check.py", "progress_lint.py"):
+            (tmp_path / "scripts" / name).write_text(
+                (_ROOT / "scripts" / name).read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        (tmp_path / "progress.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "items": [],
+                    "known_debt": [
+                        {
+                            "id": "DEBT-CLOSED",
+                            "stages": {"validate": "done"},
+                            "closing_check": "echo 'CLOSEABLE it happened'",
+                        },
+                        {
+                            "id": "DEBT-OPEN",
+                            "stages": {"validate": "partial"},
+                            "closing_check": "echo 'OPEN not yet'",
+                        },
+                    ],
+                    "current": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        out = subprocess.run(
+            [sys.executable, str(tmp_path / "scripts" / "validate_check.py")],
+            cwd=tmp_path, capture_output=True, text=True, timeout=120,
+        )
+
+        assert "DEBT-OPEN" in out.stdout, (
+            f"an open debt vanished from the report:\n{out.stdout}\n{out.stderr}"
+        )
+        assert "DEBT-CLOSED" not in out.stdout, (
+            "a debt whose validate is DONE is still listed as outstanding, so the "
+            f"report carries a CLOSEABLE nothing can ever clear:\n{out.stdout}"
+        )
+
+    def test_a_debt_with_no_stages_at_all_is_still_reported(self, tmp_path: Path) -> None:
+        """The default must stay OPEN. Most debts carry no `stages` key, and reading a
+        missing stage as `done` would silently empty the report — a far worse failure
+        than the one being fixed."""
+        (tmp_path / "scripts").mkdir()
+        for name in ("validate_check.py", "progress_lint.py"):
+            (tmp_path / "scripts" / name).write_text(
+                (_ROOT / "scripts" / name).read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        (tmp_path / "progress.yml").write_text(
+            yaml.safe_dump(
+                {
+                    "items": [],
+                    "known_debt": [
+                        {"id": "DEBT-NOSTAGES", "closing_check": "echo 'OPEN not yet'"}
+                    ],
+                    "current": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        out = subprocess.run(
+            [sys.executable, str(tmp_path / "scripts" / "validate_check.py")],
+            cwd=tmp_path, capture_output=True, text=True, timeout=120,
+        )
+
+        assert "DEBT-NOSTAGES" in out.stdout, out.stdout

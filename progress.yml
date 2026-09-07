@@ -315,6 +315,84 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT180_2026_09_07_a_closing_check_that_named_the_attempt_not_the_outcome:
+    map_check: >-
+      No mapped item — evidence-led, from verifying a CLOSEABLE before believing it.
+    THE_FALSE_CLOSEABLE: >-
+      DEBT-132 widened the health re-probe window from 5s to 10s. Its closing_check
+      grepped 're-probing with a' — the line announcing the re-probe, which marks the
+      ATTEMPT. It reported CLOSEABLE on 14 hits. MEASURED: all 14 were
+      provider:NeraAiRaw and EVERY one of those sweeps still ended ok=14 total=15 or
+      13/15. The wider window fired fourteen times and rescued ZERO probes, while the
+      check said the claim was evidenced. The record's own validate text says what is
+      unevidenced is "a probe that misses the FIRST window and answers inside the
+      SECOND" — an outcome the check never looked at.
+    WHY_THE_OBVIOUS_ALTERNATIVE_ALSO_FAILED: >-
+      The outcome line exists — "answered on the re-probe", INFO, 48 hits. It cannot
+      close it either. Those 48 span all retained days and the success WORDING never
+      changed, so a count is satisfied by HISTORY; and the line carried NO DURATION, so
+      a re-probe answering in 2s (which the old 5s window would also have caught) was
+      indistinguishable from one answering in 8s (which only the wider window can).
+      THE ASYMMETRY THAT MADE IT EASY TO MISS: in the same method, the TIMEOUT branch
+      has logged latency_ms all along and only the SUCCESS branch was silent.
+    THE_RULE_THIS_EARNS: >-
+      A fix that moves a THRESHOLD must log the MEASUREMENT the threshold is compared
+      against, or its effect is unfalsifiable. This is a FOURTH variant of one family,
+      and naming all four together is the point: satisfied by HISTORY (DEBT-125, cured
+      by date bounds), evidence that CANNOT EXIST (DEBT-127, cured by asking the
+      loggers), satisfied by a case the OLD CODE HANDLED TOO (DEBT-128), and now
+      satisfied by the ATTEMPT rather than the OUTCOME. Note what makes this one hard:
+      the pattern IS emitted, IS at INFO, and IS only produced by new code — it passes
+      every guard this programme has and still cannot settle its claim.
+    THE_TRAP_IN_THE_FIX_ITSELF: >-
+      The re-probe needed its OWN clock. `t0` starts at the FIRST probe, which by
+      definition already burned the whole first window before the success branch runs,
+      so a duration measured from it is ALWAYS over the threshold and the discriminating
+      sentence would fire every time — proving nothing, exactly like the check it
+      replaces. M1 (measure from t0) kills the INSIDE test and only that; M2 (drop the
+      branch) kills the BEYOND test and only that.
+    A_SENTENCE_NOT_A_NUMBER: >-
+      scripts/log_since.sh takes a grep PATTERN and cannot express "> 5000", so the
+      discrimination had to live in the message: the line says "BEYOND the first 5s
+      window, so the wider window is what saved it" only when the re-probe itself
+      exceeded the old window.
+    THE_INSTRUMENT_COULD_NOT_REPRESENT_A_CLOSED_DEBT: >-
+      Found by closing DEBT-153 in the same pass. validate_check.py folded known_debt
+      into the report by writing stages={"validate": "partial"} UNCONDITIONALLY. The
+      fold was right; fabricating the stage instead of reading it was not — a debt
+      recorded `validate: done` stayed listed forever, and once its evidence arrived it
+      became a permanent CLOSEABLE no action could clear. A report that cannot tell a
+      closed claim from an open one teaches its reader to skim it, which is precisely
+      what the prose-promise report exists to prevent. The default stays OPEN for a debt
+      with no stages at all — reading a missing stage as done would silently empty the
+      report, a far worse failure. Guarded in both directions; M3 restores the
+      fabrication and kills the closed-debt test alone.
+    DEBT_153_CLOSED_IN_THIS_PASS: >-
+      Verified on four axes, not taken from the check's word — see its own record. The
+      correction it produced is worth repeating: `n_replayed < n_consecutive_required`
+      does NOT separate the unjudgeable cold starts from genuinely judged rejections,
+      and I built that coarse column myself before catching it.
+    changes: >-
+      src/stackowl/health/aggregator.py (the re-probe gets its own clock and a
+      falsifiable success line), scripts/validate_check.py (read a debt's real stage),
+      tests/health/test_a_slow_probe_is_not_a_dead_subsystem.py (+2, both directions),
+      tests/audit/test_a_closing_query_is_written_where_something_can_run_it.py (+2),
+      progress.yml (DEBT-132's check corrected, DEBT-153 closed).
+    THE_THIRTEENTH_FULL_RUN_IS_GREEN: >-
+      12416 passed, 17 skipped, 0 failed in 1848.06s (rc=0), SUITE TREE STILL, on
+      aeb5fe0c — the tree DEBT-179 shipped. It confirms both of that item's fixes. The
+      skip count fell 19 -> 17, which corroborates the transient-DNS diagnosis: two
+      tests that SKIPPED during the red run execute again now.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
+      test: done, validate: partial, document: no_change_needed}
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-07 'wider window is what saved it'); [ "$n" -gt
+      0 ] && echo "CLOSEABLE ($n)" || echo "OPEN (0)"
+    WHY_THAT_CHECK_CANNOT_BE_SATISFIED_BY_THE_OLD_CODE: >-
+      The sentence is new in this item, at INFO, and is emitted ONLY when the re-probe
+      itself exceeded the first window — the one case the old 5s window could not have
+      caught. It appeared zero times before, and cannot appear without both the new
+      wording and the effect actually occurring.
   DEBT179_2026_09_07_the_full_suite_caught_my_own_regression_and_a_network_dependent_test:
     map_check: >-
       No mapped item — evidence-led. The full suite was moved ONTO the tree D08.1
@@ -16351,6 +16429,23 @@ known_debt:
       re-checked with the AST, which asks the question the string could not.
       The check reads OPEN at 0: it needs an evolution batch to hit a cold start, which
       happened ~5x/day before the fix, so it should close on its own within a day.
+      CLOSED 2026-09-07, verified on four axes rather than taken from the check's word.
+      (1) The check runs: n=4. (2) The raw records are real — INFO, stackowl.owls,
+      n_replayed 1 against n_consecutive_required 3, no failures list, at 07:00:28 from
+      a core that booted 06:54:25, so they are the new code. (3) The emitter is
+      log.owls.info at evolution.py:641 — the LOGGERS were asked, not the tree. (4) THE
+      CLASS MOVED BUCKETS: "shadow gate REJECTED" with NO failures list ran 1-6 times
+      every single day from 08-28 through 09-06 and is ZERO on 09-07, while "no verdict"
+      appears 4 times on 09-07 and never before. Genuinely judged rejections continue
+      correctly — 2 on 09-07 carrying real reasons (quality_score=0.4<0.6, and a
+      ToolCallLeakError).
+      A CORRECTION THE VERIFICATION PRODUCED: `n_replayed < n_consecutive_required` does
+      NOT separate the two populations. Two post-fix records satisfy it and are properly
+      judged (n_replayed 2, consecutive_non_regressions 1, populated failures). I built
+      that same coarse column myself and it showed the fix as INCOMPLETE. The right
+      discriminator is the presence of a `failures` list. Whether the original "63 of 69"
+      overstated is unknown — it was measured over a different window — but the
+      instrument behind it cannot separate the two, and that belongs in the record.
     closing_check: |-
       # Keyed on "no verdict", a message this item INTRODUCED. The old code emitted
       # only "shadow gate REJECTED" on this branch, so a hit proves the new path ran
@@ -16359,7 +16454,7 @@ known_debt:
       n=$(./scripts/log_since.sh 2026-09-06 'promote: no verdict')
       [ "$n" -gt 0 ] && echo "CLOSEABLE $n cold start(s) reported as no-verdict rather than rejection" || echo "OPEN 0 cold-start promotions since the fix; the code IS live-evidenced"
     stages:
-      validate: partial
+      validate: done
     found: 2026-09-06
     what: >-
       SIXTY-NINE "SHADOW GATE REJECTED" ERRORS, AND 63 OF THEM WERE ARITHMETICALLY IMPOSSIBLE.
@@ -17653,11 +17748,16 @@ known_debt:
       misses the FIRST window and answers inside the SECOND. That needs a real slow probe,
       which happened 63 times in nine days but cannot be summoned.
     closing_check: |
-      # The re-probe line was reworded to name the wider window, so this pattern only
-      # matches code shipped by DEBT-132 — a hit proves the new path ran in production,
-      # not merely that a re-probe happened at some point in history.
-      n=$(./scripts/log_since.sh 2026-09-06 're-probing with a')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n slow probe(s) got the wider second window" || echo "OPEN 0 slow probes since the fix shipped; the code IS live-evidenced"
+      # CORRECTED 2026-09-07. This grepped 're-probing with a' — the line announcing
+      # the re-probe, which marks the ATTEMPT. It reported CLOSEABLE on 14 hits and
+      # every one of those sweeps still ended ok=14/15: all 14 were a genuinely
+      # unreachable provider, so the wider window fired fourteen times and rescued
+      # NOTHING while the check called the claim evidenced. Measure the EFFECT.
+      #
+      # The sentence below exists only when the re-probe ITSELF took longer than the
+      # first window, which is the one case the old 5s window could not have caught.
+      n=$(./scripts/log_since.sh 2026-09-07 'wider window is what saved it')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n probe(s) answered BEYOND the first window" || echo "OPEN 0 probes have yet answered beyond the first window; the code IS live-evidenced"
     three_instrument_errors_of_my_own_in_this_diagnosis: >-
       Recorded because they are the same shape as the defect. (1) I labelled
       `health_sweep: bound to the live pipeline services — a recovered provider now clears
