@@ -308,6 +308,71 @@ class TestAPatternMatchesTheTextItIsAPatternFor:
         assert re.search(r"\[skills\] nudge", "[skills] nudge")
 
 
+#: A grep invocation in a document's Verification section.
+_DOC_GREP = re.compile(r"grep(?:\s+-[\w-]+)*\s+(['\"])(.+?)\1")
+#: A bracketed LOG PREFIX — `[paths]`, `[memory]` — left unescaped, so grep reads it as
+#: a character class. Deliberately narrow; see the class docstring for why.
+_UNESCAPED_PREFIX = re.compile(r"(?<!\\)\[[a-z_]+\](?=\s)")
+
+
+class TestADocumentsVerificationCommandCanActuallyRun:
+    r"""The same cause, one population over — which is the question this programme
+    requires be answered before an item is done.
+
+    A design document's Verification section is the evidence behind its `Last verified`
+    stamp, and those commands are greps too. MEASURED 2026-09-06: THREE carried an
+    unescaped bracketed log prefix, in D05.1 (twice) and D09.2. Proven against a file
+    containing the exact lines: each returned 0 unescaped and 1 escaped.
+
+    Both claims turned out to be TRUE — re-run with working patterns, D05.1's line has
+    195 occurrences and D09.2's 23 — so nothing in those documents was wrong except the
+    instrument that was supposed to demonstrate it. D05.1's was wrong twice over: it
+    also said "model-writable root" where the message says "workspace".
+
+    THIS RULE IS NARROWER THAN THE ONE ABOVE, on purpose. Applying the closing-check
+    rule — a pattern must match its own literal text — to this corpus reports 14
+    failures, and most are correct: documents use grep as a genuine regex tool, and
+    `^goal-\|^incident-`, `launched [0-9]+ (durable-task|pending-message)` and
+    `log\.(info|debug)\(` are all deliberate. A guard that cries wolf on correct work
+    is the failure this programme keeps paying for, so this asks only about the one
+    shape that is never intentional: a bracketed log prefix left unescaped.
+    """
+
+    @pytest.mark.tripwire
+    def test_no_verification_grep_reads_a_log_prefix_as_a_character_class(self) -> None:
+        docs = _ROOT / "docs" / "reference-mapping" / "designs"
+        broken: dict[str, str] = {}
+        for doc in sorted(docs.glob("*.md")):
+            for match in _DOC_GREP.finditer(doc.read_text(encoding="utf-8")):
+                pattern = match.group(2)
+                found = _UNESCAPED_PREFIX.search(pattern)
+                if found:
+                    broken[f"{doc.name}: {pattern[:60]}"] = (
+                        f"{found.group(0)} is a character class, not a prefix"
+                    )
+
+        assert not broken, (
+            "these Verification commands cannot match the line they name, so the "
+            f"`Last verified` stamp above them rests on a grep returning 0:\n  {broken}"
+        )
+
+    def test_the_doc_sweep_sees_a_real_population(self) -> None:
+        """VACUITY CONTROL. A regex that stopped finding grep invocations would make
+        the assertion above pass over an empty corpus."""
+        docs = _ROOT / "docs" / "reference-mapping" / "designs"
+        greps = [
+            m.group(2)
+            for d in docs.glob("*.md")
+            for m in _DOC_GREP.finditer(d.read_text(encoding="utf-8"))
+        ]
+
+        assert len(greps) >= 50, f"only found {len(greps)} grep patterns in the corpus"
+        assert any("\\[" in g for g in greps), (
+            "no document escapes a bracket any more — either the corpus changed or "
+            "this sweep has stopped seeing the shape it exists to check"
+        )
+
+
 class TestNoCheckBoundsAtAFutureDate:
     """THE GUARD'S OWN BLIND SPOT, found by walking into it while building the guard.
 
