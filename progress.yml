@@ -360,6 +360,32 @@ current:
       (waiting on a DEEP lane, not a long human conversation) was done by grepping the
       logs directly and still stands. What changed is that the OPEN is now honest: before
       this, the check would have read OPEN even after the nudge fired.
+    AND_THE_SAME_CAUSE_REACHED_THE_DESIGN_DOCS: >-
+      The mandated question — what else does this cause reach — found THREE more, in
+      D05.1 (twice) and D09.2, where a Verification command greps an unescaped `[paths]`
+      or `[memory]` prefix. Proven against a file holding the exact lines: 0 unescaped, 1
+      escaped. Both claims turned out TRUE when re-run with a working pattern — D05.1's
+      line has 195 occurrences and D09.2's 23 — so nothing in those documents was wrong
+      except the instrument meant to demonstrate it, and their `Last verified` stamps
+      rested on greps returning zero. D05.1's was wrong twice over: it also said
+      "model-writable root" where the message says "workspace". All three fixed; the
+      sweep now returns 0.
+    THE_DOC_GUARD_IS_DELIBERATELY_NARROWER_THAN_THE_CHECK_GUARD: >-
+      Applying the closing-check rule (a pattern must match its own literal text) to the
+      design corpus reports 14 failures and MOST ARE CORRECT: documents use grep as a
+      genuine regex tool, and alternation, `[0-9]+` and `log\.(info|debug)\(` are all
+      deliberate. 14 was not the answer — checking what the denominator was MADE OF
+      reduced it to 3. So the doc guard asks only about the one shape that is never
+      intentional, a bracketed log prefix left unescaped. A guard that cries wolf on
+      correct work is the failure this programme keeps paying for.
+    MY_PATCH_SCRIPT_ASSERTED_AND_I_DID_NOT_READ_IT: >-
+      The two findings above were written for commit ca4520be and never landed: the
+      insert asserted `count(anchor) == 1` against `MUTATION_PROVEN:`, which three
+      records now carry, so it aborted. The assertion did exactly its job; I let the
+      gate-and-commit proceed in the same step without reading its output, so the code
+      shipped correct and the RECORD shipped incomplete. A guard whose verdict nobody
+      reads is the same defect as a gate chained to the wrong command — the rule this
+      programme already wrote down twice, met from the other side.
     MUTATION_PROVEN: >-
       Two mutants, applied, killed and restored from a FILE COPY with the restore re-run
       green: reverting the escape (the live defect) fires the main assertion, and making
