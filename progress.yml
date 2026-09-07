@@ -315,6 +315,57 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT174_2026_09_07_a_security_boundary_re_proven_by_mutation_not_by_a_green_suite:
+    map_check: >-
+      D05.5 — a MAPPED item and the oldest stale document. It INVERTS A DEFAULT-DENY, so
+      its Verification was re-run INCLUDING the mutation: a suite that merely passes
+      proves nothing about a boundary.
+    THE_MUTATION_IS_THE_VERIFICATION: >-
+      M4 — make `ptc_callable` return True unconditionally — still fails EXACTLY the seven
+      escape vectors the document names: shell, execute_code, process, claude_code,
+      delegate_task, sessions_spawn, sessions_send. It also fails an EIGHTH,
+      `TestRobustnessAndAudit::test_excluded_call_is_audited`, which did not exist when
+      the document was written. That extra kill is a STRENGTHENING, not a drift: a denied
+      call must now also leave an audit record. Restored from a FILE COPY; 172 passed
+      again afterwards.
+    THE_PREMISE_IS_STRONGER_ON_2_8x_THE_DATA: >-
+      Re-measured: 4,189 tool-using turns against the recorded 1,470; 3,039 multi-call;
+      1,779 with five or more; longest chain 53 against 46; `web_fetch` 6,854 times in
+      chains against 4,102. The decisive one is the share that would fit the OLD five-name
+      allowlist: 20% -> 13%. The surface this item widened is needed MORE now, not less.
+    AND_ONE_NUMBER_MOVED_THE_OTHER_WAY_recorded_not_smoothed: >-
+      The multi-call SHARE fell from 84% to 73%. That is real and is written down rather
+      than averaged away: the corpus grew and it grew disproportionately in single-call
+      turns. The absolute count still rose 1,237 -> 3,039, so the premise holds on the
+      number that matters while the ratio moved against it.
+    NOT_VERIFIED_LIVE_STILL_STANDS_now_with_its_denominator: >-
+      The document said "Not verified live" with no measure of how far from live it was.
+      `[sandbox.ptc] channel started` appears EXACTLY ONCE in the whole retained window,
+      and no owl-tool call through it is recorded, against 42 `execute_code` invocations
+      all-time. So the zero is NO OPPORTUNITY rather than failure — the same shape D06.1
+      found from the other side, and now stated so a reader is not left guessing whether
+      the silence is a defect.
+    MY_GREP_LIED_FIRST: >-
+      Searching the logs for 'ptc' returned 458 hits and every one of the 454 top matches
+      was `browser_navigate.execute: exit` — the substring inside another word. The real
+      signal was a single line. Printing the distinct messages before believing the count
+      is what separated one from four hundred and fifty-eight.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validate_evidence: >-
+      Documentation only — no src/ change survives; the mutation was applied, measured and
+      restored from a file copy, with the suite green again afterwards as the proof the
+      restore happened. Every number re-measured against the live database and logs.
+    document_reason: >-
+      D05.5 IS the document, re-stamped 2026-09-07 with the mutation result, the
+      strengthened premise, the one ratio that moved against it, and the denominator
+      behind "not verified live".
   DEBT173_2026_09_07_the_second_never_producible_count_and_why_no_guard_follows:
     map_check: >-
       D05.3 — a MAPPED item and the oldest stale document. Its defect was DIAGNOSED in
