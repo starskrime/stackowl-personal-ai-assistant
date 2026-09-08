@@ -15326,53 +15326,6 @@ current:
         [ -z "$u" ] || [ "$u" = "0" ] || [ "$u" = "infinity" ] && echo "HOLDS — no armed
         watchdog (WatchdogUSec=${u:-none}); nothing supervises the process" || echo
         "EXPIRED — a watchdog is armed at $u"
-    ESC_158_ANSWERED_2026_09_08_audit_can_be_deleted_after_14_days_fix_code:
-      ANSWER: >-
-        Bakir, 2026-09-08: "Audit can be deleted after 14 days. Fix code." Shipped —
-        default 90 -> 14 and the pruner wired into the decay pass. The conflict this
-        entry raised (audit_log is the durable store the rotting log checks should be
-        re-keyed onto) is now SETTLED IN THE OTHER DIRECTION: a 14-day horizon is shorter
-        than the log's own retention, so acceptance evidence must NOT be re-keyed onto
-        audit_log. That closes the question the panel could not.
-      premise_check: >-
-        d=$(grep -A2 "audit_retention_days: int" src/stackowl/config/settings.py | grep -o
-        "default=[0-9]*" | head -1); [ "$d" = "default=14" ] && echo "EXPIRED — answered
-        and shipped ($d)" || echo "HOLDS — setting is $d, not 14"
-    ESC_158_SUPERSEDED_audit_log_has_a_retention_setting_with_no_reader_and_pruning_it_deletes_evidence:
-      question: >-
-        `audit_retention_days` (settings.py:837, default 90) has EXACTLY ONE reference in
-        `src/` — its own declaration. Zero readers. `audit_log` holds 11,353 rows spanning
-        ~105 days, so 90 is advertised and not enforced. Do you want it enforced (rows
-        older than 90 days pruned), the setting deleted as never-wired, or the bound
-        raised to match what the table is actually being used for?
-      why_evidence_cannot_settle_it: >-
-        Implementing the missing reader DELETES DATA, which this skill lists as a
-        stop-and-brief case, and the right answer depends on what `audit_log` is FOR.
-        Measurement can say it is unenforced; it cannot say whether 105 days of audit
-        history is a leak or the point.
-      and_it_carries_a_conflict_that_must_be_settled_FIRST: >-
-        A panel lens recommended re-keying the log-based `closing_check`s onto durable
-        rows precisely because logs rotate — and named `audit_log` as the store to use
-        (`audit_log.job_rearmed_after_failure` 527 rows, `health.alerted` 54,
-        `capability.denied` 101). Enforcing a 90-day prune would begin rotting exactly
-        that evidence, reintroducing DEBT-211's defect one store over. **The durable store
-        is durable BY ACCIDENT — because the setting has no reader — and fixing the
-        accident regresses the item that depends on it.** Deciding retention therefore
-        decides the acceptance-evidence strategy too, which is why they cannot be settled
-        separately.
-      panel_recommendation: >-
-        Do not wire it silently in either direction. If audit history is evidence, say so
-        and delete the setting rather than leaving a bound nothing honours; if it is a
-        leak, wire the prune AND move the closing checks off `audit_log` first.
-      blocked_until_answered: >-
-        Nothing is blocked today — the table is not growing dangerously (11,353 rows over
-        105 days). What is blocked is the re-keying strategy for the eight closing checks
-        still bound to a rotating log.
-      premise_check: >-
-        n=$(grep -rho "audit_retention_days" src/ | wc -l); r=$(./scripts/db_query.sh
-        "SELECT COUNT(*) FROM audit_log;" 2>/dev/null | tail -1);
-        [ "$n" -le 1 ] && echo "HOLDS — still $n reference in src/ (declaration only),
-        $r rows" || echo "EXPIRED — audit_retention_days now has $n references"
     ESC_157_should_the_skill_nudge_reach_BACKGROUND_lanes_at_all:
       question: >-
         The skill nudge can only ever fire on lanes that passed through INGRESS. Should it
@@ -18454,6 +18407,141 @@ current:
         recommendation: "(c). (a) alone leaves the checks dependent on a mechanism that just demonstrated it does not do what it is configured to do."
         blocked_until_answered: "ESC-70 specifically. The tool-cap experiment cannot produce a number until there is a window long enough to compare across."
 
+  DEBT216_2026_09_08_a_recovered_answer_went_to_whoever_spoke_last_or_to_nobody:
+    item: |-
+      An answer produced by re-driving a recovered task reached its addressee, an
+      UNRELATED chat, or nobody at all — decided by process-global state — and all
+      three were reported to the loop as "delivered".
+    why_it_matters: |-
+      Bakir, 2026-08-17: "a task is complete when its outcome reached its
+      DESTINATION, not when the function returned." This is that rule failing in
+      both directions at once, on the ONE loop's recovery path.
+    measured_2026_09_08: |-
+      Across every retained log (2026-08-28 .. 2026-09-08):
+        241  retry_actuator.attempt_retry: entry           (the denominator)
+         60  [telegram] adapter.send_text: no active chat (best-effort) — message
+              dropped — and 60 of 60 were immediately preceded by an attempt_retry
+              entry, attributed by pairing each drop with the nearest preceding
+              caller line. No other caller produced one.
+          3  re-drives of tasks whose destination was NULL that reached a REAL chat,
+              found by pairing each "[loop] re-driving a recovered task" with the
+              next telegram send outcome within 60s. Those tasks name no addressee;
+              the chat they landed in was simply the last one to speak.
+          0  send_file drops, and 0 explicit-target failures — the sibling paths are
+              latent, not firing.
+      Destinations of the 209 re-drives that logged one: 79 NULL, 60
+      telegram:72055773, 54 rca, 16 bare "telegram". Only the second is addressed.
+    root_cause: |-
+      WHY, not what. `_deliver_success` branches on `row.channel_chat_id`, derived
+      from the task's destination. With no chat id it called the UNTARGETED form
+      `adapter.send_text(text)`, which telegram resolves against `_last_chat_id` —
+      whichever chat most recently sent an update.
+
+      `channels/base.py` already forbids precisely this, in its own words: "A
+      'fallback chat' is NEVER fabricated (that re-creates the cross-deliver bug)",
+      and specifies the best-effort drop as a "loud error-level LOGGED NO-OP,
+      surfaced via the DeliveryLedger". The retry actuator calls the adapter
+      DIRECTLY, so on this path there is no ledger and nothing surfaces the no-op.
+      The contract was written; this one caller was never held to it.
+
+      And the drop WAS signalled — telegram returns None from send_text. That
+      signal is unreadable by construction: cli, socket, discord and whatsapp all
+      return None on SUCCESS. So "dropped" and "sent" are the same value, and
+      `_deliver_success` returned None on every path regardless.
+    what_else_the_same_cause_reaches: |-
+      `notifications/deliverer._transport` has the identical untargeted branch and
+      likewise returns "delivered" after a call that may have dropped — so the
+      undelivered_outbox, whose own docstring enumerates three silent-drop seams,
+      never sees this fourth one. MEASURED: 0 occurrences in the retained window
+      (its "sent" line is DEBUG, so the denominator is invisible), and its callers
+      include the health canary. NOT changed in this item — an unmeasured change to
+      the canary's transport is how a regression ships. Recorded with its zero.
+    the_guard_that_could_not_fire: |-
+      `loop._dispatch` guards this exact overclaim with `if not (result or
+      "").strip()` and the comment "marking it delivered would be the overclaim
+      shape this platform keeps finding". The value it inspects is composed by
+      `task_loop_runner`, which returned the LITERAL "re-driven and delivered after
+      N prior attempt(s)" on the completed path — a constant that can never be
+      empty. The guard was vacuous on the one path it was written for.
+    corrects_an_earlier_record: |-
+      RESOLVED_the_delivery_finding_was_an_already_healed_defect concluded "the
+      delivery path is healthy" on 60/60 destinations having delivered_at. That
+      query could not see this: a dropped answer wrote NO row, and `prune_completed`
+      deletes the completed rows that carried the false delivered_at (the 20 bare-
+      "telegram" completed rows cited in test_an_unaddressable_row_stops_early are
+      already gone from the live table). The table was the wrong instrument; the
+      only surviving witness is the 60 log lines. Not a contradiction of the
+      operator's decision — a correction of my own earlier measurement.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: partial
+      document: done
+    changes: |-
+      * channels/base.py — new `implicitly_addressable` contract (default True =
+        single-terminal). telegram/slack/discord/whatsapp declare False. Put on the
+        ADAPTER, not a name list in the caller, because a name list is a second copy
+        of one rule and drifts the moment a channel is added.
+      * retry_actuator._deliver_success — returns bool; on a channel that carries a
+        per-message target and has no chat id it now sends NOTHING and logs an INFO
+        line naming the retry id, channel and answer length.
+      * RetryOutcome.delivered — reported separately from `status`. The work DID
+        complete; re-running cannot conjure an addressee, so "pending" would spend
+        attempts on an outcome no attempt can change. What the caller must not do is
+        claim a delivery.
+      * task_loop_runner — returns a string that says which of the two happened, so
+        `_dispatch`'s guard inspects a fact instead of a literal.
+      * DEDUP: `_address_of` (store.py) and `_chat_id_of` (task_loop_runner.py) were
+        byte-identical copies of the "does this destination name somebody?" rule,
+        deciding the same question on the two halves of one lifecycle — the runner
+        to pick a target, the store to choose escalate-vs-retire for a dead letter.
+        Collapsed into pipeline/durable/addressing.py; both now alias it. Verified
+        identical on all 7 destination shapes.
+    tests: |-
+      tests/pipeline/durable/test_a_retry_never_fabricates_a_fallback_chat.py — 5
+      tests. MUTATION-PROVEN: replacing the guard with `if False` (the pre-fix
+      behaviour) turns 2 of them red with the exact production symptom
+      (delivered=True and send_text awaited); restored from a file copy and
+      re-run green. The adapter double sets the attribute explicitly rather than
+      being a bare MagicMock, whose every attribute is a truthy Mock and would
+      answer "yes" to a question it was never taught.
+    validate_partial_why: |-
+      The new INFO line has not fired in production yet — it needs a task to be
+      recovered and re-driven while carrying no addressee. That happened 60 times in
+      the retained window, so the evidence CAN exist; it has simply not happened
+      since the fix went live. Not closeable by volume of ordinary traffic.
+    closing_check: |-
+      n=$(./scripts/log_since.sh --all '_deliver_success: no addressee'); [ "$n" -gt 0 ] && echo "CLOSEABLE ($n)" || echo "OPEN (0 — no unaddressed re-drive since the fix)"
+    closing_check_is_bounded_how: |-
+      `--all` is EARNED here, not a way to dodge the date bound: the string is
+      introduced BY this commit, so `git log --reverse -S` finds it nowhere earlier
+      and history cannot satisfy the check. It is also evidence only the new code
+      could produce — the old code emitted the telegram DROP line instead, from a
+      different module, and emitted nothing at all on the send-to-the-wrong-chat
+      path. INFO, not DEBUG, so production traffic can close it.
+  RESOLVED_2026_09_08_ESC_158_audit_retention_answered_shipped_and_REMOVED_from_the_queue:
+    answer: |-
+      Bakir, 2026-09-08: "Audit can be deleted after 14 days. Fix code." Shipped —
+      settings default 90 -> 14, and the pruner wired into the weekly decay pass
+      (see DEBT215). Live effect measured the same day: audit_log 11,361 rows /
+      105.2 days -> 570 rows, 10,792 pruned, oldest 13.8 days.
+    the_conflict_it_carried_is_settled_too: |-
+      A panel lens had recommended re-keying the rotting log-based `closing_check`s
+      onto `audit_log` rows BECAUSE logs rotate. A 14-day horizon is SHORTER than
+      the log's own retained window, so that recommendation is dead: acceptance
+      evidence must not be re-keyed onto audit_log. Settled in the opposite
+      direction to the one the panel proposed.
+    why_it_is_removed_rather_than_marked: |-
+      `escalation_check.py` runs the `premise_check` of every entry in the queue and
+      has no notion of a resolved key — so a settled question keeps reporting
+      EXPIRED forever, and the queue keeps costing Bakir the time to decide it is
+      not a question. Both ESC_158 entries (ANSWERED and SUPERSEDED) were the two
+      EXPIRED results at the top of this loop; both are deleted from ESCALATIONS and
+      their content preserved here. Verified after: escalation_check reports 0
+      EXPIRED over 60 remaining entries.
 waves:
   1:
     domains: [D01]
