@@ -15341,6 +15341,18 @@ current:
         The 2026-08-30 restructure changed this queue from a LIST PRUNED on answer to a DICT that
         RETAINS the entry, and carried over only what was open at that moment — so every already-answered
         escalation lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_22_escalation_that_resolves_to_the_same_model:
+      resolution: DELIVER THE FLOOR ALREADY EARNED. Skip the identical re-run.
+      answer: DELIVER THE FLOOR ALREADY EARNED. Skip the identical re-run.
+      what_it_means: 'When the next tier resolves to the same (provider, model), stop discarding the
+        finished attempt. Return its honest floor instead of burning a second identical turn. Measured
+        cost of the old behaviour: 25 occurrences, up to 19 tool calls thrown away per turn, with
+        on_escalate resetting the ledger so the re-run was blind to what the first attempt learned.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_21 > ESC_22_escalation_that_resolves_to_the_same_model`. The
+        2026-08-30 restructure changed this queue from a LIST PRUNED on answer to a DICT that RETAINS
+        the entry, and carried over only what was open at that moment — so every already-answered
+        escalation lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
     ESC_23_catalog_override:
       resolution: CLOSED (fae357d7) — additive-only; two tests inverted, both advertising texts updated.
       recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
@@ -15348,6 +15360,21 @@ current:
         The 2026-08-30 restructure changed this queue from a LIST PRUNED on answer to a DICT that
         RETAINS the entry, and carried over only what was open at that moment — so every already-answered
         escalation lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_23_the_provider_catalog_override:
+      resolution: ADDITIVE-ONLY. A user file may add a new provider name, never replace a bundled
+        one.
+      answer: ADDITIVE-ONLY. A user file may add a new provider name, never replace a bundled one.
+      what_it_means: 'A name collision is REFUSED and logged at INFO rather than silently winning.
+        This REMOVES an advertised capability (setup/minimal.py:195 invites the override, and the
+        module docstring documents it), which is why it was asked rather than assumed. The reason
+        it goes: ProviderEntry carries base_url, and provider_command.py:886 sends that base_url the
+        operator''s RAW token before store_secret runs — so replacement is credential redirection,
+        which is the same risk class that got last-writer-wins rejected for plugin profiles.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_21 > ESC_23_the_provider_catalog_override`. The 2026-08-30
+        restructure changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry,
+        and carried over only what was open at that moment — so every already-answered escalation
+        lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
     ESC_24_two_user_facing_shapes:
       resolution: 'NOT ASKED — recommendation stands unless contradicted: leave both alone.'
       answer: 'NOT ASKED — recommendation stands unless contradicted: leave both alone.'
@@ -15479,6 +15506,84 @@ current:
         changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried
         over only what was open at that moment — so every already-answered escalation lost its record,
         and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_31_what_is_the_memo_horizon:
+      resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
+        question. Its own key records the outcome: "what is the memo horizon". The fields below are
+        the implementation and its evidence, recovered unchanged.'
+      question: Should the presented-tool memo be keyed on the CONVERSATION (session_id) instead of
+        the LANE (session_key)? Its own docstring says "a new session must recompute, or a learned
+        demotion could never take effect" — and since D01.7 split the two, session_key is the lane,
+        so a new conversation on an existing lane never recomputes and the learned usage ranking never
+        takes effect for the life of that lane.
+      why_evidence_cannot_settle_it: Both readings are defensible on the same numbers. Lane-keyed
+        maximises prompt-cache stability, which is Law 1 and is the whole point of D05.2. Conversation-keyed
+        makes the learned ranking actually reach the model, which is the reason D05.2 built the ranking
+        in the first place. Measurement says which is cheaper; it cannot say which you want, and it
+        is a live behaviour change on every conversation.
+      the_uncomfortable_fact_kept_rather_than_smoothed: The only thing re-ranking anything today is
+        a DEFECT — the browser recycle wipes the memo 62 times a day (DEBT-D054-BROWSER-FLAP). Fix
+        the flap without answering this and the ranking freezes for the life of every lane. That coupling
+        is why the two are raised together.
+      recommendation: Conversation-keyed, and fix the flap in the same change. A lane is not a cache
+        horizon for anything — it outlives conversations, spans owls, and is shared with runs that
+        are not conversations at all. Every OTHER bug found in this area today was the same confusion.
+      blocked_until_answered: DEBT-D054-BROWSER-FLAP's fix; nothing in D05.4.
+      NEW_EVIDENCE_2026_08_22_the_D05_4_watch_answers_THIS_question_not_its_own: 'Running D05.4''s
+        standing watch over the FULL window since its evidence line was promoted to INFO — 233 rebuild
+        records, 2026-08-21 onward, not just the current boot — turned "I2 is waiting on traffic"
+        into something sharper and it lands here. 220 of the 233 rebuilds carry NO conversation_id
+        at all; only 13 do; and ZERO (conversation_id, owl) pairs appear more than once. Not "few"
+        — none. So a within-conversation rebuild, the only event I2 as phrased can observe, has not
+        occurred once in two days. THE BASIS MECHANISM IS NEVERTHELESS PROVABLY LIVE: three records
+        read `measured != basis` — scout 01:45:21 (23 tools, 5929 vs 5459), scout 01:47:51 (24, 7333
+        vs 5459) and secretary 14:40:23 (23, 6403 vs 5909). All three are the SAME LANE across DIFFERENT
+        conversations, and in all three `tools` changed anyway, so D05.4''s stated pass (`measured
+        != basis` with `tools` unchanged) is still unmet. THE REASON IS STRUCTURAL, NOT STATISTICAL.
+        `memo_key` is built from `state.session_key` at pipeline/steps/execute.py:1415-1425 — the
+        LANE — so the basis persists ACROSS conversations and is never re-derived WITHIN one. A check
+        phrased on within-conversation reuse cannot be satisfied by a store keyed on the lane. That
+        is this escalation, now carrying a measurement instead of a suspicion: the memo horizon is
+        not merely a preference question, it is currently making one of D05.4''s own invariants unobservable.
+        WHAT THIS DOES NOT DO: it does not reopen D05.4. The item closed on the integration-test bar
+        Bakir chose, the basis is provably reused and the rebuild path is provably live. What is unproven
+        is narrower than it was, and now named.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_D05_4_2026_08_21 > ESC_31_what_is_the_memo_horizon`. The 2026-08-30 restructure
+        changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried
+        over only what was open at that moment — so every already-answered escalation lost its record,
+        and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_31b_THE_SAME_QUESTION_IN_A_THIRD_STORE_measured_2026_08_21:
+      resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
+        question. Its own key records the outcome: "THE SAME QUESTION IN A THIRD STORE measured 2026
+        08 21". The fields below are the implementation and its evidence, recovered unchanged.'
+      what_this_adds_to_ESC_31: It is not two stores, it is THREE, and they should be answered together
+        or the platform ends up half-converted. `infra/hydrated_tools.py` keys the tool_search promotion
+        set on `session_key` while its own docstring says it "must survive ACROSS turns of the same
+        SESSION" — the identical code-vs-stated-intent gap as the memo. Same fix, same trade, same
+        decision.
+      MEASURED_TODAY_and_the_contamination_is_real: 'On lane `owl:secretary:telegram:dm:72055773`,
+        in ONE day: 29 tool_search calls carrying NO session_id (retry, self-heal `-fix`, goal execution)
+        and 26 carrying one (actual conversations). They share a hydration bucket, so a tool discovered
+        by a background retry is promoted into the next interactive turn''s presented schema and vice
+        versa. That is a real capability change to the model''s roster, sourced from a run the user
+        never saw.'
+      AND_A_SECOND_DEFECT_IN_THE_SAME_STORE_which_is_the_shape_this_programme_HUNTS: '`record()` opens
+        with `if not session_key or not names: return`, and 59 of today''s 185 tool_search calls (32%)
+        carry an EMPTY session_key. So a third of all discoveries are silently discarded and the model
+        re-discovers the same tool every turn on those paths — FX-07''s whole purpose, not firing,
+        on a third of its traffic. A write that does not happen, with nothing saying so. NOT a proposal
+        to hydrate the empty key: bucketing them all under "" is the same cross-contamination in a
+        worse form. It is an argument that the key is wrong, not that the guard is.'
+      recommendation: Answer ESC-31 once, for all three stores, and prefer the CONVERSATION. A lane
+        is not a horizon for anything — it outlives conversations, spans owls, and is shared with
+        runs that are not conversations at all. Every defect found in this area today reduced to that
+        one confusion.
+      blocked_until_answered: nothing today; it is a live behaviour change and so is Bakir's.
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_D05_4_2026_08_21 > ESC_31b_THE_SAME_QUESTION_IN_A_THIRD_STORE_measured_2026_08_21`.
+        The 2026-08-30 restructure changed this queue from a LIST PRUNED on answer to a DICT that
+        RETAINS the entry, and carried over only what was open at that moment — so every already-answered
+        escalation lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
     ESC_35_HOT_RELOAD_FIXED_2026_08_23_T20_40Z:
       resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
         question. Its own key records the outcome: "HOT RELOAD FIXED 2026 08 23 T20 40Z". The fields
@@ -15515,6 +15620,16 @@ current:
         from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over only what
         was open at that moment — so every already-answered escalation lost its record, and with it
         the ANSWER. Restored verbatim, not re-decided.
+    ESC_35_tool_count_cap:
+      resolution: 'WINDOW-RELATIVE, BUT ONLY AFTER ESC-36. Demote tool_count_cap to an opt-out ceiling
+        and size the presented set against the resolved model window, reusing the existing resolve_no_progress_threshold
+        shape. THE ORDERING IS THE DECISION: re-sizing a set that is chosen by the alphabet only changes
+        which letters survive.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_23 > ESC_35_tool_count_cap`. The 2026-08-30 restructure changed
+        this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over
+        only what was open at that moment — so every already-answered escalation lost its record,
+        and with it the ANSWER. Restored verbatim, not re-decided.
     ESC_36_VALIDATED_LIVE_2026_08_23_T20_19Z:
       resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
         question. Its own key records the outcome: "VALIDATED LIVE 2026 08 23 T20 19Z". The fields
@@ -15542,6 +15657,64 @@ current:
         from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over only what
         was open at that moment — so every already-answered escalation lost its record, and with it
         the ANSWER. Restored verbatim, not re-decided.
+    ESC_36_IMPLEMENTED_2026_08_23_T19_50Z:
+      resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
+        question. Its own key records the outcome: "IMPLEMENTED 2026 08 23 T19 50Z". The fields below
+        are the implementation and its evidence, recovered unchanged.'
+      what_bakir_decided: Guarantee `clarify`, and fix the tie-break for unscored tools — explicitly
+        NOT hand-ranking 77 tools, because a curated ordering is a constant that rots exactly as the
+        eight lockstep cap bumps did.
+      ROUND_0_and_it_MOVED_THE_TARGET: 'I expected the harm to be cold-start owls. It is not. Measured
+        over the 30-day window, 9,349 task_outcomes rows: 15 of 18 owls HAVE usable usage history
+        and only 3 are cold. But even a busy owl has history for a small slice of the catalog — headhunter
+        15 distinct tools of 77, secretary 30, scout 8. Every remaining tool scored 0, tied, and fell
+        through to the key''s last term. So SPELLING decided which of ~60 unscored tools filled the
+        remaining slots, for owls WITH history and without alike. The cold-start framing would have
+        fixed 3 owls; the real fix reaches all 18.'
+      the_change: 'Rank key gains a THIRD term: (-owl_usage, -declared_priority, -GLOBAL_usage, name).
+        When this owl has no evidence for a tool, use the platform''s — already recorded in the same
+        task_outcomes rows (web_search 3,506 dispatches, web_fetch 1,132, memory 408, shell 283).
+        Data-derived, not hand-ranked. `name` REMAINS THE FINAL TERM so the order stays total and
+        the presented array stays byte-stable within a session, which is what D01.2''s position-0
+        cache marker depends on — the same argument as ESC-44 for skills. And `clarify` joins _DEFAULT_ALWAYS.
+        The cap is NOT bumped, deliberately: ESC-46 removed synthesize_skills from the base the same
+        day, so the guaranteed floor is the same size and clarify takes the slot that tool held.'
+      ONE_RULE_ONE_HOME_both_places_it_could_have_forked: The SQL is shared — list_tool_usage_for_owl
+        and the new list_tool_usage_global both call _tool_usage_rows, so the three deliberate choices
+        documented on the original (DESC ordering, no quality filter, approach_rating selected) cannot
+        drift. The SCORING is shared — score_tools_for_owl and score_tools_globally both call _score_rows,
+        so the quality floor, the positive-only gate and the half-life cannot drift either.
+      THE_EFFECT_MEASURED_and_my_FIRST_measurement_was_WRONG: 'My first simulation omitted the declared-priority
+        term and showed owls losing browser_click and browser_snapshot. THAT WAS FALSE and I nearly
+        reported it. Modelling the real three-term key: ALL EIGHT prioritised browser tools (snapshot
+        100, click 90, navigate 90, type 90, extract/scroll/wait_for 70, screenshot 60) are STILL
+        PRESENTED for every owl — ESC-9''s fix is completely intact. What is traded away is only the
+        UNPRIORITISED browser tail (browser_back, browser_browse, browser_close, browser_console,
+        browser_cookies_*), plus batch_approve. What is gained, per owl: headhunter +execute_code,
+        owl_schedule, session_search, claude_code. scout +note_applied_lesson, search_files, read_logs,
+        delegate_task, execute_code, owl_schedule, session_search, claude_code. THE LESSON: simulating
+        a multi-term sort key while omitting a term does not approximate it, it models a different
+        function. Same family as the contaminated baseline earlier today — a comparison is only as
+        good as its control.'
+      wiring_verified_not_assumed: 'An unwired parameter is failure mode 1, so the chain was walked
+        link by link in process: execute reads -> passes to to_provider_schema -> registry accepts
+        -> registry forwards -> rank_candidates accepts -> the rank key reads it -> scorer exists
+        -> store read exists -> one SQL shared. All nine connected.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESC_36_IMPLEMENTED_2026_08_23_T19_50Z`. The 2026-08-30 restructure changed this queue from
+        a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over only what was open
+        at that moment — so every already-answered escalation lost its record, and with it the ANSWER.
+        Restored verbatim, not re-decided.
+    ESC_36_tool_ordering:
+      resolution: 'GUARANTEE `clarify`, AND FIX THE TIE-BREAK. Promote clarify into the guaranteed
+        set beside the existing appeal tools — the same principle, one addressee over — and make the
+        tie-break for unscored tools something other than spelling. Explicitly NOT hand-ranking 77
+        tools: that is a constant that would rot exactly like the eight lockstep cap bumps.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_23 > ESC_36_tool_ordering`. The 2026-08-30 restructure changed
+        this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over
+        only what was open at that moment — so every already-answered escalation lost its record,
+        and with it the ANSWER. Restored verbatim, not re-decided.
     ESC_37_D08_4_verdict:
       resolution: RECLASSIFY TO close_gap with the two named gaps, keeping the three AHEAD findings
         in the item so the record does not read as "we were behind". Adopt the read-time re-scan;
@@ -15595,6 +15768,72 @@ current:
         queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over only
         what was open at that moment — so every already-answered escalation lost its record, and with
         it the ANSWER. Restored verbatim, not re-decided.
+    ESC_38_IMPLEMENTED_2026_08_23_T22_00Z:
+      resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
+        question. Its own key records the outcome: "IMPLEMENTED 2026 08 23 T22 00Z". The fields below
+        are the implementation and its evidence, recovered unchanged.'
+      decided: Bind `target` to the calling owl by default, resolve display-name to canonical name
+        through ONE canonicaliser, require operator/root for `user` and for another owl's file. Bakir
+        chose the option WITHOUT orphan migration, so the eight existing orphan files stay where they
+        are.
+      THE_AUTHORITY_HOLE_AND_THE_ORPHANS_ARE_ONE_DEFECT: 'MemoryTool._target was `str(kwargs.get("target")
+        or "user").strip()` — a @staticmethod taking only kwargs, so the calling owl was structurally
+        unavailable to it. Path traversal was already closed (CuratedMemory.path_for validates the
+        filename SHAPE), but SHAPE IS NOT IDENTITY: `Collector` is a perfectly safe filename and entirely
+        the wrong file.'
+      THE_DEFAULT_WAS_THE_WORST_PART: _DEFAULT_TARGET was "user", so every write that merely OMITTED
+        `target` landed in USER.md — the file every owl reads and which sits in every prompt — by
+        omission rather than by intent. The default is now the calling owl's own notes.
+      THE_ORPHAN_MECHANISM_MEASURED_2026_08_23: '8 of 13 files in ~/.stackowl/memory/ are read by
+        nothing (up from the 44% recorded when ESC-38 was raised — owl.md was added the same day).
+        Lining the files up against the owls table shows why: the model writes the DISPLAY name the
+        prompt shows it. Collector.md -> archivist. Falcon.md AND falcon.md -> both scout. agent.md,
+        owl.md, Brain.md -> no owl at all, just a generic word. sysdesign.md, sysfup.md -> owls that
+        no longer exist.'
+      the_canonicaliser_is_deliberately_NOT_fuzzy: 'owls/canonical.py matches an exact name, a case
+        variant, or a display name — nothing else. A near-miss resolver would route one owl''s notes
+        into another owl''s file, which is WORSE than the orphan it set out to prevent: an orphan
+        loses a write, a mis-resolution corrupts a reader. A canonical name beats another owl''s display
+        name, pinned by test, because that ordering is the difference between the two outcomes.'
+      root_is_ASKED_not_reimplemented: is_root_owl (owls/tool_presets.py) is the one source. The secretary
+        is the platform's root administrator, so the ordinary "record what the user told me" flow
+        is untouched — which is what makes this shippable rather than a regression.
+      THE_SCHEMA_CHANGED_WITH_THE_BEHAVIOUR_the_ESC_34_lesson_applied_early: 'The advertised `"default":
+        "user"` was REMOVED, because the default is now the calling owl, which the schema cannot name
+        — leaving it would have told the model the opposite of what happens. That is exactly the trap
+        ESC-34 sprang (a persona naming a tool the owl no longer held), caught before shipping this
+        time rather than by a passing test afterwards. A test asserts the schema no longer advertises
+        it.'
+      A_JUDGEMENT_THE_CODE_COULD_NOT_MAKE_and_how_i_resolved_it: 'When TraceContext carries no owl
+        — a CLI or utility turn — refusing would break the operator''s own path, and allowing silently
+        is a fail-open on authority. It FAILS OPEN BUT LOUDLY: today''s behaviour is preserved and
+        an INFO line records the write as unattributed. If owl-driven traces ever land in that branch
+        the log will say so, instead of the gap being invisible. Chosen because an unmeasured fail-open
+        is the shape this whole session has been removing.'
+      VALIDATE_IS_OPEN_and_stated_as_such: 'RESTART VERIFIED: last src write 21:59:21Z, core boot
+        21:59:57Z (36s). But there have been ZERO memory writes since that boot, so the three new
+        branches have had zero opportunities — 0 unattributed, 0 orphan fallbacks, 0 refusals is NOT
+        evidence they work. The `memory` tool averages ~2 calls/hour (410 in 9 days). CLOSING QUERY,
+        already known to run: grep the JSONL for "UNATTRIBUTED write", "not a known owl", and "may
+        not write". PASS = a real write resolves to the calling owl with no refusal; the interesting
+        readings are a non-zero unattributed count (which would mean the fail-open branch is load-bearing
+        and needs revisiting) or a refusal (which would mean an owl really was crossing the boundary).'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESC_38_IMPLEMENTED_2026_08_23_T22_00Z`. The 2026-08-30 restructure changed this queue from
+        a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over only what was open
+        at that moment — so every already-answered escalation lost its record, and with it the ANSWER.
+        Restored verbatim, not re-decided.
+    ESC_38_memory_authority:
+      resolution: BIND `target` TO THE CALLING OWL. Default to the caller, resolve display-name to
+        canonical name through ONE canonicaliser so "Falcon" reaches scout.md, and require an explicit
+        operator/root path for `user` and for another owl's file. Note he chose the option WITHOUT
+        orphan migration, so the five orphan files stay where they are for now — moving them is separate
+        data movement and still needs his word.
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_23 > ESC_38_memory_authority`. The 2026-08-30 restructure changed
+        this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over
+        only what was open at that moment — so every already-answered escalation lost its record,
+        and with it the ANSWER. Restored verbatim, not re-decided.
     ESC_41_D09_1_scope:
       resolution: 'RE-SCOPE TO A TASK ROW ON THE EXISTING DURABLE LOOP. Not a fork, not a second engine:
         an automatic per-turn TRIGGER as a row, admission-controlled at max_parallel=5 and crash-recovered
@@ -15606,6 +15845,16 @@ current:
         this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over
         only what was open at that moment — so every already-answered escalation lost its record,
         and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_41_X3_dedup:
+      resolution: 'REPLACE — the miner stays the single writer. The trigger enqueues work the existing
+        miner performs. This keeps the watermark meaningful and avoids the collision I verified: `reflections`
+        is UNIQUE(trace_id) DO NOTHING (first writer wins) while `lessons` upserts DO UPDATE (last
+        writer wins), so two producers would leave the two stores disagreeing.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_23 > ESC_41_X3_dedup`. The 2026-08-30 restructure changed this
+        queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over only
+        what was open at that moment — so every already-answered escalation lost its record, and with
+        it the ANSWER. Restored verbatim, not re-decided.
     ESC_43_D09_5_scope:
       resolution: 'BUILD /learn AS THE MAP SAYS. This OVERRIDES my recommendation to re-scope the
         item to the read path. My objection stays on the record — a user-authored skill currently
@@ -15653,6 +15902,53 @@ current:
         the JSONL log and never a PID; the rule is not merely a preference, the PID is actively misleading.
       recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
         > ESC_44_VERIFIED_ON_LIVE_TRAFFIC_2026_08_23_T19_10Z`. The 2026-08-30 restructure changed
+        this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over
+        only what was open at that moment — so every already-answered escalation lost its record,
+        and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_44_SHIPPED_AND_LIVE_2026_08_23_T18_56Z:
+      resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
+        question. Its own key records the outcome: "SHIPPED AND LIVE 2026 08 23 T18 56Z". The fields
+        below are the implementation and its evidence, recovered unchanged.'
+      commit: 20593b9a
+      what_changed: The injected skill catalogue's sort key moved from `name` alone to (n_executions
+        desc, lifecycle_state, name), in ONE named function (skills/store.py::catalogue_order_key)
+        so no second consumer can grow a divergent copy.
+      measured_effect_against_the_live_store: 'BEFORE (by name):  visible=14  dropped=146  carried  18
+        of 217 executions  (8%) AFTER  (by value): visible=16  dropped=144  carried 196 of 217 executions  (90%)
+        Slightly MORE skills fit, because the high-usage ones have shorter summaries.'
+      law_1_untouched: Byte-identity needs a DETERMINISTIC key, not an alphabetical one. `name` remains
+        the final term so the key is TOTAL — two distinct skills can never compare equal, so the block
+        cannot depend on SQLite's row order. Forward/reverse/shuffled input producing identical output
+        is the property the tests guard hardest.
+      green: tests/pipeline 1439 passed (owns assemble.py); tests/skills 341 passed (owns store.py
+        — 329 before, +12 new). Baselines held at exactly ruff 37 / mypy 65. The first baseline check
+        after this change read 38, from a UP037 quoted annotation of my own; fixed before the commit
+        rather than carried.
+      RESTART_VERIFIED_NOT_ASSUMED: Last src write 18:55:52Z, core boot 18:56:29Z — 37 seconds later,
+        confirmed from the startup phase records in the JSONL, never a PID.
+      THE_LIVE_CHECK_IS_OPEN_and_its_query_already_runs: 'This is falsifiable on production traffic
+        because the truncation record was given `last_presented` and `first_dropped` earlier the same
+        session (commit 978abc0f). So the cut point itself is now logged at WARNING and can simply
+        be read. BASELINE, from the 131 truncation records logged today BEFORE the reboot — every
+        one reads `last_presented=evidence-brief, first_dropped=jarvis-greeting-protocol`, an alphabetical
+        boundary. PASS = truncation records with ts > 18:56:30Z whose `last_presented` is a HIGH-USAGE
+        skill (the structure-incident-evidence family, 45/43/23 runs) rather than an alphabetically-early
+        one, and whose `first_dropped` carries fewer executions than `last_presented`. FAIL, and worth
+        stating so it cannot be explained away: if post-reboot records still show an alphabetical
+        boundary, the sort did not reach the running path and the right suspicion is a second catalogue
+        producer, not a successful change.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESC_44_SHIPPED_AND_LIVE_2026_08_23_T18_56Z`. The 2026-08-30 restructure changed this queue
+        from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over only what
+        was open at that moment — so every already-answered escalation lost its record, and with it
+        the ANSWER. Restored verbatim, not re-decided.
+    ESC_44_skill_ordering:
+      resolution: SORT BY VALUE, KEEP BYTE-IDENTITY. The catalogue key becomes (n_executions desc,
+        lifecycle_state, name) instead of name alone. Still fully deterministic, so the block stays
+        byte-identical across turns and Law 1 is untouched — the same guarantee with a better tie-break.
+        Moves the visible ~12 slots from carrying 18 of 217 executions to carrying roughly 180.
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_23 > ESC_44_skill_ordering`. The 2026-08-30 restructure changed
         this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over
         only what was open at that moment — so every already-answered escalation lost its record,
         and with it the ANSWER. Restored verbatim, not re-decided.
@@ -15721,6 +16017,15 @@ current:
         this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over
         only what was open at that moment — so every already-answered escalation lost its record,
         and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_47_50_model_column:
+      resolution: '"Add the column, start recording." ALTER task_outcomes to carry the model, populate
+        it from now on. NO behaviour change to the cap today — the data simply has to exist before
+        anything can be relative to it.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_24_EVENING > ESC_47_50_model_column`. The 2026-08-30 restructure
+        changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried
+        over only what was open at that moment — so every already-answered escalation lost its record,
+        and with it the ANSWER. Restored verbatim, not re-decided.
     ESC_49_IS_WITHDRAWN_and_the_error_was_mine:
       resolution: 'I asked Bakir "which conversation does a proactive message join — current incarnation,
         a new one, or only if one is open?" That question had no premise. The implementation does
@@ -15735,6 +16040,45 @@ current:
         The 2026-08-30 restructure changed this queue from a LIST PRUNED on answer to a DICT that
         RETAINS the entry, and carried over only what was open at that moment — so every already-answered
         escalation lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_49_ARCHITECT_2026_08_24_T02_00Z:
+      resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
+        question. Its own key records the outcome: "ARCHITECT 2026 08 24 T02 00Z". The fields below
+        are the implementation and its evidence, recovered unchanged.'
+      decided: A delivered proactive message joins the user's CURRENT incarnation, and does NOT start
+        one if none is open.
+      the_seam_measured_not_guessed: 'SessionStore.get(session_key) -> SessionEntry | None is the
+        READ-ONLY accessor, and its None is exactly the "no conversation open" case — so the "do not
+        start one" half needs no new code, only the discipline to use `get` rather than `resolve_for`/
+        `resolve_turn_session`, which are the INGRESS resolvers and may MINT an incarnation. Picking
+        the wrong one of those two is the whole risk in this item. SessionEntry.conversation_id IS
+        the incarnation (sessions/models.py:143). channels/chat_id.py maps a lane <-> a channel-native
+        chat id, which is what turns a job''s target_addresses {"telegram": 72055773} into `owl:secretary:telegram:dm:72055773`.'
+      the_shape: 'At delivery: resolve the recipient''s lane from target_addresses -> session_store.get(lane)
+        -> if None, record NOTHING -> else TranscriptStore.record_turn against that conversation_id
+        with the delivered body as the assistant turn.'
+      THE_ONE_THING_THAT_MUST_CHANGE_IN_A_SHARED_STORE: 'record_turn refuses this case twice, deliberately:
+        `if not conversation_id: return 0` ("a scheduler handler ... those are not conversations and
+        must not invent one") and `if not user_text: return 0`. The first guard stops mattering because
+        we now SUPPLY a conversation_id from the live lane — we are no longer inventing one, we are
+        joining an existing one, which is precisely the distinction that rule was protecting. The
+        second must be relaxed to admit an ASSISTANT-ONLY turn, giving the store a third shape beside
+        floored (user-only) and normal (user+assistant). Bakir approved this crossing by answering
+        ESC-49; it is recorded here so the extension reads as deliberate.'
+      a_discrepancy_i_measured_and_am_NOT_chasing: '_resolve_incarnation''s docstring says the lane
+        is keyed on the OWL — "a different owl is a different conversation" (Bakir''s Q1). The live
+        data disagrees: conversations rows read session_key=''owl:secretary:telegram:dm:72055773''
+        with owl_name of jobmarket, mailbutler and secretary against that SAME lane. So the lane is
+        per-USER-channel and the owl is a column, not part of the key. Recorded because ESC-49''s
+        implementation must use the lane that actually exists rather than the one the docstring describes
+        — and because if the docstring is the intended design, something else is already wrong.'
+      what_i_will_NOT_do: Not touch resolve_for/resolve_turn_session, not mint an incarnation, and
+        not record when the lane has none — all three would turn "join the conversation" into "manufacture
+        one", which is the option Bakir explicitly did not choose.
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESC_49_ARCHITECT_2026_08_24_T02_00Z`. The 2026-08-30 restructure changed this queue from
+        a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over only what was open
+        at that moment — so every already-answered escalation lost its record, and with it the ANSWER.
+        Restored verbatim, not re-decided.
     ESC_52_CANONICAL_DEDUP_2026_08_24:
       resolution: 'Bakir, 2026-08-24: "Canonical form + reinforce instead of refuse." Match on a canonical
         form — lowercase, separators normalised, tokens SORTED — and when it hits, strengthen the
@@ -15924,6 +16268,82 @@ current:
         changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried
         over only what was open at that moment — so every already-answered escalation lost its record,
         and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_54_UNTOUCHED_BY_THIS:
+      resolution: Separately confirmed today that browser_navigate is NOT among the 42 tools the tool_count_cap
+        trims, so the planner does see it and ESC-54 remains directive-blindness, not a presentation
+        bug.
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > FIRST_REAL_TRAFFIC_THROUGH_DEV_INGRESS_2026_08_26 > ESC_54_UNTOUCHED_BY_THIS`. The 2026-08-30
+        restructure changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry,
+        and carried over only what was open at that moment — so every already-answered escalation
+        lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_54_planner:
+      resolution: '"Feed it your directives." Pass durable user preferences / curated USER memory
+        into ToolProposer.propose alongside the goal, so a permanent instruction shapes every plan.
+        Fixes the CLASS not the instance — a future directive works with no code change. ACCEPTED
+        COST, stated when he chose: a bigger proposer prompt, and a bad directive could widen plans.
+        The envelope is ENFORCED, so this is an authorisation-adjacent change; keep the owl-bounds
+        check (assert_task_narrowing_enforceable) intact — the plan may never exceed what the owl
+        holds.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESCALATIONS_ANSWERED_2026_08_25_NIGHT > ESC_54_planner`. The 2026-08-30 restructure changed
+        this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry, and carried over
+        only what was open at that moment — so every already-answered escalation lost its record,
+        and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_54_THE_PLANNER_CANNOT_SEE_THE_USERS_STANDING_DIRECTIVES_2026_08_25:
+      resolution: 'ANSWERED — this entry is the FOLLOW-THROUGH on a decided escalation, not an open
+        question. Its own key records the outcome: "THE PLANNER CANNOT SEE THE USERS STANDING DIRECTIVES
+        2026 08 25". The fields below are the implementation and its evidence, recovered unchanged.'
+      status: ROOT CAUSE FOUND, NOT FIXED — needs Bakir, because the envelope is ENFORCED.
+      THE_CHAIN_end_to_end: task_runner.py:97 calls PreflightPlanner.plan(goal, creation_ceiling,
+        catalog), which calls ToolProposer.propose(goal, catalog) — an LLM choosing which tools a
+        goal needs from the tool NAMES and DESCRIPTIONS alone. For jobmarket's "search for Staff/Senior
+        Lead/Principal Engineer roles" it chose web_search + web_fetch + read_file + search_files
+        and omitted browser_navigate. The result is unioned with MANDATORY_DISCOVERY {tool_search,
+        tool_describe}, checked against the owl's bounds, and PERSISTED on tasks.task_envelope at
+        enqueue. execute.py:1928 then refuses any tool outside it.
+      THE_PROPOSER_SEES_ONLY_goal_AND_catalog: That is the defect in one line. USER.md carries a PERMANENT
+        directive dated 2026-08-22 — "when fetching web content, use the browser tools (browser_navigate/extract)
+        instead of web_fetch/shell curl to avoid bot-blocking" — and the planner has no access to
+        it. So it planned the exact two tools Bakir forbade and omitted the one he requires. His job
+        search then failed for precisely the reason he wrote the directive to prevent.
+      IT_IS_NOT_AN_OVERSIGHT_IN_THE_REFUSAL: '`_off_plan_block`''s own docstring is explicit and honest:
+        "THE REFUSAL CARRIES THE APPEAL... There is no runtime API to widen a durable task''s envelope,
+        so the honest appeal is to say so and name the reachable route... Promising a widening mechanism
+        that does not exist would be worse than refusing plainly." The author knew and chose an honest
+        dead end. The refusal even tells the agent to stop and report that the plan was insufficient.
+        So the failure is not a missing appeal — it is a plan that was wrong before the task ever
+        started, and cannot be corrected afterwards.'
+      measured: FIVE refusals on 2026-08-25 (four at 14:04:25 — one parallel batch — and one at 14:15:54),
+        all tool=browser_navigate owl=jobmarket, denied_by=task_envelope. jobmarket's manifest bounds.tools
+        INCLUDES browser_navigate, so the owl is authorised; only the plan is not. Three task rows
+        spanning two days carry the identical envelope, so it is systematic. Second owl affected —
+        secretary.md recorded the same shape for Brain on 2026-08-22 and concluded "fix is platform-side
+        plan builder, not grants".
+      WHY_I_DID_NOT_FIX_IT: The envelope IS enforced (denied_by=task_envelope), so widening what the
+        planner may propose changes what durable tasks are permitted to do. That is an authorisation-
+        adjacent design change on a security path, and this programme's stop-and-escalate rules cover
+        exactly that. The analysis is complete enough to implement from cold.
+      OPTIONS_FOR_BAKIR:
+      - 'FEED THE DIRECTIVES TO THE PLANNER (recommended). Pass durable user preferences / curated
+        USER memory into ToolProposer.propose alongside the goal, so a permanent instruction shapes
+        every plan. Fixes the class, not the instance — any future directive ("never use shell for
+        X") would be honoured automatically. Cost: the proposer prompt grows, and a bad directive
+        could widen plans.'
+      - 'UNION THE ENVELOPE WITH DIRECTIVE-NAMED TOOLS. Narrower: parse permanent directives for tool
+        names the owl already holds and add them to every envelope. Smaller blast radius, but it is
+        a second place that reads directives, and it only helps when a directive names a tool explicitly.'
+      - ADD A RUNTIME WIDENING API. The thing `_off_plan_block` says does not exist. Largest change,
+        and it weakens least-privilege by design — I would not recommend it unless the first two prove
+        insufficient.
+      NOT_the_fix: 'Granting jobmarket browser_navigate would be a no-op: it already holds it. The
+        refusal is the PLAN''s, not the owl''s. Worth stating because that is the obvious first move
+        and it would waste a cycle.'
+      recovered_from: RECOVERED 2026-09-08 from `480571bc^:progress.yml`, where it lived at `current
+        > ESC_54_THE_PLANNER_CANNOT_SEE_THE_USERS_STANDING_DIRECTIVES_2026_08_25`. The 2026-08-30
+        restructure changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry,
+        and carried over only what was open at that moment — so every already-answered escalation
+        lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
     ESC_160_the_only_remedy_the_reclaimer_names_is_one_it_is_forbidden_to_run:
       question: >-
         `db_reclaim` detects that incremental reclaim does not work on this database,
@@ -20265,6 +20685,63 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-237
+    found: 2026-09-08
+    what: >-
+      THE RECOVERY I SHIPPED ONE LOOP EARLIER RESTORED 22 OF 39 ENTRIES AND SAID IT WAS
+      COMPLETE. DEBT-236 recovered the escalation record lost to the 2026-08-30 restructure
+      and reported "22 of the 35 recovered VERBATIM". True BY ID and false BY ENTRY: history
+      holds THIRTY-NINE `ESC_*` entries for those 22 ids, and the extraction indexed
+      `entries[id][0]` — one per id. SEVENTEEN were dropped.
+    and_the_ones_it_dropped_were_the_ANSWERS: >-
+      Not a random 44%. Implementation records sorted first, so the restore systematically
+      kept the FOLLOW-THROUGH and discarded the DECISION: `ESC_35_tool_count_cap`,
+      `ESC_36_tool_ordering`, `ESC_38_memory_authority`, `ESC_44_skill_ordering`,
+      `ESC_54_planner`, `ESC_47_50_model_column`, `ESC_31_what_is_the_memo_horizon`.
+      MY OWN COMMIT MESSAGE QUOTED ESC-35's ANSWER AS ITS HEADLINE - "WINDOW-RELATIVE, BUT
+      ONLY AFTER ESC-36" - while the record it shipped did not contain that sentence.
+    why_it_happened: >-
+      A PER-ID WALK OVER A PER-ENTRY POPULATION. I counted the ids I could recover and never
+      asked how many ENTRIES those ids held. That is the denominator error - checking what a
+      number is MADE OF - committed inside the code written to cure a record loss, one loop
+      after shipping a guard about denominators.
+    and_the_GUARD_PASSED_because_it_shared_the_error: >-
+      `test_a_recovered_entry_says_where_it_came_from` asserted `len(recovered) >= 22`. The
+      22 was itself the defect, so the guard validated the same wrong population the recovery
+      had produced. A guard that derives its expectation from the artefact it is checking can
+      only ever confirm it.
+    fix: >-
+      (1) All 39 entries restored - the partial set removed first so the record does not hold
+      two generations. ESCALATIONS 108 -> 125; OPEN STAYS 61, the control that says nothing
+      was re-opened.
+      (2) The guard now ASKS HISTORY instead of a number: for every id in the recovery's
+      scope, every `ESC_*` key `480571bc^` holds must be present. The count cannot be chosen
+      wrongly because it is not chosen at all - measured equal, 39 = 39, zero missing, zero
+      extra.
+      (3) THE SCOPE IS PINNED, NOT DERIVED, and a mutation is why. Deriving the id set from
+      the entries carrying provenance is CIRCULAR: strip one entry's `recovered_from` and its
+      id leaves the scope with it, so the expectation shrinks to match the damage and the
+      guard passes. It survived the first re-mutation exactly that way. The 22 ids are now
+      listed as a fact about what was recovered; a later recovery widens the list in a diff
+      someone reads.
+    mutation_found_both_holes_and_review_found_neither: >-
+      M1 (an entry deleted) was caught; M2 (an entry keeping its content but losing its
+      provenance) SURVIVED and exposed the circularity. Both fail now. This is the second
+      loop running where mutation testing found slack in a guard I had just written and
+      believed.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: no_change_needed
+      document: no_change_needed
+    validate_no_change_needed_because: >-
+      Nothing shipped to a running code path - the state of record and a guard over it. The
+      proof is the instruments' own before/after: ESCALATIONS 108 -> 125 with open unchanged
+      at 61, 39 entries carrying provenance against 39 in history, and two mutations that now
+      fail where one used to pass.
   - id: DEBT-236
     found: 2026-09-08
     what: >-

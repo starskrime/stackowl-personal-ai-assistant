@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import collections
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -107,13 +108,41 @@ def test_a_recovered_entry_says_where_it_came_from() -> None:
     esc = (data.get("current") or {}).get("ESCALATIONS") or {}
     recovered = {k: v for k, v in esc.items()
                  if isinstance(v, dict) and "recovered_from" in v}
-    # THE FLOOR IS THE MEASURED COUNT, not a round number below it. `>= 20` against 22
-    # let a mutation strip one entry's provenance and still pass — caught by mutation,
-    # which is the only reason the slack was visible. The number can only RISE: a later
-    # recovery adds to it, and losing one is exactly what this must catch.
-    assert len(recovered) >= 22, (
-        f"only {len(recovered)} entries carry `recovered_from`, against 22 restored on "
-        f"2026-09-08 — either they were re-edited without their provenance, or removed"
+    # ASK HISTORY, DO NOT PIN A NUMBER. The first version of this asserted
+    # `len(recovered) >= 22` — and 22 was itself the defect: the recovery indexed
+    # `entries[id][0]`, restoring ONE entry per id over a population of THIRTY-NINE,
+    # so it kept the implementation notes and dropped the operator's actual answers
+    # (`ESC_35_tool_count_cap`, `ESC_36_tool_ordering`, `ESC_44_skill_ordering` …).
+    # The guard passed, because it counted the same wrong population the recovery
+    # had. A per-ID walk over a per-ENTRY set — the denominator error, in the code
+    # written to cure a record loss, one loop after shipping a guard about
+    # denominators.
+    #
+    # So the assertion is now an EQUALITY against the source: for every id we claim
+    # to have recovered, every `ESC_*` key that commit's parent holds must be here.
+    # That number cannot be chosen wrongly because it is not chosen at all.
+    # THE SCOPE IS PINNED, NOT DERIVED FROM THE SET UNDER TEST. Deriving it from
+    # `recovered` is circular and a mutation proved it: strip one entry's
+    # `recovered_from` and its id leaves the scope with it, so the expectation
+    # shrinks to match the damage and the guard passes. These 22 ids are a fact
+    # about what was recovered on 2026-09-08, not a threshold — a later recovery
+    # widens the list deliberately, in a diff someone reads.
+    ids = {21, 22, 23, 24, 25, 26, 27, 28, 29, 31, 35, 36, 37, 38, 41, 43, 44, 46,
+           47, 49, 52, 54}
+    history = subprocess.run(
+        ["git", "show", "480571bc^:progress.yml"],
+        capture_output=True, text=True, timeout=120, cwd=_ROOT,
+    ).stdout
+    assert history, "could not read the pre-restructure record; the recovery is unauditable"
+    expected = {
+        m.group(1) for m in re.finditer(r"^\s*(ESC_(\d+)[A-Za-z0-9_]*):", history, re.M)
+        if int(m.group(2)) in ids
+    }
+    dropped = sorted(expected - set(recovered))
+    assert not dropped, (
+        f"{len(dropped)} entries that history holds for the recovered ids are missing "
+        f"from the record. A recovery that keeps one entry per id silently discards the "
+        f"rest — and the ones it discarded were the ANSWERS: {dropped}"
     )
     for key, body in recovered.items():
         assert "480571bc" in str(body["recovered_from"]), (
