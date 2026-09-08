@@ -19626,6 +19626,98 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-225
+    found: 2026-09-08
+    what: >-
+      THE RESTART DRAIN ASKED A QUESTION AND NEVER CLOSED THE DOOR. `quiesce` probes
+      `turn_registry.has_active_turns()` and a `count_running_jobs` background probe, and
+      on a clear answer returns immediately - a check-then-act race, because nothing stops
+      the scheduler claiming and dispatching more work in the gap before `os.execv`.
+    caught_in_the_act: >-
+      2026-09-08, four consecutive lines - 05:30:22.140 "quiesce: nothing in flight -
+      draining clean"; 05:30:24.335 the scheduler DISPATCHES `incident_escalation`, 2.2s
+      AFTER the drain declared the platform quiet; 05:30:24.540 ERROR "recurrence check
+      raised" with `ValueError: Connection closed`; 05:30:24.554 "core: exec-replacing".
+      The pool went out from under a job the drain had already promised was not there.
+    the_cost_measured: >-
+      26 `ValueError: Connection closed` errors across TWELVE components in the retained
+      window - `[cadence] could not read a store's clock` (6), `task_liveness_sweep:
+      owner discovery failed` (4), `incident_escalation` detection and recurrence (6),
+      `owned_repo.fetch_owned` (2), `owl_rating_contributor` (2+2), plus `_poll_cycle`,
+      `objective_driver` and `capability_failure_rates`. Not one component's bug: one
+      shared cause with twelve faces.
+    root_cause_stated_by_the_code_itself: >-
+      `runtime/drain.py`'s module docstring names the precondition that makes `quiesce`
+      sound - "The caller stops accepting new turns first (SO THE RUNNING SET CAN ONLY
+      SHRINK)" - and the whole docstring is about TURNS. The orchestrator honours it for
+      turns (`loop_task.cancel()`, with its own comment "Stop accepting new turns ...
+      then drain"). The BACKGROUND probe was added later, its comment recording why
+      ("85 of 462 staged RCAs died that way"), and the STOP half of the contract was
+      never added with it. So for background work the running set could GROW after the
+      check - exactly what the invariant forbids. A probe was bolted onto a function
+      whose stated precondition was never extended to it.
+    the_denominator_that_reframed_it: >-
+      509 of 517 exec-replaces DO emit a quiesce line; only 8 do not, and all 8 predate
+      2026-09-05. So the drain is not missing - it runs almost always. The defect is that
+      it CANNOT HOLD what it measures. Measured first, or this would have been written up
+      as "restarts skip the drain", which is false.
+    fix: >-
+      `JobScheduler.stop_accepting()` closes the door; `run()` leaves its loop, then
+      AWAITS its in-flight `_poll_cycle` tasks before returning. The orchestrator calls it
+      immediately before `quiesce`, symmetric to `loop_task.cancel()`.
+      NOT `scheduler_task.cancel()`, deliberately: `run()` holds the ONLY strong
+      references to those tasks (asyncio keeps none, and a fire-and-forget task can be
+      collected mid-execution - which is why the `inflight` set exists at all), so
+      cancelling would risk abandoning the very work this protects.
+      THE STOP IS STICKY, and that took a second reading of the Supervisor to get right:
+      `_run_with_backoff` RESTARTS a task that returns cleanly, so a non-sticky stop would
+      re-open dispatch within one backoff - during exactly the seconds the restart is
+      trying to keep quiet. And on that re-entry `run()` PARKS rather than returning
+      instantly, because `_record_clean_return` treats a sub-`tight_loop_seconds` return
+      as a spin and escalates - an eager return would have reported a shutdown as a fault.
+    guard: >-
+      tests/scheduler/test_the_poll_loop_finishes_what_it_started.py - four tests, driving
+      the REAL `run()` against a double supplying only its two collaborators.
+      MUTATION-PROVEN: deleting the drain turns the in-flight test red; replacing
+      `while self._accepting` with `while True` turns all three red. Restored from a file
+      copy, green again.
+      AND THE FIRST VERSION OF THAT DRAIN TEST WAS VACUOUS - it released the blocked cycle
+      BEFORE checking, so the cycle finished either way and the assertion held with the
+      drain deleted. Only the mutation showed it. It now asserts `run()` HAS NOT RETURNED
+      while the cycle is still blocked, which is the actual property.
+    the_fixture_manufactured_a_false_failure_too: >-
+      The first clock slept for zero, so the loop legitimately dispatched a second cycle
+      in the microseconds before `stop_accepting()` was called, and two tests failed
+      against correct code. A race in the FIXTURE inventing a defect - the mirror of a
+      fixture that cannot show a real one. The clock is now GATED: the loop parks at a
+      known point, so "dispatched after the stop" means what it says.
+    stages:
+      brainstorm: done
+      architect: done
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: done
+    validate_evidence_2026_09_08: >-
+      LIVE, and the ORDERING is the proof. CodeWatcher re-exec'd the core on the edit and
+      the next restart produced exactly the sequence the fix exists to create:
+        09:11:39.490  [scheduler] run: no longer accepting new cycles - draining in-flight
+        09:11:39.491  [runtime]  quiesce: nothing in flight - draining clean
+        09:11:41.538  [scheduler] run: poll loop stopped
+        09:11:41.875  [startup]  core: exec-replacing with fresh code (restart)
+      The door shuts ONE MILLISECOND BEFORE the drain measures, the loop confirms it
+      stopped, and only then does the exec happen. The two restarts just before it
+      (09:07:11 and 09:08:46) show `quiesce` alone with no door-shutting - the old code -
+      so the contrast is in the same log, minutes apart. closing_check: CLOSEABLE 1.
+    closing_check: |-
+      # EVIDENCE ONLY THE NEW CODE COULD PRODUCE: this message did not exist
+      # before this item, so history cannot satisfy it. It is emitted by
+      # `stop_accepting()`, which the orchestrator calls ONLY on the restart
+      # path, immediately before `quiesce` - so seeing it means the door was
+      # actually shut before the drain measured, which is the whole fix.
+      shut=$(./scripts/log_since.sh --all 'no longer accepting new cycles')
+      [ "$shut" -gt 0 ] && echo "CLOSEABLE $shut restart(s) closed the door before draining" || echo "OPEN 0 - no restart has run on the new code yet"
   - id: DEBT-224
     found: 2026-09-08
     what: >-
