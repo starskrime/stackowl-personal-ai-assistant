@@ -142,15 +142,83 @@ def _deletions_since(paths: list[str], since: str) -> list[str]:
     return [line for line in out if _DELETION.search(line.partition(" ")[2])]
 
 
-def _sources_last_changed(paths: list[str]) -> str:
-    """The commit date of the most recent change to any cited path (YYYY-MM-DD)."""
+#: A commit examined by a human and found not to touch a document's claims.
+#: The header spells it ``> **Reviewed:** <sha> — <why it does not apply>``.
+#:
+#: BACKTICKS ARE REQUIRED, not decoration. A bare `\b[0-9a-f]{7,40}\b` also matches
+#: ordinary English written in the letters a-f — "defaced", "efface", "acceded" — so a
+#: sentence explaining a dismissal could silently become a second sha, and the guard
+#: below would then reject the document for a word.
+_REVIEWED_SHA = re.compile(r"`([0-9a-f]{7,40})`")
+
+
+def _reviewed_shas(head: dict[str, str]) -> set[str]:
+    """Short shas this document records as READ AND DISMISSED.
+
+    WHY AN OPT-OUT EXISTS AT ALL, and why it is this shape. `Last verified: <date>,
+    against commit <sha>` conflates two different facts — WHEN the document's claims
+    were checked, and WHICH TREE they were checked against. An unrelated commit to a
+    cited file moves the second and leaves the first untouched, so the honest answer
+    is neither "re-run the whole Verification section" nor "bump the date".
+
+    MEASURED 2026-09-08, which is what forced the distinction: FIVE documents went
+    stale on ONE commit, `1f48d999`, a scheduler-drain fix. All five cite
+    `startup/orchestrator.py` — 4,839 lines that wire the entire platform — and four
+    of the five cite it only as the place their subject is WIRED. Re-running five
+    Verification sections to discover that a drain fix does not affect prompt-cache
+    breakpoints is a cost high enough that the dishonest response (bump the date)
+    becomes the likely one. That is how documents rot: not because anyone chose to
+    lie, but because the truthful act was made expensive.
+
+    THE CEILING IS BUILT IN, and deliberately so — this repo has already learned that
+    an opt-out with no ceiling eats the rule it exempts. A `Reviewed:` entry names ONE
+    COMMIT that already exists. It cannot pre-authorise a future change, it expires by
+    construction the moment anything else lands, and
+    `tests/audit/test_a_reviewed_commit_is_a_real_commit.py` refuses a sha that is not
+    a real commit touching a cited source. A prose whitelist could do none of that.
+    """
+    return {m.group(1)[:8] for m in _REVIEWED_SHA.finditer(head.get("Reviewed", ""))}
+
+
+def _changes_since(
+    paths: list[str], verified: str
+) -> list[tuple[str, str, str, list[str]]]:
+    """(date, sha, subject, which cited paths) for every change after `verified`.
+
+    ONE QUERY IS THE POINT, not an optimisation. The report previously took the
+    staleness DATE from one git call and the EXPLANATION from another; a report that
+    names a cause its detector did not use is worse than one that names none, and two
+    date comparisons of different shapes will eventually disagree. (`--since` reads
+    LOCAL time and has already hidden this loop's own commits once, so the comparison
+    here is lexical on `%cs`, the same field the verdict is stated in.)
+
+    THE CULPRIT PATH IS ONLY HALF AN ANSWER, and the subject is the other half.
+    Knowing `orchestrator.py` changed says nothing about whether the change concerned
+    you; "fix(restart): the drain asked whether anything was running" is instantly
+    irrelevant to a document about prompt caching and instantly relevant to one about
+    restarts. That judgement is the entire cost of draining this report.
+    """
+    if not paths or not verified:
+        return []
     try:
-        return subprocess.run(
-            ["git", "log", "-1", "--format=%cs", "--", *paths],
-            capture_output=True, text=True, timeout=60, cwd=_ROOT,
-        ).stdout.strip()
-    except Exception:  # pragma: no cover — git absent or path unreadable
-        return ""
+        out = subprocess.run(
+            ["git", "log", "--format=%x1e%cs\x1f%h\x1f%s", "--name-only", "--", *paths],
+            capture_output=True, text=True, timeout=180, cwd=_ROOT,
+        ).stdout
+    except Exception:  # pragma: no cover — git absent
+        return []
+    wanted = set(paths)
+    changes: list[tuple[str, str, str, list[str]]] = []
+    for record in out.split("\x1e"):
+        if not record.strip():
+            continue
+        head, _, rest = record.partition("\n")
+        parts = head.split("\x1f", 2)
+        if len(parts) != 3 or parts[0] <= verified:
+            continue
+        touched = sorted(f for f in rest.split("\n") if f in wanted)
+        changes.append((parts[0], parts[1], parts[2], touched))
+    return changes
 
 
 #: A Verification COMMAND that queries the single `stackowl.jsonl` rather than the
@@ -741,9 +809,10 @@ def main(argv: list[str] | None = None) -> int:
     if "--all" in args:
         _LIST_CAP = 10**9
     docs = sorted(_DESIGNS.glob("*.md"))
-    stale: list[tuple[str, str, str]] = []
+    stale: list[tuple[str, str, str, list[str], list[str]]] = []
     fresh = 0
     unmeasurable: list[tuple[str, str]] = []
+    reviewed_only: list[tuple[str, str, int]] = []
     by_deletion: list[tuple[str, list[str]]] = []
 
     for doc in docs:
@@ -762,9 +831,21 @@ def main(argv: list[str] | None = None) -> int:
             why = "no `Source` in the header" if not source else "no cited path still exists"
             unmeasurable.append((doc.name, why))
             continue
-        changed = _sources_last_changed(real)
-        if changed and changed > date.group(1):
-            stale.append((doc.name, date.group(1), changed))
+        changes = _changes_since(real, date.group(1))
+        reviewed = _reviewed_shas(head)
+        unreviewed = [c for c in changes if c[1][:8] not in reviewed]
+        if changes and not unreviewed:
+            # READ AND DISMISSED, which is neither stale nor freshly verified. It
+            # gets its own line because folding it into `fresh` would hide the one
+            # thing worth auditing: how much of this corpus is standing on a
+            # judgement rather than on a re-run.
+            reviewed_only.append((doc.name, date.group(1), len(changes)))
+        elif unreviewed:
+            stale.append((
+                doc.name, date.group(1), max(c[0] for c in unreviewed),
+                sorted({f for c in unreviewed for f in c[3]}),
+                [f"{c[1]} {c[2]}" for c in unreviewed],
+            ))
             if deleted := _deletions_since(real, date.group(1)):
                 by_deletion.append((doc.name, deleted))
         else:
@@ -773,8 +854,40 @@ def main(argv: list[str] | None = None) -> int:
     print(f"design documents: {len(docs)}\n")
     if stale:
         print(f"STALE — sources changed after the document was verified ({len(stale)}):")
-        for name, verified, changed in sorted(stale, key=lambda r: r[1]):
-            print(f"  {name:16} verified {verified}   sources changed {changed}")
+        for name, verified, changed, culprits, subjects in sorted(stale, key=lambda r: r[1]):
+            who = ", ".join(c.split("/")[-1] for c in culprits) or "?"
+            print(f"  {name:16} verified {verified}   sources changed {changed}"
+                  f"   <- {who}")
+            for subject in subjects[:_LIST_CAP]:
+                print(f"       {subject}")
+            if len(subjects) > _LIST_CAP:
+                print(f"       … and {len(subjects) - _LIST_CAP} more")
+        # A SOURCE CITED BY MANY DOCUMENTS IS A NOISE SOURCE, and worth naming as
+        # one: `startup/orchestrator.py` is 4,839 lines and changes about twice a
+        # day, so it marks every document citing it stale whether or not the
+        # change concerned them. Without this line a reader re-reads N documents
+        # to discover they share one irrelevant cause.
+        blamed: dict[str, int] = {}
+        for _n, _v, _c, culprits, _w in stale:
+            for c in culprits:
+                blamed[c] = blamed.get(c, 0) + 1
+        shared = {c: n for c, n in blamed.items() if n > 1}
+        if shared:
+            worst = ", ".join(
+                f"{c.split('/')[-1]} ({n} documents)"
+                for c, n in sorted(shared.items(), key=lambda kv: -kv[1])
+            )
+            print(f"  ONE SOURCE, MANY DOCUMENTS: {worst} — check whether the change "
+                  f"even concerned them before re-reading each one.")
+        print()
+
+    if reviewed_only:
+        print(f"REVIEWED, NOT RE-RUN — every change since is recorded as examined "
+              f"({len(reviewed_only)}):")
+        for name, verified, n in sorted(reviewed_only, key=lambda r: r[1]):
+            print(f"  {name:16} verified {verified}   {n} commit(s) read and dismissed")
+        print("  These stand on a JUDGEMENT, not on a re-run. That is the honest "
+              "answer to an unrelated commit, and it is also where a wrong one hides.")
         print()
     single_log: list[tuple[str, int, str]] = []
     on_purpose = 0
@@ -795,8 +908,9 @@ def main(argv: list[str] | None = None) -> int:
             for line in commits[:3]:
                 print(f"        {line}")
         print()
-    print(f"checked {fresh + len(stale)}, STALE {len(stale)} "
-          f"({len(by_deletion)} by deletion), unmeasurable {len(unmeasurable)}")
+    print(f"checked {fresh + len(stale) + len(reviewed_only)}, STALE {len(stale)} "
+          f"({len(by_deletion)} by deletion), reviewed-not-rerun {len(reviewed_only)}, "
+          f"unmeasurable {len(unmeasurable)}")
     if single_log:
         docs_hit = len({r[0] for r in single_log})
         print(f"\nBLIND AFTER MIDNIGHT — {len(single_log)} Verification command(s) in "
@@ -846,8 +960,8 @@ def main(argv: list[str] | None = None) -> int:
               "fact, not a verdict: a marker superseded by a CLOSED line below it is "
               "stale prose, while one with no close anywhere is a real open question.")
         for name, ln, line in untracked[:_LIST_CAP]:
-            head, _, note = line.partition("\n")
-            print(f"  {name}:{ln}  {head[:88]}")
+            marker, _, note = line.partition("\n")
+            print(f"  {name}:{ln}  {marker[:88]}")
             print(f"      {note.strip()}")
         if len(untracked) > _LIST_CAP:
             print(f"  … and {len(untracked) - _LIST_CAP} more")

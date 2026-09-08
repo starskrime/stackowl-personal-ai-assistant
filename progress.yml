@@ -19651,6 +19651,78 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-227
+    found: 2026-09-08
+    what: >-
+      FIVE DESIGN DOCUMENTS WENT STALE ON ONE COMMIT, AND NONE OF THEM WAS AFFECTED BY IT.
+      D01.2, D01.7, D05.3, D09.1 and D10.5 all cite `src/stackowl/startup/orchestrator.py`
+      as a Source. `1f48d999` - my own scheduler-drain fix from the previous loop - added
+      26 lines to it in ONE hunk inside `_phase_gateway`'s restart path, and marked all
+      five stale. Four of the five cite that file only as the place their subject is
+      WIRED at boot; the fifth (D01.7) is on topic and the change STRENGTHENS a failure
+      mode it documents rather than falsifying a claim.
+    the_measurement_behind_it: >-
+      `orchestrator.py` is 4,839 lines and is cited by SIX design documents. It changed in
+      16 commits since 2026-09-01 - about twice a day. So for those six documents the
+      staleness signal is dominated by a file that is not a unit of meaning: nearly every
+      alarm they raise is about something else in the same module.
+    why_it_happened: >-
+      `Last verified: <date>, against commit <sha>` CONFLATES TWO DIFFERENT FACTS - WHEN a
+      document's claims were checked, and WHICH TREE they were checked against. An
+      unrelated commit to a cited file moves the second and leaves the first untouched, so
+      neither available response was honest: re-running a whole Verification section
+      proves nothing new, and bumping the date asserts a re-run that did not happen. THE
+      TRUTHFUL ACT WAS THE EXPENSIVE ONE, which is how documents rot. Nobody decides to
+      lie; the cheap answer is simply the only one that fits in a loop.
+      Reached the same way as the `--all` fix: the report named a problem it gave the
+      reader no way to act on, so every drain began by rediscovering the cause by hand.
+    fix: >-
+      (1) `doc_check.py` now names the CULPRIT PATH and the COMMIT SUBJECTS behind every
+      staleness verdict - "orchestrator.py <- 1f48d999 fix(restart): the drain asked
+      whether anything was running" is a judgement a reader can make in one look - plus a
+      ONE SOURCE, MANY DOCUMENTS line when one path marks several documents stale at once.
+      (2) A new header field, `Reviewed: <sha> - <why it does not apply>`, records a commit
+      READ AND DISMISSED. The report counts those documents separately as
+      "REVIEWED, NOT RE-RUN" and says in its own output that they stand on a judgement
+      rather than a re-run, so a wrong dismissal is visible instead of invisible.
+      (3) The two-git-call implementation was replaced by ONE `git log --name-only` per
+      document, because the date and the explanation were previously derived from
+      different queries - and a report that names a cause its detector did not use is
+      worse than one that names none. `_sources_last_changed` was left dead by that and is
+      DELETED in the same change, 38 lines.
+      (4) All five documents drained: each carries a `Reviewed:` entry stating what the
+      hunk touches and why it does not reach that document's claims. STALE 5 -> 0.
+    the_opt_out_has_a_ceiling_by_construction: >-
+      This repo has already paid for an opt-out with no ceiling, so
+      `tests/audit/test_a_reviewed_commit_is_a_real_commit.py` (3 tripwires) refuses a sha
+      that is not a real commit; a real commit that touches NONE of the document's cited
+      sources; a commit dated on or before the `Last verified` date, which was already
+      covered by that verification; and a bare sha with fewer than eight words of reason.
+      An entry names a commit that ALREADY EXISTS, so it cannot pre-authorise a future
+      change and expires the moment anything else lands. MUTATION-PROVEN, all four
+      properties, restored from a file copy and re-run green.
+    also_measured: >-
+      The sha regex requires BACKTICKS. A bare `\b[0-9a-f]{7,40}\b` also matches ordinary
+      English written in the letters a-f - "defaced", "efface", "acceded" - so the
+      sentence explaining a dismissal could silently become a second sha and the guard
+      would then reject the document for a word.
+    baselines: >-
+      `mypy scripts/doc_check.py` went 2 -> 0: the two pre-existing errors were one
+      variable named `head` shadowing the document-header dict inside a printer loop,
+      fixed here rather than left.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: no_change_needed
+      document: done
+    validate_no_change_needed_because: >-
+      Nothing shipped to a running code path. `doc_check.py` is a loop instrument, not
+      platform code, and the change is proven by its own before/after output (STALE 5 with
+      five identical one-commit explanations, then STALE 0 / reviewed-not-rerun 5) and by
+      four mutations of the new guard. There is no live behaviour to observe.
   - id: DEBT-226
     found: 2026-09-08
     what: >-
