@@ -113,6 +113,34 @@ def _health_loop_enabled() -> bool:
         return False
 
 
+def _log_exit(
+    job: Job, *, verdict: str, total: int, duration_ms: float, **extra: int
+) -> None:
+    """ONE countable INFO line per sweep, whatever the outcome.
+
+    WHY IT IS ONE LINE AND NOT THREE. The verdict used to BE the message —
+    `all healthy` at DEBUG, `UNHEALTHY subsystems detected` at ERROR,
+    `subsystems RECOVERED after heal` at WARNING — so counting sweeps meant
+    counting three different strings at three levels, one of which production
+    never records. MEASURED 2026-09-08 over the retained window: 2,705 sweeps
+    dispatched, 819 UNHEALTHY, 50 RECOVERED, and ZERO `all healthy`. Every
+    failure visible, no success visible, so "819 unhealthy" could equally be
+    819-of-819 or 819-of-2,705 and the logs could not say which.
+
+    A verdict carried as a FIELD can be grouped into that ratio; a verdict
+    carried as a message identity cannot. The loud per-outcome lines above stay
+    exactly as they are — an unhealthy subsystem is still an ERROR — this only
+    adds the line that makes them countable.
+    """
+    log.scheduler.info(
+        "[scheduler] health_sweep.execute: exit",
+        extra={"_fields": {
+            "job_id": job.job_id, "verdict": verdict, "total": total,
+            "duration_ms": duration_ms, **extra,
+        }},
+    )
+
+
 class HealthSweepHandler(JobHandler):
     """Runs :meth:`HealthAggregator.collect` and alerts on unhealthy subsystems.
 
@@ -207,6 +235,10 @@ class HealthSweepHandler(JobHandler):
                 exc_info=exc,
                 extra={"_fields": {"job_id": job.job_id, "duration_ms": duration_ms}},
             )
+            # 4. EXIT — counted like every other outcome. This is the path an
+            # outage actually takes, so leaving it out would lose the sweeps that
+            # matter most from the denominator.
+            _log_exit(job, verdict="probe_failed", total=0, duration_ms=duration_ms)
             return JobResult(
                 job_id=job.job_id,
                 effect_class="delivery",
@@ -247,9 +279,14 @@ class HealthSweepHandler(JobHandler):
         if not down and not degraded:
             _, resolved = self._dedupe_and_update([], [])
             await self._maybe_send_resolved(resolved)
-            log.scheduler.debug(
-                "[scheduler] health_sweep.execute: all healthy",
-                extra={"_fields": {"job_id": job.job_id, "total": len(statuses)}},
+            # 4. EXIT. This used to be the ONLY record of a healthy sweep and it
+            # was DEBUG, so across 2,705 real sweeps it appeared ZERO times while
+            # 819 UNHEALTHY lines appeared at ERROR — every failure visible, no
+            # success visible, and therefore no ratio. Replaced by the exit line
+            # rather than raised to INFO beside it: one line per sweep carrying the
+            # verdict as a FIELD is what makes the outcomes groupable.
+            _log_exit(
+                job, verdict="healthy", total=len(statuses), duration_ms=duration_ms,
             )
             return JobResult(
                 job_id=job.job_id,
@@ -282,6 +319,10 @@ class HealthSweepHandler(JobHandler):
                 # 4. EXIT — every unhealthy subsystem was healed + re-verified. No alert.
                 _, resolved = self._dedupe_and_update([], [])
                 await self._maybe_send_resolved(resolved)
+                _log_exit(
+                    job, verdict="recovered", total=len(statuses),
+                    duration_ms=duration_ms, healed=len(healed),
+                )
                 return JobResult(
                     job_id=job.job_id,
                     effect_class="delivery",
@@ -337,6 +378,10 @@ class HealthSweepHandler(JobHandler):
 
         # 4. EXIT — a sweep that *found* a problem still ran successfully; the job
         # succeeded at its detection task (down count is metadata, not a job error).
+        _log_exit(
+            job, verdict="unhealthy", total=len(statuses), duration_ms=duration_ms,
+            down=len(down), degraded=len(degraded),
+        )
         return JobResult(
             job_id=job.job_id,
             effect_class="delivery",
