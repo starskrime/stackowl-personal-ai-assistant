@@ -452,10 +452,23 @@ def _on_purpose_queries(text: str) -> int:
 #: acceptance line and FOUR of them sit on an item marked done, so four open questions
 #: were invisible to the only tool that re-asks them. D04.5 was one; it said "zero such
 #: events in five days" while three had occurred, and no run could have contradicted it.
-#: Anchored at line start or on a bolded `**OPEN —` so a breaker described as OPEN in
-#: prose is not swept in; the raw matching lines were printed and read before this
-#: number was believed.
-_OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\*\*OPEN\s*[—-]", re.M)
+#: Anchored at line start, or on `OPEN` FOLLOWED BY A DASH anywhere in the line — a
+#: VERDICT and its reason. A breaker "described as OPEN in prose" reads "the breaker
+#: is open" or "opened"; it does not read "OPEN — because …".
+#:
+#: THE BOLD USED TO BE REQUIRED, AND IT HID A REAL ONE FOR NINE DAYS. D09.2 says
+#: `> The live firing is OPEN — no conversation has rolled over since.` in its header
+#: and `# live (OPEN — no rollover since the restart)` inside its Verification fence.
+#: Neither starts a line and neither is bolded, so the report that exists to find
+#: exactly this could not see it — while the line the document greps for had fired
+#: SEVENTEEN times, starting the day AFTER it was written and as recently as
+#: 2026-09-08.
+#:
+#: The original anchoring was a deliberate guard against prose, and the widening was
+#: MEASURED against the whole corpus before it was believed, exactly as that decision
+#: demanded: it adds TWO lines, both in D09.2, both genuine, and NO others. Zero false
+#: positives is what earns the loosening.
+_OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\bOPEN\s*[—–-]", re.M)
 
 
 #: A statement that some check in this document was CLOSED or RESOLVED. Its presence

@@ -19651,6 +19651,73 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-235
+    found: 2026-09-08
+    what: >-
+      AN ACCEPTANCE CHECK READ OPEN FOR NINE DAYS WITH ITS EVIDENCE ALREADY IN THE LOGS,
+      and the report built to find exactly that could not see it. D09.2 says its live check
+      is OPEN in two places - `> The live firing is OPEN - no conversation has rolled over
+      since.` in the header, and `# live (OPEN - no rollover since the restart)` inside its
+      Verification fence. Neither starts a line and neither is bolded, and `_OPEN_CHECK`
+      required one or the other.
+    the_evidence_had_been_there_since_the_day_after_it_was_written: >-
+      The line the document itself greps for - `rollover_summary.correction: standing
+      instruction recorded` - has fired SEVENTEEN times: 4 on 2026-08-31, 11 on 09-01, one
+      on 09-02 and one on 09-08. Every hit AFTER the 2026-08-30 verification, so not one is
+      satisfied-by-history. The emitter is reached only when a rollover produced a
+      correction AND an owl was resolved, so each hit is the feature working end to end -
+      the branch was read before the count was believed.
+    the_falsifier_holds_too: >-
+      D09.2's own condition was that hits whose `instruction` describes what went WRONG
+      would mean the positive framing is not holding. All 17 read as what to do INSTEAD -
+      "Use the browser tool when asked; do not substitute direct fetch", "Verify live
+      before reporting completion", "give the action or a one-line blocker and exact fix,
+      not repeated status". That is ESC-71's operator condition met in production.
+    why_it_happened: >-
+      THE DETECTOR WAS ANCHORED TO THE FORM IT FIRST SAW. Bold or line-start was a
+      DELIBERATE guard - its own comment says "so a breaker described as OPEN in prose is
+      not swept in" - and that reasoning is sound and kept. What was missing is the
+      discriminator: `OPEN` followed by a DASH is a VERDICT AND ITS REASON. Prose about a
+      breaker reads "the breaker is open" or "opened"; it does not read "OPEN - because".
+      SAME SHAPE AS DEBT-234, one detector over: an instrument blind to a document that
+      writes the same fact differently. There the cost was a false "undated" on twenty
+      documents; here it was an open question nothing could re-ask.
+    and_the_loosening_was_MEASURED_before_it_was_believed: >-
+      Exactly as the original decision demanded. Against the whole corpus the widening adds
+      TWO lines, both in D09.2, both genuine, and NO others. Zero false positives is what
+      earns it. MUTATION-PROVEN IN BOTH DIRECTIONS - reverting to bold-only fails the
+      finds-it test, and widening to any "open" fails the prose test.
+    fix: >-
+      (1) `_OPEN_CHECK` gains the `\bOPEN\s*[—–-]` clause. The report now names 4 checks in
+      2 documents where it named 2 in 1.
+      (2) D09.2 CLOSED against the evidence, with its Verification section RE-RUN rather
+      than trusted: 13 passed, and `tests/memory` is 566 (recorded 498 on 08-30 - a package
+      count that grows, so it is written as a shape).
+      (3) D09.2 given the `Source` it never had, taken from the paths its own body already
+      names. It was one of the sixteen "dated, but declares no Source" that DEBT-234 made
+      visible the loop before - so `doc_check` could form no staleness verdict about it at
+      all. `checked` 48 -> 49, `unmeasurable` 36 -> 35.
+      (4) `tests/audit/test_an_open_verdict_is_seen_wherever_it_is_written.py` - three
+      tripwires: a mid-line OPEN verdict is found, prose about something being open is
+      still NOT swept in, and a vacuity control over the live corpus.
+    the_guard_uses_FIXTURES_not_the_live_document_and_that_is_deliberate: >-
+      Pinning D09.2 itself would have made the test die the moment the thing it guards was
+      fixed - precisely when it starts mattering, because the next document to write an
+      OPEN verdict that way would have nobody watching.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: done
+    validated_live: >-
+      The close is itself the live validation, and it is evidence only production could
+      supply: 17 firings of an INFO line whose emitter sits behind a correction-produced
+      AND owl-resolved guard, dated across five days and as recently as 2026-09-08. The
+      instrument change is proven by its own before/after output - `OPEN BUT NOT TRACKED`
+      went 2 checks in 1 document -> 4 in 2 -> back to 2 in 1 once D09.2 was closed.
   - id: DEBT-234
     found: 2026-09-08
     what: >-
