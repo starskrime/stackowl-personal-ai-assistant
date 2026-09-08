@@ -1631,6 +1631,16 @@ async def _run_with_tools(
             schemas = tool_registry.to_provider_schema(
                 prov.protocol, profile=profile, pins=pins, hydrated=_hydrated,
                 restrict_to=restrict_to, max_tools=_max_tools,
+                # ESC-35 — `_window` is resolved above and was DISCARDED here, so a
+                # planned envelope was sized by count alone. NOT memoized and NOT
+                # re-ranked: the budget carries the window only, and the envelope
+                # branch fits rather than ranks. `_fixed_cost` rather than `_basis`
+                # because there is no memo lane to be stable across on this path.
+                budget={
+                    "window": _window,
+                    "fixed_cost_tokens": _fixed_cost,
+                    "max_tools": _max_tools,
+                },
             )
             schemas = schemas + provider_schemas(get_services().memory_providers)
         else:

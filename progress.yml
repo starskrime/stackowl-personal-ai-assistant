@@ -20788,6 +20788,101 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-240
+    found: 2026-09-08
+    what: >-
+      A PLANNED ENVELOPE WAS NEVER SIZED AGAINST THE MODEL'S WINDOW. `execute.py` resolves
+      `_window` - an awaited call that may probe the provider - and then, on the
+      `restrict_to` branch, DISCARDS it: `to_provider_schema` is called with `max_tools`
+      and no `budget`. MEASURED against the real 77-tool catalogue:
+      restrict_to with max_tools=40 -> 40 tools; with max_tools=150 -> 77 tools; the
+      BUDGETED path at window=4096 -> 20. The envelope path ignored the window entirely.
+    and_DEBT_238_made_it_twice_as_bad_which_is_MY_defect_to_name: >-
+      DEBT-238 raised the shipped `tool_count_cap` from 40 to `HARD_TOOL_COUNT_CAP` (150).
+      On the budgeted path that is safe and I measured it: the window clips to the 20-tool
+      guaranteed set at <=8192 whatever the cap says. On the envelope path nothing clips,
+      so the SAME COMMIT took a lean-window model from 40 schemas to 77. My safety
+      measurement covered the budgeted path only and reported the change safe - and it was
+      safe on the path I measured. A SAFETY MEASUREMENT IS ABOUT THE PATH IT WALKED, and
+      the one I skipped is the one with no guard.
+    THE_ROOT_CAUSE_IS_NOT_A_MISSING_ARGUMENT: >-
+      D05.8 ALREADY FIXED EXACTLY THIS DEFECT ON EXACTLY THIS BRANCH, for a different
+      parameter. Its comment is still there: "`max_tools` is passed HERE too, not only on
+      the budgeted branch below. Until now this path was capped by PresentationConfig's
+      own default and the operator's `tool_count_cap` never reached it." That item found a
+      parameter the envelope path was missing, added it, and did not ask WHAT ELSE the
+      branch was missing. `window` was sitting beside it, resolved and unused, the whole
+      time. Fixing the instance you noticed rather than the CLASS is how a two-paths-one-
+      rule defect survives its own repair - and this is the second time on one branch.
+    fix: >-
+      The envelope branch now fits into the token budget when a budget is supplied, using
+      the SAME `tool_budget_tokens` + `fit_items` as the budgeted branch, so the two agree
+      by construction rather than by a shared constant. `execute.py` passes the window it
+      already resolved. MEASURED after: window 4096 -> 36 tools, 8192 -> 55, 16384 and
+      above -> 77 unchanged; a negative budget falls back to the non-evictable discovery
+      set rather than to nothing.
+    why_a_fit_and_not_a_new_lean_constant: >-
+      The budgeted path's lean behaviour is DERIVED, not magic: `fit_items` never drops the
+      guaranteed set and no discretionary tool fits a small budget, so its "20" IS the
+      guaranteed set (measured: guaranteed 20, ranked 57, catalogue 77). A lean ceiling
+      written into the envelope branch would be a second copy of that rule, free to
+      disagree with it later.
+    the_two_things_that_could_have_gone_wrong_and_were_measured_first: >-
+      (1) ORDER. `fit_items` returns guaranteed first, which would REORDER a set `select()`
+      deliberately orders - a prompt-cache defect under D05.2, not a cosmetic one.
+      Measured: `select()` already emits `always_present` at the front (5 of 38, all
+      leading), so the recombination is a no-op, and a test pins it so neither side can
+      drift. (2) BACKWARD COMPATIBILITY. Eight test files use `restrict_to`; five assert
+      counts. All call `to_provider_schema` DIRECTLY with no budget, so the fit is opt-in
+      on the budget's presence and they are untouched. Tests reaching it through
+      `execute.py` see `DEFAULT_WINDOW_FALLBACK` = 100,000, which fits the whole envelope.
+    and_the_cut_has_a_witness: >-
+      The sibling cut in `select()` carries the reason in its own comment - "A cut with no
+      witness is the same defect as a write with no reader" - and earned it: that line
+      fired ZERO times in eight days while its counterpart fired 955, because the branch
+      returned above both log sites. A window-driven cut is a cut, so it logs at INFO
+      (production runs at INFO; a DEBUG line would not exist when needed) with dropped,
+      dropped_count, presented, planned and window, and a test asserts the numbers add up.
+    what_it_means_for_D05_8s_open_checks: >-
+      I1 and I2 watch the eviction path and have never fired, because a cap above the
+      catalogue can never clip. They remain unobservable on THIS box, where the window is
+      262,144 - but they are no longer unobservable in PRINCIPLE for a small-window
+      deployment, which is what ESC-35 was for. The document is corrected to say which of
+      the two it is.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    closing_check: |-
+      uv run python -c "
+      from stackowl.config.settings import Settings
+      from stackowl.tools.registry import ToolRegistry
+      s = Settings(); r = ToolRegistry.with_defaults()
+      n = len(r.all()); cap = s.orchestrator.tool_count_cap
+      lean = len(r.to_provider_schema('openai', restrict_to=frozenset(t.name for t in r.all()),
+                max_tools=cap, budget={'window': 4096, 'fixed_cost_tokens': 1024, 'max_tools': cap}))
+      print('CLOSEABLE window-fitted %d of %d' % (lean, n) if lean < n else
+            'OPEN envelope still unbounded by window (%d of %d)' % (lean, n))
+      "
+    validated_live_registry_not_live_traffic_and_that_distinction_is_the_point: >-
+      The closing check above runs against a live `Settings()` and the live 77-tool
+      `ToolRegistry.with_defaults()`, not a fixture. It printed
+      "OPEN envelope still unbounded by window (77 of 77)" against the code this item
+      REPLACES and "CLOSEABLE window-fitted 11 of 77" after it - evidence only the new
+      code can produce, which is the shape this programme asks for.
+      WHAT IT IS NOT is live TRAFFIC. This box resolves a 262,144 window, so the fit is a
+      no-op on every real turn here and no amount of waiting changes that. I drafted this
+      stage as `partial` on that basis and it was the WRONG CALL: demanding a production
+      observation the deployment makes structurally impossible is the "evidence that
+      CANNOT EXIST" trap - the same one D05.8's I1/I2 sit in, which this very item
+      diagnosed one section earlier. A check that can never fire is not an open question.
+      The behaviour is pinned permanently instead by
+      `tests/tools/test_a_planned_envelope_is_sized_to_the_window.py`, which is stronger
+      than a re-asked check: it fails on a regression rather than waiting to observe one.
   - id: DEBT-239
     found: 2026-09-08
     what: >-

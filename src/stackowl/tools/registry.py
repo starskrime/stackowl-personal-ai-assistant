@@ -473,6 +473,59 @@ class ToolRegistry:
         with self._lock:
             return list(self._tools.values())
 
+    @staticmethod
+    def _fit_envelope_to_window(
+        tools: list[Tool],
+        cfg: PresentationConfig,
+        budget: dict[str, int],
+        size_of: Callable[[Tool], int],
+    ) -> list[Tool]:
+        """Narrow a planned envelope to what the model's window can carry.
+
+        Guaranteed = ``always_present`` (discovery), never dropped — the same
+        non-evictable set ``select()`` puts at the front. Everything else keeps
+        ``select()``'s order and is admitted while the token budget and the
+        count cap allow.
+
+        The cut is LOGGED at INFO. The sibling cut in ``select()`` says why:
+        "A cut with no witness is the same defect as a write with no reader" —
+        that one fired zero times in eight days while its sibling fired 955.
+        """
+        from stackowl.pipeline.context_budget import (
+            fit_items,
+            resolve_tool_count_cap,
+            tool_budget_tokens,
+        )
+
+        guaranteed = [t for t in tools if t.name in cfg.always_present]
+        discretionary = [t for t in tools if t.name not in cfg.always_present]
+        fitted = fit_items(
+            guaranteed=guaranteed,
+            candidates=discretionary,
+            budget=tool_budget_tokens(
+                window=budget["window"],
+                fixed_cost_tokens=budget["fixed_cost_tokens"],
+            ),
+            size_of=size_of,
+            hard_cap=resolve_tool_count_cap(budget.get("max_tools")),
+        )
+        kept = {t.name for t in fitted}
+        dropped = [t.name for t in tools if t.name not in kept]
+        if dropped:
+            log.tool.info(
+                "[presentation] envelope: eligible tools NOT presented — the "
+                "planned envelope does not fit the model's context window",
+                extra={"_fields": {
+                    "dropped": dropped,
+                    "dropped_count": len(dropped),
+                    "presented": len(fitted),
+                    "planned": len(tools),
+                    "window": budget["window"],
+                    "fixed_cost_tokens": budget["fixed_cost_tokens"],
+                }},
+            )
+        return fitted
+
     def to_provider_schema(
         self,
         protocol: str,
@@ -566,12 +619,40 @@ class ToolRegistry:
             return out
 
         if restrict_to is not None:
-            from stackowl.tools._infra.presentation import ToolPresentation
+            # `json` is imported HERE and not only in the budget branch below:
+            # that branch runs AFTER this one, so the lambda would raise
+            # NameError on every enveloped turn. `ast.parse` cannot see it — a
+            # syntax gate is not a name-resolution gate.
+            import json
 
-            tools = ToolPresentation(_presentation_config(max_tools)).select(
+            from stackowl.tools._infra.presentation import (
+                PresentationConfig,
+                ToolPresentation,
+            )
+
+            cfg = _presentation_config(max_tools) or PresentationConfig()
+            tools = ToolPresentation(cfg).select(
                 all_tools=self.all(), profile=profile, pins=pins, hydrated=hydrated,
                 restrict_to=restrict_to,
             )
+            if budget is not None:
+                # ESC-35, THE HALF THAT WAS NEVER BUILT: "size the presented set
+                # against the resolved model window." This branch never did. It
+                # took `max_tools` and ignored the window entirely, so a
+                # lean-window model handed a wide envelope — the self-heal ban
+                # path produces 75-78 names — got every one of them. DEBT-238
+                # then raised the shipped cap 40 -> 150 and doubled that exposure
+                # on the one path with no window guard.
+                #
+                # The SAME budget functions as the budgeted branch, so the two
+                # agree by construction rather than by a shared constant. The
+                # candidates keep `select()`'s order and are NOT re-ranked:
+                # ranking is what this branch exists to avoid, and `fit_items`
+                # returning guaranteed-first is a no-op because `select()`
+                # already emits `always_present` first.
+                tools = self._fit_envelope_to_window(
+                    tools, cfg, budget, lambda t: len(json.dumps(_schema_for(t))) // 4
+                )
             return _emit(tools)
 
         if budget is not None:
