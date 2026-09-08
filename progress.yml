@@ -19651,6 +19651,104 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-228
+    found: 2026-09-08
+    what: >-
+      A MISSED DAILY JOB LOST THE WHOLE DAY, AND NOTHING RECORDED THAT IT HAD. On one
+      `recover()` call — 2026-09-08T02:29, after the 7h21m silent stall — two overdue
+      `daily@` jobs took opposite paths: `goal_execution-88f54aa1` was replayed, and
+      `check_in-df94ceab`, overdue 3h29m, was advanced in silence. `check_in` and
+      `owl_lifecycle-jobmarket` each lost their 2026-09-07 occurrence that way. This was
+      one of the five defects the 2026-09-08 measurement lens RECORDED but did not verify;
+      verified here, and it is real.
+    the_difference_was_a_per_job_boolean: >-
+      `tools/scheduling/cronjob.py` sets `replay_missed=True` on the jobs IT creates. The
+      scheduler assembly that seeds the platform's own jobs never passes the field, so it
+      takes `Job.replay_missed`'s dataclass default of False. MEASURED on the live table:
+      of 15 enabled `daily@` jobs, 3 carry the flag and 12 do not — and the twelve are the
+      platform's own (morning brief, check-in, nightly prune, profile backup, browser
+      maintenance, orphan reconciliation).
+    why_it_happened: >-
+      NOT THE FLAG — the BELIEF behind it, and it was written down twice. `scheduler.py`'s
+      own comment said "unlike a recurring job which gets another occurrence soon
+      regardless", and `test_recover_one_shot_replay.py`'s docstring said "A recurring job
+      losing a missed occurrence is benign (it fires again soon)". That is TRUE of
+      `every 20m` and FALSE of `daily@`: the rule was formed on the frequent case and
+      applied to the whole class. Expressing it as a PER-JOB FLAG then turned it into
+      something every creation site had to remember, and of the two sites only one ever
+      did. Same shape as DEBT-227 one item earlier: a policy that has to be restated at
+      each site is a policy that will be forgotten at one of them.
+    and_the_drop_was_silent_which_is_half_the_defect: >-
+      MEASURED across 749 `recover: exit` records: the scheduler saw 1,553 overdue
+      occurrences and replayed 10 — 0.6%. The other 1,543 were advanced with NO log line
+      at all, because only the replay branch logged. Work the platform owed stopped
+      existing and no instrument could say so; the recorded finding that started this item
+      had to be reconstructed from the `jobs` table because the logs could not answer it.
+    fix: >-
+      (1) `JobScheduler._loses_an_occurrence` DERIVES the replay decision from the
+      schedule's own period: a job recurring at most once a day replays its missed slot,
+      because dropping it costs the whole occurrence. Not the SPELLING — `*/5 * * * *` is
+      cron-shaped and fires every five minutes, so a form-based rule would replay it.
+      (2) `schedule_interval_seconds` MOVED from `owls/owl_schedule_guards.py` to
+      `scheduler_helpers`, beside `compute_next_run`. It reads nothing but the scheduler's
+      own schedule language, and `recover()` could not reach it where it was without the
+      scheduler importing `owls` — a cycle, since the guard imports `scheduler_helpers`.
+      The guard imports the name back: ONE implementation, no second copy, and
+      `f is g` verified at the interpreter.
+      (3) Every drop is now logged — INFO for a job that recurs many times an hour,
+      WARNING when the cadence WOULD have earned a replay and the window refused it, which
+      is the one case where the platform knowingly drops work it owed.
+      (4) `replay_missed` is NOT retired: it still WIDENS the rule for a job recurring
+      faster than a day, which is what `cronjob.py` sets it for.
+    the_boundary_is_a_judgement_stated_not_hidden: >-
+      Every dropped slot costs exactly ONE occurrence; what differs is what fraction of the
+      job's work that is — one of 72 at `every 20m`, all of it at `daily@`. One day is the
+      line, and `_ONE_DAY_SECONDS` is deliberately NOT a tunable: a deployment may want a
+      different replay WINDOW; it cannot want a different length of day. Recorded because
+      this programme removed ~48 numeric knobs and the distinction that survived that arc
+      is between a value a deployment could reasonably disagree about and one it could not.
+    the_fifth_surface_in_the_same_change: >-
+      The corrected sentence in `test_recover_one_shot_replay.py`'s docstring (kept and
+      CORRECTED, not deleted — it is the reason this shipped), the `Job.replay_missed`
+      field comment, and `REFERENCE_MAP.md`'s catch-up claim, which described the flag
+      shape as the design.
+    validated_live_both_branches_on_one_recover_call: >-
+      2026-09-08T10:35:56, after `./start.sh` with the platform genuinely DOWN while
+      `browser_cache_eviction` (daily@04:30, `replay_missed=0`) was made overdue by 3h:
+      `recover: replaying missed job {job_id: browser_cache_eviction-609d29db, recurring:
+      true, replay_missed: false, loses_an_occurrence: true}` — a field only the new code
+      can produce — then `entry -> exit — completed` and the row advanced to its correct
+      next slot, 2026-09-09T09:30, exactly where it began. On the SAME call two `every N`
+      jobs were dropped at INFO with `loses_an_occurrence: false`: `due_jobs 3, replayed
+      1`. THE FIRST ATTEMPT PROVED NOTHING and is recorded because it looked like proof —
+      the row was edited while the platform was RUNNING, so the ordinary poll cycle
+      dispatched it six seconds later and `recover` never saw it. An overdue job on a live
+      platform is picked up anyway; `recover` only governs jobs whose slot passed while the
+      process was down, which is the outage case this item is about.
+      0 ERRORs on the boot, and a real message driven through `dev_ingress.py`
+      (trace 5f08a898717d434a83fa57062bff3349) reached the Telegram chat — `[loop] task
+      COMPLETE — its outcome reached its destination`.
+    tests: >-
+      `tests/scheduler/test_a_missed_daily_occurrence_is_not_silently_dropped.py` — 7
+      tests: the live check_in case; a frequent job still dropped; the rule reads the
+      PERIOD not the spelling (a 5-minute cron); a daily cron replayed like a `daily@`; the
+      flag still widening; the drop no longer silent; lost-outside-the-window at WARNING.
+      MUTATION-PROVEN four ways — the derived rule never firing (3 red), reading the
+      spelling (1), the drop going silent again (2), lost work at INFO (1) — restored from
+      a file copy, 7 green. `tests/scheduler` + the owl guards: 591 passed.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: no_change_needed
+    document_no_change_needed_because: >-
+      No design document covers scheduler recovery; `map_check` found no mapped item, so
+      this is evidence-led work recorded here. The one document surface that DID carry the
+      superseded claim — `REFERENCE_MAP.md`'s catch-up walk — is corrected in the same
+      change rather than left as the fifth surface.
   - id: DEBT-227
     found: 2026-09-08
     what: >-
