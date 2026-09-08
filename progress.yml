@@ -20788,6 +20788,61 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-246
+    found: 2026-09-08
+    what: >-
+      The full suite went RED on `05410021` - `test_every_closing_check_is_RUNNABLE`
+      reported `D03.2: unparseable - No closing quotation`. The check it condemned RUNS:
+      `bash -n` accepts it, and I had EXECUTED it in the loop that wrote it, watching it
+      print its OPEN line. The guard was wrong, not the check.
+    root_cause_IT_ASKED_A_PROXY_AND_NAMED_IT_THE_THING: >-
+      "Runnable" was modelled with `shlex.split()`, whose DEFAULT does not treat `#` as a
+      comment. Bash does. So a `#` line containing an apostrophe - "this deployment's
+      model" - opened a quote that never closed, and a Python lexer configured unlike the
+      shell that actually runs these checks declared correct work broken. The guard now
+      asks `bash -n`, which is not a better proxy but the ACTUAL executor.
+    MEASURED_every_one_of_the_six_was_a_false_positive: >-
+      103 executable checks in the record. SIX fail `shlex.split()` and ZERO fail
+      `bash -n` - D03.2, DEBT-144, DEBT-152, DEBT-153, DEBT-221 and one escalation
+      `premise_check`. 23 checks carry a `#` comment at all, so this was a live trap for
+      every one of them. A guard that cries wolf on correct work is the failure this
+      programme pays for most, and this one was doing it six times over.
+    and_it_walked_a_third_of_the_record: >-
+      The loop read `data.get("items")` only. FOUR of those six sit in `known_debt` and
+      one is a `premise_check` under `current.ESCALATIONS`, so the guard could never have
+      seen them however it parsed - 112 items walked against 193 known_debt entries and
+      61 escalations ignored. Only D03.2 tripped it because D03.2 happens to be an item.
+      A guard over the state of record that reads a third of the record is a denominator
+      error wearing a gate's clothes. The walk now covers all three.
+    why_it_cost_37_minutes_instead_of_2: >-
+      Every OTHER test in that file carries `@pytest.mark.tripwire`. `TestTheLiveFile` -
+      the ONLY class that reads the live `progress.yml`, and so the only one that can
+      catch a real defect in the state of record - carried none. The guards over the pure
+      functions were gated and the guard over reality was not, so a bad record could only
+      be found by a full suite. Both its tests are now marked.
+    what_else_the_same_cause_reaches: >-
+      The proxy-for-the-thing shape is the same one D03.2 was just fixed for - a
+      denominator assumed rather than read - and the same one behind DEBT-245's
+      precision-without-recall, all three landing in one session. Here the tell is
+      specific and worth carrying: a guard that validates SHELL text with a PYTHON parser
+      is asserting that two lexers agree, which is a claim nobody measured. MEASURED
+      after the fix: `bash -n` over all 103 gives 0 failures, and a deliberately
+      unrunnable check planted in `known_debt` - the half the old walk could not see - is
+      caught, so the widening is not vacuous.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_by_the_instrument_itself: >-
+      The guard is its own live evidence: it reads the real `progress.yml` on every run.
+      15 passed after the fix against 1 failed before it. Mutation-proven with a
+      file-copy restore - an unrunnable check planted in `known_debt` fails it with
+      `unexpected EOF while looking for matching quote`, and the restore returns it to 15
+      passed with `git diff progress.yml` empty.
   - id: DEBT-244
     found: 2026-09-08
     what: >-

@@ -105,6 +105,17 @@ class TestTheRuleItself:
 
 
 class TestTheLiveFile:
+    """MARKED FOR THE GATE 2026-09-08 (DEBT-246), and the marker is the point.
+
+    Every OTHER test in this file carried `@pytest.mark.tripwire`; the class that
+    checks the LIVE `progress.yml` — the only one that can catch a real defect in the
+    state of record — did not. So a bad record could not be caught by the ~2 minute
+    gate and cost a 37-minute full suite to surface. It did: the run on `05410021`
+    came back RED on exactly this class. The guards over the pure functions were
+    gated; the guard over reality was not.
+    """
+
+    @pytest.mark.tripwire
     def test_the_real_progress_yml_has_no_unclosable_partial(self) -> None:
         """The rule against the actual state of record — the assertion that makes
         this a gate rather than a unit test of a pure function."""
@@ -114,26 +125,61 @@ class TestTheLiveFile:
 
         assert not progress_lint.partial_without_closing_check_problems(data)
 
+    @pytest.mark.tripwire
     def test_every_closing_check_is_RUNNABLE(self) -> None:
         """A check that cannot execute is prose with a colon in front of it.
 
         This is the lesson from `premise_check`, which is verified the same way by
         `escalation_check.py` refusing to count an entry it could not run.
+
+        IT ASKED A PROXY AND NAMED IT THE THING — corrected 2026-09-08, DEBT-246.
+        "Runnable" was modelled with `shlex.split()`, whose DEFAULT does not treat
+        `#` as a comment. Bash does. So a `#` line containing an apostrophe —
+        "this deployment's model" — opened a quote that never closed, and the guard
+        called a check unparseable that bash runs perfectly and that had ALREADY BEEN
+        RUN, printing its OPEN line, in the loop that wrote it.
+
+        MEASURED over all 103 executable checks in the record: SIX fail
+        `shlex.split()` and ZERO fail `bash -n` (D03.2, DEBT-144, DEBT-152, DEBT-153,
+        DEBT-221 and one escalation `premise_check`). Every one of the six is a false
+        positive — crying wolf on correct work, which is the failure this programme
+        pays for most. So the guard now asks the SHELL THAT ACTUALLY RUNS THESE.
+
+        AND IT WALKED ONLY `items`. Four of those six live in `known_debt` and one is
+        a `premise_check`, so the guard could not have seen them however it parsed.
+        A guard over the state of record that reads a third of the record is a
+        denominator error, not a gate.
         """
-        import shlex
+        import subprocess
 
         import yaml
 
         data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+        checks: list[tuple[str, str]] = [
+            (str(rec.get("id")), (rec.get("closing_check") or "").strip())
+            for rec in (data.get("items") or []) + (data.get("known_debt") or [])
+            if isinstance(rec, dict) and (rec.get("closing_check") or "").strip()
+        ]
+        escalations = (data.get("current") or {}).get("ESCALATIONS") or {}
+        if isinstance(escalations, dict):
+            checks += [
+                (name, str(body["premise_check"]).strip())
+                for name, body in escalations.items()
+                if isinstance(body, dict) and str(body.get("premise_check") or "").strip()
+            ]
+
         broken: list[str] = []
-        for item in data.get("items", []):
-            check = (item.get("closing_check") or "").strip()
-            if not check:
-                continue
-            try:
-                shlex.split(check)
-            except ValueError as exc:
-                broken.append(f"{item.get('id')}: unparseable — {exc}")
+        for name, check in checks:
+            done = subprocess.run(  # noqa: S603 — fixed argv, input is the check text
+                ["bash", "-n"], input=check, text=True, capture_output=True, check=False
+            )
+            if done.returncode:
+                broken.append(f"{name}: not runnable — {done.stderr.strip()[:120]}")
+
+        assert checks, (
+            "no executable checks found at all — this walk has gone blind, which "
+            "looks exactly like a clean record."
+        )
         assert not broken, "\n  ".join(broken)
 
 
