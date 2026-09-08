@@ -19700,11 +19700,26 @@ known_debt:
       after the change - BLIND AFTER MIDNIGHT none across 91, STALE 0 - plus two new
       tripwires that are MUTATION-PROVEN in both directions: reverting to line-scanning
       turns the continuation guard red, and the prose guard red in the other direction.
-    what_is_NOT_done_and_is_not_hidden: >-
-      THE VERDICT ITSELF. The run this item launched was killed by me at 71% and there is
-      still no completed full-suite result for the 3,237 lines of drift. A clean run is
-      relaunched on the tree that carries this commit; its result is not claimed here,
-      because a verdict I did not read is not a verdict.
+    THE_VERDICT_LANDED_GREEN: >-
+      SEVENTEENTH GREEN. `12536 passed, 17 skipped, 0 failed in 2105.32s` (rc=0),
+      `SUITE TREE STILL`, on commit `5e1d74a8` with `dirty_files=0` - the relaunched run,
+      08:16:52 -> 08:52:18Z, with hands off the tree for its whole 35 minutes. It covers
+      all 3,237 lines of drift plus everything this session shipped: the delivery fix, the
+      lock-wait one source, the health denominator, the memory trim, the path pins and
+      this item's detector. No cross-test pollution, and nothing left behind by a
+      retirement.
+    AND_MY_OWN_STATEMENT_OF_THE_RULE_WAS_INCOMPLETE: >-
+      This record first said the blast radius catches `scripts/` and named only that.
+      MEASURED before the second run finished: 15 test files read `progress.yml` and 29
+      reference `docs/reference-mapping/`, so BOTH of those are in the blast radius too -
+      the two directories the skill also calls free. Of the three it names, NONE fully
+      qualifies. FREE DURING A RUN MEANS NOTHING UNDER TEST IMPORTS IT.
+      The correction had to WAIT for the verdict, because writing it into `progress.yml`
+      mid-run would have been the very edit it describes - the rule demonstrating itself.
+      Doc-only work during a wait is still the right use of the time; it just has to be
+      HELD rather than committed or left on disk while the suite reads it.
+      Recorded on both surfaces that carry the full-suite history, CLAUDE.md and the
+      item-loop SKILL.md, because correcting one copy of a rule is not correcting it.
   - id: DEBT-223
     found: 2026-09-08
     what: >-
