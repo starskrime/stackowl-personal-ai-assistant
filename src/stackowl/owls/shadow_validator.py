@@ -20,7 +20,12 @@ effect visible to concurrent real turns), never persists a replay's outcome to
 every write site in the pipeline already treats as a no-op — see
 ``_capture_outcome``/``persist_turn``/``_record_rejection``), and never delivers a
 message (``stream_registry=None`` + ``interactive=False`` + no ``reply_target`` ⇒
-``deliver.run`` discards the response). The scratch registry/services are built
+``deliver.run`` discards the response). Since 2026-09-08 ``deliver`` RECOGNISES
+that discard instead of reporting it as a lost answer: the missing registry is
+this guarantee's mechanism, and it read as a fault 153 times — enough for two
+separate loops to open on it and dismiss it. The loud case is still loud, keyed
+on ``interactive``, so a real turn that reaches that branch is not quietened by
+the fix. The scratch registry/services are built
 fresh inside ``validate()`` and discarded when it returns.
 
 Design decision (not fully prescribed by the story — the constructor signature

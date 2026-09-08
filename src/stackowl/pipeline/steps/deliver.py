@@ -78,9 +78,42 @@ async def run(state: PipelineState) -> PipelineState:
         extra={"_fields": {"session_key": state.session_key, "chunk_count": len(state.responses)}},
     )
     if registry is None:
-        log.gateway.warning(
-            "[pipeline] deliver: no registry in services — discarding responses",
-            extra={"_fields": {"session_key": state.session_key}},
+        # ABSENCE-BY-DESIGN AND ABSENCE-BY-FAULT WERE THE SAME VALUE, so this
+        # branch could not classify and defaulted to alarm — the worst of both.
+        # `shadow_validator.py`'s module docstring is where the designed case is
+        # written down: a pre-commit DNA replay "never delivers a message
+        # (`stream_registry=None` + `interactive=False` + no `reply_target` ⇒
+        # `deliver.run` discards the response)". The missing registry IS the
+        # isolation mechanism, not a defect.
+        #
+        # MEASURED 2026-09-08 over the twelve retained logs: 153 events, EVERY ONE
+        # on a `shadow-validate-*` session, a steady 10-15 a day — the only
+        # WARNING in the live census firing at a constant rate rather than in an
+        # incident burst. It has been investigated and dismissed by TWO separate
+        # loops, both of which wrote the conclusion into `progress.yml`, and it was
+        # still here to cost a third.
+        #
+        # THIS IS THE SIBLING OF THE BRANCH BELOW, LEFT BEHIND WHEN ITS TWIN WAS
+        # FIXED. `_proactive_fallback` learned to stop claiming a loss for a turn
+        # that owes nobody; twenty lines above it, this exit never asked the
+        # question at all. The state has always carried the answer: `interactive`
+        # means a human is waiting on a stream.
+        owed = state.interactive
+        emit = log.gateway.warning if owed else log.gateway.info
+        emit(
+            "[pipeline] deliver: an interactive turn has no stream registry — "
+            "the response was discarded and nobody received it"
+            if owed else
+            "[pipeline] deliver: no stream registry and none owed — a "
+            "non-interactive replay lane discards its response by design",
+            extra={"_fields": {
+                "session_key": state.session_key,
+                # THE FACT THE BRANCH DECIDED ON, in the record. Both prior
+                # investigations had to re-derive the lane from the session key
+                # because this field did not exist.
+                "interactive": state.interactive,
+                "chunk_count": len(state.responses),
+            }},
         )
         return state
 
