@@ -363,10 +363,22 @@ current:
       2026-09-07 14:32 -> 18:37, every DB write failing `sqlite3.OperationalError: disk
       I/O error`: **3,454** `pool._open_inside_lock: connect failed`, **2,934**
       `[loop] tick failed`, **490** `_poll_cycle: poll raised` — while the process stayed
-      "up". The lens counted 1 health sweep in that window; I counted **ZERO**
-      `health_sweep.execute: exit` between 14:32 and 18:38, against ~49 expected at
-      every-5m. The scheduler needs the DB to dispatch the sweep, so THE MONITOR SHARES A
-      FAILURE DOMAIN WITH THE THING IT MONITORS. It ended only because CodeWatcher
+      "up". The scheduler needs the DB to dispatch the sweep, so THE MONITOR SHARES A
+      FAILURE DOMAIN WITH THE THING IT MONITORS.
+      CORRECTED 2026-09-08 — THE NUMBER I OFFERED AS PROOF CAME FROM AN INSTRUMENT THAT
+      DOES NOT EXIST. This entry said "I counted ZERO `health_sweep.execute: exit`
+      between 14:32 and 18:38, against ~49 expected". That string is emitted NOWHERE:
+      the handler had no exit line at all, its `entry` and `all healthy` are DEBUG, and
+      the only INFO bracket is the scheduler's job wrapper `health_sweep-f2d80205:
+      exit — completed`. A zero that cannot become non-zero. WORSE, THE TRAP WAS ALREADY
+      WRITTEN DOWN IN THIS FILE by an earlier loop of mine, which noted verbatim that
+      "the obvious grep for `health_sweep.execute: exit` returns 0 against a sweep that
+      ran twice" - recorded, never re-read, and then presented to Bakir as the finding I
+      had verified MYSELF. Re-measured on the lines that do exist, the CONCLUSION HOLDS
+      and is if anything sharper: 1 scheduler job completion in the 4h05m window against
+      450-540 per comparable 4h block that same day, with `_poll_cycle: poll raised`
+      firing 490 times - the scheduler could not read its own jobs table. DEBT-219 fixes
+      the instrument in the CODE rather than in a note, because a note is what failed. It ended only because CodeWatcher
       exec-replaced the core after an unrelated `src/` edit — no recovery path closed it.
       Recurring: 31 such errors on 09-03, 4 on 09-04. This is the same structural defect
       as tonight's 7h21m outage, twice in 24 hours.
@@ -19564,6 +19576,66 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-219
+    found: 2026-09-08
+    what: >-
+      THE PLATFORM'S OWN HEALTH SIGNAL HAD NO DENOMINATOR. `health_sweep.execute` split
+      its verdict across three messages at three levels: `UNHEALTHY subsystems detected`
+      at ERROR, `subsystems RECOVERED after heal` at WARNING, and `all healthy` at DEBUG.
+      Production runs at INFO, so the one outcome meaning "the platform is fine" never
+      reached the log. MEASURED over the retained window: 2,705 sweeps dispatched, 819
+      UNHEALTHY, 50 RECOVERED, and ZERO `all healthy` - roughly 1,836 healthy sweeps
+      leaving no trace. Every failure visible, no success visible, so "819 unhealthy" is
+      unreadable: 819-of-819 and 819-of-2,705 look identical in the logs.
+    it_was_not_a_style_point_it_produced_a_false_finding: >-
+      Investigating the 2026-09-07 outage, a loop of mine reported "`health_sweep.execute:
+      exit` fired ZERO times against ~49 expected" and gave it to Bakir as the finding it
+      had verified ITSELF. There was no `execute: exit` line in the handler at all - the
+      zero was a string that cannot appear, the D14.4 defect committed a second time
+      against the same subsystem. AND THE TRAP WAS ALREADY RECORDED IN THIS FILE by an
+      earlier loop, in these words: "the exit line is job-id suffixed
+      (`health_sweep-f2d80205: exit - completed`), so the obvious grep for
+      `health_sweep.execute: exit` returns 0 against a sweep that ran twice." Written
+      down, never re-read. That is precisely why this fix is in the CODE and not in a
+      third note: the note already existed and did not work.
+    the_conclusion_survived_remeasurement: >-
+      On the lines that do exist, the original concern is sharper rather than weaker: 1
+      scheduler job completion in the 4h05m window against 450-540 per comparable 4h
+      block the same day, with `_poll_cycle: poll raised` 490 times. The scheduler could
+      not read its own jobs table, so the monitor stopped with the database. Only the
+      NUMBER offered as proof was wrong, not the claim.
+    fix: >-
+      The 4-point rule honestly applied: one INFO `health_sweep.execute: exit` on EVERY
+      return path, emitted by a shared `_log_exit` helper, carrying the verdict as a
+      FIELD (`healthy` | `unhealthy` | `recovered` | `probe_failed`) plus total/duration.
+      A field can be grouped into a ratio; a message identity cannot, and the loud
+      per-outcome lines keep their levels - an unhealthy subsystem is still an ERROR.
+      The DEBUG `all healthy` line is DELETED rather than raised, because the exit line
+      supersedes it and two lines for one fact is how the levels diverged in the first
+      place. `entry` stays DEBUG deliberately: the scheduler already logs a per-dispatch
+      entry at INFO, so a second would be a duplicate; the exit is not a duplicate
+      because the wrapper knows the handler returned but not what it concluded.
+    guard: >-
+      tests/scheduler/test_the_health_sweep_can_be_counted.py - five tests. The
+      structural one walks the AST and requires one `_log_exit` call per `return` in
+      `execute()`, so a fifth outcome added later cannot silently leave the denominator;
+      another pins the level at INFO, which is the defect itself. MUTATION-PROVEN:
+      deleting the probe-failed exit turns 2 red, restored from a file copy and green
+      again.
+    stages:
+      validate: partial
+    validate_partial_why: >-
+      The line is new, so nothing has emitted it yet. It needs one sweep to run on the
+      restarted core - which happens every ~5 minutes, so this is a short wait rather
+      than an ambiguous one.
+    closing_check: |-
+      # EVIDENCE ONLY THE NEW CODE COULD PRODUCE: this message did not exist
+      # before this item, so history cannot satisfy it. The check also asserts
+      # the DENOMINATOR is real - a healthy verdict is the outcome that used to
+      # be invisible, so seeing one is the actual proof the defect is gone.
+      total=$(./scripts/log_since.sh --all 'health_sweep.execute: exit')
+      healthy=$(./scripts/log_since.sh --all 'health_sweep.execute: exit.*"verdict": "healthy"')
+      if [ "$total" -gt 0 ] && [ "$healthy" -gt 0 ]; then echo "CLOSEABLE $total sweeps counted, $healthy of them healthy - the outcome that was invisible"; elif [ "$total" -gt 0 ]; then echo "OPEN $total exits but 0 healthy verdicts - the denominator is still one-sided"; else echo "OPEN 0 - no sweep has run on the new code yet"; fi
   - id: DEBT-218
     found: 2026-09-08
     what: >-
