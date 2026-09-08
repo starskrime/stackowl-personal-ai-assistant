@@ -10,6 +10,15 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# ASKED, NOT RESTATED. This module opens the same database file as `DbPool` with
+# its own `sqlite3.connect`, so it must honour the same lock-wait policy. It used
+# to declare `_BUSY_TIMEOUT_MS = 5000` — the value `pool.py` had already MEASURED
+# as too short against a 24-40s writer-contention burst — and it makes ONE
+# attempt where the pool makes two, so it was strictly worse off than the path
+# that measurement came from. It cost two `logger.append: INSERT failed` rows out
+# of a hash CHAIN. See `tests/db/test_the_lock_wait_policy_has_one_source.py`.
+from stackowl.db.pool import BUSY_TIMEOUT_MS as _BUSY_TIMEOUT_MS
+
 if TYPE_CHECKING:  # pragma: no cover — typing-only
     from stackowl.db.pool import DbPool
 
@@ -20,7 +29,6 @@ log = logging.getLogger("stackowl.audit")
 # some distro builds default to 5000 but that is NOT portable, and StackOwl must
 # behave identically on every host. Set it explicitly on every connection so two
 # concurrent appends serialize via the lock instead of one failing immediately.
-_BUSY_TIMEOUT_MS = 5000
 
 # Chain format version stamped on every new row. v1 rows (legacy / absent column)
 # verify with the legacy formula; v2 rows fold actor+target+a version literal into

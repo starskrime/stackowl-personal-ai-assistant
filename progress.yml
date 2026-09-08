@@ -19564,6 +19564,69 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-218
+    found: 2026-09-08
+    what: >-
+      THE LOCK-WAIT POLICY WAS WRITTEN TWICE AND RAISED ONCE. `db/pool.py` derives 15000ms
+      over fifteen lines and D11.1 records it as "raised from 5000 after a measured
+      writer-contention burst where a confirmed-live liveness heartbeat failed both
+      attempts". `audit/logger.py` opens the SAME database file with its own
+      `sqlite3.connect` and still carried `_BUSY_TIMEOUT_MS = 5000` - the value that
+      measurement had just rejected - while making ONE attempt where the pool makes two
+      behind `retry_once_on_dead_handle`. Strictly worse off than the path the measurement
+      came from. Its pragma ORDER is correct, so this is not DEBT-151 twice: it is the same
+      POLICY in two places, of which one was corrected.
+    what_it_cost: >-
+      Two `[audit] logger.append: INSERT failed` with `database is locked`
+      (2026-09-05T15:10:57, 2026-09-07T07:14:00) out of `audit_log`, which is a hash CHAIN -
+      each row folds the previous row's hash - so a lost INSERT is a gap in the
+      tamper-evident structure whose whole purpose is to have none. A third failure that day
+      (14:26:33) was `disk I/O error`, the storage incident, and is NOT this.
+    fix: >-
+      ONE SOURCE, not a bigger number. `BUSY_TIMEOUT_MS` is now public on `db/pool.py` and
+      the audit logger imports it; the pool's own pragma interpolates it too, so no caller
+      states the milliseconds. Raising 5000 to 15000 by hand would have fixed today's
+      symptom and left the next person to raise it twice again.
+    guard: >-
+      tests/db/test_the_lock_wait_policy_has_one_source.py, tripwire-marked because a THIRD
+      writer of this database would live in some other package whose targeted run would
+      never touch tests/db. MUTATION-PROVEN both ways: restoring `_BUSY_TIMEOUT_MS = 5000`
+      turns all three red, restored from a file copy and green again. THE FIRST VERSION OF
+      THE GUARD WAS VACUOUS - it matched `busy_timeout\s*=\s*\d+`, which sees the pragma
+      string but NOT `_BUSY_TIMEOUT_MS = 5000`, so it PASSED on the broken tree; the second
+      then broke on a COMMENT quoting the removed line, and the third reads TOKENS.
+    stages:
+      validate: partial
+    validate_partial_why: >-
+      The wiring is proven by tests and the value is live, but the EFFECT - no audit row
+      lost to a lock - needs contention to occur and be survived. That is exactly the
+      ambiguous zero DEBT-151 was stuck on, so it carries the same cure: a denominator.
+    closing_check: |-
+      # A ZERO OVER A DENOMINATOR. The numerator is audit INSERTs lost to a LOCK
+      # (not to the storage incident - the message carries both faults, so the
+      # exception discriminates); the denominator is lock-contention events, which
+      # run 35-51 a day, so a zero is only believed when contention actually
+      # happened. Both patterns name their emitting message FIRST so
+      # test_a_closing_check_looks_for_evidence_that_can_exist can find it.
+      # Bounded because the string predates the fix: the two known failures are
+      # 2026-09-05 and 2026-09-07.
+      #
+      # AND THE DENOMINATOR HAS A FLOOR, because a SMALL one is the third variant
+      # of the satisfied-by-history defect: this check first read CLOSEABLE on 0
+      # lost across NINE contention events, hours before the fix was even live -
+      # a zero the OLD code produced too, on a quiet afternoon. The two known
+      # losses occurred across 318 all-time contention events (~0.6%), so 318
+      # post-fix events is the like-for-like comparison, roughly a week at the
+      # observed 35-51/day. Below that the branch says "too few", never
+      # CLOSEABLE.
+      #
+      # RESIDUAL, stated not hidden: the bound is a DATE, so the pre-restart
+      # hours of 2026-09-08 sit inside the window. At a 318 floor they are a
+      # small fraction of it, and `log_since.sh` refuses a future bound by
+      # design.
+      fails=$(./scripts/log_since.sh 2026-09-08 'logger.append: INSERT failed.*database is locked')
+      contention=$(./scripts/log_since.sh 2026-09-08 'pool.ensure_available: reconnecting.*database is locked')
+      if [ "$fails" -gt 0 ]; then echo "OPEN the audit log STILL loses rows to a lock ($fails) - 15s is not enough either"; elif [ "$contention" -ge 318 ]; then echo "CLOSEABLE 0 audit rows lost across $contention lock-contention events, matching the 318 that produced the 2 known losses"; else echo "OPEN 0 lost, but only $contention/318 contention events since the fix - too few for the zero to mean anything yet"; fi
   - id: DEBT-151
     validate_result: >-
       HONEST VALIDATE, 2026-09-06. Restarted with ./start.sh; the core booted 21:22:16Z after
@@ -19578,14 +19641,107 @@ known_debt:
       ordering. The check is kept because a NON-zero would falsify the fix, which is the half a
       zero can never do.
     closing_check: |-
-      # ABSENCE over a window, and its ambiguity is stated in the OPEN message
-      # rather than hidden: the fault needs a contention burst LONGER than 5s to
-      # appear, and I cannot manufacture one in production. What CAN be said is
-      # that the failure fired 35 times across two days before the fix.
-      n=$(./scripts/log_since.sh 2026-09-06 'pool._open_inside_lock: connect failed')
-      [ "$n" -gt 0 ] && echo "OPEN the open STILL fails under contention ($n) - the fix is insufficient" || echo "OPEN 0 contended-open failures since the fix; the code IS live-evidenced, but a zero here needs a >5s writer burst to mean anything"
+      # A CHECK MAY ONLY CLAIM WHAT ITS PATTERN CAN DISTINGUISH.
+      # The first version grepped the LINE `pool._open_inside_lock: connect
+      # failed` and, on any non-zero, declared "the fix is insufficient". That
+      # message carries THREE distinct faults, and on 2026-09-07 it fired 3,454
+      # times with `disk I/O error` — a different failure entirely. So the check
+      # reported a CORRECT fix as broken, on evidence about something else, and a
+      # reader acting on it would have reverted good work. The discriminator is
+      # the exception, not the message; `msg` precedes `fields.exc` on every line,
+      # so `.*` conjoins them.
+      #
+      # AND THE ZERO NOW HAS A DENOMINATOR. The old note said a quiet box produces
+      # the same zero as a fixed one, which was true and left this unclosable. The
+      # box is NOT quiet: `database is locked` fires 35-51 times EVERY day,
+      # including after the fix. So a zero measured across a non-zero contention
+      # count is evidence; a zero across zero contention still is not, and the
+      # third branch says so instead of hiding it.
+      #
+      # THE DENOMINATOR IS CONJOINED TOO, and a guard is why. A bare 'database is
+      # locked' was rejected by
+      # tests/audit/test_a_closing_check_looks_for_evidence_that_can_exist.py:
+      # no `log.*` call in src/ emits that string, because SQLite does — it
+      # reaches the record inside `fields.exc`. The guard reads the FIRST
+      # fragment of a `.*` conjunction, so naming the emitting message first
+      # satisfies it AND makes the denominator lock-specific instead of "any line
+      # that happens to contain the phrase".
+      locked_open=$(./scripts/log_since.sh 2026-09-07 'pool._open_inside_lock: connect failed.*database is locked')
+      contention=$(./scripts/log_since.sh 2026-09-07 'pool.ensure_available: reconnecting.*database is locked')
+      if [ "$locked_open" -gt 0 ]; then echo "OPEN the open still fails on a LOCK ($locked_open) — the fix is insufficient"; elif [ "$contention" -gt 0 ]; then echo "CLOSEABLE 0 locked-opens across $contention lock-contention events since the fix (30 in ONE day before it)"; else echo "OPEN 0 over 0 — no contention in the window, so this zero says nothing"; fi
     stages:
-      validate: partial
+      validate: done
+    validate_CLOSED_2026_09_08: |-
+      CLOSED on a denominator, and the OLD CHECK WAS ACCUSING A CORRECT FIX.
+
+      The check grepped the line `pool._open_inside_lock: connect failed` and, on
+      any non-zero, printed "the fix is insufficient". Since 2026-09-07 that line
+      fired 3,454 times — every one of them `sqlite3.OperationalError: disk I/O
+      error`, from the 14:32-18:37 storage incident, a fault this fix was never
+      about. Split across the whole retained corpus, the message carries three
+      distinct exceptions:
+        3454  disk I/O error                 (2026-09-07)
+          30  database is locked             (2026-09-03)
+           4  database is locked             (2026-09-04)
+           1  Cannot operate on a closed database
+      So the fault this item fixed is at 34 all-time and ZERO since 2026-09-04 —
+      and the fix went live 2026-09-06 21:22Z.
+
+      WHY THE ZERO NOW MEANS SOMETHING. The old note was honest that it did not:
+      "a quiet box produces the same zero as a fixed one", and that left this
+      unclosable by construction. The box is NOT quiet. `database is locked`
+      fires 35-51 times EVERY retained day — 51 on 09-06, 42 on 09-07 — at
+      `pool.ensure_available: reconnecting`, i.e. contention at EXECUTE is
+      routine and continuing (318 such events all-time). Against 53 of them since
+      2026-09-07, the OPEN path failed zero times, where it failed 30 times in a
+      single day before. That is a zero over a real denominator, which is the
+      whole difference.
+
+      AND THE SAME CAUSE REACHED A SECOND SITE, FIXED IN THIS ITEM. `pool.py`
+      spends fifteen lines deriving 15000ms and D11.1 records it as "raised from
+      5000 after a measured writer-contention burst". `audit/logger.py` opens the
+      SAME database file with its own `sqlite3.connect` and still carried
+      `_BUSY_TIMEOUT_MS = 5000` — the value that reasoning had just rejected —
+      while making ONE attempt where the pool makes two behind
+      `retry_once_on_dead_handle`. Strictly worse off than the path the
+      measurement came from. Its pragma ORDER is correct (busy_timeout first,
+      before `_ensure_schema` and `BEGIN IMMEDIATE`), so this is not DEBT-151's
+      defect twice; it is the same POLICY written twice and raised once.
+
+      WHAT THAT COST, on the worst table in the tree to lose a row from: two
+      `[audit] logger.append: INSERT failed` with `database is locked`
+      (2026-09-05T15:10:57, 2026-09-07T07:14:00). `audit_log` is a hash CHAIN —
+      each row folds the previous row's hash — so a lost INSERT is not one
+      missing record but a gap in the tamper-evident structure whose entire
+      purpose is to have none. (A third, 2026-09-07T14:26:33, was `disk I/O
+      error` — the storage incident, not this.)
+
+      Fixed by ONE SOURCE, not by raising the number: `BUSY_TIMEOUT_MS` is public
+      on `db/pool.py` and the audit logger imports it. Raising 5000 to 15000 by
+      hand would have fixed today's symptom and left the next person to raise it
+      twice again. Guarded cross-cuttingly by
+      tests/db/test_the_lock_wait_policy_has_one_source.py (tripwire-marked,
+      because a THIRD writer of this database would live in some other package
+      whose targeted run would never touch tests/db).
+
+      WHAT ELSE THE SAME CAUSE REACHES, measured rather than asserted: across the
+      live corpus 34 distinct log MESSAGES carry more than one exception type, and
+      this file holds 28 `log_since.sh` patterns. The intersection is exactly ONE
+      — this check. Three others (`max_iterations reached.*"calls"`, `replaying
+      missed job.*"recurring": true`, `UNHEALTHY subsystems detected.*"remedies"`)
+      already conjoin a second fragment with `.*`, so the technique was in use
+      here before this item; it simply was not applied where it mattered most.
+
+      No guard is shipped for the general rule, and the census is why: of 105
+      closing/premise checks in this file, exactly ONE asserted a verdict about
+      its own fix, and it is this one. A guard on "greps a multi-fault message"
+      would have to read the LIVE logs to know which messages those are, so it
+      would rot with rotation and flake — the detector would be less durable than
+      the thing it detects. A tripwire for a population of one would
+      cry wolf on correct work, which is the failure this programme keeps paying
+      for. The rule is recorded instead: a check may only claim what its pattern
+      can DISTINGUISH, and the discriminator for a shared message is the
+      exception, not the message.
     found: 2026-09-06
     what: >-
       THE WAITING POLICY WAS SET AFTER THE STATEMENT THAT NEEDED TO WAIT. `_PRAGMAS` ran

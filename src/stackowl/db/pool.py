@@ -24,6 +24,18 @@ from stackowl.paths import StackowlHome
 
 log = logging.getLogger("stackowl.db")
 
+#: How long ANY connection to this database waits for a writer's lock, in ms.
+#:
+#: ONE SOURCE, and it is public because it is not this module's private business
+#: — `audit/logger.py` opens the same file with its own `sqlite3.connect` and
+#: must wait the same amount. It did not: it carried `_BUSY_TIMEOUT_MS = 5000`,
+#: the value the comment below had already MEASURED as too small, and made one
+#: attempt where this pool makes two. MEASURED 2026-09-08: two
+#: `[audit] logger.append: INSERT failed` with `database is locked`, on a
+#: hash-CHAINED table where a lost INSERT is a gap in the tamper-evident
+#: structure. Two copies of one rule, and only one of them was ever raised.
+BUSY_TIMEOUT_MS = 15000
+
 _PRAGMAS = [
     # FIRST, AND THE ORDER IS THE POINT. `journal_mode=WAL` takes a database
     # lock; every statement before this line runs on sqlite3's DEFAULT 5s wait,
@@ -40,7 +52,7 @@ _PRAGMAS = [
     # below reasons carefully about the SIZE of the timeout and never about
     # WHEN it takes effect, and its reasoning is about execute()/fetch_all()
     # retries, which is a different code path from connection setup.
-    "PRAGMA busy_timeout=15000",
+    f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}",
     "PRAGMA journal_mode=WAL",
     "PRAGMA foreign_keys=ON",
     # LAT.4 (batch background writes into chunked transactions): this WAL /
