@@ -315,6 +315,50 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT214_2026_09_08_the_recovery_destroyed_the_diagnosis_because_the_launcher_truncated_it:
+    map_check: >-
+      No mapped item — "The ground is clear." This is the WHY behind the incident's
+      "cause unknown", found by asking why the cause was unknowable rather than by
+      guessing at the cause.
+    THE_INCIDENT_COULD_NOT_BE_DIAGNOSED_AND_THIS_IS_WHY: >-
+      A failure BEFORE the log handlers exist cannot appear in `stackowl.jsonl` by
+      construction. It appears on the child's own stdout/stderr, which `start.sh`
+      redirects to `manual_restart_stdout.log` — the only possible witness to a 7h21m
+      silence. Line 94 opened it with `>`. So restarting to restore service TRUNCATED it:
+      **the recovery destroyed the diagnosis.** Verified after the fact — the file's mtime
+      was my own restart's and its contents were four lines of a healthy boot.
+    WHAT_ELSE_THAT_SAME_CAUSE_REACHES: >-
+      Every future pre-logging failure, and there is no other witness for that class. It
+      also makes "restart it and see" structurally unable to diagnose a boot hang, because
+      the act of looking changes what there is to look at. That is the mirror of this
+      repo's defect #1: not a write with no reader, but a reader with no write left.
+    THE_CRON_REFRAMED_THE_INCIDENT_AND_I_HAD_IT_WRONG_FIRST: >-
+      `~/.stackowl/logs/start_cron.log` shows repeated `[start.sh]` launches, each
+      SIGTERMing a PID that was already dead. I first read that as a restart loop. It is
+      `@reboot` — one launch per BOOT — so those are separate machine reboots, and the
+      last one launched pid 2913, the process that then sat silent. The platform was
+      started by cron 15 seconds after a boot on which `gp-vpn.service` had already failed
+      its certificate check.
+    changes: >-
+      start.sh (appends, with a dated banner per launch, instead of truncating);
+      tests/audit/test_the_launcher_does_not_destroy_the_evidence.py (new, 3 tests, two
+      mutants killed — reverting to `>` and the launcher ceasing to name the file at all,
+      the second so a blind rule fails loudly rather than passing).
+    WHAT_THIS_DOES_NOT_DO_AND_I_WILL_NOT_CLAIM: >-
+      It does not explain the 7h21m silence. That evidence is gone and cannot be recovered.
+      It makes the NEXT one diagnosable, which is the most that is honestly available now.
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: partial, document: no_change_needed}
+    closing_check: |-
+      # Keyed on a property only the FIXED launcher can produce: more than one launch
+      # banner in the file. The old `>` could never leave two, because every start wiped
+      # it. Reads a file, not a rotating log, so it never rots.
+      n=$(grep -c "\[start.sh\] launching at" "$HOME/.stackowl/manual_restart_stdout.log" 2>/dev/null || echo 0)
+      if [ "${n:-0}" -ge 2 ]; then
+        echo "CLOSEABLE — $n launch banners survive in the evidence log; a restart no longer wipes it"
+      else
+        echo "OPEN — $n banner(s); needs a second restart to prove the append survives"
+      fi
   INCIDENT_2026_09_08_the_platform_was_DOWN_for_seven_hours_with_a_live_process_and_nothing_noticed:
     map_check: >-
       No mapped item. Found by USER TESTING, which is the point — Bakir, 2026-09-07:

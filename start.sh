@@ -91,7 +91,24 @@ if [ -d "$runtime_dir" ] && [ -z "$(instance_pids)" ]; then
 fi
 
 echo "[start.sh] starting fresh instance..."
-nohup uv run python -m stackowl start > "$home/manual_restart_stdout.log" 2>&1 &
+# APPEND, NEVER TRUNCATE — this file is the ONLY record of a failure that happens
+# BEFORE logging is configured, and `>` destroyed it on every restart.
+#
+# MEASURED 2026-09-08. The platform ran 7h21m writing NOT ONE line to the JSONL: the
+# @reboot cron started it at 19:10:07Z, `ps` showed it alive, and `stackowl.jsonl` had
+# nothing after 19:08:27Z. The one artifact that could have said why is this file — the
+# child's own stdout and stderr, which is where a traceback lands when the process dies
+# or hangs before the log handlers exist. Restarting to restore service TRUNCATED it, so
+# the diagnosis was destroyed by the recovery. The incident record has to say "cause
+# unknown" for exactly that reason.
+#
+# A banner makes the entries separable, because the interesting case is comparing the
+# boot that hung against the one that worked.
+{
+    echo
+    echo "=== [start.sh] launching at $(date -u +%Y-%m-%dT%H:%M:%SZ) (pid follows) ==="
+} >> "$home/manual_restart_stdout.log"
+nohup uv run python -m stackowl start >> "$home/manual_restart_stdout.log" 2>&1 &
 disown
 
 echo "[start.sh] launched (pid $!). Tail $home/logs/stackowl.jsonl to confirm steady state."
