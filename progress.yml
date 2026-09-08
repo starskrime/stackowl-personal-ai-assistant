@@ -19651,6 +19651,72 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-231
+    found: 2026-09-08
+    what: >-
+      THE EIGHTEENTH FULL SUITE CAME BACK RED, AND THE FAILURE WAS MINE.
+      `1 failed, 12553 passed, 17 skipped in 2239.34s` (rc=1, `SUITE TREE STILL`) on
+      `c001b6c8`: `tests/test_story_7_1b.py::TestSchedulerLifecycle::
+      test_recover_advances_next_run_when_replay_disabled`. DEBT-228 changed
+      `JobScheduler.recover` so a `daily@` job replays its missed slot whether or not
+      `replay_missed` is set; that test asserts the retired contract, on a fixture whose
+      default schedule is `daily@09:00` - i.e. exactly the `check_in` case the fix exists
+      for. The assertion was right about the mechanism and wrong about the example.
+    why_I_missed_it: >-
+      MY TARGETED RUN WAS `tests/scheduler` + `tests/owls`, chosen the way targeted paths
+      are always chosen - by what the change looks related to. `tests/test_story_7_1b.py`
+      sits DIRECTLY in `tests/`, so no package path touches it. The tripwire gate could not
+      help either: it runs only `@pytest.mark.tripwire`.
+      THE LANDMINE WAS ALREADY WRITTEN DOWN, in this loop's own instructions - "`tests/
+      <package>` NEVER runs `tests/*.py`. 69 test files sit directly in `tests/`". I had
+      read it. It did not help, and that is the finding: A WARNING NAMES THE HAZARD, AND
+      THE READER NEEDS THE ANSWER. Knowing one of 69 files might matter is not knowing
+      WHICH one, and the gap between those two is where thirty-seven minutes went.
+    fix: >-
+      (1) The test rewritten to the SHIPPED contract, and split in two so the file records
+      the change rather than quietly dropping half of it: `every 30m` still advances (the
+      property it always protected, on a job it still holds for) and `daily@09:00` now
+      replays with no flag set.
+      (2) `scripts/tests_touching.py` - given the files you changed (or `git diff` by
+      default), it names every test that imports or NAMES their module, marks the
+      root-level ones with `*`, and prints the ready-made `uv run pytest ...` line. Run
+      against `scheduler/scheduler.py` it returns 49 files and marks exactly one:
+      `tests/test_story_7_1b.py`. It would have found this.
+      (3) `tests/audit/test_the_targeted_run_can_see_the_root_level_tests.py` - two
+      tripwires pinning the property the failure turned on: the walk must REACH files
+      directly under `tests/`, and it must match a dotted name in a STRING (this tree
+      monkeypatches by string and reads `inspect.getsource` of modules it never imports,
+      so an import-only walk would return a confident, incomplete list).
+    it_matches_three_ways_and_two_are_not_optional_here: >-
+      Imported outright; imported as a symbol FROM the module; or named in a string
+      literal. The third is what makes it correct in THIS codebase - and the guard's second
+      test proves at least one covering test reaches its module by string alone, so that
+      path cannot rot into an import-only walk while reading green.
+    mutation_found_dead_code_in_my_own_new_function: >-
+      `_module_names` returned the module AND its parent packages, with a docstring
+      justifying it - "`from stackowl.scheduler import scheduler` would otherwise be
+      missed". FALSE ABOUT ITS OWN CODE: `_imports` already expands an `ImportFrom` into
+      both names, and the caller then took `max(..., key=len)` and never read the parents.
+      Removing them changed nothing, which is the definition of dead - found because the
+      third mutation SURVIVED. Deleted with the claim, in the same change.
+    also_fixed_while_here: >-
+      `tests/audit/test_a_doc_does_not_pin_a_count_that_grows_by_design.py` emitted a
+      SyntaxWarning - its docstring quotes a shell line-continuation, and `\`` is an
+      invalid escape Python says "will not work in the future". Made the docstring raw.
+      Found because the new guard parses test files and surfaced it.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: no_change_needed
+      document: no_change_needed
+    validate_no_change_needed_because: >-
+      Nothing shipped to a running code path: a test corrected to the contract that was
+      already live since DEBT-228 (validated live that day), a new loop instrument, and two
+      new guards. The proof is the instrument's own output naming the file that went red,
+      and the 49 selected test files running green.
   - id: DEBT-229
     found: 2026-09-08
     what: >-

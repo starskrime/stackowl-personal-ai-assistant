@@ -1,4 +1,4 @@
-"""A Verification step over a whole package must assert a SHAPE, not a count.
+r"""A Verification step over a whole package must assert a SHAPE, not a count.
 
 WHY THIS EXISTS, measured 2026-09-06 across the 83 design documents.
 

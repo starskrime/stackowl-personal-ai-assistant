@@ -90,11 +90,23 @@ class TestSchedulerLifecycle:
         )
         assert rows == []
 
-    async def test_recover_advances_next_run_when_replay_disabled(
+    async def test_recover_advances_a_FREQUENT_job_that_has_moved_on(
         self, tmp_db: DbPool
     ) -> None:
+        """The contract this test has always protected, on a job it still holds for.
+
+        IT USED TO SAY `..._when_replay_disabled`, and that name stated a rule
+        DEBT-228 retired: `replay_missed=False` no longer means "do not replay",
+        it means "no explicit override — the schedule decides". The default
+        `_job()` schedule is `daily@09:00`, so under the new rule this fixture
+        REPLAYS, which is the `check_in` case the fix exists for. The assertion
+        was correct about the mechanism and wrong about the example.
+
+        `every 30m` keeps the original meaning: overdue by two hours is four slots
+        stale, the work is fungible across them, and advancing loses nothing.
+        """
         past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
-        job = _job(next_run_at=past, replay_missed=False)
+        job = _job(schedule="every 30m", next_run_at=past, replay_missed=False)
         await insert_job(tmp_db, job)
         sched = JobScheduler(db=tmp_db)
         replayed = await sched.recover(replay_window_hours=24)
@@ -103,6 +115,23 @@ class TestSchedulerLifecycle:
             "SELECT next_run_at FROM jobs WHERE job_id = ?", (job.job_id,)
         )
         assert rows[0]["next_run_at"] > past
+
+    async def test_recover_replays_a_DAILY_job_the_flag_never_claimed(
+        self, tmp_db: DbPool
+    ) -> None:
+        """The half the old test asserted BACKWARDS, kept here so this file
+        records the contract change rather than quietly dropping it.
+
+        A `daily@` job overdue by two hours with no flag set is the live
+        `check_in` case: dropping the slot costs the whole day, so the schedule's
+        own period earns the replay without anything being remembered at the
+        creation site.
+        """
+        past = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+        job = _job(next_run_at=past, replay_missed=False)   # daily@09:00
+        await insert_job(tmp_db, job)
+        sched = JobScheduler(db=tmp_db)
+        assert await sched.recover(replay_window_hours=24) == 1
 
     async def test_create_job_inserts_row(self, tmp_db: DbPool) -> None:
         sched = JobScheduler(db=tmp_db)
