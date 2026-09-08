@@ -180,7 +180,7 @@ def _reviewed_shas(head: dict[str, str]) -> set[str]:
     # ONLY THE DISMISSAL POSITION COUNTS — the text before the first em dash, which
     # is exactly the documented shape `Reviewed: <sha> — <why it does not apply>`.
     #
-    # MEASURED 2026-09-09, when the gate refused a commit of mine and was RIGHT to.
+    # MEASURED 2026-09-08, when the gate refused a commit of mine and was RIGHT to.
     # D13.2's reason names an EARLIER commit as history ("the second time a
     # `PROCESS.md` edit has marked it stale without touching it — the header already
     # records `2f899198` doing the same"), and reading the whole field turned that

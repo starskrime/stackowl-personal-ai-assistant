@@ -309,6 +309,15 @@ class MigrationRunner:
             ).fetchall()
             drifted: list[str] = []
             backfilled = 0
+            # WHAT WAS ACTUALLY COMPARED, kept separately from what was walked.
+            # MEASURED 2026-09-08 on the live database: the exit line said "139
+            # applied migrations match their files" on the same boot it warned that
+            # 0137 had no file — 139 rows, 138 comparisons, and the summary is the
+            # line a reader trusts because it is the ALL CLEAR. `len(rows)` is the
+            # population the walk STARTED with; `continue` removed a row from the
+            # comparison and not from the count.
+            verified = 0
+            unverifiable: list[str] = []
             for version, name, stored in rows:
                 path = by_version.get(version)
                 if path is None:
@@ -319,12 +328,15 @@ class MigrationRunner:
                         "the tree — this database ran something no longer present",
                         version, name,
                     )
+                    unverifiable.append(name)
                     continue
                 try:
                     current = semantic_checksum(path.read_text(encoding="utf-8"))
                 except OSError as exc:
                     log.warning("[db] runner.verify: could not read %s", path, exc_info=exc)
+                    unverifiable.append(name)
                     continue
+                verified += 1
                 if stored is None:
                     conn.execute(
                         "UPDATE schema_migrations SET sql_checksum = ? WHERE version = ?",
@@ -343,10 +355,35 @@ class MigrationRunner:
                     len(drifted), ", ".join(sorted(drifted)),
                 )
             else:
-                log.info(
-                    "[db] runner.verify: exit — %d applied migrations match their files",
-                    len(rows),
-                )
+                # ONE SUMMARY, BUILT ONCE. Three branches each formatting their own
+                # count is how `len(rows)` and `verified` came to disagree in the
+                # first place — and mutation testing proved the point: with the count
+                # written three times, reverting one of them to `len(rows)` changed
+                # nothing any test could see, because that branch is only reached
+                # when the two are equal. A number stated once cannot drift from
+                # itself.
+                detail = f"{verified} applied migration(s) match their files"
+                if unverifiable:
+                    # The gap belongs in the SUMMARY, not left as arithmetic between
+                    # it and a per-row warning that has already scrolled away.
+                    detail += (
+                        f", {len(unverifiable)} unverifiable "
+                        f"({', '.join(sorted(unverifiable))}) — the ledger is NOT "
+                        f"fully checked"
+                    )
+                if rows and verified == 0:
+                    # 0 OVER 0 IS NOT A PASS. The all-clear is reached whenever no
+                    # drift was found, and "no drift" is also what an EMPTY
+                    # comparison produces — a tree whose migration directory had gone
+                    # missing would have logged a pass over zero comparisons.
+                    log.warning(
+                        "[db] runner.verify: exit — NOTHING VERIFIED, this is not an "
+                        "all-clear: %s", detail,
+                    )
+                elif unverifiable:
+                    log.warning("[db] runner.verify: exit — %s", detail)
+                else:
+                    log.info("[db] runner.verify: exit — %s", detail)
         except sqlite3.Error as exc:
             log.warning("[db] runner.verify: verification failed", exc_info=exc)
         finally:

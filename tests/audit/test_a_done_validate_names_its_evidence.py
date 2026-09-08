@@ -6,7 +6,7 @@ evidence aged silently until `closing_check`; a design document's claim aged
 silently until `doc_check`. A `validate: done` had no check of any kind — and
 `done` is precisely the word that stops anybody asking again.
 
-MEASURED 2026-09-09. DEBT-230's record was DRAFTED IN THE SCRATCHPAD while a full
+MEASURED 2026-09-08. DEBT-230's record was DRAFTED IN THE SCRATCHPAD while a full
 suite ran, and applied verbatim when the tree came free. It carried
 `validate: done`. The platform was never restarted, no live drop record was ever
 read, and at the time of the correction there were 61 such records in the retained
@@ -59,7 +59,7 @@ from progress_lint import (  # noqa: E402
 #: The population on the day the rule was written, AFTER DEBT-230 was corrected.
 #: A ceiling, never a target: it may fall as records are validated or re-recorded,
 #: and any rise is a new claim nobody can check.
-_MEASURED_2026_09_09 = 43
+_MEASURED_2026_09_08 = 43
 
 
 def _record() -> dict:
@@ -69,10 +69,10 @@ def _record() -> dict:
 @pytest.mark.tripwire
 def test_no_new_done_validate_arrives_without_its_evidence() -> None:
     found = _unevidenced(_record())
-    assert len(found) <= _MEASURED_2026_09_09, (
+    assert len(found) <= _MEASURED_2026_09_08, (
         f"{len(found)} records claim `validate: done` while naming neither a design "
-        f"document nor a `validated…` key, against {_MEASURED_2026_09_09} measured on "
-        f"2026-09-09. A `done` nobody can check is a claim, not a check. Either add a "
+        f"document nor a `validated…` key, against {_MEASURED_2026_09_08} measured on "
+        f"2026-09-08. A `done` nobody can check is a claim, not a check. Either add a "
         f"`validated…` key naming what you observed LIVE, or record the stage "
         f"`partial` with a `closing_check` — the honest state for a claim reality has "
         f"not settled yet. New: {sorted(set(found))[-5:]}"
@@ -90,7 +90,7 @@ def test_the_detector_still_sees_the_population_it_was_built_on() -> None:
     """
     found = _unevidenced(_record())
     assert len(found) >= 30, (
-        f"only {len(found)} unevidenced records matched, against 43 on 2026-09-09. "
+        f"only {len(found)} unevidenced records matched, against 43 on 2026-09-08. "
         f"Either forty-odd items were genuinely re-validated, or the walk no longer "
         f"recognises the shape it was built to find — check the second before "
         f"believing the first."

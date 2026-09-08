@@ -19651,8 +19651,99 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-233
+    found: 2026-09-08
+    what: >-
+      THE INTEGRITY CHECK'S ALL-CLEAR COUNTED ROWS IT HAD JUST SKIPPED. On the same boot,
+      192 times across the retained window:
+      `runner.verify: applied migration 0137 (...) has no file in the tree` and
+      `runner.verify: exit — 139 applied migrations match their files`. The ledger holds
+      139 rows and 138 have a file - the one that does not is the one the warning names.
+      The summary asserts that 139 matched when 138 were compared, and the SUMMARY is the
+      line a reader trusts, because it is the all-clear.
+    why_it_happened: >-
+      THE DENOMINATOR, not the missing file. `verify` walks the applied rows; a row with
+      no file logs its warning and `continue`s - removed from the COMPARISON and not from
+      `len(rows)`, which is the population the walk STARTED with. The count was taken
+      before the exclusions and reported after them. That is this file's own rule about
+      checking what a denominator is MADE OF, found inside the integrity checker itself.
+    and_the_all_clear_is_reached_on_an_EMPTY_comparison: >-
+      The `else` fired whenever `drifted` was empty - which is also true when NOTHING was
+      compared. A database whose migrations directory had gone missing entirely would have
+      logged "0 applied migrations match their files" as a pass. A zero numerator over a
+      zero denominator is not a pass either.
+    what_this_is_NOT: >-
+      The phantom row is a development artefact of this box: `0137_migration_semantic_
+      checksum.sql` was applied from the working tree on 2026-09-05 and NEVER COMMITTED
+      (`git log --all --diff-filter=ADR` finds it in no commit). Deleting the row would
+      silence the symptom on one machine and leave every customer's integrity summary
+      just as able to lie. The COUNT is the platform defect; the row is the evidence that
+      found it, and it is deliberately left in place as that evidence.
+    fix: >-
+      `verified` and `unverifiable` are tracked separately from the walk, and the summary
+      is BUILT ONCE from them: the verified count, the unverifiable count and their names
+      when there are any, at WARNING when the ledger is not fully checked and at WARNING
+      with "NOTHING VERIFIED" when nothing was compared at all. A clean ledger still gets
+      a plain INFO all-clear - a fix that made every summary alarming would be worse than
+      the defect.
+    MUTATION_CAUGHT_THE_TESTS_BEFORE_IT_CAUGHT_THE_CODE: >-
+      The first implementation formatted the count in THREE branches, and two of four
+      mutations SURVIVED. (a) Reverting one branch to `len(rows)` changed nothing, because
+      that branch is only reached when the two are equal - an equivalent mutation hiding a
+      number written three times. (b) Deleting the empty-comparison branch changed nothing,
+      because the `unverifiable` branch is ALSO a warning and the test only asserted the
+      LEVEL - satisfied by a case the old code handled too, in miniature. Restructured so
+      the number is stated ONCE, and the test now asserts the CLAIM ("NOTHING VERIFIED")
+      rather than the volume. Re-mutated: 4 of 4 caught, restored from a file copy, green.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_live: >-
+      CodeWatcher exec-replaced the core after the edit and the platform logged the
+      before and after itself, on one database, hours apart:
+      12:10:54 INFO  `runner.verify: exit — 139 applied migrations match their files`
+      13:11:03 WARNING `runner.verify: exit — 138 applied migration(s) match their files,
+      1 unverifiable (0137_migration_semantic_checksum.sql) — the ledger is NOT fully
+      checked`, and again on the two boots after it. 139 -> 138 with the gap NAMED, and
+      the level raised because the ledger is not fully checked. Evidence only the new code
+      can produce: the words "unverifiable" and the migration name appear in no earlier
+      record.
+    the_FIRST_closing_check_I_WROTE_REPORTED_A_FALSE_CLOSEABLE: >-
+      Recorded because it is the rule "verify a CLOSEABLE before you believe it" earning
+      its place on the day it was needed. My check read
+      `log_since.sh 2026-09-08 'runner.verify: exit' 'unverifiable'` and reported
+      "CLOSEABLE - 60 boots", before the fix had run once. The THIRD ARGUMENT TO
+      `log_since.sh` IS AN EXCLUDE PATTERN, not a second match: it had counted every
+      verify summary that did NOT contain the word. I assumed a conjunction from a
+      signature I never read - "print the real shape before you filter it", failing on the
+      instrument rather than on the system. The conjunction belongs in `jq`; `log_since.sh`
+      takes the date bound and one pattern.
+    and_the_GATE_CAUGHT_A_DATE_I_HAD_WRITTEN_FROM_MEMORY: >-
+      This item's first closing_check was dated 2026-09-09 and the gate refused the
+      commit - `test_no_closing_check_is_dated_in_the_future`, which exists because a
+      future bound makes `log_since.sh` return 0 forever. Today is 2026-09-08. Chasing
+      that one line found THIRTEEN MORE across eight files and two commits ALREADY
+      PUSHED: two `found:` dates, and a `MEASURED` line dated one day ahead in
+      `runner.py`, the item-loop
+      skill, `progress_lint.py`, `doc_check.py`, `PROCESS.md`'s stage table, two test
+      docstrings and a constant NAMED for the date.
+      None was a typo: I inferred the date from how long the session had been running
+      instead of reading the clock - "measure, do not assume" failing on the one fact
+      that is free to check. THE GUARD EXISTED AND SAW ONE OF FOURTEEN, because it was
+      written for `closing_check` fields and nothing looked anywhere else - a rule
+      enforced on the surface where it was first noticed and nowhere else.
+      `tests/audit/test_nothing_claims_to_have_measured_the_future.py` now sweeps every
+      tracked text file for `MEASURED <date>` and every `found:` in the record. Population
+      ZERO after the correction, so it can only fire on the change that makes the claim.
+      MUTATION-PROVEN both ways, plus a vacuity control that re-runs the sweep against a
+      year-2000 "today" and fails if it finds no dated measurements at all.
   - id: DEBT-232
-    found: 2026-09-09
+    found: 2026-09-08
     what: >-
       I RECORDED `validate: done` FOR WORK I NEVER VALIDATED. DEBT-230's record was DRAFTED
       IN THE SCRATCHPAD while a full suite ran - the tree was frozen, so the whole item was
@@ -19854,7 +19945,7 @@ known_debt:
       offender list empty and the gate would read GREEN while guarding nothing - the
       vacuous-guard shape, which this repo has now paid for in two separate instruments.
     validate_was_recorded_done_and_it_was_NOT: >-
-      CORRECTED 2026-09-09 (DEBT-232). This record was DRAFTED IN THE SCRATCHPAD while a
+      CORRECTED 2026-09-08 (DEBT-232). This record was DRAFTED IN THE SCRATCHPAD while a
       full suite ran, and applied verbatim once the tree was free - so it asserted a
       validate that had not happened. The platform was never restarted and no live drop
       record was ever read. The stage is `partial` with the check below, which is what the

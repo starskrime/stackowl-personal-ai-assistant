@@ -146,7 +146,7 @@ def entries_with_closing_checks(data: dict[str, Any]) -> list[tuple[str, str]]:
 #: A key naming the LIVE evidence behind a `validate: done`. The prefix is the whole
 #: mechanism, and it is deliberately a NAME rather than a content heuristic.
 #:
-#: MEASURED 2026-09-09, on my own record and by accident: a first attempt scored an
+#: MEASURED 2026-09-08, on my own record and by accident: a first attempt scored an
 #: entry as evidenced if it carried any key matching /valid|live|observed|measured/ and
 #: longer than 120 characters. It passed DEBT-230 — whose only matching key was
 #: `the_live_cost_is_on_the_adapter_that_DID_carry_a_payload`, a description of the

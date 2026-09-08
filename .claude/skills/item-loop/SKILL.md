@@ -224,7 +224,7 @@ and `progress_lint` refuses one without it.** Run this beside `escalation_check`
 start of a loop:
 
 **AND A `done` VALIDATE MUST NAME ITS EVIDENCE — a `validated…` key, or a `doc:` whose
-Verification section holds it.** MEASURED 2026-09-09, on my own record from the loop
+Verification section holds it.** MEASURED 2026-09-08, on my own record from the loop
 before: DEBT-230's entry was DRAFTED IN THE SCRATCHPAD while a full suite ran and applied
 verbatim when the tree came free, so it asserted a validate that never happened — the
 platform was not restarted and no live record was read. `done` is the word that stops
@@ -264,6 +264,14 @@ open questions, and no later pass could ever close them. Ten items sat at 6/7 wi
 mechanism that could advance them. The escalation queue had already been given exactly this
 cure (`premise_check`) for exactly this reason, and validates never got it. First run:
 D07.2 and D07.3 had been closeable for days.
+
+**`log_since.sh`'s THIRD ARGUMENT EXCLUDES — it is not a second pattern to match.**
+MEASURED 2026-09-08: a check reading
+`log_since.sh 2026-09-08 'runner.verify: exit' 'unverifiable'` reported
+**CLOSEABLE — 60 boots** before the fix had run once, because it had counted every
+summary that did NOT contain the word. The signature is
+`<date> <grep-pattern> [exclude-pattern]`, and I assumed a conjunction from a signature I
+never read. Put the AND in `jq`; give `log_since.sh` the date bound and ONE pattern.
 
 **Verify a CLOSEABLE before you believe it** — the first run also produced a false positive.
 D15.6's check asked for a file containing both `notification_overrides` and `SELECT`, and
