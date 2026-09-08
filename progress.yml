@@ -19651,6 +19651,94 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-234
+    found: 2026-09-08
+    what: >-
+      "UNMEASURABLE 36" WAS A CLAIM ABOUT THE CORPUS AND A FACT ABOUT THE PARSER. `doc_check`
+      reported "no dated `Last verified` in the header" about TWENTY design documents, and
+      every one of them carries a date. They use the corpus's SECOND GENRE - prose fields
+      `**Item.** …` / `**Last verified.** 2026-09-05, commit `91f71750`` - a PERIOD, not a
+      colon, and no blockquote. `DOC_STANDARD` describes only the first.
+    the_number_was_on_the_board_every_loop_and_nobody_could_act_on_it: >-
+      "unmeasurable 36" printed at the start of every invocation for days. It stayed
+      untouched because THE STATED REASON WAS WRONG: it invited a reader to add a date that
+      was already there, and said nothing about what was actually missing. A finding you
+      cannot act on from the report is the same shape as the `--all` fix and the staleness
+      culprit fix - the third time this instrument has hidden the work rather than named it.
+    and_it_is_the_SECOND_parser_vs_corpus_confusion_in_this_ONE_script: >-
+      Its own docstring records the first: eleven documents were filed as headerless because
+      `Source (new):` variants and src-relative paths went unread. Same script, same mistake,
+      different genre - which is why the fix is a guard that sweeps the WHOLE corpus for
+      "declares a date the parser cannot see", not two pinned examples.
+    the_honest_three_way_split_of_the_same_36: >-
+      16 dated, but declare no Source - staleness cannot be computed (a real, actionable
+      gap); 14 declare no verification date at all (a real gap); and 6 DECLINED - nothing
+      was built, so nothing can go stale. The arithmetic reconciles against the earlier
+      measurement: 22 documents carry a date (20 in prose + D02.1 and D09.2 in blockquote),
+      14 do not.
+    the_third_bucket_is_the_one_that_matters_because_it_is_NOT_A_GAP: >-
+      A large part of the prose genre is DECLINED items - "The Answer To The Ask Is No",
+      "Nothing was built" - where the Ask was measured and refused. Such a document cites no
+      source because there is none: nothing was written, so nothing can drift, and undatable
+      is its correct and PERMANENT state. Listing it beside the real gaps is how a list of 36
+      became a list nobody worked - a bucket you cannot act on teaches the reader to skip the
+      bucket.
+    asked_of_the_RECORD_not_of_the_prose: >-
+      `stages.implement == no_change_needed` decides it. The obvious alternative is to match
+      the document's own words ("Nothing was built"), and this repo has watched four guards
+      break on, or be satisfied by, a comment. The record already maintains the same fact.
+    fix: >-
+      (1) `_header` falls back to the prose genre when there is no blockquote - fields from
+      the first `**Key.**` line to the first `##`, with WRAPPED values joined (D10.3's runs
+      to four lines; the blockquote parser learned that the hard way when 27 documents lost
+      source paths to unjoined continuations).
+      (2) The unmeasurable reasons split three ways, each naming what is actually missing.
+      (3) `tests/audit/test_the_staleness_report_knows_both_document_genres.py` - five
+      tripwires: the prose header is read, a wrapped field is joined, NO document that
+      declares a date is reported as undated (swept over the whole corpus, because a guard
+      pinned to two examples would pass while eighteen stayed invisible), a declined item is
+      not reported as a gap, and a vacuity control pinning the prose population at >=15
+      against the 20 measured.
+    proven_off_tree_before_it_touched_the_repo: >-
+      A full suite was in flight, so the whole item was developed against a COPY in the
+      scratchpad and the before/after reports were DIFFED: 77 lines, every one of them inside
+      the UNMEASURABLE section. `checked 48, STALE 0, reviewed-not-rerun 7` unchanged - the
+      widened parser made nothing newly measurable-and-wrong.
+    it_CONTRADICTED_A_RECORDED_DECISION_and_that_was_caught_before_landing: >-
+      `tests/audit/test_the_doc_check_reads_the_header_not_the_prose.py` asserts
+      `_header(...) == {}` for exactly the `**Status.** …` shape this change teaches the
+      parser to read. Landing blind would have turned `tests/audit` RED - found by asking,
+      while the tree was frozen, WHICH TESTS DEPEND ON THE BEHAVIOUR I WAS CHANGING.
+      NOT silently reconciled. Every property that decision protects was re-measured
+      against the new parser and survives: a BODY mention still yields `{}` (the
+      83-versus-35 substring failure cannot recur), the prescribed blockquote still wins, a
+      field below the first heading is still ignored, and `BROWSER-BACKENDS.md` is STILL
+      unmeasurable because reading its `**Status.**` gives it no verification date. What
+      changed is only its `head == {}` assertion, an implementation detail; the test is
+      SPLIT IN TWO so the surviving property is stated on its own and the refinement carries
+      its reason.
+      It is not an escalation: the instrument was making a FALSE STATEMENT about twenty
+      documents, and correcting a false report is not a question of product intent.
+    the_sequencing_lesson_this_loop_paid_for_twice: >-
+      A full suite launched at the END of a loop guarantees the NEXT loop opens blocked -
+      it has happened three times now, and the rule says only "do not launch until the item
+      is otherwise finished", which is silent about WHERE in the cycle. Launching at the
+      START and working the item off-tree during the run is strictly better: one loop
+      absorbs the whole 37 minutes instead of blocking the next one. This item is the
+      evidence - measured, designed, implemented, mutation-proven and recorded entirely
+      against a scratchpad copy while the run went.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: no_change_needed
+      document: no_change_needed
+    validate_no_change_needed_because: >-
+      Nothing shipped to a running code path - `doc_check.py` is a loop instrument. The proof
+      is its own before/after output over the live corpus, diffed line by line, and four
+      mutations of the widening.
   - id: DEBT-233
     found: 2026-09-08
     what: >-

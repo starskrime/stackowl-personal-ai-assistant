@@ -31,7 +31,9 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DESIGNS = _ROOT / "docs" / "reference-mapping" / "designs"
@@ -52,6 +54,17 @@ _LOGS = Path.home() / ".stackowl" / "logs"
 _CITATION = r"`([A-Za-z0-9_./:-]+)`"
 
 _FIELD = re.compile(r">\s*\*\*([A-Za-z ()]+):\*\*\s*(.*)")
+#: THE SECOND GENRE, and the corpus has always had two. `DOC_STANDARD` describes a
+#: blockquote header — `> **Last verified:** …` — and 20 design documents instead open
+#: with prose fields: `**Item.** D17.4 · … ` then `**Last verified.** 2026-09-05, commit
+#: `91f71750``. A PERIOD, not a colon, and no blockquote.
+#:
+#: MEASURED 2026-09-08: this report said "no dated `Last verified` in the header" about
+#: all 20 of them, and every one carries a date. "Unmeasurable" was a claim about the
+#: CORPUS and a fact about the PARSER — the second time in this instrument (the first is
+#: recorded above: eleven documents filed as headerless because `Source (new):` and
+#: src-relative paths went unread).
+_PROSE_FIELD = re.compile(r"^\*\*([A-Za-z ()]+)\.\*\*\s*(.*)")
 
 
 def _header(text: str) -> dict[str, str]:
@@ -86,7 +99,65 @@ def _header(text: str) -> dict[str, str]:
             out[last] = f"{out[last]} {stripped.lstrip('>').strip()}".strip()
         elif out and not stripped.startswith(">"):
             break
+    if out:
+        return out
+    # NO BLOCKQUOTE HEADER — try the prose genre. Fields run from the first
+    # `**Key.**` line to the first `##`, and they WRAP exactly as the blockquote
+    # ones do (D10.3's `Last verified.` spans four lines), so a continuation is
+    # any following line that is neither blank nor a new field nor a heading.
+    last = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("##"):
+            break
+        m = _PROSE_FIELD.match(stripped)
+        if m:
+            last = m.group(1).strip()
+            out[last] = m.group(2).strip()
+        elif last is not None and stripped:
+            out[last] = f"{out[last]} {stripped}".strip()
+        elif last is not None:
+            last = None  # a blank line ends the field, not the header
     return out
+
+
+def _built_nothing(doc_name: str) -> bool:
+    """Did this item's `implement` stage conclude `no_change_needed`?
+
+    A DOCUMENT WITH NO SOURCES IS NOT ALWAYS A GAP. A large part of the prose genre
+    is DECLINED items — "The Answer To The Ask Is No", "Nothing was built" — where
+    the Ask was measured and refused. Such an item cites no source because there is
+    no source: nothing was written, so nothing can drift, and "undatable" is its
+    correct and permanent state rather than a hole someone should fill.
+
+    Asked of the RECORD, not of the prose. The obvious alternative is to match the
+    document's own words, and this repo has watched four guards break on, or be
+    satisfied by, a comment. `stages.implement == no_change_needed` is the same fact
+    stated where it is already maintained.
+    """
+    item_id = doc_name[:-3] if doc_name.endswith(".md") else doc_name
+    for entry in _record_items():
+        if str(entry.get("id")) == item_id:
+            return (entry.get("stages") or {}).get("implement") == "no_change_needed"
+    return False
+
+
+@lru_cache(maxsize=1)
+def _record_items() -> tuple[dict[str, Any], ...]:
+    """`items` from the record, or () if it cannot be read — never a wrong answer.
+
+    CACHED, because the first draft was not and it showed. `_built_nothing` is asked
+    once per undatable document — 22 of them — and each call re-parsed a 20,000-line
+    YAML file. The report went from seconds to minutes, which is the difference
+    between an instrument a loop runs every time and one it starts skipping.
+    """
+    try:
+        import yaml  # noqa: PLC0415 — only this report needs it
+        data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 — a report must never end a loop
+        print(f"  (declined-item split skipped: {exc})", file=sys.stderr)
+        return ()
+    return tuple(e for e in (data.get("items") or []) if isinstance(e, dict))
 
 
 def _source_fields(head: dict[str, str]) -> str:
@@ -840,10 +911,17 @@ def main(argv: list[str] | None = None) -> int:
         cited = [p for p in re.findall(_CITATION, source) if "/" in p]
         real = [r for p in cited if (r := _resolve(p))]
         if not date:
-            unmeasurable.append((doc.name, "no dated `Last verified` in the header"))
+            unmeasurable.append((doc.name, "declares no verification date at all"))
             continue
         if not real:
-            why = "no `Source` in the header" if not source else "no cited path still exists"
+            if source:
+                why = "no cited path still exists"
+            elif _built_nothing(doc.name):
+                # A CORRECT TERMINAL STATE, not a gap: the Ask was declined, nothing
+                # was built, so nothing can drift.
+                why = "DECLINED — nothing was built, so nothing can go stale"
+            else:
+                why = "dated, but declares no Source — staleness cannot be computed"
             unmeasurable.append((doc.name, why))
             continue
         changes = _changes_since(real, date.group(1))

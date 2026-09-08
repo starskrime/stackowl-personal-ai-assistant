@@ -47,18 +47,52 @@ class TestTheHeaderIsReadStructurally:
         assert head["Last verified"].startswith("2026-09-06")
         assert "a.py" in head["Source"]
 
-    def test_prose_outside_the_header_is_NOT_the_header(self) -> None:
+    def test_a_BODY_mention_is_still_not_a_header(self) -> None:
         """THE DISAGREEMENT THAT SENT THIS BACK FOR A SECOND MEASUREMENT.
-        `BROWSER-BACKENDS.md` writes `**Status.**` as prose and mentions
-        `Last verified` in its body. A whole-text search calls that compliant;
-        it is not, and the difference is 83 versus 35 documents."""
+
+        A whole-text search for "Last verified" called 83 of 84 documents
+        compliant; the structural parser said 35. Both were right about different
+        questions and only one is about DOC_STANDARD. This is the property that
+        settled it, and it is untouched: a phrase in the BODY is not a field.
+        """
+        head = _header(
+            "# Thing\n\n"
+            "Some prose that mentions Last verified: 2026-01-01 in passing.\n"
+        )
+
+        assert head == {}, f"a body mention was read as a header field: {head}"
+
+    def test_a_PROSE_FIELD_at_the_top_is_read_and_its_body_is_not(self) -> None:
+        """THE DECISION REFINED, 2026-09-08, and the refinement is the point.
+
+        This assertion used to require `_header` to return `{}` for the
+        `BROWSER-BACKENDS.md` shape. That was right about the HAZARD — prose must
+        not confer compliance — and wrong about the CORPUS: twenty design
+        documents open with `**Item.** …` / `**Last verified.** 2026-09-05,
+        commit `…`` and the report called every one of them undated. See
+        DEBT-234; "unmeasurable" was a claim about the corpus and a fact about the
+        parser.
+
+        Every property the original decision protects survives. A body mention
+        still yields `{}` (above). The prescribed blockquote still wins. A field
+        below the first heading is still ignored. And BROWSER-BACKENDS is STILL
+        unmeasurable, because reading its `**Status.**` gives it no verification
+        date — the outcome the decision exists to produce is unchanged.
+
+        What changed is only that a field-shaped line at the TOP is now read as
+        one, and the sentence AFTER a blank line is not swallowed into it.
+        """
         head = _header(
             "# Browser backends\n\n"
             "**Status.** Design, not built.\n\n"
             "Some prose that happens to mention Last verified in passing.\n"
         )
 
-        assert head == {}, f"prose was mistaken for the prescribed header: {head}"
+        assert head == {"Status": "Design, not built."}, head
+        assert "Last verified" not in head, (
+            "the trailing prose was swallowed into the header, which is the "
+            "substring-compliance failure this class exists to prevent"
+        )
 
     def test_the_header_stops_at_the_body(self) -> None:
         """A `> **Field:**` line further down the document is not the header —
