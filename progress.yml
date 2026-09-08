@@ -315,6 +315,85 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  INCIDENT_2026_09_08_the_platform_was_DOWN_for_seven_hours_with_a_live_process_and_nothing_noticed:
+    map_check: >-
+      No mapped item. Found by USER TESTING, which is the point — Bakir, 2026-09-07:
+      "always test the new implementation like user testing … Testing means test the
+      platform. Not a vpn."
+    HOW_IT_WAS_FOUND_AND_WHY_NOTHING_ELSE_WOULD_HAVE: >-
+      Every instrument this programme owns said healthy. The process was alive (`ps` shows
+      7h18m), `pgrep` found it, the last log line read `orchestrator.run: exit — ready`,
+      and the tripwire gate was green. NOT ONE of them looks at whether a turn can
+      actually complete. Driving one real message through `scripts/dev_ingress.py` is what
+      exposed it, and it exposed it in seconds.
+    MEASURED: >-
+      `stackowl-2026-09-07.jsonl` ends at **19:08:27Z**. The current file begins at
+      **02:29:20Z**, which is my restart. So the platform wrote NO log record for
+      **7h21m** — while a StackOwl process started at 19:10:07Z (i.e. AFTER the last
+      record) stayed alive that entire time and produced nothing at all.
+    WHAT_NOTICES_IF_THIS_DEGRADES_SILENTLY_NOTHING_DOES: >-
+      `[watchdog] systemd watchdog not configured — skipping` is logged on every boot. A
+      liveness watchdog is the one mechanism that would have caught a process alive and
+      not serving, and it is not configured. That is the guide-star question — "if this
+      degrades SILENTLY, what notices?" — with the answer NOTHING, on the whole platform
+      rather than on a feature.
+    THE_WATCHDOG_IS_BUILT_AND_CANNOT_ARM_AND_THE_CHECK_FOUND_IT: >-
+      `src/stackowl/service/watchdog.py` implements sd_notify `WATCHDOG=1` pings on a
+      30-second interval — a real liveness watchdog, already written. It activates ONLY
+      when `WATCHDOG_USEC` is set, which systemd sets for a service it supervises. There
+      is NO stackowl unit installed on this box (`systemctl list-unit-files` finds none);
+      the platform runs under `./start.sh` via nohup. So the watchdog can never arm, no
+      supervisor restarts a hung process, and `python -m stackowl install-service` — the
+      command that would change that — has never been used here. Built, shipped, inert:
+      CLAUDE.md failure shape 5, on the one mechanism that would have caught this outage.
+      Found by the closing check, on its first run, after the gate forced it to ask the
+      SERVICE MANAGER instead of the logs.
+    WHAT_I_COULD_NOT_DETERMINE_AND_WILL_NOT_PRETEND: >-
+      WHY the 19:10:07Z process produced zero log records. Its own boot lines are absent,
+      so it either never reached logging setup or wrote somewhere unfound; no other file
+      in `~/.stackowl/logs/` carries records in that window. Without that, the fix is a
+      guess. THE DIAGNOSIS IS INCOMPLETE — recorded as such rather than shipped as one,
+      which is the distinction the loop rule draws between an unfinished diagnosis and
+      "diagnose and defer".
+    AND_A_HYPOTHESIS_I_FALSIFIED_BEFORE_IT_REACHED_THE_RECORD: >-
+      I first read the 18:56Z sequence — provider errors, then `gateway: adapter exited —
+      shutdown complete`, `phase 6 (gateway): ok`, `orchestrator.run: exit — ready` — as
+      the outage, and had `_run_until_signal` written up as the cause: one helper serving
+      both the CLI (where a clean return means the user quit) and a long-lived channel
+      (where it means the loop died). MEASURED before recording it: all **222**
+      `_run_until_signal: woke` lines across every retained log say `via_signal=true`, and
+      there is NONE at 18:56. The 18:56 lines also belong to the PREVIOUS process, which
+      ended before the one that hung even started. Two wrong readings, both caught by
+      checking rather than by reasoning — but the helper's split contract is real and
+      worth its own look.
+    RESTORED_AND_USER_TESTED_END_TO_END: >-
+      `./start.sh` at 02:29:20Z, then a real message through `dev_ingress.py`
+      (trace 51016528c71943f9a21ddf070ed7e90f): classify -> assemble -> execute ->
+      `[cost] NeraAiRaw/neraai-v1-raw: 733in/32out tokens, 1594.1ms` -> `deliver: entry`
+      -> `deliver: exit`, no delivery error. The answer reached the real chat, which is
+      this platform's definition of complete.
+    ONE_ERROR_SURVIVED_THE_TURN_AND_IS_NOT_THE_OUTAGE: >-
+      `[resilient_round] provider rejected the REQUEST (400) — our payload, not our
+      credentials`. One call in the turn; the turn recovered and delivered. Recorded
+      because a 400 is OUR bug by that line's own reasoning, not an outage symptom.
+    stages: {brainstorm: partial, architect: not_started, implement: not_started,
+      cleanup: not_started, test: not_started, validate: not_started, document: not_started}
+    closing_check: |-
+      # NOT A LOG QUERY, and the gate is what taught me that. The first version grepped
+      # the logs for "systemd watchdog not configured" and
+      # `test_no_closing_check_greps_the_logs_unbounded` refused the commit — correctly,
+      # and for a deeper reason than the rule it enforces: the question here is not "what
+      # did the platform say", it is "does a mechanism EXIST that would notice". That is
+      # answerable from the tree and the service manager, so it never rots and cannot be
+      # satisfied by history.
+      unit=$(systemctl show stackowl.service -p WatchdogUSec --value 2>/dev/null)
+      cfg=$(grep -rl "WatchdogSec\|sd_notify\|WATCHDOG_USEC" --include="*.service" \
+            --include="*.py" src/ 2>/dev/null | head -1)
+      if [ -n "$unit" ] && [ "$unit" != "0" ] && [ "$unit" != "infinity" ]; then
+        echo "CLOSEABLE — a liveness watchdog is armed (WatchdogUSec=$unit)"
+      else
+        echo "OPEN — no armed liveness watchdog; nothing would notice the next silent stall (unit=${unit:-none}, code=${cfg:-none})"
+      fi
   DEBT213_2026_09_07_the_one_source_for_closing_checks_knew_two_of_the_records_three_sections:
     map_check: >-
       No mapped item. Found BY DEBT-212 — my own record landed in `current` and its
@@ -14931,6 +15010,31 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_159_should_the_platform_run_under_a_service_manager_so_something_notices_it_stalling:
+      question: >-
+        The platform runs under `./start.sh` + nohup, with no systemd unit. It ships a
+        working sd_notify watchdog (`service/watchdog.py`) that can only arm under a
+        service manager, and a `stackowl install-service` command that installs one.
+        Should this box run it as a service?
+      why_evidence_cannot_settle_it: >-
+        Installing a service changes how his machine boots and who owns the process — an
+        operator decision about his own environment, not a measurable property. Measurement
+        can only say what it costs NOT to: 7h21m of silent downtime on 2026-09-08 that no
+        instrument noticed.
+      panel_recommendation: >-
+        Yes, and it is the smallest fix that would have caught this: the watchdog is
+        already written and tested, so arming it is configuration rather than code. If the
+        answer is no, then the alternative has to be an in-process liveness check that does
+        not depend on a supervisor — because "alive but serving nothing" is currently
+        indistinguishable from healthy at every level.
+      blocked_until_answered: >-
+        Nothing is blocked; the platform is up and user-tested. What is unanswered is
+        whether the NEXT silent stall is noticed, and today it would not be.
+      premise_check: >-
+        u=$(systemctl show stackowl.service -p WatchdogUSec --value 2>/dev/null);
+        [ -z "$u" ] || [ "$u" = "0" ] || [ "$u" = "infinity" ] && echo "HOLDS — no armed
+        watchdog (WatchdogUSec=${u:-none}); nothing supervises the process" || echo
+        "EXPIRED — a watchdog is armed at $u"
     ESC_158_audit_log_has_a_retention_setting_with_no_reader_and_pruning_it_deletes_evidence:
       question: >-
         `audit_retention_days` (settings.py:837, default 90) has EXACTLY ONE reference in

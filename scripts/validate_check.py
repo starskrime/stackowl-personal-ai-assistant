@@ -237,13 +237,19 @@ def main() -> int:
     #
     # `current` is a MAPPING keyed by record name, not a list, so the id has to come from
     # the key; every other section carries its own `id`.
+    # ANY PARTIAL STAGE, not just `validate` — this module's own first line says it
+    # re-runs "every partial stage's closing check", and reading only `validate` made
+    # that false. MEASURED 2026-09-08 the moment an incident was recorded with
+    # `brainstorm: partial` (its diagnosis genuinely incomplete) and a runnable check:
+    # the check was invisible, which is the same dead end this file exists to remove,
+    # one AXIS over rather than one population over. The mapped-items selection above
+    # already reads any stage; only the two later populations hardcoded one.
     items += [
-        dict(rec, id=name,
-             stages={"validate": (rec.get("stages") or {}).get("validate", "partial")})
+        dict(rec, id=name, stages=dict(rec.get("stages") or {}))
         for name, rec in (data.get("current") or {}).items()
         if isinstance(rec, dict)
         and (rec.get("closing_check") or "").strip()
-        and (rec.get("stages") or {}).get("validate") == "partial"
+        and any((rec.get("stages") or {}).get(st) == "partial" for st in _STAGES)
     ]
 
     print(f"partial stages: {len(items)} item(s)\n")
