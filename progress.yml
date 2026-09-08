@@ -19651,6 +19651,88 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-229
+    found: 2026-09-08
+    what: >-
+      A DESIGNED ISOLATION GUARANTEE WAS REPORTED AS A LOST ANSWER, 153 TIMES.
+      `[pipeline] deliver: no registry in services - discarding responses` fired 153 times
+      across the twelve retained logs, EVERY ONE on a `shadow-validate-*` session, at a
+      steady 10-15 a day for the whole window - the only WARNING in the live census firing
+      at a constant rate rather than in an incident burst.
+    it_is_not_a_loss_and_the_tree_says_so: >-
+      `shadow_validator.py`'s module docstring states the discard as a load-bearing
+      guarantee: a pre-commit DNA replay "never delivers a message (`stream_registry=None`
+      + `interactive=False` + no `reply_target` => `deliver.run` discards the response)".
+      The absent registry IS the mechanism by which a replay cannot reach a live user.
+    the_cost_is_measured_not_assumed: >-
+      This line has been investigated and dismissed by TWO separate loops, both of which
+      wrote the conclusion into this file. `SHADOWGATE_2026_09_01` opened on it as one of
+      two new signals ("the first is a symptom of the second"), and a later round-0 census
+      listed "39 [pipeline] deliver: no registry in services - DISCARDING response" among
+      its top numbers and concluded "the 39 are ALL `shadow-validate-*` sessions - not user
+      turns. Discarding them is correct." Diagnosed twice, left in place twice, and it
+      would have cost a third loop the same time - this one, which is how it was found.
+    why_it_happened: >-
+      `stream_registry=None` carries TWO DIFFERENT FACTS with no way to tell them apart: a
+      lane BUILT without a registry so it cannot deliver by design, and a live interactive
+      turn whose services were misassembled so it cannot deliver by accident.
+      Absence-by-design and absence-by-fault were the same value, so the branch could not
+      classify and defaulted to alarm - the worst of both, because it cried wolf ten times
+      a day AND could not have raised its voice for the case that matters.
+    and_it_is_the_SIBLING_of_a_branch_already_fixed_in_this_file: >-
+      Twenty lines below it, `_proactive_fallback` was taught to stop claiming a loss for a
+      turn that owes nobody - `tests/pipeline/test_a_deferred_turn_is_not_a_lost_answer.py`,
+      whose docstring says "a warning that cries wolf is how a real one gets ignored, and
+      this one cost an hour before it was disproved". The exit ABOVE it was never asked the
+      same question, though the state has always carried the answer. That is the shape
+      worth naming: a fix applied to the branch that was reported, not to the file's other
+      branch with the identical defect.
+    fix: >-
+      The branch asks `state.interactive` - the second member of the shadow validator's own
+      isolation triple, meaning "a human is waiting on a stream". A non-interactive replay
+      lane reports at INFO that it owes no delivery; an INTERACTIVE turn reaching the same
+      branch is still a WARNING saying the response was discarded and nobody received it.
+      NOT "log less": the loud case is louder, because it is no longer buried under ten
+      false ones a day. Both records carry `interactive` as a FIELD, because both prior
+      investigations had to re-derive the lane from its session key.
+    the_fifth_surface_in_the_same_change: >-
+      `shadow_validator.py`'s docstring now records that the discard is RECOGNISED rather
+      than reported as a fault, and why. The two `progress.yml` citations of the old
+      sentence are dated RECORDS of what was measured and are left alone - the boundary is
+      live instruction versus record.
+    validated_live: >-
+      2026-09-08T11:08-11:09, on the core that exec-replaced at 11:07 with the new code,
+      with `evolution_batch` made due so real replays would run: TEN of the new INFO
+      records, each carrying `interactive: false` - a field only the new code produces -
+      on real `shadow-validate-*` sessions discarding 681, 1047 and 896-character
+      responses. ZERO occurrences of the old sentence since the restart (its newest is
+      07:03, before the change) and ZERO of the new records at WARNING, which is correct:
+      no interactive turn reached that branch. The only ERROR on the boot is
+      `[dna] coordinator.promote: shadow gate REJECTED`, which is DEBT-116's open question
+      and unrelated.
+    tests: >-
+      `tests/pipeline/test_a_scratch_pipeline_is_not_a_lost_answer.py` - 4 tests: the
+      replay lane quiet; the interactive case still loud; the two distinguishable in the
+      log AND in the fields; and the isolation guarantee itself (the response is still not
+      delivered), because a test that only read the log level could not tell whether the
+      change had broken it. MUTATION-PROVEN four ways - one sentence at WARNING for both
+      (2 red), quiet for both (2), the deciding field dropped (1), the branch silent (4) -
+      restored from a file copy, 4 green. `tests/pipeline` + `tests/owls`: 2263 passed.
+      The fixture uses the REAL `ResponseChunk`: the first draft used a `SimpleNamespace`
+      with a `content` attribute and died on `c.is_floor` in the floor check above the
+      branch, before it could test anything.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: no_change_needed
+    document_no_change_needed_because: >-
+      `map_check` found no mapped item; this is evidence-led work recorded here. The one
+      document surface carrying the superseded claim is `shadow_validator.py`'s own module
+      docstring, corrected in the same change.
   - id: DEBT-228
     found: 2026-09-08
     what: >-
