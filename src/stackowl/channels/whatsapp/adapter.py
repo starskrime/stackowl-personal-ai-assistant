@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -321,6 +322,7 @@ class WhatsAppChannelAdapter(ChannelAdapter):
                 raise DeliveryError("whatsapp", "no_target")
             log.whatsapp.error(
                 "[whatsapp] adapter.send_text: no target chat (best-effort) — message dropped",
+                extra={"_fields": {"text_len": len(text), "explicit": explicit}},
             )
             return
         parts = self._splitter.split(text)
@@ -376,6 +378,15 @@ class WhatsAppChannelAdapter(ChannelAdapter):
                 raise DeliveryError("whatsapp", "no_target")
             log.whatsapp.error(
                 "[whatsapp] adapter.send_file: no target chat (best-effort) — file dropped",
+                extra={"_fields": {
+                    # The EXTENSION, not the path — a log record must not carry
+                    # the operator's directory layout — and it is the field
+                    # telegram's equivalent already uses, so the three adapters
+                    # answer the same question the same way.
+                    "ext": Path(file_path).suffix.lower(),
+                    "has_caption": bool(caption),
+                    "explicit": explicit,
+                }},
             )
             return
         log.whatsapp.debug(

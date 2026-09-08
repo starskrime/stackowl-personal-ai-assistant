@@ -202,8 +202,15 @@ async def _won_transition(db: DbPool) -> bool:
         return False
     try:
         return int(rows[0].get("n", 0)) == 1
-    except (TypeError, ValueError):  # B5 — defensive, never raise out
-        log.scheduler.warning("[scheduler] run_now: changes() unreadable — treating as lost")
+    except (TypeError, ValueError) as exc:  # B5 — defensive, never raise out
+        log.scheduler.warning(
+            "[scheduler] run_now: changes() unreadable — treating as lost",
+            exc_info=exc,
+            # WHAT WAS UNREADABLE. This branch decides whether the CAS claim
+            # was won — whether the job runs at all — and it reported the loss
+            # with neither the value nor the exception it had just caught.
+            extra={"_fields": {"raw": repr(rows[0].get("n"))[:80]}},
+        )
         return False
 
 

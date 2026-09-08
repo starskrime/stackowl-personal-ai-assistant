@@ -757,7 +757,15 @@ class TelegramChannelAdapter(ChannelAdapter):
                 raise DeliveryError("telegram", "no_target")
             log.telegram.error(
                 "[telegram] adapter.send_text: no active chat (best-effort) — message dropped",
-                extra={"_fields": {"has_app": self._bot_app is not None}},
+                # `has_app` ALONE IS NOT AN IDENTIFIER. This line fired 61 times in
+                # the retained window and all 61 records read `{"has_app": true}` —
+                # one constant, so the log could not say how long the lost message
+                # was, nor whether the 61 were one incident or sixty-one.
+                extra={"_fields": {
+                    "has_app": self._bot_app is not None,
+                    "text_len": len(text),
+                    "explicit": explicit,
+                }},
             )
             return None
         parts = self._splitter.split(text)
@@ -1243,7 +1251,12 @@ class TelegramChannelAdapter(ChannelAdapter):
                 raise DeliveryError("telegram", "no_target")
             log.telegram.error(
                 "[telegram] adapter.send_file: no active chat (best-effort) — file dropped",
-                extra={"_fields": {"has_app": self._bot_app is not None}},
+                extra={"_fields": {
+                    "has_app": self._bot_app is not None,
+                    "ext": ext,
+                    "has_caption": bool(caption),
+                    "explicit": explicit,
+                }},
             )
             return
 

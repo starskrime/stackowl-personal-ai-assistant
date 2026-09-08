@@ -125,6 +125,11 @@ class CamoufoxRuntime:
             log.engine.warning(
                 "[browser] runtime.disconnect: CDP connection lost — the browser "
                 "itself may be fine; will reconnect on next use",
+                # The comment above is emphatic that "socket gone" and "process
+                # gone" are different states and that confusing them caused a
+                # recycle storm. The record could not say which one this was.
+                extra={"_fields": {"attached": self._attached,
+                                   "available": self.available}},
             )
         else:
             log.engine.warning(

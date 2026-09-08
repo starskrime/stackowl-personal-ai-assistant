@@ -153,7 +153,14 @@ class DesktopVisionRouter:
         # Defence in depth: if the analyzer somehow used a cloud backend, refuse
         # the result rather than surfacing an off-box description.
         if not analysis.is_local:
-            log.security.warning("[gui.vision] route: analyzer used non-local backend — discarding")
+            log.security.warning(
+                "[gui.vision] route: analyzer used non-local backend — discarding",
+                # `analysis.backend` is already read eight lines below, for an
+                # exit line at DEBUG. On a production box that line does not
+                # exist, so the only surviving record of an off-box routing was
+                # the one that would not say which backend it was.
+                extra={"_fields": {"backend": analysis.backend}},
+            )
             return DesktopVisionRouting.unavailable(
                 "vision analysis routed off-box; discarding to keep desktop pixels local",
             )

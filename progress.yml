@@ -19717,6 +19717,72 @@ known_debt:
       already live since DEBT-228 (validated live that day), a new loop instrument, and two
       new guards. The proof is the instrument's own output naming the file that went red,
       and the 49 selected test files running green.
+  - id: DEBT-230
+    found: 2026-09-08
+    what: >-
+      SEVEN LINES ANNOUNCED A LOSS AND COULD NOT SAY WHAT WAS LOST. Walking every
+      `log.<name>.{warning,error,critical,exception}` call in `src/stackowl/` and reading
+      its message literal: 41 claim a loss - dropped, discarded, not delivered, lost - and
+      SEVEN carried no `extra=` payload at all. Four of the seven are the same sentence,
+      written independently in three channel adapters (`discord`/`whatsapp` send_text and
+      send_file, "no target ... (best-effort) - message/file dropped").
+    the_live_cost_is_on_the_adapter_that_DID_carry_a_payload: >-
+      Telegram's `adapter.send_text: no active chat (best-effort) - message dropped` fired
+      61 times in the retained window and EVERY record reads `{"has_app": true}` - one
+      constant, identical across all 61. A user-facing message was thrown away sixty-one
+      times and the log cannot say how long it was, which call site produced it, or whether
+      the sixty-one were one incident or sixty-one.
+      SO "CARRIES AN EXTRA" IS NOT "CAN BE INVESTIGATED", and the denominator says so: 34
+      of 41 carry a payload, which looks healthy and was not. That is this file's own rule
+      about checking what a denominator is MADE OF, found in the instrument layer.
+    why_it_happened: >-
+      Each adapter wrote its own drop report and NOTHING EVER REQUIRED A LOSS REPORT TO
+      IDENTIFY ITS LOSS. The information was available at every one of these sites -
+      `text_len` is computed eight lines above, in an ENTRY line at DEBUG. Production runs
+      at INFO, so that line does not exist when it is needed: the standing rule ("a
+      `log.*.debug` line does not exist when you need it") was being broken by the PAIRING
+      rather than by either line alone.
+    the_same_shape_three_more_times_outside_the_adapters: >-
+      (1) `run_now: changes() unreadable - treating as lost` caught TypeError/ValueError and
+      logged neither the value nor the exception - and that branch decides whether the CAS
+      claim was won, i.e. whether a job runs at all. (2) `runtime.disconnect: CDP connection
+      lost` sits directly under a comment insisting "socket gone" and "process gone" are
+      different states and that confusing them caused a recycle storm - and the record could
+      not say which state it was in. (3) `[gui.vision] route: analyzer used non-local
+      backend - discarding` is a SECURITY refusal that would not name the backend it
+      refused, though `analysis.backend` is read eight lines below for a DEBUG exit line.
+    fix: >-
+      Structural, not seven edits: `tests/audit/test_a_reported_loss_says_what_was_lost.py`
+      walks the AST and fails when a loud log call whose message claims a loss carries no
+      payload. It reads the AST rather than the source text, because four guards in this
+      session were broken by - or satisfied by - a comment. Then the seven sites, each
+      given the identifier that was already in scope. Proven against a MIRROR of `src/` in
+      the scratchpad before `src/` was touched: 41 reports / 7 silent -> 41 / 0.
+    what_the_guard_does_not_check_stated_rather_than_hidden: >-
+      Whether a payload is INFORMATIVE. `{"has_app": true}` would pass it. Whether a field
+      varies per event is not decidable from source, and a guard that guessed would cry
+      wolf on correct work - the failure this programme keeps paying for. Presence is
+      mechanically checkable and absence is unarguable; the informative half is a rule you
+      apply, and the six adapter sites were read by hand for it.
+    the_targeted_paths_were_DERIVED_not_guessed: >-
+      First use of `scripts/tests_touching.py` (DEBT-231, shipped an hour earlier): it
+      selected 87 test files for these seven source files and marked TWO that sit directly
+      in `tests/` - `test_pb0b_channel_liveness.py` and `test_pb0c_auto_restart.py` - which
+      a `tests/channels` + `tests/tools` run would not have reached. 461 passed, 2 skipped.
+      That is the instrument working on the first real change after the failure that
+      prompted it.
+    the_second_tripwire_pins_the_DENOMINATOR: >-
+      >=35 against the 41 measured. Without it a matcher that rotted would leave the
+      offender list empty and the gate would read GREEN while guarding nothing - the
+      vacuous-guard shape, which this repo has now paid for in two separate instruments.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: no_change_needed
   - id: DEBT-229
     found: 2026-09-08
     what: >-

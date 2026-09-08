@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -232,6 +233,11 @@ class DiscordChannelAdapter(ChannelAdapter):
                 raise DeliveryError("discord", "no_target")
             log.discord.error(
                 "[discord] adapter.send_text: no target channel (best-effort) — message dropped",
+                # WHAT WAS LOST, not just that something was. `text_len` is computed
+                # eight lines above for an ENTRY line at DEBUG, and production runs
+                # at INFO — so the one record that survives is this one, and until
+                # 2026-09-08 it carried nothing at all.
+                extra={"_fields": {"text_len": len(text), "explicit": explicit}},
             )
             return
         # Resolve the live channel object — Discord sends via channel.send(), not
@@ -300,6 +306,15 @@ class DiscordChannelAdapter(ChannelAdapter):
                 raise DeliveryError("discord", "no_target")
             log.discord.error(
                 "[discord] adapter.send_file: no target channel (best-effort) — file dropped",
+                extra={"_fields": {
+                    # The EXTENSION, not the path — a log record must not carry
+                    # the operator's directory layout — and it is the field
+                    # telegram's equivalent already uses, so the three adapters
+                    # answer the same question the same way.
+                    "ext": Path(file_path).suffix.lower(),
+                    "has_caption": bool(caption),
+                    "explicit": explicit,
+                }},
             )
             return
         channel: Any = self._channels.get(target) or (
