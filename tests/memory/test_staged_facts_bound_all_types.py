@@ -19,11 +19,25 @@ widening the existing predicate would have been a write with no effect — the
 exact shape this programme keeps finding — so the non-conversation types get a
 per-TYPE cap instead.
 
-The cap reuses `_TURN_HISTORY_FLOOR` rather than inventing a number. These rows
-have no rich reader: every staged_facts SELECT in the bridge filters
-`source_type = 'conversation'`, and the only way a non-conversation row surfaces
-at all is `list_staged`, used for id-prefix lookups from the `memory` tool. So
-the cap exists to keep a forensic tail, not to serve a query.
+The cap reuses `_TURN_HISTORY_FLOOR` rather than inventing a number.
+
+THE JUSTIFICATION BELOW WAS TRUE WHEN WRITTEN AND WENT FALSE SIXTEEN DAYS LATER.
+It read: "These rows have no rich reader: every staged_facts SELECT in the bridge
+filters `source_type = 'conversation'`, and the only way a non-conversation row
+surfaces at all is `list_staged`… So the cap exists to keep a forensic tail, not
+to serve a query." That was a correct survey of the bridge on 2026-08-14. On
+2026-08-30 the ESC-69 interim added `staged_semantic_recall` to `sqlite_helpers`,
+reading `staged_facts` with NO source_type predicate — see
+`test_recall_can_see_staged_facts.py`, which exists to pin exactly that reader.
+Nothing re-read this claim, and by 2026-09-08 the cap had deleted 323 embedded
+rows of an authored-once type that the recall was meant to surface (DEBT-221).
+
+The bound is NOT removed — this file's cases still pass, because every fact it
+stages is UNEMBEDDED and therefore genuinely unreachable by any query, which is
+what a forensic tail is. What changed is that the trim now spares rows the reader
+can return, using the reader's own `embedding IS NOT NULL` membership rather than
+a survey of the neighbouring module. See
+`test_the_bound_cannot_delete_what_recall_can_find.py`.
 """
 
 from __future__ import annotations

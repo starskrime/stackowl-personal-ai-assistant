@@ -19576,6 +19576,108 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-221
+    found: 2026-09-08
+    what: >-
+      A FORENSIC-TAIL CAP WAS DELETING THE MEMORIES SEMANTIC RECALL EXISTS TO SERVE.
+      `sqlite_bridge._trim_source_type` caps every non-conversation source_type at
+      `_TURN_HISTORY_FLOOR` (50) on the write path, justified in its own docstring by
+      "these rows have no rich reader: every other staged_facts SELECT in this class
+      filters source_type = 'conversation'... The cap keeps a forensic tail, it does not
+      serve a query."
+    measured_2026_09_08: >-
+      From the platform's own log and its live database - 323 `conversation_summary` rows
+      DELETED by this trim (314 stage events trimming 1, three trimming 2, one trimming
+      3); 50 rows remaining and ALL FIFTY carry an embedding; 320 firings of
+      `sqlite_helpers.staged_semantic_recall`, which selects `FROM staged_facts WHERE
+      owner_id = ? AND status = 'staged' AND embedding IS NOT NULL` with NO source_type
+      predicate. Every deleted summary was inside that corpus. Staging rate ~30/day (324
+      in the 11 retained days), and the writer's own volume collapsed from ~60-72
+      summaries/day (08-28..09-01) to 4/2/0/0/2/0 afterwards - recorded, NOT explained
+      here, and not this item.
+    root_cause: >-
+      THE PREMISE WAS TRUE WHEN WRITTEN AND NOTHING RE-READ IT. The survey was correct
+      for `sqlite_bridge` on 2026-08-14. On 2026-08-30 the ESC-69 interim shipped
+      `staged_semantic_recall` into `sqlite_helpers` - the sibling module `sqlite_bridge`
+      IMPORTS AT LINE 22 - specifically to make staged rows reachable while
+      `committed_facts` sat empty ("414 memory searches returned 0 archive hits"). From
+      that day the bound was deleting what the recall fix existed to surface, for sixteen
+      days.
+      A BOUND JUSTIFIED BY A CLAIM ABOUT THE REST OF THE SYSTEM, with nothing tying the
+      two together, is a premise that ages silently - the same failure this programme
+      already cured for escalations (premise_check), partial stages (closing_check) and
+      design documents (doc_check), found here in CODE. Raising 50 to a bigger number
+      would have bought a quiet week.
+    three_surfaces_already_disagreed_and_nothing_joined_them: >-
+      `models.py` records that conversation_summary is "still written and still read as a
+      staged row"; `sqlite_helpers.staged_semantic_recall` is the reader; and
+      `tests/memory/test_recall_can_see_staged_facts.py` exists to PIN that reader. The
+      suite held both halves of the contradiction - one test asserting the type is capped
+      because nothing reads it, another asserting recall reads it.
+    fix: >-
+      The trim deletes only rows NOTHING CAN SEARCH: `AND (embedding IS NULL OR
+      length(embedding) = 0)`. The predicate is the READER'S OWN membership test read
+      backwards, not a list of exempt type names - a list would restate a fact about the
+      rest of the system and rot exactly as the prose did, whereas this protects a type
+      the day it starts being embedded with nothing to remember. The forensic tail
+      survives for rows no query can reach, which is all it was ever for.
+    what_this_does_NOT_fix_stated_not_hidden: >-
+      Searchable rows now accumulate: ~30/day, so a year is ~11k rows. That is small and
+      it is NOT bounded here. Decay for rows that ARE read belongs in the
+      `knowledge_prune` job with a stated horizon, not in a silent delete on the write
+      path. Recorded as a choice rather than left as a surprise.
+    guard: >-
+      tests/memory/test_the_bound_cannot_delete_what_recall_can_find.py - four tests, and
+      the third deliberately keeps the OLD behaviour green for unembedded rows so the fix
+      cannot be mistaken for "remove the bound". MUTATION-PROVEN: deleting the
+      searchability clause turns three red; re-applied and green again. The premise is
+      also corrected at its other source, the docstring of
+      test_staged_facts_bound_all_types.py, which stated it first.
+    THE_FIXTURE_WAS_WRONG_TWICE_AND_THE_BASELINE_MOVED_EACH_TIME: >-
+      First version gave every staged fact the SAME embedding: the bridge's similarity
+      dedup folded 75 writes into ONE row and the unfixed code looked catastrophic
+      (1 of 75 surviving). Second nudged one component (0.1 + n*0.01), still cosine
+      ~0.999 against a 0.92 dedup threshold - two rows. Only ORTHOGONAL one-hot vectors
+      reproduced the real 50-of-75 cap. Real summaries of different conversations are not
+      near-parallel; a double whose vectors are makes the code under test look far worse
+      than it is, and I would have written "1 of 75" into this record as the defect.
+    stages:
+      validate: partial
+    validate_partial_why: >-
+      The fix is a DELETE that no longer fires. Its evidence is an ABSENCE, and the
+      honest form of that is a denominator: summaries must keep being staged (so the path
+      runs) while the trim reports zero rows removed for them.
+    closing_check: |-
+      # THE TRIM'S OWN EXIT LINE CARRIES `trimmed`, so numerator and denominator
+      # are the SAME INFO record: staging events for a non-conversation type, and
+      # how many rows each deleted. The exclusion is exact - `"source_type":
+      # "conversation"` with its closing quote does not match
+      # `"conversation_summary"` - and the arithmetic reconciles: 737 stage exits
+      # all-time, 407 non-conversation, of which 371 trimmed >= 1 = 318
+      # conversation_summary + 53 agent_self, both measured independently.
+      #
+      # SCOPED TO ALL NON-CONVERSATION TYPES, not to summaries alone, because the
+      # summary writer's own volume collapsed to 0-2/day after 2026-09-01 (a
+      # separate, recorded, unexplained finding). Keyed on summaries the check
+      # could sit at "0 staged" for days and say nothing; the wider denominator is
+      # the same fix and actually accrues.
+      #
+      # Bounded to 2026-09-08: the LINE predates the fix, only the ZERO is new.
+      #
+      # COUNTED BY SUBTRACTION, NOT BY A CHARACTER CLASS. The first version asked
+      # for `"trimmed": [1-9]` and the tripwire
+      # `test_every_pattern_matches_its_own_literal_text` refused it: that guard
+      # holds every pattern to matching the literal text it names, and `[1-9]` is
+      # a real character class, not an escaped bracket. It was RIGHT to refuse -
+      # this corpus's metacharacter defects have been paid for three times - so
+      # the count is arithmetic over two literal patterns instead. `.*` is safe
+      # because it matches its own literal text; `[1-9]` is not. Verified
+      # equivalent: 407 non-conversation stage exits all-time minus 36 reporting
+      # `"trimmed": 0` = 371, the exact number the character class returned.
+      staged=$(./scripts/log_since.sh 2026-09-08 'sqlite_bridge.stage: exit' '"source_type": "conversation"')
+      untrimmed=$(./scripts/log_since.sh 2026-09-08 'sqlite_bridge.stage: exit.*"trimmed": 0' '"source_type": "conversation"')
+      trimmed=$((staged - untrimmed))
+      if [ "$staged" -eq 0 ]; then echo "OPEN 0 non-conversation facts staged since the fix - the path has not run, so the zero says nothing"; elif [ "$trimmed" -gt 0 ]; then echo "OPEN $trimmed of $staged staging events still deleted a searchable row"; else echo "CLOSEABLE 0 searchable rows deleted across $staged non-conversation staging events since the fix"; fi
   - id: DEBT-220
     found: 2026-09-08
     what: >-

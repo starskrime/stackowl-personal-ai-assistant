@@ -466,11 +466,36 @@ class SqliteMemoryBridge(MemoryBridge):
         forever. Widening the existing predicate would have been a write with no
         effect — so these types are capped per TYPE instead.
 
-        The cap reuses the conversation floor rather than inventing a number.
-        These rows have no rich reader: every other staged_facts SELECT in this
-        class filters ``source_type = 'conversation'``, and a non-conversation
-        row surfaces only through ``list_staged`` for an id-prefix lookup. The
-        cap keeps a forensic tail, it does not serve a query.
+        The cap reuses the conversation floor rather than inventing a number, and
+        it only ever deletes rows NOTHING CAN SEARCH.
+
+        THAT SECOND CLAUSE IS THE FIX, AND ITS ABSENCE COST 323 MEMORIES. This
+        docstring used to justify the bound by asserting "these rows have no rich
+        reader: every other staged_facts SELECT in this class filters
+        ``source_type = 'conversation'``". That was a TRUE survey of THIS CLASS on
+        2026-08-14. On 2026-08-30 the ESC-69 interim added
+        ``staged_semantic_recall`` to ``sqlite_helpers`` — the module imported at
+        the top of this file — reading ``FROM staged_facts WHERE owner_id = ? AND
+        status = 'staged' AND embedding IS NOT NULL`` with NO source_type
+        predicate, precisely so staged rows would be reachable while
+        ``committed_facts`` sat empty. From that day the premise was false and
+        nothing re-read it.
+
+        MEASURED 2026-09-08: 323 rows of one authored-once type deleted here, 50
+        left, ALL FIFTY carrying an embedding, against 320 firings of that recall.
+        The bound was deleting the memories the recall fix exists to surface.
+
+        SO THE PREDICATE IS THE READER'S OWN, not a list of exempt types. A list
+        would restate a fact about the rest of the system and rot exactly as the
+        prose did; ``embedding IS NULL`` is the reader's membership test read
+        backwards, so a type becomes protected the day it starts being embedded
+        and there is nothing to remember. The forensic tail still exists for rows
+        no query can reach, which is all it was ever for.
+
+        NOT BOUNDED HERE ANY MORE: searchable rows accumulate, measured at ~30/day
+        (324 in 11 days). A year is ~11k rows. Decay for rows that ARE read
+        belongs in the ``knowledge_prune`` job with a stated horizon, not in a
+        silent delete on the write path.
 
         Never raises: losing the trim costs disk, and a staging write that
         already succeeded must not be reported as a failure because the bound
@@ -482,6 +507,7 @@ class SqliteMemoryBridge(MemoryBridge):
             return await self._db.execute_returning_rowcount(
                 """DELETE FROM staged_facts
                     WHERE source_type = ?
+                      AND (embedding IS NULL OR length(embedding) = 0)
                       AND fact_id NOT IN (
                         SELECT fact_id FROM staged_facts
                          WHERE source_type = ?
