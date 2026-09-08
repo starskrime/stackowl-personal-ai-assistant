@@ -274,6 +274,26 @@ class CostTracker(OwnedRepository):
             ttft_ms=ttft_ms,
         )
 
+        # THE DENOMINATOR (D03.2 / DEBT-244). Resolved here because this is the
+        # only moment it is knowable: model_window's cache is in-process and empty
+        # at rest, so nothing reading the table later can reconstruct it. NULL when
+        # the probe has not run -- an honest "unknown", never a manufactured 262144.
+        # Never raises: cost accounting must not break a completion that has already
+        # happened (B5), and a missing denominator must not lose the numerator.
+        try:
+            from stackowl.providers.base import window_fraction
+            from stackowl.providers.model_window import cached_window
+
+            _window = cached_window(provider_name, model)
+            _fraction = window_fraction(input_tokens=input_tokens, window=_window)
+        except Exception as exc:  # noqa: BLE001 -- a denominator is never worth a call
+            log.engine.debug(
+                "[cost_tracker] window lookup failed — recording without a denominator",
+                extra={"_fields": {"error": str(exc), "provider": provider_name}},
+            )
+            _window = None
+            _fraction = None
+
         try:
             await self._db.execute(
                 """
@@ -281,8 +301,9 @@ class CostTracker(OwnedRepository):
                     provider_name, model, input_tokens, output_tokens,
                     cost_usd, trace_id, recorded_at, owner_id,
                     session_key, conversation_id, cached_input_tokens, prompt_hash,
-                    system_prompt_chars, ttft_ms, priced, owl_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    system_prompt_chars, ttft_ms, priced, owl_name,
+                    context_window
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.provider_name, record.model, record.input_tokens,
@@ -290,7 +311,7 @@ class CostTracker(OwnedRepository):
                     record.recorded_at, self._owner_id,
                     record.session_key, record.conversation_id, record.cached_input_tokens,
                     record.prompt_hash, record.system_prompt_chars, record.ttft_ms,
-                    int(priced), record.owl_name,
+                    int(priced), record.owl_name, _window,
                 ),
             )
         except Exception as exc:
@@ -323,6 +344,11 @@ class CostTracker(OwnedRepository):
                     "prompt_hash": prompt_hash,
                     "system_prompt_chars": system_prompt_chars,
                     "ttft_ms": ttft_ms,
+                    # D03.2 -- the ratio, from the one function that owns it.
+                    "window": _window,
+                    "fraction_of_window": (
+                        round(_fraction, 4) if _fraction is not None else None
+                    ),
                 }
             },
         )

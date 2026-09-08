@@ -99,16 +99,34 @@ _MAX_COMPRESS_ATTEMPTS = 3
 _WINDOW_HIGH_WATER = 0.5
 
 
+def window_fraction(*, input_tokens: int, window: int | None) -> float | None:
+    """Fraction of the window this call used. None ONLY when the window is unknown.
+
+    THE MEASUREMENT, with no judgement attached. Split out of
+    :func:`window_pressure` on 2026-09-08 because that function did both and threw
+    the measurement away whenever its own judgement was negative, which is 131,637
+    of 131,644 recorded calls. That is why D03.2's closing check could report only
+    "0 exceedances" and never a distribution: the one function in the tree that
+    computed the ratio destroyed it by design.
+    """
+    if not window or window <= 0:
+        return None
+    return input_tokens / window
+
+
 def window_pressure(*, input_tokens: int, window: int | None) -> float | None:
     """Fraction of the window this call used, or None when it is not worth saying.
 
     None for an unresolved window (the probe has not run yet) and for anything under
     :data:`_WINDOW_HIGH_WATER` — silence is the correct answer for the overwhelming
     majority, whose median is 5,248 tokens against a 262,144 window.
+
+    THE JUDGEMENT, which ASKS :func:`window_fraction` rather than recomputing it,
+    so the ratio has ONE source.
     """
-    if not window or window <= 0:
+    fraction = window_fraction(input_tokens=input_tokens, window=window)
+    if fraction is None:
         return None
-    fraction = input_tokens / window
     return fraction if fraction >= _WINDOW_HIGH_WATER else None
 
 
