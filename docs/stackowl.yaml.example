@@ -84,8 +84,8 @@ budget:
 orchestrator:
   # Pipeline orchestration backend. 'asyncio' is the default known-good backend; 'langgraph' is experimental/opt-in (the LangGraph backend exists but is exercised only when explicitly selected).
   backend: asyncio
-  # Maximum number of tools presented to the model per turn. The discretionary roster is relevance-ranked and clipped to this count; guaranteed base tools are always included and count toward it. Default 40 matches the historical cap (byte-identical). Lower it (e.g. 12-18) for weak/quantized models that derail when offered too many tools.
-  tool_count_cap: 40
+  # Ceiling on the number of tools presented to the model per turn. It is a BACKSTOP against a pathological catalogue, not a shaping lever: it defaults to sit above any real toolset, and the presented set is sized against the model's resolved context window instead (ESC-35). The discretionary roster is relevance-ranked and clipped to this count; guaranteed base tools are always included and count toward it. Lower it (e.g. 12-18) deliberately for weak/quantized models that derail when offered too many tools.
+  tool_count_cap: 150
 
 durable:
   # Route scheduled owl goals AND objective sub-goals through the durable pipeline (checkpointed, exactly-once, resumable) so long-running autonomous work survives a restart. ON by default as of the Objective Manager keystone; set False to fall back to the legacy ephemeral path.

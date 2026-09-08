@@ -77,9 +77,20 @@ def test_absent_max_tools_is_byte_identical_full_catalog() -> None:
     schemas = reg.to_provider_schema(
         "openai", budget=_budget(16384, max_tools=None),
     )
-    assert len(schemas) == full == 20  # default cap 40 ≥ 20 → all presented
+    assert len(schemas) == full == 20  # the default ceiling ≥ 20 → all presented
 
 
-def test_default_orchestrator_cap_is_forty() -> None:
-    # The shipped default keeps behavior byte-identical (FR5: capable model = full set).
-    assert OrchestratorSettings().tool_count_cap == 40
+def test_the_default_lets_a_capable_model_see_the_whole_catalogue() -> None:
+    """FR5 — capable model = FULL SET. That was this test's stated intent all along,
+    and the number it pinned had stopped delivering it.
+
+    It asserted `== 40`, described as "byte-identical", and that was true when the
+    catalogue was ~20 tools. The catalogue reached 79 and 40 became a clip: measured
+    2026-09-08, 1,491 live turns presented all 79 only because this box's yaml
+    overrides the cap by hand. The default now REFERENCES the backstop the owner
+    decision sized (`HARD_TOOL_COUNT_CAP`, "comfortably above any real toolset"), so
+    the intent holds as the catalogue grows instead of expiring in silence.
+    """
+    from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP
+
+    assert OrchestratorSettings().tool_count_cap == HARD_TOOL_COUNT_CAP

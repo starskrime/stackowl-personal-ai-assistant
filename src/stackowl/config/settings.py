@@ -38,6 +38,7 @@ from stackowl.mcp.server_settings import McpServerSettings
 from stackowl.mcp.settings import McpClientSettings
 from stackowl.owls.manifest import OwlAgentManifest
 from stackowl.paths import StackowlHome
+from stackowl.pipeline.context_budget import HARD_TOOL_COUNT_CAP
 
 __all__ = ["BriefSettings", "BudgetSettings", "CheckInSettings", "DiscordSettings", "GovernanceSettings", "IdentitySettings", "ImageSettings", "MemorySettings", "NotificationSettings", "OrchestratorSettings", "ParliamentSettings", "ProgressSettings", "QuietHoursSettings", "SandboxSettings", "SchedulerSettings", "Settings", "SlackSettings", "SystemSettings", "TelegramSettings", "TranscriptionSettings", "TtsSettings", "UISettings", "WebhookSettings", "WebhookSourceConfig", "WebSearchSettings", "WhatsAppSettings"]  # noqa: E501
 
@@ -426,14 +427,35 @@ class OrchestratorSettings(BaseModel):
         json_schema_extra={"hot_reload": False},
     )
     tool_count_cap: int = Field(
-        default=40,
+        # ONE SOURCE, ASKED. This was `default=40` while `HARD_TOOL_COUNT_CAP` — the
+        # SAME rule, written down in `pipeline/context_budget.py` — was raised to 150
+        # on 2026-07-22 by owner decision, because "the registered toolset (~60-78
+        # tools) was already exceeding the old cap of 40, silently trimming real tools
+        # every turn … it should sit comfortably above any real toolset, not below it."
+        # That constant is only the fallback for when settings are ABSENT, and settings
+        # are always present — so the decision applied exactly where it could not
+        # matter, and the copy that runs kept clipping.
+        #
+        # MEASURED 2026-09-08: 1,491 live turns presented 79 tools (the whole
+        # catalogue) because this box's yaml sets 150 by hand. Every install that
+        # clones from the repository got 40 and lost ~39 tools on every turn.
+        #
+        # AND 40 WAS NEVER A NUMBER — it was a RELATIONSHIP. Its own test says so:
+        # "the shipped default keeps behavior byte-identical (FR5: capable model =
+        # full set)", true when the catalogue was ~20 tools. The catalogue grew to 79
+        # and the constant did not, so the intent expired in silence. Referencing the
+        # backstop instead of repeating it is what stops the two drifting again.
+        default=HARD_TOOL_COUNT_CAP,
         ge=1,
         description=(
-            "Maximum number of tools presented to the model per turn. The "
+            "Ceiling on the number of tools presented to the model per turn. It is a "
+            "BACKSTOP against a pathological catalogue, not a shaping lever: it "
+            "defaults to sit above any real toolset, and the presented set is sized "
+            "against the model's resolved context window instead (ESC-35). The "
             "discretionary roster is relevance-ranked and clipped to this count; "
-            "guaranteed base tools are always included and count toward it. Default "
-            "40 matches the historical cap (byte-identical). Lower it (e.g. 12-18) "
-            "for weak/quantized models that derail when offered too many tools."
+            "guaranteed base tools are always included and count toward it. Lower it "
+            "(e.g. 12-18) deliberately for weak/quantized models that derail when "
+            "offered too many tools."
         ),
         json_schema_extra={"hot_reload": True},
     )

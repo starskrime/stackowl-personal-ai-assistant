@@ -20685,6 +20685,80 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-238
+    found: 2026-09-08
+    what: >-
+      EVERY INSTALL THAT CLONES THIS REPOSITORY CLIPPED ~39 OF 79 TOOLS ON EVERY TURN.
+      `OrchestratorSettings.tool_count_cap` shipped with `default=40` while
+      `HARD_TOOL_COUNT_CAP` - the SAME rule, in `pipeline/context_budget.py` - was raised
+      to 150 on 2026-07-22 by owner decision, because "the registered toolset (~60-78
+      tools) was already exceeding the old cap of 40, silently trimming real tools every
+      turn ... it should sit comfortably above any real toolset, not below it."
+      TWO COPIES OF ONE RULE, AND THE ONE THAT RUNS WAS NOT THE ONE THAT WAS FIXED:
+      `HARD_TOOL_COUNT_CAP` is only the fallback for when settings are ABSENT, and settings
+      are always present, so the decision applied exactly where it could not matter.
+    the_default_was_never_a_NUMBER_it_was_a_RELATIONSHIP: >-
+      Its own test said so - "the shipped default keeps behavior byte-identical (FR5:
+      capable model = full set)" - and that was TRUE when the catalogue was ~20 tools and
+      40 comfortably exceeded it. The catalogue grew to 79; the constant did not move; the
+      intent expired in silence. A constant expressing `cap >= catalogue` becomes a binding
+      limit the moment the other side grows, and nothing was watching.
+    ESC_35_reached_the_same_place_from_the_other_direction: >-
+      2026-08-23: "Demote tool_count_cap to an opt-out ceiling and size the presented set
+      against the resolved model window." THE WINDOW-RELATIVE SIZING ALREADY EXISTS - the
+      budgeted path passes `budget={"window", "fixed_cost_tokens", "max_tools"}` - and
+      could never take effect underneath a count that bound first at 40. Two operator
+      decisions, thirty-two days apart, both pointing here, and neither reached the shipped
+      default.
+    THE_DEEPEST_CAUSE_and_it_is_about_HOW_I_MEASURE: >-
+      This gap was already written down IN THIS FILE, twice, and read the wrong way round.
+      A prior loop recorded: "The shipped default is `tool_count_cap: 40`.
+      `~/.stackowl/stackowl.yaml` sets 150 and the catalogue is 79 tools. 79 < 150, so the
+      cap CANNOT BIND" - and used it to explain why our instruments showed zero eviction,
+      never asking what it meant for an install WITHOUT that yaml. ESC-70 measured the same
+      effect on 2026-08-30 and declined to raise the cap further. The effect was measured
+      three times and the cause was never turned outward.
+      A MEASUREMENT THAT EXPLAINS YOUR OWN BOX CAN HIDE A DEFECT IN THE PRODUCT. This box
+      has an operator-tuned yaml; any default it overrides is INVISIBLE to live
+      measurement, and "fix the platform, never this setup" applies one level up - the
+      setup was fixed, by hand, on 2026-08-26, and the platform never was.
+    fix: >-
+      `tool_count_cap` now DEFAULTS TO `HARD_TOOL_COUNT_CAP` by reference rather than
+      repeating a number, so the two cannot diverge again, and its description says it is a
+      backstop rather than a shaping lever. Shipped default 40 -> 150.
+      `tests/config/test_the_tool_cap_has_one_source.py` - three tripwires: the default IS
+      the backstop; the default is a REFERENCE not a literal (read from the AST, because
+      equality today is not the property - inability to diverge is); and the backstop still
+      sits above a real catalogue, expressed as a RELATIONSHIP so it survives the catalogue
+      growing again, which is how it broke the first time.
+    the_sixth_surface_was_GENERATED_and_the_guard_caught_it: >-
+      `docs/stackowl.yaml.example` carries the field description and went stale the moment
+      the default changed. `test_the_example_config_cannot_go_stale` failed and named the
+      command that regenerates it - the file exists "precisely so it cannot become a stale
+      second copy of the configuration surface". It sits DIRECTLY in `tests/`, so only the
+      derived path set reached it: `scripts/tests_touching.py` selected 109 files, 13 of
+      them root-level.
+    and_the_test_that_pinned_40_now_states_its_intent: >-
+      `test_default_orchestrator_cap_is_forty` asserted the number. Renamed to
+      `test_the_default_lets_a_capable_model_see_the_whole_catalogue` and asserts the
+      backstop, which is what FR5 meant and what 40 had stopped delivering.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_live: >-
+      `OrchestratorSettings()` with no yaml now returns 150 (was 40) - the value a fresh
+      clone gets. THE USER-FACING EFFECT CANNOT BE OBSERVED ON THIS BOX AND THAT IS THE
+      POINT: its yaml already sets 150 by hand, which is why 1,491 live turns presented all
+      79 tools while every clone presented 40. Re-measured after the change, the yaml now
+      DIFFERS FROM THE SHIPPED DEFAULT IN ONLY TWO PLACES (the providers list and a
+      frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
+      third - so live measurement is no longer blind here. 1,091 tests passed across the
+      109 files the instrument selected.
   - id: DEBT-237
     found: 2026-09-08
     what: >-
