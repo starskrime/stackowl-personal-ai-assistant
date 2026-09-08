@@ -32,6 +32,8 @@ and it enforces only that a check EXISTS, never what it returns.
 
 from __future__ import annotations
 
+import datetime
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +46,154 @@ from progress_lint import prose_closing_promises  # noqa: E402
 _STAGES = (
     "brainstorm", "architect", "implement", "cleanup", "test", "validate", "document",
 )
+
+
+#: `log_since.sh`'s own warning, matched on its distinctive phrase rather than on an exit
+#: status the script deliberately does not set — it prints the count and returns 0 so a
+#: caller can use it directly, which is right and is also why the signal has to be read
+#: out of stderr.
+_WINDOW_TRUNCATED = "WINDOW TRUNCATED"
+
+#: A closing check that bounds its evidence to the day a fix shipped.
+_SCOPED = re.compile(r"log_since\.sh\s+(\d{4}-\d{2}-\d{2})")
+
+#: Package-manager chatter every `uv run` writes to stderr. Not a verdict.
+_UV_NOISE = re.compile(r"^\s*(?:Installed|Uninstalled|Resolved|Audited|Downloading|Built)\b.*$",
+                       re.M)
+
+#: How many days of warning is enough to act. Rotation drops one file per day, so this is
+#: literally "days remaining", and three is the smallest number that survives a weekend.
+_ROT_WARNING_DAYS = 3
+
+
+def verdict_of(line: str, truncated: bool) -> str:
+    """CLOSEABLE | EXPIRED | open | ????? for one check's last output line.
+
+    EXPIRED IS A THIRD STATE, and collapsing it into `open` is the defect this fixed. A
+    date-bounded check asks "has this happened SINCE the fix shipped?". Once the logs no
+    longer reach that date the honest answer is "this question can no longer be asked" —
+    but the check still prints `OPEN (0)`, and OPEN reads as *not yet*. The item then sits
+    at 6 of 7 forever with a mechanism that cannot advance it, which is precisely the dead
+    end `closing_check` was built to end.
+
+    BOTH CONDITIONS ARE REQUIRED, and the first version of this had only the truncation.
+    `log_since.sh` warns whenever the requested date predates the oldest retained log
+    REGARDLESS of the count, so a check whose evidence still survives inside the shortened
+    window returns a real hit AND a warning together. Marking on the warning alone would
+    have relabelled true CLOSEABLEs as EXPIRED — worse than the defect being fixed, because
+    it hides an item that was ready to close. Only the ZERO is ambiguous.
+
+    A function rather than a branch inside `main()` so the tests can ask the real
+    predicate. Writing the decision twice is this repo's most repeated defect, and it was
+    committed twice in one session last loop inside the guard written against it.
+    """
+    if line.startswith("CLOSEABLE"):
+        return "CLOSEABLE"
+    if line.startswith("OPEN"):
+        return "EXPIRED" if truncated else "open"
+    return "?????"
+
+
+def _logs_dir() -> Path | None:
+    """The log directory, asked of `StackowlHome` rather than re-derived.
+
+    D18.3 — one source for the home. A script that rebuilds `~/.stackowl` itself reports
+    on a different instance than the process it is asking about, and `log_since.sh`
+    already resolves it exactly this way.
+    """
+    try:
+        out = subprocess.run(
+            ["uv", "run", "python", "-c",
+             "from stackowl.paths import StackowlHome; print(StackowlHome.logs_dir())"],
+            cwd=_ROOT, capture_output=True, text=True, timeout=120,
+        )
+        logs = Path((out.stdout or "").strip())
+    except Exception as exc:  # noqa: BLE001 — degrade to silence, and say why
+        print(f"  (rot clock unavailable: {exc})")
+        return None
+    return logs if logs.is_dir() else None
+
+
+def _retention() -> tuple[str, int, int]:
+    """(oldest retained date, dated files present, files retention permits).
+
+    ALL THREE, because the first version of this reported a countdown derived from ONE
+    of them and was wrong by three weeks. It assumed the horizon slides a day per day.
+    It does not: `backupCount` is 30 and only TEN dated files exist, and
+    `TimedRotatingFileHandler.getFilesToDelete()` deletes nothing until the count
+    EXCEEDS that. So the horizon is FROZEN until roughly twenty more midnights have
+    passed, and the clock said "2 days, ACT NOW" about a check with about 23.
+    """
+    logs = _logs_dir()
+    if logs is None:
+        return "", 0, 0
+    stamped = sorted(p.name for p in logs.glob("stackowl-*.jsonl"))
+    oldest = stamped[0][len("stackowl-"):-len(".jsonl")] if stamped else ""
+    try:
+        import os
+        permitted = int(os.environ.get("STACKOWL_LOG_RETAIN_DAYS", "30"))
+    except ValueError:
+        permitted = 30
+    return oldest, len(stamped), permitted
+
+
+def _report_rot_clock(items: list[dict]) -> None:
+    """Say when each date-bounded check stops being answerable, and show the working.
+
+    THE PREVENTIVE HALF. EXPIRED tells you a check has died; this tells you it is going
+    to, which is the only moment at which re-keying it is cheap.
+
+    THE FIRST VERSION OF THIS WAS WRONG, and wrong in the most dangerous direction — it
+    printed a confident, precise, three-weeks-early countdown. It computed
+    `bound - oldest_retained`, which is the number of days of history the check currently
+    has BEHIND its bound; that is not a countdown to anything. Rotation only deletes once
+    the dated files EXCEED `backupCount`, and there are ten against a permitted thirty, so
+    nothing is being deleted at all yet. Measured: it reported "2d ACT NOW" for D03.2,
+    whose bound actually survives until about 2026-09-30.
+
+    So the projection is stated WITH its inputs rather than on its own. That is not
+    decoration either: `observability.py` records that five dated files vanished in one
+    night on 2026-08-30 and says in as many words that THE CAUSE OF THAT DELETION IS
+    UNPROVEN. A day-counter over a sensor known to have failed once is a precision
+    instrument on a broken gauge, so the honest output shows the gauge — ten files of a
+    permitted thirty — beside the projection that assumes it behaves.
+    """
+    oldest, present, permitted = _retention()
+    if not oldest:
+        print("\nROT CLOCK — unavailable: no dated log files, so nothing can be timed.")
+        return
+    today = datetime.date.today()
+    rows: list[tuple[datetime.date, str, str]] = []
+    for item in items:
+        found = _SCOPED.findall(str(item.get("closing_check") or ""))
+        if found:
+            bound = datetime.date.fromisoformat(min(found))
+            # A bound expires the day the oldest retained log passes it. Deletion starts
+            # only once the dated files exceed `permitted`, and from then the oldest is
+            # `today - permitted`, so `bound` is lost on `bound + permitted + 1`.
+            rows.append((bound + datetime.timedelta(days=permitted + 1),
+                         str(item.get("id")), min(found)))
+    header = (f"\nROT CLOCK — retained window starts {oldest}; {present} dated file(s) "
+              f"present of a permitted {permitted}, so nothing is being deleted "
+              f"{'yet' if present <= permitted else 'any longer'}.")
+    if not rows:
+        print(f"{header} No check bounds its evidence to a date, across {len(items)} "
+              "check(s). (The denominator is printed because a silent clock and a corpus "
+              "with nothing to time look identical.)")
+        return
+    rows.sort()
+    print(f"{header} Projected expiry below ASSUMES retention behaves as configured — it "
+          f"did not on 2026-08-30, when five dated files vanished in one night for a "
+          f"reason `observability.py` still records as UNPROVEN. Re-key a check onto "
+          f"something that does not rot before its date, not after:")
+    urgent = [r for r in rows if (r[0] - today).days <= _ROT_WARNING_DAYS]
+    for when, ident, bound in rows[:12]:
+        days = (when - today).days
+        note = "  <-- ACT NOW" if days <= _ROT_WARNING_DAYS else ""
+        print(f"  {days:>4}d  {ident:<14} bound {bound} -> unanswerable ~{when}{note}")
+    if len(rows) > 12:
+        print(f"  … and {len(rows) - 12} more, all later")
+    print(f"  {len(urgent)} of {len(rows)} within {_ROT_WARNING_DAYS} days.")
 
 
 def main() -> int:
@@ -78,6 +228,7 @@ def main() -> int:
     print(f"partial stages: {len(items)} item(s)\n")
     closeable: list[str] = []
     unverifiable: list[str] = []
+    expired: list[str] = []
 
     for item in sorted(items, key=lambda i: str(i.get("id"))):
         ident = str(item.get("id"))
@@ -88,12 +239,27 @@ def main() -> int:
             unverifiable.append(ident)
             print(f"  ????     {ident} ({', '.join(stages)}) — NO closing_check")
             continue
+        truncated = False
         try:
             out = subprocess.run(
                 check, shell=True, cwd=_ROOT, capture_output=True,
                 text=True, timeout=180,
             )
-            verdict = (out.stdout or out.stderr or "").strip().splitlines()
+            # STDERR IS A SIGNAL, NOT A FALLBACK — this line used to read
+            # `(out.stdout or out.stderr or "")`, so stderr was consulted ONLY when
+            # stdout was empty. Every check echoes CLOSEABLE/OPEN to stdout, so stdout
+            # was never empty, so stderr was discarded on 100% of runs. What it was
+            # discarding is `log_since.sh`'s WINDOW TRUNCATED warning — a warning that
+            # script's own comments say is sent to stderr *"rather than being silently
+            # absorbed"*, absorbed by its only caller. Built, documented, and not wired.
+            truncated = _WINDOW_TRUNCATED in (out.stderr or "")
+            # THE FALLBACK MUST NOT REPORT TOOLING NOISE AS A VERDICT. `uv run` writes
+            # "Installed 1 package in 7ms" to stderr on every invocation, and several
+            # checks shell out through it, so a check that printed nothing to stdout used
+            # to have that line reported as its answer. Filtered rather than dropped,
+            # because a real traceback on stderr IS the most useful thing to show.
+            noise = (_UV_NOISE.sub("", out.stderr or "")).strip()
+            verdict = ((out.stdout or "").strip() or noise).splitlines()
             line = verdict[-1] if verdict else "<no output>"
         except subprocess.TimeoutExpired:
             line = "<check timed out>"
@@ -104,20 +270,21 @@ def main() -> int:
         # A check that says nothing is reported as saying nothing, because a silent
         # instrument reading as "still open" is how the prose versions of these
         # queries went unread for a month.
-        if line.startswith("CLOSEABLE"):
+        mark = verdict_of(line, truncated)
+        if mark == "CLOSEABLE":
             closeable.append(ident)
-            mark = "CLOSEABLE"
-        elif line.startswith("OPEN"):
-            mark = "open     "
-        else:
+        elif mark == "EXPIRED":
+            expired.append(ident)
+            line = f"{line[:110]}  [WINDOW TRUNCATED — re-key onto evidence that does not rot]"
+        elif mark == "?????":
             unverifiable.append(ident)
-            mark = "?????    "
-        print(f"  {mark} {ident} ({', '.join(stages)}) — {line[:150]}")
+        print(f"  {mark:<9} {ident} ({', '.join(stages)}) — {line[:170]}")
 
     print(
         f"\nchecked {len(items)}, CLOSEABLE {len(closeable)}, "
-        f"unverifiable {len(unverifiable)}"
+        f"EXPIRED {len(expired)}, unverifiable {len(unverifiable)}"
     )
+    _report_rot_clock(items)
     _report_prose_promises(data)
     if closeable:
         print(

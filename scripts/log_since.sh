@@ -30,7 +30,26 @@
 #     then means "rotated away", not "never happened". That distinction is the whole
 #     subject of this file, so it goes to stderr rather than being silently absorbed.
 #
-# Usage:  scripts/log_since.sh <YYYY-MM-DD> <grep-pattern>
+# THE BOUND IS NOT ALWAYS NEEDED, AND WHERE IT IS NOT IT ONLY ADDS AN EXPIRY.
+#
+# MEASURED 2026-09-07 across the fifteen closing checks then outstanding: SEVEN key their
+# evidence on a message the item INTRODUCED — `a single call used` (D03.2),
+# `escalation declined — no stronger tier` (D04.5), `session_search: bookends rendered`
+# (D11.3), and four more. For those, history CANNOT satisfy the check: the string does not
+# exist in any log written before the commit that added it, which `git log --reverse -S`
+# confirms per pattern. The date bound buys nothing there — and it costs something real,
+# because the retained window is ten days and rotation drops one per day, so the bound
+# eventually falls below the horizon and the check can never be asked again. D03.2's was
+# two days from that when this was written.
+#
+# So `--all` is the honest form for that case: no lower bound, and no truncation warning,
+# because there is no window to truncate. It is NOT a way to silence the warning on a
+# check that needs a bound — the other TEN patterns measured that day predate their fix
+# (`sandbox.bwrap] run: exit` by nearly three months) and an unbounded count of those is
+# the satisfied-by-history defect this script exists to prevent. Use `--all` only when
+# `git log --reverse -S '<pattern>' -- src/` shows the string first appearing with the fix.
+#
+# Usage:  scripts/log_since.sh <YYYY-MM-DD|--all> <grep-pattern> [exclude-pattern]
 # Prints: the match count on stdout. Nothing else, so a caller can use it directly.
 
 set -uo pipefail
@@ -66,10 +85,14 @@ else
     fi
 fi
 
-if [[ ! "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "log_since: '$since' is not YYYY-MM-DD" >&2
+if [ "$since" = "--all" ]; then
+    unbounded=1
+elif [[ ! "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "log_since: '$since' is not YYYY-MM-DD or --all" >&2
     echo 0
     exit 2
+else
+    unbounded=0
 fi
 
 # A FUTURE BOUND IS UNENFORCEABLE, AND SILENTLY SO — refuse it rather than answer it.
@@ -87,7 +110,7 @@ fi
 # lines. Nothing can have shipped tomorrow, so this is always a mistake, and an
 # unenforceable bound must fail loudly rather than return a number that looks bounded.
 today="$(date -u +%F)"
-if [[ "$since" > "$today" ]]; then
+if [ "$unbounded" -eq 0 ] && [[ "$since" > "$today" ]]; then
     echo "log_since: '$since' is in the FUTURE (today is $today). The bound cannot be" \
          "honoured — the current log file has no date in its name and is always in" \
          "the window, so this would count pre-fix lines as evidence." >&2
@@ -99,7 +122,8 @@ shopt -s nullglob
 stamped=("$dir"/stackowl-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl)
 
 # The oldest retained STAMPED log bounds what any question about the past can see.
-if [ ${#stamped[@]} -gt 0 ]; then
+# With --all there is no lower bound, so there is nothing to truncate and no warning.
+if [ "$unbounded" -eq 0 ] && [ ${#stamped[@]} -gt 0 ]; then
     oldest=$(basename "${stamped[0]}" .jsonl)
     oldest=${oldest#stackowl-}
     # Lexical compare is correct for ISO dates and needs no date(1).
@@ -112,7 +136,7 @@ fi
 files=()
 for f in "${stamped[@]}"; do
     d=$(basename "$f" .jsonl); d=${d#stackowl-}
-    if [[ ! "$d" < "$since" ]]; then
+    if [ "$unbounded" -eq 1 ] || [[ ! "$d" < "$since" ]]; then
         files+=("$f")
     fi
 done

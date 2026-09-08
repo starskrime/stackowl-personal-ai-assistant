@@ -315,6 +315,98 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT211_2026_09_07_the_warning_built_so_it_would_not_be_absorbed_is_absorbed_by_its_only_caller:
+    map_check: >-
+      No mapped item — "The ground is clear." Evidence-led, and it gates the programme's
+      TEN remaining mapped items, which are all `validate: partial` at 6 of 7.
+    EXIT_CONDITION_WRITTEN_BEFORE_STARTING: >-
+      A closing check whose evidence window has rotted below the log horizon is reported
+      as EXPIRED, never as `open`; every date-scoped check prints how many days remain
+      before that happens, so it is re-keyed BEFORE it expires rather than after; proven
+      against a synthetic truncated window; mutants killed; gated and pushed.
+    THE_WARNING_WAS_BUILT_SO_IT_WOULD_NOT_BE_ABSORBED_AND_ITS_ONLY_CALLER_ABSORBED_IT: >-
+      `log_since.sh` announces WINDOW TRUNCATED on stderr, and its own comments say that
+      goes to stderr *"rather than being silently absorbed"*. `validate_check.py` read
+      `(out.stdout or out.stderr or "")` — stderr consulted ONLY when stdout is empty, and
+      every check echoes CLOSEABLE/OPEN to stdout, so the warning was discarded on 100% of
+      runs. Built, documented, and not wired: CLAUDE.md failure shape 5, in the pair of
+      scripts that exist to keep this programme honest.
+    WHAT_IT_COSTS_IS_THE_AMBIGUOUS_ZERO_ONE_LEVEL_UP: >-
+      A check whose window has rotted prints `OPEN (0)`; OPEN reads as *not yet*; the item
+      sits at 6 of 7 with a mechanism that can never advance it — the exact dead end
+      `closing_check` was built to end. Ten of the fifteen partials are MAPPED items, and
+      102 of 112 mapped items are otherwise done, so these are the programme's remaining
+      mapped work.
+    THE_ROOT_CAUSE_IS_THAT_THE_CURE_FOR_ONE_DEFECT_CREATED_AN_EXPIRY: >-
+      The date bound cures satisfied-by-history and is right for the checks that need it.
+      It was applied as a BLANKET rule. MEASURED with `git log --reverse -S <pattern> --
+      src/`: SEVEN of the outstanding checks key on a message the item INTRODUCED, so
+      history cannot satisfy them and the bound bought nothing while still expiring; TEN
+      key on a message that predates the fix (`sandbox.bwrap] run: exit` by nearly three
+      months) and genuinely need it. `log_since.sh` gained `--all` for the first group and
+      the seven were re-keyed; the rot clock watches the remaining eight.
+    THE_PANEL_CORRECTED_THREE_OF_MY_OWN_ROUND_0_FACTS_AND_ONE_INVERTED_THE_ITEM: >-
+      I measured "rotation drops one file per day, so D03.2 rots in 2 days" and built a
+      clock on it. VERIFIED against the handler: `backupCount` is 30 and only TEN dated
+      files exist, and `getFilesToDelete()` deletes nothing until the count EXCEEDS that —
+      **the horizon is FROZEN at 2026-08-28, not sliding.** D03.2's true expiry is about
+      2026-09-30, roughly 23 days out, and my clock printed "2d ACT NOW". A confident,
+      precise, three-weeks-early countdown is worse than no clock. Corrected to
+      `bound + permitted + 1`, and the report now prints its INPUTS — ten files of a
+      permitted thirty — beside the projection, because `observability.py` records that
+      five dated files vanished in one night on 2026-08-30 for a reason it still calls
+      UNPROVEN. A day-counter over a sensor known to have failed once must show the sensor.
+    AND_A_SECOND_PANEL_CATCH_THAT_WOULD_HAVE_HIDDEN_A_CLOSEABLE: >-
+      My first EXPIRED condition was the truncation warning ALONE. `log_since.sh` warns
+      whenever the bound predates the oldest log REGARDLESS of the count, so a check that
+      still found its evidence inside the shortened window returns a real hit AND a
+      warning — and would have been relabelled EXPIRED, hiding an item that was ready to
+      close. That is worse than the defect being fixed. The condition is now truncation
+      AND a zero, because only the zero is ambiguous.
+    THE_EXISTING_GUARD_CAUGHT_ME_AND_WAS_STRENGTHENED_RATHER_THAN_RELAXED: >-
+      `test_every_log_since_call_names_a_real_date` failed on the seven `--all` calls,
+      correctly — it exists to stop exactly the move of silencing a bound. It now accepts
+      `--all` only when `git log --reverse -S` shows the pattern first entering `src/` on
+      or after the retained window opens, so the permission is MECHANICAL rather than an
+      honour system. Its residual is stated rather than hidden: a string introduced inside
+      the window but before a later fix would pass and still admit pre-fix lines.
+    FIVE_MUTANTS_AND_THE_ONE_THAT_SURVIVED_TAUGHT_A_LOCALE_HAZARD: >-
+      P1 (EXPIRED collapses to open), P2 (EXPIRED on the warning alone), P4 (`--all` still
+      applies the bound) and P5 (uv-noise filter) died. P3 — `--all` still emitting the
+      truncation warning — SURVIVED, because under the default collation punctuation is
+      ignored, so `[[ "2026-09-01" > "--all" ]]` is FALSE and the warning never fires even
+      without the guard. Pinned with `LC_ALL=C`, under which the hyphen sorts below the
+      digits and the guard becomes load-bearing. Five of five now, restored from file
+      copies, final re-run green at 17.
+    A_LATENT_BUG_FIXED_IN_PASSING: >-
+      `uv run` writes "Installed 1 package in 7ms" to stderr on every invocation and
+      several checks shell through it, so a check printing nothing to stdout had that
+      reported as its verdict. Filtered rather than dropped — a real traceback on stderr
+      is the most useful thing to show.
+    changes: >-
+      scripts/validate_check.py (`verdict_of` extracted so tests ask the real predicate,
+      EXPIRED as a third state, the corrected rot clock, the stderr-noise filter);
+      scripts/log_since.sh (`--all`, documented as earned rather than granted);
+      tests/audit/test_a_closing_check_cannot_be_satisfied_by_history.py (10 -> 17 tests,
+      five mutants killed); progress.yml (seven redundant bounds re-keyed to `--all`).
+    MEASURED_EFFECT: >-
+      Rot clock 13 date-bound checks -> 8; D03.2 and D09.4 are now rot-proof rather than
+      merely warned about, and the nearest remaining expiry is ~28 days out.
+    THE_NEXT_ITEM_IS_A_PRODUCT_DEFECT_NOT_AN_INSTRUMENT_ONE_AND_I_VERIFIED_IT: >-
+      A panel lens argued this item is housekeeping and named the alternative. VERIFIED
+      independently: `audit_retention_days` (settings.py:837, default 90) has EXACTLY ONE
+      reference in `src/` — its own declaration. Zero readers. `audit_log` holds 11,353
+      rows spanning ~105 days against that declared 90-day bound. Write with no reader
+      plus no decay, in the live product. **And it carries a conflict that must be settled
+      first:** implementing the missing reader would begin pruning `audit_log`, which is
+      the durable store the same panel wants these closing checks re-keyed ONTO. The
+      durable store is durable by accident, and fixing the accident regresses this item.
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: no_change_needed, document: done}
+    validate_no_change_needed_because: >-
+      Nothing in `src/` changed; the deliverable is two programme scripts and their guard.
+      `./start.sh` would prove nothing, so this is `no_change_needed` rather than a `done`
+      with no evidence.
   DEBT210_2026_09_07_the_correction_minted_the_next_wrong_number_and_left_the_first:
     map_check: >-
       No mapped item — "The ground is clear." Evidence-led, and it is DEBT-209's cause
@@ -2079,7 +2171,7 @@ current:
     stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
       test: done, validate: partial, document: no_change_needed}
     closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-07 'wider window is what saved it'); [ "$n" -gt
+      n=$(./scripts/log_since.sh --all 'wider window is what saved it'); [ "$n" -gt
       0 ] && echo "CLOSEABLE ($n)" || echo "OPEN (0)"
     WHY_THAT_CHECK_CANNOT_BE_SATISFIED_BY_THE_OLD_CODE: >-
       The sentence is new in this item, at INFO, and is emitted ONLY when the re-probe
@@ -18368,7 +18460,7 @@ known_debt:
       INFO through log.startup so the closing check has evidence that can exist.
     stages: {validate: partial}
     closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-07 'another process rotated the log'); if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n follow-the-rotation notices since the fix shipped"; else echo "OPEN — 0 notices; needs a UTC midnight with BOTH gateway and core alive, and the core re-execs often enough (70% of boots are CodeWatcher) that it may reopen on its own before one arrives"; fi
+      n=$(./scripts/log_since.sh --all 'another process rotated the log'); if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n follow-the-rotation notices since the fix shipped"; else echo "OPEN — 0 notices; needs a UTC midnight with BOTH gateway and core alive, and the core re-execs often enough (70% of boots are CodeWatcher) that it may reopen on its own before one arrives"; fi
   - id: DEBT-164
     found: 2026-09-07
     what: >-
@@ -19227,7 +19319,7 @@ known_debt:
       # single hit proves the NEW path ran (DEBT-138's rule). NOT keyed on the
       # re-arm line, which fired 17 times BEFORE the fix and would close on the
       # defect itself.
-      n=$(./scripts/log_since.sh 2026-09-06 'recurring occurrence RETAINED')
+      n=$(./scripts/log_since.sh --all 'recurring occurrence RETAINED')
       [ "$n" -gt 0 ] && echo "CLOSEABLE $n recurring occurrence(s) kept an early retry" || echo "OPEN 0 recurring jobs have exhausted retries on a transient failure since the fix; the code IS live-evidenced"
     stages:
       validate: partial
@@ -29412,7 +29504,7 @@ items:
       # history: this check first reported CLOSEABLE on evidence that PREDATED the
       # change it validates. log_since.sh also carries the grep -a fix (the logs hold
       # null bytes) and warns when the window is truncated by rotation.
-      n=$(./scripts/log_since.sh 2026-08-30 'a single call used')
+      n=$(./scripts/log_since.sh --all 'a single call used')
       [ "$n" -gt 0 ] && echo "CLOSEABLE $n x mid-turn compression since 2026-08-30" || echo "OPEN 0 x mid-turn compression since 2026-08-30 - no turn has been long enough to compress"
     title: "Conversation compression"
     domain: D03
@@ -29983,7 +30075,7 @@ items:
     doc: "docs/reference-mapping/designs/D04.5.md"
     doc_last_verified: "2026-09-07"
     closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-05 'escalation declined — no stronger tier'); b=$(./scripts/log_since.sh 2026-09-05 'circuit open — tool bounced for remainder of turn'); if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n decline lines against $b bounces since the fix shipped"; else echo "OPEN — 0 decline lines and $b bounces since 2026-09-05; watch the BOUNCE, not the breaker OPEN — 52 opens produced 12 bounces, all of them 08-28..08-31"; fi
+      n=$(./scripts/log_since.sh --all 'escalation declined — no stronger tier'); b=$(./scripts/log_since.sh 2026-09-05 'circuit open — tool bounced for remainder of turn'); if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n decline lines against $b bounces since the fix shipped"; else echo "OPEN — 0 decline lines and $b bounces since 2026-09-05; watch the BOUNCE, not the breaker OPEN — 52 opens produced 12 bounces, all of them 08-28..08-31"; fi
     decisions:
       - "IT SURVIVES, verified three ways rather than assumed: the gate exists and asks
          the real question; on the live configuration it answers FALSE because the
@@ -33505,7 +33597,7 @@ items:
       # RE-MEASURED 2026-09-07 (DEBT-198), and the premise is now exact rather than
       # directional. It reports HOW CLOSE the seeded lane is, so a reader can tell
       # "one turn away" from "structurally impossible" without re-deriving it.
-      n=$(./scripts/log_since.sh 2026-09-02 '\[skills\] nudge')
+      n=$(./scripts/log_since.sh --all '\[skills\] nudge')
       d=$(uv run python -c "import sqlite3;c=sqlite3.connect('file:/home/boss/.stackowl/workspace/stackowl.db?mode=ro',uri=True);print(max([r[0] or 0 for r in c.execute(\"SELECT completed_turns FROM sessions WHERE session_key LIKE '%telegram%'\")]+[0]))" 2>/dev/null || echo "?")
       [ "$n" -gt 0 ] && echo "CLOSEABLE $n x skills nudge since 2026-09-02" || echo "OPEN 0 x skills nudge. The gate is NOT the blocker - skill_manage is in presentation._DEFAULT_BASE, guaranteed to survive the budget - and the mechanism works: the memory nudge fired 101 times on the same primitive at interval 4. The only blocker is the counter reaching 10. Deepest SEEDED ingress lane right now: $d of 10. The seed (9bdc7c88) covers ingress lanes only; 80% of turns are on incident/goal lanes that have no sessions row BY DESIGN (record_completed_turn refuses to invent a lane for background work), which is ESC-157, not a defect"
     title: "Skill-creation nudges"
@@ -35289,7 +35381,7 @@ items:
       # history: this check first reported CLOSEABLE on evidence that PREDATED the
       # change it validates. log_since.sh also carries the grep -a fix (the logs hold
       # null bytes) and warns when the window is truncated by rotation.
-      n=$(./scripts/log_since.sh 2026-09-05 'session_search: bookends rendered')
+      n=$(./scripts/log_since.sh --all 'session_search: bookends rendered')
       [ "$n" -gt 0 ] && echo "CLOSEABLE $n x discover hit framed since 2026-09-05" || echo "OPEN 0 x discover hit framed since 2026-09-05 - the INFO line only exists from 2026-09-05; before that this was unclosable by construction"
     title: "Session-search shapes"
     domain: D11
