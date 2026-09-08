@@ -367,21 +367,25 @@ current:
     stages: {brainstorm: done, architect: done, implement: done,
       cleanup: done, test: done, validate: partial, document: no_change_needed}
     closing_check: |-
-      # Keyed on a log FIELD this item INTRODUCED — `audit_rows_pruned`, which the decay
-      # job now reports and which no earlier code could emit. Not keyed on row COUNT,
-      # because a count falling is also what an empty table looks like.
+      # Keyed on the LEG RUNNING, not on rows disappearing. The first version watched for
+      # "rows pruned", which the handler only logged when the count was non-zero — and
+      # after the first prune took 10,792 rows there was nothing left older than the
+      # horizon, so the check could never have closed. It also must not be satisfied by
+      # running `AuditRetention.prune()` by hand, which is what I did to execute the
+      # operator's decision: the question is whether the WIRING works, and only the
+      # scheduled job emits this line. Both traps are the ambiguous zero, one step apart.
       # DATE-BOUND, NOT `--all`, AND THE REASON IS A REAL LIMIT OF MY OWN GUARD.
       # `--all` is earned when `git log --reverse -S <pattern> -- src/` shows the message
       # first entering the tree with the fix. This message is introduced by THIS commit,
       # which has no history yet — so the guard refused it, correctly, and a pattern
       # cannot prove itself to git until it has been committed. The bound is honest here
       # anyway: the message cannot predate today, so history cannot satisfy the count.
-      n=$(./scripts/log_since.sh 2026-09-08 'audit rows pruned past their horizon')
+      n=$(./scripts/log_since.sh 2026-09-08 'audit retention pass complete')
       r=$(./scripts/db_query.sh "SELECT COUNT(*) FROM audit_log;" 2>/dev/null | tail -1)
       if [ "${n:-0}" -gt 0 ]; then
-        echo "CLOSEABLE — the decay pass has pruned audit rows $n time(s); table now $r rows"
+        echo "CLOSEABLE — the wired decay pass ran its audit leg $n time(s); table now $r rows"
       else
-        echo "OPEN — 0 prune events yet; the decay job runs weekly, table $r rows"
+        echo "OPEN — the audit leg has not run through the SCHEDULER yet (weekly); table $r rows"
       fi
   DEBT214_2026_09_08_the_recovery_destroyed_the_diagnosis_because_the_launcher_truncated_it:
     map_check: >-

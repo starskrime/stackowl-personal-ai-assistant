@@ -135,11 +135,19 @@ class KnowledgePruneHandler(JobHandler):
                 extra={"_fields": {"job_id": job.job_id}},
             )
             return 0
-        if pruned:
-            log.scheduler.info(
-                "[scheduler] knowledge_prune: audit rows pruned past their horizon",
-                extra={"_fields": {"job_id": job.job_id, "rows": pruned}},
-            )
+        # ALWAYS LOG, INCLUDING ZERO — and the first version had `if pruned:`, which
+        # made a successful no-op silent. MEASURED the same night: after the first prune
+        # took 10,792 rows there was nothing left older than the horizon, so every
+        # subsequent run would delete 0 and say NOTHING, and the wiring this item exists
+        # to establish would have been unprovable forever. A zero is ambiguous only when
+        # you cannot tell it from an absence; emitting it removes the ambiguity, which is
+        # the whole reason the acceptance check can be keyed on the LEG RUNNING rather
+        # than on rows disappearing. Deleting nothing is the steady state of a healthy
+        # retention pass, not an event worth hiding.
+        log.scheduler.info(
+            "[scheduler] knowledge_prune: audit retention pass complete",
+            extra={"_fields": {"job_id": job.job_id, "rows_pruned": pruned}},
+        )
         return int(pruned)
 
     async def _run_curator(self, job: Job) -> int:
