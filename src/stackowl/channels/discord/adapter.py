@@ -50,6 +50,10 @@ _UNSET: Any = object()
 class DiscordChannelAdapter(ChannelAdapter):
     """Discord I/O channel — DM + guild support, allowlist-gated."""
 
+    #: Discord carries a per-message channel id; with none there is no addressee,
+    #: only a last-speaker fallback. See ChannelAdapter.
+    implicitly_addressable = False
+
     def __init__(self, settings: DiscordSettings) -> None:
         self._settings = settings
         self._client: discord.Client | None = None

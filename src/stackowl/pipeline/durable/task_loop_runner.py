@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from stackowl.infra.observability import log
+from stackowl.pipeline.durable.addressing import address_of
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from collections.abc import Awaitable, Callable
@@ -61,12 +62,9 @@ def actuator_row_for(task: Any) -> Any:
     )
 
 
-def _chat_id_of(destination: str | None) -> str | None:
-    """``telegram:72055773`` -> ``72055773``. None for a channel-only destination
-    such as ``cli``, which addresses its single terminal implicitly."""
-    if not destination or ":" not in destination:
-        return None
-    return destination.split(":", 1)[1] or None
+#: ONE source, shared with `store.py` — see addressing.py for why this stopped
+#: being a second private copy.
+_chat_id_of = address_of
 
 
 def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
@@ -123,6 +121,17 @@ def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
                 getattr(outcome, "banned", ()) or ()
             )
             raise err
+        # SAY WHICH OF THE TWO THINGS HAPPENED. `_dispatch` guards the overclaim
+        # with `if not result.strip()` — and this line is the value it inspects,
+        # so a literal that always reads "delivered" made that guard vacuous on
+        # the one path it was written for. The attempt can finish having reached
+        # somebody, or having had nobody to reach; only the first is a delivery.
+        if not getattr(outcome, "delivered", True):
+            return (
+                f"re-driven after {task.attempt_count} prior attempt(s); the "
+                f"answer was produced but this task named no addressee, so "
+                f"nothing was delivered"
+            )
         return f"re-driven and delivered after {task.attempt_count} prior attempt(s)"
 
     return _run

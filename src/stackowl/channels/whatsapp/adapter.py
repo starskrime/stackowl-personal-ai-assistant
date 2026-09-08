@@ -70,6 +70,10 @@ _UNSET: Any = object()
 class WhatsAppChannelAdapter(ChannelAdapter):
     """WhatsApp I/O channel — Playwright-powered WhatsApp Web, allowlist-gated."""
 
+    #: WhatsApp carries a per-message target ("+15551234"); with none there is no
+    #: addressee, only a last-speaker fallback. See ChannelAdapter.
+    implicitly_addressable = False
+
     def __init__(
         self,
         settings: WhatsAppSettings,

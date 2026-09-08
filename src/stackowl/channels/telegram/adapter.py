@@ -131,6 +131,11 @@ def coerce_chat_id(raw: object) -> int | None:
 class TelegramChannelAdapter(ChannelAdapter):
     """Telegram I/O channel — DM + group support, allowlist-gated."""
 
+    #: A telegram send needs a chat id. Without one this adapter can only fall
+    #: back to ``_last_chat_id`` — whichever chat last sent an update — so an
+    #: untargeted send is a guess at a recipient, never a delivery.
+    implicitly_addressable = False
+
     def __init__(
         self,
         settings: TelegramSettings,

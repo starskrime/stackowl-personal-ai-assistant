@@ -31,6 +31,29 @@ class OutboundMessage(BaseModel):
 class ChannelAdapter(ABC):
     """Abstract I/O channel — CLI, Telegram, Slack, etc. all implement this."""
 
+    #: Whether an untargeted :meth:`send_text` reaches a KNOWN recipient.
+    #:
+    #: True for a channel that addresses a single terminal implicitly (CLI): no
+    #: target is needed because there is only one place the text can go. False
+    #: for every channel that carries a per-message target, where "no target"
+    #: means "no addressee" — such an adapter can only resolve an untargeted
+    #: send against its shared ``_last_*`` state, i.e. whichever conversation
+    #: most recently spoke.
+    #:
+    #: This exists because a CALLER cannot tell those two cases apart, and the
+    #: difference decides whether an untargeted send is a delivery or a guess.
+    #: MEASURED 2026-09-08: the retry actuator could not tell, so a recovered
+    #: answer for a task with NO addressee was discarded 60 times and sent to an
+    #: unrelated chat 3 times, depending only on whether someone had messaged the
+    #: bot recently. See
+    #: ``tests/pipeline/durable/test_a_retry_never_fabricates_a_fallback_chat.py``.
+    #:
+    #: It is an adapter attribute rather than a list of channel names inside the
+    #: caller on purpose: a name list is a second copy of one rule and drifts the
+    #: moment a channel is added. The default is the safe, honest one for a
+    #: single-terminal adapter; rich channels override it to False.
+    implicitly_addressable: bool = True
+
     @property
     @abstractmethod
     def channel_name(self) -> str: ...

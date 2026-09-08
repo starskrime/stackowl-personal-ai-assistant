@@ -74,6 +74,10 @@ def _is_ratelimited(err: BaseException) -> bool:
 class SlackChannelAdapter(ChannelAdapter):
     """Slack channel adapter — see module docstring for the integration contract."""
 
+    #: Slack carries a per-message target ("C123ABC"); with none there is no
+    #: addressee, only a last-speaker fallback. See ChannelAdapter.
+    implicitly_addressable = False
+
     contributor_name: str = "slack_channel"
 
     # Bound on the per-turn state maps (thread-by-trace, inbound-files-by-trace).

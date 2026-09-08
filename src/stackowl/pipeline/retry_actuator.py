@@ -85,6 +85,12 @@ class RetryOutcome:
     #: task's last_error, which is what the next attempt is then shown as "what
     #: happened last time". A tautology cannot change a strategy.
     reason: str = ''
+    #: Whether the answer actually REACHED somebody. ``status`` alone cannot say
+    #: it: a "completed" attempt whose answer had no addressee did the work and
+    #: delivered nothing, and reporting those identically is how 60 discarded
+    #: answers were recorded as delivered (2026-09-08). Bakir, 2026-08-17: "a
+    #: task is complete when its outcome reached its DESTINATION".
+    delivered: bool = True
 
 
 def _native_chat_id(raw: str) -> str | int:
@@ -353,7 +359,7 @@ class RetryActuator:
             # 3. STEP — deliver. Recording completion is the CALLER's job: the
             # runner marks the `tasks` row from this method's return value, and
             # that is the only bookkeeping that exists now.
-            await self._deliver_success(row, answer_text)
+            delivered = await self._deliver_success(row, answer_text)
         except Exception as exc:  # never raise into the scheduler loop
             delay_seconds = _delivery_retry_delay_seconds(exc)
             log.scheduler.error(
@@ -374,11 +380,18 @@ class RetryActuator:
                 extra={"_fields": {"retry_id": row.id, "status": outcome.status}},
             )
             return outcome
+        # `delivered` is reported, never folded into `status`. The work DID
+        # complete — re-running it cannot conjure an addressee, so "pending"
+        # would spend attempts on an outcome no attempt can change. What the
+        # caller must not do is claim a delivery, and that is now a separate
+        # fact it can read. A subclass override that returns None (test doubles
+        # do) reads as "not delivered" rather than silently as success.
         log.scheduler.info(
             "retry_actuator.attempt_retry: exit",
-            extra={"_fields": {"retry_id": row.id, "status": "completed"}},
+            extra={"_fields": {"retry_id": row.id, "status": "completed",
+                               "delivered": bool(delivered)}},
         )
-        return RetryOutcome(status="completed")
+        return RetryOutcome(status="completed", delivered=bool(delivered))
 
     def _augment_goal(self, row: RetryAttempt) -> str:
         """Tell the retry WHAT burned and WHY, so it is constrained, not blind.
@@ -453,14 +466,25 @@ class RetryActuator:
                 return name
         return ""
 
-    async def _deliver_success(self, row: RetryAttempt, answer_text: str) -> None:
+    async def _deliver_success(self, row: RetryAttempt, answer_text: str) -> bool:
+        """Send the recovered answer to the task's OWN addressee. Returns whether
+        it actually went anywhere.
+
+        THE RETURN VALUE IS THE POINT. This used to return ``None`` on every
+        path, so "delivered" and "discarded" were indistinguishable to the
+        caller, and ``attempt_retry`` reported ``completed`` for both. The
+        adapter DOES signal the drop — by returning ``None`` from ``send_text``
+        — but every other adapter (cli, socket, discord, whatsapp) returns
+        ``None`` on SUCCESS, so that signal is unreadable by construction.
+        MEASURED 2026-09-08: 60 discarded answers, all reported delivered.
+        """
         adapter = self._channel_registry.get(row.channel)
         if row.channel_chat_id and row.channel_message_id and hasattr(adapter, "edit_message"):
             try:
                 await adapter.edit_message(
                     int(row.channel_chat_id), int(row.channel_message_id), answer_text,
                 )
-                return
+                return True
             except Exception as exc:  # edit can fail (message too old/deleted) — fall back
                 log.telegram.error(
                     "retry_actuator._deliver_success: edit failed — sending new message",
@@ -485,8 +509,31 @@ class RetryActuator:
             await cast("_TargetedSender", adapter).send_text(
                 answer_text, chat_id=_native_chat_id(row.channel_chat_id)
             )
-        else:
-            await adapter.send_text(answer_text)
+            return True
+        # NO CHAT ID ⇒ NO ADDRESSEE, and on a channel that carries a per-message
+        # target that is the END of it. `channels/base.py` states the rule this
+        # branch used to break: "A 'fallback chat' is NEVER fabricated (that
+        # re-creates the cross-deliver bug)." An untargeted `send_text` here
+        # resolved against telegram's `_last_chat_id` — whichever chat most
+        # recently spoke — so the fate of a recovered internal answer depended on
+        # who had messaged the bot lately. MEASURED 2026-09-08: 3 answers for
+        # tasks with a NULL destination reached a real chat that way, and 60 more
+        # were discarded. Both were reported as delivered.
+        #
+        # A single-terminal channel (cli) is the honest exception: it has exactly
+        # one place text can go, so no target is needed and none is guessed.
+        if not getattr(adapter, "implicitly_addressable", True):
+            log.scheduler.info(
+                "retry_actuator._deliver_success: no addressee — the answer was "
+                "not delivered anywhere",
+                extra={"_fields": {
+                    "retry_id": row.id, "channel": row.channel,
+                    "answer_len": len(answer_text),
+                }},
+            )
+            return False
+        await adapter.send_text(answer_text)
+        return True
 
     async def _handle_failure(
         self, row: RetryAttempt, error: str, *, newly_failed_capability: str,

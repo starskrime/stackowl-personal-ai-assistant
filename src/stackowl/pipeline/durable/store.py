@@ -21,6 +21,7 @@ from stackowl.db.pool import DbPool
 from stackowl.exceptions import DurableTaskNotFoundError
 from stackowl.infra.observability import log
 from stackowl.infra.resilience import jittered
+from stackowl.pipeline.durable.addressing import address_of
 from stackowl.pipeline.durable.failure_class import (
     _RESHAPING_CLASSES,
     SMALL_CEILING_CLASSES,
@@ -103,12 +104,11 @@ def _channel_of(destination: str | None) -> str | None:
     return destination.split(":", 1)[0] or None
 
 
-def _address_of(destination: str | None) -> str | None:
-    """"telegram:72055773" -> "72055773". None for a channel-only destination
-    like "cli", which addresses its single terminal implicitly."""
-    if not destination or ":" not in destination:
-        return None
-    return destination.split(":", 1)[1] or None
+#: ONE source for "does this destination name somebody?" — see addressing.py.
+#: This module and `task_loop_runner` used to carry byte-identical copies under
+#: two different names, deciding the same question on the two halves of one
+#: lifecycle.
+_address_of = address_of
 
 
 def _split(raw: Any) -> tuple[str, ...]:

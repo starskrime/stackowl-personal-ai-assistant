@@ -1,0 +1,36 @@
+"""ONE answer to "does this destination name somebody?".
+
+A task's ``destination`` is either ``<channel>:<address>`` ("telegram:72055773")
+or a bare channel name ("telegram", "rca", "cli") or NULL. Only the first names
+an addressee; the other two say WHERE a reply would go without saying WHO it
+goes to.
+
+WHY THIS MODULE EXISTS. That rule was written twice — ``_address_of`` in
+``store.py`` and ``_chat_id_of`` in ``task_loop_runner.py``, byte-identical
+logic under two names — and the two copies decide the SAME question on the two
+halves of one lifecycle: the runner uses it to choose whether the retry actuator
+gets a target, and the store uses it to choose whether a dead letter is escalated
+to a waiting person or retired as having nobody to tell. Had they drifted, the
+platform would have sent an answer to a destination it had already classified as
+unaddressable, or retired work somebody was still waiting for.
+
+That is failure mode #3 from ``CLAUDE.md`` — two copies of one rule — and the
+cure it prescribes: one source, and the other asks it.
+"""
+
+from __future__ import annotations
+
+
+def address_of(destination: str | None) -> str | None:
+    """``"telegram:72055773"`` -> ``"72055773"``; ``None`` when nobody is named.
+
+    ``None`` for a channel-only destination such as ``cli``, which addresses its
+    single terminal implicitly, and for ``rca``/``telegram``/NULL, which name no
+    recipient at all. A caller that needs to tell those two apart asks the
+    ADAPTER (``ChannelAdapter.implicitly_addressable``), because whether a
+    channel can reach somebody without an address is a property of the channel,
+    not of the string.
+    """
+    if not destination or ":" not in destination:
+        return None
+    return destination.split(":", 1)[1] or None
