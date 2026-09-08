@@ -209,15 +209,46 @@ def _log_query_lines(text: str) -> list[tuple[int, str]]:
     ]
 
 
+#: An explicit opt-out for a query that reads the single log file ON PURPOSE.
+#:
+#: NOT EVERY SINGLE-FILE QUERY IS BLIND, and treating them alike made this report's
+#: own number wrong. MEASURED 2026-09-08 by reading all 31 flagged commands in
+#: context: SEVEN are deliberately scoped to the current boot and are CORRECT as
+#: they stand — three sit directly under `./start.sh && sleep 90` asking "did this
+#: boot log any ERROR", one says "ZERO turns have run since the restart", and two
+#: ask "does the arithmetic reconcile on the current boot?", where widening to the
+#: glob would sum eleven days of registrations against a one-boot denominator and
+#: silently break a correct check. So the honest population was 24, not 31, and a
+#: future loop reading "31" would have "fixed" seven working queries.
+#:
+#: A STRUCTURED TOKEN, NOT A PROSE WHITELIST. The tempting detector is "does a
+#: nearby comment say 'current boot'", which is a guess at future phrasing — the
+#: failure this programme has paid for repeatedly. An explicit marker is declared
+#: by the author, cannot drift with wording, and shows up in a grep.
+_ON_PURPOSE = "doc_check: current-boot"
+
+
 def _single_log_queries(text: str) -> list[tuple[int, str]]:
-    """(line_no, line) for every Verification command pinned to the single log file."""
+    """(line_no, line) for every Verification command pinned to the single log file.
+
+    Lines carrying :data:`_ON_PURPOSE` are excluded here and counted separately by
+    the caller, so "deliberate" is visible in the report rather than absent from it.
+    """
     out: list[tuple[int, str]] = []
     for i, line in enumerate(text.splitlines(), 1):
-        if "stackowl*.jsonl" in line:
+        if "stackowl*.jsonl" in line or _ON_PURPOSE in line:
             continue
         if _SINGLE_LOG.search(line):
             out.append((i, line.strip()))
     return out
+
+
+def _on_purpose_queries(text: str) -> int:
+    """How many single-file queries the author explicitly marked as current-boot."""
+    return sum(
+        1 for line in text.splitlines()
+        if _ON_PURPOSE in line and _SINGLE_LOG.search(line)
+    )
 
 
 #: An acceptance check a document itself marks OPEN. `validate_check.py` re-runs a
@@ -654,7 +685,22 @@ def _validate_stages() -> dict[str, str]:
     }
 
 
-def main() -> int:
+#: How many rows each section prints before it truncates.
+#:
+#: WHY IT IS A VARIABLE. Every list here was hard-capped at 12, so the report
+#: named 12 of 31 BLIND AFTER MIDNIGHT commands and hid the other 19 behind
+#: "… and 19 more". A finding you cannot enumerate cannot be worked: the report
+#: could say the corpus was dirty and could not say WHICH lines to fix, which
+#: made the fix impossible to do FROM THE REPORT — the instrument's own version
+#: of a count without its contents. `--all` prints every row.
+_LIST_CAP = 12
+
+
+def main(argv: list[str] | None = None) -> int:
+    global _LIST_CAP
+    args = sys.argv[1:] if argv is None else argv
+    if "--all" in args:
+        _LIST_CAP = 10**9
     docs = sorted(_DESIGNS.glob("*.md"))
     stale: list[tuple[str, str, str]] = []
     fresh = 0
@@ -692,12 +738,14 @@ def main() -> int:
             print(f"  {name:16} verified {verified}   sources changed {changed}")
         print()
     single_log: list[tuple[str, int, str]] = []
+    on_purpose = 0
     log_commands = 0
     for doc in docs:
         body = doc.read_text(encoding="utf-8")
         log_commands += len(_log_query_lines(body))
         for ln, line in _single_log_queries(body):
             single_log.append((doc.name, ln, line))
+        on_purpose += _on_purpose_queries(body)
 
     if by_deletion:
         print(f"STALE BY DELETION — read these first ({len(by_deletion)} of "
@@ -720,14 +768,20 @@ def main() -> int:
               "rotation instead of writing on into the renamed file), but the retained "
               "logs still hold the misplaced records, and a single-file query is blind "
               "to every previous day regardless:")
-        for name, ln, line in single_log[:12]:
+        for name, ln, line in single_log[:_LIST_CAP]:
             print(f"  {name}:{ln}  {line[:88]}")
-        if len(single_log) > 12:
-            print(f"  … and {len(single_log) - 12} more")
+        if len(single_log) > _LIST_CAP:
+            print(f"  … and {len(single_log) - _LIST_CAP} more")
+        if on_purpose:
+            print(f"  ({on_purpose} further single-file quer(ies) are marked "
+                  f"`{_ON_PURPOSE}` and excluded — deliberately scoped to one boot, "
+                  f"where the glob would be WRONG.)")
     elif log_commands:
         print(f"\nBLIND AFTER MIDNIGHT — none, across {log_commands} log-reading "
-              "Verification command(s); every one of them globs. (The denominator is "
-              "printed because a silent detector and a clean corpus look identical.)")
+              f"Verification command(s); every one globs, or is one of {on_purpose} "
+              f"marked `{_ON_PURPOSE}` because it reads ONE boot on purpose and the "
+              "glob would be wrong. (The denominator is printed because a silent "
+              "detector and a clean corpus look identical.)")
 
     stages = _validate_stages()
     untracked: list[tuple[str, int, str]] = []
@@ -752,12 +806,12 @@ def main() -> int:
         print("     Each line says whether the SAME document also records a close — a "
               "fact, not a verdict: a marker superseded by a CLOSED line below it is "
               "stale prose, while one with no close anywhere is a real open question.")
-        for name, ln, line in untracked[:12]:
+        for name, ln, line in untracked[:_LIST_CAP]:
             head, _, note = line.partition("\n")
             print(f"  {name}:{ln}  {head[:88]}")
             print(f"      {note.strip()}")
-        if len(untracked) > 12:
-            print(f"  … and {len(untracked) - 12} more")
+        if len(untracked) > _LIST_CAP:
+            print(f"  … and {len(untracked) - _LIST_CAP} more")
     elif open_markers or staged_docs:
         print(f"\nOPEN BUT NOT TRACKED — none, across {open_markers} OPEN acceptance "
               f"marker(s); {staged_docs} of {len(docs)} document(s) matched a stage "
@@ -782,7 +836,7 @@ def main() -> int:
               "what they claim: they return 0, and 0 reads as failure. These are RECORDS "
               "now, not checks — date them as such, and give the reader something "
               "runnable beside them:")
-        for name, ln, when, cmd in rotted[:12]:
+        for name, ln, when, cmd in rotted[:_LIST_CAP]:
             print(f"  {name}:{ln}  recorded {when}")
             print(f"      {cmd[:88]}")
     elif dated_blocks:
@@ -809,10 +863,10 @@ def main() -> int:
               "unaffected, which is why this hid. Add `| sort |` before the `tail` — "
               "every log line begins `{\"ts\": \"`, so a lexical sort is a "
               "chronological one, and it is correct under an ordered grep too:")
-        for name, ln, cmd in unordered[:12]:
+        for name, ln, cmd in unordered[:_LIST_CAP]:
             print(f"  {name}:{ln}  {cmd[:96]}")
-        if len(unordered) > 12:
-            print(f"  … and {len(unordered) - 12} more")
+        if len(unordered) > _LIST_CAP:
+            print(f"  … and {len(unordered) - _LIST_CAP} more")
     elif by_position:
         print(f"\nNEWEST RECORD TAKEN BY PIPE POSITION — none, across {by_position} "
               "command(s) that take a record by position from the multi-file glob; every "
@@ -834,11 +888,11 @@ def main() -> int:
               "check reading `| wc -l` returns 0 and 0 reads as *not yet*. Use "
               "`./scripts/db_query.sh '<SQL>'`, which resolves the path from StackowlHome "
               "and exits non-zero on a missing or empty database:")
-        for name, ln, cmd, why in unreachable[:12]:
+        for name, ln, cmd, why in unreachable[:_LIST_CAP]:
             print(f"  {name}:{ln}  {cmd[:88]}")
             print(f"      {why}")
-        if len(unreachable) > 12:
-            print(f"  … and {len(unreachable) - 12} more")
+        if len(unreachable) > _LIST_CAP:
+            print(f"  … and {len(unreachable) - _LIST_CAP} more")
     elif db_queries:
         print(f"\nCANNOT QUERY THE DATABASE — none, across {db_queries} database "
               "query/queries on runnable Verification commands; every one goes through "
@@ -859,7 +913,7 @@ def main() -> int:
               f"runnable Verification command do not exist. A step naming a file this "
               "tree does not have CANNOT have been run, so any 'Verification RUN' stamp "
               "above it claims more than was done:")
-        for name, ln, rel, line in gone[:12]:
+        for name, ln, rel, line in gone[:_LIST_CAP]:
             print(f"  {name}:{ln}  {rel}")
             print(f"      {line[:88]}")
     elif watched:

@@ -19576,6 +19576,90 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-220
+    found: 2026-09-08
+    what: >-
+      THIRTY-ONE VERIFICATION COMMANDS READ ONLY TODAY'S LOG. The retained window is
+      eleven dated files plus the live one; a query pinned to `stackowl.jsonl` alone is
+      blind to every previous day, returns 0, and 0 reads as *not yet* rather than
+      *wrong instrument*. `doc_check.py` had reported this population since 2026-09-07
+      (43 then, 31 now) and nothing had drained it.
+    and_the_report_could_not_be_ACTED_on: >-
+      Every list in `doc_check.py` was hard-capped at 12 rows, so the report named 12 of
+      31 and hid the rest behind "... and 19 more". A finding you cannot enumerate cannot
+      be worked - the report could say the corpus was dirty and could not say WHICH lines
+      to fix. That is the instrument's own version of a count with no contents, and it is
+      why this sat undrained for a day. `--all` now prints every row.
+    THE_REPORTS_OWN_NUMBER_WAS_WRONG: >-
+      All 31 were read IN CONTEXT and they split. SEVEN are deliberately scoped to the
+      current boot and CORRECT as written: three sit directly under `./start.sh && sleep
+      90` asking "did THIS boot log an ERROR", one records "ZERO turns have run since the
+      restart", and two ask "does the arithmetic reconcile on the current boot?" - where
+      globbing would sum ELEVEN DAYS of skill registrations against a one-boot
+      denominator and silently break a working check. So the honest population was 24,
+      not 31, and a future loop acting on "31" would have "fixed" seven correct queries.
+      A detector that cannot tell deliberate from accidental reports a wrong denominator,
+      which is this programme's most expensive recurring error, here committed by the
+      tool built to catch it.
+    fix: >-
+      24 widened to `stackowl*.jsonl`. The 7 deliberate ones carry an explicit
+      `# doc_check: current-boot` marker - a STRUCTURED TOKEN, not a prose whitelist,
+      because "does a nearby comment say current boot" is a guess at future phrasing.
+      `doc_check.py` excludes marked lines and reports their count SEPARATELY in both
+      branches, so "deliberate" is visible in the report rather than absent from it.
+    the_widening_needed_a_second_cure_or_it_would_have_shipped_a_worse_bug: >-
+      Where a command takes a record by POSITION (`| tail -1`), widening alone trades a
+      blind query for a NON-DETERMINISTIC one: this harness wraps a multi-threaded grep
+      that emits results as workers finish. DEMONSTRATED LIVE on `tier ladder resolved` -
+      three identical unsorted runs over the glob returned 2026-09-06, 2026-09-05 and
+      2026-09-06 while the true newest record was 2026-09-08; with `| sort` all three
+      returned 2026-09-08. So `| sort` was added before every `tail`, `-a` to every grep
+      (null bytes silently truncate a match), and `grep -c` over many files was summed
+      with `| paste -sd+ | bc` because it prints one count PER FILE, not a total.
+      `doc_check`'s independent NEWEST-RECORD detector went 5 -> 8 commands and still
+      reports "every one of them sorts first", which is the instrument catching my own
+      edit rather than my own reading of it.
+    verification_run_not_trusted: >-
+      The four rewritten grep commands were EXECUTED: `rendering summaries LEAN` -> 366
+      (summed across files), `tier ladder resolved` -> newest record 2026-09-08T06:15:32,
+      `outside any source dir` -> 2026-09-08T06:15:41, `refusing ... from untrusted` -> 0
+      (that event genuinely has not occurred, which the glob now proves rather than
+      assumes).
+    guard: >-
+      tests/audit/test_no_design_document_queries_one_log_file_by_accident.py,
+      tripwire-marked, and it ASKS `doc_check._single_log_queries` rather than restating
+      its regex - two definitions of "single-file log query" is the two-copies shape. A
+      second test PINS the marker count at 7 so the opt-out cannot quietly eat the rule:
+      an eighth must be read and argued in a diff. MUTATION-PROVEN: un-globbing one
+      document turns it red; restored from a file copy, green again.
+      WHY THIS IS A GATE WHEN doc_check AS A WHOLE IS NOT: staleness cannot be a tripwire
+      because 15 of 33 measurable docs are stale on any day, so it would fail every
+      unrelated change - the shape that gets a gate bypassed. This property is zero and
+      stays zero unless someone writes a NEW blind query, so it can only fire on the
+      change that causes it.
+    AND A GUARD PINNED A FLOOR ON THE DEFECT COUNT, SO IT BLOCKED THE FIX: >-
+      `TestTheSingleLogFileReportSeesTheRealCorpus` required the live report to find at
+      least TWENTY blind commands. It was written to catch a detector that quietly
+      narrows - a real risk it had already realised twice while being written, once by a
+      regex that required the command word BEFORE the filename and so missed
+      `cat .../stackowl.jsonl | jq`, reporting 14. The INTENT was right and the SHAPE was
+      wrong: pinning a defect COUNT means the guard fires the moment somebody fixes the
+      defect, and it cannot tell "the detector narrowed" from "the corpus was cleaned".
+      It fired exactly that way here and refused the commit that drained it.
+      RESHAPED into a POSITIVE CONTROL: the detector is now run against a known-bad
+      fixture (including the `cat ... | jq` shape that slipped past the first regex) and
+      against a marked line, asserting it finds the first and excludes-but-counts the
+      second. A control cannot rot as the world is cleaned. MUTATION-PROVEN by
+      reintroducing the historical narrowing, which turns it red; restored from a file
+      copy, green again. THE GENERAL LESSON, and it is the same one this whole item is
+      about: assert the INSTRUMENT'S BEHAVIOUR, never a snapshot of the world it measures.
+    stages:
+      validate: no_change_needed
+    validate_no_change_needed_because: >-
+      Nothing shipped to `src/`; this is documentation, one script flag and two guards. The acceptance
+      is the detector's own reading, run after the edit: BLIND AFTER MIDNIGHT went from
+      "31 in 19 documents" to "none, across 90 log-reading Verification command(s); every
+      one globs, or is one of 7 marked". The guard above keeps it there.
   - id: DEBT-219
     found: 2026-09-08
     what: >-

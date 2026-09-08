@@ -412,6 +412,19 @@ class TestADocumentsVerificationCommandCanActuallyRun:
         )
 
 
+def _load_doc_check():
+    """Import `scripts/doc_check.py` and ASK it, rather than restating its regex."""
+    import importlib.util
+
+    path = _ROOT / "scripts" / "doc_check.py"
+    spec = importlib.util.spec_from_file_location("_doc_check_probe", path)
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_doc_check_probe"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 class TestTheSingleLogFileReportSeesTheRealCorpus:
     """A Verification command pinned to `stackowl.jsonl` is blind after any midnight.
 
@@ -431,14 +444,31 @@ class TestTheSingleLogFileReportSeesTheRealCorpus:
     this lesson IN PROSE — and D03.2 had it wrong anyway, which is the whole argument for
     reporting it rather than trusting it to be remembered.
 
-    REPORTED, NEVER GATED, for doc_check's own standing reason: 47 lines across 23
-    documents carry it today, and a tripwire would fail every unrelated change until
-    someone rewrote twenty-three documents. The deletion-stale count drained 11 -> 2 by
-    being visible every loop; this can drain the same way.
+    IT WAS REPORTED, NEVER GATED, and the population has now DRAINED to zero
+    (DEBT-220, 2026-09-08): 24 commands widened to the glob and 7 marked
+    `# doc_check: current-boot` because they read ONE boot on purpose. The gate that
+    keeps it there is
+    `tests/audit/test_no_design_document_queries_one_log_file_by_accident.py`, which
+    can now exist for the reason it could not before — a property at zero can only
+    fail on the change that breaks it, so it cries wolf on nothing.
+
+    THIS TEST USED TO ASSERT A FLOOR, AND THE FLOOR BLOCKED THE FIX. It required the
+    live report to find at least TWENTY blind commands, written to catch a detector
+    that quietly narrows (it had narrowed twice while being written: the first regex
+    required the command word BEFORE the filename and missed
+    `cat …/stackowl.jsonl | jq`, reporting 14). The intent was right and the SHAPE was
+    wrong — pinning a defect COUNT means the guard fires the moment somebody fixes the
+    defect, and it cannot tell "the detector narrowed" from "the corpus was cleaned".
+    It fired exactly that way when DEBT-220 drained it.
+
+    So it now asserts the DETECTOR'S BEHAVIOUR against a known-bad fixture instead of
+    asserting the world is still dirty. A positive control cannot rot, and it catches
+    the narrowing this was built for — including the exact `cat …| jq` shape that
+    slipped past the first regex.
     """
 
     @pytest.mark.tripwire
-    def test_the_report_names_the_commands_that_are_actually_there(self) -> None:
+    def test_the_report_still_has_a_section_for_this(self) -> None:
         out = subprocess.run(
             [sys.executable, str(_ROOT / "scripts" / "doc_check.py")],
             cwd=_ROOT, capture_output=True, text=True, timeout=300,
@@ -448,15 +478,37 @@ class TestTheSingleLogFileReportSeesTheRealCorpus:
             "doc_check no longer reports single-log-file queries, so a check that can "
             f"only ever return 0 reads like one that passed:\n{out.stdout[-1500:]}"
         )
-        m = re.search(r"BLIND AFTER MIDNIGHT — (\d+) Verification command", out.stdout)
-        assert m, f"the report lost its count:\n{out.stdout[-1200:]}"
-        assert int(m.group(1)) >= 20, (
-            f"only {m.group(1)} single-log commands found; FORTY-SEVEN across 23 "
-            "documents were measured on 2026-09-07. A detector that quietly narrows is "
-            "the failure this file exists to prevent — and this one narrowed TWICE while "
-            "being written: the first regex required the command word BEFORE the "
-            "filename and missed `cat …/stackowl.jsonl | jq`, reporting 14"
+
+    @pytest.mark.tripwire
+    def test_the_detector_still_finds_a_blind_command_when_there_is_one(self) -> None:
+        """THE POSITIVE CONTROL. A silent detector and a clean corpus look identical,
+        and only this can tell them apart."""
+        doc_check = _load_doc_check()
+        planted = "\n".join([
+            "```bash",
+            "grep 'x' ~/.stackowl/logs/stackowl.jsonl",
+            "cat ~/.stackowl/logs/stackowl.jsonl | jq -r '.msg'",
+            "```",
+        ])
+        found = doc_check._single_log_queries(planted)  # noqa: SLF001
+        assert len(found) == 2, (
+            f"the detector found {len(found)} of 2 planted blind commands. The second "
+            f"is the `cat …| jq` shape that an earlier version of this regex missed, "
+            f"which is why it is planted here rather than trusted: {found}"
         )
+
+    @pytest.mark.tripwire
+    def test_the_detector_honours_the_deliberate_marker_and_counts_it(self) -> None:
+        """The opt-out must EXCLUDE from the defect list and APPEAR in its own count —
+        an exclusion nothing reports is indistinguishable from a detector going blind."""
+        doc_check = _load_doc_check()
+        marked = (
+            "```bash\n"
+            f"grep 'x' ~/.stackowl/logs/stackowl.jsonl  # {doc_check._ON_PURPOSE}\n"  # noqa: SLF001
+            "```"
+        )
+        assert doc_check._single_log_queries(marked) == []  # noqa: SLF001
+        assert doc_check._on_purpose_queries(marked) == 1  # noqa: SLF001
 
     def test_it_does_not_flag_the_glob(self) -> None:
         """The other direction. A detector that also matched `stackowl*.jsonl` would
