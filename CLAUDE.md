@@ -224,8 +224,10 @@ is a failing test only after you have checked it is not merely slow.** `tests/db
 is minutes, not seconds; I recorded it as a hang at a 250s timeout and was wrong.
 
 **Its mechanism, re-measured 2026-09-05, because this line used to state it
-wrongly.** It said "102 tests, each replaying all 128 migrations". There are **136**
-migrations, and the cost is not one replay per test but **46 explicit
+wrongly.** It said "102 tests, each replaying all 128 migrations". There are more than
+that — read the live count from `ls src/stackowl/db/migrations/*.sql | wc -l`, because this
+sentence has now been wrong twice — and the cost is not one replay per test but **46
+explicit
 `MigrationRunner(` sites inside `tests/db`**. That distinction matters to anyone
 trying to make it faster: **`tests/_schema_template.py` already exists** — build the
 schema once, copy it per test — and **120 files already use it**, while **22 files

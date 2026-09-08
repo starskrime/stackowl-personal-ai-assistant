@@ -301,6 +301,185 @@ def test_a_neighbouring_sentence_does_not_clear_a_wrong_one() -> None:
     )
 
 
+# ---------------------------------------------------------------------------------------
+# THE SECOND OWNED NUMBER. Everything above is about one number; this is the generalisation
+# a panel lens asked for and the evidence that it was right to ask.
+#
+# MEASURED 2026-09-07, immediately after the baselines were cleaned: the MIGRATION COUNT is
+# the worse live case. There are 138 `.sql` files, highest id `0139`, and of the SIX
+# sentences in this corpus that state a migration count, **FIVE disagreed** — against zero
+# for the baselines. They state 90, 135 and 136: three different wrong answers.
+#
+# AND THE MAP CONTRADICTS ITSELF IN ONE FILE. `REFERENCE_MAP.md:947` says "pool + 90
+# migrations"; `REFERENCE_MAP.md:1882` says "there are **136** migrations, not 90". The
+# correction was written into the same document as the error and never edited the error.
+# `D11.1.md:22` then quotes it a third time — *"The map said 90 migrations. There are 135.
+# Corrected."* — and the map still said 90, while 135 had itself gone stale. Each
+# correction minted the next generation of wrong number without fixing the original. That
+# is the cause this whole file exists for, and it is why the cure has to be "ask the
+# owner", never "correct the copy".
+#
+# THE COUNT AND THE ID ARE TOLD APART BY POSITION, not by a word list. A count PRECEDES the
+# plural noun ("138 migrations"); an id FOLLOWS the singular ("migration 0110"). Without
+# that distinction the rule flags every legitimate reference to a specific migration —
+# measured, 14 sentences, almost all of them `0102`/`0107`/`0110`/`0136` id references
+# doing nothing wrong.
+_MIGRATIONS = _ROOT / "src" / "stackowl" / "db" / "migrations"
+
+#: "138 migrations" — a count, because it precedes the plural noun.
+_MIGRATION_COUNT = re.compile(r"\*{0,2}(\d{2,4})\*{0,2}\s+migrations\b", re.I)
+#: "there are 135" — only a claim when its paragraph is about migrations; alone it means
+#: nothing, which is why this one is resolved against the PARAGRAPH and the form above is
+#: not. `D11.1` splits exactly this way: the subject in one sentence, the number in the next.
+_THERE_ARE = re.compile(r"there are \*{0,2}(\d{2,4})\*{0,2}", re.I)
+#: "highest `0139`" — the other number the directory owns.
+_HIGHEST = re.compile(r"highest\s+`?(\d{4})`?", re.I)
+_MIGRATION_SUBJECT = re.compile(r"\bmigrations\b", re.I)
+
+
+def _migration_owner() -> tuple[str, str]:
+    """(count, highest id) read from the directory that owns them."""
+    names = sorted(p.name for p in _MIGRATIONS.glob("*.sql"))
+    return str(len(names)), names[-1][:4]
+
+
+def _migration_claims(text: str) -> list[tuple[int, str, set[str]]]:
+    """(line_no, sentence, claimed numbers) for every migration COUNT claim in `text`.
+
+    ONE PREDICATE, asked by the corpus sweep and by the pinned-shape tests. It is factored
+    because I wrote this file's other shared predicate for exactly this reason and then
+    made the same mistake again twenty minutes later: a test that reimplemented the
+    paragraph rule locally stayed green while the real function had it mutated away. Two
+    copies of one rule, in the file whose subject is two copies of one rule.
+    """
+    out: list[tuple[int, str, set[str]]] = []
+    block: list[str] = []
+    start = 1
+    blocks: list[tuple[int, str]] = []
+    for i, line in enumerate(text.splitlines(), 1):
+        if line.strip():
+            if not block:
+                start = i
+            block.append(line)
+        else:
+            if block:
+                blocks.append((start, " ".join(x.strip() for x in block)))
+            block = []
+    if block:
+        blocks.append((start, " ".join(x.strip() for x in block)))
+    for line_no, joined in blocks:
+        # THE ONE PLACE THIS FILE WIDENS SCOPE RATHER THAN NARROWING IT. "There are 135"
+        # means nothing on its own, so it is a claim only when its PARAGRAPH is about
+        # migrations — which is how D11.1's number was caught, the subject being in the
+        # previous sentence. The "138 migrations" form is self-contained and needs none of
+        # this; the asymmetry is in the shape of the claim, not in the prose.
+        about = bool(_MIGRATION_SUBJECT.search(joined))
+        for sentence in _SENTENCE.split(joined):
+            claimed = set(_MIGRATION_COUNT.findall(sentence))
+            if about:
+                claimed |= set(_THERE_ARE.findall(sentence))
+                claimed |= set(_HIGHEST.findall(sentence))
+            if claimed:
+                out.append((line_no, sentence, claimed))
+    return out
+
+
+def _migration_disagreements() -> tuple[int, list[str]]:
+    count, highest = _migration_owner()
+    seen = 0
+    bad: list[str] = []
+    for path in _tracked_markdown():
+        rel = str(path.relative_to(_ROOT))
+        for line_no, sentence, claimed in _migration_claims(
+            path.read_text(encoding="utf-8", errors="ignore")
+        ):
+            seen += 1
+            if _DATED.search(sentence):
+                continue
+            wrong = sorted(claimed - {count, highest})
+            if wrong:
+                bad.append(f"{rel}:~{line_no} states {wrong} — {sentence[:120]}")
+    return seen, bad
+
+
+@pytest.mark.tripwire
+def test_no_document_states_a_migration_count_the_directory_does_not_have() -> None:
+    seen, bad = _migration_disagreements()
+    count, highest = _migration_owner()
+    assert not bad, (
+        f"{len(bad)} migration-count claim(s) disagree with the directory "
+        f"({count} files, highest {highest}). Do not restate a number the tree owns — "
+        "point at it, or date the sentence if it is a record:\n  " + "\n  ".join(bad)
+    )
+    assert seen >= 3, f"only {seen} migration-count claims seen — the rule has gone blind"
+
+
+@pytest.mark.tripwire
+def test_a_specific_migration_id_is_not_read_as_a_count() -> None:
+    """`migration 0110` is a reference, not a claim about how many there are.
+
+    Measured: without the position rule, 14 sentences flag and nearly all are legitimate
+    id references. A guard that fires on correct work is the failure this repo pays for.
+    """
+    for sentence in (
+        "Migration 0110 removed a column for the same reason.",
+        "It was first written as migration `0137`, and the first behavioural test failed.",
+        "`skills` table (migration 0107) | the curator moves it",
+    ):
+        assert not _MIGRATION_COUNT.findall(sentence), sentence
+
+
+@pytest.mark.tripwire
+def test_it_catches_the_migration_counts_that_were_wrong() -> None:
+    """The five real sites, verbatim. 138 files, highest `0139`."""
+    count, highest = "138", "0139"
+    for sentence in (
+        "**StackOwl.** SQLite with pool + 90 migrations, `conversations`/`messages`.",
+        "There are **136** migrations, and the cost is not one replay per test.",
+        "there are **136** migrations, not 90 (all applied, highest 0136);",
+        "**The map said 90 migrations.",
+    ):
+        claimed = set(_MIGRATION_COUNT.findall(sentence)) | set(_HIGHEST.findall(sentence))
+        assert claimed - {count, highest}, f"not flagged: {sentence!r}"
+
+
+@pytest.mark.tripwire
+def test_the_migration_owner_reads_the_directory_rather_than_a_number() -> None:
+    """Kills the hardcode, which the corpus sweep cannot.
+
+    A clean corpus and a guard reading the WRONG owner look identical from outside — the
+    exact failure DEBT-208 was about, recurring inside the guard written for it. Mutating
+    `_migration_owner` to return a fixed 136 left all sixteen tests green, because no
+    document states a count any more. So this asserts the RELATION to the directory, by a
+    different route than the function takes, and never the value — the count is free to
+    grow and must.
+    """
+    count, highest = _migration_owner()
+    on_disk = [f for f in _MIGRATIONS.iterdir() if f.suffix == ".sql"]
+    assert int(count) == len(on_disk), f"{count} claimed, {len(on_disk)} .sql files present"
+    assert any(f.name.startswith(highest) for f in on_disk), (
+        f"highest id {highest!r} names no file in {_MIGRATIONS}"
+    )
+
+
+@pytest.mark.tripwire
+def test_a_count_in_a_following_sentence_is_still_a_claim() -> None:
+    """The D11.1 shape, and the only test that keeps the paragraph subject alive.
+
+    `**The map said 90 migrations. There are 135.** Corrected.` splits into two sentences:
+    the subject is in the first, the number in the second. "There are 135" alone means
+    nothing, so it is resolved against the PARAGRAPH — the one place this file deliberately
+    widens scope rather than narrowing it, and it is why 135 was caught at all. Mutating
+    that away left every other test green.
+    """
+    doc = "**The map said 90 migrations. There are 135.** Corrected.\n"
+    found: set[str] = set()
+    for _, _, claimed in _migration_claims(doc):
+        found |= claimed
+    assert "135" in found, f"the following-sentence count was not seen: {sorted(found)}"
+    assert "90" in found, f"the in-sentence count was not seen: {sorted(found)}"
+
+
 @pytest.mark.tripwire
 def test_the_gate_still_states_both_baselines_as_numbers() -> None:
     """The owner must remain parseable, or the guard above silently has nothing to compare.

@@ -947,7 +947,9 @@ the very decay signal that would retire it. See `designs/D10.7.md`.
 ### D11.1 · Session store — `PARITY`
 **Hermes.** `hermes_state.py` — `SessionDB`, SQLite **WAL**, source tagging per session
 (`cli`/`telegram`/…), model config recorded per session.
-**StackOwl.** SQLite with pool + 90 migrations, `conversations`/`messages`.
+**StackOwl.** SQLite with pool + a migration runner, `conversations`/`messages`. (The
+count is owned by `src/stackowl/db/migrations/` — `ls src/stackowl/db/migrations/*.sql | wc -l`. This line said
+**90** from 2026-07-25 until 2026-09-07, while the directory went to 138.)
 **Ask.** None.
 **CONFIRMED 2026-09-04 — parity holds on all three named properties, and the count was
 stale.** WAL: set by the pool (`PRAGMA journal_mode=WAL`) AND persistent in the live file
@@ -1881,11 +1883,17 @@ because `cost_records` has no column naming the code path — which is exactly w
 
 ### D18.9 · Migrations — `AHEAD`
 **Hermes.** No migration framework visible; schema evolves in `hermes_state.py`.
-**StackOwl.** 90 idempotent SQL migrations with a runner.
+**StackOwl.** Idempotent SQL migrations with a runner; the count is owned by
+`src/stackowl/db/migrations/` (`ls src/stackowl/db/migrations/*.sql | wc -l`). [CORRECTED 2026-09-07 — this said
+**90**, and D18.9's own correction below said 136 without ever editing this line. One
+document, two numbers, both wrong.]
 **Ask.** Keep.
 **VERIFIED 2026-09-05 — KEPT, AND VERIFYING IT FOUND THE HALF THAT WAS MISSING.** Two
-specifics are stale: there are **136** migrations, not 90 (all applied, highest 0136); and
-"idempotent" describes the RUNNER, not the SQL — 68 of the 136 use `ALTER TABLE`, which
+specifics are stale: as of 2026-09-05 there were **136** migrations, not 90 (all applied,
+highest `0136`) — and on 2026-09-07 that reading is itself a record, the directory holding
+**138**, highest `0139`; read the live count from
+`ls src/stackowl/db/migrations/*.sql | wc -l`. And as of 2026-09-05
+"idempotent" describes the RUNNER, not the SQL — 68 files use `ALTER TABLE`, which
 SQLite cannot re-run, so safety comes from `_apply` skipping any version already in the
 ledger. **THE DEFECT: `_apply` has always written `sha256(sql)` into
 `schema_migrations.checksum` and NOTHING in src/ ever read it back.** An applied migration is

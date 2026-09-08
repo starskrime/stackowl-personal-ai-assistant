@@ -315,6 +315,70 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT210_2026_09_07_the_correction_minted_the_next_wrong_number_and_left_the_first:
+    map_check: >-
+      No mapped item — "The ground is clear." Evidence-led, and it is DEBT-209's cause
+      applied to the number a panel lens measured as the WORSE live case.
+    EXIT_CONDITION_WRITTEN_BEFORE_STARTING: >-
+      The migration count is stated in no live sentence that disagrees with the directory
+      that owns it; the guard shipped in DEBT-209 grows an OWNER TABLE rather than a third
+      bespoke file; it is proven to catch every real site; mutants killed; gated and pushed.
+    THE_POPULATION_WAS_BIGGER_THAN_THE_PANEL_SAID_AND_I_MEASURED_IT_MYSELF: >-
+      Future-proof reported three wrong restatements. MEASURED against the directory —
+      138 `.sql` files, highest `0139` — there are SIX count-claim sentences in the live
+      corpus and FIVE disagreed, stating 90, 135 and 136: three different wrong answers.
+      One site (`REFERENCE_MAP.md:1892`) was cited by nobody. I verified the owner myself
+      before believing any of it, because two panel numbers had already been wrong today.
+    THE_SHAPE_IS_WHY_THIS_OUTRANKS_THE_BASELINES: >-
+      `REFERENCE_MAP.md` CONTRADICTS ITSELF IN ONE FILE — line 950 said "pool + 90
+      migrations" while line 1892 said "there are 136 migrations, NOT 90". The correction
+      was written into the same document as the error and never edited the error. `D11.1`
+      then quoted it a third time — "The map said 90 migrations. There are 135."
+      **Corrected.** — and the map still said 90 six weeks later, in TWO places, while 135
+      had itself gone stale. Each correction MINTED THE NEXT WRONG NUMBER AND LEFT THE
+      FIRST. That is why the cure has to be "ask the owner", never "correct the copy":
+      correcting a copy is what produced three of these five.
+    THE_COUNT_AND_THE_ID_ARE_TOLD_APART_BY_POSITION_NOT_BY_A_WORD_LIST: >-
+      A count PRECEDES the plural noun ("138 migrations"); an id FOLLOWS the singular
+      ("migration 0110"). Without that, the rule flags 14 sentences and nearly all are
+      legitimate references to `0102`/`0107`/`0110`/`0136`. With it: 6 claims, 5 defects,
+      0 false positives. Same discipline as DEBT-208 — read the STRUCTURE, not the words.
+    AND_ONE_PLACE_THIS_FILE_DELIBERATELY_WIDENS_SCOPE_INSTEAD_OF_NARROWING: >-
+      "There are 135" is meaningless alone, so THAT form resolves against the PARAGRAPH
+      while "138 migrations" resolves against the sentence. D11.1 splits exactly there —
+      subject in one sentence, number in the next — and the asymmetry is in the SHAPE of
+      the claim, not in the prose. It is the opposite call from DEBT-208 and for the same
+      reason: scope the claim to what actually carries it.
+    I_MADE_THE_TWO_COPIES_DEFECT_TWICE_IN_THE_FILE_ABOUT_TWO_COPIES: >-
+      Three mutants; N2 died at once, N1 and N3 SURVIVED. N1 (hardcode the owner to 136)
+      survived because a clean corpus and a guard reading the WRONG owner look identical —
+      DEBT-208's exact lesson, recurring inside the guard written for it. N3 survived
+      because the test I added for it REIMPLEMENTED the paragraph rule locally instead of
+      asking for it, so mutating the real function changed nothing — the same
+      two-copies-of-one-rule defect I had already fixed once in this same file, twenty
+      minutes earlier, with a docstring about it. Both cured by factoring
+      `_migration_claims` and asserting the owner's RELATION to the directory by a
+      different route than the function takes. Three of three now.
+    changes: >-
+      tests/audit/test_a_documented_baseline_matches_the_gate_that_enforces_it.py (grown
+      from one owned number to an OWNER TABLE: 13 -> 18 tests, three mutants killed);
+      docs/reference-mapping/REFERENCE_MAP.md (both wrong counts, in two sections),
+      docs/reference-mapping/designs/D11.1.md, docs/reference-mapping/designs/D18.9.md and
+      CLAUDE.md — every live sentence now points at
+      `ls src/stackowl/db/migrations/*.sql | wc -l` or is dated as the record it is.
+    THE_FUTURE_PROOF_OBJECTION_FROM_DEBT_209_IS_NOW_ANSWERED: >-
+      It argued a third bespoke number-guard was the "never a second engine" defect and
+      asked for an owner table. Recorded then rather than acted on; acted on now. Checked
+      first that the existing `test_a_doc_does_not_pin_a_count_that_grows_by_design` could
+      host it — it cannot: it is scoped to `expect:` pytest counts in Verification
+      sections and has no owner mechanism. So the table grew inside DEBT-209's guard
+      rather than into a new file.
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: no_change_needed, document: done}
+    validate_no_change_needed_because: >-
+      Nothing in `src/` changed and nothing runs at runtime — a documentation correction
+      and a static tripwire. `./start.sh` would prove nothing, so this is
+      `no_change_needed` rather than a `done` with no evidence.
   DEBT209_2026_09_07_a_number_with_one_owner_restated_on_three_instruction_surfaces:
     map_check: >-
       No mapped item — "The ground is clear." Evidence-led. Found by READING the three §0
