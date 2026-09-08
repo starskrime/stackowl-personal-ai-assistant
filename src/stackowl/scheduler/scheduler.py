@@ -28,6 +28,7 @@ from stackowl.scheduler.scheduler_helpers import (
     reap_stale_running,
     reap_timed_out_running,
     row_to_job,
+    schedule_interval_seconds,
     write_audit,
 )
 from stackowl.scheduler.scheduler_mutations import _won_transition, run_now, update_job
@@ -138,6 +139,17 @@ def _bind_job_trace(job: Any) -> Any:
         or "internal"
     )
     return TraceContext.start(session_key=f"job:{job.job_id}", channel=str(channel))
+
+
+#: One day, in seconds — the boundary at which a dropped slot costs a job its
+#: whole occurrence rather than one of many.
+#:
+#: NOT A TUNABLE. This programme spent an arc removing ~48 numeric knobs, and the
+#: distinction that survived it is between a value a deployment could reasonably
+#: disagree about and one it could not. A box may want a different replay WINDOW;
+#: it cannot want a different length of day. Expressed here so the rule reads as
+#: the sentence it is — "does this job run again today?" — instead of as 86400.
+_ONE_DAY_SECONDS = 86400.0
 
 
 class JobScheduler(SupervisedTask):
@@ -733,6 +745,30 @@ class JobScheduler(SupervisedTask):
         """
         return not bool(job.params.get("run_once"))
 
+    @staticmethod
+    def _loses_an_occurrence(job: Job) -> bool:
+        """True when dropping this job's missed slot costs it the whole day.
+
+        Every dropped slot costs exactly ONE occurrence; what differs is what
+        fraction of the job's work that is. At `every 20m` it is one of 72 and the
+        job runs again within the hour. At `daily@` it is all of it, and the
+        operator-visible fact is that the job DOES NOT RUN AGAIN TODAY. One day is
+        therefore the line, and it is a judgement stated rather than a knob: it is
+        not tunable, because a deployment cannot have a different opinion about
+        what a day is.
+
+        NOT the schedule's SPELLING. The tempting shortcut is form —
+        `daily@`/cron replays, `every N` does not — and `*/5 * * * *` is
+        cron-shaped while firing every five minutes. `schedule_interval_seconds`
+        reads the interval from any accepted form and cannot make that mistake.
+
+        An unparseable schedule yields None and this returns False, leaving the
+        previous behaviour exactly as it was: a rule that cannot read the cadence
+        must not invent one.
+        """
+        period = schedule_interval_seconds(job.schedule)
+        return period is not None and period >= _ONE_DAY_SECONDS
+
     async def _rearm_one_shot(
         self, job: Job, last_error: str | None, failure_class: str
     ) -> None:
@@ -1138,9 +1174,26 @@ class JobScheduler(SupervisedTask):
             # can be deferred forever by repeated restarts and never actually be
             # delivered. Always replay an overdue one-shot (bounded by the same
             # window), regardless of replay_missed — deferring it is data loss,
-            # not a benign reschedule, unlike a recurring job which gets another
-            # occurrence soon regardless.
-            if (job.replay_missed or not self._is_recurring(job)) and inside_window:
+            # not a benign reschedule.
+            #
+            # THE CLAUSE THAT USED TO END THAT SENTENCE WAS WRONG, and it cost two
+            # occurrences of the operator's own daily work. It read "unlike a
+            # recurring job which gets another occurrence soon regardless" — true
+            # of `every 20m`, false of `daily@`, and applied to the whole class.
+            # MEASURED 2026-09-08 on the boot at 02:29 after a 7h21m stall: two
+            # overdue `daily@` jobs, one `recover()` call, opposite outcomes,
+            # decided by a per-job boolean that only ONE of the two creation sites
+            # sets (`tools/scheduling/cronjob.py` does; the scheduler assembly that
+            # seeds the platform's own jobs never passes the field). 3 of the 15
+            # enabled `daily@` jobs carried it; `check_in` and
+            # `owl_lifecycle-jobmarket` were not among them and each lost their
+            # 2026-09-07 run. So the policy is DERIVED from the schedule here
+            # instead of remembered at each creation site — nothing to forget.
+            loses_an_occurrence = self._loses_an_occurrence(job)
+            should_replay = (
+                job.replay_missed or not self._is_recurring(job) or loses_an_occurrence
+            )
+            if should_replay and inside_window:
                 log.scheduler.info(
                     "[scheduler] recover: replaying missed job",
                     extra={"_fields": {
@@ -1154,6 +1207,11 @@ class JobScheduler(SupervisedTask):
                         # D15.6 shape.
                         "recurring": self._is_recurring(job),
                         "replay_missed": job.replay_missed,
+                        # WHICH OF THE THREE REASONS. Without it the flag, the
+                        # one-shot rule and the derived cadence rule are one
+                        # undifferentiated count, and any check for "the derived
+                        # rule works" would be satisfied by a one-shot.
+                        "loses_an_occurrence": loses_an_occurrence,
                     }},
                 )
                 await self._run_job(job)
@@ -1163,6 +1221,34 @@ class JobScheduler(SupervisedTask):
                 await self._db.execute(
                     "UPDATE jobs SET next_run_at = ? WHERE job_id = ?",
                     (next_run, job.job_id),
+                )
+                # THE DROP WAS SILENT, and that is half the defect. MEASURED over
+                # 749 `recover: exit` records: 1,553 overdue occurrences seen, 10
+                # replayed, and the other 1,543 advanced with NO log line at all,
+                # because only the replay branch above logged. Work the platform
+                # owed stopped existing and no instrument could say so.
+                #
+                # WARNING, not INFO, when the job WOULD have been replayed and the
+                # window refused it: that is the platform knowingly dropping work
+                # it owed. A benign skip by a job that recurs many times an hour is
+                # a different fact and reads at INFO.
+                overdue_s = (now - missed_at).total_seconds()
+                emit = log.scheduler.warning if should_replay else log.scheduler.info
+                emit(
+                    "[scheduler] recover: missed occurrence dropped — advanced to "
+                    "the next slot",
+                    extra={"_fields": {
+                        "job_id": job.job_id,
+                        "handler": job.handler_name,
+                        "schedule": job.schedule,
+                        "overdue_seconds": round(overdue_s, 1),
+                        "next_run": next_run,
+                        # The two facts that separate a lost day from a skipped
+                        # tick: would the cadence have earned a replay, and was it
+                        # the window that refused.
+                        "loses_an_occurrence": loses_an_occurrence,
+                        "inside_window": inside_window,
+                    }},
                 )
         log.scheduler.info(
             "[scheduler] recover: exit",

@@ -1287,8 +1287,12 @@ with a header/footer frame so role alternation stays intact.
 catchup semantics need confirming.
 **Ask.** WALKED 2026-09-04. (1) Hard interrupt: PRESENT — `asyncio.wait_for(..., 1200s)` vs their
 180s, defensible because dispatch is concurrent so a long handler never delays the next tick.
-(2)+(3) Catchup/grace: PRESENT but DIFFERENT — a per-job `replay_missed` flag that coalesces to
-<=1 catch-up, rather than a computed window clamped 120s-2h. (4) `skip_memory`: ABSENT, zero hits
+(2)+(3) Catchup/grace: PRESENT but DIFFERENT — <=1 catch-up rather than a computed window
+clamped 120s-2h. RE-WALKED 2026-09-08: it is no longer "a per-job flag". The flag only WIDENS
+now; the default is derived from the schedule's own period, so a job recurring at most once a
+day replays its missed slot and a faster one does not. The flag shape is what let `check_in`
+lose its 2026-09-07 occurrence — 3 of 15 `daily@` jobs set it, and the 12 that did not were
+the platform's own. (4) `skip_memory`: ABSENT, zero hits
 — a scheduled job runs the full pipeline; left alone as an unmeasured optimisation. (5) Delivery
 mirroring: DIFFERENT, and the one with a moving number — we mirror into the operator's lane, and
 33 of 34 lanes have zero empty-user rows while his has 30 of 60 with a longest consecutive-assistant

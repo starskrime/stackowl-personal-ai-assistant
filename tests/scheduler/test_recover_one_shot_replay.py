@@ -4,9 +4,18 @@ Live incident (2026-07-08): a cronjob "in 5m" reminder sat overdue with
 ``replay_missed=False`` (the default). Every platform restart's ``recover()``
 took the "just reschedule" branch, recomputing the RELATIVE "in 5m" schedule
 fresh from that restart's boot time — pushing the reminder further into the
-future without ever firing it. A recurring job losing a missed occurrence is
-benign (it fires again soon); a one-shot losing it is the user's request
+future without ever firing it. A one-shot losing its slot is the user's request
 silently vanishing.
+
+THE SENTENCE THAT USED TO SIT HERE WAS WRONG and is corrected rather than
+deleted, because it is the reason a second defect shipped: "a recurring job
+losing a missed occurrence is benign (it fires again soon)". True of `every 20m`
+and false of `daily@`, and applied to the whole class — see
+`test_a_missed_daily_occurrence_is_not_silently_dropped.py`, where two of the
+platform's own daily jobs are measured losing their 2026-09-07 run. `recover()`
+now derives the replay decision from the schedule's period; the control below
+still holds because a 20-minute job is on the benign side of that line, which is
+exactly the case the original sentence was written from.
 """
 
 from __future__ import annotations

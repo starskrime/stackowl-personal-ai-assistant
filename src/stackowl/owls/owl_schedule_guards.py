@@ -14,11 +14,13 @@ No per-user scheduled-owl quota and no consecutive-failure circuit breaker
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
-from stackowl.infra.observability import log
-from stackowl.scheduler.scheduler_helpers import parse_every
-from stackowl.tools.scheduling.cron_helpers import parse_daily_hhmm
+# `schedule_interval_seconds` LIVES IN `scheduler_helpers` NOW, beside
+# `compute_next_run`, and is imported rather than restated. It answers a
+# question about the SCHEDULER's schedule language, and the scheduler needs it
+# too (`recover` derives a missed job's replay policy from the period). Two
+# implementations of one cadence rule is the shape this repo pays for most;
+# importing it keeps the name this module has always exported.
+from stackowl.scheduler.scheduler_helpers import schedule_interval_seconds
 
 # The provenance marker stamped into a scheduled owl's projected ``jobs`` row
 # (``params['source']``). Reconcile only ever touches rows carrying it; a
@@ -33,38 +35,6 @@ MIN_SCHEDULED_INTERVAL_SECONDS = 300.0
 # No per-user scheduled-owl quota and no consecutive-failure circuit breaker
 # (owner decision 2026-07-22) — a failing recurring job keeps re-arming and
 # alerting instead of being permanently paused (see scheduler/scheduler.py).
-
-
-def schedule_interval_seconds(schedule: str) -> float | None:
-    """Best-effort effective interval of a schedule expression, in seconds.
-
-    Handles every accepted scheduler form: ``daily@HH:MM`` (one day), the
-    ``every <n><unit>`` token (via the shared :func:`parse_every`), and a 5-field
-    cron (the delta between its next two firings). Returns ``None`` when the
-    expression is unparseable — the caller then declines to judge it (fail-open;
-    an unparseable schedule is rejected earlier by ``is_valid_schedule``).
-    """
-    text = schedule.strip()
-    if text.lower().startswith("daily@"):
-        return 86400.0 if parse_daily_hhmm(text) is not None else None
-    every = parse_every(text)
-    if every is not None:
-        return every.total_seconds()
-    try:
-        from croniter import croniter  # type: ignore[import-untyped]
-
-        base = datetime.now(UTC)
-        it = croniter(text, base)
-        first: datetime = it.get_next(datetime)
-        second: datetime = it.get_next(datetime)
-        return (second - first).total_seconds()
-    except Exception as exc:  # B5 — never raise out of a pure guard
-        log.scheduler.warning(
-            "[owls] schedule_interval_seconds: unparseable schedule",
-            exc_info=exc,
-            extra={"_fields": {"schedule": text}},
-        )
-        return None
 
 
 def interval_floor_error(schedule: str) -> str | None:

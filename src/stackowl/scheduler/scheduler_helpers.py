@@ -166,6 +166,51 @@ def _next_local_hhmm(
     return candidate.astimezone(UTC).isoformat()
 
 
+def schedule_interval_seconds(schedule: str) -> float | None:
+    """Best-effort effective interval of a schedule expression, in seconds.
+
+    MOVED HERE 2026-09-08 from `owls/owl_schedule_guards.py`, which still
+    exports the name. It was written for the scheduled-owl interval FLOOR and
+    reads nothing but the scheduler's own schedule language, so it sat one
+    import away from the module that defines that language — and `recover`
+    could not reach it without the scheduler importing `owls`, which would be
+    a cycle (`owl_schedule_guards` already imports this module).
+
+    Handles every accepted scheduler form: ``daily@HH:MM`` (one day), the
+    ``every <n><unit>`` token (via the shared :func:`parse_every`), and a 5-field
+    cron (the delta between its next two firings). Returns ``None`` when the
+    expression is unparseable — the caller then declines to judge it (fail-open;
+    an unparseable schedule is rejected earlier by ``is_valid_schedule``).
+    """
+    # Imported inside the function, matching `compute_next_run` below: this module
+    # is imported by `tools.scheduling` and a module-level import would close the
+    # loop.
+    from stackowl.tools.scheduling.cron_helpers import parse_daily_hhmm
+
+    text = schedule.strip()
+    if text.lower().startswith("daily@"):
+        return 86400.0 if parse_daily_hhmm(text) is not None else None
+    every = parse_every(text)
+    if every is not None:
+        return every.total_seconds()
+    try:
+        from croniter import croniter  # type: ignore[import-untyped]
+
+        base = datetime.now(UTC)
+        it = croniter(text, base)
+        first: datetime = it.get_next(datetime)
+        second: datetime = it.get_next(datetime)
+        return (second - first).total_seconds()
+    except Exception as exc:  # B5 — never raise out of a pure guard
+        log.scheduler.warning(
+            "[scheduler] schedule_interval_seconds: unparseable schedule",
+            exc_info=exc,
+            extra={"_fields": {"schedule": text}},
+        )
+        return None
+
+
+
 def compute_next_run(
     schedule: str, *, tz: str = "UTC", now: datetime | None = None
 ) -> str:
@@ -217,7 +262,7 @@ def compute_next_run(
         )
         return next_iso
     try:
-        from croniter import croniter  # type: ignore[import-untyped]
+        from croniter import croniter  # noqa: PLC0415 — the ignore lives on the first import above
 
         it = croniter(schedule, datetime.now(UTC))
         next_dt: datetime = it.get_next(datetime)

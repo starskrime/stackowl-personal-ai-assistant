@@ -45,6 +45,18 @@ class Job(BaseModel):
     failure_count: int = 0
     last_error: str | None = None
     enabled: bool = True
+    # An EXPLICIT WIDENING of the replay rule, no longer the rule itself.
+    # `JobScheduler.recover` derives the default from the schedule's own period
+    # (`_loses_an_occurrence`): a job that recurs at most once a day replays its
+    # missed slot whether or not this flag is set, because dropping it costs the
+    # whole occurrence. This flag forces a replay for a job that recurs FASTER
+    # than that — which is what `tools/scheduling/cronjob.py` sets it for.
+    #
+    # It used to be the whole policy, and that is why it is written this way now:
+    # a per-job boolean is something every creation site has to remember, and of
+    # the two sites here only one ever did. MEASURED 2026-09-08: 3 of 15 enabled
+    # `daily@` jobs carried it, the other 12 being the platform's own seeded jobs,
+    # and `check_in` lost its 2026-09-07 occurrence in silence.
     replay_missed: bool = False
     primary_channel: str | None = None
     params: dict[str, Any] = Field(default_factory=dict)
