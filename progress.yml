@@ -315,6 +315,102 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT209_2026_09_07_a_number_with_one_owner_restated_on_three_instruction_surfaces:
+    map_check: >-
+      No mapped item — "The ground is clear." Evidence-led. Found by READING the three §0
+      documents this session had skipped; the defect was in the method document itself.
+    EXIT_CONDITION_WRITTEN_BEFORE_STARTING: >-
+      The two lint baselines are stated in exactly ONE place — `scripts/tripwires.sh` —
+      every live instruction surface reads them from it rather than restating them, and a
+      guard fails when any markdown states a baseline that disagrees with the gate. The
+      guard must be shown to catch the PRE-FIX tree; a guard that cannot be shown to catch
+      the thing it was built for is decoration. Gated, committed, pushed.
+    THE_DEFECT_WAS_IN_THE_METHOD_DOCUMENT_ITSELF: >-
+      `scripts/tripwires.sh` owns two lint baselines and refuses a commit that raises
+      either. `docs/reference-mapping/PROCESS.md` — the file §0 tells every item to read
+      before anything else — said the ruff baseline was 39 against a gate of 35, INSIDE a
+      sentence asserting "these are the numbers scripts/tripwires.sh actually gates on"
+      and a note claiming the figure had been corrected on 2026-09-06. A reader following
+      the prose believed they had four findings of headroom on a tree that has ZERO:
+      ruff 35/35, mypy 65/65.
+    MEASUREMENT_LENS_ROUND_0_AND_THE_NUMBER_THAT_DECIDED_IT: >-
+      The gate's values have NEVER changed — 0 changes across the 2 commits that ever
+      touched the file; it was created already at its improved values. What moves is the
+      COUNT it tracks: ruff 46->39->37->35 and mypy 78->65, five transitions. A mean of
+      **12.2 markdown surfaces went stale per transition** (11/12/12/13/13, 61
+      stale-surface-events), essentially the same dozen files each time, every one caught
+      by a human reading or not at all. And **0 guards**: nothing in tests/ or scripts/
+      parsed the gate's numbers, over 30 test files that read something under scripts/.
+      The nearest existing test asserts only that the STRINGS "ruff" and "mypy" appear in
+      the gate body — it would stay green if the gate said `must not rise above 500`.
+    THE_CENSUS_OF_THREE_WAS_ITSELF_WRONG_FOR_THE_FOURTH_TIME: >-
+      I corrected three surfaces and reported three. The Measurement lens found a FOURTH
+      (`SESSION_PROMPT.md` at the repo ROOT — a different file from the one under `docs/`,
+      pinning 35/65 as a first-class claim; it agreed today and is the exact shape that
+      produced the 37 twice) and a FIFTH that actively disagreed: `D01.7.md:62`, "Zero new
+      errors remain against the 78-error pre-existing baseline (`DEBT-8`)" — present
+      tense, no date, against a gate of 65. Same failure as CLAUDE.md's own "the census of
+      five was itself wrong", one layer up, committed inside its own fix.
+    SCOPE_IS_A_SENTENCE_AND_ALL_THREE_CANDIDATES_WERE_MEASURED: >-
+      Line scope catches 2 of 5 — PROCESS.md's number sits on a hard-wrapped line whose
+      subject words are on the neighbours, so a per-line reader sees a number with no
+      subject. Paragraph scope catches 1 of 5 — the wrong sentence sits beside one naming
+      the gate, which clears the whole block. SENTENCES catch 5 of 5. DEBT-208's lesson,
+      arriving from both sides at once: scope a claim to its own span.
+    THE_PANEL_WAS_RIGHT_TWICE_AND_ITS_FIX_BROKE_THE_GUARD_ONCE: >-
+      Stability argued that failing on ANY disagreement is the bypass shape — a baseline
+      may FALL, and DEBT-1 improved four times, so the guard would redden unrelated
+      commits until a dozen documents were re-edited. Adopted: only a number ABOVE the
+      ceiling is a defect, which is also where the harm is. But my first implementation
+      compared against `max(gate)` = 65, so a ruff claim of 37 was measured against the
+      MYPY ceiling and cleared — **recall fell 5 of 5 to 1 of 5, silently**. Caught by
+      re-running the historical control, not by reading. A panel recommendation is a
+      hypothesis; the control is what settles it.
+    AND_I_HAD_TO_CORRECT_MY_OWN_HERMES_CLAIM: >-
+      I wrote that the reference platform "tolerates no pre-existing findings", inferred
+      from a grep that found no prose numbers. Its `pyproject.toml` sets
+      `select = ["PLW1514"]` under "All other lints are intentionally disabled while we
+      wrangle typechecks". It HAS a threshold; it expresses it as CONFIGURATION, which has
+      one owner by construction. That is the stronger lesson and it means this guard does
+      not expire when DEBT-1 drains: `must not rise above 0` would still live in one place
+      and still be liable to restatement.
+    MUTATION_TESTING_LIED_UNTIL_THE_MUTATION_WAS_ASSERTED: >-
+      Three of five mutants first read as SURVIVED. Two of those three had never been
+      applied — `str.replace` is a no-op when the pattern misses, and the shell quoting
+      had mangled it. A mutant that survives because it was never introduced is worse than
+      no mutation testing. With `assert old in s` first: M1 (max not min) and M5 (gate
+      parser blinded) die, M3 (drop the DEBT-id subject) and M4 (drop the ratio guard)
+      die, and M2 (paragraph scope) genuinely survived every test until one was written
+      for it. Five of five now, restored from a file copy, final re-run green at 13.
+    A_DISAGREEMENT_KEPT_RATHER_THAN_AVERAGED: >-
+      Future-proof argued this is a third bespoke number-guard beside two that already
+      encode the shape (`test_a_test_asks_the_constant_instead_of_restating_it`,
+      `test_a_doc_does_not_pin_a_count_that_grows_by_design`) and should be a shared owner
+      table instead. VERIFIED both files exist. I chose a new file anyway: they guard
+      different populations (a test copying a code constant; a doc pinning a count that
+      GROWS BY DESIGN with no single owner), and one-audit-file-per-defect-shape is this
+      repo's established convention with four precedents from the last three days. The
+      objection is recorded rather than resolved.
+    THE_BIGGER_POPULATION_IS_ELSEWHERE_AND_IS_NOT_THIS_ITEM: >-
+      Future-proof measured the MIGRATION COUNT as a worse live case than the baselines:
+      138 migrations on disk (highest 0139) against `REFERENCE_MAP.md:950` "90
+      migrations", `D11.1.md:22` "there are 135", `D18.9.md:12` and `CLAUDE.md:227` "136"
+      — THREE wrong restatements live right now, one of them 48 out, versus ZERO for the
+      baselines after this item. Filed as the next item, not folded in.
+    changes: >-
+      tests/audit/test_a_documented_baseline_matches_the_gate_that_enforces_it.py (new, 13
+      tests, five mutants killed); docs/reference-mapping/PROCESS.md,
+      docs/reference-mapping/SESSION_PROMPT.md, docs/reference-mapping/NEXT_SESSION.md,
+      SESSION_PROMPT.md (root) and CLAUDE.md — every live surface now reads the numbers
+      from the gate instead of restating them; docs/reference-mapping/designs/D01.7.md
+      (the 78-error claim corrected); docs/reference-mapping/designs/D05.8.md (restamped
+      `Last verified` against c5c8e3dd — DOC_STANDARD rule 7, missed when that edit landed).
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: no_change_needed, document: done}
+    validate_no_change_needed_because: >-
+      Nothing in `src/` changed and nothing runs at runtime — the deliverable is a
+      documentation correction and a static tripwire. `./start.sh` would prove nothing
+      here, so the stage is `no_change_needed` rather than a `done` with no evidence.
   DEBT208_2026_09_07_the_report_declared_drained_was_reading_zero_because_it_was_blind:
     map_check: >-
       No mapped item — "The ground is clear." Evidence-led: the detector filed by DEBT205

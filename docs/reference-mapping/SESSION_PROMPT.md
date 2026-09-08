@@ -131,8 +131,11 @@ STOP AND ESCALATE — do not decide these alone. Write the brief into
 
 RUNNING UNATTENDED — the rules that only matter when nobody is watching:
 
-  - ruff and mypy baselines are 37 and 65 in src/. Check BOTH before every commit;
-    neither may rise. If your change raises one, that is the change's problem to fix.
+  - ruff and mypy baselines in src/ may not rise. DO NOT trust a number written here:
+    `scripts/tripwires.sh` owns them and this line said 37 while the gate refused
+    anything above 35. Read them from the gate —
+    `grep -n 'must not rise above' scripts/tripwires.sh` — and check BOTH before every
+    commit. If your change raises one, that is the change's problem to fix.
   - Real suite durations on this box: tests/providers ~185s, tests/pipeline ~740s,
     tests/tools ~990s, tests/tools/meta ~250s, tests/scheduler ~1200s. Under-budgeting
     produces exit 143, which is SIGTERM from your own timeout and NOT a red test — never

@@ -170,8 +170,13 @@ evidence is `partial` or `blocked` — **never `done`**.
 - **A guard you have not seen fail is not a guard. A skipped test is not evidence.**
 
 **Before you commit**
-- `ruff` **35** / `mypy` **65** in `src/` are the baselines. [CORRECTED 2026-09-07 — this
-  said ruff 37; it has since improved to 35, and `scripts/tripwires.sh` is the authority.] Check **both**, in the
+- The `ruff` / `mypy` baselines for `src/` are owned by `scripts/tripwires.sh` and are
+  deliberately NOT restated here — read them with
+  `grep -n 'must not rise above' scripts/tripwires.sh`. [CORRECTED 2026-09-07 — this line
+  named the pair, said ruff 37, and was wrong for nine days. MEASURED: the gate's numbers
+  have NEVER changed, while the counts they track moved five times, and a mean of 12.2
+  markdown surfaces went stale per move. A copy that happens to agree today is the shape,
+  not the exception.] Check **both**, in the
   **foreground**, before every commit. Neither may rise. They catch real bugs — an
   undefined name last session would have been a runtime `NameError`.
 - **Run the suites that IMPORT what you changed.**

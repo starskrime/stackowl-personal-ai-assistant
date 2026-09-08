@@ -137,7 +137,9 @@ STANDING RULES
   - Update progress.yml after EVERY stage and run
     `uv run python scripts/progress_lint.py` each time.
   - Commit at sub-story granularity when green; merge to main and push.
-  - ruff baseline in src/ is 37 and mypy is 65. Neither may rise.
+  - the ruff and mypy baselines in src/ may not rise, and as of 2026-09-07 this line
+    USED to name them (37) when the gate refused above 35. Read them from their owner:
+    `grep -n 'must not rise above' scripts/tripwires.sh`.
 
 THE LESSON THAT COST THE MOST LAST SESSION — apply it to JOB 1
   A TEST DOUBLE THAT STOPPED RESEMBLING THE REAL THING hid a whole broken path,

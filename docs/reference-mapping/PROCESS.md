@@ -362,12 +362,34 @@ conversation buffer, recreating the same disease one layer down.
 Pre-existing red is not out of scope by default. When we choose not to fix something now, it goes
 in `known_debt` in `progress.yml` with what it is, the evidence, the decision, and why. Currently:
 `DEBT-1` — pre-existing `ruff` errors in `src/`, in files unrelated to any current item, not
-fixed mid-item because that would violate minimal-diffs. The baseline is now **39** (was 46) and
-`mypy` is **65**; both are checked before and after every change, and neither may rise.
-**These are the numbers `scripts/tripwires.sh` actually gates on** — corrected 2026-09-06,
-when the prose here still said 39/78 against a gate of 35/65. A reader following the prose
-believed they had headroom the gate would refuse: the same two-copies-of-one-rule shape
-as the "it hangs" line four sections up, and as the token-budget defect DEBT-128 records.
+fixed mid-item because that would violate minimal-diffs. Neither baseline may rise.
+
+**DO NOT READ THE NUMBERS HERE — READ THE GATE.** `scripts/tripwires.sh` holds them, on
+the two lines that enforce them:
+
+```bash
+grep -n 'must not rise above' scripts/tripwires.sh
+```
+
+**This paragraph is the worked example of why.** MEASURED 2026-09-07: it said the ruff
+baseline was **39** while the gate refused anything above **35** — and it said so in the
+same breath as
+*"these are the numbers `scripts/tripwires.sh` actually gates on"* and a note claiming the
+figure had been corrected on 2026-09-06. The correction moved one of the two numbers and
+the sentence asserting correctness stayed. A reader following the prose believed they had
+four findings of headroom the gate would refuse.
+
+That is the two-copies-of-one-rule shape — the same one as the "it hangs" line four
+sections up, and as DEBT-128's token budget — and it survived HERE, in the method document
+every item is told to read first, for a day after the sweep that was supposed to end it.
+**MEASURED 2026-09-07:** three live instruction surfaces still stated a wrong baseline
+(this file at 39, and `SESSION_PROMPT.md` and `NEXT_SESSION.md` under `docs/` at 37), while
+NINE design documents (D01.1, D01.2, D01.4, D01.5, D05.1, D05.2, D05.3, D05.5, D05.6)
+had already adopted the right form — *diff against the gate,
+never against a number copied here, because a baseline may FALL and a pinned value then
+reads as failure on a healthy tree.* The documents were right and the instructions were
+wrong. So the cure is not a fourth correction: it is to stop restating a number that has
+one owner.
 
 The test is simple: could someone reading `progress.yml` in six months tell what we knew and what
 we chose? If yes, it is tracked. If it only exists in a chat log, it is lost.

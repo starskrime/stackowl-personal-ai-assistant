@@ -153,8 +153,8 @@ rule is not correcting the rule.** All five surfaces now carry these numbers.
 **AND THE CENSUS OF FIVE WAS ITSELF WRONG — SWEPT 2026-09-07, three days later.** Two
 MORE live surfaces still said the suite hangs: `docs/reference-mapping/designs/D04.1.md`
 ("Never run a bare `pytest` on this box — it hangs") and, worse, **`SESSION_PROMPT.md`**,
-which is the prompt handed to an autonomous session and which also stated the ruff
-baseline as 37 when it is 35. The claim that cost ten red tests was still being handed to
+which is the prompt handed to an autonomous session and which, as of 2026-09-07, also
+stated the ruff baseline as 37 against a gate of 35. The claim that cost ten red tests was still being handed to
 new sessions. The failure is one level up from the one recorded above: the correction was
 applied to a list someone REMEMBERED, not to a set someone SWEPT. Correcting the copies
 you can think of is not correcting the rule either.
