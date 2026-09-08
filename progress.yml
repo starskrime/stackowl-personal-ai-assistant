@@ -315,6 +315,43 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  MEASURED_2026_09_08_the_telegram_canary_is_NOT_a_defect_and_I_proposed_it_as_one_twice:
+    map_check: >-
+      No mapped item. Recorded as a NEGATIVE result so the next loop does not re-open it.
+    WHAT_I_CLAIMED_AND_WHY_IT_WAS_WRONG: >-
+      I twice put this forward as the next item, describing it as "an ERROR that fires
+      repeatedly, proposes nothing, and is contradicted by reality". Every part of that
+      was wrong, and measuring killed three hypotheses in a row.
+    ONE_IT_IS_NOT_CONTRADICTED_BY_REALITY: >-
+      `telegram_canary_send` probes `send_ephemeral` — a muted, self-deleting probe sent by
+      a scheduled job through the IPC gateway link. My user-test message went through the
+      normal REPLY path. Different code paths, so a working reply says nothing about the
+      canary, and I was comparing two unrelated things.
+    TWO_ITS_THRESHOLD_IS_NOT_TIGHTER_THAN_ITS_CADENCE: >-
+      The obvious shape for a permanently-degraded freshness check. Measured:
+      `TELEGRAM_CANARY_STALE_AFTER_S` is DERIVED, never a literal — 20-minute interval x 3
+      missed intervals = 3600s — against a job that runs `every 20m`. The window is three
+      times the cadence, which is the correct relationship.
+    THREE_IT_IS_NOT_STUCK_IT_SELF_HEALED: >-
+      Last `UNHEALTHY subsystems detected` was **02:46:07Z**. The `channel_liveness` row for
+      `telegram_canary` refreshed at **03:10:19Z**, and there has been NO degraded event
+      since. It was legitimately stale — no canary probe ran during the 7h21m outage or
+      across three restarts — and it recovered the moment the next probe confirmed. The
+      alarm was honest and transient, which is what a canary is for.
+    WHAT_REMAINS_WORTH_A_LOOK_AND_IT_IS_SMALL: >-
+      `remedies: []` on every UNHEALTHY line, and the ephemeral path DID fail for real on
+      2026-09-07 (`socket_adapter.send_ephemeral: no ack — falling back to sentinel id`,
+      `[ipc] gateway link: ephemeral send failed`, 07:32 and 07:44). Neither is tonight's
+      problem and neither is urgent; recorded so they are not lost.
+    THE_LESSON_IS_ABOUT_ME_NOT_THE_CANARY: >-
+      I reported this to the operator as a candidate defect BEFORE measuring it, twice,
+      on the strength of an ERROR line and a plausible story. The programme's own rule —
+      print the real shape before you filter it — applies to what I tell him, not only to
+      what I write into a document. A confident wrong recommendation costs him more than
+      silence would have.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: no_change_needed, validate: no_change_needed,
+      document: no_change_needed}
   DEBT215_2026_09_08_a_complete_pruner_and_a_complete_setting_joined_to_nothing:
     map_check: >-
       No mapped item — "The ground is clear." Operator-directed: "Audit can be deleted
