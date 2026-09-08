@@ -19645,8 +19645,17 @@ known_debt:
       validate: partial
     validate_partial_why: >-
       The fix is a DELETE that no longer fires. Its evidence is an ABSENCE, and the
-      honest form of that is a denominator: summaries must keep being staged (so the path
-      runs) while the trim reports zero rows removed for them.
+      honest form of that is a denominator: non-conversation facts must keep being staged
+      (so the path runs) while the trim reports zero rows removed for them.
+    validate_evidence_2026_09_08: >-
+      LIVE: restarted with ./start.sh, core armed 07:08:57Z against commit 2d42ce6b
+      (07:0x), checked on the boot line rather than a PID; zero ERROR/CRITICAL since. The
+      50 surviving `conversation_summary` rows are intact, which is the state the fix
+      protects. NOT CLAIMED: the closing_check reads OPEN at "0 non-conversation facts
+      staged since the fix" - the write path needs a session rollover or an `agent_self`
+      write to run, and both are currently rare (the summary writer's own collapse to
+      0-2/day is the separate recorded finding). The fix being live is evidenced; the
+      trim declining to delete is not yet, and that is what the check is for.
     closing_check: |-
       # THE TRIM'S OWN EXIT LINE CARRIES `trimmed`, so numerator and denominator
       # are the SAME INFO record: staging events for a non-conversation type, and
