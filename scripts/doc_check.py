@@ -28,6 +28,7 @@ where a human decides what to re-verify.
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import sys
@@ -266,8 +267,96 @@ def _reviewed_shas(head: dict[str, str]) -> set[str]:
     return {m.group(1)[:8] for m in _REVIEWED_SHA.finditer(dismissal)}
 
 
+@lru_cache(maxsize=1024)
+def _symbol_span(sha: str, path: str, symbol: str) -> tuple[int, int] | None:
+    """The symbol's line span in `path` AS OF `sha`, or None if it is not there.
+
+    Read at that commit rather than in the working tree on purpose: a symbol moves,
+    and asking today's line numbers about a three-week-old diff compares two
+    different files.
+    """
+    try:
+        src = subprocess.run(
+            ["git", "show", f"{sha}:{path}"],
+            capture_output=True, text=True, timeout=60, cwd=_ROOT,
+        ).stdout
+        tree = ast.parse(src)
+    except Exception:  # pragma: no cover — absent file, syntax error at that commit
+        return None
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+            and node.name == symbol
+        ):
+            return (node.lineno, getattr(node, "end_lineno", node.lineno) or node.lineno)
+    return None
+
+
+@lru_cache(maxsize=1024)
+def _changed_line_ranges(sha: str, path: str) -> tuple[tuple[int, int], ...]:
+    """The NEW-side line ranges `sha` touched in `path`. Empty means unreadable."""
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "-U0", f"{sha}^", sha, "--", path],
+            capture_output=True, text=True, timeout=60, cwd=_ROOT,
+        ).stdout
+    except Exception:  # pragma: no cover — git absent, or a root commit
+        return ()
+    out: list[tuple[int, int]] = []
+    for m in re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", diff, re.M):
+        start = int(m.group(1))
+        count = int(m.group(2)) if m.group(2) is not None else 1
+        out.append((start, start + max(count, 1) - 1))
+    return tuple(out)
+
+
+def _commit_reaches_symbols(sha: str, path: str, symbols: frozenset[str]) -> bool:
+    """Did `sha` change any of the cited symbols in `path`?
+
+    UNKNOWN MEANS YES. A span we cannot locate, or a diff we cannot read, counts as
+    reaching the symbol — reporting a document fresh while its subject changed is a
+    worse failure than the false positive this whole function exists to remove.
+    """
+    spans = [_symbol_span(sha, path, sym) for sym in symbols]
+    if not spans or any(sp is None for sp in spans):
+        return True
+    ranges = _changed_line_ranges(sha, path)
+    if not ranges:
+        return True
+    return any(
+        not (hi < lo_s or lo > hi_s)
+        for (lo_s, hi_s) in ranges
+        for (lo, hi) in spans
+        if lo is not None  # narrowed above; keeps mypy honest
+    )
+
+
+def _cited_symbols(cited: list[str]) -> dict[str, frozenset[str]]:
+    """resolved path -> cited symbols, ONLY where EVERY citation names one.
+
+    A path cited bare anywhere is a claim about the whole file and keeps whole-file
+    dating. D05.4 does exactly that: `pipeline/steps/execute.py` bare beside
+    `tools/registry.py::to_provider_schema`.
+    """
+    seen: dict[str, set[str | None]] = {}
+    for raw in cited:
+        resolved = _resolve(raw)
+        if resolved is None:
+            continue
+        seen.setdefault(resolved, set()).add(
+            raw.split("::", 1)[1] if "::" in raw else None
+        )
+    return {
+        path: frozenset(s for s in syms if s)
+        for path, syms in seen.items()
+        if None not in syms and any(syms)
+    }
+
+
 def _changes_since(
-    paths: list[str], verified: str
+    paths: list[str],
+    verified: str,
+    symbols: dict[str, frozenset[str]] | None = None,
 ) -> list[tuple[str, str, str, list[str]]]:
     """(date, sha, subject, which cited paths) for every change after `verified`.
 
@@ -303,6 +392,19 @@ def _changes_since(
         if len(parts) != 3 or parts[0] <= verified:
             continue
         touched = sorted(f for f in rest.split("\n") if f in wanted)
+        if symbols:
+            # A citation that names a SYMBOL is only reached by a commit that changed
+            # that symbol. `bf603ef7` touched ten lines of `build_tool_schemas` and
+            # marked D09.4 stale over `execute.py::_turn_context_prefix`, 300 lines
+            # away. Filtering here rather than at the report keeps the culprit list
+            # and the verdict derived from ONE walk, which this function's own
+            # docstring says is the point.
+            touched = [
+                f for f in touched
+                if f not in symbols or _commit_reaches_symbols(parts[1], f, symbols[f])
+            ]
+            if not touched:
+                continue
         changes.append((parts[0], parts[1], parts[2], touched))
     return changes
 
@@ -1159,7 +1261,7 @@ def main(argv: list[str] | None = None) -> int:
                 why = "dated, but declares no Source — staleness cannot be computed"
             unmeasurable.append((doc.name, why))
             continue
-        changes = _changes_since(real, date.group(1))
+        changes = _changes_since(real, date.group(1), _cited_symbols(cited))
         reviewed = _reviewed_shas(head)
         unreviewed = [c for c in changes if c[1][:8] not in reviewed]
         if changes and not unreviewed:

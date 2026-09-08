@@ -20788,6 +20788,73 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-241
+    found: 2026-09-08
+    what: >-
+      STALENESS WAS COMPUTED AT FILE GRANULARITY WHILE THE CORPUS ALREADY WROTE SYMBOL
+      GRANULARITY. `doc_check._resolve` discarded the symbol from a `file.py::Symbol`
+      citation - `path.split("::", 1)[0]` - and its comment stated the reason: "The file
+      is the thing git can date." That is FALSE. Git plus the AST dates a symbol exactly:
+      take its span in the file AS OF that commit and ask whether the commit's hunks
+      overlap it.
+    what_it_cost_measured_on_my_own_commit: >-
+      `execute.py` is 3,960 lines and is named as a `Source:` by SIX design documents;
+      `registry.py` is 895 lines and named by FOUR. `bf603ef7` changed TEN LINES inside
+      `build_tool_schemas` and marked EIGHT documents stale. D09.4 cites
+      `execute.py::_turn_context_prefix` - lines 1225-1331 against a commit that touched
+      1634-1643, three hundred lines away. The detector was handed the exact information
+      proving that document was fine and threw it away on the way in.
+    the_shape: >-
+      A CONVENTION WITH NO READER, which is the write-with-no-reader shape wearing a
+      citation. 28 symbol-level citations exist across 16 documents and not one was read.
+      And because citing a symbol bought nothing, there was no reason for any document to
+      start - the convention could only decay.
+    fix: >-
+      `_symbol_span(sha, path, symbol)` reads the file at that commit and returns the
+      AST span; `_changed_line_ranges(sha, path)` parses the new-side hunks;
+      `_commit_reaches_symbols` intersects them. `_cited_symbols` builds the map and
+      `_changes_since` filters on it, inside the SAME single git walk the function's own
+      docstring says is the point.
+    two_deliberate_limits_both_pinned_by_test: >-
+      (1) A path is narrowed ONLY when EVERY citation of it names a symbol. D05.4 cites
+      `pipeline/steps/execute.py` BARE beside `tools/registry.py::to_provider_schema`;
+      the bare one is a claim about the whole file, and letting the precise one narrow it
+      would silence a real staleness on the strength of an unrelated citation.
+      (2) UNKNOWN MEANS STALE. A symbol that cannot be located at that commit - renamed,
+      moved, not yet written - or a diff that cannot be read makes the commit COUNT. A
+      false "stale" costs a re-read; a false "fresh" costs a document asserting something
+      untrue with nothing left to notice it.
+    AND_MY_FIRST_MEASUREMENT_OF_THE_FIX_WAS_VACUOUS: >-
+      Loading the patched module put its `_DESIGNS` under the scratch copy, so the
+      comparison globbed an EMPTY directory and reported the stale count falling from
+      8 to 0. I had predicted ONE document would clear and the number that came back was
+      eight - and being better than predicted is exactly when a measurement deserves less
+      trust, not more. Pointed at the real corpus with the denominator printed (84
+      documents seen) the answer is 8 -> 7, which is the one document the line-range
+      arithmetic said it would be. The test now asserts the denominator for that reason.
+    what_else_this_cause_reaches: >-
+      Every document citing a large shared file. Six cite `execute.py` and four cite
+      `registry.py`, so any change to either manufactures a drain across documents that
+      have nothing to do with the branch that changed - which is why this report has
+      needed draining in three consecutive loops, twice from MY commits. The remaining 7
+      are stale by whole-file citation and are genuinely unjudged; this item does not
+      claim them.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_live_corpus: >-
+      Run against the real 84-document corpus, symbol-aware dating reports 7 stale where
+      the shipped code reports 8; the document that clears is D09.4, exactly the one
+      whose cited symbol the commit does not touch. Four mutations killed:
+      filter-always-False (hides real staleness), filter-always-True (no narrowing),
+      unknown-means-fresh (the fail-open direction), and bare-citation-no-longer-
+      protected. `tests/audit/test_a_symbol_citation_is_dated_by_its_symbol.py`, six
+      tests, four marked tripwire.
   - id: DEBT-240
     found: 2026-09-08
     what: >-
