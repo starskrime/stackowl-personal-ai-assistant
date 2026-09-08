@@ -552,13 +552,25 @@ class ToolRegistry:
         base set + profile groups are dropped for this turn. ``is not None``,
         NOT truthiness — ``frozenset()`` yields discovery-only, never base+groups.
 
-        ``budget`` (opt-in, Task 4): when supplied as ``{"window": N,
-        "fixed_cost_tokens": M}``, ranks candidates via
-        :class:`ToolPresentation.rank_candidates` and greedy-fits them into the
-        measured token budget via :func:`fit_items`. Guaranteed (base + always-
-        present) are never dropped. When ``None`` (default) behavior is byte-
-        identical to the previous implementation. ``usage_scores`` is forwarded
-        to the ranker when ``budget`` is set.
+        ``budget`` (opt-in, Task 4) as ``{"window": N, "fixed_cost_tokens": M}``
+        SIZES the presented set against the model's real window. It reaches BOTH
+        gated paths and does different things on each — the distinction matters to
+        a caller and was missing from this docstring until 2026-09-08:
+
+        * with ``restrict_to`` (the planned-envelope branch): the set is chosen by
+          the deterministic ``select()`` and then FITTED into the token budget via
+          :func:`fit_items`. It is NOT ranked — preserving ``select()``'s order is
+          the whole reason that branch bypasses the budgeter — and the non-evictable
+          set is ``always_present`` alone, because an envelope drops the base set by
+          design. Added by DEBT-240: the branch previously ignored the window
+          entirely and handed a lean-window model the whole envelope.
+        * without it (the budgeted branch): candidates are ranked via
+          :class:`ToolPresentation.rank_candidates` and greedy-fitted into the same
+          budget. Guaranteed here is base + ``always_present``, and ``usage_scores``
+          is forwarded to the ranker.
+
+        When ``budget`` is ``None`` (default) behavior on both paths is byte-identical
+        to the previous implementation — the fit is opt-in on the budget's presence.
 
         ``usage_scores`` (D05.2) replaced a ``request_text`` relevance ranker.
         The old signal made this method's output a function of the turn's

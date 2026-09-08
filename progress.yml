@@ -20788,6 +20788,92 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-242
+    found: 2026-09-08
+    what: >-
+      The seven documents `bf603ef7` marked stale, JUDGED PER DOCUMENT rather than
+      date-bumped. `doc_check`'s own report says to do this - "check whether the change
+      even concerned them before re-reading each one" - and the answer differed per
+      document, which is the entire reason that line exists.
+    the_judgement_measured_against_the_symbols_that_commit_touched: >-
+      Those symbols are `to_provider_schema` + the new `_fit_envelope_to_window` in
+      registry.py, and `build_tool_schemas` in execute.py.
+      D05.1, D05.3 and D05.7 mention NONE of them - 0 occurrences each - and are about
+      discovery, service gating and the tool loop respectively. Dismissed.
+      D01.2's single `to_provider_schema` mention is a call shape in the cache narrative,
+      and the envelope path is explicitly NOT memoized, so a change to how it is sized
+      cannot move a cache breakpoint. Dismissed.
+      D05.6's invariant was RE-MEASURED rather than reasoned about - `_emit` computes the
+      presented set from the FINAL list and the fit runs before it - across windows 4,096
+      / 8,192 / 16,384 / 262,144, presenting 11 / 35 / 62 / 77 tools: ZERO dangling
+      references at every one, including the case that drops 66 of 77. Dismissed with
+      fresh evidence.
+      D05.2 and D05.4 were genuinely wrong and were CORRECTED.
+    D05_2_carried_two_line_citations_that_were_already_wrong: >-
+      It cited `execute.py:1126` for the `restrict_to` branch (actually 1620, an
+      exception handler in a key-canonicalisation helper sits at 1126) and
+      `execute.py:1144` for the depth>0 strip (actually 1729). Both ~500 lines off, and
+      both ALREADY WRONG when the document was last verified - so "moved since verified"
+      is the wrong question to ask of a line citation, and the right one is not
+      mechanically checkable. Replaced with SYMBOL citations, which DEBT-241 made
+      dateable one loop earlier, so the fix finally buys something instead of rotting
+      again. Its claim that the envelope path routes "not through the budgeter" was also
+      narrowed: it now takes the budget for SIZING, still not for ranking and still not
+      memoized.
+    D05_4s_three_claims_were_about_the_branch_that_changed: >-
+      The branch table's row A, the flow diagram, and I4 - whose label called branch B
+      "budget" when branch A now receives one. The INVARIANT is unchanged (the branches
+      are still mutually exclusive within a session_id); only the label was ambiguous,
+      and the distinguishing property is the budgeter's RANKING and its memo, neither of
+      which branch A uses.
+    AND_MY_FIRST_APPLIER_WOULD_HAVE_RE_BROKEN_FOUR_OF_THEM: >-
+      `doc_check._header` builds its dict with a plain assignment - `out[last] = ...` -
+      so a SECOND `> **Reviewed:**` in one document silently DISCARDS the first. Four of
+      these documents already carried a dismissal, and adding a second field dropped
+      `30eecd8e` and `1f48d999` from their reviewed sets: commits already examined,
+      quietly returned to the stale list. `Reviewed:` is precisely the field that wants
+      to accumulate, because it dismisses ONE named commit and a document outlives many.
+      The applier's read-back caught it ONLY because it counted the FIELDS; counting the
+      sha would have passed. Merged into one field instead, and both shas verified
+      present in all four afterwards.
+    the_guard_and_why_it_forbids_rather_than_fixes: >-
+      Making `_header` accumulate would change what every OTHER field means - `Source:`
+      and `Last verified:` are single-valued by design and a reader who writes one twice
+      wants the last. The defect is not the assignment; it is that a duplicate is
+      INVISIBLE. So the duplicate is what is forbidden.
+      `tests/audit/test_a_header_field_is_not_silently_overwritten.py` - 0 duplicates
+      across 84 documents measured before and after, so it ships green and can only
+      ratchet. It carries a planted positive control (the corpus is clean, so without one
+      the guard only ever asserts the absence of something it has never caught) and a
+      test that asserts the PREMISE against `doc_check` itself, so if `_header` is ever
+      made to accumulate this guard fails and can be retired.
+      ITS OWN FLOOR WAS WRONG FIRST: I wrote `with_fields >= 60` from memory and it
+      failed against a clean corpus - the guard crying wolf on correct work before it had
+      even shipped. Measured: 51 of 84 documents carry blockquote headers, 309 fields in
+      all; the other 33 use the prose genre `doc_check` already reports separately.
+    the_sixth_surface_is_the_changed_functions_own_docstring: >-
+      `to_provider_schema`'s `budget` paragraph still said the call "ranks candidates via
+      rank_candidates" and that "Guaranteed (base + always-present) are never dropped".
+      Both are FALSE on the branch bf603ef7 added: it deliberately does not rank, and its
+      non-evictable set is `always_present` alone because an envelope drops the base set
+      by design. That commit updated code, tests, D05.8, D05.4, D05.2 and the record -
+      and left the docstring of the very method it was editing. The retirement checklist
+      names five surfaces and not this one, which is the first thing a caller reads and
+      the only one that travels with the signature.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validated_live_corpus: >-
+      STALE 7 -> 0 across the 84-document corpus, measured with the denominator printed.
+      Duplicate header fields 0 before and 0 after. The new guard passes 4/4 against both
+      the live corpus and the drained one. D05.6's invariant re-measured at four windows
+      with 0 dangling references. Both dismissed shas verified still present in all four
+      merged `Reviewed:` fields.
   - id: DEBT-241
     found: 2026-09-08
     what: >-
