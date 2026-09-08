@@ -186,10 +186,50 @@ class JobScheduler(SupervisedTask):
     def task_id(self) -> str:
         return "job_scheduler"
 
+    def stop_accepting(self) -> None:
+        """Close the door: dispatch no further poll cycles, finish the running ones.
+
+        THE HALF THE DRAIN WAS MISSING. `runtime/drain.py` states the precondition
+        that makes `quiesce` sound — "The caller stops accepting new turns first
+        (so the running set can only shrink)" — and the restart path honours it for
+        TURNS (`loop_task.cancel()`) while giving scheduler jobs only a
+        `count_running_jobs` PROBE. So the background running set could GROW after
+        the check. MEASURED 2026-09-08: `quiesce: nothing in flight` at 05:30:22.140,
+        a job DISPATCHED at 05:30:24.335, and `ValueError: Connection closed` at
+        05:30:24.540 as the pool went out from under it — 26 such errors across
+        TWELVE components in the retained window.
+
+        NOT `scheduler_task.cancel()`, deliberately. `run()` holds the ONLY strong
+        references to its in-flight `_poll_cycle` tasks (asyncio keeps none of its
+        own, and a fire-and-forget task can be collected mid-execution), so
+        cancelling it would risk abandoning exactly the work this protects.
+        """
+        self._accepting = False
+        log.heartbeat.info(
+            "[scheduler] run: no longer accepting new cycles — draining in-flight"
+        )
+
+    #: Whether new poll cycles may be dispatched. Sticky once cleared: the
+    #: scheduler runs under `Supervisor`, which RESTARTS a task that returns
+    #: cleanly, so a non-sticky stop would re-open the door within one backoff —
+    #: during exactly the seconds the restart is trying to keep quiet.
+    _accepting: bool = True
+
     async def run(self) -> None:
+        if not self._accepting:
+            # STOPPED FOR RESTART. Do not re-open, and do not return INSTANTLY:
+            # `Supervisor._record_clean_return` treats a run shorter than
+            # `tight_loop_seconds` as a spin and escalates after a few in a row,
+            # so an immediate return would report a shutdown as a fault. Park
+            # instead; the orchestrator's teardown cancels this task moments later.
+            log.heartbeat.info(
+                "[scheduler] run: not restarting — the scheduler is stopping"
+            )
+            await asyncio.Event().wait()
+            return
         log.heartbeat.info("[scheduler] run: starting poll loop")
         inflight: set[asyncio.Task[None]] = set()
-        while True:
+        while self._accepting:
             # Fire this cycle as its OWN task instead of awaiting it inline — a
             # cycle containing a hung/slow handler (bounded by
             # _HANDLER_TIMEOUT_SEC, up to 20min) must never delay the NEXT
@@ -210,6 +250,18 @@ class JobScheduler(SupervisedTask):
             inflight.add(task)
             task.add_done_callback(inflight.discard)
             await self._clock.async_sleep(_POLL_INTERVAL_SEC)
+
+        # THE DOOR IS SHUT; NOW LET WHAT IS INSIDE FINISH. `inflight` is the only
+        # strong reference to these tasks, so awaiting them here is what makes
+        # "stop accepting" different from "abandon" — and it is what lets the
+        # caller's `quiesce` probe reach zero honestly instead of racing it.
+        if inflight:
+            log.heartbeat.info(
+                "[scheduler] run: draining in-flight cycles before exit",
+                extra={"_fields": {"in_flight": len(inflight)}},
+            )
+            await asyncio.gather(*list(inflight), return_exceptions=True)
+        log.heartbeat.info("[scheduler] run: poll loop stopped")
 
     async def _poll_cycle(self) -> None:
         """One timed, error-isolated poll tick — see run()'s fire-and-forget

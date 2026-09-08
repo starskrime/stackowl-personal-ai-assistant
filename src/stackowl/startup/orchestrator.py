@@ -4599,6 +4599,32 @@ class StartupOrchestrator:
                             count_running_jobs,
                         )
 
+                        # AND CLOSE THE DOOR ON THE SCHEDULER, symmetric to the
+                        # `loop_task.cancel()` above. `drain.py` states the
+                        # precondition that makes `quiesce` sound — "The caller
+                        # stops accepting new turns first (so the running set can
+                        # only shrink)" — and until now only TURNS honoured it;
+                        # the background half had a PROBE and no stop, so the
+                        # running set could GROW after the check. MEASURED
+                        # 2026-09-08: `quiesce: nothing in flight` at 05:30:22.140,
+                        # a job dispatched at 05:30:24.335, and `Connection closed`
+                        # at 05:30:24.540 — 26 such errors across TWELVE components
+                        # in the retained window. Cycles already running keep their
+                        # strong references and finish; `count_running_jobs` below
+                        # then reaches zero honestly instead of racing.
+                        try:
+                            scheduler_components.scheduler.stop_accepting()
+                        except Exception as exc:  # never block a restart
+                            # LOGGED, NOT SUPPRESSED. A bare `suppress` here would
+                            # turn "the door did not shut" into silence, and the
+                            # whole defect this fixes is a drain that looked clean
+                            # while work was still being admitted.
+                            log.warning(
+                                "[startup] core: could not stop the scheduler before "
+                                "quiesce — in-flight jobs may still be admitted",
+                                exc_info=exc,
+                            )
+
                         _db_for_drain = db_pool
                         await quiesce(
                             turn_registry,
