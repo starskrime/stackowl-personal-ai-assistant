@@ -34,3 +34,28 @@ def address_of(destination: str | None) -> str | None:
     if not destination or ":" not in destination:
         return None
     return destination.split(":", 1)[1] or None
+
+
+class NoAddresseeCompletion(Exception):
+    """The work finished and there was nobody to deliver it to.
+
+    A CONTROL SIGNAL, not a failure. The loop has exactly two terminal outcomes —
+    delivered, or failed and requeued — and this is a third that neither fits:
+    re-running cannot conjure an addressee, so requeueing spends attempts on an
+    outcome no attempt can change, while `mark_delivered` would stamp
+    `delivered_at` on an answer that reached nobody.
+
+    MEASURED LIVE 2026-09-08 with the third missing. A recovered task whose
+    destination was the bare channel name "telegram" produced its answer, sent it
+    nowhere (correctly), and the loop still logged `[loop] task COMPLETE — its
+    outcome reached its destination` with `delivered_at` set, because
+    `_dispatch` marks delivery on any non-empty result string.
+
+    It carries the result so the loop can still RECORD the work; the runner
+    raises it because, as `task_loop_runner` puts it, "a raise is the only
+    channel this runner has back to the loop".
+    """
+
+    def __init__(self, result: str) -> None:
+        super().__init__("the answer had no addressee, so nothing was delivered")
+        self.result = result

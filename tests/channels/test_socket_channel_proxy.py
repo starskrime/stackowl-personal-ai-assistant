@@ -17,6 +17,7 @@ import pytest
 
 from stackowl.channels.registry import ChannelRegistry
 from stackowl.channels.socket_adapter import (
+    _GATEWAY_HELD_CHANNELS,
     configured_gateway_channels,
     register_socket_channel_proxies,
     resolve_ephemeral_sent,
@@ -69,7 +70,10 @@ def test_configured_channels_reads_all_gates() -> None:
         discord_token="d",
         whatsapp_enabled=True,
     )
-    assert configured_gateway_channels(s) == ["telegram", "slack", "discord", "whatsapp"]
+    # ASK THE CONSTANT, do not restate it. `_GATEWAY_HELD_CHANNELS` is what the
+    # core's proxies consult to decide whether an untargeted send names anyone;
+    # a channel added there and not here would go untested, and vice versa.
+    assert configured_gateway_channels(s) == list(_GATEWAY_HELD_CHANNELS)
 
 
 def test_configured_channels_empty_when_unconfigured() -> None:

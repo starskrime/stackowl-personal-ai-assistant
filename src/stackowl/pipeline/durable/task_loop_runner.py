@@ -27,7 +27,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from stackowl.infra.observability import log
-from stackowl.pipeline.durable.addressing import address_of
+from stackowl.pipeline.durable.addressing import NoAddresseeCompletion, address_of
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from collections.abc import Awaitable, Callable
@@ -127,7 +127,12 @@ def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
         # the one path it was written for. The attempt can finish having reached
         # somebody, or having had nobody to reach; only the first is a delivery.
         if not getattr(outcome, "delivered", True):
-            return (
+            # NOT a return. A returned string — however truthful its words — is
+            # marked DELIVERED by `_dispatch`, which tests only that it is
+            # non-empty. Measured live 2026-09-08: the string said "nothing was
+            # delivered" and the row got `delivered_at` anyway. The distinction
+            # has to be in the CHANNEL, not in the prose.
+            raise NoAddresseeCompletion(
                 f"re-driven after {task.attempt_count} prior attempt(s); the "
                 f"answer was produced but this task named no addressee, so "
                 f"nothing was delivered"

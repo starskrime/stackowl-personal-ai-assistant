@@ -18407,7 +18407,7 @@ current:
         recommendation: "(c). (a) alone leaves the checks dependent on a mechanism that just demonstrated it does not do what it is configured to do."
         blocked_until_answered: "ESC-70 specifically. The tool-cap experiment cannot produce a number until there is a window long enough to compare across."
 
-  DEBT216_2026_09_08_a_recovered_answer_went_to_whoever_spoke_last_or_to_nobody:
+  DEBT217_2026_09_08_a_recovered_answer_went_to_whoever_spoke_last_or_to_nobody:
     item: |-
       An answer produced by re-driving a recovered task reached its addressee, an
       UNRELATED chat, or nobody at all — decided by process-global state — and all
@@ -18478,7 +18478,7 @@ current:
       implement: done
       cleanup: done
       test: done
-      validate: partial
+      validate: done
       document: done
     changes: |-
       * channels/base.py — new `implicitly_addressable` contract (default True =
@@ -18492,6 +18492,16 @@ current:
         complete; re-running cannot conjure an addressee, so "pending" would spend
         attempts on an outcome no attempt can change. What the caller must not do is
         claim a delivery.
+      * SocketChannelAdapter.implicitly_addressable answers for the channel it
+        PROXIES, not for itself, against _GATEWAY_HELD_CHANNELS — pinned to
+        configured_gateway_channels by a drift guard so two lists of the same
+        four names cannot diverge.
+      * NoAddresseeCompletion + store.mark_completed_unaddressed — the loop's
+        THIRD terminal. delivered_at stays NULL (it is a PROOF column);
+        acknowledged_at is stamped instead, the same column and meaning
+        resolve_unannounced_dead_letters already uses for "reviewed, nobody was
+        waiting". The runner RAISES it, because a returned string is marked
+        delivered by _dispatch however truthful its words.
       * task_loop_runner — returns a string that says which of the two happened, so
         `_dispatch`'s guard inspects a fact instead of a literal.
       * DEDUP: `_address_of` (store.py) and `_chat_id_of` (task_loop_runner.py) were
@@ -18508,11 +18518,45 @@ current:
       re-run green. The adapter double sets the attribute explicitly rather than
       being a bare MagicMock, whose every attribute is a truthy Mock and would
       answer "yes" to a question it was never taught.
-    validate_partial_why: |-
-      The new INFO line has not fired in production yet — it needs a task to be
-      recovered and re-driven while carrying no addressee. That happened 60 times in
-      the retained window, so the evidence CAN exist; it has simply not happened
-      since the fix went live. Not closeable by volume of ordinary traffic.
+    validate_CLOSED_and_the_live_run_found_TWO_more_defects: |-
+      Rather than wait for traffic, the branch was driven directly: a bounded task
+      (goal "Reply with exactly the word: ok", destination "telegram" — a bare
+      channel name, max_attempts 2) enqueued on the RUNNING platform three times,
+      with a ./start.sh between each. It took all three; the first two FAILED.
+
+      RUN 1, 04:50:46 — the fix did not work at all:
+        retry_actuator.attempt_retry: exit  {"delivered": true}
+        [telegram] adapter.send_text: no active chat — message dropped   (+2ms)
+      In the SPLIT-PROCESS deployment the core does not hold the telegram adapter;
+      registry.get("telegram") returns a SocketChannelAdapter proxy that forwards a
+      frame to the gateway. It subclasses ChannelAdapter, so it inherited the base
+      default and answered "yes, I address a recipient implicitly" for a channel
+      that cannot. THE PROXY LOSES THE IDENTITY OF THE THING IT STANDS FOR — and the
+      property directly above it in socket_adapter.py carries a docstring warning
+      about that exact mistake for `surface`. The unit tests could not catch it:
+      they model the real adapter's shape, not the proxy's.
+
+      RUN 2, 05:03:29 — nothing was sent (correct), and the loop still wrote:
+        [loop] task COMPLETE — its outcome reached its destination
+        {"delivered_at": "2026-09-08T05:03:29.162176+00:00"}
+      Making the runner's RETURN STRING truthful was not enough, because _dispatch
+      tests only that it is non-empty. The loop had two terminals — delivered or
+      failed — so an answer with no addressee had to be filed as one of them.
+
+      RUN 3, 05:07:34 — honest end to end:
+        retry_actuator._deliver_success: no addressee — the answer was not
+          delivered anywhere              {"channel": "telegram", "answer_len": 2}
+        retry_actuator.attempt_retry: exit                 {"delivered": false}
+        [loop] task COMPLETE with NO ADDRESSEE — the work finished and there was
+          nobody to deliver it to         {"acknowledged_at": "...05:07:34.034"}
+      Zero telegram sends and zero drops in that window. Row: status completed,
+      delivered_at NULL, acknowledged_at set.
+
+      The three rows read as the fix's own history — run 1 claimed a delivery for a
+      dropped answer, run 2 stamped delivered_at while its own result text said
+      nothing was delivered, run 3 is truthful. All three synthetic rows were then
+      deleted from the live table (two carried exactly the false delivered_at this
+      item exists to prevent). closing_check: CLOSEABLE (2).
     closing_check: |-
       n=$(./scripts/log_since.sh --all '_deliver_success: no addressee'); [ "$n" -gt 0 ] && echo "CLOSEABLE ($n)" || echo "OPEN (0 — no unaddressed re-drive since the fix)"
     closing_check_is_bounded_how: |-

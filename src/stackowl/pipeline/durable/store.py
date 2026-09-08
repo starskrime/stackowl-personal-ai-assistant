@@ -1836,6 +1836,43 @@ class DurableTaskStore(OwnedRepository):
             extra={"_fields": {"task_id": task_id, "delivered_at": now.isoformat()}},
         )
 
+    async def mark_completed_unaddressed(self, task_id: str, *, result: str) -> None:
+        """The work is done and there was NOBODY to deliver it to.
+
+        THE THIRD TERMINAL, and its absence was the defect. `mark_delivered` is
+        "the ONLY way a task completes" and stamps `delivered_at` as proof the
+        outcome landed; `_safe_fail` requeues. A task whose destination names no
+        addressee fits neither — so the loop took the first, and claimed a
+        delivery for an answer that reached nobody.
+
+        `delivered_at` stays NULL, because nothing was delivered and that column
+        is a PROOF. `acknowledged_at` is stamped instead, which is the column
+        `resolve_unannounced_dead_letters` already uses for exactly this meaning:
+        "reviewed, and found to have nobody waiting". Same distinction, drawn at
+        the other end of the lifecycle.
+        """
+        now = datetime.now(UTC)
+        affected = await self._db.execute_returning_rowcount(
+            f"UPDATE {self._table} SET status='completed', result=?, "  # noqa: S608
+            "acknowledged_at=?, lease_owner=NULL, lease_expires_at=NULL, "
+            "updated_at=? WHERE task_id=? AND owner_id=?",
+            (result, now.isoformat(), now.isoformat(), task_id, self._owner_id),
+        )
+        if not affected:
+            # Same reasoning as mark_delivered: measure the effect, never trust
+            # the call, and never raise into the loop over bookkeeping.
+            log.tasks.error(
+                "[loop] unaddressed completion matched NO row — the work ran and "
+                "the task it belongs to is still open",
+                extra={"_fields": {"task_id": task_id, "owner_id": self._owner_id}},
+            )
+            return
+        log.tasks.info(
+            "[loop] task COMPLETE with NO ADDRESSEE — the work finished and there "
+            "was nobody to deliver it to",
+            extra={"_fields": {"task_id": task_id, "acknowledged_at": now.isoformat()}},
+        )
+
     async def prune_completed(self, *, older_than_days: int = 1) -> int:
         """Delete COMPLETED rows past the window. Bakir asked for this explicitly.
 

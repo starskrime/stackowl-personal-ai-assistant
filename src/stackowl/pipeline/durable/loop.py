@@ -34,6 +34,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from stackowl.infra.observability import log
+from stackowl.pipeline.durable.addressing import NoAddresseeCompletion
 from stackowl.pipeline.durable.failure_class import (
     classify_failure,
     wants_reshaping,
@@ -54,6 +55,13 @@ class _Store(Protocol):
     async def claimable(self, *, limit: int = 10, now: Any = None) -> list[Any]: ...
     async def claim(self, task_id: str, *, worker: str, lease_seconds: int = 900) -> bool: ...
     async def mark_delivered(self, task_id: str, *, result: str) -> None: ...
+    #: The THIRD terminal — the work ran and named no addressee. On the
+    #: protocol beside mark_delivered rather than reached for with getattr, so
+    #: a store that cannot record it is a type error and not a silent fallback
+    #: to claiming the delivery.
+    async def mark_completed_unaddressed(
+        self, task_id: str, *, result: str,
+    ) -> None: ...
     async def fail_and_requeue(
         self, task_id: str, *, error: str, failure_class: str = "",
         banned: tuple[str, ...] = (),
@@ -334,6 +342,13 @@ class TaskLoop:
             return
         try:
             result = await self._runner(task)
+        except NoAddresseeCompletion as done:
+            # NOT a failure, and not a delivery. The work finished; there was
+            # nobody to tell. Requeueing would spend attempts on an outcome no
+            # attempt can change, and mark_delivered would claim a delivery that
+            # did not happen — so this is the third terminal the loop lacked.
+            await self._safe_complete_unaddressed(task, result=done.result)
+            return
         except Exception as exc:
             failure_class = classify_failure(exc)
             # The runner attaches what the attempt burned to the exception it
@@ -368,6 +383,20 @@ class TaskLoop:
             log.tasks.error(
                 "[loop] could not mark a task delivered — it will be retried when "
                 "its lease expires",
+                exc_info=exc, extra={"_fields": {"task_id": task.task_id}},
+            )
+
+    async def _safe_complete_unaddressed(self, task: Any, *, result: str) -> None:
+        """Record an unaddressed completion. NEVER raises into the gather."""
+        try:
+            await self._store.mark_completed_unaddressed(task.task_id, result=result)
+        except Exception as exc:
+            # The work happened; only the bookkeeping failed. Say so loudly — the
+            # lease will expire and the row will be retried, which is why an
+            # idempotency key matters for effectful tasks.
+            log.tasks.error(
+                "[loop] could not record an unaddressed completion — it will be "
+                "retried when its lease expires",
                 exc_info=exc, extra={"_fields": {"task_id": task.task_id}},
             )
 

@@ -47,6 +47,7 @@ delivery that did not happen.
 
 from __future__ import annotations
 
+import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -176,3 +177,146 @@ def test_every_channel_carrying_a_per_message_target_declares_it() -> None:
             f"{rich.__name__} takes a per-message target, so an untargeted send "
             f"is a guess at a recipient, not a delivery"
         )
+
+
+def test_the_core_side_PROXY_answers_for_the_channel_it_proxies_not_for_itself() -> None:
+    """THE FIX ABOVE DID NOT WORK IN PRODUCTION, and this is why.
+
+    MEASURED LIVE 2026-09-08, by enqueuing a bounded task with destination
+    "telegram" (a bare channel name) on the running platform and watching it::
+
+        04:50:46.512  retry_actuator.attempt_retry: exit   {"delivered": true}
+        04:50:46.514  [telegram] adapter.send_text: no active chat
+                      (best-effort) — message dropped
+
+    `delivered: true`, and the answer dropped two milliseconds later. In the
+    SPLIT-PROCESS deployment the core does not hold the telegram adapter — the
+    gateway does — so `channel_registry.get("telegram")` returns a
+    `SocketChannelAdapter`, a proxy that forwards a frame over the socket. It
+    subclasses `ChannelAdapter`, so it inherited the base default and answered
+    "yes, I address a recipient implicitly" on behalf of a channel that cannot.
+
+    The proxy loses the identity of the thing it stands for — and the property
+    directly ABOVE this one in `socket_adapter.py` carries a docstring warning
+    about that exact mistake for `surface`. A new class attribute walked into it
+    the very next property down.
+
+    The unit tests above could not catch this: they hand the actuator a double
+    that models the attribute, which is the real adapter's shape, not the
+    proxy's. Only the live run distinguished them.
+    """
+    from stackowl.channels.socket_adapter import (
+        _GATEWAY_HELD_CHANNELS,
+        SocketChannelAdapter,
+    )
+
+    telegram_proxy = SocketChannelAdapter(object(), channel_name="telegram")  # type: ignore[arg-type]
+    assert telegram_proxy.implicitly_addressable is False, (
+        "the core's proxy for telegram must not promise a delivery the gateway's "
+        "adapter cannot make without a chat id"
+    )
+
+    cli_proxy = SocketChannelAdapter(object(), channel_name="cli")  # type: ignore[arg-type]
+    assert cli_proxy.implicitly_addressable is True, (
+        "the cli proxy stands for a single-terminal adapter and must NOT regress"
+    )
+    assert "cli" not in _GATEWAY_HELD_CHANNELS
+
+
+def test_the_proxy_list_cannot_drift_from_the_channels_the_gateway_actually_runs() -> None:
+    """One source, and the other asks it.
+
+    `configured_gateway_channels` decides which channels get a socket proxy;
+    `_GATEWAY_HELD_CHANNELS` decides what those proxies claim about addressing.
+    Two lists of the same four names is the "two copies of one rule" shape, so
+    this pins them together: every channel the first can return must appear in
+    the second. Its own docstring already carries a `ponytail:` conceding the
+    duplication of the orchestrator's gates — this stops a THIRD copy drifting.
+    """
+    import inspect
+
+    from stackowl.channels import socket_adapter
+
+    src = inspect.getsource(socket_adapter.configured_gateway_channels)
+    appended = set(re.findall(r'channels\.append\("([a-z]+)"\)', src))
+    assert appended, "could not read the channel names out of the function"
+    missing = appended - set(socket_adapter._GATEWAY_HELD_CHANNELS)
+    assert not missing, (
+        f"{sorted(missing)} get a socket proxy but are absent from "
+        f"_GATEWAY_HELD_CHANNELS, so their proxies would claim to address a "
+        f"recipient implicitly"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_loop_does_not_stamp_a_delivery_for_an_answer_nobody_received() -> None:
+    """THE SECOND THING THE LIVE RUN CAUGHT, one level above the adapter.
+
+    With `_deliver_success` fixed, the 05:03 run sent nothing — correctly — and
+    the loop STILL wrote::
+
+        [loop] task COMPLETE — its outcome reached its destination
+        {"delivered_at": "2026-09-08T05:03:29.162176+00:00"}
+
+    because `_dispatch` marks delivery on any non-empty result string, and the
+    runner returned one. Making that string truthful was not enough: the loop had
+    only two terminals, delivered or failed, so an answer with no addressee had to
+    be filed as one of them. `delivered_at` is a PROOF column; it must stay NULL.
+    """
+    from stackowl.pipeline.durable.addressing import NoAddresseeCompletion
+    from stackowl.pipeline.durable.loop import TaskLoop
+
+    store = MagicMock()
+    store.mark_delivered = AsyncMock()
+    store.mark_completed_unaddressed = AsyncMock()
+    store.reclaim_expired = AsyncMock()
+    store.count_prior_reshaping_failures = AsyncMock(return_value=0)
+
+    async def _runner(_task: object) -> str:
+        raise NoAddresseeCompletion("re-driven; nobody to deliver to")
+
+    loop = TaskLoop.__new__(TaskLoop)
+    loop._store = store            # noqa: SLF001
+    loop._runner = _runner         # noqa: SLF001
+    task = MagicMock()
+    task.task_id = "t-unaddressed"
+    task.last_failure_class = ""
+
+    await loop._dispatch(task)     # noqa: SLF001
+
+    store.mark_delivered.assert_not_awaited()
+    store.mark_completed_unaddressed.assert_awaited_once()
+    assert store.mark_completed_unaddressed.await_args.kwargs["result"] == (
+        "re-driven; nobody to deliver to"
+    )
+
+
+def test_the_unaddressed_terminal_leaves_the_delivery_proof_alone() -> None:
+    """`delivered_at` is proof the answer landed. It must not appear in the SQL."""
+    import ast
+    import inspect
+    import textwrap
+
+    from stackowl.pipeline.durable.store import DurableTaskStore
+
+    # READ THE SQL, NOT THE SOURCE TEXT. The first version of this asserted over
+    # `inspect.getsource(...)` and failed on the method's own DOCSTRING, which
+    # explains why `delivered_at` must stay NULL. A guard satisfied — or broken —
+    # by prose is not a guard on behaviour; ask the AST for the string literals.
+    tree = ast.parse(textwrap.dedent(
+        inspect.getsource(DurableTaskStore.mark_completed_unaddressed)
+    ))
+    fn = tree.body[0]
+    assert isinstance(fn, ast.AsyncFunctionDef)
+    body = fn.body[1:] if ast.get_docstring(fn) else fn.body
+    literals = [
+        n.value for n in ast.walk(ast.Module(body=body, type_ignores=[]))
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    ]
+    sql = " ".join(literals)
+    assert "delivered_at" not in sql, (
+        "stamping delivered_at here would re-create the exact overclaim this "
+        "terminal exists to prevent"
+    )
+    assert "acknowledged_at" in sql
+    assert "status='completed'" in sql

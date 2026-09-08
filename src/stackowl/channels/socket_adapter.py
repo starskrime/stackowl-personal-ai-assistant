@@ -60,6 +60,18 @@ def resolve_ephemeral_sent(request_id: str, message_id: int) -> None:
     future.set_result(message_id)
 
 
+#: Channels the GATEWAY process holds, which the core can only reach by proxy.
+#:
+#: Every one of them carries a PER-MESSAGE TARGET, so an untargeted send through
+#: the proxy names no recipient — the gateway's real adapter would resolve it
+#: against its own shared `_last_*` state, i.e. whichever conversation last spoke.
+#: `configured_gateway_channels` decides which channels get a proxy; this decides
+#: what those proxies may claim about addressing, and
+#: `test_the_proxy_list_cannot_drift_from_the_channels_the_gateway_actually_runs`
+#: pins the two together so they cannot drift apart.
+_GATEWAY_HELD_CHANNELS = ("telegram", "slack", "discord", "whatsapp")
+
+
 class SocketChannelAdapter(ChannelAdapter):
     """A ChannelAdapter whose I/O is the gateway<->core socket."""
 
@@ -86,6 +98,24 @@ class SocketChannelAdapter(ChannelAdapter):
     @property
     def channel_name(self) -> str:
         return self._channel
+
+    @property
+    def implicitly_addressable(self) -> bool:  # type: ignore[override]
+        """Answer for the channel this proxies, NOT for the proxy.
+
+        THE SAME MISTAKE `surface` DOCUMENTS, one property up. Inheriting the
+        base default here made the core's telegram proxy report "yes, I address a
+        recipient implicitly" on behalf of an adapter that cannot: MEASURED LIVE
+        2026-09-08, `retry_actuator.attempt_retry: exit {"delivered": true}` at
+        04:50:46.512 and `[telegram] adapter.send_text: no active chat
+        (best-effort) — message dropped` at 04:50:46.514. The guard that was
+        supposed to stop that send never saw a real telegram adapter, because in
+        the split-process deployment the core never holds one.
+
+        A proxy that cannot ask the thing it stands for must not claim the
+        stronger property.
+        """
+        return self._channel not in _GATEWAY_HELD_CHANNELS
 
     def feed(self, msg: IngressMessage) -> None:
         """Push an inbound message (called by the core frame loop)."""
