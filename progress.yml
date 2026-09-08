@@ -19576,6 +19576,90 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-222
+    found: 2026-09-08
+    what: >-
+      I RECORDED A COLLAPSE IN MEMORY FORMATION. IT WAS A FIX WORKING. DEBT-221 noted,
+      and deliberately did not explain, that conversation summaries fell from ~60-72/day
+      (08-28..09-01) to 4/2/0/0/2/0 afterwards - phrased as a "collapse" and left as an
+      open worry against the "memory that knows the user" pillar. Measured out, the HIGH
+      numbers were the defect and the low ones are correct.
+    what_the_shape_actually_was: >-
+      The daily totals were never a rate. They were a SINGLE BURST at 09h UTC, and it
+      grew monotonically: 70, 72, 83, 88, 95 executions on 08-28..09-01, then 4. A burst
+      whose size climbs ~6/day is a backlog that never drains, not a workload. And
+      scheduler job entries equal execute entries EXACTLY on every one of the ten
+      retained days (71/76/87/92/99/4/2/1/5/59), so every run was scheduler-driven; the
+      boundary `enqueue: queued` lines held steady at 2-6/day throughout, before and
+      after. The thing that changed was not how many conversations ended.
+    the_cause_was_already_fixed_and_already_written_down: >-
+      `465c17ac` (2026-08-31T17:57Z) - "a one-shot job stops instead of coming back
+      tomorrow". `scheduler.py` records it in its own words: ONE_SHOT_TERMINAL_STATUS was
+      "written by nothing" until 2026-08-31 "while a method named `_mark_completed`
+      re-armed every one-shot to 'pending'". `enqueue_rollover_summary` sets
+      `run_once: True` precisely so a boundary is summarised once - its comment says the
+      alternative is to "re-summarise a conversation that ended once" - and the re-arming
+      defeated it. So every already-ended conversation was re-summarised EVERY DAY, and
+      the burst grew by one per new boundary.
+      The last burst ran 09-01 09:00Z on the set that was still `pending` when the fix
+      landed; from 09-02 only genuinely new boundaries run. The `jobs` table now holds
+      113 rollover_summary rows, ALL `completed`, ZERO pending - the backlog is drained,
+      and the escalation queue had already recorded "the 92 armed rollover jobs fired and
+      went terminal" as a premise that expired on its own.
+    the_path_is_healthy_end_to_end: >-
+      Traced on 2026-09-06, after the fix: 5 boundaries enqueued at 09:02:52, 5 executed
+      at 09:03:22, 3 returned "nothing notable - storing nothing", 2 staged a summary,
+      and all 5 scheduler jobs exited `completed`. 2026-09-07's zero staging is the
+      provider outage (56 `summary call failed`), and 2026-09-08's zero is a day with no
+      conversation boundary at all - `enqueue: queued` is 0, so there was nothing to
+      summarise rather than something missed.
+    killed_candidates_measured_not_assumed: >-
+      (1) `enqueue: not queued` fires exactly once a day, every day, which looked like a
+      steady leak. It is `sqlite3.IntegrityError: UNIQUE constraint failed:
+      jobs.idempotency_key` - the outcome the code's own comment calls "the EXPECTED
+      outcome of a re-announced or re-recovered boundary, not a fault". Benign.
+      (2) The 50 surviving summaries share only 5 distinct `source_ref`s, 46 of them one
+      chat id, which looked like duplication. All 46 CONTENTS are distinct and
+      substantive ("Background objective created: find fully remote Staff/Principal SWE
+      openings...", "The Gmail 'Purge the 18' task is blocked because the OAuth token
+      lacks delete permission..."). A telegram `source_ref` is the chat id and is stable
+      across every conversation in that chat, so a shared ref proves nothing about
+      duplication - which is why the contents were read rather than the refs counted.
+      (3) `d82cb279` (D03.1, 09-02T09:51Z) was the obvious suspect by date and is NOT the
+      cause: it is a compaction-ownership refactor, and the drop is explained by a fix
+      that landed the day BEFORE it.
+    what_made_this_possible_and_what_else_it_reaches: >-
+      A DAILY TOTAL HID THE SHAPE. 70 -> 95 -> 4 read as "healthy, healthy, broken"; the
+      hourly split read as "one growing backlog, then drained" and pointed straight at
+      the cause. Every number in the first reading was correct and the conclusion was
+      backwards. This programme's rule is to check what a denominator is MADE of; the
+      same applies to a total's DISTRIBUTION, and nothing in the record forced that
+      question. It reaches every per-day count this loop takes off the logs: a rate and a
+      once-daily burst are indistinguishable after summing.
+      AND THE ANSWER WAS ALREADY IN THE TREE - in `scheduler.py`'s constant docstring, in
+      `enqueue_rollover_summary`'s `run_once` comment, and in the escalation queue's own
+      "92 armed rollover jobs fired and went terminal". Three records of the same event,
+      and a fourth entry written a day later called it an unexplained collapse.
+    residue_checked_and_there_is_none: >-
+      The same defect would leave one-shot jobs stuck `pending` after they had run. The
+      live `jobs` table holds 33 pending rows and every one is a RECURRING handler with
+      exactly ONE row and a FUTURE `next_run_at` (health_sweep, knowledge_prune,
+      morning_brief, db_reclaim, ...). No one-shot is pending anywhere. Checked because
+      "the fix landed" and "nothing is still broken by it" are different claims.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: no_change_needed
+      document: done
+    no_change_needed_because: >-
+      There is no defect to fix - the defect was fixed on 2026-08-31 and this item is the
+      measurement that says so. What shipped is the CORRECTION: DEBT-221's two claims of
+      an unexplained collapse now point here. Leaving them would have sent a later loop
+      hunting a regression that does not exist, which is the harm CLAUDE.md names about
+      landmine notes outliving their mines.
   - id: DEBT-221
     found: 2026-09-08
     what: >-
@@ -19592,9 +19676,10 @@ known_debt:
       `sqlite_helpers.staged_semantic_recall`, which selects `FROM staged_facts WHERE
       owner_id = ? AND status = 'staged' AND embedding IS NOT NULL` with NO source_type
       predicate. Every deleted summary was inside that corpus. Staging rate ~30/day (324
-      in the 11 retained days), and the writer's own volume collapsed from ~60-72
-      summaries/day (08-28..09-01) to 4/2/0/0/2/0 afterwards - recorded, NOT explained
-      here, and not this item.
+      in the 11 retained days), and the writer's own volume fell from ~60-72
+      summaries/day (08-28..09-01) to 4/2/0/0/2/0 afterwards. EXPLAINED 2026-09-08 in
+      DEBT-222 and it is NOT a regression: the high numbers were a defect. Reading it as
+      a collapse was wrong.
     root_cause: >-
       THE PREMISE WAS TRUE WHEN WRITTEN AND NOTHING RE-READ IT. The survey was correct
       for `sqlite_bridge` on 2026-08-14. On 2026-08-30 the ESC-69 interim shipped
@@ -19666,8 +19751,8 @@ known_debt:
       # conversation_summary + 53 agent_self, both measured independently.
       #
       # SCOPED TO ALL NON-CONVERSATION TYPES, not to summaries alone, because the
-      # summary writer's own volume collapsed to 0-2/day after 2026-09-01 (a
-      # separate, recorded, unexplained finding). Keyed on summaries the check
+      # summary writer's own volume fell to 0-2/day after 2026-09-01 - which
+      # DEBT-222 measured as CORRECT, not a collapse. Keyed on summaries the check
       # could sit at "0 staged" for days and say nothing; the wider denominator is
       # the same fix and actually accrues.
       #
