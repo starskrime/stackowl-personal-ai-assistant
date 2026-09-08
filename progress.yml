@@ -2547,8 +2547,14 @@ current:
       aeb5fe0c — the tree DEBT-179 shipped. It confirms both of that item's fixes. The
       skip count fell 19 -> 17, which corroborates the transient-DNS diagnosis: two
       tests that SKIPPED during the red run execute again now.
+    VALIDATE_CLOSED_2026_09_08: >-
+      CLOSEABLE, verified, closed. **1** hit of `wider window is what saved it`, with the
+      string first entering `src/` on 2026-09-07 with the fix. One hit is the whole
+      claim here: the line fires ONLY when a re-probe exceeded the first window, which
+      is the single case the old 5s window could not have caught. A slow probe is no
+      longer read as a dead subsystem, and now it says so.
     stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
-      test: done, validate: partial, document: no_change_needed}
+      test: done, validate: done, document: no_change_needed}
     closing_check: >-
       n=$(./scripts/log_since.sh --all 'wider window is what saved it'); [ "$n" -gt
       0 ] && echo "CLOSEABLE ($n)" || echo "OPEN (0)"
@@ -2818,8 +2824,14 @@ current:
       added, at INFO. It appeared zero times in ten retained days beforehand, and the
       old code emitted no INFO record on this path at all. A single hit is impossible
       without the fix. The logger was checked, not just the tree.
+    VALIDATE_CLOSED_2026_09_08: >-
+      CLOSEABLE, verified, closed. **46** hits of `[resilient_round] fault classified`.
+      `git log --reverse -S` puts the string's first appearance in `src/` at 2026-09-07,
+      the day this item shipped it — so history cannot satisfy the count and `--all` is
+      earned rather than assumed. The taxonomy now leaves a trace production can see,
+      which was the whole point.
     stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
-      test: done, validate: partial, document: done}
+      test: done, validate: done, document: done}
   DEBT176_2026_09_07_the_detector_this_item_exists_to_add_could_never_fire:
     map_check: >-
       D05.7 — the oldest stale document, and doc_check now says WHY it is stale: a
@@ -2919,8 +2931,16 @@ current:
       shape DEBT-128's lesson asks for, not a pre-existing line that merely fires
       again. The logger was checked, not just the tree: _warn calls
       log.engine.info("[guardrails] tool-loop warning", ... code=...).
+    VALIDATE_CLOSED_2026_09_08: >-
+      CLOSEABLE, verified, closed. **3** hits of `"code":
+      "idempotent_no_progress_warning"` since the 2026-09-07 bound, against **0**
+      across every retained log before it — checked directly rather than taken from the
+      item's own claim. The string has been in `src/` since 2026-08-04, so the zero is
+      not about the string existing: the BRANCH was unreachable until this item
+      reordered the detectors, which is exactly what the item said and what the logs
+      now confirm.
     stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed,
-      test: done, validate: partial, document: done}
+      test: done, validate: done, document: done}
   DEBT175_2026_09_07_the_document_that_reproduced_exactly_and_why_that_is_the_finding:
     map_check: >-
       D05.6 — a MAPPED item and the oldest stale document. Verification RUN, not trusted,
