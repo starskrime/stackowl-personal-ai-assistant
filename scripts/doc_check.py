@@ -310,6 +310,48 @@ def _changed_line_ranges(sha: str, path: str) -> tuple[tuple[int, int], ...]:
     return tuple(out)
 
 
+@lru_cache(maxsize=256)
+def _symbols_at(sha: str, path: str) -> tuple[tuple[str, int, int], ...]:
+    """Every def/class in `path` AS OF `sha`, as (name, first line, last line)."""
+    if not path.endswith(".py"):
+        return ()
+    try:
+        src = subprocess.run(
+            ["git", "show", f"{sha}:{path}"],
+            capture_output=True, text=True, timeout=60, cwd=_ROOT,
+        ).stdout
+        tree = ast.parse(src)
+    except Exception:  # pragma: no cover — absent at that commit, or unparseable
+        return ()
+    return tuple(
+        (n.name, n.lineno, getattr(n, "end_lineno", n.lineno) or n.lineno)
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+    )
+
+
+def _touched_symbols(sha: str, path: str) -> tuple[str, ...]:
+    """The symbols `sha` actually changed in `path` — the reader's first question.
+
+    NAMES, never filters. A symbol a document does not mention can still be the one
+    that broke it, so this puts the fact in front of the reader rather than deciding
+    for them. Empty means "could not tell" (a non-Python source, a file absent at
+    that commit, an unreadable diff), which reads correctly as no extra information.
+    """
+    spans = _symbols_at(sha, path)
+    ranges = _changed_line_ranges(sha, path)
+    if not spans or not ranges:
+        return ()
+    hit = {
+        name
+        for (name, lo, hi) in spans
+        if any(not (end < lo or start > hi) for start, end in ranges)
+    }
+    # Smallest span first: the innermost symbol is the one the reader wants named.
+    order = {name: hi - lo for (name, lo, hi) in spans}
+    return tuple(sorted(hit, key=lambda n: (order.get(n, 0), n)))
+
+
 def _commit_reaches_symbols(sha: str, path: str, symbols: frozenset[str]) -> bool:
     """Did `sha` change any of the cited symbols in `path`?
 
@@ -1285,7 +1327,21 @@ def main(argv: list[str] | None = None) -> int:
     if stale:
         print(f"STALE — sources changed after the document was verified ({len(stale)}):")
         for name, verified, changed, culprits, subjects in sorted(stale, key=lambda r: r[1]):
-            who = ", ".join(c.split("/")[-1] for c in culprits) or "?"
+            # NAME THE SYMBOLS, not just the file. Deriving these by hand is the
+            # entire cost of draining this report, and it was paid three loops
+            # running while the machinery to compute them sat wired to one caller.
+            shas = [line.split(" ", 1)[0] for line in subjects]
+            parts = []
+            for c in culprits:
+                syms = sorted({
+                    sym for sha in shas for sym in _touched_symbols(sha, c)
+                })
+                base = c.split("/")[-1]
+                parts.append(
+                    f"{base} ({', '.join(syms[:6])}{'…' if len(syms) > 6 else ''})"
+                    if syms else base
+                )
+            who = ", ".join(parts) or "?"
             print(f"  {name:16} verified {verified}   sources changed {changed}"
                   f"   <- {who}")
             for subject in subjects[:_LIST_CAP]:

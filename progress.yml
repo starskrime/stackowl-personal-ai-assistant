@@ -20788,6 +20788,79 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-243
+    found: 2026-09-08
+    what: >-
+      THE STALE REPORT NAMED THE FILE AND NOT THE SYMBOLS, so every drain began by
+      deriving them by hand. `doc_check` printed `<- registry.py` plus a commit subject
+      and then told the reader to "check whether the change even concerned them" -
+      which means reading the file at that commit, walking its AST, reading the commit's
+      hunks and intersecting. I did exactly that BY HAND in THREE CONSECUTIVE LOOPS,
+      for `1f48d999`, `bf603ef7` and `d5f2f26e`.
+    AND_THE_MACHINERY_WAS_ALREADY_THERE_which_is_the_actual_defect: >-
+      DEBT-241 shipped `_symbol_span` and `_changed_line_ranges` one loop earlier, to
+      date SYMBOL-CITED paths. They had exactly ONE caller, `_commit_reaches_symbols`,
+      which runs only when a citation names a symbol. For a BARE citation they computed
+      nothing - and bare is how all 69 citations of files >=500 lines are written, which
+      is where the entire drain comes from. BUILT BUT NOT WIRED, one case over from the
+      one it was built for.
+    the_scale_that_makes_it_worth_wiring: >-
+      MEASURED: `execute.py` is 3,961 lines and cited BARE by six documents;
+      `orchestrator.py` is 4,840 and cited bare by five; `registry.py` is 916 and cited
+      bare by six. 69 bare citations of large shared files in total. So any edit
+      anywhere in a 4,000-line file marks five or six documents stale, and the reader
+      must re-derive which function moved before dismissing any of them.
+      `d5f2f26e` is the cleanest case: a DOCSTRING edit to `to_provider_schema` that
+      marked FOUR documents stale, one of which (D05.1) mentions that function once and
+      `register`/`discover` thirty-seven times between them.
+    fix: >-
+      `_symbols_at(sha, path)` reads the file's AST at that commit; `_touched_symbols`
+      intersects it with the commit's hunks; the STALE line prints them. `<- registry.py`
+      becomes `<- registry.py (ToolRegistry, to_provider_schema)`, innermost symbol
+      first - a reader wants `build_tool_schemas`, not the 1,900-line `_run_with_tools`
+      that contains it.
+    it_NAMES_and_never_FILTERS_and_a_test_asserts_that: >-
+      A symbol a document never mentions can still be the one that broke it, so this is
+      presentational: it must not change WHICH documents are reported stale. The verdict
+      still comes from `_changes_since`, and a test reads that function's source to
+      assert `_touched_symbols` is not consulted there. Turning a report into a filter
+      is exactly how a detector goes quiet, and this one had the ingredients to do it.
+    verified_against_answers_derived_before_the_code_existed: >-
+      The three hand-derived sets from earlier loops are the test corpus, because a
+      synthetic fixture would only prove the function agrees with itself:
+      `bf603ef7`/registry.py -> ToolRegistry, _fit_envelope_to_window,
+      to_provider_schema; `bf603ef7`/execute.py -> _run_with_tools, build_tool_schemas;
+      `d5f2f26e`/registry.py -> ToolRegistry, to_provider_schema. All three reproduced
+      exactly. Four mutations killed: always-empty, every-symbol-not-just-hits,
+      outermost-first, and an empty symbol table.
+    and_it_was_used_to_drain_the_four_it_reported: >-
+      Not a separate item - the validation. The new line made the judgement cheap:
+      D05.1 dismissed because it is about registration and discovery, and the other
+      three because the docstring now DESCRIBES the two-branch behaviour they were each
+      corrected for one loop earlier. STALE 4 -> 0, 0 duplicate header fields, and all
+      three dismissed shas preserved per document by the merge discipline DEBT-242
+      shipped.
+    what_it_costs_because_a_report_the_loop_runs_every_time_deserves_a_number: >-
+      Each named symbol set is a `git show` plus an AST parse, both `lru_cache`d.
+      MEASURED end to end, two runs each: 18.32s / 18.32s before, 18.82s / 18.91s
+      after - about 0.5s, 2.7%, inside the noise of a run that already takes eighteen
+      seconds. Stated rather than assumed because this script runs at the start of every
+      loop and `tests/audit` invokes it as a subprocess with a 300s timeout, so a cost
+      that looked free and was not would show up as a mysterious gate slowdown later.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_live_corpus: >-
+      Run against the live 84-document corpus the report prints
+      `<- registry.py (ToolRegistry, to_provider_schema)` for all four stale entries,
+      where it previously printed `<- registry.py`. Degenerate cases return empty rather
+      than raising: a non-Python source, a file the commit never touched, a file absent
+      at that commit, and an unknown sha. After the drain, STALE 0 of 84.
   - id: DEBT-242
     found: 2026-09-08
     what: >-
