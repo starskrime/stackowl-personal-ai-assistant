@@ -315,6 +315,90 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT216_2026_09_08_a_broken_premise_check_was_about_to_drop_a_live_question_from_his_queue:
+    map_check: >-
+      No mapped item — "The ground is clear." Found by running `escalation_check` at the
+      start of the loop, which is what the skill says it is for.
+    THE_QUEUE_WAS_LYING_AND_IN_THE_DANGEROUS_DIRECTION: >-
+      `escalation_check` reported ESC-159 EXPIRED — "a unit now exists (infinity)". There
+      is no unit. MEASURED: `systemctl show <a-unit-that-does-not-exist> -p WatchdogUSec
+      --value` prints **`infinity`**, while a REAL unit (gp-vpn) prints **`0`**, and
+      `systemctl list-unit-files | grep -c stackowl` is **0**. So `infinity` is the
+      NO-UNIT answer and my check read it as the opposite. An EXPIRED escalation leaves
+      the queue: the question the operator still has to answer — customer-side liveness,
+      the thing that cost 7h21m — would have silently disappeared.
+    I_WROTE_TWO_CHECKS_FOR_ONE_QUESTION_AND_ONE_WAS_WRONG: >-
+      Closing ESC-159 I added an ANSWERED entry beside the original rather than replacing
+      it, and gave the new one a fresh premise_check. The OLD entry's check handles
+      `infinity` correctly; mine did not. Two copies of one rule, disagreeing, three hours
+      after I shipped a guard against exactly that shape.
+    AND_THE_FOLDED_YAML_DEFECT_A_THIRD_TIME: >-
+      The corrected check went in as `>-` opening with a `#`, which folds the comment onto
+      the commands and turns the whole thing into one comment. `escalation_check` printed
+      `(no output)` and the entry stopped answering at all. THIRD occurrence tonight.
+    WHY_MY_OWN_GUARD_DID_NOT_CATCH_IT: >-
+      `test_a_commented_closing_check_keeps_its_line_breaks` reads `closing_check` and
+      NOTHING ELSE. `premise_check` is runnable shell in the same file, written the same
+      way, for the same reason — and was invisible to it. The same "the union knew two of
+      the three populations" defect as `current` missing from the closing-check readers,
+      one FIELD over instead of one section over. The guard now reads both, asserts it can
+      see premises at all so a blind half fails loudly, and is mutation-proven on the
+      premise path specifically.
+    changes: >-
+      progress.yml (ESC-159's premise_check corrected and de-folded),
+      tests/audit/test_a_partial_stage_carries_the_query_that_would_close_it.py (the guard
+      widened to premise_check, +1 denominator assertion, mutant killed).
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: no_change_needed, document: no_change_needed}
+    validate_no_change_needed_because: >-
+      Nothing in `src/` changed; the effect IS the measurement — `escalation_check` went
+      from 3 EXPIRED to 2, and the two that remain are the genuinely-answered ESC-158 pair.
+  MEASURED_2026_09_08_seven_product_defects_found_by_a_measurement_lens_two_verified_here:
+    map_check: >-
+      No mapped item. Round 0 for the direction Bakir chose — platform reliability and
+      product capability. Recorded so the next loop picks from EVIDENCE rather than from a
+      story, which is how I picked wrong three times tonight.
+    THE_ONE_I_VERIFIED_MYSELF_AND_IT_IS_WORSE_THAN_REPORTED: >-
+      **A four-hour total database failure in which monitoring stopped entirely.**
+      2026-09-07 14:32 -> 18:37, every DB write failing `sqlite3.OperationalError: disk
+      I/O error`: **3,454** `pool._open_inside_lock: connect failed`, **2,934**
+      `[loop] tick failed`, **490** `_poll_cycle: poll raised` — while the process stayed
+      "up". The lens counted 1 health sweep in that window; I counted **ZERO**
+      `health_sweep.execute: exit` between 14:32 and 18:38, against ~49 expected at
+      every-5m. The scheduler needs the DB to dispatch the sweep, so THE MONITOR SHARES A
+      FAILURE DOMAIN WITH THE THING IT MONITORS. It ended only because CodeWatcher
+      exec-replaced the core after an unrelated `src/` edit — no recovery path closed it.
+      Recurring: 31 such errors on 09-03, 4 on 09-04. This is the same structural defect
+      as tonight's 7h21m outage, twice in 24 hours.
+    THE_ONE_THAT_HITS_A_STATED_PILLAR: >-
+      "Memory that actually knows the user" is one of the four vision pillars.
+      `staged_facts` where `source_type='conversation_summary'` holds EXACTLY **50** rows
+      because `sqlite_bridge` trims to a floor of 50 GLOBALLY, not per session, against
+      **324** summaries staged in eleven retained days — **85% evicted**. The store they
+      were meant to be promoted into, `committed_facts`, has **0 rows and no writer**, a
+      fact already stated in-tree. So it is a 50-item LRU, not a cap in front of an
+      archive, and the assistant forgets summarised conversations after ~50 rollovers
+      system-wide. NOT independently re-verified by me — the lens's numbers, recorded as
+      its claim rather than as my measurement.
+    THE_REST_RECORDED_NOT_VERIFIED: >-
+      Daily jobs missed during downtime are silently dropped (`replay_missed=0` on all 15
+      system-seeded `daily@` jobs; `check_in` for 09-07 fell in the outage and has no
+      `job_runs` row); `db_reclaim` permanently stalled with 22% of a 359 MB database
+      unreclaimable and printing its own remedy that no actuator runs;
+      `owl_lifecycle-jobmarket` building tasks with no delivery address (185/185
+      stream-miss events, 2 today); one skill that can never load (229/229 boots).
+    AND_NINE_CANDIDATES_THE_LENS_KILLED_WITH_EVIDENCE: >-
+      Worth as much as the findings: the canary "spam" (a muted self-deleting probe),
+      `job_runs` all-completed (a dedup table by design, not a failure log), "user crons
+      reinterpreted as daily" (326/326 are `schedule:"manual"`), `undelivered_outbox` 215
+      rows (all 215 carry `surfaced_at`, typically ~8s later), orphan-DNA and
+      capability-gap noise (last seen 2026-08-31, already fixed), DNA promotion
+      (8 of 87, selective not broken), empty `remedies` (real but cosmetic — the heal loop
+      fired 50 RECOVERED events), the rollover "storm" (a dev-boot artifact), and stuck
+      queues (0 pending, 0 running, no dead-letter since 08-29).
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
+      cleanup: no_change_needed, test: no_change_needed, validate: no_change_needed,
+      document: no_change_needed}
   MEASURED_2026_09_08_the_telegram_canary_is_NOT_a_defect_and_I_proposed_it_as_one_twice:
     map_check: >-
       No mapped item. Recorded as a NEGATIVE result so the next loop does not re-open it.
@@ -15202,10 +15286,21 @@ current:
         rules out. Reframed rather than closed: liveness has to be solved IN the platform
         for customers, not in this box's service manager. Folded into the reliability
         work he chose as the next direction.
-      premise_check: >-
-        u=$(systemctl show stackowl.service -p WatchdogUSec --value 2>/dev/null);
-        [ -z "$u" ] && echo "HOLDS — no unit on this box, as instructed; customer-side
-        liveness still unsolved" || echo "EXPIRED — a unit now exists ($u)"
+      premise_check: |-
+        # `infinity` IS THE NO-UNIT ANSWER, and my first version read it as the opposite.
+        # MEASURED 2026-09-08: `systemctl show definitely-not-a-real-unit.service -p
+        # WatchdogUSec --value` prints `infinity`, while a REAL unit (gp-vpn) prints `0`.
+        # So the emptiness test never fired and this escalation reported EXPIRED — which
+        # would have dropped a question the operator still has to answer OUT of his queue.
+        # The older entry's check had it right; I wrote a second one beside it and got it
+        # wrong, which is two copies of one rule disagreeing.
+        n=$(systemctl list-unit-files 2>/dev/null | grep -c stackowl)
+        u=$(systemctl show stackowl.service -p WatchdogUSec --value 2>/dev/null)
+        if [ "${n:-0}" -eq 0 ] || [ "$u" = "infinity" ] || [ "$u" = "0" ]; then
+          echo "HOLDS — no armed watchdog (units=$n, WatchdogUSec=$u); customer-side liveness still unsolved"
+        else
+          echo "EXPIRED — a watchdog is armed at $u"
+        fi
     ESC_159_SUPERSEDED_should_the_platform_run_under_a_service_manager_so_something_notices_it_stalling:
       question: >-
         The platform runs under `./start.sh` + nohup, with no systemd unit. It ships a

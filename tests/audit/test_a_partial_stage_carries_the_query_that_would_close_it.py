@@ -240,7 +240,18 @@ def test_a_commented_closing_check_keeps_its_line_breaks() -> None:
     folded: list[str] = []
     seen = 0
     swallowed = ("$(", "&&", "; then")
-    for ident, raw in entries_with_closing_checks(data):
+    # AND `premise_check`, WHICH THIS GUARD DID NOT LOOK AT — so the defect it exists to
+    # catch was committed a THIRD time, in an escalation's premise instead of an item's
+    # closing check. MEASURED 2026-09-08: the folded scalar turned the whole check into a
+    # comment, `escalation_check` printed `(no output)`, and the entry silently stopped
+    # answering. Both fields are runnable shell in the same file for the same reason;
+    # guarding one of them is the two-populations defect this repo keeps paying for.
+    premises = [
+        (str(name), str(rec["premise_check"]))
+        for name, rec in ((data.get("current") or {}).get("ESCALATIONS") or {}).items()
+        if isinstance(rec, dict) and (rec.get("premise_check") or "").strip()
+    ]
+    for ident, raw in list(entries_with_closing_checks(data)) + premises:
         text = str(raw)
         if not text.lstrip().startswith("#"):
             continue
@@ -250,6 +261,7 @@ def test_a_commented_closing_check_keeps_its_line_breaks() -> None:
             if bare.startswith("#") and any(tok in bare for tok in swallowed):
                 folded.append(f"{ident}: a `#` line swallowed shell — {bare[:70]}")
                 break
+    assert premises, "no premise_check found — the escalation half of the rule is blind"
     assert seen >= 3, f"only {seen} commented check(s) seen — the rule has gone blind"
     assert not folded, (
         "these run nothing at all, because a folded scalar turned the whole check into "
