@@ -498,7 +498,20 @@ current:
       mutants killed). DELETION_RETENTION_DAYS left at 365 deliberately: those records are
       the record OF deletions and outliving what they describe is their entire purpose.
     stages: {brainstorm: done, architect: done, implement: done,
-      cleanup: done, test: done, validate: partial, document: no_change_needed}
+      cleanup: done, test: done, validate: done, document: no_change_needed}
+    validate_evidence_2026_09_08: >-
+      CLOSED, and verified independently rather than taken from the check. The SCHEDULER
+      dispatched the wired handler and the audit leg ran INSIDE that same dispatch - one
+      job id across all four lines, 09:00:27Z:
+        [scheduler] knowledge_prune-cc6d65a2: entry - running handler
+        [scheduler] knowledge_prune: audit retention pass complete
+                    {"job_id": "knowledge_prune-cc6d65a2", "rows_pruned": 2}
+        [scheduler] knowledge_prune-cc6d65a2: exit - completed
+      That is exactly what this item recorded as unproven - "the audit leg has not run
+      through the SCHEDULER yet (weekly)" - and the matching `job_id` is what makes it the
+      same invocation rather than two things that happened to co-occur. `rows_pruned: 2`
+      is a bonus: the handler logs even on zero (deliberately), so the check would have
+      passed on a no-op, and it did real work anyway.
     closing_check: |-
       # Keyed on the LEG RUNNING, not on rows disappearing. The first version watched for
       # "rows pruned", which the handler only logged when the count was non-zero — and
@@ -775,7 +788,19 @@ current:
     TARGETED_TESTS: >-
       tests/notifications 138 passed, tests/memory 562 passed, tests/startup 124 passed.
     stages: {brainstorm: done, architect: done, implement: done,
-      cleanup: done, test: done, validate: partial, document: no_change_needed}
+      cleanup: done, test: done, validate: done, document: no_change_needed}
+    validate_evidence_2026_09_08: >-
+      CLOSED on a case the OLD CODE COULD NOT HAVE HANDLED, which is the discriminator
+      this check needed and did not state. Three new `staged_facts` rows appeared
+      (230 -> 233), all three EMBEDDED, and the unembedded count did not move (31 -> 31,
+      all of them pre-fix `conversation` rows). Crucially TWO of the three carry
+      `source_ref` values `owl:secretary:recovery:rollover-19a` and
+      `owl:jobmarket:recovery:task-b027597` - the ROLLOVER/recovery path, i.e. the
+      PROACTIVE one. This item's defect was that "the registry was passed on the chat
+      path and omitted on the proactive one", so a summary written by a rollover job is
+      precisely the case that used to land unembedded. Had the three come from a chat
+      turn the check would have been satisfied by a case the predecessor handled too, and
+      that is what was checked before believing it.
     closing_check: |-
       # DURABLE ROWS, NOT A LOG LINE — the bridge announces `has_embeddings` only at
       # DEBUG and production runs at INFO, so no traffic could ever close a log-based
@@ -19626,6 +19651,62 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-226
+    found: 2026-09-08
+    what: >-
+      THREE ACCEPTANCE CHECKS HAD BECOME CLOSEABLE AND NONE HAD BEEN VERIFIED. The queue
+      read `checked 20, CLOSEABLE 3`. This item drained it - and the point of the item is
+      that each was checked INDEPENDENTLY before being believed, because this programme
+      has already shipped a false CLOSEABLE (D15.6, a conjunction across a whole file).
+    DEBT_215_the_scheduler_actually_dispatched_it: >-
+      The claim was "the audit leg has not run through the SCHEDULER yet (weekly)". Four
+      lines at 09:00:27Z carry ONE job id: `knowledge_prune-cc6d65a2: entry`, then
+      `knowledge_prune: audit retention pass complete {"job_id":
+      "knowledge_prune-cc6d65a2", "rows_pruned": 2}`, then `exit - completed`. The
+      MATCHING job id is what makes it one invocation rather than two things that
+      co-occurred. And `rows_pruned: 2` is a bonus the check did not require: the handler
+      logs even on zero (deliberately), so a no-op would have satisfied it.
+    DEBT_212_a_case_the_OLD_CODE_could_not_have_handled: >-
+      Three new rows (230 -> 233), all EMBEDDED, unembedded unchanged at 31 (all pre-fix
+      `conversation` rows). The discriminator is in the `source_ref`s:
+      `owl:secretary:recovery:rollover-19a` and `owl:jobmarket:recovery:task-b027597` -
+      the ROLLOVER/recovery path, which IS the proactive one. This item's defect was "the
+      registry was passed on the chat path and omitted on the proactive one", so those
+      two rows are exactly the case that used to land unembedded. Had all three come from
+      a chat turn, the check would have been satisfied by a case the predecessor handled
+      too - the third variant of the satisfied-by-the-wrong-thing family - and checking
+      WHICH PATH wrote them is what ruled that out.
+    DEBT_221_a_state_the_old_code_could_not_produce: >-
+      Stronger than the check itself asked for. `_TURN_HISTORY_FLOOR` is 50 and
+      `conversation_summary` now holds 53 ROWS. The predecessor trimmed every
+      non-conversation type back to the newest 50 on EVERY staging write, so 53 is
+      structurally impossible for it - not unlikely, impossible. The check's own reading
+      is the weaker one: 3 staging events, all logging `"trimmed": 0`, against a pre-fix
+      base rate of 371 trims in 407 events (91%).
+    and_progress_lint_caught_me_writing_a_duplicate_key: >-
+      Closing DEBT-221 I added `validate_evidence_2026_09_08` - a key that entry ALREADY
+      had, from the honest earlier note "the fix is live; the trim declining to delete is
+      not yet evidenced". YAML keeps the LAST, so the earlier record would have been
+      discarded without an error, and the file would have lost the very statement that
+      made the later close meaningful. `progress_lint` refused it. The new record is
+      renamed and explicitly says it supersedes the old one, which is kept.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: no_change_needed
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validate_done_because: >-
+      The item IS validation: three `partial` stages advanced to `done` on evidence
+      obtained by re-measuring, not by re-reading the checks. `validate_check.py` went
+      from `checked 20, CLOSEABLE 3` to `checked 17, CLOSEABLE 0` - 17 because a closed
+      stage is no longer re-run.
+    no_code_changed: >-
+      Nothing shipped to `src/`. All three fixes were already live; what was missing was
+      the evidence that they had FIRED, which is the difference this programme cares
+      about most.
   - id: DEBT-225
     found: 2026-09-08
     what: >-
@@ -20034,11 +20115,22 @@ known_debt:
       near-parallel; a double whose vectors are makes the code under test look far worse
       than it is, and I would have written "1 of 75" into this record as the defect.
     stages:
-      validate: partial
-    validate_partial_why: >-
-      The fix is a DELETE that no longer fires. Its evidence is an ABSENCE, and the
-      honest form of that is a denominator: non-conversation facts must keep being staged
-      (so the path runs) while the trim reports zero rows removed for them.
+      validate: done
+    validate_CLOSED_2026_09_08_superseding_the_not_yet_evidenced_note_above: >-
+      CLOSED ON A STATE THE OLD CODE COULD NOT PRODUCE, which is stronger than the check
+      itself asked for. `_TURN_HISTORY_FLOOR` is 50 and `conversation_summary` now holds
+      53 ROWS. Under the predecessor `_trim_source_type` kept the newest 50 of any
+      non-conversation type on every staging write, so that count could never exceed 50 -
+      53 is structurally impossible for it, not merely unlikely.
+      The check's own reading agrees and is the weaker statement: 3 non-conversation
+      staging events since the fix, all three logging `"trimmed": 0`, against a pre-fix
+      base rate of 371 trims in 407 events (91%). Three clean events at that rate is
+      already good evidence; the row count exceeding the cap is proof.
+      This SUPERSEDES `validate_evidence_2026_09_08` above, which honestly recorded "the
+      fix is live; the trim declining to delete is not yet evidenced". It is kept rather
+      than overwritten - and the rename is not cosmetic: writing this under the same key
+      would have made YAML keep only the LAST, silently discarding that record.
+      `progress_lint` refused the duplicate, which is the whole reason it exists.
     validate_evidence_2026_09_08: >-
       LIVE: restarted with ./start.sh, core armed 07:08:57Z against commit 2d42ce6b
       (07:0x), checked on the boot line rather than a PID; zero ERROR/CRITICAL since. The
