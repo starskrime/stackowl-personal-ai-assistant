@@ -22,6 +22,22 @@ So this asks the tree instead of asking the reader to remember:
     uv run python scripts/tests_touching.py                    # what you changed
     uv run python scripts/tests_touching.py src/stackowl/x.py  # or name the files
 
+AND IT COVERS `scripts/` TOO, which it did not on the day it shipped. Asked about
+`scripts/doc_check.py` it answered *"no changed files under src/ — nothing to
+map"*: a confident, empty answer about a file `tests/audit` imports twelve times
+over. That is not a hypothetical gap. Editing `scripts/doc_check.py` mid-run VOIDED
+THE 17th FULL SUITE, because the run's fingerprint covers `src/` and `tests/` and
+therefore could not see it, and the instrument built so the reader would not have to
+remember which tests matter could not see it either. A tool that answers "nothing"
+for a whole class of file teaches the reader to stop asking.
+
+Scripts are matched on their STEM — `scripts/doc_check.py` -> `doc_check` — because
+that is how `tests/audit` reaches them: `sys.path.insert(0, _ROOT / "scripts")` then
+a bare `import doc_check`, or `spec_from_file_location(..., _ROOT / "scripts" /
+"doc_check.py")`. Matching is exact (the bare stem imported, or a string equal to
+the stem or ending in `/<stem>.py`) rather than by substring, so a stem like
+`settings` cannot drag in every file that mentions the word.
+
 IT MATCHES THREE WAYS, and the second and third are not optional in this codebase.
 An `import` alone would have missed nothing here, but this tree wires things
 dynamically and asserts on source TEXT: tests monkeypatch by dotted string
@@ -78,6 +94,19 @@ def _module_name(path: str) -> str | None:
     return ".".join(parts) if parts else None
 
 
+def _script_stem(path: str) -> str | None:
+    """`scripts/doc_check.py` -> `doc_check`, or None if it is not a script path.
+
+    Only the top level of `scripts/` — nothing below it is imported by a test
+    today, and guessing a package layout that does not exist would be inventing
+    a rule rather than reading one.
+    """
+    p = Path(path)
+    if len(p.parts) != 2 or p.parts[0] != "scripts" or p.suffix != ".py":
+        return None
+    return p.stem
+
+
 def _imports(tree: ast.Module) -> set[str]:
     """Every dotted module name this file imports."""
     names: set[str] = set()
@@ -99,10 +128,19 @@ def _string_mentions(tree: ast.Module) -> set[str]:
     }
 
 
+def _all_strings(tree: ast.Module) -> set[str]:
+    """Every string literal, for matching a script by name rather than by module."""
+    return {
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+    }
+
+
 def covering_tests(changed: list[str]) -> dict[str, list[str]]:
     """changed source file -> the test files that import or name its module."""
     wanted = {c: m for c in changed if (m := _module_name(c))}
-    hits: dict[str, list[str]] = {c: [] for c in wanted}
+    scripts = {c: st for c in changed if (st := _script_stem(c))}
+    hits: dict[str, list[str]] = {c: [] for c in list(wanted) + list(scripts)}
     for test in sorted(_TESTS.rglob("test_*.py")):
         try:
             tree = ast.parse(test.read_text(encoding="utf-8"))
@@ -110,6 +148,14 @@ def covering_tests(changed: list[str]) -> dict[str, list[str]]:
             continue
         imported = _imports(tree)
         mentioned = _string_mentions(tree)
+        literals = _all_strings(tree)
+        for script_file, stem in scripts.items():
+            # A bare `import doc_check` after a sys.path insert, or the file named
+            # as a path for `spec_from_file_location`. Exact, never substring.
+            if stem in imported or stem in literals or any(
+                lit == f"{stem}.py" or lit.endswith(f"/{stem}.py") for lit in literals
+            ):
+                hits[script_file].append(str(test.relative_to(_ROOT)))
         for src_file, module in wanted.items():
             # Imported outright, imported as a symbol FROM it, or named in a
             # string (monkeypatch targets, `inspect.getsource` by dotted path).
@@ -122,11 +168,11 @@ def covering_tests(changed: list[str]) -> dict[str, list[str]]:
 
 def main() -> int:
     changed = sys.argv[1:] or _changed_files()
-    src_changed = [c for c in changed if c.startswith("src/")]
-    if not src_changed:
-        print("no changed files under src/ — nothing to map")
+    mappable = [c for c in changed if c.startswith(("src/", "scripts/"))]
+    if not mappable:
+        print("no changed files under src/ or scripts/ — nothing to map")
         return 0
-    hits = covering_tests(src_changed)
+    hits = covering_tests(mappable)
 
     every: set[str] = set()
     for src_file, tests in sorted(hits.items()):

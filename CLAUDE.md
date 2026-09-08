@@ -144,6 +144,7 @@ at a process table. Measured, in order:
 | 2026-09-08 | **`1 failed, 12553 passed, 17 skipped in 2239.34s` (rc=1)** — RED, on `c001b6c8`, `SUITE TREE STILL`. The failure was MINE: DEBT-228 changed `recover`'s contract and `tests/test_story_7_1b.py` asserts the retired one. It sits DIRECTLY in `tests/`, so the targeted `tests/scheduler` run could never reach it and the gate runs only tripwires. **The landmine below was already written and did not help** — it names the hazard, and the reader needs the answer. `scripts/tests_touching.py` now gives it. See DEBT-231. |
 | 2026-09-08 | **`12568 passed, 17 skipped, 0 failed in 2188.04s` (rc=0)** — nineteenth, GREEN again on `39cd90d6`, the tree carrying the fixes for the red run above. **Launched at the START of a loop rather than the end**, which is the sequencing rule three loops paid for: a run begun when an item finishes guarantees the NEXT loop opens blocked. Start it first, work the item off-tree in the scratchpad, land it when the verdict prints — one loop absorbs the 37 minutes instead of blocking the next. See DEBT-234. |
 | 2026-09-08 | **`12577 passed, 17 skipped, 0 failed in 2212.17s` (rc=0)** — twentieth, on `a937743d`, `SUITE TREE STILL`. First DELIBERATE use of the sequencing rule: launched at the start of the loop and the whole of DEBT-236 built against a scratch copy of the record while it ran. |
+| 2026-09-08 | **`12583 passed, 17 skipped, 0 failed in 2188.25s` (rc=0)**, `SUITE TREE STILL` — twenty-first, on `f22bfd32`. Launched at the START of the loop again; DEBT-239 — a new `doc_check` report, a `tests_touching` blind spot, ten guards and four document corrections — was measured, built, mutation-proven and dry-run entirely off-tree while it ran. |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so
@@ -370,6 +371,19 @@ printed `binary file matches` on `stackowl-2026-09-05.jsonl` and silently return
 **98** of that file's **110** matches — the null-byte truncation `log_since.sh`
 already bakes `-a` in for. Neither grep is safe bare: one misorders, the other
 truncates. Write `grep -ah … | sort` and both are covered.
+
+**AND `jq` IS A THIRD CASE, which looks like the worst of them and is the mildest.**
+MEASURED 2026-09-08 while re-running D05.8's Verification section: every `jq` over
+the glob prints `jq: error (at …/stackowl-2026-09-05.jsonl:41431): Cannot index
+number with string "ts"` — the same NUL block that truncates `/usr/bin/grep`. It
+reads exactly like a query that died half way, and I believed that for three
+commands. **It does not truncate.** Counted with and without that file,
+117,960 + 49,182 = 167,142 exactly: `jq` reports the bad line on stderr and
+processes every other one. So the error is noise and the numbers are whole — the
+hazard here is DISTRUSTING A COUNT YOU SHOULD HAVE BELIEVED, which is the mirror of
+every other entry in this section. Do not add `2>/dev/null` to hide it either: that
+would also hide a real parse failure. Read the count, and check the arithmetic if it
+matters.
 
 **In SQL `LIKE`, `_` is a WILDCARD.** `skill_name LIKE 'incident_%'` returned 1 row
 and the row was `incident-evidence-brief` from six weeks earlier — the underscore

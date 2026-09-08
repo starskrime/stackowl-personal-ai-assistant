@@ -20742,6 +20742,35 @@ known_debt:
       `test_default_orchestrator_cap_is_forty` asserted the number. Renamed to
       `test_the_default_lets_a_capable_model_see_the_whole_catalogue` and asserts the
       backstop, which is what FR5 meant and what 40 had stopped delivering.
+    THE_SAFETY_PROPERTY_MEASURED_ON_THE_REAL_CATALOGUE_2026_09_08: >-
+      Raising the ceiling is only safe if the WINDOW still protects a weak model, and the
+      first attempt to check it PROVED NOTHING: the suite's `_wide_registry` fixture holds
+      20 synthetic tools with one-line descriptions, so every window from 2,048 to 262,144
+      presented all 20 and the numbers were identical under both caps. A fixture that
+      cannot show the behaviour is not evidence - this repo's own rule, met head-on.
+      Re-measured against `ToolRegistry.with_defaults()`, 77 real tools:
+      window 4,096 -> 20 presented under BOTH the new 150 and the old 40;
+      8,192 -> 20 / 20;  16,384 -> 51 / 40;  32,768 -> 77 / 40;
+      131,072 -> 77 / 40;  262,144 -> 77 / 40.
+      SO THE WEAK-MODEL PROTECTION WAS NEVER THE COUNT. At 4k and 8k the budgeter clips to
+      20 whatever the ceiling says; the count only ever bound ABOVE the window's real
+      capacity, taxing capable models and protecting nobody. That is ESC-35's sentence -
+      "size the presented set against the resolved model window" - shown to be already
+      true underneath, and the crossover at 16k (51 vs 40) is where the old default started
+      costing tools the window could afford.
+    the_seventh_surface: >-
+      `tools/registry.py:601` said `# optional "max_tools"
+      (OrchestratorSettings.tool_count_cap), default 40` - a code comment restating the
+      value that had just moved. Found by SWEEPING for every restatement rather than the
+      ones I remembered: the sweep returned exactly one live stale claim, the rest being
+      historical narration that is correct as written.
+    and_D05_8_was_CORRECTED_not_date_bumped: >-
+      Its header carried the sentence that made this item findable - "The shipped default
+      is `tool_count_cap: 40`. `~/.stackowl/stackowl.yaml` sets 150" - and used it to
+      explain why OUR instruments read zero. The same sentence is the defect statement for
+      every install without that yaml, and the document is now corrected to say so, along
+      with three tables that called 150 "fallback only, not a ceiling" and `_DEFAULT_CAP`
+      36 when the tree says 38.
     stages:
       brainstorm: done
       architect: no_change_needed
@@ -20749,7 +20778,7 @@ known_debt:
       cleanup: done
       test: done
       validate: done
-      document: no_change_needed
+      document: done
     validated_live: >-
       `OrchestratorSettings()` with no yaml now returns 150 (was 40) - the value a fresh
       clone gets. THE USER-FACING EFFECT CANNOT BE OBSERVED ON THIS BOX AND THAT IS THE
@@ -20759,6 +20788,137 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-239
+    found: 2026-09-08
+    what: >-
+      A DESIGN DOCUMENT CAN PUBLISH A CONFIG DEFAULT AND NO INSTRUMENT IN THIS PROGRAMME
+      EVER ASKS THE CODE WHETHER IT IS STILL TRUE. `doc_check.py` dates a document against
+      the files it names as a `Source:`, which is the right question for prose and blind to
+      the most copy-able fact a document carries. MEASURED 2026-09-08: sixteen config rows
+      are published across the design set, and `config/settings.py` - which defines every
+      one of them - is cited as a Source only by the documents that happen to be ABOUT
+      settings.
+    it_was_found_by_COMMITTING_it_which_is_the_whole_point: >-
+      DEBT-238 moved `orchestrator.tool_count_cap` from 40 to `HARD_TOOL_COUNT_CAP` (150).
+      D05.8 cites `settings.py`, so it went STALE and was corrected in that item. D05.4
+      publishes THE SAME DEFAULT in its Configuration table, cites four other files, and
+      `doc_check` reported it CLEAN while it said 40 - a document made actively FALSE by a
+      commit, by the instrument built to catch exactly that, silent because the falsifying
+      file is one the document documents but does not watch. Staleness by citation can only
+      ever see the sources an author remembered to list.
+    the_shape_and_what_else_it_reaches: >-
+      Two copies of one rule, with only one of them asked - the shape this file names as
+      accounting for nearly every real defect here, reached a fourth way. The other five
+      published rows happen to be CORRECT today (`sandbox.bwrap_enabled`,
+      `sandbox.docker_enabled`, `memory.provider_schema_ceiling`,
+      `memory.semantic_search_enabled`, `memory.short_term_window`) - unwatched, not wrong,
+      which is precisely the state D05.4 was in the day before DEBT-238 landed.
+    fix: >-
+      `doc_check.py` now ASKS a live `Settings()` for every default any design document
+      publishes, and reports `PUBLISHED DEFAULT DISAGREES WITH THE CODE` with its
+      denominator. It stays a report (the script always returns 0, as it always has); the
+      GATE is `tests/audit/test_a_published_default_is_the_one_the_code_has.py`, marked
+      `tripwire`, which is where every other cross-cutting guard in this tree lives.
+      NOT CIRCULAR: the expectation comes from the live settings object and the claim from
+      the markdown, so neither derives from the other. Fourth instance of one cure -
+      `premise_check` for escalations, `closing_check` for partial stages, `doc_check` for
+      prose staleness, and now ONE SOURCE, ASKED for a published value.
+    THREE_INSTRUMENTS_TO_MEASURE_ONE_THING_and_both_wrong_ones_were_confident: >-
+      The first draft treated any dotted backticked cell as a config key and reported SEVEN
+      deleted settings - `cache_audit._tools_hashes`, `gmail.py`, `_ptc.ptc_enabled` - none
+      of which was ever a setting; ordinary tables about code look exactly like config
+      tables. The second resolved the section against a live `Settings`, which killed all
+      seven, and then read COLUMN THREE as the default. That is a layout, not a rule: the
+      design set uses SIX config-table layouts and column three is the Source in one and
+      the Notes in another, so it reported 12 FALSE of which 10 were the instrument quoting
+      the wrong column back at itself ("says 'stays'", "says 'Telegram'"). The table is now
+      asked for its OWN structure - find the header, find the column headed Default or
+      Value. PRINT THE REAL SHAPE BEFORE YOU FILTER IT, met twice in one script, and the
+      noise looked exactly like findings both times.
+    MUTATION_FOUND_A_VACUOUS_ASSERTION_THAT_NOTHING_ELSE_COULD: >-
+      Deleting the GONE branch outright left the suite GREEN. `no document documents a
+      setting that is gone` was 0 over 0 - no document currently names a removed field - so
+      it asserted nothing. The FALSE half had a planted positive control from the start and
+      the retirement half did not, and only mutation could see the difference. A control
+      was added; all SEVEN mutations now die (agrees-always-true, no-table-is-config,
+      drop-the-section-filter, value-column-by-position, any->all over tokens,
+      never-report-gone, no-literal-swallows-all).
+    the_guard_must_not_punish_BETTER_documentation: >-
+      D05.8 writes the value as ``HARD_TOOL_COUNT_CAP (150)`` - naming the constant a
+      reader must grep for AS WELL AS its value, which is better than a bare number. A
+      leading-token reader marked it FALSE and would have pushed the document toward the
+      worse spelling to satisfy the guard. Every token in the cell is now considered. The
+      laxity this buys is stated in the code rather than hidden: a cell saying "40 (raised
+      to 150 in DEBT-238)" passes on the second number, and the alternative is a guard that
+      forbids a document from describing its own change.
+    corrected_in_the_same_change: >-
+      D05.4's two Configuration rows (`tool_count_cap` said 40; `HARD_TOOL_COUNT_CAP` was
+      called "Fallback" when it is now the default itself), with the safety measurement
+      added and the header saying explicitly that the Verification section was NOT re-run
+      and the date deliberately not bumped. D05.8's remaining prose stating `_DEFAULT_CAP =
+      36` in the present tense when the tree says 38 - dated rather than rewritten, because
+      36 is what was measured at the time. D12.4's `progress.flicker_guard_ms` row, which
+      published an em dash in a Default column for a field whose default is 400.0.
+      Corpus after: 16 rows, 16 agree, 0 false, 0 gone, 0 unstated.
+    THE_SAME_BLINDNESS_ONE_TOOL_OVER_and_I_walked_into_it_doing_this: >-
+      Choosing the targeted run for THIS change, `scripts/tests_touching.py` answered "no
+      changed files under src/ - nothing to map" about `scripts/doc_check.py`, a file
+      `tests/audit` imports FOURTEEN times over. That is the same defect in the same shape:
+      an instrument confident and empty about a whole class of file. And it is the exact
+      file class that VOIDED THE 17th FULL SUITE - the run fingerprints `src/` and `tests/`
+      so it could not see a `scripts/` edit, and the tool built so the reader would not have
+      to remember which tests matter could not see it either. A tool that answers "nothing"
+      for a whole class teaches the reader to stop asking, which is worse than no tool.
+      Fixed in the same change: scripts are matched on their STEM, because that is how
+      `tests/audit` reaches them - `sys.path.insert(0, _ROOT / "scripts")` then a bare
+      `import doc_check`, or `spec_from_file_location(..., "scripts" / "doc_check.py")`.
+      It now returns 14 files for `doc_check.py` and 1 for itself.
+    and_its_first_exactness_test_SURVIVED_MUTATION_TOO: >-
+      Matching must be exact, never substring: MEASURED, seven test files mention
+      `doc_check` only inside a docstring, so a substring match returns 19 where an exact
+      match returns 14 - and one of the seven is `tests/memory/`, an unrelated package a
+      reader would then be told to run. The first assertion guarded this with a COUNT
+      THRESHOLD on `map_check`, and substring matching passed it, because that stem happens
+      not to over-match. A threshold guesses. It now names the two files that must NOT
+      appear, and all four mutations die (stem-always-None, loose-substring, scripts-dict-
+      empty, stem-accepts-any-path).
+    AND_RUNNING_D05_8s_VERIFICATION_FOUND_THAT_MY_OWN_FIX_BLINDED_IT: >-
+      D05.8 stayed STALE after its content was corrected, correctly - the content was right
+      and its Verification section had not been re-run since `f22bfd32`, so stamping it
+      fresh would have been the exact false claim these instruments exist to catch. Running
+      it in full: the four test blocks pass (6, 4, 47, 60, the last two SHAPES that held).
+      The three LIVE checks - I1, I2, I3, all reading the eviction path - return zero, and
+      zero across the WHOLE retained corpus rather than just this boot. The reason is
+      DEBT-238: the shipped cap is now 150 against a 77-tool catalogue, so `cap can bind =
+      False` EVERYWHERE, not merely on the operator's box. The count path cannot evict, so
+      the records those checks read cannot be written. THE FIX REMOVED THE DEFECT AND THE
+      OBSERVABILITY OF THE DEFECT IN ONE MOVE - "evidence that CANNOT EXIST", authored by
+      me, four days after this programme named that family. They are now marked RECORDS of
+      the capped regime with a runnable condition that would make them checks again (the
+      catalogue growing past the backstop, or an operator lowering the cap deliberately).
+    the_instrument_looked_broken_and_was_not: >-
+      Every `jq` over the log glob prints `Cannot index number with string "ts"` from a NUL
+      block at `stackowl-2026-09-05.jsonl:41431` - the same corruption `CLAUDE.md` already
+      records as TRUNCATING `/usr/bin/grep`. I read it as truncation for three commands. It
+      does NOT truncate: 117,960 + 49,182 = 167,142 exactly, counted with and without that
+      file. `jq` reports the bad line and processes the rest. The hazard is the MIRROR of
+      every other entry in that section - distrusting a count that was whole - and the note
+      now says so on BOTH surfaces that carry it, because correcting one copy of a rule is
+      not correcting the rule.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    validated_live: >-
+      Not a runtime path - this is an instrument, and its live evidence is the report
+      itself. Run against the UNCORRECTED corpus it names exactly the three real defects
+      (D05.4:312, D05.8:59, D05.8:288, each "says 40, live 150") and nothing else; against
+      the corrected corpus, 16 of 16 agree. Both halves were run, because a checker that
+      finds nothing and a clean corpus are the same output.
   - id: DEBT-237
     found: 2026-09-08
     what: >-

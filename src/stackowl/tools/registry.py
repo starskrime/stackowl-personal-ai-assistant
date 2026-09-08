@@ -598,7 +598,10 @@ class ToolRegistry:
 
             # Cap the COUNT too: a weak model derails when offered too many tools
             # even if they fit in tokens. Effective cap comes from the budget dict's
-            # optional "max_tools" (OrchestratorSettings.tool_count_cap), default 40.
+            # optional "max_tools" (OrchestratorSettings.tool_count_cap), which
+            # defaults to HARD_TOOL_COUNT_CAP — a backstop above any real
+            # catalogue, not a shaping lever (DEBT-238). It said "default 40"
+            # until 2026-09-08, when that stopped being true everywhere at once.
             # D05.8 — the explicit kwarg wins, then the budget dict's own key. One
             # cap per turn, chosen in one place, so the budgeted path and the two
             # select() paths can never disagree about what the operator asked for.

@@ -33,7 +33,7 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DESIGNS = _ROOT / "docs" / "reference-mapping" / "designs"
@@ -902,6 +902,228 @@ def _validate_stages() -> dict[str, str]:
 _LIST_CAP = 12
 
 
+# --------------------------------------------------------------------------
+# A PUBLISHED DEFAULT, ASKED OF THE CODE THAT DEFINES IT
+#
+# The staleness check above dates a document against the files it NAMES as a
+# Source. That is the right question for prose and it is blind to the most
+# copy-able fact a document carries: the DEFAULT VALUE of a config key.
+# MEASURED 2026-09-08 — sixteen such rows are published across the design set,
+# and `config/settings.py`, which defines every one of them, is cited as a
+# Source only by the documents that happen to be ABOUT settings. So a default
+# can change in the tree while every document restating it stays "fresh" by
+# every instrument this programme owns.
+#
+# Not hypothetical; it is how this report was found. DEBT-238 moved
+# `orchestrator.tool_count_cap` from 40 to `HARD_TOOL_COUNT_CAP` (150). D05.8
+# cites `settings.py`, so it went STALE and was corrected. D05.4 publishes the
+# SAME default in its Configuration table, cites four other files, and this
+# script reported it CLEAN while it said 40.
+#
+# ONE SOURCE, ASKED — the same cure as `premise_check` for escalations and
+# `closing_check` for partial stages, applied to the one claim that can be
+# compared mechanically. The document still states the number; it can no longer
+# state it alone.
+#
+# IT TOOK THREE INSTRUMENTS TO MEASURE THIS, and both wrong ones were confident.
+# The first treated any dotted backticked cell as a config key and reported
+# SEVEN deleted settings — `cache_audit._tools_hashes`, `gmail.py`,
+# `_ptc.ptc_enabled` — none of which was ever one. The second resolved the
+# section against a live `Settings` and then read column THREE as the default;
+# that is a layout, not a rule, and the design set uses SIX, so it reported 12
+# FALSE rows of which 10 were the instrument quoting the Source or Notes column
+# back at itself ("says 'stays'", "says 'Telegram'"). The table is therefore
+# asked for its own structure: find the header, find the column headed Default
+# or Value, find the one headed Key/Field/Name. A table with no such pair is
+# not making a config claim and is skipped.
+# --------------------------------------------------------------------------
+
+#: A markdown separator row: `|---|:--:|---|`.
+_SEP = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
+
+#: A backticked `section.field` anywhere in a key cell.
+_CONFIG_KEY = re.compile(r"`([a-z_]+\.[a-z_]+)`")
+
+#: Column headers naming the setting, and stating its value.
+_KEY_HEADERS = {"key", "field", "name", "setting"}
+_VALUE_HEADERS = {"default", "value"}
+
+#: A value cell stating no literal at all.
+_NO_LITERAL = re.compile(r"^\s*(—|–|-|n/?a|none stated|\(.*\)|see\b|varies\b)?\s*$", re.I)
+
+
+class ConfigClaim(NamedTuple):
+    doc: str
+    line: int
+    key: str
+    claimed: str
+    live: Any
+
+
+def _row_cells(line: str) -> list[str]:
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def _markdown_tables(text: str) -> list[tuple[int, list[str], list[list[str]]]]:
+    """Every markdown table in `text` as (header line number, header, body)."""
+    lines = text.split("\n")
+    out: list[tuple[int, list[str], list[list[str]]]] = []
+    i = 0
+    while i < len(lines):
+        if (
+            lines[i].lstrip().startswith("|")
+            and i + 1 < len(lines)
+            and _SEP.match(lines[i + 1])
+        ):
+            body: list[list[str]] = []
+            j = i + 2
+            while j < len(lines) and lines[j].lstrip().startswith("|"):
+                body.append(_row_cells(lines[j]))
+                j += 1
+            out.append((i + 1, _row_cells(lines[i]), body))
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def _config_columns(header: list[str]) -> tuple[int, int] | None:
+    """(key column, value column) if this header describes config, else None."""
+    key = value = None
+    for n, cell in enumerate(header):
+        name = cell.replace("*", "").replace("`", "").strip().lower().rstrip("?")
+        if key is None and name in _KEY_HEADERS:
+            key = n
+        elif value is None and name in _VALUE_HEADERS:
+            value = n
+    return (key, value) if key is not None and value is not None else None
+
+
+def _claimed_literals(cell: str) -> list[str]:
+    """Every token a value cell offers as the value, leading token first.
+
+    A cell is not always a bare literal. ``**150** (= `HARD_TOOL_COUNT_CAP`)``,
+    ``HARD_TOOL_COUNT_CAP (150)`` and ``40 (`ge=1`)`` are all real spellings in
+    this corpus, and the middle one is the BEST of the three — it names the
+    constant a reader must grep for as well as its value. An instrument that only
+    read the leading token marked it false and would have pushed the document
+    toward the worse spelling to satisfy the guard.
+
+    THE LAXITY THIS BUYS, STATED. A cell mentioning two numbers — "40 (raised to
+    150 in DEBT-238)" — now passes on the second. That is accepted: such a cell
+    states the truth and explains it, and the alternative is a guard that forbids
+    a document from describing its own change.
+    """
+    text = cell.replace("**", "").replace("`", "").strip()
+    if _NO_LITERAL.match(text):
+        return []
+    return [t for raw in re.split(r"[\s(),;=]+", text) if (t := raw.strip())]
+
+
+def _settings_sections(settings: Any) -> dict[str, set[str]]:
+    """Live section -> field names, read from the model rather than a list."""
+    out: dict[str, set[str]] = {}
+    for name in type(settings).model_fields:
+        section = getattr(settings, name, None)
+        fields = getattr(type(section), "model_fields", None)
+        if fields is not None:
+            out[name] = set(fields)
+    return out
+
+
+def _value_agrees(claimed: str, live: Any) -> bool:
+    """Does one published token name the live value?
+
+    Normalises the spellings a table legitimately uses for one value — `True` /
+    `true` / `yes`, `6` / `6.0`, and a quoted string.
+    """
+    c = claimed.strip().strip("\"'").lower()
+    if c == str(live).strip().lower():
+        return True
+    if isinstance(live, bool):
+        return c in ({"true", "yes", "on"} if live else {"false", "no", "off"})
+    if isinstance(live, (int, float)):
+        try:
+            return float(c.replace("_", "")) == float(live)
+        except ValueError:
+            return False
+    return False
+
+
+def config_claims(settings: Any, docs: list[Path] | None = None) -> dict[str, list[ConfigClaim]]:
+    """Every published config default, split by whether the code agrees.
+
+    NOT CIRCULAR, deliberately: the expectation comes from a live `Settings` and
+    the claim from the markdown, so neither derives from the other. A guard that
+    read the default out of the document it was checking would pass forever.
+    """
+    sections = _settings_sections(settings)
+    out: dict[str, list[ConfigClaim]] = {
+        "false": [], "gone": [], "ok": [], "no_literal": [],
+    }
+    for path in docs if docs is not None else sorted(_DESIGNS.glob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        for start, header, body in _markdown_tables(text):
+            cols = _config_columns(header)
+            if cols is None:
+                continue
+            key_col, value_col = cols
+            for n, row in enumerate(body):
+                if max(key_col, value_col) >= len(row):
+                    continue
+                found = _CONFIG_KEY.search(row[key_col])
+                if not found:
+                    continue
+                section, _, field = found.group(1).partition(".")
+                if section not in sections:
+                    continue  # an ordinary table about code, not a config claim
+                claim = ConfigClaim(path.name, start + 2 + n, found.group(1), "", None)
+                tokens = _claimed_literals(row[value_col])
+                if field not in sections[section]:
+                    out["gone"].append(
+                        claim._replace(claimed=tokens[0] if tokens else "")
+                    )
+                    continue
+                live = getattr(getattr(settings, section), field)
+                if not tokens:
+                    out["no_literal"].append(claim._replace(live=live))
+                elif any(_value_agrees(t, live) for t in tokens):
+                    out["ok"].append(claim._replace(claimed=tokens[0], live=live))
+                else:
+                    out["false"].append(claim._replace(claimed=tokens[0], live=live))
+    return out
+
+
+def _report_config_claims(docs: list[Path]) -> None:
+    """The report. Not a verdict — `tests/audit` holds the gate, as it does for
+    every other cross-cutting guard in this tree."""
+    try:
+        from stackowl.config.settings import Settings
+
+        res = config_claims(Settings(), docs)
+    except Exception as exc:  # noqa: BLE001 — a report must never break the report
+        print(f"\nPUBLISHED DEFAULTS — not checked: {type(exc).__name__}: {exc}")
+        return
+    total = sum(len(v) for v in res.values())
+    if not total:
+        return
+    if res["false"] or res["gone"]:
+        print(f"\nPUBLISHED DEFAULT DISAGREES WITH THE CODE — "
+              f"{len(res['false']) + len(res['gone'])} of {total} config row(s). "
+              "These documents are not STALE by date; their Source never changed. "
+              "They restate a value `config/settings.py` owns:")
+        for c in res["false"]:
+            print(f"  {c.doc}:{c.line}  {c.key}  —  says {c.claimed!r}, live {c.live!r}")
+        for c in res["gone"]:
+            print(f"  {c.doc}:{c.line}  {c.key}  —  documents a field its section "
+                  f"no longer has")
+    else:
+        print(f"\nPUBLISHED DEFAULT DISAGREES WITH THE CODE — none, across {total} "
+              f"config row(s) in the design set ({len(res['no_literal'])} state no "
+              "literal). (The denominator is printed because a silent detector and a "
+              "clean corpus look identical.)")
+
+
 def main(argv: list[str] | None = None) -> int:
     global _LIST_CAP
     args = sys.argv[1:] if argv is None else argv
@@ -1179,6 +1401,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nNAMES A TEST THAT IS GONE — none, across {watched} test path(s) on "
               "runnable Verification commands. (The denominator is printed because a "
               "silent detector and a clean corpus look identical.)")
+
+    _report_config_claims(docs)
 
     if unmeasurable:
         # THE HEADING WAS THE SAME DEFECT ONE LEVEL UP. "nothing can date them" was
