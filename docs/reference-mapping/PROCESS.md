@@ -131,7 +131,7 @@ Update `progress.yml` **after each stage**, not at the end.
 | **implement** | Build it. Tests first. Minimal root-cause diffs. Ships ON, not dormant. | Feature complete |
 | **cleanup** | Remove what this made obsolete. Resolve the item's `dedup_target`. | Nothing duplicated, nothing orphaned, lint + types green |
 | **test** | Unit + gateway-driven integration from business requirements, mocking only the AI provider. Targeted paths with timeouts. | Green, no pre-existing failure left unexplained |
-| **validate** | Prove it in the real platform. Restart, drive a turn, read the JSONL. | Evidence pasted into `notes` |
+| **validate** | Prove it in the real platform. Restart, drive a turn, read the JSONL. | A `validated…` key naming what you observed, or the document's Verification section. `notes` was the old home and nothing could find it there — corrected 2026-09-09, because a record drafted ahead of the work asserted a validate that never happened and no instrument could say so. Not yet observable? `partial` + a `closing_check`. |
 | **document** | Close the doc. Re-verify every path and default. Stamp date + commit. | All sections final, Verification passes, every Invariant maps to a test |
 
 ### The 25 questions

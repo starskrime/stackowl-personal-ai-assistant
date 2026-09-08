@@ -19651,6 +19651,70 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-232
+    found: 2026-09-09
+    what: >-
+      I RECORDED `validate: done` FOR WORK I NEVER VALIDATED. DEBT-230's record was DRAFTED
+      IN THE SCRATCHPAD while a full suite ran - the tree was frozen, so the whole item was
+      prepared off-tree - and applied VERBATIM when the run finished. It carried
+      `validate: done`. The platform was never restarted and no live drop record was ever
+      read. MEASURED at the correction: 61 drop records across the retained logs, ALL of
+      them the old `{"has_app": true}` shape, ZERO carrying the new payload.
+    why_it_happened: >-
+      A RECORD WRITTEN AHEAD OF THE WORK ASSERTS AN INTENTION AS A FACT. Drafting off-tree
+      was the right response to a running suite; applying the draft unchanged is where the
+      claim entered. And nothing could catch it: `validate: done` was the ONLY stage in this
+      programme with no check of any kind - an escalation's premise gets `premise_check`, a
+      `partial` stage gets `closing_check`, a design document gets `doc_check`, and `done`
+      - the word that stops anybody looking again - got nothing.
+    the_first_detector_I_WROTE_PASSED_IT: >-
+      A name-and-length heuristic (any key matching /valid|live|observed|measured/ over 120
+      characters) scored DEBT-230 as EVIDENCED, because it carries
+      `the_live_cost_is_on_the_adapter_that_DID_carry_a_payload` - a description of the
+      DEFECT. The single worst offender in the file passed the guard built to find it.
+      A KEY WHOSE NAME RESEMBLES EVIDENCE IS NOT EVIDENCE; that is this repo's denominator
+      rule biting the instrument meant to enforce it, and it is why the rule is now an
+      exact prefix rather than a heuristic.
+    fix: >-
+      (1) DEBT-230's stage corrected to `partial` with a runnable `closing_check` that
+      returns CLOSEABLE the day a drop record carries `text_len`/`ext` - evidence only the
+      new code can produce, date-bounded, and its message string is emitted at ERROR so the
+      can-it-exist guard passes. It reads OPEN today and says why.
+      (2) `progress_lint.entries_with_an_unevidenced_done_validate` + a report line.
+      (3) `tests/audit/test_a_done_validate_names_its_evidence.py` - three tripwires: the
+      ratchet (43 today, can only fall), a VACUITY FLOOR (>=30, because the ratchet passes
+      on an empty list and a detector that stopped matching would read green), and a check
+      that a `doc:` still discharges the requirement, so the guard cannot push mapped items
+      into duplicating their document here.
+      (4) The rule written where it is read: the item-loop skill beside the `closing_check`
+      paragraph, and `PROCESS.md`'s stage table, whose validate row said the evidence goes
+      in `notes` - where nothing could find it.
+    a_ratchet_not_a_gate_and_why: >-
+      43 records predate the convention. A gate failing on all 43 would fail every unrelated
+      change until someone re-validated forty-three items, which is how a gate gets bypassed
+      rather than satisfied - the same reason `doc_check` is a report. The number can only
+      fall, so it fires on a new unevidenced claim and on nothing else. MUTATION-PROVEN
+      three ways (the walk returning nothing, the `doc:` exemption dropped, the prefix
+      reverting to the heuristic that passed DEBT-230), restored from a file copy, 3 green.
+    the_denominator_is_stated_not_hidden: >-
+      `current` is EXCLUDED and holds 133 such records against 43 here. It is a JOURNAL -
+      `progress_lint`'s own summary calls 281 of its 294 keys "journal and prunable" - and
+      pinning a number made of two different kinds of record is the denominator error this
+      programme pays for most. Measuring all three populations first is what showed the
+      difference; the ratchet would otherwise have been 133 and meaningless.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: no_change_needed
+      document: no_change_needed
+    validate_no_change_needed_because: >-
+      Nothing shipped to a running code path: a record corrected, a linter report, three
+      guards and three prose surfaces. The proof is the instrument's own output - `validate:
+      43 done with neither a design document nor a validated key` - and DEBT-230's check
+      now returning a reasoned OPEN where a false `done` stood.
   - id: DEBT-231
     found: 2026-09-08
     what: >-
@@ -19775,14 +19839,32 @@ known_debt:
       >=35 against the 41 measured. Without it a matcher that rotted would leave the
       offender list empty and the gate would read GREEN while guarding nothing - the
       vacuous-guard shape, which this repo has now paid for in two separate instruments.
+    validate_was_recorded_done_and_it_was_NOT: >-
+      CORRECTED 2026-09-09 (DEBT-232). This record was DRAFTED IN THE SCRATCHPAD while a
+      full suite ran, and applied verbatim once the tree was free - so it asserted a
+      validate that had not happened. The platform was never restarted and no live drop
+      record was ever read. The stage is `partial` with the check below, which is what the
+      honest-validate rule prescribes for a claim reality has not settled yet.
+      MEASURED at the correction: 61 drop records across the retained logs, ALL of them
+      the old `{"has_app": true}` shape, and ZERO carrying the new payload. Correct as an
+      OPEN: the fix shipped hours ago and the branch is rare.
     stages:
       brainstorm: done
       architect: no_change_needed
       implement: done
       cleanup: done
       test: done
-      validate: done
+      validate: partial
       document: no_change_needed
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-08 '— message dropped'); f=$(cat
+      ~/.stackowl/logs/stackowl*.jsonl | jq -c 'select((.msg|test("\\(best-effort\\) —
+      (message|file) dropped")) and ((.fields|has("text_len")) or (.fields|has("ext"))))'
+      2>/dev/null | wc -l); if [ "$f" -gt 0 ]; then echo "CLOSEABLE — $f drop records
+      carry the payload that names what was lost"; else echo "OPEN — $n drop events since
+      the fix shipped and $f carry text_len/ext; the branch needs a best-effort send with
+      no remembered chat, which is rare (61 in the whole retained window, all old-shape)";
+      fi
   - id: DEBT-229
     found: 2026-09-08
     what: >-

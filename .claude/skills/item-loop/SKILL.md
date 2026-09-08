@@ -223,6 +223,17 @@ already paid for:
 and `progress_lint` refuses one without it.** Run this beside `escalation_check` at the
 start of a loop:
 
+**AND A `done` VALIDATE MUST NAME ITS EVIDENCE — a `validated…` key, or a `doc:` whose
+Verification section holds it.** MEASURED 2026-09-09, on my own record from the loop
+before: DEBT-230's entry was DRAFTED IN THE SCRATCHPAD while a full suite ran and applied
+verbatim when the tree came free, so it asserted a validate that never happened — the
+platform was not restarted and no live record was read. `done` is the word that stops
+anybody looking again, and it was the one stage with no check at all. `progress_lint`
+now reports the population (43 legacy records) and
+`tests/audit/test_a_done_validate_names_its_evidence.py` ratchets it so it can only fall.
+**Do not draft a record ahead of the work it describes** — write the stage when the
+evidence exists, and `partial` + a `closing_check` when it does not yet.
+
 ```bash
 uv run python scripts/validate_check.py
 uv run python scripts/doc_check.py      # which design docs went stale

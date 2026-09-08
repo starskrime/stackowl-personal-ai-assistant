@@ -29,7 +29,9 @@ import collections
 import pathlib
 import re
 import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -99,7 +101,7 @@ def log_pattern_fragment(pattern: str) -> str:
     return frag
 
 
-def entries_with_closing_checks(data: dict) -> list[tuple[str, str]]:
+def entries_with_closing_checks(data: dict[str, Any]) -> list[tuple[str, str]]:
     """Every ``(label, closing_check)`` in the record, items AND known_debt.
 
     ONE SOURCE, because there are now three readers — ``validate_check.py`` and two
@@ -141,6 +143,58 @@ def entries_with_closing_checks(data: dict) -> list[tuple[str, str]]:
     return out
 
 
+#: A key naming the LIVE evidence behind a `validate: done`. The prefix is the whole
+#: mechanism, and it is deliberately a NAME rather than a content heuristic.
+#:
+#: MEASURED 2026-09-09, on my own record and by accident: a first attempt scored an
+#: entry as evidenced if it carried any key matching /valid|live|observed|measured/ and
+#: longer than 120 characters. It passed DEBT-230 — whose only matching key was
+#: `the_live_cost_is_on_the_adapter_that_DID_carry_a_payload`, a description of the
+#: DEFECT — while that entry's validate had never happened at all. A key whose NAME
+#: merely resembles evidence is not evidence, which is this repo's denominator rule
+#: reaching the instrument that was meant to enforce it.
+_VALIDATED_PREFIX = "validated"
+
+
+def entries_with_an_unevidenced_done_validate(data: dict[str, Any]) -> list[str]:
+    """Every `validate: done` that names neither a document nor its live evidence.
+
+    THE FOURTH INSTANCE OF ONE CURE. An escalation's premise aged silently until
+    `premise_check`; a `partial` stage's evidence aged silently until `closing_check`;
+    a document's claim aged silently until `doc_check`. A `validate: done` had no
+    check of any kind — and a `done` is the one that stops anybody looking again.
+
+    THE CASE THAT FOUND IT WAS MINE. DEBT-230's record was drafted in the scratchpad
+    while a full suite ran and applied verbatim when the tree came free, so it
+    asserted a validate that had not happened: the platform was never restarted and
+    no live record was ever read. Nothing could have caught that, because nothing
+    asked.
+
+    TWO WAYS TO SATISFY IT, and both are honest. A mapped item's evidence belongs in
+    its design document's Verification section, so a `doc:` key discharges the
+    requirement. Evidence-led work has no document, so it names the evidence here in
+    a `validated…` key — or records the stage `partial` with a `closing_check`, which
+    is what the honest-validate rule prescribes for a claim reality has not settled.
+
+    `current` IS EXCLUDED, and the exclusion is stated rather than hidden: it holds
+    133 such records against 43 here, and it is a JOURNAL — this file's own summary
+    calls 281 of its 294 keys "journal and prunable". Pinning a number made of two
+    different kinds of record is the denominator error this programme pays for most.
+    """
+    out: list[str] = []
+    for pool in ("items", "known_debt"):
+        for entry in data.get(pool) or []:
+            if not isinstance(entry, dict):
+                continue
+            if (entry.get("stages") or {}).get("validate") != "done":
+                continue
+            if entry.get("doc"):
+                continue  # the document's Verification section is the evidence
+            if not any(k.startswith(_VALIDATED_PREFIX) for k in entry):
+                out.append(str(entry.get("id")))
+    return out
+
+
 #: The convention the corpus already uses to write a closing query by hand. The COLON
 #: is the discriminator and it is doing real work: ``the closing query returned 213`` is
 #: narration about a check that ran, while ``Closing query: grep ...`` is a promise that
@@ -151,7 +205,9 @@ _PROSE_PROMISE = re.compile(r"\bclosing (?:query|check)\s*:", re.I)
 _EXECUTABLE_KEYS = ("closing_check", "premise_check")
 
 
-def _walk_strings(node: object, path: tuple[str, ...] = ()):
+def _walk_strings(
+    node: object, path: tuple[str, ...] = ()
+) -> Iterator[tuple[tuple[str, ...], str]]:
     """Every ``(path, text)`` string in the document, at any depth."""
     if isinstance(node, dict):
         for key, value in node.items():
@@ -163,7 +219,7 @@ def _walk_strings(node: object, path: tuple[str, ...] = ()):
         yield path, node
 
 
-def prose_closing_promises(data: dict) -> list[tuple[str, str, str]]:
+def prose_closing_promises(data: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Every ``(record, field, promise)`` written where nothing can execute it.
 
     THE FOURTH INSTANCE OF ONE CURE, and it is here because the first three were each
@@ -219,7 +275,7 @@ def prose_closing_promises(data: dict) -> list[tuple[str, str, str]]:
     return out
 
 
-def _record_label(data: dict, path: tuple[str, ...]) -> str:
+def _record_label(data: dict[str, Any], path: tuple[str, ...]) -> str:
     """A name a human can search for, never a list index.
 
     ``known_debt`` is a LIST, so the natural label for its entries is the position —
@@ -240,7 +296,7 @@ def _record_label(data: dict, path: tuple[str, ...]) -> str:
     return path[1] if len(path) > 1 else path[0]
 
 
-def _records_carrying_an_executable_check(data: dict) -> set[str]:
+def _records_carrying_an_executable_check(data: dict[str, Any]) -> set[str]:
     """Records that already have a runnable check, so their prose is not an orphan."""
     covered: set[str] = set()
     for path, _text in _walk_strings(data):
@@ -292,7 +348,7 @@ def duplicate_key_problems(text: str) -> list[str]:
     return problems
 
 
-def stale_stage_problems(data: dict) -> list[str]:
+def stale_stage_problems(data: dict[str, Any]) -> list[str]:
     """Items the loop WORKED but whose structured stages never moved.
 
     WHY THIS IS A CHECK. An item's progress lives in two places: the narrative
@@ -358,7 +414,7 @@ _CLAIM_STAGES = ("validate", "document")
 _EVIDENCE_FIELDS = ("doc", "validate_result", "changes", "notes", "decisions")
 
 
-def load_bearing_current_keys(data: dict) -> dict[str, str]:
+def load_bearing_current_keys(data: dict[str, Any]) -> dict[str, str]:
     """Item id -> the ``current`` key that is its ONLY evidence.
 
     WHY THIS IS SEPARATE FROM THE LINT RULE. ``current`` is 41% of a 2.5 MB
@@ -411,7 +467,7 @@ def load_bearing_current_keys(data: dict) -> dict[str, str]:
     return out
 
 
-def unevidenced_validate_problems(data: dict) -> list[str]:
+def unevidenced_validate_problems(data: dict[str, Any]) -> list[str]:
     """A claim stage marked `done` with nothing recorded that a reader could check.
 
     THE CARDINAL RULE OF THIS PROGRAMME is that a claim in progress.yml must have
@@ -454,7 +510,7 @@ def unevidenced_validate_problems(data: dict) -> list[str]:
     return problems
 
 
-def partial_without_closing_check_problems(data: dict) -> list[str]:
+def partial_without_closing_check_problems(data: dict[str, Any]) -> list[str]:
     """A stage recorded `partial` that does not say what evidence would close it.
 
     THE SIBLING RULE, ONE STAGE VALUE OVER. `unevidenced_validate_problems` above
@@ -497,7 +553,7 @@ def partial_without_closing_check_problems(data: dict) -> list[str]:
     return problems
 
 
-def stale_closing_check_problems(data: dict) -> list[str]:
+def stale_closing_check_problems(data: dict[str, Any]) -> list[str]:
     """A `closing_check` on an item that has no `partial` stage left.
 
     THE MIRROR OF THE RULE ABOVE, and it exists because closing a stage is exactly the
@@ -527,7 +583,7 @@ def stale_closing_check_problems(data: dict) -> list[str]:
     return problems
 
 
-def misattributed_doc_problems(data: dict) -> list[str]:
+def misattributed_doc_problems(data: dict[str, Any]) -> list[str]:
     """An item pointing at ANOTHER item's design document.
 
     MEASURED 2026-09-05, and the measurement is that I did it. D18.6's completed
@@ -628,6 +684,18 @@ def main() -> int:
         print(
             f"  current: {total} keys — {len(bearing)} load-bearing (an item's ONLY "
             f"evidence), {total - len(bearing)} journal and prunable"
+        )
+
+    # A `done` validate is the one nobody looks at again, so it is the one that has
+    # to name its evidence. REPORTED, not refused: 43 legacy records predate the
+    # convention, and a linter that failed on all of them would be bypassed rather
+    # than satisfied. `tests/audit/test_a_done_validate_names_its_evidence.py`
+    # ratchets the number so it can only fall.
+    unevidenced = entries_with_an_unevidenced_done_validate(data)
+    if unevidenced:
+        print(
+            f"  validate: {len(unevidenced)} `done` with neither a design document nor "
+            f"a `validated…` key — evidence nobody can find is a claim, not a check"
         )
     return 0
 
