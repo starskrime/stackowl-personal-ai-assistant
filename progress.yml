@@ -19702,6 +19702,20 @@ known_debt:
       pinning a number made of two different kinds of record is the denominator error this
       programme pays for most. Measuring all three populations first is what showed the
       difference; the ratchet would otherwise have been 133 and meaningless.
+    and_the_GATE_REFUSED_MY_OWN_COMMIT_correctly: >-
+      Draining the document this item made stale, `tripwires.sh` printed TRIPWIRES FAILED
+      and the commit did not go out - the chain working exactly as designed. The refusal
+      was right and the defect was in DEBT-227's mechanism, not in the document: my
+      `Reviewed:` reason CITES an earlier commit as history ("the header already records
+      `2f899198` doing the same"), and `_reviewed_shas` read the whole field, so a
+      CITATION became a second DISMISSAL - of a commit predating the verification, which
+      the ceiling guard then correctly rejected.
+      A reason must be able to cite a commit without dismissing it, or the useful half of
+      the explanation gets written out to keep the guard quiet - a mechanism degrading the
+      record it exists to protect. Only the DISMISSAL POSITION counts now: the text before
+      the first em dash, which is exactly the documented shape `Reviewed: <sha> - <why>`.
+      MUTATION-PROVEN both ways - removing the split reproduces the refusal, and moving the
+      sha AFTER the dash makes the document read STALE again because nothing was dismissed.
     stages:
       brainstorm: done
       architect: no_change_needed

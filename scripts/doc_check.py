@@ -177,7 +177,22 @@ def _reviewed_shas(head: dict[str, str]) -> set[str]:
     `tests/audit/test_a_reviewed_commit_is_a_real_commit.py` refuses a sha that is not
     a real commit touching a cited source. A prose whitelist could do none of that.
     """
-    return {m.group(1)[:8] for m in _REVIEWED_SHA.finditer(head.get("Reviewed", ""))}
+    # ONLY THE DISMISSAL POSITION COUNTS — the text before the first em dash, which
+    # is exactly the documented shape `Reviewed: <sha> — <why it does not apply>`.
+    #
+    # MEASURED 2026-09-09, when the gate refused a commit of mine and was RIGHT to.
+    # D13.2's reason names an EARLIER commit as history ("the second time a
+    # `PROCESS.md` edit has marked it stale without touching it — the header already
+    # records `2f899198` doing the same"), and reading the whole field turned that
+    # citation into a second dismissal, of a commit that predates the verification.
+    # The guard then correctly reported a stale entry that did not exist.
+    #
+    # A reason has to be able to CITE a commit without DISMISSING it, or the useful
+    # half of the explanation gets written out to keep the guard quiet — which is how
+    # a mechanism starts degrading the record it exists to protect.
+    field = head.get("Reviewed", "")
+    dismissal = field.split("—", 1)[0] if "—" in field else field
+    return {m.group(1)[:8] for m in _REVIEWED_SHA.finditer(dismissal)}
 
 
 def _changes_since(
