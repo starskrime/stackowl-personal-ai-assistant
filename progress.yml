@@ -20788,6 +20788,96 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-244
+    found: 2026-09-08
+    what: >-
+      D03.2 - conversation compression, P1 - has sat with `validate: partial` because
+      its closing check reports 0. AND THAT 0 COULD NOT BE READ: "pressure has not
+      reached 50% yet" and "the watch never ran" produced the same 0, inside the
+      acceptance evidence for a P1 gap.
+    root_cause_ONE_FUNCTION_COMPUTED_AND_JUDGED_IN_THE_SAME_BREATH: >-
+      `providers/base.py::window_pressure` computed `input_tokens / window` and returned
+      None below `_WINDOW_HIGH_WATER` (0.5) in the same function - so the ONLY code in
+      the tree that computed the ratio DESTROYED it for 131,637 of 131,644 recorded
+      calls, by design. An exceedance counter can say IF a threshold was crossed and
+      never HOW FULL things generally run, which is why no distribution was ever
+      observable. Conflating "what is the measurement" with "is the measurement
+      alarming" is defect shape 3 - two jobs, one function - and the split is the fix:
+      `window_fraction` is the measurement, `window_pressure` ASKS it. One source.
+    MY_FIRST_FRAMING_WAS_WRONG_AND_THE_CORRECTION_IS_THE_RECORD: >-
+      I measured the LOGS - 8,217 records carrying `input_tokens`, 1,256 carrying
+      `window`, the PAIR appearing ZERO times - and wrote that the distribution "had no
+      record at all". Falsified before it shipped by reading
+      `tests/providers/test_a_call_near_the_window_says_so.py`, the watch's own test,
+      which recorded the same diagnosis from the DATABASE on 2026-08-30. `cost_records`
+      holds 131,644 rows: MEASURED 2026-09-08, 7 over 50% of a 262,144 window, 390 over
+      25%, peak 162,912. I had measured the wrong store.
+    the_asymmetry_the_correction_exposed: >-
+      The NUMERATOR is persisted on every row. The DENOMINATOR is persisted NOWHERE -
+      `providers/model_window.py`'s cache is in-process and EMPTY AT REST, so a check
+      running in a fresh shell cannot resolve the window at all. That is why D03.2's
+      check had to hardcode 262,144, why the 2026-08-30 measurement that FALSIFIED
+      D03.2's earlier closure had to assume the same number, and why D03.2's own prose
+      quotes "62.1% of the 262,144 window" as if it were a reading. Every one of those
+      percentages is an inference about a value nobody wrote down.
+    fix: >-
+      Four surfaces, one change. (1) `window_fraction` split out of `window_pressure`,
+      which now asks it. (2) Migration 0140 adds `cost_records.context_window`, so the
+      denominator is persisted beside the numerator it belongs to and a fresh process
+      can compute the ratio from the row alone. (3) `record()` resolves the window at
+      the one moment it is knowable and puts `window` + `fraction_of_window` on the
+      existing `[cost]` INFO line - zero new log lines, since that line already fires
+      once per completion and already carried `input_tokens` without ever recording
+      what they were a fraction OF. (4) D03.2 documents the watch.
+    why_a_COLUMN_and_not_only_a_log_field: >-
+      CLAUDE.md's own landmine: "a log-reading check becomes a RECORD when its evidence
+      rotates, and then reads 0 forever". Ten dated log files are retained. A
+      denominator living only on a log line would make this very check unreadable again
+      in ten days - the defect being fixed, recreated by its own fix. `cost_records`
+      does not rotate. Historic rows stay NULL deliberately: their window is not
+      recoverable, and a DEFAULT would manufacture the exact 262,144 assumption this
+      removes.
+    the_watch_was_documented_NOWHERE: >-
+      Found while doing this: `grep -rl "window_pressure|a single call used" docs/`
+      returns NOTHING. The watch shipped 2026-08-30 with code, a WARNING line and a test
+      carrying a long docstring, and no design document mentioned it - so its threshold
+      was tied to D03.2's numbers by nothing a reader could follow. This is the
+      fifth-surface rule in its MIRROR: the checklist names documents made stale by a
+      DELETION, and this one went stale by an ADDITION. D03.2 now carries it.
+    B5_the_denominator_must_never_cost_a_completion: >-
+      `cached_window` is read lazily inside `record()` and any failure is swallowed to a
+      DEBUG line with `window: None` - cost accounting must never break a completion
+      that has already happened, and a missing denominator must never lose the
+      numerator. An unresolved window records NULL rather than a guess. Both pinned by
+      test.
+    this_does_NOT_close_D03_2_and_that_is_the_point: >-
+      D03.2 keeps `validate: partial`. Nothing here makes compression fire; it makes the
+      check READABLE and its denominator real, so the next reader can tell "not yet"
+      from "never possible" instead of inheriting an unevidenced sentence. Claiming a
+      close would be the exact move that put this defect here.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    doc: docs/reference-mapping/designs/D03.2.md
+    validated_on_live_records_after_a_real_turn: >-
+      Restarted at 17:46:00, fourteen seconds after commit `2290001e`, so the core holds
+      the new code. Migration 0140 applied (schema_migrations tops out at 0140 and
+      `cost_records` now carries `context_window INTEGER`). A real message was driven
+      through the platform with `scripts/dev_ingress.py` and the rows it produced carry
+      the denominator: `NeraAiRaw/neraai-v1-raw, input_tokens 587, context_window
+      262144, fraction 0.0022`. The `[cost]` INFO line carries them too - `window
+      262144, fraction_of_window 0.0006` on a 167-token call. D03.2's check 5 moved from
+      131,644 calls / 0 with_denominator to 131,673 / 12. THAT IS EVIDENCE ONLY THE NEW
+      CODE COULD PRODUCE: `context_window` is a new column with exactly one writer, so a
+      non-NULL value is impossible without it - not a pre-existing line firing again.
+      D03.2's whole Verification section was RE-RUN, not trusted: check 1 15 passed,
+      check 3 642 passed / 0 failed, check 4 31 records (`-a` checked against that count
+      and it makes no difference, 31 both ways), check 5 as above.
   - id: DEBT-243
     found: 2026-09-08
     what: >-
@@ -33587,8 +33677,23 @@ items:
       # history: this check first reported CLOSEABLE on evidence that PREDATED the
       # change it validates. log_since.sh also carries the grep -a fix (the logs hold
       # null bytes) and warns when the window is truncated by rotation.
+      # AND IT NOW PRINTS ITS DENOMINATOR (DEBT-244). The OPEN branch used to assert
+      # "no turn has been long enough to compress" — a CAUSE the logs could not
+      # establish, because nothing recorded input_tokens and window on one record.
+      # 8,217 records carried input_tokens, 1,256 carried window, and ZERO carried
+      # both, so a 0 here could not be told from "the watch never ran". The per-call
+      # [cost] line now carries fraction_of_window, so the body is visible, not only
+      # the tail. No 2>/dev/null on the jq: a NUL block in one retained log makes it
+      # print to stderr without truncating, and hiding that would also hide a real
+      # parse failure.
       n=$(./scripts/log_since.sh --all 'a single call used')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x mid-turn compression since 2026-08-30" || echo "OPEN 0 x mid-turn compression since 2026-08-30 - no turn has been long enough to compress"
+      # THE DENOMINATOR COMES FROM cost_records, NOT THE LOGS. The numerator is
+      # persisted per call (131,644 rows) and the window is NOT persisted anywhere:
+      # the probe cache is empty at rest, so a fresh process cannot resolve it. The
+      # 262144 below is therefore an ASSUMPTION about this deployment's model, stated
+      # rather than hidden, and it is why the ratio is also recorded at call time now.
+      d=$(./scripts/db_query.sh "SELECT COUNT(*) || ' calls, ' || SUM(context_window IS NOT NULL) || ' carrying a real denominator, ' || SUM(input_tokens >= 131072) || ' over 50%, ' || SUM(input_tokens >= 65536) || ' over 25%, peak ' || MAX(input_tokens) FROM cost_records" | tail -1)
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x window pressure >=50% since 2026-08-30" || echo "OPEN 0 watch firings since 2026-08-30; cost_records says $d (the 50%/25% marks assume 262144 for rows predating migration 0140)"
     title: "Conversation compression"
     domain: D03
     verdict: MISSING
