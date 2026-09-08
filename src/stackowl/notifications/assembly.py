@@ -38,6 +38,7 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only imports
     from stackowl.commands.urgent_command import UrgentCommand
     from stackowl.config.settings import Settings
     from stackowl.db.pool import DbPool
+    from stackowl.embeddings.registry import EmbeddingRegistry
     from stackowl.events.bus import EventBus
     from stackowl.memory.preferences import PreferenceStore
     from stackowl.notifications.deliverer import ProactiveDeliverer
@@ -82,6 +83,7 @@ class NotificationAssembly:
         settings: Settings,
         event_bus: EventBus,
         preference_store: PreferenceStore,
+        embedding_registry: EmbeddingRegistry | None = None,
     ) -> NotificationComponents:
         """Construct the router, digest job, and router-dependent commands.
 
@@ -164,7 +166,17 @@ class NotificationAssembly:
             # this the agent has no record of having spoken to the user: Bakir
             # asked "What?" three times about a news message it had just sent and
             # got the answer to a 45-minute-old question each time.
-            conversation_store=SqliteMemoryBridge(db),
+            # THE REGISTRY IS PASSED HERE BECAUSE `store()` EMBEDS. ESC-19 records a
+            # delivered proactive message through this bridge, and `store()` is the same
+            # method that calls `_embed_content` — so a bridge built without a registry
+            # writes the message with a NULL embedding and it is invisible to semantic
+            # recall afterwards. The chat path at `memory/assembly.py` has always passed
+            # it; this site never did, which is one actuator wired on only some paths.
+            # `sqlite_bridge` records the identical defect one layer down: it "HELD AN
+            # EMBEDDING REGISTRY AND NEVER USED IT", staged_facts reached 0% embedded and
+            # the reinforcer's `WHERE embedding IS NOT NULL` matched nothing. That was
+            # fixed in the class; this is the second construction site, fixed now.
+            conversation_store=SqliteMemoryBridge(db, embedding_registry=embedding_registry),
             # ESC-20 — so a SCHEDULED message obeys the same formatting
             # preferences a conversational reply does. Measured 2026-08-16: the
             # style was enforced only on the turn path, so Bakir's global

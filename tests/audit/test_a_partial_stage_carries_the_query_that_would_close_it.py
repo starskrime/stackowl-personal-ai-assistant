@@ -209,3 +209,49 @@ class TestTheMechanismIsActuallyReached:
         assert f"problems.extend({rule}(data))" in src, (
             f"progress_lint defines {rule} but never runs it"
         )
+
+
+@pytest.mark.tripwire
+def test_a_commented_closing_check_keeps_its_line_breaks() -> None:
+    """A folded YAML scalar joins its lines, so a leading `#` comments out the whole check.
+
+    MEASURED 2026-09-07, on a check I had just written. `closing_check: >-` FOLDS every
+    line into one, so a check that opens with an explanatory `#` comment — the house style,
+    and most of these do — becomes a single line beginning with `#`. The shell then runs
+    nothing, `validate_check.py` reports `<no output>`, and the item is unverifiable rather
+    than open. Silent by construction: the YAML is valid, `progress_lint` is satisfied, and
+    the record LOOKS like it carries a runnable check.
+
+    `|-` preserves the breaks and is the only correct style for a commented check.
+
+    THE SYMPTOM IS NOT A MISSING NEWLINE, and the first version of this guard tested for
+    one and did not fire. YAML's folded style keeps a line break before any MORE-indented
+    line, so a check with an indented `if` body still contains newlines — it is only the
+    comment lines and the first commands that get run together. The real signature is a
+    line that OPENS with `#` and has swallowed executable code, so this looks for shell
+    structure inside a comment: `$(`, `&&`, or `; then`. A correctly written comment line
+    is prose and contains none of them.
+    """
+    import yaml
+
+    from progress_lint import entries_with_closing_checks
+
+    data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+    folded: list[str] = []
+    seen = 0
+    swallowed = ("$(", "&&", "; then")
+    for ident, raw in entries_with_closing_checks(data):
+        text = str(raw)
+        if not text.lstrip().startswith("#"):
+            continue
+        seen += 1
+        for line in text.splitlines():
+            bare = line.strip()
+            if bare.startswith("#") and any(tok in bare for tok in swallowed):
+                folded.append(f"{ident}: a `#` line swallowed shell — {bare[:70]}")
+                break
+    assert seen >= 3, f"only {seen} commented check(s) seen — the rule has gone blind"
+    assert not folded, (
+        "these run nothing at all, because a folded scalar turned the whole check into "
+        "one comment — use `|-`:\n  " + "\n  ".join(folded)
+    )

@@ -72,6 +72,33 @@ def _describe(node: yaml.MappingNode) -> str:
     return f"line {node.start_mark.line + 1}"
 
 
+def log_pattern_fragment(pattern: str) -> str:
+    """The literal text a `log.*` call would actually contain, from a check's grep pattern.
+
+    ONE SOURCE, for the same reason `entries_with_closing_checks` is one: three guards ask
+    "does anything emit this?" and each was doing its own extraction.
+
+    THE ENVELOPE IS THE WHOLE PROBLEM. These patterns match a LOG LINE, so they carry the
+    JSON the formatter adds at WRITE time — `"msg": "…"`, `"code": "…"` — and that text
+    appears in no source file. A guard searching for the raw pattern therefore finds no
+    emitter and concludes the evidence cannot exist, for a string the logs are full of.
+
+    MEASURED 2026-09-07, when five `current` closing checks became visible for the first
+    time and TWO separate guards failed on them at once: the emitter walk said "no logging
+    call in `src/` emits this" about `[resilient_round] fault classified`, whose own check
+    had just counted FORTY-FIVE live log lines. A guard that calls a demonstrably-emitted
+    string unemittable is worse than no guard, because it fails correct work.
+
+    Regex alternation and `.*` are cut too, so the fragment is a literal a source string
+    can plausibly contain.
+    """
+    frag = re.split(r"\\\||\.\*", pattern)[0].replace("\\", "").strip()
+    inner = re.search(r'"(?:msg|code)":\s*"(.+)', frag)
+    if inner:
+        frag = inner.group(1).rstrip('"').strip()
+    return frag
+
+
 def entries_with_closing_checks(data: dict) -> list[tuple[str, str]]:
     """Every ``(label, closing_check)`` in the record, items AND known_debt.
 
@@ -84,6 +111,17 @@ def entries_with_closing_checks(data: dict) -> list[tuple[str, str]]:
     claims had no way to be re-checked: a `partial` item gets ``validate_check.py``
     re-running its query every loop, and a debt got a paragraph. That is the same
     dead-end DEBT-124 removed for items, one population over.
+
+    AND ``current`` WAS THE THIRD POPULATION, MISSING FROM THE UNION ITSELF. The
+    paragraph above is exactly right about why one source exists, and the source knew
+    two of the record's three sections. MEASURED 2026-09-07: FIVE ``current`` entries
+    were ``validate: partial`` with a perfectly good executable check that NOTHING ran —
+    four of them written earlier the same day. Wiring them in, three were immediately
+    CLOSEABLE on evidence that had already arrived and that no reader could see.
+
+    ``current`` is a MAPPING keyed by record name where the other two are lists of
+    records carrying their own ``id``, which is why it was easy to leave out and why the
+    key is used as the label here.
     """
     out: list[tuple[str, str]] = []
     for item in data.get("items", []):
@@ -94,6 +132,12 @@ def entries_with_closing_checks(data: dict) -> list[tuple[str, str]]:
         check = (debt.get("closing_check") or "").strip()
         if check:
             out.append((str(debt.get("id")), check))
+    for name, rec in (data.get("current") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        check = (rec.get("closing_check") or "").strip()
+        if check:
+            out.append((str(name), check))
     return out
 
 

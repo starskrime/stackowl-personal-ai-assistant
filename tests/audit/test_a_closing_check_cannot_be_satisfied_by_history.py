@@ -65,7 +65,10 @@ def _first_appeared_in_src(pattern: str) -> str:
     survives a spot check.
     """
     import subprocess
-    frag = re.split(r"\\\||\.\*", pattern)[0].replace("\\", "").strip()
+
+    from progress_lint import log_pattern_fragment
+
+    frag = log_pattern_fragment(pattern)
     if len(frag) < 12:
         return ""
     out = subprocess.run(

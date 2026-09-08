@@ -315,6 +315,147 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT213_2026_09_07_the_one_source_for_closing_checks_knew_two_of_the_records_three_sections:
+    map_check: >-
+      No mapped item. Found BY DEBT-212 — my own record landed in `current` and its
+      closing check was never re-run. Completed in the same loop because the diagnosis
+      was complete, which this skill requires rather than permits.
+    THE_HELPERS_OWN_DOCSTRING_NAMES_THE_DEFECT_IT_HAD: >-
+      `progress_lint.entries_with_closing_checks` says "ONE SOURCE, because there are now
+      three readers … Adding a second population to three private loops is the two-copies
+      defect this file exists to catch, so the union lives here and the readers ask." The
+      union was `items` + `known_debt`. `current` — the section every evidence-led item in
+      this session is recorded in — was missing, so ALL THREE readers were blind to it,
+      and `validate_check.py` had the same gap independently.
+    WHAT_IT_COST_MEASURED_THE_MOMENT_IT_WAS_WIRED: >-
+      FIVE `current` entries were `validate: partial` carrying a runnable check that
+      nothing executed — four written earlier the same day by other loops, one mine.
+      Wiring them in took `validate_check` from 15 checks to 20, and **THREE were
+      immediately CLOSEABLE**: DEBT-176 (3 hits), DEBT-177 (45), DEBT-180 (1). Evidence
+      that had already arrived, against items sitting at 6 of 7, that no reader could see.
+    AND_MY_OWN_CHECK_WAS_SILENTLY_COMMENTED_OUT: >-
+      Written as a FOLDED YAML scalar (`>-`) opening with a `#` comment, which joins the
+      comment lines onto the first commands — so the whole check became one comment, the
+      shell ran nothing, and `validate_check` reported `<no output>`. Valid YAML,
+      `progress_lint` satisfied, and the record LOOKS like it carries a runnable check.
+      Fixed with `|-`, and guarded.
+    THE_GUARD_TOOK_THREE_ATTEMPTS_AND_THE_FIRST_TWO_WERE_DECORATION: >-
+      Attempt one tested for "no newline in the value" — WRONG, because folded style keeps
+      a break before any MORE-INDENTED line, so a check with an indented `if` body still
+      contains newlines and the mutant survived. Attempt two survived for a different
+      reason: the guard read the shared helper, which was itself blind to `current`. Only
+      after fixing the helper AND keying on the real signature — a line that OPENS with
+      `#` and has swallowed shell (`$(`, `&&`, `; then`) — did the mutant die. A guard
+      that cannot be shown to catch its own defect is decoration, and this one was
+      decoration twice before it was not.
+    AND_THE_GATE_REFUSED_THE_COMMIT_WHICH_IS_THE_POINT_OF_A_GATE: >-
+      Wiring `current` in made five hidden checks visible, and `tripwires.sh` immediately
+      FAILED: `test_no_closing_check_greps_the_logs_unbounded` named THREE of them —
+      DEBT-176, DEBT-177, DEBT-178 — grepping the logs with no ship-date bound and no
+      `grep -a`. They had been invisible, so no guard had ever seen them. The population I
+      exposed was defective, which is the strongest evidence the exposure was worth doing.
+    I_REPORTED_THREE_CLOSEABLE_BEFORE_THAT_AND_THE_CLAIM_WAS_PREMATURE: >-
+      MEASURED with `git log --reverse -S` per pattern: `at_capacity: giving up for this
+      turn` first entered `src/` on 2026-08-08 and `idempotent_no_progress_warning` on
+      2026-08-04 — a MONTH before the items whose fixes they were supposed to evidence —
+      while `fault classified` entered on 2026-09-07 WITH its item. So two of the three
+      were unbounded counts over patterns older than the code they validate, the exact
+      satisfied-by-history defect. Bounded now (DEBT-176, DEBT-178 to 2026-09-07) and
+      `--all` for DEBT-177, which earns it. Re-run: DEBT-176 CLOSEABLE (3) — the number
+      SURVIVES the bound, so the claim was right by luck rather than by evidence — DEBT-177
+      CLOSEABLE (45), DEBT-178 honestly OPEN (0).
+    AND_MY_OWN_all_GUARD_REFUSED_A_LEGITIMATE_CASE: >-
+      It searched `src/` for the whole pattern, including the JSON envelope `"msg": "` the
+      formatter adds at WRITE time — which appears in no source file, so an earned `--all`
+      read as unearned. The searchable fragment is the message text inside the envelope.
+      Found by the guard being wrong in the safe direction, which is the right way round.
+    changes: >-
+      scripts/progress_lint.py (`current` added to the one source),
+      scripts/validate_check.py (`current` read for partial stages; it had the same gap
+      independently), tests/audit/test_a_partial_stage_carries_the_query_that_would_close_it.py
+      (+1 guard, mutation-proven on the third attempt),
+      tests/audit/test_a_closing_check_cannot_be_satisfied_by_history.py (the `--all`
+      proof strips the JSON envelope), and three `current` closing checks re-keyed onto
+      `log_since.sh` — two bounded, one earning `--all`.
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: no_change_needed, document: no_change_needed}
+    validate_no_change_needed_because: >-
+      Programme scripts only; nothing runs at runtime and `./start.sh` would prove nothing.
+      The effect IS the measurement above — 15 checks to 20, three closeable.
+  DEBT212_2026_09_07_the_registry_was_passed_on_the_chat_path_and_omitted_on_the_proactive_one:
+    map_check: >-
+      No mapped item — "The ground is clear." Evidence-led, and the first PRODUCT defect
+      this session rather than an instrument one.
+    I_DID_NOT_WRITE_THE_EXIT_CONDITION_FIRST_AND_SHOULD_HAVE: >-
+      Section 3 says write it before starting. I went from a `never_called.py` sweep
+      straight into the fix. Recorded because the rule exists to stop exactly the drift
+      that a promising lead produces, and three of my four leads this loop were dead.
+    HOW_IT_WAS_FOUND_AND_THE_THREE_DEAD_LEADS_BEFORE_IT: >-
+      `never_called.py` reports 48 DEFAULT WINS sites — "the symbol IS referenced, so the
+      code reads as wired". Four were investigated. THREE were benign or already handled,
+      and the data falsified them rather than reading: `DurableTaskStore.owner_id` omitted
+      at two sites looked like a tenancy defect (26 distinct owner_ids in `tasks`, and
+      `claimable()` IS owner-scoped) until the rows showed 225 completed / 90 failed / 0
+      pending for non-default owners — they run, because `heal_unreachable_owners()`
+      already exists, is wired at `loop.py:163` and is tested. `SqliteMemoryBridge`'s
+      three `recall_*` omissions are inert on a store used only to record. The FOURTH was
+      real.
+    THE_DEFECT: >-
+      `notifications/assembly.py` built `SqliteMemoryBridge(db)` with no
+      `embedding_registry`, and the only method it is ever called on is `store()` — the
+      same `store()` that calls `_embed_content`. So every proactive message ESC-19
+      records into the recipient's conversation landed with a NULL embedding and was
+      invisible to semantic recall. The chat path at `memory/assembly.py:128` has always
+      passed the registry. One actuator, wired on some paths — the first shape CLAUDE.md
+      lists.
+    AND_THE_SAME_DEFECT_IS_RECORDED_ONE_LAYER_DOWN_IN_THE_SAME_CLASS: >-
+      `sqlite_bridge._embed_content`'s docstring says the bridge once "HELD AN EMBEDDING
+      REGISTRY AND NEVER USED IT", and traces the chain — `store()` wrote a StagedFact
+      with no embedding, staged_facts reached 0% embedded, `FactReinforcer`'s
+      `WHERE embedding IS NOT NULL` matched nothing, the table reached 66% duplicates.
+      That was fixed INSIDE THE CLASS on 2026-08-25. This is the second CONSTRUCTION
+      SITE, and fixing one caller was not fixing the rule. Live today: staged_facts holds
+      199 embedded rows against 31 with none.
+    WHAT_I_COULD_NOT_EVIDENCE_AND_WHY: >-
+      The bridge announces `has_embeddings` at init — at DEBUG, and production runs at
+      INFO, so no volume of traffic can distinguish the two instances from the logs. That
+      is D08.1's DEBUG-evidence trap in a third place. The claim therefore rests on the
+      STATIC fact (the construction site passes no registry, and the protocol method it is
+      called on is the embedding one), not on a log count. I did not add an INFO line,
+      because the guard below makes the property checkable without one.
+    THE_GUARD_ASSERTS_THE_PROPERTY_NOT_THE_TWO_SITES: >-
+      `test_an_actuator_is_wired_on_every_path_not_some.py` walks the AST of every file in
+      `src/` and requires every construction of a bridge whose writes embed to pass the
+      registry, so a THIRD site added later is caught by the same rule. It asserts its own
+      denominator (>= 2 sites found) so a rule that goes blind fails loudly, and a second
+      test pins the link the guard depends on — that the notifier's one-method Protocol is
+      still `store`, the method that embeds.
+    changes: >-
+      src/stackowl/notifications/assembly.py (the registry threaded in and passed),
+      src/stackowl/startup/orchestrator.py (passes `memory_components.embedding_registry`,
+      in scope since MemoryAssembly runs ~170 lines earlier),
+      tests/audit/test_an_actuator_is_wired_on_every_path_not_some.py (new, 2 tests).
+      Baselines held at ruff 35 / mypy 65 — the first attempt typed the parameter `object`
+      and pushed mypy to 66, and the import then broke ruff's I001; both caught before the
+      gate rather than by it.
+    TARGETED_TESTS: >-
+      tests/notifications 138 passed, tests/memory 562 passed, tests/startup 124 passed.
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: partial, document: no_change_needed}
+    closing_check: |-
+      # DURABLE ROWS, NOT A LOG LINE — the bridge announces `has_embeddings` only at
+      # DEBUG and production runs at INFO, so no traffic could ever close a log-based
+      # check here. Baseline at the fix (2026-09-07): 230 staged facts, 31 unembedded.
+      # CLOSEABLE once NEW facts have been written and the unembedded count has NOT
+      # grown, which is exactly what passing the registry buys and what its absence
+      # would have broken. Never rots: it reads a table, not a rotating log.
+      t=$(./scripts/db_query.sh "SELECT COUNT(*) FROM staged_facts;" 2>/dev/null | tail -1)
+      n=$(./scripts/db_query.sh "SELECT COUNT(*) FROM staged_facts WHERE embedding IS NULL;" 2>/dev/null | tail -1)
+      if [ "${t:-0}" -gt 230 ] && [ "${n:-99}" -le 31 ]; then
+        echo "CLOSEABLE — $t staged facts (was 230), still only $n unembedded (was 31)"
+      else
+        echo "OPEN — $t staged facts, $n unembedded; needs new writes since the fix"
+      fi
   DEBT211_2026_09_07_the_warning_built_so_it_would_not_be_absorbed_is_absorbed_by_its_only_caller:
     map_check: >-
       No mapped item — "The ground is clear." Evidence-led, and it gates the programme's
@@ -2340,8 +2481,8 @@ current:
       and that zero now means "has not happened yet" rather than "cannot happen", which
       is the whole change.
     closing_check: >-
-      n=$(grep -h '"msg": "\[curated\] at_capacity: giving up for this turn"'
-      ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | wc -l); [ "$n" -gt 0 ] && echo
+      n=$(./scripts/log_since.sh 2026-09-07
+      '"msg": "\[curated\] at_capacity: giving up for this turn"'); [ "$n" -gt 0 ] && echo
       "CLOSEABLE ($n)" || echo "OPEN (0)"
     WHY_THAT_CHECK_CANNOT_BE_SATISFIED_BY_THE_OLD_CODE: >-
       The line is emitted only past MAX_CONSOLIDATION_FAILURES_PER_TURN consecutive
@@ -2431,8 +2572,8 @@ current:
       the honest state — the point of the item is that a zero here now means "has not
       happened yet" instead of "can never happen", which is what it meant before.
     closing_check: >-
-      n=$(grep -h '"msg": "\[resilient_round\] fault classified"'
-      ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | wc -l); [ "$n" -gt 0 ] && echo
+      n=$(./scripts/log_since.sh --all
+      '"msg": "\[resilient_round\] fault classified"'); [ "$n" -gt 0 ] && echo
       "CLOSEABLE ($n)" || echo "OPEN (0)"
     WHY_THAT_CHECK_CANNOT_BE_SATISFIED_BY_THE_OLD_CODE: >-
       The message string is new in this item and is emitted only by the branch it
@@ -2530,8 +2671,8 @@ current:
       stays OPEN — exactly as this document's step 5 stayed open for a month before
       the rotated logs closed it.
     closing_check: >-
-      n=$(grep -h '"code": "idempotent_no_progress_warning"'
-      ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | wc -l); [ "$n" -gt 0 ] && echo
+      n=$(./scripts/log_since.sh 2026-09-07
+      '"code": "idempotent_no_progress_warning"'); [ "$n" -gt 0 ] && echo
       "CLOSEABLE ($n)" || echo "OPEN (0)"
     WHY_THAT_CHECK_CANNOT_BE_SATISFIED_BY_THE_OLD_CODE: >-
       The code string is emitted only by the branch this item made reachable, at
@@ -14790,6 +14931,41 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_158_audit_log_has_a_retention_setting_with_no_reader_and_pruning_it_deletes_evidence:
+      question: >-
+        `audit_retention_days` (settings.py:837, default 90) has EXACTLY ONE reference in
+        `src/` — its own declaration. Zero readers. `audit_log` holds 11,353 rows spanning
+        ~105 days, so 90 is advertised and not enforced. Do you want it enforced (rows
+        older than 90 days pruned), the setting deleted as never-wired, or the bound
+        raised to match what the table is actually being used for?
+      why_evidence_cannot_settle_it: >-
+        Implementing the missing reader DELETES DATA, which this skill lists as a
+        stop-and-brief case, and the right answer depends on what `audit_log` is FOR.
+        Measurement can say it is unenforced; it cannot say whether 105 days of audit
+        history is a leak or the point.
+      and_it_carries_a_conflict_that_must_be_settled_FIRST: >-
+        A panel lens recommended re-keying the log-based `closing_check`s onto durable
+        rows precisely because logs rotate — and named `audit_log` as the store to use
+        (`audit_log.job_rearmed_after_failure` 527 rows, `health.alerted` 54,
+        `capability.denied` 101). Enforcing a 90-day prune would begin rotting exactly
+        that evidence, reintroducing DEBT-211's defect one store over. **The durable store
+        is durable BY ACCIDENT — because the setting has no reader — and fixing the
+        accident regresses the item that depends on it.** Deciding retention therefore
+        decides the acceptance-evidence strategy too, which is why they cannot be settled
+        separately.
+      panel_recommendation: >-
+        Do not wire it silently in either direction. If audit history is evidence, say so
+        and delete the setting rather than leaving a bound nothing honours; if it is a
+        leak, wire the prune AND move the closing checks off `audit_log` first.
+      blocked_until_answered: >-
+        Nothing is blocked today — the table is not growing dangerously (11,353 rows over
+        105 days). What is blocked is the re-keying strategy for the eight closing checks
+        still bound to a rotating log.
+      premise_check: >-
+        n=$(grep -rho "audit_retention_days" src/ | wc -l); r=$(./scripts/db_query.sh
+        "SELECT COUNT(*) FROM audit_log;" 2>/dev/null | tail -1);
+        [ "$n" -le 1 ] && echo "HOLDS — still $n reference in src/ (declaration only),
+        $r rows" || echo "EXPIRED — audit_retention_days now has $n references"
     ESC_157_should_the_skill_nudge_reach_BACKGROUND_lanes_at_all:
       question: >-
         The skill nudge can only ever fire on lanes that passed through INGRESS. Should it

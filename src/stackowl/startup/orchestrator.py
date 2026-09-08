@@ -1144,6 +1144,10 @@ class StartupOrchestrator:
             settings=self._settings,
             event_bus=event_bus,
             preference_store=preference_store,
+            # In scope since line ~969, where MemoryAssembly runs. Without it the
+            # proactive-message recorder writes unembedded rows — see the note at the
+            # `conversation_store=` construction in notifications/assembly.py.
+            embedding_registry=memory_components.embedding_registry,
         )
         notification_router = notification_components.router
         proactive_deliverer = notification_components.proactive_deliverer

@@ -225,6 +225,27 @@ def main() -> int:
         and (d.get("stages") or {}).get("validate", "partial") == "partial"
     ]
 
+    # AND `current`, WHICH WAS THE THIRD SECTION AND THE LAST TO GET THE CURE.
+    #
+    # The dead end this script exists to remove — a partial stage whose closing query
+    # nothing can execute — was fixed for `items`, then extended to `known_debt` (the
+    # block above says so in as many words). `current` was never added, so an
+    # evidence-led item recorded there could carry a perfectly good executable check
+    # that NOTHING WOULD EVER RUN. MEASURED 2026-09-07 the moment one of my own records
+    # landed there: FIVE entries, all `validate: partial`, all with a runnable check, all
+    # invisible — four of them written earlier the same day by other loops.
+    #
+    # `current` is a MAPPING keyed by record name, not a list, so the id has to come from
+    # the key; every other section carries its own `id`.
+    items += [
+        dict(rec, id=name,
+             stages={"validate": (rec.get("stages") or {}).get("validate", "partial")})
+        for name, rec in (data.get("current") or {}).items()
+        if isinstance(rec, dict)
+        and (rec.get("closing_check") or "").strip()
+        and (rec.get("stages") or {}).get("validate") == "partial"
+    ]
+
     print(f"partial stages: {len(items)} item(s)\n")
     closeable: list[str] = []
     unverifiable: list[str] = []

@@ -79,6 +79,14 @@ _INDIRECT_EMITTERS = {
         "SEPARATELY rather than folded into a regex with ERROR because that one line would "
         "otherwise be invisible inside a four-figure count."
     ),
+    '"code": "idempotent_no_progress_warning"': (
+        "A `_fields` VALUE reached through one call. `tool_guardrails.py:240` passes the "
+        "literal to `self._warn(...)`, which logs it at :283 as `\"code\": code` — a "
+        "VARIABLE, so no AST walk over `log.*` literals can see it, however wide. PROOF it "
+        "reaches the logs: 3 lines match on 2026-09-07, which is also what DEBT-176's own "
+        "check counts. Same shape as `[skills] nudge` below: a literal handed to a helper "
+        "that does the logging."
+    ),
     "[skills] nudge": (
         "TurnNudge logs f\"{self.label}: due\" (infra/nudge.py:92) and the label is passed "
         "at skills/nudge.py:46. PROOF the indirection reaches the logs: the SIBLING label "
@@ -90,12 +98,21 @@ _INDIRECT_EMITTERS = {
 
 @lru_cache(maxsize=1)
 def _logged_literals() -> tuple[tuple[str, str], ...]:
-    """Every (message-literal, level) a logging call in `src/` can emit.
+    """Every (literal, level) a logging call in `src/` can put into a log line.
 
     Collected from the AST rather than by grepping, because a grep cannot tell a string
     that is LOGGED from one that is returned, stored, or rendered — which is the entire
     distinction this file exists to make. f-strings contribute their literal fragments,
     since a pattern is usually matched against the fixed part.
+
+    A `_fields` VALUE IS NOT COLLECTED, AND THAT IS DELIBERATE — measured, after trying.
+    The item-loop's guidance names a log FIELD as a shape to reach for, so widening this
+    to read `extra=` looked right. It fixes nothing: the field values that matter are
+    VARIABLES at the call site (`"code": code` in `tool_guardrails._warn`), not literals,
+    so an AST walk cannot see them however wide its net. Shipping the widening would have
+    been an unexercised branch that only loosens a guard. Indirection like that is what
+    `_INDIRECT_EMITTERS` is for — an exemption that has to cite live proof and is itself
+    checked for staleness.
     """
     out: list[tuple[str, str]] = []
     for path in _SRC.rglob("*.py"):
@@ -156,7 +173,12 @@ def _log_bounds(check: str) -> list[str]:
 
 def _emitters(pattern: str) -> list[tuple[str, str]]:
     """Logging calls whose message could contain *pattern*."""
-    needle = pattern.split(".*")[0].strip()
+    # ASK THE ONE SOURCE. This used to take `pattern.split(".*")[0]`, which keeps the
+    # `"msg": "` envelope the formatter adds at write time and which no source file
+    # contains — so a string with 45 live log lines read as "nothing emits this".
+    from progress_lint import log_pattern_fragment
+
+    needle = log_pattern_fragment(pattern)
     return [(m, lvl) for m, lvl in _logged_literals() if needle and needle in m]
 
 
