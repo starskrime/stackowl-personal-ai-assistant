@@ -510,6 +510,18 @@ class TestTheSingleLogFileReportSeesTheRealCorpus:
         assert doc_check._single_log_queries(marked) == []  # noqa: SLF001
         assert doc_check._on_purpose_queries(marked) == 1  # noqa: SLF001
 
+    @staticmethod
+    def _fenced(*command_lines: str) -> str:
+        """A Verification block as it really appears — INSIDE a fence.
+
+        The fixtures here were bare command strings until 2026-09-08. That was a
+        double that had stopped resembling the thing it stood for: the detector
+        reads DOCUMENTS, and a document's commands live in fences. Passing bare
+        strings hid the two defects the cases below now cover, because both are
+        properties of how a fenced block is READ rather than of the regex.
+        """
+        return "```bash\n" + "\n".join(command_lines) + "\n```"
+
     def test_it_does_not_flag_the_glob(self) -> None:
         """The other direction. A detector that also matched `stackowl*.jsonl` would
         report every correct command as broken — crying wolf on the fix itself."""
@@ -517,14 +529,62 @@ class TestTheSingleLogFileReportSeesTheRealCorpus:
         import doc_check as dc
 
         assert dc._single_log_queries(
-            'grep -h "x" ~/.stackowl/logs/stackowl*.jsonl | wc -l'
+            self._fenced('grep -h "x" ~/.stackowl/logs/stackowl*.jsonl | wc -l')
         ) == []
         assert dc._single_log_queries(
-            'grep -c "x" ~/.stackowl/logs/stackowl.jsonl'
+            self._fenced('grep -c "x" ~/.stackowl/logs/stackowl.jsonl')
         ), "the single-file form is no longer detected"
         assert dc._single_log_queries(
-            "cat ~/.stackowl/logs/stackowl.jsonl | jq -r '.msg'"
+            self._fenced("cat ~/.stackowl/logs/stackowl.jsonl | jq -r '.msg'")
         ), "the `cat … | jq` form — the commonest here — is not detected"
+
+    @pytest.mark.tripwire
+    def test_a_command_split_across_a_continuation_is_still_seen(self) -> None:
+        """THE GAP, MEASURED 2026-09-08: nine real commands were invisible.
+
+        The reader sits on one line and the log path on the next, joined by a
+        backslash. A per-line matcher sees neither half as a command — the path
+        line has no reader, and the reader line has no path. `_fence_commands`
+        already joined continuations for a sibling detector and this one did not
+        use it, so the cure existed and was wired on only some paths.
+
+        `D07.3:107`, `D08.2:264/306/321`, `D05.3:301`, `D09.2:112`, `D10.5:238`
+        were all of this shape and all read as clean.
+        """
+        sys.path.insert(0, str(_ROOT / "scripts"))
+        import doc_check as dc
+
+        found = dc._single_log_queries(self._fenced(
+            "grep -aoE 'launched [0-9]+ recoveries' \\",
+            "  ~/.stackowl/logs/stackowl.jsonl | tail -2",
+        ))
+        assert found, (
+            "a command split across a backslash continuation was not seen; the "
+            "detector has gone back to matching single physical lines"
+        )
+
+    @pytest.mark.tripwire
+    def test_prose_describing_the_defect_is_not_reported_as_the_defect(self) -> None:
+        """THE OTHER HALF, and joining alone would have made it worse.
+
+        Fourteen lines in this corpus NAME `stackowl.jsonl` while explaining why a
+        single-file query is wrong — "it named `stackowl.jsonl`, one file". A
+        detector that reads outside fences flags the correction as the defect,
+        which is the failure `_rotted_evidence`'s fence walk already records. The
+        fence requirement is what keeps the nine findable without inventing the
+        fourteen.
+        """
+        sys.path.insert(0, str(_ROOT / "scripts"))
+        import doc_check as dc
+
+        prose = (
+            "**Three — the query was blind after midnight.** It named "
+            "`~/.stackowl/logs/stackowl.jsonl`, one file, and `cat "
+            "~/.stackowl/logs/stackowl.jsonl | jq` would have been wrong too.\n"
+        )
+        assert dc._single_log_queries(prose) == [], (
+            "prose explaining the defect was reported AS the defect"
+        )
 
 
 class TestADocumentsVerificationReadsAFieldProductionRecords:

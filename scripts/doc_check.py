@@ -228,26 +228,65 @@ def _log_query_lines(text: str) -> list[tuple[int, str]]:
 _ON_PURPOSE = "doc_check: current-boot"
 
 
-def _single_log_queries(text: str) -> list[tuple[int, str]]:
-    """(line_no, line) for every Verification command pinned to the single log file.
+def _fenced_log_commands(text: str) -> list[tuple[int, str]]:
+    """(line_no, joined command) for every log-reading command INSIDE a fence.
 
-    Lines carrying :data:`_ON_PURPOSE` are excluded here and counted separately by
-    the caller, so "deliberate" is visible in the report rather than absent from it.
+    WALKS FENCES AND JOINS CONTINUATIONS, and both halves were missing here.
+
+    The first version scanned raw lines, which got this wrong in BOTH directions
+    and the file already knew it. `_fence_commands` exists precisely because
+    "FIFTEEN fenced blocks in this corpus name a `.jsonl` log and are invisible to
+    a per-line matcher, because the reader sits on one line and the glob on the
+    next", and `_rotted_evidence`'s fence walk exists because "a command quoted in
+    prose is a description of one... a line-scoped detector flagged that
+    correction as the defect". Two sibling detectors had both cures; this one had
+    neither, so it was wired on only some paths — this repo's failure mode #1.
+
+    MEASURED 2026-09-08, which is how it was found: 23 lines name the single log
+    and go unflagged. NINE are real commands split across a backslash
+    continuation, with the path and the pipe on the line AFTER the reader
+    (`D07.3:108`, `D08.2:265/307/322`, `D05.2:501`, `D05.3:302`, `D09.2:113`,
+    `D04.1:148`, `D10.5:239`). The other fourteen are PROSE explaining this very
+    defect — "it named `stackowl.jsonl`, one file" — which a line matcher would
+    have flagged as the defect it describes. Joining finds the nine; the fence
+    walk drops the fourteen. Neither cure alone is enough.
     """
+    lines = text.splitlines()
     out: list[tuple[int, str]] = []
-    for i, line in enumerate(text.splitlines(), 1):
-        if "stackowl*.jsonl" in line or _ON_PURPOSE in line:
+    i = 0
+    while i < len(lines):
+        if not lines[i].lstrip().startswith("```"):
+            i += 1
             continue
-        if _SINGLE_LOG.search(line):
-            out.append((i, line.strip()))
+        close = i + 1
+        while close < len(lines) and not lines[close].lstrip().startswith("```"):
+            close += 1
+        for offset, cmd in _fence_commands(lines[i + 1:close]):
+            if _ANY_LOG.search(cmd):
+                out.append((i + 2 + offset, cmd.strip()))
+        i = close + 1
     return out
+
+
+def _single_log_queries(text: str) -> list[tuple[int, str]]:
+    """(line_no, command) for every Verification command pinned to the single log.
+
+    Commands carrying :data:`_ON_PURPOSE` are excluded here and counted separately
+    by the caller, so "deliberate" is visible in the report rather than absent.
+    """
+    return [
+        (n, cmd) for n, cmd in _fenced_log_commands(text)
+        if "stackowl*.jsonl" not in cmd
+        and _ON_PURPOSE not in cmd
+        and _SINGLE_LOG.search(cmd)
+    ]
 
 
 def _on_purpose_queries(text: str) -> int:
     """How many single-file queries the author explicitly marked as current-boot."""
     return sum(
-        1 for line in text.splitlines()
-        if _ON_PURPOSE in line and _SINGLE_LOG.search(line)
+        1 for _n, cmd in _fenced_log_commands(text)
+        if _ON_PURPOSE in cmd and _SINGLE_LOG.search(cmd)
     )
 
 

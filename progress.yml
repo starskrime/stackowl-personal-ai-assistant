@@ -19626,6 +19626,85 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-224
+    found: 2026-09-08
+    what: >-
+      THE TREE HAD NO VERDICT, AND I VOIDED THE RUN THAT WOULD HAVE GIVEN IT ONE.
+      42 files / 3,237 insertions / 21 commits had landed since the last COMPLETED
+      full-suite verdict (`dca7f6e1`, 12443 passed) - touching `db/pool.py`,
+      `memory/sqlite_bridge.py`, the durable loop, five channel adapters, the scheduler
+      handlers and the orchestrator. The only later run (`full-suite-20260907-184345`, on
+      `15729316`) ended at 71% with no verdict. That drift is the strongest reason this
+      programme names for spending 32 minutes, so the suite was launched on `b7635aff`
+      with `dirty_files=0`.
+    the_finding_is_what_I_did_to_it: >-
+      Mid-run I edited `scripts/doc_check.py`, reasoning that the fingerprint covers
+      `src/` and `tests/` only, so `scripts/` was free. THE FINGERPRINT IS NOT THE BLAST
+      RADIUS. The suite runs the WORKING TREE, and `tests/audit` imports
+      `scripts/doc_check.py` directly - so the edit was live inside the running suite,
+      broke `test_it_does_not_flag_the_glob`, and the run would have reported a failure
+      about a file that is not in the tree the verdict names. Worse, it would still have
+      printed `SUITE TREE STILL`, because the fingerprint cannot see what it does not
+      cover. Caught by running `tests/audit` separately while the suite was still at 71%;
+      the run was then killed deliberately (`rc=99`, no verdict) rather than left to buy
+      a number that could not be trusted.
+      THE RULE, STATED PROPERLY: "docs/, scripts/ and progress.yml are free the whole
+      time" is true of the FINGERPRINT and false of the SUITE. Free during a run means
+      "nothing under test imports it", and `scripts/` fails that test.
+    and_the_wait_found_a_real_gap_in_a_guard_I_SHIPPED: >-
+      `doc_check`'s BLIND AFTER MIDNIGHT detector scanned RAW LINES while its two sibling
+      detectors walked fences and joined backslash continuations. MEASURED: 23 lines name
+      the single log and went unflagged; SEVEN are real commands whose reader sits on one
+      line and whose log path sits on the next (`D07.3:107`, `D08.2:264/306/321`,
+      `D05.3:301`, `D09.2:112`, `D10.5:238`), and the other sixteen are PROSE explaining
+      this very defect, which a line matcher would have flagged as the defect it
+      describes. Both cures already existed in the file - `_fence_commands` joins
+      continuations "because the reader sits on one line and the glob on the next", and
+      `_rotted_evidence` walks fences because "a line-scoped detector flagged that
+      correction as the defect" - and this detector used NEITHER. Wired on only some
+      paths, in the guard built to stop exactly that.
+      So "BLIND AFTER MIDNIGHT - none, across 90" was a FALSE CLEAN. It now reads none
+      across 91, and the seven commands are fixed: `jq` widened alone (it consumes file
+      arguments in order), greps given `-ah`, and `D07.3`'s `tail -2` rewritten to `cat
+      glob | grep` because the extracted fragment carries no timestamp, so `sort` cannot
+      restore chronology there - only an ordered stream can.
+    six_stale_documents_re_verified_not_re_stamped: >-
+      D04.6, D13.3, D14.4, D13.1, D06.2, D07.3 - STALE 6 -> 0. Five went stale on my own
+      commits, and each was checked against the SPECIFIC claim rather than date-bumped:
+      D04.6's `jittered()` is still applied at all three self-computed sites and my diff
+      touched it zero times; D14.4's `_compose_alert`/`remedy` likewise; D06.2's
+      `sandbox_sweep` is still registered and still `every 10m`, executions 1,225 ->
+      1,470. D13.1 and D13.3 gained real CONTENT rather than a stamp, because the change
+      that made them stale is on their subject: `implicitly_addressable` makes the
+      cli/messaging split D13.1 draws by hand machine-readable, and it narrows D13.3's
+      "the core is deliberately unaware" claim, which is exactly what the defect cost.
+      D07.3 is stale only by DIRECTORY granularity - its Source cites `pipeline/durable/`
+      and my change touched none of the three things it names.
+    two_instrument_slips_of_my_own_recorded: >-
+      (1) `git log --since="2026-09-08 00:00"` uses LOCAL time, so it hid my own
+      01:xx commits and I briefly concluded the wrong files had changed; a commit RANGE
+      has no timezone. (2) Verifying D14.4 I read `stackowl health`'s exit code through
+      `| tail`, so `$?` reported tail's status (0) against a documented 1 - the same
+      pipeline trap this skill records about gates, met in a verification.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: no_change_needed
+      document: done
+    validate_no_change_needed_because: >-
+      Nothing shipped to a running code path: the changes are `scripts/doc_check.py`, its
+      guards, and seven documents. The acceptance is the detector's own reading, run
+      after the change - BLIND AFTER MIDNIGHT none across 91, STALE 0 - plus two new
+      tripwires that are MUTATION-PROVEN in both directions: reverting to line-scanning
+      turns the continuation guard red, and the prose guard red in the other direction.
+    what_is_NOT_done_and_is_not_hidden: >-
+      THE VERDICT ITSELF. The run this item launched was killed by me at 71% and there is
+      still no completed full-suite result for the 3,237 lines of drift. A clean run is
+      relaunched on the tree that carries this commit; its result is not claimed here,
+      because a verdict I did not read is not a verdict.
   - id: DEBT-223
     found: 2026-09-08
     what: >-
