@@ -19601,6 +19601,15 @@ known_debt:
       The wiring is proven by tests and the value is live, but the EFFECT - no audit row
       lost to a lock - needs contention to occur and be survived. That is exactly the
       ambiguous zero DEBT-151 was stuck on, so it carries the same cure: a denominator.
+    validate_evidence_2026_09_08: >-
+      LIVE: restarted with ./start.sh, core armed 05:47:56Z against commit fe65518d, zero
+      ERROR/CRITICAL since. The running tree reports `audit._BUSY_TIMEOUT_MS == 15000 ==
+      pool.BUSY_TIMEOUT_MS` and `is` the same object, so the two are one value rather than
+      two that agree. WHAT IS *NOT* EVIDENCED, and it is not claimed: no audit row has been
+      written since the boot - the newest is 03:18:51Z, before it - because audit writes are
+      event-driven (skill mutation, deletion, consent), so the WRITE path has not been
+      exercised on the new value yet. The closing_check is the thing that will settle it,
+      and it correctly reads OPEN at 9/318.
     closing_check: |-
       # A ZERO OVER A DENOMINATOR. The numerator is audit INSERTs lost to a LOCK
       # (not to the storage incident - the message carries both faults, so the
