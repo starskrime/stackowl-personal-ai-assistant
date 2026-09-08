@@ -15285,6 +15285,56 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_160_the_only_remedy_the_reclaimer_names_is_one_it_is_forbidden_to_run:
+      question: >-
+        `db_reclaim` detects that incremental reclaim does not work on this database,
+        names the remedy, and cannot apply it. May it run a full VACUUM itself - and if
+        so, when? 21% of the live database (78.8 MB of 359 MB) is parked on a freelist
+        the incremental path cannot reach.
+      the_platform_diagnoses_itself_completely: >-
+        WARNING, 17 times across 09-07 and 09-08: "the pass reclaimed far less than it
+        asked for - incremental reclaim is not working on this database", with fields
+        `asked_pages: 2000, reclaimed_pages: 1, freelist_after: 19243, free_mb: 78.8,
+        remedy: "a one-time full VACUUM is required to reclaim this space"`. The handler
+        records that a full VACUUM of a COPY of this file recovered 82 MB (359.4 ->
+        277.3 MB), so the remedy is proven, not assumed. `reclaim_stalled` is a good
+        detector - it asks about the RESULT, not the configuration, after both
+        configuration checks were defeated at once by this database.
+      why_evidence_cannot_settle_it: >-
+        It is not a measurement, it is an APPETITE. `db_reclaim.py` records the design
+        decision this would overturn, in its own words: a full VACUUM "rewrites the
+        entire database under an exclusive lock and is why this could never have been a
+        background job". That lock is the cost - every DB operation blocks for the
+        duration, the hand-run in August took 35s on a 922 MB file, and `busy_timeout` is
+        15s, so a VACUUM can itself produce the `database is locked` errors DEBT-151 and
+        DEBT-218 were about. Whether a brief stall on YOUR box is worth 79 MB is yours.
+      what_this_is_NOT: >-
+        Not a request to diagnose. The diagnosis is complete and the remedy is proven;
+        what is missing is permission to overturn a recorded decision. This is the
+        distinction Bakir drew on 2026-08-31 - escalate the DECISION, never the
+        DIAGNOSIS - and the stop-and-brief rule names "a panel answer that contradicts a
+        recorded decision" as exactly this case.
+      options_with_their_costs: >-
+        (a) LEAVE IT. 79 MB parked, growing; it was hand-VACUUMed on 2026-08-22 (922 ->
+        273 MB) and has re-accumulated to 359 MB in 17 days, so this is a recurring
+        manual chore - the "CLI-run-by-human" shape your own standing rule rejects.
+        (b) VACUUM AT BOOT when stalled, gated on a cooldown. Costs boot seconds instead
+        of serving seconds; nothing is competing for the lock, which is exactly the
+        objection the recorded decision raised. Adds delay to a process that re-execs
+        often (70% of boots are CodeWatcher).
+        (c) `VACUUM INTO` a copy then swap. Holds only a read lock while copying; the
+        swap is the sole exclusive moment. Needs 359 MB of temp space (19 GB free).
+        Panel recommendation: (b) or (c), NOT a background VACUUM - the recorded
+        objection is right about a job competing with live traffic.
+      blocked_until_answered: >-
+        Nothing else. The freelist is not urgent: the root filesystem is at 66% with 19
+        GB free, and the precedent that made this dangerous (2026-08-22) was a 99%-full
+        disk. Recorded so the number is visible before it is urgent, not after.
+      premise_check: |-
+        # EXPIRES ON ITS OWN if reclaim starts working or the space is recovered by
+        # any route - the question is about the PARKED SPACE, not about the handler.
+        free=$(./scripts/db_query.sh "SELECT (SELECT * FROM pragma_freelist_count())*100/(SELECT * FROM pragma_page_count());" 2>/dev/null | tail -1)
+        [ "$free" -ge 10 ] 2>/dev/null && echo "HOLDS — ${free}% of the database is parked on the freelist, unreclaimable by the incremental path" || echo "EXPIRED — freelist at ${free}%"
     ESC_159_ANSWERED_2026_09_08_leave_this_box_alone_the_question_is_the_CUSTOMER_deployment:
       ANSWER: >-
         Bakir, 2026-09-08: "Leave it. Current [fix] for development only so we are
@@ -19576,6 +19626,77 @@ known_debt:
       an answer. Anywhere a message asserts an OUTCOME rather than the CONDITION it actually
       observed, the same over-claim is available - and the condition here was simply
       `reply_target is None`, which is true of both the defect and the design.
+  - id: DEBT-223
+    found: 2026-09-08
+    what: >-
+      TWO DURABLE STORES HAD A DECOY AT THE OBVIOUS SIBLING PATH, POINTING OPPOSITE WAYS.
+      Measured on the live box: `~/.stackowl/stackowl.db` 0 bytes (2026-07-25) beside the
+      live `~/.stackowl/workspace/stackowl.db` at 359 MB; and `~/.stackowl/workspace/kuzu`
+      empty with 0 files (2026-05-24) beside the live `~/.stackowl/kuzu` at 41 MB. The
+      database's decoy is at the HOME root and the graph's is at the WORKSPACE root, so
+      no rule of thumb saves a reader - whichever you guess, you are wrong half the time.
+    why_the_zero_byte_one_is_worse_than_untidy: >-
+      SQLite opens an empty file as a VALID EMPTY DATABASE rather than raising. So the
+      honest conclusion from `~/.stackowl/stackowl.db` - the obvious name at the obvious
+      place - is "the platform has lost everything". I opened it myself this loop before
+      checking `default_db_path()`, which is what prompted the item.
+    it_had_already_cost_this_programme_once_and_the_file_says_so: >-
+      `kuzu_dir`'s docstring records the first occurrence: the accessor returned
+      `workspace()/kuzu` while `MemoryAssembly.build` opened `home()/kuzu` directly, "so
+      there were two graph locations and only one of them had ever been written"
+      (measured 2026-08-05, 30 MB live vs an empty directory). It then names the cure and
+      the cause of survival: "Nothing had pinned this location - no test asserted it and
+      the only consumer passed its own path - which is exactly why the split survived
+      unnoticed."
+      THAT TEST WAS NEVER WRITTEN. The nearest existing assertion checks that
+      `ensure_exists` CREATES `home/kuzu` - adjacent to, but not the same as, pinning
+      what the accessor RETURNS, and silent about the sibling.
+    and_the_defining_file_contradicted_itself: >-
+      `paths.py:64` returns `home()/kuzu`; `paths.py:224`, in `downloads_dir`'s docstring
+      160 lines below, described "the persistent stores (stackowl.db / kuzu / knowledge)
+      that live at the workspace ROOT". Two claims about one location in ONE FILE - and
+      the stale one is precisely the belief that created the split. Corrected in this
+      change rather than left as the fifth surface.
+    fix: >-
+      (1) `tests/paths/test_the_state_lives_where_the_accessor_says.py` - five tests
+      pinning both accessors against BOTH spellings, asserting `ensure_exists` creates
+      neither decoy, asserting it does create the live ones (so the forbid-both version
+      cannot pass vacuously), and pinning that STACKOWL_DATA_DIR moves the database
+      without taking the graph with it. MUTATION-PROVEN: restoring `kuzu_dir()` to
+      `workspace()/kuzu` turns 3 of them plus one pre-existing test red; restored from a
+      file copy, 33 green.
+      (2) The self-contradicting docstring corrected at its source.
+      (3) The three dead things deleted from disk after proving each unreferenced:
+      `~/.stackowl/stackowl.db` (0 bytes; `paths.py:44` is the ONLY construction of a db
+      path and it is workspace-scoped), `~/.stackowl/workspace/kuzu` (0 files; no code
+      constructs `workspace()/kuzu`), and a `__path_probe.txt` left by an earlier
+      investigation whose own contents read "path probe - safe to delete". Live state
+      verified intact afterwards: 359 MB database, 41M graph, 230 staged facts.
+    no_guard_for_the_docstring_half_and_why: >-
+      Matching prose is how FOUR guards in this session broke or were satisfied by a
+      comment. The accessors are pinned instead: a wrong docstring beside a pinned
+      accessor is a documentation bug, while a wrong accessor is a data-loss bug.
+    killed_measured_not_assumed: >-
+      `~/.stackowl/workspace/workspace/` holds 17 files including the operator's live
+      job-market research, modified 2026-09-07. It LOOKS like a third decoy at a doubled
+      path. It is not a code defect: nothing in `src/` appends "workspace" to
+      `StackowlHome.workspace()` - the `scratch / "workspace"` sites are sandbox temp
+      dirs - so the directory was made by the agent itself through the shell tool. Left
+      untouched: those are his files, and moving them is a stop-and-brief case.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: no_change_needed
+      document: done
+    validate_no_change_needed_because: >-
+      Nothing shipped to a running code path - the accessors already returned the right
+      locations, which is why all five tests pass on the unmutated tree. What shipped is
+      the PIN that stops them moving, a docstring correction, and three deletions from
+      disk verified before and after. There is no live behaviour to observe: the fix is
+      that a future reader cannot be handed the wrong file.
   - id: DEBT-222
     found: 2026-09-08
     what: >-

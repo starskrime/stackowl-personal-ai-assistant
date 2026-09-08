@@ -221,10 +221,20 @@ class StackowlHome:
 
         Lives UNDER the workspace (not the home root) so ``send_file`` can deliver
         from it, yet is a sibling of — not mixed in with — the persistent stores
-        (stackowl.db / kuzu / knowledge) that live at the workspace
+        (stackowl.db / knowledge) that live at the workspace
         ROOT. (``skills`` was in that list until D05.1 moved it OUT of the
         workspace entirely — see :meth:`skills_dir`.) That separation lets the downloads janitor prune this
         folder on a schedule without ever touching durable state.
+
+        ``kuzu`` WAS NAMED HERE AND IS NOT AT THE WORKSPACE ROOT. It lives at the
+        HOME root — see :meth:`kuzu_dir`, 160 lines above, whose docstring records
+        why: the accessor once returned ``workspace()/kuzu`` while the only
+        consumer opened ``home()/kuzu``, so the box carried a live 30 MB graph and
+        an empty directory at the same time. The accessor was corrected on
+        2026-08-05 and this sentence was not, so one file made two claims about
+        one location — and the stale one is exactly the belief that created the
+        split. Removed 2026-09-08; the accessors are pinned by
+        ``tests/paths/test_the_state_lives_where_the_accessor_says.py``.
         """
         return cls.workspace() / "downloads"
 
