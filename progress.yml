@@ -19623,11 +19623,21 @@ known_debt:
       deleting the probe-failed exit turns 2 red, restored from a file copy and green
       again.
     stages:
-      validate: partial
-    validate_partial_why: >-
-      The line is new, so nothing has emitted it yet. It needs one sweep to run on the
-      restarted core - which happens every ~5 minutes, so this is a short wait rather
-      than an ambiguous one.
+      validate: done
+    validate_evidence_2026_09_08: >-
+      LIVE AND CLOSED. Restarted with ./start.sh; core armed 06:15:45Z, which is AFTER
+      commit fe8c6bc2 (06:11:07Z) - checked against the boot line, never a PID, because
+      an earlier pair of exit lines at 06:07:37 and 06:13:08 came from a CodeWatcher
+      re-exec that PRECEDED the commit and would have been evidence from the wrong tree.
+      From the post-commit core, 06:18:16Z:
+      `[scheduler] health_sweep.execute: exit {"verdict": "healthy", "total": 15}`,
+      INFO, duration_ms 634.1. The verdict is HEALTHY - the one outcome that was
+      invisible across 2,705 prior sweeps - so this is evidence the defect is gone
+      rather than merely evidence a line exists. closing_check: CLOSEABLE.
+      INSTRUMENT NOTE for the next reader: `duration_ms` is PROMOTED to the top level of
+      the record by the observability layer, so it is absent from `.fields` and present
+      as `.duration_ms`. Checked rather than assumed, because assuming the shape of a
+      record is what this whole item is about.
     closing_check: |-
       # EVIDENCE ONLY THE NEW CODE COULD PRODUCE: this message did not exist
       # before this item, so history cannot satisfy it. The check also asserts
