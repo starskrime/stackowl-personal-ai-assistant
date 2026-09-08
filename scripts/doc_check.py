@@ -1168,7 +1168,13 @@ def main(argv: list[str] | None = None) -> int:
               "silent detector and a clean corpus look identical.)")
 
     if unmeasurable:
-        print("\nUNMEASURABLE — not fresh and not stale; nothing can date them:")
+        # THE HEADING WAS THE SAME DEFECT ONE LEVEL UP. "nothing can date them" was
+        # written when the parser saw one genre; 22 of these 36 DO carry a date and
+        # cannot be dated for a different reason — they declare no Source. A summary
+        # line that restates the corrected error is how a fix leaves its own cause
+        # standing, so it names the three reasons instead of asserting one.
+        print("\nUNMEASURABLE — no staleness verdict is possible; the reason differs "
+              "per document and the third is not a gap:")
         for name, why in sorted(unmeasurable):
             print(f"  {name:16} {why}")
     return 0

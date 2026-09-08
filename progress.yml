@@ -19719,6 +19719,13 @@ known_debt:
       its reason.
       It is not an escalation: the instrument was making a FALSE STATEMENT about twenty
       documents, and correcting a false report is not a question of product intent.
+    and_the_SECTION_HEADING_restated_the_error_I_had_just_fixed: >-
+      "UNMEASURABLE - not fresh and not stale; NOTHING CAN DATE THEM" was written when the
+      parser knew one genre. After the fix, 22 of those 36 carry a date and cannot be dated
+      for a DIFFERENT reason - they declare no Source. Correcting the per-document reasons
+      while leaving the summary asserting the old one is how a fix leaves its own cause
+      standing, one level up. The heading now names the three reasons instead of asserting
+      one, and says the third is not a gap.
     the_sequencing_lesson_this_loop_paid_for_twice: >-
       A full suite launched at the END of a loop guarantees the NEXT loop opens blocked -
       it has happened three times now, and the rule says only "do not launch until the item
