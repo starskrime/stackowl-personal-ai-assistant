@@ -256,9 +256,19 @@ class TestPermissionsCommand:
 
 class TestGovernanceSettings:
     def test_default_audit_retention_days(self) -> None:
-        """GovernanceSettings.audit_retention_days must default to 90."""
+        """GovernanceSettings.audit_retention_days must default to 14.
+
+        Bakir, 2026-09-08: "Audit can be deleted after 14 days. Fix code." It was 90, and
+        the number meant nothing either way — MEASURED that day, `AuditRetention` was
+        constructed nowhere in `src/` and this setting was read by nothing, so `audit_log`
+        held 11,353 rows spanning ~105 days against the bound it advertised. The pruner is
+        wired into the decay pass now, which is what makes the number real.
+
+        Pinning a DEFAULT is a contract and stays pinned; that is different from pinning a
+        count that grows by design, which is the thing this repo removes on sight.
+        """
         gs = GovernanceSettings()
-        assert gs.audit_retention_days == 90
+        assert gs.audit_retention_days == 14
 
     def test_default_audit_export_key(self) -> None:
         """GovernanceSettings.audit_export_key must default to empty string."""
@@ -290,7 +300,7 @@ class TestGovernanceSettings:
         s = Settings()
         assert hasattr(s, "governance")
         assert isinstance(s.governance, GovernanceSettings)
-        assert s.governance.audit_retention_days == 90
+        assert s.governance.audit_retention_days == 14  # see the default test above
 
 
 # ---------------------------------------------------------------------------

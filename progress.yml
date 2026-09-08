@@ -315,6 +315,74 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  DEBT215_2026_09_08_a_complete_pruner_and_a_complete_setting_joined_to_nothing:
+    map_check: >-
+      No mapped item — "The ground is clear." Operator-directed: "Audit can be deleted
+      after 14 days. Fix code." He also granted data deletion in the same sitting, which
+      is what makes this shippable rather than an escalation.
+    THE_DEFECT_IS_A_MISSING_EDGE_NOT_A_MISSING_HALF: >-
+      `audit/retention.py` has a careful `AuditRetention.prune()` — it lifts the no-delete
+      trigger, deletes past the cutoff, restores the trigger inside ONE exclusive
+      transaction with rollback, holds DELETION records to their own 365-day horizon, and
+      appends a prune record. It is covered by `tests/test_story_12_4.py`.
+      `GovernanceSettings.audit_retention_days` was declared, defaulted, described and
+      range-checked. MEASURED 2026-09-08: `AuditRetention` was constructed in exactly ONE
+      place in the repository — that test — and NOWHERE in `src/`; the setting had ONE
+      reference in `src/`, its own declaration. Both halves complete, neither joined.
+      `audit_log`: 11,353 rows over ~105 days against an advertised 90-day bound.
+    WHY_THIS_VERSION_OF_BUILT_BUT_NOT_WIRED_IS_THE_HARDEST_TO_SEE: >-
+      The usual shape is a capability with an obvious hole. Here there was no hole —
+      there was a missing EDGE, and an edge is invisible to any review that reads one
+      file at a time. Both halves pass inspection individually; the feature does not
+      exist. So the guard asserts the EDGE: a component whose only purpose is to be run
+      on a schedule must be constructed somewhere that is not a test, and a declared
+      setting must be read outside `config/`.
+    WHERE_IT_WENT_AND_WHY_NOT_A_NEW_JOB: >-
+      Into `KnowledgePruneHandler`, which is literally "the platform's DECAY pass" and
+      whose own docstring says both passes live in one job on purpose because decay is a
+      single concern and the operator should have one thing to pause. It USED to prune by
+      age and lost that leg when the fact store was retired — this restores the shape
+      rather than inventing a second engine. A failure in the audit leg is logged and
+      does not fail the job, mirroring the curator leg exactly.
+    TWO_MISTAKES_I_MADE_AND_CAUGHT: >-
+      I wrote `settings.audit.audit_retention_days` from memory — the real path is
+      `settings.governance`, and mypy caught it as a 66th error against a 65 baseline. And
+      I called `default_db_path()` at a line where the module-level name is bound LATER,
+      which would have been a NameError at boot; caught by reading the import order rather
+      than trusting that a name in the file is a name in scope.
+    AND_A_MUTANT_WALKED_THROUGH_MY_OWN_GUARD: >-
+      `test_the_decay_job_runs_the_audit_leg` first asserted `".prune()" in handler` as
+      TEXT. Replacing the real call with `pruned = 0` left it green, because this test's
+      own docstring contains the string ".prune()". A guard satisfied by PROSE — the
+      failure this repo has already paid for elsewhere. Re-keyed onto the AST: the call
+      has to be a Call. Both mutants dead after that.
+    changes: >-
+      src/stackowl/config/settings.py (90 -> 14, description corrected to name the
+      deletion-record exception), src/stackowl/scheduler/handlers/knowledge_prune.py (the
+      audit leg, mirroring the curator leg), src/stackowl/scheduler/assembly.py (the
+      construction site — the whole fix in one edge),
+      tests/audit/test_the_audit_pruner_is_wired_not_merely_built.py (new, 3 tests, two
+      mutants killed). DELETION_RETENTION_DAYS left at 365 deliberately: those records are
+      the record OF deletions and outliving what they describe is their entire purpose.
+    stages: {brainstorm: done, architect: done, implement: done,
+      cleanup: done, test: done, validate: partial, document: no_change_needed}
+    closing_check: |-
+      # Keyed on a log FIELD this item INTRODUCED — `audit_rows_pruned`, which the decay
+      # job now reports and which no earlier code could emit. Not keyed on row COUNT,
+      # because a count falling is also what an empty table looks like.
+      # DATE-BOUND, NOT `--all`, AND THE REASON IS A REAL LIMIT OF MY OWN GUARD.
+      # `--all` is earned when `git log --reverse -S <pattern> -- src/` shows the message
+      # first entering the tree with the fix. This message is introduced by THIS commit,
+      # which has no history yet — so the guard refused it, correctly, and a pattern
+      # cannot prove itself to git until it has been committed. The bound is honest here
+      # anyway: the message cannot predate today, so history cannot satisfy the count.
+      n=$(./scripts/log_since.sh 2026-09-08 'audit rows pruned past their horizon')
+      r=$(./scripts/db_query.sh "SELECT COUNT(*) FROM audit_log;" 2>/dev/null | tail -1)
+      if [ "${n:-0}" -gt 0 ]; then
+        echo "CLOSEABLE — the decay pass has pruned audit rows $n time(s); table now $r rows"
+      else
+        echo "OPEN — 0 prune events yet; the decay job runs weekly, table $r rows"
+      fi
   DEBT214_2026_09_08_the_recovery_destroyed_the_diagnosis_because_the_launcher_truncated_it:
     map_check: >-
       No mapped item — "The ground is clear." This is the WHY behind the incident's
@@ -15054,7 +15122,24 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
-    ESC_159_should_the_platform_run_under_a_service_manager_so_something_notices_it_stalling:
+    ESC_159_ANSWERED_2026_09_08_leave_this_box_alone_the_question_is_the_CUSTOMER_deployment:
+      ANSWER: >-
+        Bakir, 2026-09-08: "Leave it. Current [fix] for development only so we are
+        thinking about customer." So NO systemd unit on this machine, and he did NOT
+        grant systemd changes in the same sitting — the autonomy answer withheld exactly
+        that one. The dev box stays as it is.
+      WHAT_REMAINS_OPEN_AND_IT_IS_BIGGER_THAN_THE_ORIGINAL_QUESTION: >-
+        The SHIPPED product still cannot notice "alive but serving nothing" — a customer
+        who clones this repo gets the same hole that cost 7h21m here, and telling them to
+        install a systemd unit is a SETUP answer, which `feedback_fix_the_platform_not_this_setup`
+        rules out. Reframed rather than closed: liveness has to be solved IN the platform
+        for customers, not in this box's service manager. Folded into the reliability
+        work he chose as the next direction.
+      premise_check: >-
+        u=$(systemctl show stackowl.service -p WatchdogUSec --value 2>/dev/null);
+        [ -z "$u" ] && echo "HOLDS — no unit on this box, as instructed; customer-side
+        liveness still unsolved" || echo "EXPIRED — a unit now exists ($u)"
+    ESC_159_SUPERSEDED_should_the_platform_run_under_a_service_manager_so_something_notices_it_stalling:
       question: >-
         The platform runs under `./start.sh` + nohup, with no systemd unit. It ships a
         working sd_notify watchdog (`service/watchdog.py`) that can only arm under a
@@ -15079,7 +15164,19 @@ current:
         [ -z "$u" ] || [ "$u" = "0" ] || [ "$u" = "infinity" ] && echo "HOLDS — no armed
         watchdog (WatchdogUSec=${u:-none}); nothing supervises the process" || echo
         "EXPIRED — a watchdog is armed at $u"
-    ESC_158_audit_log_has_a_retention_setting_with_no_reader_and_pruning_it_deletes_evidence:
+    ESC_158_ANSWERED_2026_09_08_audit_can_be_deleted_after_14_days_fix_code:
+      ANSWER: >-
+        Bakir, 2026-09-08: "Audit can be deleted after 14 days. Fix code." Shipped —
+        default 90 -> 14 and the pruner wired into the decay pass. The conflict this
+        entry raised (audit_log is the durable store the rotting log checks should be
+        re-keyed onto) is now SETTLED IN THE OTHER DIRECTION: a 14-day horizon is shorter
+        than the log's own retention, so acceptance evidence must NOT be re-keyed onto
+        audit_log. That closes the question the panel could not.
+      premise_check: >-
+        d=$(grep -A2 "audit_retention_days: int" src/stackowl/config/settings.py | grep -o
+        "default=[0-9]*" | head -1); [ "$d" = "default=14" ] && echo "EXPIRED — answered
+        and shipped ($d)" || echo "HOLDS — setting is $d, not 14"
+    ESC_158_SUPERSEDED_audit_log_has_a_retention_setting_with_no_reader_and_pruning_it_deletes_evidence:
       question: >-
         `audit_retention_days` (settings.py:837, default 90) has EXACTLY ONE reference in
         `src/` — its own declaration. Zero readers. `audit_log` holds 11,353 rows spanning

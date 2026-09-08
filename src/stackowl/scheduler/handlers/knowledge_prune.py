@@ -21,6 +21,27 @@ should have one thing to pause, and a skill pass that silently never ran would
 be the exact failure mode ADR-19 exists to end. A curator failure is logged and
 does NOT fail the job — pruning facts and pruning skills are independent, and
 one must not mask the other.
+
+AND THE AUDIT LEG, ADDED 2026-09-08 — BUILT, TESTED, AND NEVER RUN UNTIL NOW.
+``audit/retention.py`` has had a careful ``AuditRetention.prune()`` all along: it
+lifts the no-delete trigger, deletes past the cutoff, restores the trigger inside
+one EXCLUSIVE transaction, holds DELETION records to their own longer horizon, and
+appends a prune record. MEASURED 2026-09-08 it was constructed in exactly ONE
+place — ``tests/test_story_12_4.py`` — and NOWHERE in ``src/``. The
+``audit_retention_days`` setting was the mirror image: declared, documented, and
+read by nothing. Two halves of one feature, each complete, neither joined to the
+other, so ``audit_log`` reached 11,353 rows spanning ~105 days against a
+advertised 90-day bound. That is CLAUDE.md's failure shape 5 with both halves
+present, which is the version that looks most like working software.
+
+It belongs in THIS job rather than a new one for the reason the paragraph above
+already gives: decay is a single concern and the operator should have one thing to
+pause. The handler used to prune by age and lost that leg when the fact store was
+retired; this restores the shape rather than inventing a second engine.
+
+Bakir set the horizon on 2026-09-08: "Audit can be deleted after 14 days. Fix
+code." DELETION records keep their own 365-day retention, untouched — they are the
+record OF deletions and outliving the rows they describe is their whole point.
 """
 
 from __future__ import annotations
@@ -34,16 +55,23 @@ from stackowl.scheduler.base import JobHandler
 from stackowl.scheduler.job import Job, JobResult
 
 if TYPE_CHECKING:
+    from stackowl.audit.retention import AuditRetention
     from stackowl.skills.lifecycle import SkillCurator
 
 
 class KnowledgePruneHandler(JobHandler):
     """Wraps :class:`SkillCurator` as a :class:`JobHandler`."""
 
-    def __init__(self, curator: SkillCurator | None = None) -> None:
+    def __init__(
+        self,
+        curator: SkillCurator | None = None,
+        audit_retention: AuditRetention | None = None,
+    ) -> None:
         # Optional so every existing construction site keeps working unchanged;
-        # when absent the skill pass is simply skipped (and says so).
+        # when absent the pass is simply skipped (and says so). The audit leg
+        # follows the curator's shape exactly rather than inventing a second one.
         self._curator = curator
+        self._audit_retention = audit_retention
 
     @property
     def handler_name(self) -> str:
@@ -57,8 +85,9 @@ class KnowledgePruneHandler(JobHandler):
         )
         TestModeGuard.assert_not_test_mode("knowledge_prune.execute")
         t0 = time.monotonic()
-        # 3. STEP — ADR-19 skill decay, now the whole job.
+        # 3. STEP — ADR-19 skill decay, and the audit leg beside it.
         curated = await self._run_curator(job)
+        audit_pruned = await self._run_audit_retention(job)
 
         duration_ms = (time.monotonic() - t0) * 1000
         # 4. EXIT
@@ -68,6 +97,7 @@ class KnowledgePruneHandler(JobHandler):
                 "_fields": {
                     "job_id": job.job_id,
                     "skills_curated": curated,
+                    "audit_rows_pruned": audit_pruned,
                     "duration_ms": duration_ms,
                 }
             },
@@ -76,11 +106,41 @@ class KnowledgePruneHandler(JobHandler):
             job_id=job.job_id,
             effect_class="state_change",
             success=True,
-            output=f"skills_curated={curated}",
+            output=f"skills_curated={curated} audit_rows_pruned={audit_pruned}",
             error=None,
             duration_ms=duration_ms,
-            metadata={"skills_curated": curated},
+            metadata={"skills_curated": curated, "audit_rows_pruned": audit_pruned},
         )
+
+    async def _run_audit_retention(self, job: Job) -> int:
+        """Prune audit rows past their horizon. Never raises — returns how many went.
+
+        Mirrors ``_run_curator`` deliberately: a failure here is logged and does NOT
+        fail the job, because the two decay legs are independent and one must not mask
+        the other. `prune()` is synchronous sqlite and brief, so it runs inline.
+        """
+        if self._audit_retention is None:
+            log.scheduler.debug(
+                "[scheduler] knowledge_prune: no audit retention wired — skipping",
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return 0
+        try:
+            pruned = self._audit_retention.prune()
+        except Exception as exc:
+            # Every except logs. A decay failure must never take the job with it.
+            log.scheduler.error(
+                "[scheduler] knowledge_prune: audit retention failed — job continues",
+                exc_info=exc,
+                extra={"_fields": {"job_id": job.job_id}},
+            )
+            return 0
+        if pruned:
+            log.scheduler.info(
+                "[scheduler] knowledge_prune: audit rows pruned past their horizon",
+                extra={"_fields": {"job_id": job.job_id, "rows": pruned}},
+            )
+        return int(pruned)
 
     async def _run_curator(self, job: Job) -> int:
         """Run the skill decay pass. Never raises — returns how many moved."""

@@ -351,8 +351,8 @@ retired_builtin_owls: []
 # Tool autonomy level for owls.
 autonomy_level: medium
 governance:
-  # Number of days to keep audit_log rows before pruning.
-  audit_retention_days: 90
+  # Days to keep audit_log rows before the decay pass prunes them. Deletion records are held far longer — see DELETION_RETENTION_DAYS.
+  audit_retention_days: 14
   # HMAC-SHA256 key used to sign audit log exports. Empty = unsigned.
   audit_export_key: ''
   # Auto-merge Dependabot security PRs on the same day they open.

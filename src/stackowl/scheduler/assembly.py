@@ -264,9 +264,26 @@ class SchedulerAssembly:
 
             return await owl_drive_thresholds(db, owl_registry, FAILING_BELOW)
 
+        # THE AUDIT LEG IS WIRED HERE, and this line is the whole fix. MEASURED
+        # 2026-09-08: `AuditRetention` was constructed in exactly one place in the
+        # repository — a test — and `audit_retention_days` was read by nothing at all.
+        # Both halves complete, neither joined, so `audit_log` held 11,353 rows over
+        # ~105 days against a bound it advertised and never applied. It ships ON: a
+        # decay pass nobody has to enable is the only kind that runs.
+        # Imported locally, like the audit logger's own construction further down:
+        # the module-level name is bound after this point, so using it here would be a
+        # NameError at boot — caught before it shipped, by reading the import order
+        # rather than trusting that a name in the file is a name in scope.
+        from stackowl.audit.retention import AuditRetention
+        from stackowl.db.pool import default_db_path as _audit_db_path
+
         knowledge_prune_handler = KnowledgePruneHandler(
             curator=SkillCurator(
                 skills_components.store, thresholds=_owl_drive_thresholds,
+            ),
+            audit_retention=AuditRetention(
+                db_path=_audit_db_path(),
+                retention_days=settings.governance.audit_retention_days,
             ),
         )
         HandlerRegistry.instance().register(knowledge_prune_handler)

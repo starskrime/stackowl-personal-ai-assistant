@@ -835,9 +835,12 @@ class GovernanceSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     audit_retention_days: int = Field(
-        default=90,
+        default=14,
         ge=1,
-        description="Number of days to keep audit_log rows before pruning.",
+        description=(
+            "Days to keep audit_log rows before the decay pass prunes them. "
+            "Deletion records are held far longer — see DELETION_RETENTION_DAYS."
+        ),
         json_schema_extra={"hot_reload": False},
     )
     audit_export_key: str = Field(
