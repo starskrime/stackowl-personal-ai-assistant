@@ -193,3 +193,60 @@ class TestTheSnapshotSeparatesMeasuredFromUnknown:
             side_effect_committed = False
 
         assert _measured_absent_effects([_O()]) == ()
+
+
+class TestTheScheduleFulfillerSaysWhenItCouldNotEvenTry:
+    """`overclaim.fulfilled` is a SUCCESS counter, so every path that declines has
+    to speak or its zero cannot be diagnosed.
+
+    MEASURED 2026-09-09: `overclaim.fulfilled` is 0 all-time over THREE
+    `scheduling_commit` overclaims — and that zero is fully explained, because
+    `ScheduleCommitFulfiller` logs each of its own declines and all three read
+    `_parse: no inferable time — fallback to floor`. The ladder is healthy. The one
+    path that would NOT have spoken is the gate's own `provider_registry is None`
+    guard, which returned silently while the callee already warns about the strictly
+    milder `get_by_tier failed`. Two copies of one rule, and only this one was mute.
+    """
+
+    async def test_a_missing_provider_registry_is_announced_not_swallowed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import logging
+
+        from stackowl.pipeline.services import StepServices, set_services
+
+        set_services(StepServices())  # provider_registry is None
+
+        records: list[logging.LogRecord] = []
+
+        class _Cap(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        # The named logger directly, not caplog: `configure_logging` sets
+        # propagate = False on `stackowl`, so a propagation-based fixture passes
+        # alone and fails in any session that configured logging first (DEBT-267).
+        logger = logging.getLogger("stackowl.engine")
+        handler = _Cap()
+        handler.setLevel(logging.DEBUG)
+        previous = logger.level
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        try:
+            result = await dg._try_fulfill_schedule_commit(  # noqa: SLF001
+                _state(responses=(_draft("I'll remind you every morning."),))
+            )
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(previous)
+
+        assert result is None, "with no registry there is nothing to fulfil"
+        skipped = [
+            r for r in records
+            if "fulfillment SKIPPED" in r.getMessage() and r.levelno >= logging.WARNING
+        ]
+        assert skipped, (
+            "the actuator declined because a collaborator was absent and said nothing "
+            "at a level production writes, so `overclaim.fulfilled == 0` cannot be told "
+            f"from 'it never got the chance': {[r.getMessage()[:60] for r in records]}"
+        )

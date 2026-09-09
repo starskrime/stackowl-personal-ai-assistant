@@ -1071,6 +1071,25 @@ async def _try_fulfill_schedule_commit(state: PipelineState) -> str | None:
     try:
         registry = get_services().provider_registry
         if registry is None:
+            # SAY SO. This is an ACTUATOR declining, not a lookup returning
+            # nothing: the caller's only other signal is `overclaim.fulfilled`,
+            # which is a SUCCESS counter, so a silent return here makes "could
+            # not even try" and "tried and failed" the same reading.
+            #
+            # MEASURED 2026-09-09: `overclaim.fulfilled` is 0 all-time over THREE
+            # `scheduling_commit` overclaims — and that zero turned out to be
+            # fully explained, because `ScheduleCommitFulfiller` logs every one of
+            # its own declines and all three say
+            # `_parse: no inferable time — fallback to floor`. The ladder is
+            # healthy. This branch is the ONE path in it that would not have said
+            # anything, and it is the strictly worse case than the one the callee
+            # already warns about (`_resolve_provider: get_by_tier failed`). Two
+            # copies of one rule, and only this one was silent.
+            log.engine.warning(
+                "[overclaim_gate] schedule fulfillment SKIPPED — no provider "
+                "registry, so the promise falls to the honest floor untried",
+                extra={"_fields": {"trace_id": state.trace_id}},
+            )
             return None
         from stackowl.interaction.schedule_commit_fulfiller import (
             ScheduleCommitFulfiller,
