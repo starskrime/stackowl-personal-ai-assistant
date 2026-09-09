@@ -20841,6 +20841,60 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-252
+    found: 2026-09-09
+    what: >-
+      Bakir, live: "Agent context usage not correct … today's context switching,
+      compaction, memory handling, long term memory does not work correctly." THAT
+      REPORT COULD BE NEITHER CONFIRMED NOR REFUTED, because nothing recorded what a
+      turn actually remembered.
+    root_cause_THE_ONLY_TURN_COUNT_LIVED_INSIDE_A_BRANCH_THAT_STOPPED_FIRING: >-
+      MEASURED: `_gather_history` logs only its ERROR path, and the single line in the
+      whole pipeline carrying a history turn count is `classify: conversation too long`
+      - emitted ONLY when compression runs. DEBT-248 then raised the budget from a
+      fixed 12,000 to 0.75 of the resolved window (196,608 here) with the 40-turn read
+      cap bounding history at ~46,640, so compression essentially never fires and that
+      count went dark. On a normal turn NOTHING recorded how much history was assembled
+      or which key it was read under.
+      MY OWN FIX MADE THE INSTRUMENT SILENT. That is the sharp part: DEBT-248 was
+      correct and it removed the only place a turn's history size was ever reported,
+      because the number rode on a REMEDIAL branch instead of the main path. A
+      measurement that only exists when something goes wrong disappears the moment the
+      wrong thing is fixed.
+    what_else_that_same_cause_reaches: >-
+      DEBT-251's record claims a recovery turn "assembles history from a different
+      bucket than the chat it delivers into". That claim is plausible - recovery turns
+      carry `owl:*:recovery:*`, which `sessions/models.py:288` classifies as a MACHINE
+      LANE, "a lane with no person on it", while ordinary turns file under
+      `owner_scope_key` (identity if resolved, else the lane) - AND IT WAS
+      UNVERIFIABLE WHEN I WROTE IT. I could not have checked it; nor could anyone
+      reading the record. It is now checkable by measurement, which is the point of
+      this item rather than a side effect of it.
+    fix: >-
+      One INFO line per turn on the MAIN path, `[pipeline] classify: history
+      assembled`, carrying `scope_key`, `read_turns`, `turns`, `read_depth`, `tokens`
+      and `compressed`. INFO because production runs at INFO and a DEBUG line does not
+      exist when the question is asked. `scope_key` is what makes it diagnostic rather
+      than decorative: a turn reading a THIN history and a turn reading the WRONG
+      BUCKET are indistinguishable without it, and `read_turns` vs `turns` separates
+      "compressed" from "there was nothing there".
+    the_reported_key_is_the_one_the_read_used: >-
+      `_scope = owner_scope_key(state)` is computed once and passed to BOTH
+      `_gather_history` and the log line. Re-deriving it for the report would let the
+      two drift, and a key the read did not use would be worse than none because it
+      would look authoritative. A guard pins that.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: no_change_needed
+    closing_check: |
+      # The line is new, so any occurrence is evidence only this code could produce.
+      n=$(./scripts/log_since.sh 2026-09-09 'classify: history assembled')
+      [ "${n:-0}" -gt 0 ] && echo "CLOSEABLE ${n} turns since 2026-09-09 recorded what history they assembled" || echo "OPEN 0 turns have recorded their assembled history"
   - id: DEBT-251
     found: 2026-09-09
     what: >-

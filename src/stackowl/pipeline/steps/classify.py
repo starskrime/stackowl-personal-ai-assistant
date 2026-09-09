@@ -14,6 +14,7 @@ import re
 from stackowl.infra import lesson_experiment
 from stackowl.infra.observability import log
 from stackowl.learning.heuristic_ranking import rank_lessons
+from stackowl.parliament.token_estimate import estimate_tokens
 from stackowl.pipeline import lesson_context as lc
 from stackowl.pipeline.message_shaping import merge_consecutive_roles
 from stackowl.pipeline.services import (
@@ -882,12 +883,42 @@ async def run(state: PipelineState) -> PipelineState:
     # the session's earlier turns present instead of discarding them. The deep
     # read is bounded, and when everything fits the selection is a no-op with NO
     # model call — which is the overwhelming majority of turns.
-    history = await _gather_history(
-        owner_scope_key(state),
-        max(short_term_window, _deep_history_turns()),
-        conversation_scope_keys(state),
-    )
+    _scope = owner_scope_key(state)
+    _depth = max(short_term_window, _deep_history_turns())
+    history = await _gather_history(_scope, _depth, conversation_scope_keys(state))
+    _read_turns = len(history)
     history = await _compress_history(history, state)
+
+    # WHAT THIS TURN ACTUALLY REMEMBERED. Bakir, 2026-09-09: "Agent context usage not
+    # correct … today's context switching, compaction, memory handling, long term
+    # memory does not work correctly." That report could be neither confirmed nor
+    # refuted, because NOTHING recorded how much history a turn assembled or which key
+    # it read under: `_gather_history` logs only its error path, and the only line
+    # carrying a turn count fired exclusively when compression ran — which, since
+    # DEBT-248 raised the budget to a share of the window, is almost never.
+    #
+    # So "did this turn see the conversation?" was unanswerable, and every claim about
+    # context — including my own in DEBT-251, that a recovery turn reads a different
+    # bucket — was an assertion nobody could check. This is the premise being fixed
+    # rather than argued: one INFO line per turn, because production runs at INFO and a
+    # DEBUG line does not exist when the question is asked.
+    #
+    # `scope_key` is the half that makes it diagnostic rather than decorative. Turns
+    # are filed under `owner_scope_key` — identity if a resolver produced one, else the
+    # lane — and a machine lane like `owl:*:recovery:*` is a DIFFERENT key, so a turn
+    # reading a thin history is distinguishable from one reading the wrong bucket.
+    log.engine.info(
+        "[pipeline] classify: history assembled",
+        extra={"_fields": {
+            "trace_id": state.trace_id,
+            "scope_key": _scope,
+            "read_turns": _read_turns,
+            "turns": len(history),
+            "read_depth": _depth,
+            "tokens": sum(estimate_tokens(m.content or "") for m in history),
+            "compressed": len(history) != _read_turns,
+        }},
+    )
     # No lean gate (owner decision 2026-07-22): a "conversational"-classified
     # turn used to skip lessons/graph-context/skill-relevance entirely — but
     # the router's intent_class is coarser than "greetings/small-talk" (e.g.
