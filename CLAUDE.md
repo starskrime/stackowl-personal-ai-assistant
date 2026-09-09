@@ -246,7 +246,14 @@ protects the whole repo looks related to nothing. Two defects shipped exactly th
 way: `usage_report.py` read the owner-governed `task_outcomes` with no `owner_id`
 predicate (that item ran `tests/tools/meta` and `tests/startup`; the tripwire lives in
 `tests/tenancy`), and deleting six modules left three of their entries in the
-owner-scope allowlist. The gate is **~2 minutes** and runs everything marked
+owner-scope allowlist. The gate is **~4.5 minutes** — MEASURED across FIVE runs on
+2026-09-08: `284/284/284/286/290 passed, 2 skipped` in 256.8s to 265.9s. It said
+**~2 minutes** until then, from a 2026-09-06 reading of `138 passed` in 105.88s, so the
+gate **doubled in two days** while the number stood still. It matters because a stale
+duration is why a gate gets SKIPPED, and this one grows by construction: the marker is
+the source, so every loop that ships a guard adds to the cost and nothing updates the
+figure. Read it off your own run rather than trusting this sentence.
+It runs everything marked
 `@pytest.mark.tripwire` plus `progress_lint`, `ruff` and `mypy`. Mark a new guard with
 that marker and it joins automatically — the marker is the source, not a path list.
 

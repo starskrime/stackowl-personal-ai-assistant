@@ -168,9 +168,14 @@ Duplicate keys silently swallow whole records. This has already happened.
   construction, not by reading. Targeted paths are chosen by what the change
   looks related to, and a CROSS-CUTTING guard never looks related to anything — which
   is how an unscoped `task_outcomes` read and three stale allowlist entries both
-  shipped. The gate takes **~2 minutes** (MEASURED 2026-09-06: 133s wall,
-  `138 passed, 2 skipped` in 105.88s — it was ~40s when there were far fewer
-  guards, and a stale duration is why a gate gets skipped) and runs everything
+  shipped. The gate takes **~4.5 minutes** (MEASURED across FIVE runs on 2026-09-08:
+  `284/284/284/286/290 passed, 2 skipped` in 256.8s-265.9s. This line read **~2
+  minutes** from a 2026-09-06 reading of `138 passed` in 105.88s, and it was ~40s
+  before that — so the gate has DOUBLED in two days and roughly sextupled overall,
+  while the number stood still. A stale duration is why a gate gets skipped, and this
+  one grows by construction: the marker is the source, so every loop that ships a
+  guard adds to it and nothing updates the figure. Read it off your own run rather
+  than trusting this sentence) and runs everything
   marked `@pytest.mark.tripwire`
   plus `progress_lint` and both baselines.
 
