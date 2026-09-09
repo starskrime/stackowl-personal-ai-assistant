@@ -21639,13 +21639,45 @@ known_debt:
       cycling for hours, messaging Bakir every four minutes), then NULL-for-everyone
       letting rows complete undelivered. Each fixed the destination. NEITHER ASKED
       WHETHER THE SENTENCE BESIDE IT STILL MATCHED.
+    validated_2026_09_09_AND_THE_CLOSEABLE_WAS_VERIFIED_NOT_BELIEVED: >-
+      CLOSEABLE, and checked before it was believed, because this check's first two forms
+      both produced a false one. THE ROW: `task-f72b2a205776`, created 2026-09-09T19:00:29Z
+      — after the fix went live at 11:14:39Z — with an EMPTY `destination`, carrying
+      "the drive finishes; this turn owes no delivery, because it is deferred and
+      unaddressed and its parent delivers". A destination-less turn taking the else branch,
+      which is precisely the case the previous two forms could never reach.
+    the_discrimination_was_RE_CHECKED_because_the_string_predates_the_fix: >-
+      `git log -S"owes no delivery" -- src/` returns THREE commits, and the oldest
+      (`58b45ce5`) is older than this item — which looked, for a moment, like the
+      discriminator failing the same way the first two forms did. It does not. That
+      occurrence is a DOCSTRING ("Where this turn's answer must land — or None when it owes
+      no delivery"), and the third is a COMMENT in `store.py`. The only site that WRITES the
+      phrase into `tasks.achievement` is `task_runner.py:237`, this item's own else branch.
+      A string in the tree proves nothing about what reached the database; the WRITER is the
+      question.
+    the_legacy_rows_are_reported_and_inert_rather_than_quietly_dropped: >-
+      THREE rows still claim a delivery achievement with no destination — 2026-09-07T19:00,
+      2026-09-08T19:00 and 2026-09-08T19:14, all `completed`, all written before the fix was
+      live. They are harmless and that is MEASURED, not assumed: `_owes_delivery` is
+      documented as "True when this task has a DESTINATION and no proof it ever arrived" and
+      keys on `destination`, so nothing branches on `achievement` to decide delivery. They
+      are left alone deliberately — rewriting terminal historical rows to make a check read
+      nicer would be falsifying the record, and the check reports them rather than hiding
+      them.
+    and_one_instrument_lied_on_the_way: >-
+      The first attempt to read the row ran `SELECT id, ...` and returned NOTHING with
+      stderr suppressed, which read exactly like "the check is reporting a row that does not
+      exist". The table has no `id` column — it is `task_id` — and `sqlite3` had raised
+      `OperationalError` into a discarded stream. Re-run with stderr visible, the count is 1
+      and always was. Suppressing stderr on a query is how a broken instrument becomes a
+      finding about the system.
     stages:
       brainstorm: done
       architect: no_change_needed
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: no_change_needed
     validate_stays_PARTIAL_because_the_first_CLOSEABLE_did_not_discriminate: >-
       The check reported CLOSEABLE on one row created after the fix carrying a delivery
