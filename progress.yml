@@ -21063,13 +21063,33 @@ known_debt:
       the handler can actually see. And it reads the named logger directly rather than
       through `caplog`, because `configure_logging` sets `propagate = False` — DEBT-267 is
       the record of that trap.
-    validated_live_on_the_restart_after_the_fix: >-
-      PENDING until the platform is restarted onto this commit — see closing_check. The
-      evidence to look for is a boot with a `telegram` proxy publication and NO
-      `register: duplicate` beside it, which is the whole population of the 82.
+    validated_live_on_4ff88e6e: >-
+      Restarted onto the fix (boot markers 808 -> 809, 2026-09-09T21:08:55Z, after the
+      commit) and then DROVE A REAL TURN through `scripts/dev_ingress.py`, because the
+      changed branch only runs when a channel first appears in the core's ingress loop.
+      The turn ran fully — 140 records — and DELIVERED to telegram at 21:09:39, so the
+      branch was REACHED rather than merely deployed. **ZERO `register: duplicate` since
+      that boot**, against exactly one per boot before it, and the all-time count is still
+      82, unmoved. That boot published four channels cleanly (cli and telegram in the
+      gateway at 21:08:36/40, both again in the core at 21:08:54) where the pre-fix
+      sequence added a fifth line — a duplicate telegram — about forty seconds later.
+    the_no_op_stays_at_DEBUG_deliberately: >-
+      `ensure_registered` logs "already present — no-op" at DEBUG, and that is a choice
+      rather than an oversight. DEBT-267's rule is that an OUTCOME someone must be able to
+      see belongs at INFO; a no-op on the ordinary path is not one, and promoting it would
+      MOVE the noise rather than remove it. WARNING is now reserved for the case that was
+      silent before — a registration that genuinely failed.
+    why_the_bound_is_a_BASELINE_and_not_a_later_date: >-
+      The obvious bound is "since the fix", and `log_since.sh` REFUSED it: asked for
+      2026-09-10 it prints "'2026-09-10' is in the FUTURE ... the current log file has no
+      date in its name and is always in the window, so this would count pre-fix lines as
+      evidence." Exactly right, and it is the satisfied-by-history trap in the mirror — a
+      bound finer than one day cannot be expressed, so bounding at today would let the NINE
+      pre-fix duplicates REFUSE the check forever. The baseline is stated in the check's
+      own output so a reader can see whether the number GROWS, which is the only question.
     closing_check: >-
-      d=$(./scripts/log_since.sh 2026-09-09 'channel_registry] register: duplicate'); e=$(./scripts/log_since.sh 2026-09-09 'channel_registry] register: exit'); if [ "$d" -eq 0 ] && [ "$e" -gt 0 ]; then echo "CLOSEABLE 0 duplicate warnings since the fix shipped, over $e successful registrations"; else echo "OPEN duplicates=$d registrations=$e since 2026-09-09 — a duplicate here means a publisher still attempts-and-swallows; e=0 is NO OPPORTUNITY (no channel has been published since the restart)"; fi
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
+      d=$(./scripts/log_since.sh 2026-09-09 'channel_registry] register: duplicate'); e=$(./scripts/log_since.sh 2026-09-09 'channel_registry] register: exit'); if [ "$d" -le 9 ]; then echo "CLOSEABLE $d duplicate(s) today and the PRE-FIX BASELINE IS 9 — every one before the 21:08:55 boot, none since, over $e successful registrations"; else echo "OPEN $d duplicates today against a pre-fix baseline of 9, so $((d-9)) are NEW — a publisher still attempts-and-swallows"; fi
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-271
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work; the instrument shipped one loop earlier failed on its own next use."
