@@ -353,3 +353,132 @@ class TestTheRotClockModelsRotationCorrectly:
         assert logs.exists()
         present, permitted = 10, 30
         assert present <= permitted, "with files to spare, rotation deletes nothing"
+
+
+def _comment_only(check: str) -> str:
+    """The check's prose, without the command. The inverse of `_command_only`.
+
+    That function exists because a guard satisfied by prose is worse than none. This one
+    exists for the failure that created: prose the guards deliberately do not read can
+    drift until it says the OPPOSITE of the command, and nothing notices.
+    """
+    return "\n".join(ln for ln in check.splitlines() if ln.lstrip().startswith("#"))
+
+
+#: An affirmative claim that the check is bounded to a ship date. The negative lookbehind
+#: is load-bearing: a comment explaining that it is NOT date-scoped is the compliant form.
+_DATE_SCOPE_CLAIM = re.compile(r"(?<!not )\bdate-scoped\b|\bscoped to\b", re.I)
+#: A verdict string asserting a lower bound. `validate_check.py` prints this to the board,
+#: so it is what a reader of the record actually sees.
+_VERDICT_BOUND = re.compile(r"\bsince \d{4}-\d{2}-\d{2}\b")
+
+
+class TestTheWindowPolicyAgreesOnEverySurface:
+    """A check's window policy is written in THREE places, and only one was checked.
+
+    MEASURED 2026-09-09. Two live checks — D03.2 and D11.3 — opened with the words
+    "SCOPED TO THE DAY THIS SHIPPED (<date>). An unbounded count is satisfied by
+    history", and then ran `./scripts/log_since.sh --all`. They warned against exactly
+    what they did. Their OPEN branches, which are the text that reaches the board,
+    finished "since 2026-08-30" and "since 2026-09-05" — bounds no command applied.
+
+    THE COMMANDS WERE RIGHT AND ARE STILL RIGHT. Both patterns were introduced by their
+    own shipping commit (`e090b57c`, `4f437303`) and the retained logs hold ZERO
+    occurrences at any date, so history cannot satisfy either check and `--all` is the
+    honest form — which is precisely what `test_every_log_since_call_names_a_real_date_or
+    _earns_all` verifies. The defect is that the conversion to `--all` touched the
+    COMMAND ONLY. The comment and the verdict string are two more copies of the same
+    policy, and both kept describing the bound that had been removed.
+
+    WHY NOTHING CAUGHT IT, and this is the root cause rather than the two edits: every
+    existing guard in this file runs `_command_only()` first, ON PURPOSE, because a
+    mutant reverting a check to a raw unbounded `grep` once survived on the strength of
+    a comment that still said "log_since.sh". Stripping the prose stops it SATISFYING a
+    rule; nothing then asks whether it AGREES with one. Five other `--all` checks were
+    written that way from birth and are clean, so this is drift under edit, not a
+    misunderstanding — which is the shape a guard fixes and a correction does not.
+
+    Same family as CLAUDE.md's "two copies of one rule" and as the retirement that
+    updated four surfaces and left the design document advertising a deleted flag for
+    eight days.
+    """
+
+    @staticmethod
+    def _wholly_unbounded(cmd: str) -> bool:
+        """True when every `log_since.sh` call in the check passes `--all`.
+
+        A check that legitimately mixes the two — D04.5 asks one bounded and one
+        unbounded question — is outside this rule, because either description can be
+        the true one and this guard cannot tell which clause the prose belongs to.
+        """
+        args = set(re.findall(r"log_since\.sh\s+(\S+)", cmd))
+        return args == {"--all"}
+
+    @pytest.mark.tripwire
+    def test_an_unbounded_check_does_not_describe_itself_as_date_scoped(self) -> None:
+        data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+        bad: list[str] = []
+        for ident, raw in _record_checks(data):
+            if not self._wholly_unbounded(_command_only(raw)):
+                continue
+            if _DATE_SCOPE_CLAIM.search(_comment_only(raw)):
+                bad.append(
+                    f"{ident}: the comment claims a ship-date scope and the command "
+                    f"passes --all, so the check warns against what it then does"
+                )
+        assert not bad, "\n  ".join(bad)
+
+    @pytest.mark.tripwire
+    def test_an_unbounded_check_does_not_report_a_bound_it_never_applied(self) -> None:
+        """The surface that reaches the operator. An OPEN line reading "0 x since
+        2026-09-05" tells the board a window was applied; `--all` applied none, and a
+        reader cannot tell a genuinely bounded zero from an unbounded one."""
+        data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+        bad: list[str] = []
+        for ident, raw in _record_checks(data):
+            cmd = _command_only(raw)
+            if not self._wholly_unbounded(cmd):
+                continue
+            for claim in _VERDICT_BOUND.findall(cmd):
+                bad.append(f"{ident}: verdict text says {claim!r} on an --all command")
+        assert not bad, "\n  ".join(bad)
+
+    @pytest.mark.tripwire
+    def test_a_bounded_check_does_not_describe_itself_as_unbounded(self) -> None:
+        """THE MIRROR, AND IT HAS ZERO LIVE INSTANCES TODAY — stated rather than
+        implied, because a guard over an empty population is a pass over nothing.
+
+        It is here because the drift runs both ways: the next edit to move a check the
+        other direction, from `--all` back to a date, will leave a comment saying the
+        bound is not needed. The detector is pinned by the controls below so this
+        assertion is not the only thing standing behind it.
+        """
+        data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+        bad: list[str] = []
+        for ident, raw in _record_checks(data):
+            cmd = _command_only(raw)
+            args = set(re.findall(r"log_since\.sh\s+(\S+)", cmd))
+            if not args or "--all" in args:
+                continue
+            if re.search(r"\bnot date-scoped\b", _comment_only(raw), re.I):
+                bad.append(f"{ident}: comment says NOT date-scoped; every call has a date")
+        assert not bad, "\n  ".join(bad)
+
+    def test_the_detector_catches_the_wording_that_was_actually_there(self) -> None:
+        """The control that makes the three sweeps mean something. Without it, "no
+        offenders" is indistinguishable from a regex that matches nothing — the 0-over-0
+        that CLAUDE.md names, and the reason a passing sweep is not evidence on its own.
+        """
+        was_live = "# SCOPED TO THE DAY THIS SHIPPED (2026-08-30). An unbounded count is"
+        assert _DATE_SCOPE_CLAIM.search(was_live)
+        assert _VERDICT_BOUND.search('echo "OPEN 0 watch firings since 2026-08-30"')
+
+    def test_the_detector_accepts_the_correction(self) -> None:
+        """And the other half: a rule that flagged the fixed text too would just be
+        noise. The compliant form NAMES the policy instead of removing the sentence."""
+        corrected = "# NOT DATE-SCOPED, AND THAT IS EARNED — corrected 2026-09-09."
+        assert not _DATE_SCOPE_CLAIM.search(corrected)
+        assert not _VERDICT_BOUND.search(
+            'echo "OPEN 0 watch firings across every retained log, and the line cannot '
+            'predate 2026-08-30"'
+        )

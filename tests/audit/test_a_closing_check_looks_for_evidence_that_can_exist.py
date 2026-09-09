@@ -84,14 +84,8 @@ _INDIRECT_EMITTERS = {
         "literal to `self._warn(...)`, which logs it at :283 as `\"code\": code` — a "
         "VARIABLE, so no AST walk over `log.*` literals can see it, however wide. PROOF it "
         "reaches the logs: 3 lines match on 2026-09-07, which is also what DEBT-176's own "
-        "check counts. Same shape as `[skills] nudge` below: a literal handed to a helper "
-        "that does the logging."
-    ),
-    "[skills] nudge": (
-        "TurnNudge logs f\"{self.label}: due\" (infra/nudge.py:92) and the label is passed "
-        "at skills/nudge.py:46. PROOF the indirection reaches the logs: the SIBLING label "
-        "\"[curated] nudge\" (memory/curated.py:1135) runs the identical code path and has "
-        "produced 98 log lines."
+        "check counts. The shape is a literal handed to a helper that does the logging — "
+        "`[skills] nudge` was the other instance and was removed with D09.4's check."
     ),
 }
 

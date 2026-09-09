@@ -20347,8 +20347,21 @@ known_debt:
       the handler neither follows the rotation nor stops trying. doRollover is now
       overridden to FOLLOW: close, reopen the base file, advance rolloverAt, and say so at
       INFO through log.startup so the closing check has evidence that can exist.
-    stages: {validate: partial}
-    closing_check: >-
+    stages: {validate: done}
+    validated_on_the_MIDNIGHT_IT_WAS_WAITING_FOR: >-
+      CLOSED 2026-09-09. The record said it needed "a UTC midnight with BOTH gateway and
+      core alive", and one arrived: `[logging] another process rotated the log -
+      reopened the current file` at 00:00:05.484, five seconds past midnight, fields
+      `rotated_to: stackowl-2026-09-08.jsonl, now_writing: stackowl.jsonl`.
+      EVIDENCE ONLY THE NEW CODE COULD PRODUCE - `git log -S` shows that string was
+      introduced by the fix itself (`25568c8a`), so the unbounded `--all` window cannot
+      be satisfied by history, and the retained logs reach back to 2026-08-28 with zero
+      earlier occurrences.
+      AND THE EFFECT, NOT JUST THE CALL: the rotated 2026-09-08 file holds ZERO records
+      dated 2026-09-09 - writing PAST a rotation into the stale file was the bug - while
+      the current file holds 14,930. This closes the defect recorded as
+      `project_gateway_core_dual_log_writer_bug` on 2026-07-18.
+    superseded_closing_check_kept_because_it_still_answers_the_right_question: >-
       n=$(./scripts/log_since.sh --all 'another process rotated the log'); if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n follow-the-rotation notices since the fix shipped"; else echo "OPEN — 0 notices; needs a UTC midnight with BOTH gateway and core alive, and the core re-execs often enough (70% of boots are CodeWatcher) that it may reopen on its own before one arrives"; fi
   - id: DEBT-164
     found: 2026-09-07
@@ -20841,6 +20854,77 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-255
+    found: 2026-09-09
+    what: >-
+      Two live closing checks opened with the words "SCOPED TO THE DAY THIS SHIPPED
+      (<date>). An unbounded count is satisfied by history" and then ran
+      `./scripts/log_since.sh --all`. They warned against exactly what they did. Their
+      OPEN branches - the text that reaches the board through `validate_check.py` -
+      finished "since 2026-08-30" and "since 2026-09-05", bounds no command applied.
+    the_commands_were_right_and_still_are: >-
+      MEASURED before touching anything, because the obvious repair was to re-add the
+      date bound and it would have been the wrong one. `git log --reverse -S` dates both
+      patterns to their own shipping commit - `a single call used` to `e090b57c`
+      (2026-08-30) and `session_search: bookends rendered` to `4f437303` (2026-09-05) -
+      and `log_since.sh --all` returns ZERO occurrences at any date for both. So history
+      cannot satisfy either check, `--all` is the honest form, and a bound would only add
+      an expiry to a window that is already safe. That is precisely what
+      `test_every_log_since_call_names_a_real_date_or_earns_all` already verifies. The
+      defect was never the command.
+    WHY_IT_HAPPENED_which_is_the_item: >-
+      The conversion to `--all` touched the COMMAND ONLY. A check's window policy is
+      written in THREE places - the comment, the command, and the verdict string - and
+      exactly one of them is checked. Every guard in
+      `test_a_closing_check_cannot_be_satisfied_by_history.py` runs `_command_only()`
+      first, ON PURPOSE: a mutant reverting a check to a raw unbounded `grep` once
+      survived because the comment above it still said "log_since.sh". Stripping the
+      prose stops it SATISFYING a rule; nothing then asked whether it AGREES with one.
+      Same shape as CLAUDE.md's "two copies of one rule", and as the retirement that
+      updated four surfaces and left D05.7 advertising a deleted flag for eight days.
+    what_else_the_same_cause_reaches: >-
+      Swept all 34 closing checks. 27 call `log_since.sh`; 8 are wholly unbounded. The
+      other five `--all` checks (DEBT-225, 219, 144, 180, 217) were written that way from
+      birth and carry no contradictory prose - so this is DRIFT UNDER EDIT, not a
+      misunderstanding, which is the shape a guard fixes and a correction does not. The
+      mirror direction (a bounded check whose comment says it is unbounded) has ZERO live
+      instances; it is guarded anyway and the record says so rather than implying a
+      population.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    the_fix: >-
+      `TestTheWindowPolicyAgreesOnEverySurface` in
+      `tests/audit/test_a_closing_check_cannot_be_satisfied_by_history.py` - three
+      tripwire sweeps plus a `_comment_only()` that is the deliberate inverse of
+      `_command_only()`. An unbounded check may not describe itself as date-scoped, may
+      not print a bound it never applied, and a bounded one may not call itself
+      unbounded. Both comments and both verdict strings corrected to state what the
+      command does and why `--all` is earned.
+    AND CLOSING_D09_4_ORPHANED_AN_EXEMPTION_which_the_audit_run_caught: >-
+      The same loop's D09.4 closure removed that item's `closing_check`, and
+      `[skills] nudge` was the only check using the `_INDIRECT_EMITTERS` exemption
+      written for it. `test_the_exemption_is_still_needed` failed by name - the guard
+      that exists because "an exemption list is a place for defects to hide" - so the
+      entry was DELETED rather than left, along with the dangling "same shape as
+      `[skills] nudge` below" cross-reference in the entry above it. Retired means
+      deleted applies to a guard's exemptions too, and the docstring citing D09.4's
+      character-class defect was KEPT: it is a record of what was measured, not a live
+      claim. This is why the targeted path was widened to all of `tests/audit` when
+      `tests_touching.py` answered "nothing to map" for a progress.yml-only change.
+    validated: >-
+      MUTATION-PROVEN, restoring from a file copy in the scratchpad and never from git.
+      Reinstating the pre-correction comment on D11.3 and its "since 2026-09-05" verdict
+      string killed two of the three sweeps by name
+      (`D11.3: verdict text says 'since 2026-09-05' on an --all command`); restoring the
+      good copy returned 22 passed. Two unit controls pin the detector against the
+      wording that was ACTUALLY live, so "no offenders" cannot be a regex that matches
+      nothing - the 0-over-0 this file's own rules name.
   - id: DEBT-254
     found: 2026-09-09
     what: >-
@@ -34474,9 +34558,17 @@ items:
 
   - id: D03.2
     closing_check: |-
-      # SCOPED TO THE DAY THIS SHIPPED (2026-08-30). An unbounded count is satisfied by
-      # history: this check first reported CLOSEABLE on evidence that PREDATED the
-      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # NOT DATE-SCOPED, AND THAT IS EARNED — corrected 2026-09-09. This comment used
+      # to claim a ship-date bound (2026-08-30) while the command below it
+      # passes `--all`, so it warned against exactly what it then did. MEASURED: `git
+      # log -S` shows the string was introduced by the shipping commit `e090b57c`, and
+      # the retained logs hold ZERO occurrences at any date, so history cannot satisfy
+      # this check and a date bound would only narrow a window that is already safe.
+      # The hazard the old wording named is real; it just was not this check's. An
+      # unbounded count IS satisfied by history in general — that is the D07.2 case,
+      # where a check reported CLOSEABLE on hits seven days older than its own fix —
+      # and it is not this check's hazard, because there are no such hits to find.
+      # log_since.sh also carries the grep -a fix (the logs hold
       # null bytes) and warns when the window is truncated by rotation.
       # AND IT NOW PRINTS ITS DENOMINATOR (DEBT-244). The OPEN branch used to assert
       # "no turn has been long enough to compress" — a CAUSE the logs could not
@@ -34494,7 +34586,7 @@ items:
       # 262144 below is therefore an ASSUMPTION about this deployment's model, stated
       # rather than hidden, and it is why the ratio is also recorded at call time now.
       d=$(./scripts/db_query.sh "SELECT COUNT(*) || ' calls, ' || SUM(context_window IS NOT NULL) || ' carrying a real denominator, ' || SUM(input_tokens >= 131072) || ' over 50%, ' || SUM(input_tokens >= 65536) || ' over 25%, peak ' || MAX(input_tokens) FROM cost_records" | tail -1)
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x window pressure >=50% since 2026-08-30" || echo "OPEN 0 watch firings since 2026-08-30; cost_records says $d (the 50%/25% marks assume 262144 for rows predating migration 0140)"
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x window pressure >=50% across every retained log (the line cannot predate 2026-08-30; e090b57c introduced it)" || echo "OPEN 0 watch firings across every retained log, and the line cannot predate 2026-08-30; cost_records says $d (the 50%/25% marks assume 262144 for rows predating migration 0140)"
     title: "Conversation compression"
     domain: D03
     verdict: MISSING
@@ -38573,7 +38665,24 @@ items:
     notes: null
 
   - id: D09.4
-    closing_check: |-
+    validated_when_the_counter_finally_REACHED_TEN: >-
+      CLOSED 2026-09-09. This check's own OPEN text named the single blocker - "the gate
+      is NOT the blocker ... the only blocker is the counter reaching 10" - and the
+      counter reached it. `[skills] nudge: due` fired SIX times: 01:53:32, 02:05:18,
+      02:46:25, 02:49:48, 02:56:30 and 04:56:16, every one today and all after the
+      2026-09-02 ship date. The retained logs reach back to 2026-08-28 and hold ZERO
+      earlier occurrences, so the unbounded `--all` window is not satisfied by history
+      here - even though the comment above the command wrongly claims it is date-scoped.
+    CONVERSION_WAS_NOT_MEASURED_AND_IS_NOT_CLAIMED: >-
+      The document frames the sibling memory nudge by CONVERSION - 96 fired, 77% of
+      writes followed one - and that is NOT what closed this. Skill writes did occur
+      after the first nudge, but they are BOOT-TIME REGISTRATION, not conversions: each
+      burst is 41 identical `store.upsert: stored` events at ONE timestamp, and every
+      burst coincides with a restart (13, 13 and 8 startup lines in the same minute).
+      Checked because "skill activity after a nudge" is exactly the shape that looks
+      like conversion and is not. What is closed is that the skills nudge FIRES, which
+      is what the check asks.
+    superseded_closing_check_kept_because_it_still_answers_the_right_question: |-
       # SCOPED TO THE DAY THIS SHIPPED (2026-09-02). An unbounded count is satisfied by
       # history: this check first reported CLOSEABLE on evidence that PREDATED the
       # change it validates. log_since.sh also carries the grep -a fix (the logs hold
@@ -38607,7 +38716,7 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   partial
+      validate:   done
       document:   done
     doc: "docs/reference-mapping/designs/D09.4.md"
     doc_last_verified: "2026-09-07 against commit dee99e6d — Verification RE-RUN, not trusted: step 1 = 13 passed (was 9; the four new ones arrived with the seeding work, which is why a single-file pin is worth keeping), step 1+2 together = 651 passed 0 failed, step 3 = 0 — and the check now reports the DISTANCE: deepest seeded ingress lane 9 of 10."
@@ -40366,12 +40475,19 @@ items:
       denominator, the FTS improvement is unevidenced in production.
   - id: D11.3
     closing_check: |-
-      # SCOPED TO THE DAY THIS SHIPPED (2026-09-05). An unbounded count is satisfied by
-      # history: this check first reported CLOSEABLE on evidence that PREDATED the
-      # change it validates. log_since.sh also carries the grep -a fix (the logs hold
+      # NOT DATE-SCOPED, AND THAT IS EARNED — corrected 2026-09-09. This comment used
+      # to claim a ship-date bound (2026-09-05) while the command below it
+      # passes `--all`, so it warned against exactly what it then did. MEASURED: `git
+      # log -S` shows the string was introduced by the shipping commit `4f437303`, and
+      # the retained logs hold ZERO occurrences at any date, so history cannot satisfy
+      # this check and a date bound would only narrow a window that is already safe.
+      # An unbounded count IS satisfied by history in general — that is the D07.2
+      # case, where a check reported CLOSEABLE on hits seven days older than its own
+      # fix — and it is not this check's hazard, because there are no such hits.
+      # log_since.sh also carries the grep -a fix (the logs hold
       # null bytes) and warns when the window is truncated by rotation.
       n=$(./scripts/log_since.sh --all 'session_search: bookends rendered')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x discover hit framed since 2026-09-05" || echo "OPEN 0 x discover hit framed since 2026-09-05 - the INFO line only exists from 2026-09-05; before that this was unclosable by construction"
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x discover hit framed across every retained log (the line cannot predate 2026-09-05; 4f437303 introduced it)" || echo "OPEN 0 x discover hit framed across every retained log - the INFO line only exists from 2026-09-05, so this was unclosable by construction before then"
     title: "Session-search shapes"
     domain: D11
     verdict: PARITY
