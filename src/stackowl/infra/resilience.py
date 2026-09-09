@@ -208,7 +208,30 @@ def looks_like_dead_handle(
     # ADR-19 I6 — make the fragile path VISIBLE. If this line is common in the
     # logs, the type list above is missing something and the fix is to add the
     # type, not another string.
-    log.infra.debug(
+    #
+    # AT INFO, BECAUSE AT DEBUG IT WAS NOT VISIBLE AT ALL. The docstring above
+    # says every use of the text path is logged "so how much we still depend on
+    # the fragile path is a measurement instead of a guess". It was a guess:
+    # production runs at INFO and this deployment has written ZERO DEBUG records
+    # across 677,108 retained lines, so the line could never appear however often
+    # the branch ran. A counter whose zero cannot be distinguished from "never
+    # written" is not a counter.
+    #
+    # AND THE ZERO LOOKS LIKE IT IS TRUE, which is exactly why this needed
+    # checking rather than assuming. MEASURED 2026-09-09: 232
+    # `retry_once: dead handle detected` events — 163 `sqlite3.OperationalError`,
+    # 50 `sqlite3.ProgrammingError`, 12 `ValueError: no active connection`, 5
+    # playwright `TargetClosedError`. NONE of them reached here. Every DB one goes
+    # through `db/pool.py`'s `is_dead=_looks_like_dead_sqlite`, which bypasses this
+    # function entirely and classifies STRUCTURALLY on the sqlite3 type plus
+    # `sqlite_errorcode` (F022) — and the playwright one matched by TYPE. So the
+    # type-first design is holding, and now the log can say so instead of being
+    # silent in both the healthy and the degraded case.
+    #
+    # The volume is safe by construction: this fires only when the text path is
+    # actually taken, which the measurement above says is rare. If it becomes
+    # common the line is doing its job, and the remedy in the comment applies.
+    log.infra.info(
         "[resilience] dead handle matched by TEXT, not type — fragile path",
         extra={"_fields": {"exc_type": type(exc).__name__, "marker": matched}},
     )

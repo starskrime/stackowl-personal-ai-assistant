@@ -74,12 +74,26 @@ def test_every_marker_still_classifies(caplog):
 
 def test_the_fragile_text_path_announces_itself(caplog):
     """ADR-19 I6. If this line is common in production, the TYPE list is missing
-    something and the fix is another type, not another string."""
+    something and the fix is another type, not another string.
+
+    AND IT HAS TO ANNOUNCE ITSELF WHERE ANYONE CAN HEAR IT. This test asserted only
+    that the line is EMITTED, which it was — at DEBUG, and this deployment has
+    written ZERO DEBUG records across 677,108 retained lines. So the docstring's
+    promise that the dependency is "a measurement instead of a guess" was itself a
+    guess: the count could not rise above zero however often the branch ran. The
+    level assertion below is the half that was missing.
+    """
     import logging
 
     with caplog.at_level(logging.DEBUG, logger="stackowl.infra"):
         looks_like_dead_handle(Exception("Target closed"))
-    assert any("matched by TEXT" in r.message for r in caplog.records)
+    matched = [r for r in caplog.records if "matched by TEXT" in r.message]
+    assert matched
+    assert all(r.levelno >= logging.INFO for r in matched), (
+        "the fragile-path counter is below INFO, so production cannot record it and "
+        "its zero cannot be told from 'never written' — which is the whole point of "
+        f"the line: {[(r.levelname, r.message[:50]) for r in matched]}"
+    )
 
 
 def test_a_type_match_does_NOT_log_the_fragile_path(caplog):
