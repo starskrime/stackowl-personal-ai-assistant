@@ -20865,6 +20865,60 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-265
+    found: 2026-09-09
+    what: >-
+      DEBT-261's closing check reported CLOSEABLE for the SECOND time on evidence that
+      cannot tell the fix from its predecessor, and I had already refused it once. The
+      two rows it named - `task-7613e5a30162` and `task-699a53ec88a2`, created 14:00:29
+      and 14:00:30 - both carry `destination = telegram:72055773`. An ADDRESSED turn is
+      exactly the case the OLD code got right; it would have written those two rows
+      identically.
+    WHY_I_GOT_IT_WRONG_TWICE_which_is_the_item: >-
+      Both corrections narrowed the POPULATION and neither changed the DISCRIMINATOR. The
+      first form counted `achievement LIKE '%is delivered to%'`; refused, because it
+      matched `turn_task.py`'s "the reply is delivered to the user who asked", a line the
+      item never touched. I narrowed it to `%delivered to the job%` - the literal
+      `task_runner.py` actually writes - which is more PRECISE and no more DISCRIMINATING,
+      because BOTH codes write that literal whenever `destination_for_turn` returns an
+      address. NARROWING A POPULATION BOTH CODES PRODUCE CAN NEVER DISCRIMINATE, HOWEVER
+      NARROW IT GETS.
+    the_discriminator_existed_from_the_first_commit_and_I_did_not_use_it: >-
+      The skill's own rule names the shape to reach for - a new column, a new field, a
+      NEW MESSAGE. The fix added an else branch whose achievement reads "the drive
+      finishes; this turn owes no delivery", a string the old code HAD NO BRANCH TO
+      WRITE. That is the evidence only the new code can produce, and it was sitting in
+      the diff the whole time while I twice rewrote the query around the shared half.
+    the_measurement: >-
+      0 rows carry the new achievement, and 0 destination-less turns have been created
+      since the fix went live at 2026-09-09T11:14:39Z. So the else branch has NOT been
+      exercised and the CLOSEABLE was false. Every task created since the fix has been an
+      addressed turn, which takes the same branch it always did.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: no_change_needed
+    the_fix: >-
+      DEBT-261's check now counts rows carrying `%owes no delivery%` - the else-branch
+      string - with the destination-less population since the fix as its DENOMINATOR, so
+      a zero is legible rather than ambiguous: it says the branch has not been exercised
+      rather than that the fix failed. DEBT-261 stays `partial`, honestly, for the third
+      time.
+    NO_GUARD_AND_THE_REASON_IS_ALREADY_RECORDED: >-
+      The skill states plainly why this family ships no script: the obvious proxy - "was
+      the pattern introduced before the fix?" - is measurably unreliable and mislabelled
+      D14.4 and DEBT-136 as weak because their discriminating fragments are JSON rendered
+      at log time and appear in no source file. A check that cries wolf on correct work is
+      the failure this programme keeps paying for. So this stays a rule a reader applies,
+      and the rule now has a worked example with the exact query that failed twice.
+    validated: >-
+      The corrected check RUN: it prints OPEN with both numbers - 0 rows carrying the new
+      achievement over 0 destination-less turns since the fix - and `validate_check`
+      moves CLOSEABLE 1 -> 0. The board no longer offers me a false close.
   - id: DEBT-264
     found: 2026-09-09
     what: >-
@@ -21235,17 +21289,36 @@ known_debt:
       # a case the old code handled too", caught by reading the row before believing the
       # verdict. The changed line is `task_runner.py`'s job-targets achievement, so that
       # is the only string that can evidence it.
-      new=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%delivered to the job%' AND (destination IS NULL OR destination = '') AND created_at >= '2026-09-09T11:14:39'" | tail -1)
+      # THIRD FORM OF THIS CHECK, and the first that can DISCRIMINATE. The first two
+      # both counted rows carrying a DELIVERY achievement and asked whether they had a
+      # destination — and the old code produced exactly such rows correctly whenever
+      # `destination_for_turn` returned an address. Narrowing the population from
+      # `%is delivered to%` to `%delivered to the job%` made it more precise and no more
+      # discriminating: BOTH codes write that literal for an addressed turn. Measured
+      # 2026-09-09, the second form reported CLOSEABLE on two rows created at 14:00:29
+      # and 14:00:30, each with `destination = telegram:72055773` — rows the OLD code
+      # would have written identically.
+      #
+      # NARROWING THE POPULATION IS NOT DISCRIMINATING WHEN THE NARROWING IS ON AN
+      # ATTRIBUTE BOTH CODES SHARE. The skill's own rule names the shape to reach for —
+      # a new column, a new field, a NEW MESSAGE — and the new message existed from the
+      # first commit: the else-branch achievement, which the old code could never write
+      # because it had no else branch.
+      new=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%owes no delivery%'" | tail -1)
       # THE DENOMINATOR OF NEW ROWS, so CLOSEABLE cannot be 0-over-0. Until the platform
       # has actually created a task carrying a delivery achievement under the new code,
       # there is nothing to be right about.
-      newd=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%delivered to the job%' AND created_at >= '2026-09-09T11:14:39'" | tail -1)
-      if [ "${newd:-0}" -eq 0 ]; then
-        echo "OPEN no task carrying a delivery achievement has been created since the fix went live at 2026-09-09T11:14:39Z, so nothing yet distinguishes it from its predecessor; $d such rows exist in total and $n of them (all pre-fix) claim a delivery with no destination"
-      elif [ "${new:-0}" -eq 0 ]; then
-        echo "CLOSEABLE $newd row(s) created under the new code carry a delivery achievement and ALL of them carry a destination; $n legacy rows remain, written before the fix"
+      # THE DENOMINATOR IS THE POPULATION THAT CAN DISCRIMINATE: turns created since the
+      # fix that owe no delivery, i.e. carry no destination. Until one of those exists,
+      # the else branch has not been exercised and a zero above says nothing about the
+      # fix. Reported so the OPEN state is legible rather than ambiguous.
+      newd=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE (destination IS NULL OR destination = '') AND created_at >= '2026-09-09T11:14:39'" | tail -1)
+      if [ "${new:-0}" -gt 0 ]; then
+        echo "CLOSEABLE $new row(s) carry the else-branch achievement 'owes no delivery' — a string the old code had no branch to write, so only the fix can have produced them ($n legacy rows still claim a delivery with no destination)"
+      elif [ "${newd:-0}" -eq 0 ]; then
+        echo "OPEN 0 rows carry the new achievement, and 0 destination-less turns have been created since the fix went live at 2026-09-09T11:14:39Z — so the else branch has NOT been exercised and no evidence yet distinguishes the fix from its predecessor. NOT a failure signal: addressed turns take the same branch as before, and $d rows carry a delivery achievement in total."
       else
-        echo "OPEN $new of $newd rows created since the fix still claim a delivery achievement with a NULL destination"
+        echo "OPEN $newd destination-less turn(s) created since the fix, and NONE carries the new achievement — the else branch is not being taken where it should be"
       fi
   - id: DEBT-260
     found: 2026-09-09
