@@ -96,6 +96,7 @@ _JUDGED: tuple[tuple[str, str, str], ...] = (
     ('D11.3.md', '**OPEN — no bookend has be', 'MARKER'),
     ('D13.1.md', 'status meets OPEN first.', 'PROSE'),
     ('D13.1.md', 'notates every OPEN site with whether', 'PROSE'),
+    ('D14.4.md', 's as honestly OPEN: the new line goes', 'PROSE'),
     ('D14.4.md', 'alert half is OPEN, and honestly so.**', 'MARKER'),
     ('D14.4.md', 'uld have read OPEN forever.', 'PROSE'),
     ('D16.5.md', '**OPEN — no MCP server has', 'MARKER'),

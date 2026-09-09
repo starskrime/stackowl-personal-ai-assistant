@@ -20865,6 +20865,82 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-264
+    found: 2026-09-09
+    what: >-
+      A SHIPPED builtin skill could not load, and the only signal was a WARNING nobody
+      reads. `[skills] loader.load_all: skill invalid — skipping` fired twice on
+      2026-09-06 for `skills/builtin/web-automation`: an unquoted colon in the YAML
+      frontmatter (`description: Drive a website: navigate, ...`), so `parse_skill_md`
+      raised and the skill was simply ABSENT from the catalogue. Fixed since (`56947626`,
+      em-dash), and the commit message says what caught it: "the restart caught a defect
+      I had just introduced" — A RESTART, NOT A TEST.
+    WHY_and_it_is_not_the_gap_it_first_looked_like: >-
+      A test WOULD have caught it. `test_native_tier2_skills_journey.py` names
+      `web-automation`, calls `parse_skill_md` on it, and has existed since 2026-06-21 —
+      it simply was not on the targeted path that shipped the break. So the gap is NOT
+      "nothing validates shipped skills": 13 of the 14 are validated. It is that the
+      coverage is THREE HAND-MAINTAINED NAME LISTS where a declared property belongs -
+      every skill this platform ships must load. MEASURED: `chunked-pdf-summary` is named
+      by no tier journey, so nothing parses it at all, and the next skill added is
+      unvalidated by default in exactly the same way. CLAUDE.md's own shape: a name list
+      standing in for a property.
+    why_it_is_a_PLATFORM_defect_not_a_setup_one: >-
+      These files ship from `src/stackowl/skills/_builtin/` and are seeded into every
+      install, so a broken one is broken for everyone who clones - not just this box. The
+      user-visible symptom is a skill that silently does not exist.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    the_fix: >-
+      One enumerating guard: glob `_builtin/*/SKILL.md`, parse every one, construct its
+      `SkillManifest`. The POPULATION IS THE DIRECTORY rather than a list someone
+      remembered to update. Marked `tripwire`, because a cross-cutting guard looks
+      related to nothing and would never be picked by a targeted path - which is exactly
+      how the break shipped. It asserts only LOADABILITY; the tier journeys assert body
+      content, tier placement and wording, and they stay.
+    THREE_CANDIDATE_DEFECTS_MEASURED_AND_TWO_WERE_NOT_MINE_TO_FIX: >-
+      The recorded claim was "one skill that can never load, 229/229 boots". Measured: it
+      is `trending-research-owl`, 301 warnings, sitting outside every source dir - and it
+      is ESC-127's OPEN PLACEMENT QUESTION ("adopt into user/, or delete it. Placement is
+      a trust decision"), which is his call and not mine to take. The second was
+      `web-automation`, already fixed. Only the third - the missing enumeration - was
+      both real and in scope. Recorded so the next loop does not re-measure all three.
+    AND_MY_OWN_PROBE_LIED_ONCE_on_the_way: >-
+      Checking whether the shipped `web-automation` parsed, I printed "FAILS:
+      AttributeError 'SkillMarkdown' object has no attribute 'name'" - which is MY probe
+      reaching for a field that does not exist, not the file failing. The parse had
+      succeeded. One character of instrument error away from recording a shipped skill as
+      broken when it is fine, which is the mirror of the defect this item is about.
+    THE_FULL_SUITE_WENT_RED_ON_MY_OWN_DOC_EDIT_and_the_gate_could_not_see_it: >-
+      `1 failed, 12728 passed` on `13b6894d`, `SUITE TREE STILL` - the twenty-fifth run,
+      and the failure was MINE:
+      `test_the_table_knows_every_line_in_the_corpus`, DEBT-256's self-maintaining ground
+      truth. The previous loop's `Reviewed:` line on D14.4 reads "the alert half this
+      document records as honestly OPEN", which is a new `\bOPEN\b` line nobody had
+      judged. Judged PROSE and added to the table; the detector does not match it anyway
+      (`OPEN:` is not a clause boundary), which is exactly why the table asks about EVERY
+      occurrence rather than only the ones the regex catches.
+      AND THE GATE COULD NOT HAVE CAUGHT IT, BY DESIGN. That test is deliberately NOT a
+      tripwire - its own docstring says so, because it fires whenever a design document
+      gains or edits an OPEN line, which is ordinary work here, and a gate that fails on
+      ordinary work gets bypassed rather than satisfied. The cost of that decision is
+      exactly this: a doc edit ships and the full run finds it ~40 minutes later. That is
+      the trade as designed, paid once, and worth recording rather than re-litigating.
+    validated_by_REPRODUCING_THE_REAL_DEFECT_in_the_uncovered_skill: >-
+      MUTATION-PROVEN against an off-tree mirror of `_builtin/`, restored from a file
+      copy. The mutant was not invented: it is the EXACT 2026-09-06 failure - an unquoted
+      colon in the description scalar - injected into `chunked-pdf-summary`, the one skill
+      no tier journey names. The guard failed with the same error the live loader
+      recorded that day, `SkillMarkdownError: SKILL.md frontmatter is invalid YAML:
+      mapping values are not allowed here`, and named the skill. Restore returned
+      3 passed. So the guard is proven against the real historical defect, in the exact
+      file the existing name lists cannot see.
   - id: DEBT-263
     found: 2026-09-09
     what: >-
