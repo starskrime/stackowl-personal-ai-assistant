@@ -20841,6 +20841,66 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-254
+    found: 2026-09-09
+    what: >-
+      EIGHT design documents went stale, and every one of them was made stale by MY OWN
+      commits in this session - DEBT-244, 248, 249, 250 and 252. The count had grown 3
+      -> 8 while I shipped six items, which is the fifth-surface rule accumulating
+      against its own author.
+    the_report_named_the_shape_before_I_did: >-
+      "ONE SOURCE, MANY DOCUMENTS: assemble.py (6 documents), base.py (2 documents) -
+      check whether the change even concerned them before re-reading each one."
+      `assemble.run` is a WHOLE PIPELINE STEP, so symbol narrowing at function
+      granularity cannot discriminate: DEBT-248 moved window resolution to a shared
+      helper INSIDE `run`, and six documents that cite `run` for entirely different
+      reasons all went stale together. That is not a defect in the narrowing - a
+      document citing `run` is citing the step - it is the case the `Reviewed`
+      mechanism exists for, and draining it is judgement work rather than code.
+    what_each_judgement_was: >-
+      SEVEN dismissed with the reason written down, one merged. D01.1, D08.1, D08.4 and
+      D16.3 cite `assemble.run` for prompt composition, memory injection and block
+      order - the window budget touches none of them, and `lean` is still hardcoded
+      False so the cached prompt is byte-identical. D01.4 cites `owl_build` for a
+      prompt-invalidation CAUSE: `_invalidate_prompt` was already called on every edit,
+      successful or not, so DEBT-250 changed whether the edit LANDS, not how often the
+      cause fires. D04.1 was RE-MEASURED rather than argued - its central claim is
+      "`ModelProvider` has 24 members", and an AST walk confirms exactly 24 methods,
+      because `window_fraction` is module-level and not a member.
+    D01_6_NEARLY_GOT_A_WRONG_CORRECTION: >-
+      I had it down as the one REAL update: DEBT-244 added `cost_records.context_window`
+      and D01.6 lists that table's columns without it. Reading the SECTION HEADER stopped
+      it - the list sits under "### What already exists", a snapshot of the schema BEFORE
+      that item's work. Adding the new column would have falsified a historical statement
+      rather than updated a current one. The fifth-surface rule says update the document
+      when a change makes it wrong; it does not say make every list current.
+    D01_2_NEEDED_A_MERGE_AND_THE_OBVIOUS_MERGE_WOULD_HAVE_BEEN_INVISIBLE: >-
+      It already carried a `Reviewed:` field. A second `**Reviewed:**` line is silently
+      discarded by `_header` (the defect DEBT-242 shipped a guard for), and the natural
+      alternative - an "Also reviewed" block, which this very document already uses for
+      prose - is NOT parsed: `_reviewed_shas` reads `head.get("Reviewed", "")` and
+      nothing else. So a dismissal written that way would be reasoning the instrument
+      cannot see, and the document would have stayed stale while LOOKING handled. The
+      shas were merged into the existing field.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: done
+      document: done
+    validated_on_the_REAL_TREE_after_refusing_to_trust_the_mirror: >-
+      `doc_check.py` is an instrument, so its live evidence is the report itself:
+      `checked 49, STALE 0 (0 by deletion), reviewed-not-rerun 17, unmeasurable 35`,
+      against `STALE 8 / reviewed-not-rerun 9` before. 9 + 8 = 17 exactly, so all eight
+      moved and none was lost.
+      AND THE MIRROR WAS NOT TRUSTED FOR THIS, deliberately. Building the change against
+      a scratch copy is the sequencing rule, but that mirror had `src/` symlinked and was
+      not a real worktree, and its run reported reviewed-not-rerun 16 with `D13.2`
+      silently absent — from a file byte-identical to the live one. An unexplained
+      category change is a lying instrument, so the verification was deferred to the real
+      tree rather than reported from the copy. The real number is 17 and D13.2 is present.
   - id: DEBT-253
     found: 2026-09-09
     what: >-
