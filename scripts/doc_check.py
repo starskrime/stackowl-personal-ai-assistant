@@ -679,10 +679,45 @@ def _on_purpose_queries(text: str) -> int:
 #: across a rebuild), D05.8:506 (the envelope witness) and D09.5:226. The report said
 #: 2 when the answer was 6.
 #:
-#: BOLD is the discriminator, not punctuation. A status marker is emphasised
-#: (`**OPEN`); prose uses the bare word mid-sentence - "a breaker OPEN for", "an OPEN
-#: escalation" - and there are 20 such lines that must stay unflagged.
-_OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\bOPEN\s*[—–-]|\*\*OPEN\b", re.M)
+#: "BOLD IS THE DISCRIMINATOR, NOT PUNCTUATION" WAS THE CONCLUSION, AND IT WAS DRAWN
+#: FROM DATA THAT CONCLUSION HAD ALREADY FILTERED - corrected 2026-09-09, recall
+#: 10/18 -> 17/18 at 17/17 precision.
+#:
+#: The 09-08 correction above did sweep the corpus, which is why this is not the
+#: "list someone remembered" failure a second time. It swept, and then LABELLED what
+#: it found using a discriminator it had already chosen: anything unbolded read as
+#: prose, so eight genuine markers were filed as prose and the sweep confirmed the
+#: rule it started from. VERIFIED against `268dc678`, the commit that made that
+#: correction: all eight were present in the tree that day. `* 5 (live) — OPEN.` sat
+#: NINE LINES from `* 3 … — **OPEN,` in the same bullet list of the same file, and
+#: only the bolded one was counted.
+#:
+#: A DISCRIMINATOR PICKED BEFORE THE GROUND TRUTH IS LABELLED WILL LABEL THE GROUND
+#: TRUTH. So the ground truth is now written down independently, in
+#: `tests/audit/test_the_open_check_detector_sees_the_shapes_the_corpus_writes.py`:
+#: all 30 `\bOPEN\b` lines in the design set, each judged marker or prose, with the
+#: reason. The regex is measured against that table, not against itself.
+#:
+#: What the corpus actually writes, and what separates a verdict from prose about
+#: one: a VERDICT ends a clause - `**OPEN.**`, `— OPEN.`, `is OPEN**,`,
+#: `check 5 OPEN.`, `| **OPEN** |`, `# 4. Live (OPEN):`, or the end of a heading —
+#: `(OPEN):` is a LABELLED step in a Verification block and is a verdict too. PROSE
+#: uses the word
+#: mid-phrase ("read OPEN for nine days", "annotates every OPEN site", "meets OPEN
+#: first"). Three exclusions carry the rest and each is mechanical, not a word list:
+#: an article before it makes it a NOUN ("an OPEN escalation", "not an OPEN"); `.)`
+#: after it closes a PARENTHETICAL aside about the past ("when it was still OPEN.)");
+#: and a bold span ending `OPEN**:` is a LABEL being introduced, which is how
+#: D04.1 names this report's sibling category.
+_OPEN_CHECK = re.compile(
+    r"(?<!an )(?<!a )(?:"
+    r"^\s*\**OPEN\b"                                    # the line opens with the verdict
+    r"|\*\*OPEN\b"                                      # emphasised verdict
+    r"|\bOPEN\s*[—–-]"                                   # verdict, then a dash into its reason
+    r"|\bOPEN(?=[.,;](?!\))|\):|\*\*(?!:)|\s*\||\s*$)"  # verdict at a clause boundary
+    r")",
+    re.M,
+)
 
 #: A backticked marker is PROSE ABOUT a marker, never a marker.
 #:

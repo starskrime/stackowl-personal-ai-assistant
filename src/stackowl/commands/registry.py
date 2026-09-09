@@ -68,7 +68,15 @@ class CommandRegistry:
         # dispatches through the registry gets it for free.
         is_dry_run, cleaned = strip_sigil(args)
         if is_dry_run:
-            log.gateway.debug(
+            # INFO, not DEBUG — promoted 2026-09-09 (DEBT-256). Production runs at
+            # INFO, so a DEBUG line does not exist when you need it. D10.5's
+            # acceptance check has read "STILL OPEN. Unit-tested; no live evidence"
+            # since 2026-08-29, and no volume of traffic could ever have closed it:
+            # this branch was its only witness. That is the same defect D08.1 paid
+            # for once already. The `command` name is safe to carry; the raw args
+            # are NOT, which is why they are absent here exactly as they are on the
+            # live path below.
+            log.gateway.info(
                 "[commands] registry.dispatch: dry-run preview (handler NOT run)",
                 extra={"_fields": {"command": name}},
             )

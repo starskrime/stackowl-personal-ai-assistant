@@ -20854,6 +20854,89 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-256
+    found: 2026-09-09
+    what: >-
+      `doc_check.py`'s OPEN BUT NOT TRACKED report - which exists to find acceptance checks
+      marked OPEN in a document whose item says `validate: done`, checks nothing will ever
+      re-ask - reported SIX. The answer was TEN. One of the four it could not see had been
+      CLOSEABLE for ELEVEN DAYS: D09.5's check 3 was satisfied by three live records from
+      2026-08-29 that nobody looked at.
+    WHY_and_it_is_not_the_failure_it_looks_like: >-
+      The 2026-09-08 correction to that same regex widened recall 2 -> 6 and its own comment
+      says it "MEASURED over every \bOPEN\b in the design set". It DID sweep, so this is not
+      "a list someone REMEMBERED rather than a set someone SWEPT" a second time. It swept,
+      and then LABELLED what it found using a discriminator it had already chosen - "BOLD is
+      the discriminator, not punctuation". Anything unbolded read as prose, so eight genuine
+      markers were filed as prose and the sweep CONFIRMED THE RULE IT STARTED FROM.
+      A DISCRIMINATOR PICKED BEFORE THE GROUND TRUTH IS LABELLED WILL LABEL THE GROUND TRUTH.
+    verified_rather_than_argued: >-
+      All eight missed markers were present in the tree at `268dc678`, the commit that made
+      the 09-08 correction - so the corpus did not grow, the judgement was wrong.
+      `* 5 (live) — OPEN.` sat NINE LINES from `* 3 … — **OPEN,` in the same bullet list of
+      the same file, and only the bolded one was counted.
+    the_measurement: >-
+      Ground truth hand-judged over all 38 `\bOPEN\b` lines in the design set (38, not 30:
+      blanking code spans per FILE instead of per LINE joins lines through an unterminated
+      backtick and hides eight). Live detector: recall 10/19, precision 10/10. New detector:
+      recall 19/19, precision 19/20. The corpus uses OPEN for a circuit BREAKER state and a
+      file DESCRIPTOR as well as a check verdict, and the one false positive is a breaker
+      sentence grammatically identical to a verdict - `#   OPEN, not the bounce` against
+      `which is OPEN, not PASS.` - recorded as an exception with its reason rather than tuned
+      away, because a detector tuned until it has no exceptions is tuned to its sample.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    D09_5_DRAINED_and_the_record_contradicted_itself_in_ADJACENT_LINES: >-
+      `validate: done  # closing query run verbatim 2026-08-30; PASS conditions met` sat
+      directly above `document: done  # live-invocation check probed; /learn genuinely never
+      invoked`. Both were kept for ten days. "Run verbatim" is exactly what happened and
+      exactly the defect: the query named `[startup] gateway: command contributed a TURN
+      PROMPT`, the seam line SHARED by every command implementing `build_turn_prompt`, so
+      three `/skill` invocations on 2026-08-29 satisfied it while `/learn` had never run.
+      MEASURED: 3 records, all `cmd: "skill"`, 17:03:24 / 17:23:59 / 17:25:12, and
+      `log_since.sh --all 'commands] learn: invoked'` returns 0. Check 3 (the seam) IS closed
+      by those three - the line sits inside `if _turn_prompt:` at orchestrator.py:2417, so the
+      emitter IS the claim. Check 5 is not, and never was. Stage -> `partial` with a query
+      keyed on `LearnCommand.build_turn_prompt`'s OWN INFO line, which has existed since
+      2026-08-30 (f4e4ec39) and was never wired into the check it was added for.
+    D10_5_WAS_UNCLOSABLE_BY_CONSTRUCTION_and_that_is_the_second_finding: >-
+      The newly-visible marker - "`/skill use X ??` previews rather than runs — STILL OPEN.
+      Unit-tested; no live evidence", standing since 2026-08-29 - had its only possible
+      witness at DEBUG. `commands/registry.py`'s dry-run branch logged
+      `registry.dispatch: dry-run preview (handler NOT run)` with `log.gateway.debug`, and
+      production runs at INFO. "No live evidence" was GUARANTEED, not observed. That is
+      D08.1's failure exactly, and it was hiding behind the detector's blindness: a check
+      nothing enumerates cannot be found to be unclosable either. Promoted to INFO in the
+      same change, stage -> `partial`, closing check bounded to the PROMOTION date rather
+      than the feature's, because the string has been in src/ since 2026-06-20.
+    validated: >-
+      MUTATION-PROVEN from a file copy, never git: reverting `_OPEN_CHECK` to the
+      pre-2026-09-09 regex fails `test_every_marker_the_corpus_writes_is_seen` and names all
+      EIGHT missed markers by file and line; restoring gave 6 passed. The report itself moved
+      6 -> 10 and then to 7 as the two drained items left the `validate: done` population,
+      and `validate_check.py` moved `checked 17 -> 19` with both new checks reporting OPEN
+      with a real query. The guard's self-maintaining half proved itself DURING the loop: my
+      own edit to D10.5's marker made that line unjudged and its table entry stale, and the
+      test failed by name until both were re-judged.
+    DEBT_255s_GUARD_CAUGHT_ME_ONE_LOOP_LATER: >-
+      The closing check written for D09.5 above passed `--all` and then finished its OPEN
+      branch with "the emitter has existed since 2026-08-30" -
+      `test_an_unbounded_check_does_not_report_a_bound_it_never_applied`, shipped in the
+      previous loop, failed by name on it. The sentence was TRUE (it dates the emitter, not
+      the count's window) and the regex cannot tell those apart, which is the same
+      unwinnable discrimination as the breaker-versus-verdict false positive in this item.
+      Reworded to "the emitter was added on 2026-08-30" rather than refining the guard: a
+      blunt rule that occasionally costs a rephrase is worth more than a clever one that
+      lets the real case through.
+    the_targeted_path_was_derived_not_chosen: >-
+      `tests_touching.py src/stackowl/commands/registry.py` -> 53 files, 489 passed in 137s.
+      The only `src/` change is the DEBUG -> INFO promotion.
   - id: DEBT-255
     found: 2026-09-09
     what: >-
@@ -38751,10 +38834,34 @@ items:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: done      # closing query run verbatim 2026-08-30; PASS conditions met
+      # CORRECTED 2026-09-09 (DEBT-256): `done` here and the comment on the line below
+      # contradicted each other in adjacent lines, and the record kept both for ten days.
+      # "Closing query run verbatim" is exactly what happened and exactly the defect: the
+      # query named `[startup] gateway: command contributed a TURN PROMPT`, the seam line
+      # SHARED by every command with a `build_turn_prompt`, so three `/skill` invocations
+      # on 2026-08-29 satisfied it while `/learn` had never run. Check 3 (the seam) IS
+      # closed by those three records; check 5 (a real `/learn`) is not, and never was.
+      validate: partial
       document: done      # live-invocation check probed; /learn genuinely never invoked
     doc: docs/reference-mapping/designs/D09.5.md
-    doc_last_verified: "2026-08-30 against 04e63271 — both paths fired and observed"
+    doc_last_verified: "2026-09-09 against 53be7d87 — check 3 CLOSED on three live seam firings (2026-08-29, cmd=skill); check 5 still OPEN with a corrected query. Previously '2026-08-30 against 04e63271 — both paths fired and observed', which was true of the SEAM and false of /learn."
+    closing_check: |-
+      # NOT DATE-SCOPED, AND IT IS EARNED. `git log --reverse -S` puts
+      # 'learn: invoked — turn prompt built' in src/ on 2026-08-30 (f4e4ec39), AFTER the
+      # oldest retained log (2026-08-28), so no retained line can predate the emitter and
+      # a bound would only add an expiry. It is a literal in `LearnCommand.build_turn_prompt`
+      # at INFO, so the evidence CAN exist — production runs at INFO.
+      #
+      # THIS IS THE SECOND QUERY. The first named the SHARED seam line and was satisfied by
+      # /skill traffic without /learn ever running; that is what closed this stage wrongly.
+      # The emitter here sits in `/learn`'s own builder, so only `/learn` can produce it.
+      n=$(./scripts/log_since.sh --all 'commands] learn: invoked')
+      # The degraded sibling, watched deliberately: it fires when a surface ignores the
+      # turn-prompt seam and shows the user the instruction instead. A non-zero here with a
+      # zero above means /learn RAN and the seam did not hold — a different answer, not this
+      # check's, and it must not be silently folded into the same count.
+      f=$(./scripts/log_since.sh --all 'commands] learn: FALLBACK')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n real /learn invocation(s) across every retained log ($f took the degraded fallback path)" || echo "OPEN 0 real /learn invocations across every retained log; the emitter was added on 2026-08-30 and the fallback count is $f"
     decisions: []
     changes: []
     BRAINSTORM_CLOSED_2026_08_23: >-
@@ -39365,10 +39472,25 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   done
+      # CORRECTED 2026-09-09 (DEBT-256). The document has said "STILL OPEN. Unit-tested;
+      # no live evidence" about the `??` preview since 2026-08-29 while this stage said
+      # `done`, so nothing re-asked it — `validate_check.py` only re-runs a `partial`.
+      # The marker was invisible to `doc_check`'s report as well, because `**STILL OPEN.**`
+      # is not the bolded shape its regex required.
+      validate:   partial
       document:   done
     doc: "docs/reference-mapping/designs/D10.5.md"
     doc_last_verified: null
+    closing_check: |-
+      # DATE-BOUNDED TO TODAY, AND THE BOUND IS THE POINT. The string has been in src/
+      # since 2026-06-20, so `--all` would be the satisfied-by-history defect — except
+      # that it could not be, because until 2026-09-09 this line was at DEBUG and
+      # production runs at INFO. THAT was the real defect: the check's only possible
+      # witness could never be written, so "no live evidence" was guaranteed rather than
+      # observed, and no volume of traffic could have closed it. Promoted to INFO in the
+      # same change; the bound is the promotion date, not the feature's.
+      n=$(./scripts/log_since.sh 2026-09-09 'registry.dispatch: dry-run preview')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n dry-run preview(s) since the witness was promoted to INFO on 2026-09-09" || echo "OPEN 0 dry-run previews since the witness was promoted to INFO on 2026-09-09; needs one real '/<command> ??' in production"
     decisions:
       - date: 2026-08-29
         stage: validate
