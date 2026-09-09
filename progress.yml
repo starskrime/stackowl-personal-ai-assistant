@@ -21018,6 +21018,72 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-273
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work, from the CURRENT bucket of the provenance report."
+    what: >-
+      THE SELF-HEALING PRIMITIVE'S OWN FRAGILE-PATH COUNTER COULD NOT BE READ.
+      `looks_like_dead_handle` classifies TYPE first and falls back to English substrings,
+      and logs every use of that fallback so — in its docstring's words — "how much we still
+      depend on the fragile path is a measurement instead of a guess". It was a guess: the
+      line is `log.infra.debug`, production runs at INFO, and this deployment has written
+      ZERO DEBUG records across 677,108 retained lines. The count could not rise above zero
+      however often the branch ran.
+    why_not_what: >-
+      A ZERO THAT CANNOT BE DISTINGUISHED FROM "NEVER WRITTEN" IS NOT A COUNTER, and the
+      docstring's remedy depends on reading it — "if this line is common in the logs, the
+      type list above is missing something and the fix is to add the type, not another
+      string". That instruction can never fire. Same shape as DEBT-267, in the primitive
+      that governs retry for EVERY tool and the whole browser stack.
+    and_the_investigation_that_found_it_ended_in_NO_DEFECT_which_is_the_point: >-
+      The entry was 232 `[resilience] retry_once: dead handle detected` events, CURRENT.
+      Grouped by the exception that triggered them: 163 `sqlite3.OperationalError`, 50
+      `sqlite3.ProgrammingError`, 12 `ValueError: no active connection`, 5 playwright
+      `TargetClosedError`. Every DB one is CORRECT BY DESIGN — `db/pool.py` passes
+      `is_dead=_looks_like_dead_sqlite`, which bypasses `looks_like_dead_handle` entirely and
+      classifies STRUCTURALLY on the sqlite3 type plus `sqlite_errorcode` (F022), with
+      SQLITE_BUSY a documented transient code. Recorded so the next loop does not
+      re-investigate a 232-event signal that is the platform working.
+    two_readings_I_had_to_abandon_and_both_were_confident: >-
+      FIRST: "dead handle" is the wrong classification for "database is locked", so a
+      transient lock triggers a connection recycle. Refuted by reading the classifier — the
+      remedy is deliberate and the code is a documented transient. SECOND, worse: with
+      `database is locked` visible in `DEFAULT_DEAD_HANDLE_MARKERS` I concluded 225 of 230
+      classifications went through the TEXT path, making the "last resort" 97% of traffic.
+      Refuted by the `is_dead=` parameter — the DB never calls that function at all. Both
+      readings were built on the marker list without checking WHICH classifier actually
+      ran. The generalisable half: a shared helper with a caller-supplied override means
+      the code you are reading may not be the code that ran.
+    no_guard_shipped_and_the_reason: >-
+      `scripts/logging_visibility.py` could not have caught this and widening it would not
+      help: it keys on a function having a LOUD return beside a DEBUG-only one, and
+      `looks_like_dead_handle` has no loud return at all. What would catch it is "a
+      docstring claims a line is measurable while the line is below INFO" — a prose-versus-
+      level contradiction that no reliable proxy exists for, and this programme has already
+      recorded twice that a guard which cries wolf on correct work gets bypassed rather
+      than satisfied. Stated rather than shipped.
+    tests: >-
+      The assertion went into `tests/infra/test_dead_handle_classification.py`, which
+      already owned the line — it asserted the fallback ANNOUNCES itself and never that
+      anyone could hear it. DISCRIMINATION PROVEN: the amended test FAILS against the
+      unpromoted source and PASSES against a promoted mirror, 13/13 in the file.
+    claim_check: >-
+      grep -n "log.infra.info" src/stackowl/infra/resilience.py >/dev/null && echo "SETTLED — the fragile-path counter is at a level production writes" || echo "OPEN — the counter is below INFO again"
+    validated_live_on_7a047a5a: >-
+      Restarted onto the promotion (boot markers 810 -> 811, 2026-09-09T22:08:12Z, after the
+      commit) and drove a REAL TURN, which delivered at 22:08:28 — so the platform is
+      healthy on the changed primitive, which matters because this function governs retry
+      for every tool. The counter reads **0 since that boot**, and that zero is now a REAL
+      ANSWER rather than an unreadable one: the DB traffic that dominates dead-handle
+      recycles bypasses this function by design, so nothing SHOULD have taken the text path.
+      The deliverable is that the number exists, not its size — before this change 0 and
+      "never logged" were the same reading.
+    the_diff_is_one_line_and_that_is_the_safety_argument: >-
+      The entire non-comment change is `log.infra.debug` -> `log.infra.info`. No control
+      flow moved, which is what makes a one-line edit to the retry primitive safe to ship on
+      a targeted path (48 passed across the derived files, 13/13 in the owning test) rather
+      than needing its own full-suite verdict.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-272
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, found by the CURRENT bucket of the report DEBT-271 built."
