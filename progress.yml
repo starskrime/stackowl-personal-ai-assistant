@@ -20788,6 +20788,141 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-249
+    found: 2026-09-09
+    what: >-
+      THE PLATFORM CANNOT REMEMBER THAT IT COMPACTED. Bakir, 2026-09-09: "First of all
+      platfomr does not remember when last time did compaction and now doing for my each
+      request." MEASURED across every retained log: 34 compression events over six days,
+      and `had_prior_summary=false` on EVERY ONE. Never once true.
+    root_cause_A_READ_WITH_NO_WRITER: >-
+      `Selection.prior_summary` is read by `select()`, logged by classify, and branched
+      on by `apply()` - and NOTHING ANYWHERE WRITES ONE. Outside the compressor module
+      itself the string `prior_summary` appears in exactly one place in `src/`: the log
+      line that reports whether there was one. So the reuse path is reachable code that
+      no producer can ever reach. Defect shape 1 in the mirror - the tree's catalogue
+      names "a write with no reader", and this is a READ WITH NO WRITER.
+    why_it_was_never_wired_and_this_is_the_useful_part: >-
+      The two data models do not meet. `select()` looks for a message whose content
+      starts with `SUMMARY_MARKER`, i.e. it expects the summary to arrive as part of the
+      history it is handed. But `_gather_history` reads from
+      `conversation_store.recent_conversation_turns`, whose unit is a USER/ASSISTANT TURN
+      PAIR - and a summary is neither half of a turn. There is nowhere in the store's
+      shape to put one, so the feature could be designed and could not be wired. A
+      durable summary needs its own row keyed by session with the turn watermark it
+      covers, which is a migration plus a writer plus a reader.
+    NOT_FIXED_and_saying_so: >-
+      DEBT-248 raised the trigger to a share of the resolved window, so on this
+      deployment compaction effectively no longer fires and the repeated cost is gone in
+      practice. It is NOT gone in principle: any small-window deployment still
+      re-summarizes from scratch on every turn past its budget. Recorded as its own item
+      rather than folded into DEBT-248, because claiming the fix covered it would be the
+      exact move this programme forbids.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: blocked
+      cleanup: no_change_needed
+      test: no_change_needed
+      validate: partial
+      document: no_change_needed
+    closing_check: |
+      # CLOSEABLE only when a compaction REUSES a previous one. `had_prior_summary` is
+      # emitted by classify on EVERY compression, so a true reading is evidence only a
+      # writer could produce - there has never been one in 34 events across six days.
+      #
+      # --all IS EARNED HERE rather than a forgotten date bound. The usual hazard is a
+      # check satisfied by evidence older than the change; that cannot happen when the
+      # count is ZERO across the entire retained window, and there is no ship date to
+      # bound by because there is no writer yet. The day one ships, any true reading is
+      # new by construction.
+      #
+      # THE THIRD ARGUMENT EXCLUDES, and that is used DELIBERATELY here rather than by
+      # the mistake this repo already paid for. The matched pattern must be a string a
+      # `log.*` call actually emits, and `"had_prior_summary": true` is a JSON FIELD
+      # rendered at log time that appears in no source file - so matching on it fails
+      # `test_no_check_waits_for_a_string_nothing_logs`, correctly. So both counts match
+      # the EMITTED message, and the numerator excludes the `false` rendering, leaving
+      # the compactions that reused a summary. Do not "fix" the third argument into a
+      # second match pattern.
+      t=$(./scripts/log_since.sh --all 'conversation too long for the history budget')
+      n=$(./scripts/log_since.sh --all 'conversation too long for the history budget' '"had_prior_summary": false')
+      [ "${n:-0}" -gt 0 ] && echo "CLOSEABLE $n of $t compactions reused a prior summary" || echo "OPEN 0 of ${t:-0} compactions ever reused a prior summary - the reuse path still has no writer"
+  - id: DEBT-248
+    found: 2026-09-09
+    what: >-
+      A live Telegram "hi" took ~2.5 minutes. MEASURED on trace `edc81f3b`: one call is
+      91% of it - the history summarizer, 12,156 in / 9,236 out in 139,834 ms - and it
+      ran because `HISTORY_BUDGET_TOKENS` was a fixed 12,000, which is 4.6% of this
+      deployment's 262,144 window.
+    root_cause_A_FIXED_COUNT_GATING_AN_ECONOMIC_DECISION: >-
+      Compaction is only worth doing when the tokens it SAVES cost more than the tokens
+      it SPENDS, and nothing in the code compared those. MEASURED over 2,279 live calls:
+      generation runs at 15 ms/output-token and prefill at 0.138 ms/input-token, a 109:1
+      ratio. Compacting spent ~139 s of generation to avoid sending ~53,600 tokens of
+      history, which is ~7.4 s of prefill. IT PAID 139 SECONDS TO SAVE 7. A trigger that
+      is a token count cannot see that, because the decision it gates is a COMPARISON and
+      a constant only has one side of it.
+    and_the_read_cap_was_already_doing_the_protecting: >-
+      `DEEP_HISTORY_TURNS` caps the READ at 40 turns, so history is structurally bounded
+      at ~46,640 tokens - 17.8% of this window - whatever the budget says. The constant's
+      own comment called it "deliberately well below any real window", which was true and
+      was the defect. It only made compaction fire early: MEASURED at turn ~10, and the
+      live events show it firing at 43, 45 and 46 turns within ten minutes.
+    fix: >-
+      `history_budget(window)` returns `0.75 * resolved window` - 196,608 here, the
+      ~200k Bakir asked for, expressed as a property of the model rather than a second
+      constant that goes stale. An unknown window keeps the old 12,000, and a small
+      model gets LESS than before (8,192 -> 6,144), because the point is not "compact
+      less" but "compact against the real window".
+    it_had_to_be_WIRED_not_re_numbered: >-
+      `state.model_window` is filled by `assemble`, which runs AFTER `classify` - so a
+      compressor that merely read the field would have seen None every turn and silently
+      kept the old budget. That is the ships-as-decoration shape, and it was caught by
+      checking the step order in `pipeline/registry.py` BEFORE writing the code rather
+      than after. `resolve_turn_window` now exists once in `provider_select.py` and BOTH
+      steps ask it; `assemble`'s own copy of the block is gone, and the dead
+      `_safe_resolve_api_key` it left behind was deleted in the same change.
+    the_rejected_fix_is_recorded_because_the_rejection_is_the_lesson: >-
+      I first proposed `disable_thinking=True` on the summarizer, having found it is the
+      SEVENTH bypass site of the invisible-thinking bug. Bakir: "Never disable thinking."
+      He was right and the redirect was better than the diagnosis - the expensive call
+      should not have been happening at all, and switching reasoning off would have
+      traded answer quality for latency everywhere that call is used. Nothing was
+      applied; the allowlist entry in
+      `tests/providers/test_a_side_task_never_pays_for_invisible_thinking.py` for
+      `pipeline/steps/classify.py` still reads "already correct - goes through LLMGateway
+      with floor==ceiling=='fast'", which is a non-sequitur about TIER, and is left
+      untouched deliberately rather than edited on the way past.
+    a_recorded_decision_was_re_asserted_not_overridden: >-
+      `test_the_engine_owns_WHEN_as_well_as_HOW` (D03.1) failed on this change because it
+      asserted the LITERAL `"cc.plan(history)"`, which breaks the moment the engine is
+      handed an argument. The decision it guards is that the ENGINE owns the budget
+      policy, and that still holds: `history_budget()` and its share live in the
+      compressor, and classify passes the resolved window, which is a FACT about the
+      deployment rather than a rule - exactly as `select()` has always taken
+      `budget_tokens` while `plan()` owns what that value is. The guard now asserts the
+      substance and additionally FORBIDS any share or budget literal appearing in the
+      pipeline step, which the old wording never did.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_on_a_real_telegram_turn_after_a_restart: >-
+      Restarted 01:12 with the fix live, then drove a real "hi" through
+      `scripts/dev_ingress.py`. Turn `d19720c3`: `triage: entry` 01:19:27.201 ->
+      `deliver: exit` 01:19:40.147 = 12.9 SECONDS, against ~150 s for the identical
+      request on the same session at 00:32. NO COMPACTION LINE AT ALL - the history now
+      fits under the 196,608 budget where 12,000 stopped it. And the mechanism is
+      visible rather than inferred: the largest call is `16204in / 10out in 4,087 ms`,
+      the whole history sent as cheap PREFILL exactly as the 109:1 arithmetic predicted -
+      ~4 s instead of the ~140 s of generation it replaced. Evidence only the new code
+      could produce: a 16k-token history reaching the model at all is impossible under a
+      12,000-token budget, which would have compacted it first.
   - id: DEBT-247
     found: 2026-09-08
     what: >-
