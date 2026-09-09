@@ -1234,6 +1234,24 @@ _SEP = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
 #: A backticked `section.field` anywhere in a key cell.
 _CONFIG_KEY = re.compile(r"`([a-z_]+\.[a-z_]+)`")
 
+#: A backticked MODULE CONSTANT in a key cell — `HISTORY_BUDGET_TOKENS`, `_DEFAULT_CAP`.
+#:
+#: WHY THIS EXISTS, and it is a denominator failure inside the denominator report.
+#: `_CONFIG_KEY` requires a DOTTED lowercase `section.field`, because the live value
+#: came from a `Settings` model and that is how a Settings field is spelled. Every row
+#: publishing a MODULE CONSTANT therefore matched nothing and was skipped in silence —
+#: not classified `gone`, not counted, simply never seen. The report then printed
+#: "none, across 16 config row(s)" and a reader had no way to learn that 23 more rows
+#: existed and none of them had been looked at.
+#:
+#: MEASURED 2026-09-09: 23 such rows across 8 documents against a visible 16, so the
+#: detector saw 16 of 39. And the blind class is the WORSE one: a module constant is
+#: exactly what "retired means deleted" has already been burned by twice — D05.7
+#: advertised `hard_stop_enabled` for eight days after it was deleted, and D03.2 has
+#: published `_HISTORY_BUDGET_TOKENS`, a symbol that exists NOWHERE in `src/`, as the
+#: operative compression trigger since DEBT-248 made it window-relative.
+_CONFIG_CONST = re.compile(r"`(_?[A-Z][A-Z0-9_]{3,})`")
+
 #: Column headers naming the setting, and stating its value.
 _KEY_HEADERS = {"key", "field", "name", "setting"}
 _VALUE_HEADERS = {"default", "value"}
@@ -1307,7 +1325,92 @@ def _claimed_literals(cell: str) -> list[str]:
     text = cell.replace("**", "").replace("`", "").strip()
     if _NO_LITERAL.match(text):
         return []
+    # A COMMA BETWEEN DIGITS IS A THOUSANDS SEPARATOR, not a token boundary. Measured
+    # on the first run of the widened detector: `4,000` split into `4` and `000`, the
+    # leading token was reported as the claim, and D10.6 was marked "says 4, live 4000"
+    # — a correct row failed by the instrument. The corpus writes 12,000 and 4,000 as
+    # readily as 12_000, so this is the common spelling rather than an edge case.
+    text = re.sub(r"(?<=\d),(?=\d)", "", text)
     return [t for raw in re.split(r"[\s(),;=]+", text) if (t := raw.strip())]
+
+
+class _Computed:
+    """A constant that exists but whose value no static walk can state.
+
+    Distinct from absence, and the distinction is the whole gone/uncited split:
+    `_VALID_SOURCES = get_args(SkillSource)` is live and unresolvable, which is a
+    reason to say nothing about its VALUE and no reason at all to call it deleted.
+    """
+
+    def __repr__(self) -> str:  # pragma: no cover — diagnostics only
+        return "<computed at import time>"
+
+
+_COMPUTED = _Computed()
+
+
+def module_constants(paths: list[str]) -> dict[str, list[tuple[str, Any]]]:
+    """Module-level `NAME = <literal>` assignments in the given source files.
+
+    NOT CIRCULAR, the same way `config_claims` is not: the claim comes from the
+    markdown and the expectation from an AST walk of the code. Reading the value out
+    of the document would pass forever.
+
+    SCOPED TO THE DOCUMENT'S OWN `Source:` PATHS, and that is load-bearing rather
+    than tidy. `_DEFAULT_CAP` is published by BOTH D05.8 (38) and D10.6 (4,000), and
+    they are different constants in different modules — a repo-wide name lookup would
+    mark one of them false on the other's value, which is a guard crying wolf on
+    correct work. Directory citations are honoured through `cites`, so a document
+    naming `src/stackowl/skills` covers every module under it.
+
+    Returns every definition found, so an ambiguous name can be REPORTED as ambiguous
+    rather than silently resolved to whichever the walk saw first.
+    """
+    found: dict[str, list[tuple[str, Any]]] = {}
+    files: list[Path] = []
+    for cited in paths:
+        target = _ROOT / cited
+        if target.is_dir():
+            files.extend(sorted(target.rglob("*.py")))
+        elif target.suffix == ".py" and target.is_file():
+            files.append(target)
+    for f in files:
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, OSError):  # pragma: no cover — unreadable source
+            continue
+        rel = str(f.relative_to(_ROOT))
+        for node in tree.body:  # module level ONLY — a class attribute is not this
+            # BOTH ASSIGNMENT FORMS. `Assign` alone was the first version and it
+            # MANUFACTURED FOUR DELETIONS: `DEFAULT_HOOK_TIMEOUT_SECONDS: Final = 2.0`
+            # and `_VALID_SOURCES: tuple[...] = get_args(...)` are `AnnAssign`, so four
+            # live constants were about to be reported as "exists NOWHERE in src/" —
+            # under a rule whose whole point is that a deletion left something behind.
+            # Caught by a raw-grep control before it shipped; a detector that reports
+            # absence from an incomplete walk is worse than no detector, because absence
+            # is exactly the claim nobody re-checks.
+            if isinstance(node, ast.AnnAssign):
+                targets: list[ast.expr] = [node.target] if node.value is not None else []
+                value_node = node.value
+            elif isinstance(node, ast.Assign):
+                targets = list(node.targets)
+                value_node = node.value
+            else:
+                continue
+            if value_node is None:
+                continue
+            try:
+                value = ast.literal_eval(value_node)
+            except (ValueError, SyntaxError):
+                # NOT a literal — `get_args(SkillSource)` is computed. The name still
+                # EXISTS, which is what the gone/uncited split turns on, so it is
+                # recorded with a sentinel rather than dropped: dropping it would put
+                # the name back in the "nowhere in src" bucket it does not belong in.
+                value = _COMPUTED
+            for target_node in targets:
+                if isinstance(target_node, ast.Name):
+                    found.setdefault(target_node.id, []).append((rel, value))
+    return found
 
 
 def _settings_sections(settings: Any) -> dict[str, set[str]]:
@@ -1330,14 +1433,111 @@ def _value_agrees(claimed: str, live: Any) -> bool:
     c = claimed.strip().strip("\"'").lower()
     if c == str(live).strip().lower():
         return True
+    # A TABLE WRITES ESCAPES; THE LIVE VALUE IS THE DECODED STRING. D08.4 publishes
+    # `"\n§\n"` for a delimiter whose runtime value is an actual newline, section
+    # sign, newline — the same value in the only spelling a markdown cell can carry.
+    # Reported as a disagreement on the first run of the widened detector, which is a
+    # guard crying wolf on the correct spelling of a correct row.
+    #
+    # TARGETED, not `unicode_escape`. The obvious form —
+    # `c.encode().decode("unicode_escape")` — round-trips through latin-1 and mangles
+    # every non-ASCII character, and this very cell contains `§`, so the "fix" left the
+    # row failing for a second, subtler reason. Only the escapes this corpus actually
+    # writes are decoded; anything else is left exactly as the document has it.
+    unescaped = c
+    for esc, real in (("\\n", "\n"), ("\\t", "\t"), ("\\r", "\r")):
+        unescaped = unescaped.replace(esc, real)
+    # COMPARED UNSTRIPPED, and that is the third defect in this one row. Every other
+    # comparison here calls `str(live).strip()`, which is right for a number or a flag
+    # and destroys a WHITESPACE-SIGNIFICANT constant: `ENTRY_DELIMITER` IS a newline,
+    # a section sign and a newline, and stripping it leaves `§`. So the escaped form
+    # was compared against a value the comparison had just mutilated.
+    if unescaped == str(live).lower():
+        return True
     if isinstance(live, bool):
         return c in ({"true", "yes", "on"} if live else {"false", "no", "off"})
     if isinstance(live, (int, float)):
         try:
-            return float(c.replace("_", "")) == float(live)
+            # Commas as well as underscores: this corpus writes `12,000` and `12_000`
+            # for the same number, and reading only the underscore form marked a
+            # correct row false. Measured on D03.2's own budget row.
+            return float(c.replace("_", "").replace(",", "")) == float(live)
         except ValueError:
             return False
     return False
+
+
+@lru_cache(maxsize=1)
+def _all_src_constants() -> dict[str, list[tuple[str, Any]]]:
+    """Every module-level literal constant in `src/`, cached — the fallback lookup."""
+    return module_constants(["src/stackowl"])
+
+
+def _constant_anywhere(name: str) -> str:
+    """Which module defines `name`, if any — used only to tell a CITATION GAP from a
+    deleted symbol. Never used to resolve a value: that stays scoped to the document's
+    own sources, or `_DEFAULT_CAP` would be resolved from whichever module won a walk."""
+    defs = _all_src_constants().get(name)
+    return ", ".join(sorted({m for m, _v in defs})) if defs else ""
+
+
+def _classify_constant(
+    out: dict[str, list[ConfigClaim]],
+    constants: dict[str, list[tuple[str, Any]]],
+    doc: str,
+    line: int,
+    name: str,
+    value_cell: str,
+) -> None:
+    """Place one constant-keyed config row into the same four buckets as a setting.
+
+    THE `gone` BUCKET IS THE POINT. A row naming a symbol that no longer exists is the
+    single most likely row to be stale — it is what a deletion leaves behind — and it
+    was the one the old key pattern could not even see. D03.2 published
+    `_HISTORY_BUDGET_TOKENS` (no such symbol; the real one is `HISTORY_BUDGET_TOKENS`,
+    in a different module) as the operative compression trigger, and nothing reported it.
+    """
+    claim = ConfigClaim(doc, line, name, "", None)
+    tokens = _claimed_literals(value_cell)
+    defs = constants.get(name)
+    if not defs:
+        # THREE-WAY, NOT TWO. "Not in this document's declared sources" and "not
+        # anywhere in src" are different findings and only the second is a stale row.
+        # Measured on the first run: D05.4 publishes `HARD_TOOL_COUNT_CAP`, which lives
+        # in `pipeline/context_budget.py` — a module D05.4 does not cite. Reporting that
+        # as a deleted symbol is a guard crying wolf on a correct row, and the real
+        # finding is a CITATION GAP: the document publishes a value it never claims to
+        # source, so nothing dates it either.
+        elsewhere = _constant_anywhere(name)
+        if elsewhere:
+            out["uncited"].append(claim._replace(
+                claimed=tokens[0] if tokens else "", live=elsewhere,
+            ))
+        else:
+            out["gone"].append(claim._replace(claimed=tokens[0] if tokens else ""))
+        return
+    if any(v is _COMPUTED for _m, v in defs):
+        # The name is live; its value is computed at import. Saying nothing about the
+        # value is the honest outcome — `no_literal` is the bucket for "no comparison
+        # was made", and it already prints as a denominator rather than a finding.
+        out["no_literal"].append(claim._replace(live="computed at import time"))
+        return
+    values = {v for _mod, v in defs}
+    if len(values) > 1:
+        # Reported rather than resolved: picking one would be a coin flip stated as
+        # a fact, and the ambiguity is itself worth a reader's attention.
+        out["ambiguous"].append(claim._replace(
+            claimed=tokens[0] if tokens else "",
+            live=", ".join(f"{m}={v!r}" for m, v in defs),
+        ))
+        return
+    live = next(iter(values))
+    if not tokens:
+        out["no_literal"].append(claim._replace(live=live))
+    elif any(_value_agrees(t, live) for t in tokens):
+        out["ok"].append(claim._replace(claimed=tokens[0], live=live))
+    else:
+        out["false"].append(claim._replace(claimed=tokens[0], live=live))
 
 
 def config_claims(settings: Any, docs: list[Path] | None = None) -> dict[str, list[ConfigClaim]]:
@@ -1349,10 +1549,19 @@ def config_claims(settings: Any, docs: list[Path] | None = None) -> dict[str, li
     """
     sections = _settings_sections(settings)
     out: dict[str, list[ConfigClaim]] = {
-        "false": [], "gone": [], "ok": [], "no_literal": [],
+        "false": [], "gone": [], "ok": [], "no_literal": [], "ambiguous": [],
+        "uncited": [],
     }
     for path in docs if docs is not None else sorted(_DESIGNS.glob("*.md")):
         text = path.read_text(encoding="utf-8")
+        # The document's own declared sources bound the constant lookup — see
+        # `module_constants` for why a repo-wide one would cry wolf.
+        head = _header(text)
+        cited = [
+            r for raw in re.findall(_CITATION, _source_fields(head))
+            if "/" in raw and (r := _resolve(raw))
+        ]
+        constants = module_constants(cited) if cited else {}
         for start, header, body in _markdown_tables(text):
             cols = _config_columns(header)
             if cols is None:
@@ -1363,6 +1572,12 @@ def config_claims(settings: Any, docs: list[Path] | None = None) -> dict[str, li
                     continue
                 found = _CONFIG_KEY.search(row[key_col])
                 if not found:
+                    const = _CONFIG_CONST.search(row[key_col])
+                    if const:
+                        _classify_constant(
+                            out, constants, path.name, start + 2 + n,
+                            const.group(1), row[value_col],
+                        )
                     continue
                 section, _, field = found.group(1).partition(".")
                 if section not in sections:
@@ -1397,16 +1612,39 @@ def _report_config_claims(docs: list[Path]) -> None:
     total = sum(len(v) for v in res.values())
     if not total:
         return
-    if res["false"] or res["gone"]:
+    flagged = len(res["false"]) + len(res["gone"]) + len(res["uncited"]) + len(res["ambiguous"])
+    if flagged:
+        # THE HEADLINE COUNTED TWO BUCKETS AND PRINTED FOUR. It said "6 of 39" over
+        # nine listed rows, because `uncited` and `ambiguous` were added to the report
+        # and not to its arithmetic — a header disagreeing with its own list, which is
+        # the defect class this whole report exists for.
         print(f"\nPUBLISHED DEFAULT DISAGREES WITH THE CODE — "
-              f"{len(res['false']) + len(res['gone'])} of {total} config row(s). "
+              f"{flagged} of {total} config row(s) "
+              f"({len(res['false'])} state a wrong value, {len(res['gone'])} name a "
+              f"symbol that is gone, {len(res['uncited'])} are published by a document "
+              f"that cites no source defining them, {len(res['ambiguous'])} ambiguous). "
               "These documents are not STALE by date; their Source never changed. "
               "They restate a value `config/settings.py` owns:")
         for c in res["false"]:
             print(f"  {c.doc}:{c.line}  {c.key}  —  says {c.claimed!r}, live {c.live!r}")
+        for c in res["uncited"]:
+            print(f"  {c.doc}:{c.line}  {c.key}  —  published here, but this document "
+                  f"cites no source that defines it (it lives in {c.live})")
+        for c in res["ambiguous"]:
+            print(f"  {c.doc}:{c.line}  {c.key}  —  says {c.claimed!r}, and its cited "
+                  f"sources define it more than once: {c.live}")
         for c in res["gone"]:
-            print(f"  {c.doc}:{c.line}  {c.key}  —  documents a field its section "
-                  f"no longer has")
+            # THE WORDING IS PER-KIND, and it was not. "documents a field its section
+            # no longer has" is the SETTINGS sentence; printed over a module constant it
+            # names a section that never existed and sends the reader to
+            # `config/settings.py` to look for something that was never there. A key
+            # with no dot is a constant.
+            if "." in c.key:
+                why = "documents a field its section no longer has"
+            else:
+                why = ("names a module-level constant that exists NOWHERE in src/ — "
+                       "the shape a deletion leaves behind")
+            print(f"  {c.doc}:{c.line}  {c.key}  —  {why}")
     else:
         print(f"\nPUBLISHED DEFAULT DISAGREES WITH THE CODE — none, across {total} "
               f"config row(s) in the design set ({len(res['no_literal'])} state no "

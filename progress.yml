@@ -20854,6 +20854,95 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-259
+    found: 2026-09-09
+    what: >-
+      100 of 112 mapped items are complete and ALL TWELVE that are not are incomplete at
+      exactly ONE stage - `validate`. Working the P1 among them, D03.2 (compaction, the
+      defect the operator reported live), found its Configuration table publishing
+      `_HISTORY_BUDGET_TOKENS`, `classify.py`, 12,000 as the trigger for compressing a
+      conversation. THREE THINGS WERE WRONG AT ONCE and nothing reported any of them: no
+      such symbol exists anywhere in `src/` (the real one is `HISTORY_BUDGET_TOKENS`, no
+      underscore); it lives in `memory/conversation_compressor.py`, not `classify.py`; and
+      the value stopped being the trigger when DEBT-248 made the budget a share of the
+      RESOLVED WINDOW. 12,000 is 4.6% of this deployment's window and is exactly the
+      number he reported as the defect.
+    WHY_a_denominator_failure_INSIDE_the_denominator_report: >-
+      `_CONFIG_KEY` requires a DOTTED lowercase `section.field`, because the live value
+      came from a `Settings` model and that is how a Settings field is spelled. Every row
+      keyed on a MODULE CONSTANT matched nothing and was skipped in SILENCE - not
+      classified `gone`, not counted, never seen. The report then printed "none, across 16
+      config row(s)", which is a clean verdict over the 16 it could parse and says nothing
+      about the 23 it could not. A DETECTOR THAT DROPS THE ROWS IT CANNOT PARSE REPORTS A
+      CLEAN CORPUS AND AN INCOMPLETE ONE IDENTICALLY - the exact error its own denominator
+      line exists to prevent, one level in. MEASURED: 23 constant-keyed rows across 8
+      documents against a visible 16, so it saw 16 of 39.
+    and_the_blind_class_is_the_worse_one: >-
+      A module constant is precisely what "retired means deleted" has been burned by
+      twice: D05.7 advertised `hard_stop_enabled` for eight days after ESC-68 deleted it.
+      The detector could see the class least likely to rot and was blind to the class most
+      likely to.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    THREE_INSTRUMENT_DEFECTS_FOUND_BY_VERIFYING_THE_FIRST_RUN_RATHER_THAN_BELIEVING_IT: >-
+      The widened detector's first run reported ELEVEN findings and FOUR were artefacts.
+      (1) `4,000` was tokenised as `4` and `000`, so a CORRECT row was reported as "says
+      4, live 4000". (2) `ENTRY_DELIMITER` was reported as disagreeing because a table can
+      only write `\n` while the live value is a real newline - and the obvious repair,
+      `encode().decode("unicode_escape")`, mangles the `§` in that very cell, so the fix
+      failed for a second subtler reason; and every comparison called `str(live).strip()`,
+      which is right for a number and MUTILATES a value that IS whitespace, leaving `§`.
+      Three defects in one row. (3) FOUR MANUFACTURED DELETIONS: the walk handled only
+      `ast.Assign`, so `DEFAULT_HOOK_TIMEOUT_SECONDS: Final = 2.0` and three siblings read
+      as "exists NOWHERE in src/" - under a rule whose whole point is that a deletion left
+      something behind. A raw-grep control caught it. ABSENCE IS THE CLAIM NOBODY
+      RE-CHECKS, so a detector that reports it from an incomplete walk is worse than none.
+    the_fix: >-
+      `_CONFIG_CONST` accepts a backticked module constant; `module_constants()` resolves
+      the live value by AST walk over the DOCUMENT'S OWN declared sources - scoped, because
+      `_DEFAULT_CAP` is 38 in D05.8 and 4,000 in D10.6, two real constants in two modules,
+      and a repo-wide resolve would mark one false on the other's value. Classification is
+      THREE-WAY rather than two: "not in this document's sources" (a citation gap) is a
+      different finding from "not anywhere in src" (a deletion), and only the second is a
+      stale row. A computed constant (`get_args(SkillSource)`) is recorded as EXISTING
+      with its value unstated rather than dropped. The headline now sums every bucket it
+      prints - it said "6 of 39" over nine listed rows, a header disagreeing with its own
+      list, which is the defect class this report is about.
+    drained: >-
+      Report went 16-of-39-blind to 7 of 40 named, then to 5 after D03.2's two rows were
+      corrected to `DEEP_HISTORY_TURNS`, `history_budget(window)` / `WINDOW_SHARE` 0.75,
+      and `HISTORY_BUDGET_TOKENS` labelled as the UNKNOWN-WINDOW FALLBACK it now is. Zero
+      `gone`, zero wrong values. The 5 remaining are citation gaps in D05.4 and D10.1 -
+      named, milder, and left for their own items rather than silently fixed here.
+    AND_D03_2s_CLOSING_CHECK_WATCHED_A_PROXY_FOR_NEITHER_DIRECTION: >-
+      It counted `[context] a single call used N% of the model window`, which measures
+      TOTAL CALL INPUT against the window and fires at 131,072, while compression is gated
+      on HISTORY TOKENS against `history_budget(window)` = 196,608. A call crosses 131,072
+      on system prompt, tools and one huge tool result with a two-turn history; a history
+      crosses its budget inside a call well under it. The proxy was reasonable when the
+      trigger was a FIXED 12,000 - DEBT-248 changed the trigger and left the check keyed to
+      the constant era. THE COMMIT THAT CHANGES A THRESHOLD HAS TO CHANGE THE CHECK THAT
+      WATCHES IT. Replaced with evidence only the new code can produce: a history LARGER
+      than the old 12,000 budget that was NOT compressed, read off DEBT-248's own
+      `classify: history assembled` line. It also re-measures its own REACHABILITY every
+      run - the largest stored conversation holds 21,580 tokens, so the magnitude occurs
+      in ordinary use and the OPEN is a real question rather than an unanswerable one.
+    validated: >-
+      MUTATION-PROVEN from a file copy, three mutants, all killed by name: ignoring
+      `AnnAssign` again failed three tests including the manufactured-deletion one;
+      removing the thousands-separator rule failed the tokeniser test alone; calling a
+      citation gap a deletion again failed the two report tests. Restore returned 9 passed.
+      `doc_check` re-run end to end after each change rather than trusted.
+    no_full_suite_and_the_reason: >-
+      `git diff 15ec3c83..HEAD -- src` is EMPTY - src/ is byte-identical to the tree the
+      22nd green ran on. Everything here is `scripts/`, `docs/`, `progress.yml` and one
+      new `tests/audit` file, which the targeted path runs directly.
   - id: DEBT-258
     found: 2026-09-09
     what: >-
@@ -34845,14 +34934,47 @@ items:
       # the tail. No 2>/dev/null on the jq: a NUL block in one retained log makes it
       # print to stderr without truncating, and hiding that would also hide a real
       # parse failure.
-      n=$(./scripts/log_since.sh --all 'a single call used')
+      # REPLACED 2026-09-09 (DEBT-259). This check watched
+      # '[context] a single call used N% of the model window' as a proxy for "was there
+      # ever enough history to compress". IT IS A PROXY FOR NEITHER DIRECTION, and the
+      # two quantities are not the same quantity: the watch measures TOTAL CALL INPUT
+      # against the model window and fires at 50% of it (131,072), while compression is
+      # gated on HISTORY TOKENS against `history_budget(window)` = 196,608. A call can
+      # cross 131,072 on system prompt, tools and one huge tool result with a two-turn
+      # history; a history can cross its budget inside a call well under 131,072. The
+      # proxy was reasonable when the trigger was a FIXED 12,000 and any large call
+      # implied a large history — DEBT-248 made the trigger window-relative and left the
+      # check keyed to the constant era. The commit that changes a threshold has to
+      # change the check that watches it.
+      #
+      # THE DISCRIMINATOR ONLY THE NEW CODE CAN PRODUCE: a history LARGER than the old
+      # fixed budget that was NOT compressed. Under the old code >12,000 always
+      # compressed; under the new one it does not until 196,608. `classify: history
+      # assembled` is DEBT-248's own INFO line and carries both fields, so no pre-fix
+      # record can satisfy this — which is why `--all` is earned here (first in src/
+      # 2026-09-08, after the 2026-08-28 log horizon).
+      hist=~/.stackowl/logs/stackowl*.jsonl
+      n=$(grep -ah 'classify: history assembled' $hist 2>/dev/null \
+          | jq -s '[.[]|select(.fields.tokens > 12000 and .fields.compressed == false)]|length' 2>/dev/null)
+      n=${n:-0}
+      # The denominator and the distance to closure, so an OPEN here says HOW open.
+      seen=$(./scripts/log_since.sh --all 'classify: history assembled')
+      peak=$(grep -ah 'classify: history assembled' $hist 2>/dev/null \
+             | jq -s '[.[].fields.tokens]|max // 0' 2>/dev/null)
+      # IS THIS EVIDENCE EVEN REACHABLE? A zero above means "no assembled history has
+      # been big enough yet", and that is only an OPEN QUESTION if histories that big
+      # occur in ordinary use. Re-measured here rather than asserted once: the largest
+      # STORED conversation. If it sits under 12,000 the check is unanswerable and the
+      # premise needs fixing, not waiting — which is the distinction this programme keeps
+      # paying to learn.
+      biggest=$(./scripts/db_query.sh "SELECT MAX(t) FROM (SELECT SUM(COALESCE(token_count, LENGTH(COALESCE(content,''))/4)) AS t FROM messages GROUP BY conversation_id)" | tail -1)
       # THE DENOMINATOR COMES FROM cost_records, NOT THE LOGS. The numerator is
       # persisted per call (131,644 rows) and the window is NOT persisted anywhere:
       # the probe cache is empty at rest, so a fresh process cannot resolve it. The
       # 262144 below is therefore an ASSUMPTION about this deployment's model, stated
       # rather than hidden, and it is why the ratio is also recorded at call time now.
       d=$(./scripts/db_query.sh "SELECT COUNT(*) || ' calls, ' || SUM(context_window IS NOT NULL) || ' carrying a real denominator, ' || SUM(input_tokens >= 131072) || ' over 50%, ' || SUM(input_tokens >= 65536) || ' over 25%, peak ' || MAX(input_tokens) FROM cost_records" | tail -1)
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x window pressure >=50% across every retained log (the line cannot predate 2026-08-30; e090b57c introduced it)" || echo "OPEN 0 watch firings across every retained log, and the line cannot predate 2026-08-30; cost_records says $d (the 50%/25% marks assume 262144 for rows predating migration 0140)"
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n turn(s) carried a history over the OLD 12,000 budget and were NOT compressed — the trigger is window-relative in production, not merely in tests (peak history $peak tokens over $seen assemblies; cost_records says $d)" || echo "OPEN 0 of $seen assembled histories have exceeded 12,000 tokens, so nothing yet distinguishes the new trigger from the old; peak ASSEMBLED history is $peak tokens against a 196,608 budget. REACHABLE, not hypothetical: the largest stored conversation holds $biggest tokens, so a turn on a conversation that size produces the discriminating record. NOT a failure signal — the fix is test-proven; this asks production for a case big enough to tell the new trigger from the old. cost_records says $d"
     title: "Conversation compression"
     domain: D03
     verdict: MISSING
