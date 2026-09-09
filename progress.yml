@@ -20924,6 +20924,13 @@ known_debt:
       with a real query. The guard's self-maintaining half proved itself DURING the loop: my
       own edit to D10.5's marker made that line unjudged and its table entry stale, and the
       test failed by name until both were re-judged.
+    live_after_a_real_restart_not_a_PID: >-
+      `./start.sh` run after the push; commit `1897e0c3` at 07:55:08Z and
+      `[startup] core: code watcher armed` at 07:56:02.589Z, 54 seconds later, so the
+      running image carries the DEBUG -> INFO promotion. Checked against the LOG RECORD and
+      the commit clock, never a PID - the promotion is the whole point of D10.5's new
+      closing check, and a check whose witness is not actually running is the defect this
+      item is about.
     DEBT_255s_GUARD_CAUGHT_ME_ONE_LOOP_LATER: >-
       The closing check written for D09.5 above passed `--all` and then finished its OPEN
       branch with "the emitter has existed since 2026-08-30" -
