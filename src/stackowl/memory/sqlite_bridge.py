@@ -354,6 +354,28 @@ class SqliteMemoryBridge(MemoryBridge):
         # never fire; it is now deleted. An actuator that watches from elsewhere
         # can stop working without anyone noticing, and this one cannot.
         trimmed = await self._trim_turns(session_key)
+        # AN EVICTION IS AN INFO EVENT. Production runs at INFO, so until 2026-09-09
+        # this rowcount existed only in the DEBUG line below and conversation-turn
+        # eviction left NO production record — while the sibling bound in `stage()`
+        # reported its own count at INFO. That asymmetry is why a real memory defect
+        # (323 of 327 staged summaries deleted, ended by `2d42ce6b`) could be measured
+        # from the logs, and the identical question about the user's OWN turns could
+        # not be asked at all.
+        #
+        # ONLY WHEN SOMETHING IS REMOVED. An unconditional INFO would print one line
+        # per turn to report that nothing happened, which is how a log becomes
+        # unreadable and how the event that matters hides inside it. The branch worth a
+        # record is the one that deletes a memory.
+        if trimmed:
+            log.memory.info(
+                "[memory] sqlite_bridge.store: conversation turns EVICTED past the "
+                "retention window — these are gone from short-term memory",
+                extra={"_fields": {
+                    "session_key": session_key,
+                    "trimmed": trimmed,
+                    "keep": _turns_to_keep(),
+                }},
+            )
         # 4. EXIT
         log.memory.debug(
             "[memory] sqlite_bridge.store: exit",

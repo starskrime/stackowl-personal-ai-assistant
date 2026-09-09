@@ -382,6 +382,17 @@ current:
       exec-replaced the core after an unrelated `src/` edit — no recovery path closed it.
       Recurring: 31 such errors on 09-03, 4 on 09-04. This is the same structural defect
       as tonight's 7h21m outage, twice in 24 hours.
+    RESOLVED_2026_09_09_VERIFIED_FROM_PRODUCTION_see_DEBT_260: >-
+      The pillar defect below was REAL and is ALREADY FIXED, and the proof had been
+      sitting in the logs unread. `[memory] sqlite_bridge.stage: exit` is INFO and
+      carries `trimmed`, so the whole history is countable: 2026-08-28 through 09-06,
+      EVERY staging event evicted a row (56/56, 59/59, 69/69, 59/59, 72/72, 4/4, 2/2) -
+      323 of 327 staged summaries deleted. On 2026-09-08, the day `2d42ce6b` landed the
+      `embedding IS NULL` predicate, the count went to ZERO and has stayed there (3
+      events 0 trimmed, then 1 and 0). All 54 surviving rows are embedded, so the bound
+      can no longer reach them. THE FIX SHIPPED WITH NO ACCEPTANCE CHECK, so its success
+      was invisible and this record still listed the defect as open - I nearly re-opened
+      it. A FIX WITHOUT A CHECK CANNOT BE TOLD FROM A FLUKE.
     THE_ONE_THAT_HITS_A_STATED_PILLAR: >-
       "Memory that actually knows the user" is one of the four vision pillars.
       `staged_facts` where `source_type='conversation_summary'` holds EXACTLY **50** rows
@@ -20854,6 +20865,79 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-260
+    found: 2026-09-09
+    what: >-
+      Verifying the recorded product defect on the vision pillar "Memory that actually
+      knows the user" - a lens's claim that 85% of conversation summaries were being
+      evicted, explicitly recorded as ITS claim rather than a measurement. It was REAL:
+      323 of 327 staged summaries deleted. It is also ALREADY FIXED, by `2d42ce6b` on
+      2026-09-08, and the before/after is unambiguous in production.
+    the_measurement_by_day: >-
+      08-28 56/56, 08-29 59/59, 08-30 69/69, 08-31 59/59, 09-01 72/72, 09-02 4/4,
+      09-03 2/2, 09-06 2/2 - every single staging event evicting a row - then 09-08
+      3 events 0 trimmed and 09-09 1 event 0 trimmed. The predicate landed 09-08. All 54
+      surviving rows carry an embedding, so the bound cannot reach them.
+    WHY_NOBODY_KNEW_which_is_the_item: >-
+      The fix shipped with NO ACCEPTANCE CHECK. Its success was therefore invisible, the
+      `current` record still listed the defect as open, and the next reader - me - was one
+      step from re-opening a solved problem and "fixing" it twice. A FIX WITHOUT A CHECK
+      CANNOT BE TOLD FROM A FLUKE. This is the mirror of the failure this programme
+      already names: an OPEN check that nothing re-asks leaves an item stuck at 6 of 7,
+      and a CLOSED defect that nothing records leaves the record lying in the other
+      direction.
+    AND_THE_MIRROR_PATH_IS_DARK_which_is_what_shipped: >-
+      `stage()` reports its eviction count at INFO; `store()` reports the SAME CLASS OF
+      DECISION - `_trim_turns` deleting the user's own conversation turns - only in a
+      DEBUG exit line, and production runs at INFO. So the summary defect was measurable
+      and the identical question about the user's typed turns could not be asked at all.
+      An INFO now fires WHEN AND ONLY WHEN rows are actually removed, carrying
+      `session_key`, `trimmed` and `keep`. Not unconditional: a line per turn reporting
+      that nothing happened is how a log becomes unreadable and how the event that
+      matters hides inside it.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: no_change_needed
+    closing_check: |-
+      # BOUNDED TO THE PROMOTION DATE and earned: the string is new, introduced by this
+      # item, so no retained line can predate it — but the message ALSO cannot be
+      # satisfied by history because it did not exist. Watching the emitter, not the
+      # event the prose names: the line sits inside `if trimmed:` in `store()`, so it
+      # fires only when `_trim_turns` actually deleted rows.
+      n=$(./scripts/log_since.sh 2026-09-09 'conversation turns EVICTED past the retention window')
+      # THE DENOMINATOR, so a zero is never ambiguous — AND IT IS NOT `store: exit`,
+      # which was my first choice and is the very DEBUG line this item exists about. A
+      # denominator that cannot be measured in production makes the ratio unreadable in
+      # exactly the way the numerator was: it read "0 store calls have run" on a path
+      # that runs on every turn. `store()` calls `stage()`, whose exit line IS at INFO,
+      # so conversation stagings are the countable denominator.
+      d=$(./scripts/log_since.sh 2026-09-09 'sqlite_bridge.stage: exit')
+      [ "$n" -gt 0 ] && echo "CLOSEABLE $n conversation-turn eviction(s) now visible at INFO where nothing was recorded before" || echo "OPEN 0 evictions recorded since the witness shipped 2026-09-09; $d stagings have run, so a zero here means the retention window is not biting rather than that the line is dead — and the sibling witness in stage() proves the shape works"
+    validated: >-
+      MUTATION-PROVEN from a file copy: demoting the new line back to DEBUG fails
+      `test_the_conversation_buffer_trim_reports_at_INFO` by name, and making it
+      unconditional fails `test_it_speaks_only_when_a_memory_is_actually_removed`.
+      Restore returned 4 passed. The guard was written FIRST and was red on both counts
+      before the change. Derived targeted path: 293 passed in 121s.
+    AND_MY_OWN_CHECKS_FIRST_DENOMINATOR_WAS_THE_DEFECT_ITSELF: >-
+      The closing check's first denominator was `store: exit` - the DEBUG line this whole
+      item is about. It printed "0 store calls have run" for a function that runs on every
+      turn, so the ratio was unreadable in exactly the way the numerator had been.
+      Corrected to `stage: exit`, which `store()` calls and which IS at INFO: 20 stagings
+      since the bound. Writing a check is what exposes an unmeasurable premise, and it
+      exposed one I had introduced while fixing the same class.
+    AND_I_NEARLY_WROTE_A_FALSE_CLAIM_FROM_MY_OWN_GREP: >-
+      Mid-measurement I ran `grep -rn "trimmed" src/ | grep "log\..*info"`, got nothing,
+      and was one sentence from recording "no INFO witness exists anywhere in src". The
+      two tokens sit on DIFFERENT LINES of the same call, so a line-oriented conjunction
+      can never match them. That is CLAUDE.md's "print the real shape before you filter
+      it", committed by the instrument I built to check it — and the whole 323-row
+      measurement exists only because I read the function instead of trusting the grep.
   - id: DEBT-259
     found: 2026-09-09
     what: >-
