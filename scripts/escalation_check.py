@@ -173,6 +173,64 @@ def _still_called_open(live: set[int]) -> list[tuple[str, int, list[int], str]]:
     return out
 
 
+#: The key shapes this corpus uses to say "recorded, not verified".
+_UNVERIFIED_CLAIM = re.compile(r"NOT_VERIFIED|UNVERIFIED|RECORDED_NOT", re.I)
+
+
+def _sweep_recorded_claims(current: dict) -> None:
+    """The FOURTH population of aging claims, and the first three name the cure.
+
+    An escalation's premise aged silently until `premise_check`. A `partial` stage's
+    evidence aged until `closing_check`. A design document's claim aged until
+    `doc_check` made `Last verified` checkable. A RECORDED PRODUCT CLAIM got nothing:
+    it is prose in `current`, re-read every loop, and never marked settled.
+
+    MEASURED 2026-09-09 on three of my own loops. One record's
+    `THE_REST_RECORDED_NOT_VERIFIED` lists four defects a lens found but did not
+    verify. I picked one each loop and spent real measurement finding that two are
+    FIXED (one live-evidenced by three `loses_an_occurrence` replays, the last being
+    `morning_brief`) and two are the OPERATOR'S open questions (ESC-127, ESC-160). Zero
+    were live unverified defects, and the record still read as four open items, because
+    nothing could mark a claim settled.
+
+    SEVEN records carry such a list, so this is a population rather than one entry —
+    measured before writing a line of it, because a cure for a population of one is
+    over-building.
+
+    REPORTED, NOT GATED, and the count is printed so it can only fall: failing every
+    unrelated change until seven historical records are retrofitted is how a gate gets
+    bypassed rather than satisfied. Same reasoning `doc_check` already applies to
+    staleness and `progress_lint` to the 43 legacy validates.
+    """
+    records = {
+        key: body
+        for key, body in current.items()
+        if isinstance(body, dict) and any(_UNVERIFIED_CLAIM.search(k) for k in body)
+    }
+    if not records:
+        return
+    with_check = {k: v for k, v in records.items() if (v.get("claim_check") or "").strip()}
+    print(
+        f"\nRECORDED BUT NEVER SETTLED — {len(records)} record(s) in `current` carry a "
+        f"claim list marked unverified; {len(with_check)} carry a runnable "
+        "`claim_check`. A claim nothing can settle is re-measured by the next loop that "
+        "reads it, which has already cost three."
+    )
+    for key, body in sorted(with_check.items()):
+        check = body["claim_check"].strip()
+        try:
+            out = subprocess.run(
+                check, shell=True, cwd=_ROOT, capture_output=True, text=True, timeout=180,
+            ).stdout.strip().splitlines()
+            verdict = out[-1] if out else "(no output)"
+        except Exception as exc:  # noqa: BLE001 — a check may not break the sweep
+            verdict = f"(check failed: {exc})"
+        mark = "SETTLED " if verdict.startswith("SETTLED") else "open    "
+        print(f"  {mark} {key[:64]}\n           {verdict[:150]}")
+    for key in sorted(set(records) - set(with_check)):
+        print(f"  no check {key[:64]}")
+
+
 def main() -> int:
     data = yaml.safe_load((_ROOT / "progress.yml").read_text())
     esc = (data.get("current") or {}).get("ESCALATIONS") or {}
@@ -205,6 +263,8 @@ def main() -> int:
             print(f"  holds    {key}  [{verdict[:60]}]")
 
     print(f"\nchecked {checked}, EXPIRED {expired}, no premise_check {len(unverifiable)}")
+
+    _sweep_recorded_claims((data.get("current") or {}))
 
     live = {int(m.group(1)) for k in esc if (m := _ESC_REF.search(str(k)))}
     if stale := _still_called_open(live):

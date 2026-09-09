@@ -403,6 +403,42 @@ current:
       archive, and the assistant forgets summarised conversations after ~50 rollovers
       system-wide. NOT independently re-verified by me — the lens's numbers, recorded as
       its claim rather than as my measurement.
+    ALL_FOUR_SETTLED_2026_09_09_see_DEBT_266: >-
+      ZERO of the four below are live unverified defects, and finding that out cost THREE
+      separate loops. (1) "Daily jobs missed during downtime are silently dropped" -
+      FIXED by `bdcb288a`, which DERIVES the replay decision from the schedule via
+      `_loses_an_occurrence` instead of the per-job boolean, and it is LIVE-EVIDENCED:
+      three replays carry `{recurring: true, replay_missed: false, loses_an_occurrence:
+      true}` - browser_cache_eviction and evolution_batch on 09-08, and `morning_brief`
+      on 2026-09-09T13:00:57. Before that commit all three were silently dropped. The
+      claim's own specifics were wrong too: `replay_missed` is set on 3 of the 15 daily
+      jobs, not 0. (2) "owl_lifecycle-jobmarket builds tasks with no delivery address,
+      185/185 stream-miss" - REFUTED: `stream-miss` is THREE messages, and 47 of them say
+      "live reader gone — answer delivered via proactive fallback" with `status:
+      delivered`. (3) "one skill that can never load" - it is `trending-research-owl`,
+      and it is ESC-127's OPEN PLACEMENT QUESTION, which is the operator's to answer.
+      (4) "`db_reclaim` permanently stalled" - ESC-160, also his. So: two settled, two
+      queued for him, none awaiting measurement.
+    claim_check: |-
+      # SETTLED means: the fix that closed claim (1) is still evidenced in production,
+      # AND the two claims that are the operator's are still IN HIS QUEUE. If either
+      # escalation is answered this drops to `open` so the next loop revisits it rather
+      # than reading a settled verdict about a question that has moved.
+      #
+      # The numerator is evidence ONLY THE NEW CODE COULD PRODUCE: `loses_an_occurrence`
+      # is a field `bdcb288a` introduced, so no pre-fix record can carry it, and a
+      # RECURRING job replaying with `replay_missed: false` was impossible before it.
+      r=$(grep -ah 'recover: replaying missed job' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null \
+          | jq -s '[.[]|select(.fields.loses_an_occurrence == true and .fields.recurring == true and .fields.replay_missed == false)]|length' 2>/dev/null)
+      r=${r:-0}
+      q=$(uv run python -c "
+      import yaml, pathlib
+      e = (yaml.safe_load(pathlib.Path('progress.yml').read_text(encoding='utf-8')).get('current') or {}).get('ESCALATIONS') or {}
+      open_ids = [k for k, v in e.items() if isinstance(v, dict) and not v.get('resolution')]
+      print(sum(1 for k in open_ids if '127' in k or '160' in k))
+      " 2>/dev/null | tail -1)
+      q=${q:-0}
+      [ "$r" -gt 0 ] && [ "${q:-0}" -eq 2 ] && echo "SETTLED $r derived replays still evidenced (claim 1 fixed), claim 2 refuted, and both operator questions still queued (ESC-127, ESC-160)" || echo "open derived replays=$r (need >0) and operator questions still queued=$q of 2 — one of the four has moved and needs re-reading"
     THE_REST_RECORDED_NOT_VERIFIED: >-
       Daily jobs missed during downtime are silently dropped (`replay_missed=0` on all 15
       system-seeded `daily@` jobs; `check_in` for 09-07 fell in the outage and has no
@@ -20865,6 +20901,70 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-266
+    found: 2026-09-09
+    what: >-
+      A recorded-but-unverified product claim had no settlement state, so it was measured
+      again. `current` holds a record whose `THE_REST_RECORDED_NOT_VERIFIED` lists FOUR
+      defects a measurement lens found but did not verify. Across THREE separate loops I
+      picked one each time and spent real measurement discovering that NONE of them is a
+      live unverified defect.
+    the_four_settled_with_evidence: >-
+      (1) "Daily jobs missed during downtime are silently dropped" - FIXED by `bdcb288a`,
+      which DERIVES the replay decision from the schedule via `_loses_an_occurrence`
+      rather than a per-job boolean only one creation site sets, and it is LIVE-EVIDENCED:
+      three replays carry `{recurring: true, replay_missed: false, loses_an_occurrence:
+      true}` - `browser_cache_eviction` and `evolution_batch` on 09-08, and MORNING_BRIEF
+      on 2026-09-09T13:00:57. Before that commit all three were silently dropped. The
+      claim's specifics were wrong too: `replay_missed` is set on 3 of the 15 daily jobs,
+      not 0. (2) "owl_lifecycle-jobmarket builds tasks with no delivery address, 185/185"
+      - REFUTED: `stream-miss` is THREE messages and 47 say "answer delivered via
+      proactive fallback" with `status: delivered`. (3) "one skill that can never load" -
+      `trending-research-owl`, ESC-127's OPEN PLACEMENT QUESTION, his to answer.
+      (4) "`db_reclaim` permanently stalled" - ESC-160, also his. Two settled, two queued,
+      none awaiting measurement.
+    WHY_the_same_cure_a_FOURTH_time: >-
+      An escalation's premise aged silently until `premise_check`. A `partial` stage's
+      evidence aged until `closing_check`. A design document's claim aged until
+      `doc_check` made `Last verified` checkable. A RECORDED PRODUCT CLAIM got NOTHING -
+      it is prose in `current`, re-read every loop, never settled. Naming the other three
+      is the point: this is one shape, and the fourth population was simply unwatched.
+    it_is_a_population_measured_BEFORE_building_anything: >-
+      SIX records in `current` carry a claim list marked unverified. A cure for a
+      population of one would be over-building, so the count was taken first. (My initial
+      probe said seven and was double-counting one record that has TWO such subkeys - the
+      sweep counts RECORDS, and 6 is the number.)
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    the_fix: >-
+      `escalation_check.py` - the script that ALREADY sweeps aging premises - now also
+      sweeps recorded claims, rather than a second engine for the same question. It
+      prints how many such records exist and how many carry a runnable `claim_check`, so
+      the population can only fall; it is REPORTED, NOT GATED, for the reason `doc_check`
+      already records: failing every unrelated change until six historical records are
+      retrofitted is how a gate gets bypassed rather than satisfied. The worked example
+      carries the first `claim_check`, and it is not a rubber stamp - it goes back to
+      `open` if either operator question leaves the queue, so a settled verdict cannot
+      outlive the question it settled.
+    validated: >-
+      The sweep RUN: "6 record(s) ... 1 carry a runnable `claim_check`", and the worked
+      example prints "SETTLED 3 derived replays still evidenced, claim 2 refuted, and
+      both operator questions still queued (ESC-127, ESC-160)". Guard written FIRST and
+      red on four of five.
+    A_MUTANT_SURVIVED_AND_THE_FIX_FOR_IT_IS_THE_BETTER_TEST: >-
+      Mutant A - defining the sweep but never calling it - died on the DRIVEN test that
+      runs the script, which is why that test does not read the source. MUTANT B SURVIVED:
+      replacing the numerator with a literal `r=1` still printed "SETTLED 1 derived
+      replays" - the same shape, the same word, a number from nowhere. Pinning the number
+      would be brittle, since it rises whenever the platform replays another job, so the
+      guard now MEASURES THE SAME QUANTITY INDEPENDENTLY and compares. Both move together;
+      a hardcoded one does not move at all. Mutant B then died by name.
   - id: DEBT-265
     found: 2026-09-09
     what: >-
