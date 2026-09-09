@@ -107,6 +107,40 @@ SUMMARY_MARKER = "[earlier conversation, compressed]"
 DEEP_HISTORY_TURNS = 40
 HISTORY_BUDGET_TOKENS = 12_000
 
+#: Share of the RESOLVED model window history may occupy before it is compressed.
+#:
+#: Bakir, 2026-09-09: "compaction should br when it is 200k not on 12 k". 0.75 of this
+#: deployment's 262,144 window is 196,608 - the 200k he asked for, expressed as a
+#: property of the model rather than a number that goes stale when the model changes.
+#:
+#: WHY THE FIXED 12,000 WAS WRONG, and it is an economic argument rather than a taste
+#: one. The constant's own comment called it "deliberately well below any real window",
+#: which is true and was the defect: it is 4.6% of the window here, and
+#: DEEP_HISTORY_TURNS already caps the READ at 40 turns, so history is structurally
+#: bounded at ~46,640 tokens (17.8% of the window) whatever this number says. The read
+#: cap was already doing the protecting; the budget only made compaction fire early -
+#: MEASURED at turn ~10.
+#:
+#: AND COMPACTING COST MORE THAN IT SAVED. MEASURED 2026-09-09 over 2,279 live calls:
+#: generation runs at 15 ms/output-token and prefill at 0.138 ms/input-token, a 109:1
+#: ratio. A live "hi" spent 139,834 ms summarizing (12,156 in / 9,236 out) to avoid
+#: sending ~53,600 tokens of history, which would have cost ~7.4 s of prefill. It paid
+#: 139 seconds to save 7. A trigger that is a fixed token count cannot see that,
+#: because the decision it gates is a COMPARISON and it only has one side of it.
+WINDOW_SHARE = 0.75
+
+
+def history_budget(window: int | None = None) -> int:
+    """Tokens history may occupy: a share of the resolved window.
+
+    Falls back to :data:`HISTORY_BUDGET_TOKENS` when the window is unknown - the
+    conservative behaviour this had before, kept for the first turn after a boot
+    (the probe cache is empty at rest) and for any provider that cannot report one.
+    """
+    if not window or window <= 0:
+        return HISTORY_BUDGET_TOKENS
+    return max(1, int(window * WINDOW_SHARE))
+
 
 @dataclass(frozen=True)
 class Selection:
@@ -176,7 +210,7 @@ def select(messages: Sequence[Message], *, budget_tokens: int) -> Selection:
     return Selection(head, middle, tail, prior)
 
 
-def plan(messages: Sequence[Message]) -> Selection:
+def plan(messages: Sequence[Message], *, window: int | None = None) -> Selection:
     """Decide what survives, using THIS engine's own budget.
 
     The caller supplies history and asks; it does not pass a budget, because the
@@ -185,7 +219,7 @@ def plan(messages: Sequence[Message]) -> Selection:
     directly — but production goes through here so that swapping the engine
     swaps the policy with it.
     """
-    return select(messages, budget_tokens=HISTORY_BUDGET_TOKENS)
+    return select(messages, budget_tokens=history_budget(window))
 
 
 def build_prompt(selection: Selection) -> str:

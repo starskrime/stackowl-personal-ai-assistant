@@ -95,25 +95,6 @@ _injector = DNAPromptInjector()
 _skill_injector = SkillInstructionInjector()
 
 
-def _safe_resolve_api_key(cfg: object) -> str | None:
-    """Resolve a provider config's api_key for the window probe; NEVER raises —
-    a bad/missing secret must degrade to no-auth-header (the probe itself then
-    fails closed to the safe default window), never sink the turn."""
-    raw = getattr(cfg, "api_key", None)
-    if not raw:
-        return None
-    try:
-        from stackowl.config.secret_resolver import SecretResolver
-
-        return SecretResolver.resolve(raw)
-    except Exception as exc:  # noqa: BLE001 — a secret-resolution error must never break window probing
-        log.engine.debug(
-            "[pipeline] assemble: api_key resolution failed for window probe — proceeding unauthenticated",
-            exc_info=exc,
-        )
-        return None
-
-
 async def run(state: PipelineState) -> PipelineState:
     log.engine.debug(
         "[pipeline] assemble: entry", extra={"_fields": {"trace_id": state.trace_id}}
@@ -175,40 +156,18 @@ async def run(state: PipelineState) -> PipelineState:
     # exactly the case that most needs the FULL instructions, not a trimmed one;
     # `lean` is hardcoded False below. Fail-safe: any error → full prompt regardless.
     lean = False
-    model_window: int | None = None
-    try:
-        if services.provider_registry is not None:
-            from stackowl.pipeline.provider_select import select_tool_provider_plan
-            from stackowl.providers.model_window import resolve_window
-            # Quiet, side-effect-free window probe: no INFO log AND no recovery
-            # event (execute's real selection records the provider_fallback once).
-            _choice = select_tool_provider_plan(
-                services.provider_registry, services, state,
-                log_selection=False, record_recovery=False,
-            )
-            _p = _choice.provider
-            _pc = getattr(_p, "_config", None)
-            # ONE copy of the fallback, on the choice itself (ESC-47/50) — this
-            # expression was the original, and execute needs the same answer.
-            _resolved_model = _choice.resolved_model
-            model_window = await resolve_window(
-                provider_name=getattr(_p, "name", "") or "",
-                base_url=_pc.base_url if _pc is not None else None,
-                model=_resolved_model,
-                context_chars=(_pc.context_chars if _pc is not None else None),
-                protocol=getattr(_p, "protocol", "") or "",
-                api_key=_safe_resolve_api_key(_pc),
-            )
-            log.engine.debug(
-                "[pipeline] assemble: model window resolved",
-                extra={"_fields": {"trace_id": state.trace_id, "model_window": model_window}},
-            )
-    except Exception as exc:  # no-hidden-errors: degrade to the FULL prompt, never crash
-        log.engine.warning(
-            "[pipeline] assemble: window resolution failed — full charter",
-            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
-        )
-        model_window = None
+    # ONE RESOLVER, SHARED WITH classify (DEBT-248). This block used to live here,
+    # and `classify` — which runs BEFORE this step — needed the same answer to size
+    # the history budget against the window. Copying it would have been the
+    # two-copies-of-one-rule shape; `resolve_turn_window` is now the single source
+    # and carries this block's quiet-probe and never-raise behaviour unchanged.
+    from stackowl.pipeline.provider_select import resolve_turn_window
+
+    model_window: int | None = await resolve_turn_window(services, state)
+    log.engine.debug(
+        "[pipeline] assemble: model window resolved",
+        extra={"_fields": {"trace_id": state.trace_id, "model_window": model_window}},
+    )
 
     registry = services.owl_registry
     manifest = None

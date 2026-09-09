@@ -394,3 +394,68 @@ def select_tool_provider_plan(
         pinned=pinned,
         floor_tier=floor_tier,
     )
+
+
+
+def _safe_resolve_api_key(cfg: object) -> str | None:
+    """Resolve a provider config's api_key for the window probe; NEVER raises.
+
+    A bad or missing secret degrades to no auth header - the probe then fails closed
+    to the safe default window - and must never sink the turn.
+    """
+    raw = getattr(cfg, "api_key", None)
+    if not raw:
+        return None
+    try:
+        from stackowl.config.secret_resolver import SecretResolver  # noqa: PLC0415
+
+        return SecretResolver.resolve(raw)
+    except Exception as exc:  # noqa: BLE001 — never break window probing
+        log.engine.debug(
+            "[provider_select] api_key resolution failed for window probe — "
+            "proceeding unauthenticated",
+            exc_info=exc,
+        )
+        return None
+
+
+async def resolve_turn_window(services: object, state: PipelineState) -> int | None:
+    """The effective model window for THIS turn, or None if it cannot be resolved.
+
+    ONE COPY, ASKED BY BOTH STEPS. `assemble` resolved this and `classify` runs
+    BEFORE it, so `state.model_window` is still None at compression time - which is
+    why the history budget could not be window-relative until this existed. Copying
+    assemble's block into classify would have been the two-copies-of-one-rule shape
+    this repo pays for most; `_safe_resolve_api_key` is already duplicated across
+    `assemble.py` and `execute.py` and is the standing example.
+
+    Quiet and side-effect-free: no INFO log and no recovery event, because execute's
+    real selection records the provider fallback once. `resolve_window` memoizes, so
+    the second caller in a turn pays nothing. Never raises - any failure is None, and
+    every caller degrades to its own safe default.
+    """
+    try:
+        registry = getattr(services, "provider_registry", None)
+        if registry is None:
+            return None
+        from stackowl.providers.model_window import resolve_window  # noqa: PLC0415
+
+        choice = select_tool_provider_plan(
+            registry, services, state, log_selection=False, record_recovery=False,
+        )
+        provider = choice.provider
+        cfg = getattr(provider, "_config", None)
+        return await resolve_window(
+            provider_name=getattr(provider, "name", "") or "",
+            base_url=cfg.base_url if cfg is not None else None,
+            model=choice.resolved_model,
+            context_chars=(cfg.context_chars if cfg is not None else None),
+            protocol=getattr(provider, "protocol", "") or "",
+            api_key=_safe_resolve_api_key(cfg),
+        )
+    except Exception as exc:  # noqa: BLE001 — a window is never worth a turn
+        log.engine.warning(
+            "[provider_select] window resolution failed — the caller degrades",
+            exc_info=exc, extra={"_fields": {"trace_id": state.trace_id}},
+        )
+        return None

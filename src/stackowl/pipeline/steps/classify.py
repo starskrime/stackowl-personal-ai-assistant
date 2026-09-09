@@ -687,11 +687,20 @@ async def _compress_history(history: list[Message], state: PipelineState) -> lis
     history assembly may not be the thing that fails a turn.
     """
     from stackowl.memory import conversation_compressor as cc
+    from stackowl.pipeline.provider_select import resolve_turn_window
 
     try:
-        selection = cc.plan(history)
+        # THE BUDGET IS A SHARE OF THE WINDOW, and the window has to be resolved HERE.
+        # `assemble` resolves it and runs AFTER this step, so `state.model_window` is
+        # still None at compression time — reading it alone would have made the
+        # window-relative budget decoration that never engaged. Prefer the state when
+        # something upstream has already filled it; otherwise ask the shared resolver,
+        # which is memoized and quiet. None keeps the old fixed budget.
+        window = state.model_window or await resolve_turn_window(get_services(), state)
+        budget = cc.history_budget(window)
+        selection = cc.plan(history, window=window)
         if not selection.needs_compression:
-            return cc.apply(selection, None, budget_tokens=cc.HISTORY_BUDGET_TOKENS)
+            return cc.apply(selection, None, budget_tokens=budget)
         # 2. DECISION — a long session; pay one cheap call to keep its middle.
         log.engine.info(
             "[pipeline] classify: conversation too long for the history budget — "
@@ -700,12 +709,13 @@ async def _compress_history(history: list[Message], state: PipelineState) -> lis
                 "trace_id": state.trace_id,
                 "turns": len(history),
                 "middle_turns": len(selection.middle),
-                "budget_tokens": cc.HISTORY_BUDGET_TOKENS,
+                "budget_tokens": budget,
+                "model_window": window,
                 "had_prior_summary": selection.prior_summary is not None,
             }},
         )
         summary = await _summarize_region(cc.build_prompt(selection), state)
-        out = cc.apply(selection, summary, budget_tokens=cc.HISTORY_BUDGET_TOKENS)
+        out = cc.apply(selection, summary, budget_tokens=budget)
         log.engine.info(
             "[pipeline] classify: conversation compressed",
             extra={"_fields": {

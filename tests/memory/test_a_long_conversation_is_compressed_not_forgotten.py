@@ -175,9 +175,25 @@ def test_the_engine_owns_WHEN_as_well_as_HOW() -> None:
     assert "_HISTORY_BUDGET_TOKENS = " not in src, (
         "the budget is back in the pipeline step — the engine no longer owns when"
     )
-    assert "cc.plan(history)" in src, (
-        "classify decides the budget itself instead of asking the engine"
+    # THE ASSERTION WAS A LITERAL AND THE DECISION IS ABOUT SUBSTANCE — DEBT-248,
+    # 2026-09-09. It read `"cc.plan(history)" in src`, which fails the moment the
+    # engine is handed an ARGUMENT, and being handed one is not the same as losing
+    # the policy. `history_budget()` and its window share live in the engine; classify
+    # passes the resolved model window, which is a FACT ABOUT THE DEPLOYMENT and not a
+    # rule — exactly as `select()` has always taken `budget_tokens` while `plan()`
+    # owns what that value is. What the decision forbids is classify deciding the
+    # NUMBER, so that is what is asserted now.
+    assert "cc.plan(history, window=" in src, (
+        "classify no longer asks the engine to plan — the seam moved"
     )
+    assert "cc.history_budget(" in src, (
+        "classify computes a budget without asking the engine for it"
+    )
+    for policy in ("WINDOW_SHARE", "0.75", "* 0.", "12_000", "12000"):
+        assert policy not in src, (
+            f"a budget POLICY ({policy!r}) is back in the pipeline step — the engine "
+            f"no longer owns when"
+        )
 
 
 def test_it_is_actually_WIRED_into_the_history_path() -> None:
