@@ -21065,6 +21065,20 @@ known_debt:
       PROVEN — fails against the silent source, passes against a fixed mirror, 7/7 in the
       owning file. It reads the named logger directly rather than through `caplog`, because
       `configure_logging` sets `propagate = False` (DEBT-267 is the record of that trap).
+    validated_live_on_865e93c0_the_GATE_not_the_branch: >-
+      Restarted onto the fix (boot markers 812 -> 813, 2026-09-09T23:06:05Z, after the
+      commit) and drove a REAL TURN, which delivered at 23:06:19 across 73 records. That
+      validates what CAN be validated: every turn passes through `delivery_gate`, so a
+      change there is proven not to have broken the path even though the added branch is
+      latent. ZERO `fulfillment SKIPPED` since that boot, which is the predicted answer —
+      the provider registry is wired, so the branch has no opportunity, and the
+      closing_check says so rather than reading the zero as a failure.
+    what_is_deliberately_NOT_claimed: >-
+      The branch itself has not run in production and validate stays `partial` for that
+      reason. Exercising it needs a turn that promises a schedule WHILE the provider
+      registry is unwired — two conditions that have never co-occurred in the retained
+      window. Manufacturing that live would mean breaking the platform to watch it
+      complain; the driven test does it honestly instead.
     stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
     closing_check: >-
       n=$(./scripts/log_since.sh 2026-09-09 'fulfillment SKIPPED'); f=$(./scripts/log_since.sh 2026-09-09 'overclaim.fulfilled'); d=$(./scripts/log_since.sh 2026-09-09 'overclaim.detected'); echo "OPEN skips=$n fulfilled=$f detected=$d since 2026-09-09 — skips=0 is NO OPPORTUNITY, not failure: the branch needs a turn that promises a schedule WHILE the provider registry is unwired, which has never yet co-occurred. The line existing is the deliverable; DEBT-274 records that all three real declines came from _parse instead."
