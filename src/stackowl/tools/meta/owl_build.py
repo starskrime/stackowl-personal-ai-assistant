@@ -164,6 +164,21 @@ def _persona_carries(manifest: object, wanted: str) -> bool:
 
 # The editable manifest fields, mapped from the tool's argument name to the
 # manifest attribute. Only these are checked, and only when the caller passed one.
+#
+# ONE MAP, ASKED BY BOTH SIDES — DEBT-250, 2026-09-09, and until then there were two.
+# `_edit_unbound` hand-wrote its own two-field list and disagreed with this one on the
+# only field they shared: it wrote `spec.specialty` into `system_prompt` while this
+# checks `role`. So editing a builtin owl on anything but `model_tier` could not
+# verify, EVER. The tool persisted an unchanged manifest, returned "Updated owl 'X'.",
+# and the verifier correctly called the overclaim — which failed the task, which
+# retried, which BANNED `owl_build` from the presented set, so the retry could not use
+# the only tool that would work. Bakir, 2026-09-09: "Ehich is always and always failing
+# fornlast 5 month."
+#
+# MEASURED on the live turn: `owl_build.execute: edit unbound owl exit` with
+# `fields_changed: []` while the caller asked for `specialty` and `boundaries`, then
+# `wanted "...JARVIS persona..." / observed "primary-assistant"` and
+# `wanted "Adopt the JARVIS persona..." / observed ""`.
 _EDIT_CHECKED_FIELDS: tuple[tuple[str, str], ...] = (
     ("model_tier", "model_tier"),
     ("boundaries", "boundaries"),
@@ -1552,12 +1567,42 @@ class OwlBuildTool(Tool):
             "owl_build.execute: edit unbound owl",
             extra={"_fields": {"name": spec.name}},
         )
+        # EVERY FIELD THE VERIFIER CHECKS, FROM THE SAME MAP IT CHECKS THEM WITH.
+        # This used to be a hand-written two-field list that ignored `boundaries`,
+        # `display_name` and `evolution_strategy` outright — the caller asked, the
+        # tool dropped them silently, and `fields_changed` came back empty.
         updates: dict[str, object] = {}
-        if spec.model_tier is not None:
-            updates["model_tier"] = spec.model_tier
-        if spec.specialty is not None:
-            updates["system_prompt"] = spec.specialty
-        rebuilt = current.model_copy(update=updates) if updates else current
+        for arg_name, attr in _EDIT_CHECKED_FIELDS:
+            value = getattr(spec, arg_name, None)
+            if value is None or not str(value).strip():
+                continue
+            updates[attr] = value
+
+        # AND THE RECORD IS NOT THE EFFECT. MEASURED 2026-09-09: `dna_injector` reads
+        # `boundaries`, `display_name`, `name` and `system_prompt` — and NOT `role`.
+        # So writing `role` alone satisfies the verifier and changes nothing the model
+        # ever sees, which would replace an honest failure with a silent one. The
+        # persona is what the caller is actually editing, so `specialty` still lands in
+        # `system_prompt` too; `role` is the declared specialty on the record, exactly
+        # as `owl_build_authz` sets it at mint (`role=specialty`).
+        if "role" in updates:
+            updates["system_prompt"] = updates["role"]
+
+        if not updates:
+            # NEVER "Updated" WHEN NOTHING CHANGED. Persisting an untouched manifest
+            # and reporting success is the overclaim that started this: the verifier
+            # then catches a lie the tool did not have to tell.
+            log.tool.warning(
+                "owl_build.execute: edit requested no editable field — refusing to "
+                "report an update that did not happen",
+                extra={"_fields": {"name": spec.name,
+                                   "editable": [a for a, _ in _EDIT_CHECKED_FIELDS]}},
+            )
+            return self._err(
+                f"no editable field was given for '{spec.name}' — pass one of "
+                f"{', '.join(a for a, _ in _EDIT_CHECKED_FIELDS)}.", t0
+            )
+        rebuilt = current.model_copy(update=updates)
         snapshot = await snapshot_owl(rebuilt.name)
         try:
             await persist_owl(rebuilt)
