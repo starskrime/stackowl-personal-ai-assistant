@@ -1423,14 +1423,55 @@ class OpenAIProvider(ModelProvider):
         """
         from stackowl.parliament.token_estimate import estimate_tokens
         from stackowl.providers.model_config import resolve_model_override
-        from stackowl.providers.model_window import cached_window
+        from stackowl.providers.model_window import (
+            DEFAULT_WINDOW_FALLBACK,
+            cached_window,
+            window_from_config,
+        )
 
-        effective_max_output_tokens, _effective_context_chars = resolve_model_override(
+        effective_max_output_tokens, effective_context_chars = resolve_model_override(
             self._config, resolved_model
         )
         window = cached_window(self._name, resolved_model)
         if window is None:
-            return effective_max_output_tokens
+            # NOT "no limit" — "not resolved YET". This was the one branch that
+            # abandoned the clamp entirely rather than degrading: it returned the
+            # raw ceiling, so a cache miss asked for max_output_tokens WHOLE.
+            #
+            # MEASURED 2026-09-09, 21 identical records: "requested 250000 output
+            # tokens and your prompt contains at least 12145 input tokens, for a
+            # total of at least 262145" against a 262,144 window — over by exactly
+            # ONE token, the request rejected outright. FIVE of them are dated
+            # 2026-09-08, AFTER `DEFAULT_WINDOW_FALLBACK` was lowered 1,000,000 ->
+            # 100,000 (2026-09-01, owner decision) for this very failure. That
+            # change corrected the fallback's VALUE; this branch never consulted a
+            # fallback at all, so it could not benefit from it — the symptom was
+            # repaired one tier above the path that produced it.
+            #
+            # `model_window`'s own module docstring states the precedence: config
+            # `context_chars` -> probe -> known default -> conservative fallback.
+            # `cached_window` reads ONLY the probe tier, so the config tier was
+            # being resolved on the line above and discarded into a throwaway
+            # `_effective_context_chars` — `window_from_config` had existed for it
+            # the whole time with no caller. Wired here, and the arithmetic below
+            # is then SHARED rather than copied, so an unresolved window costs a
+            # shorter answer instead of the whole turn.
+            window = (
+                window_from_config(context_chars=effective_context_chars)
+                if effective_context_chars
+                else DEFAULT_WINDOW_FALLBACK
+            )
+            log.engine.warning(
+                "[openai] _output_cap: window not resolved yet — budgeting against "
+                "the configured/fallback window rather than the raw output ceiling",
+                extra={"_fields": {
+                    "provider": self._name,
+                    "model": resolved_model,
+                    "assumed_window": window,
+                    "from_config": bool(effective_context_chars),
+                    "output_ceiling": effective_max_output_tokens,
+                }},
+            )
 
         input_tokens = sum(estimate_tokens(_message_content_text(m)) for m in messages)
         if tool_schemas:

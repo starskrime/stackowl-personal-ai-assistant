@@ -20446,8 +20446,48 @@ known_debt:
       anything. The two worth reading first are the durable-loop CRITICAL and the audit
       INSERT failure, because neither is obviously a provider consequence.
     stages: {validate: partial}
+    THE_CHECK_COULD_NOT_CLOSE_AND_NEITHER_REASON_WAS_THE_PLATFORM: >-
+      RE-MEASURED 2026-09-09. Two defects in the instrument, both of them shapes this
+      programme has paid for before. (1) IT TESTED THE WRONG FIELD. Provider causation
+      lives in `fields.exc`, not in `msg` — the biggest block is
+      `[pipeline] execute: tool_loop failed`, whose exception is `httpx.ConnectError:
+      Name or service not known` reaching the weak-model host. The record's own history
+      says this happened once already and was "fixed" by WIDENING THE MESSAGE LIST, which
+      cannot work: no message list can express a cause that is not in the message. Adding
+      the exception CLASS names to the exclusion takes the reading from 111 (110 error, 1
+      critical) to 88 (87 error, 1 critical): **23 lines reclassified.** A first pass with
+      `jq` said 26 rather than 23, because it applied the two patterns to two separate
+      fields while `log_since.sh` greps the whole record; 23 is the number the CHECK
+      produces and therefore the one recorded. (2) IT COUNTED CUMULATIVELY FROM A FIXED DATE, so it can
+      only ever grow. It read "92 when filed" then "111", which reads as deterioration —
+      while the actual per-day residue is 72 -> 13 -> 3 (2026-09-07/08/09), a 24-fold
+      IMPROVEMENT. A monotonically increasing counter is not a health signal.
+    what_the_residue_is_actually_made_of: >-
+      MEASURED, grouped by message rather than counted: 56 of the 87 are one recurring
+      emitter, `[telegram] adapter.send_text: no active chat`, firing 3 every ~5 minutes
+      on 2026-09-07 alone — ONE incident, not 56. TODAY'S residue is THREE and all three
+      are deliberate: one `adapter.edit_message: edit failed — fail open` (it recovered,
+      and says so) and two `[dna] coordinator.promote: shadow gate REJECTED`, which
+      `evolution.py` logs at ERROR by a RECORDED DECISION (Story 2.7 AC #1 — "a gate
+      rejection must be visible without a human going looking"). I checked those two
+      rather than assuming: each carries exactly one real replay failure in `failures`,
+      so the gate is working and the level is correct. Not demoted.
+    and_one_genuine_defect_the_residue_DID_surface: >-
+      5 of yesterday's 13 are `[resilient_round] provider rejected the REQUEST (400) — our
+      payload, not our credentials`, and the payload is the same every time: **21
+      occurrences of "requested 250000 output tokens and your prompt contains at least
+      12145 input tokens, for a total of at least 262145"** against a 262,144 window —
+      over by exactly ONE token. 250000 is `max_output_tokens` verbatim, so the
+      window-aware `_output_cap` (which carries four recorded incidents: 2026-07-18/21/22/23)
+      did not shape that request. NOT DIAGNOSED FURTHER and deliberately not claimed: every
+      explicit `max_tokens=` caller in src/ passes a SMALL value (4, 512, a named constant),
+      so the path that produced 250000 is not yet identified, and it has not fired since
+      2026-09-08T22:46. Recorded as a measurement with a runnable check, not as a
+      conclusion.
+    context_window_400_check: >-
+      n=$(./scripts/log_since.sh 2026-09-09 'provider rejected the REQUEST'); [ "$n" -eq 0 ] && echo "QUIET — no 400 since 2026-09-09; 21 all-time, newest 2026-09-08T22:46, all 'requested 250000 output tokens ... total of at least 262145'" || echo "LIVE — $n context-window 400s since 2026-09-09; find the call path that bypasses _output_cap"
     closing_check: >-
-      E=$(./scripts/log_since.sh 2026-09-07 '"level": "ERROR"' 'providers unavailable\|providers unreachable\|provider_call: failed\|provider call failed\|provider cascade failed\|API error\|summary call failed\|pool\._open_inside_lock\|connect failed\|tick failed\|poll raised\|UNHEALTHY subsystems\|rollover_summary.execute: exit'); C=$(./scripts/log_since.sh 2026-09-07 '"level": "CRITICAL"' 'providers unavailable\|providers unreachable\|provider_call: failed\|provider call failed\|provider cascade failed\|API error\|summary call failed\|pool\._open_inside_lock\|connect failed\|tick failed\|poll raised\|UNHEALTHY subsystems\|rollover_summary.execute: exit'); n=$((E+C)); if [ "$n" -eq 0 ]; then echo "CLOSEABLE 0 non-provider ERROR/CRITICAL since 2026-09-07"; else echo "OPEN $n non-provider ERROR/CRITICAL since 2026-09-07 ($E error, $C critical); 92 when filed, of which 8 since that day's last boot"; fi
+      EX='providers unavailable\|providers unreachable\|provider_call: failed\|provider call failed\|provider cascade failed\|API error\|summary call failed\|pool\._open_inside_lock\|connect failed\|tick failed\|poll raised\|UNHEALTHY subsystems\|rollover_summary.execute: exit\|ProviderError\|APIConnectionError\|ConnectError\|CircuitOpenError\|AllProvidersUnavailable\|APITimeoutError\|ConnectTimeout\|Name or service not known\|No address associated'; E=$(./scripts/log_since.sh 2026-09-09 '"level": "ERROR"' "$EX"); C=$(./scripts/log_since.sh 2026-09-09 '"level": "CRITICAL"' "$EX"); n=$((E+C)); if [ "$n" -eq 0 ]; then echo "CLOSEABLE 0 non-provider ERROR/CRITICAL since 2026-09-09"; else echo "OPEN $n non-provider ERROR/CRITICAL SINCE 2026-09-09, THE DATE THIS WAS RE-BASED ($E error, $C critical) — RE-BASE THE DATE when you re-read this, which is the whole point: not a cumulative total; per-day 72 -> 13 -> 3 since 2026-09-07, and the cumulative reading fell 111 -> 88 once provider causation is read from fields.exc as well as msg"; fi
   - id: DEBT-196
     found: 2026-09-07
     what: >-
@@ -20978,6 +21018,57 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-268
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work, found by draining DEBT-203's residue."
+    what: >-
+      THE ONE BRANCH OF `_output_cap` THAT ABANDONED THE CLAMP INSTEAD OF DEGRADING.
+      MEASURED across every retained log: 21 IDENTICAL records — "requested 250000 output
+      tokens and your prompt contains at least 12145 input tokens, for a total of at least
+      262145" against a 262,144-token window. Over by exactly ONE token, rejected outright
+      with a 400, the user's turn lost. 250000 is `max_output_tokens` VERBATIM, so nothing
+      shaped that request at all.
+    why_not_what: >-
+      `_output_cap` resolves the window with `cached_window`, which answers the PROBE tier
+      only and returns None on a miss — and the None branch returned
+      `effective_max_output_tokens` unchanged. The path with the LEAST information was the
+      only one that did not degrade. AND A FIX AIMED AT THIS EXACT FAILURE HAD ALREADY
+      SHIPPED AND MISSED IT: `DEFAULT_WINDOW_FALLBACK` was lowered 1,000,000 -> 100,000 on
+      2026-09-01 (owner decision, and `model_window.py`'s own comment cites
+      2026-09-01T21:56:19Z — one of these 21 records — as its cause). FIVE MORE occurred on
+      2026-09-08. The fallback's VALUE was corrected one tier above the branch that
+      consulted no fallback at all, which is this programme's own WHY-not-WHAT rule failing
+      on a fix: the symptom was repaired where it was visible, not where it was produced.
+    and_the_tier_it_needed_was_already_resolved_and_thrown_away: >-
+      `model_window`'s module docstring states the precedence — config `context_chars` ->
+      probe -> known default -> conservative fallback — and `window_from_config` has
+      existed for the config tier since it was written. MEASURED: its ONLY mention outside
+      its own definition was `_effective_context_chars`, a throwaway binding on the line
+      directly above this branch. The value was computed, underscore-named, and discarded.
+      Built, and not wired to the single case that needed it — CLAUDE.md's shape #5, one
+      line away from the defect it would have prevented.
+    fix: >-
+      The unresolved-window branch now derives a window from the configured
+      `context_chars` (via `window_from_config`) and falls back to
+      `DEFAULT_WINDOW_FALLBACK`, then falls THROUGH to the same headroom arithmetic —
+      shared, not copied, so there is no second place for the rule to drift. It logs at
+      WARNING, because a request budgeted against an assumed window is a degradation and
+      DEBT-267 is the record of what DEBUG costs. MEASURED on a mirror: the unresolved cap
+      goes 250,000 -> 81,783 for the live 12,145-token prompt, and a RESOLVED window is
+      byte-identical at 229,376 — the change touches only the miss path.
+    tests: >-
+      `tests/providers/test_an_unresolved_window_degrades_instead_of_abandoning_the_clamp.py`
+      — five tests, DISCRIMINATION PROVEN rather than asserted: 3 failed / 2 passed against
+      the pre-fix tree and 5 passed against the fixed mirror, and the two that passed
+      before are exactly the control (a resolved window is unaffected) and the vacuity
+      guard (every other assertion is an upper bound, which a cap of zero would satisfy).
+      The wiring is proven by DIFFERENCE — a larger configured `context_chars` must change
+      the answer — rather than by reading the source, so a re-discarded value fails.
+    claim_check: >-
+      n=$(./scripts/log_since.sh 2026-09-09 'provider rejected the REQUEST'); w=$(./scripts/log_since.sh 2026-09-09 '_output_cap: window not resolved yet'); echo "400s=$n assumed-window budgetings=$w — a 400 here means the clamp is still bypassed somewhere; a WARNING with no 400 beside it is the fix working"
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-09 'provider rejected the REQUEST'); w=$(./scripts/log_since.sh 2026-09-09 '_output_cap: window not resolved yet'); if [ "$n" -eq 0 ] && [ "$w" -gt 0 ]; then echo "CLOSEABLE $w assumed-window budgetings since the fix shipped and 0 context-window 400s beside them — the branch RAN and did not overflow"; else echo "OPEN 400s=$n budgetings=$w since 2026-09-09. 21 400s all-time, newest 2026-09-08T22:46, all PRE-FIX. w=0 is NO OPPORTUNITY, not failure: the branch needs a cache MISS, which happens only before the probe answers for a (provider, model) pair"; fi
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
   - id: DEBT-267
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, recorded here per the skill's rule for an unmapped finding."

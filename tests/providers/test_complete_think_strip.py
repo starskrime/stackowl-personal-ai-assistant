@@ -890,4 +890,15 @@ async def test_output_cap_uses_per_model_override(monkeypatch: pytest.MonkeyPatc
     )
     provider = OpenAIProvider(config, api_key="")
     assert provider._output_cap("acme-v1-mini", []) == 9000  # noqa: SLF001
-    assert provider._output_cap("qwen3.5:2b", []) == 250000  # noqa: SLF001 — default_model, unaffected (no window)
+    # THE PER-MODEL OVERRIDE IS THIS TEST'S SUBJECT and is unchanged above. The line
+    # below is incidental to it, and it used to read `== 250000` with the comment
+    # "default_model, unaffected (no window)" — which pinned the DEFECT DEBT-268 fixes:
+    # an unresolved window returned `max_output_tokens` WHOLE, and that produced 21
+    # live `ContextWindowExceededError` 400s ("requested 250000 output tokens ... total
+    # of at least 262145" against a 262,144 window). An unresolved window is "not known
+    # YET", not "no limit", so it is now budgeted against DEFAULT_WINDOW_FALLBACK
+    # (100,000) exactly as a resolved one is: 100000 - 100000//_PROMPT_RESERVE_DIVISOR.
+    assert provider._output_cap("qwen3.5:2b", []) == 87_500  # noqa: SLF001
+    assert provider._output_cap("qwen3.5:2b", []) < 250000, (  # noqa: SLF001
+        "the unresolved-window branch hands back the raw ceiling again"
+    )
