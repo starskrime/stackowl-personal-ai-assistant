@@ -20865,6 +20865,108 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-261
+    found: 2026-09-09
+    what: >-
+      A task row can state that its completion means DELIVERY while carrying nowhere to
+      deliver to. MEASURED in the live database: of the SIX rows whose `achievement`
+      reads "the answer is delivered to the job's targets", THREE have a NULL
+      `destination`. Same stated contract, half of them without the only field that can
+      enforce it.
+    WHY_IT_MATTERS_rather_than_being_untidy: >-
+      `DurableTaskStore._owes_delivery` keys on `destination`, and `update_status` uses
+      it to REFUSE a `completed` transition for a row that still owes an answer - the one
+      mechanism enforcing Bakir's rule that "a task is complete when its outcome reached
+      its DESTINATION, not when the function returned". A NULL destination makes that
+      guard return False. So for those three rows the guard was disabled by a missing
+      field WHILE THE ROW ITSELF SAID DELIVERY WAS THE CONDITION.
+    the_cause: >-
+      At `task_runner.py`, `destination` came from `destination_for_turn` - which
+      correctly returns None when a turn owes nothing, being deferred and unaddressed so
+      its parent delivers - and `achievement` was an UNCONDITIONAL LITERAL on the next
+      line. Two independent decisions about ONE contract, written adjacently. CLAUDE.md's
+      third defect shape exactly: two copies of one rule; one source, have the other ask
+      it.
+    AND_IT_IS_THE_THIRD_ROUND_OF_THIS_DEFECT_IN_THIS_FUNCTION: >-
+      The comments already in `task_runner` record the first two, both about getting the
+      DESTINATION right: a bare channel name is not an address (ten jobmarket tasks
+      cycling for hours, messaging Bakir every four minutes), then NULL-for-everyone
+      letting rows complete undelivered. Each fixed the destination. NEITHER ASKED
+      WHETHER THE SENTENCE BESIDE IT STILL MATCHED.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: no_change_needed
+    what_this_does_NOT_claim: >-
+      It does not change which rows complete - the guard already keys on `destination`
+      and still does. It stops the RECORD asserting a delivery the row never owed, which
+      is the difference between a database a later mechanism can trust and one it cannot.
+    THREE_LENS_CLAIMS_MEASURED_AND_TWO_REFUTED_on_the_way: >-
+      The recorded product-defect list said `owl_lifecycle-jobmarket` was "building tasks
+      with no delivery address (185/185 stream-miss events)". WRONG ON THE MECHANISM AND
+      THE COUNT: `stream-miss` is THREE different messages. 47 read "live reader gone —
+      answer delivered via proactive fallback" with `status: delivered` (the fallback
+      WORKING), 3 read "proactive fallback did NOT deliver", and 186 read "no durable
+      fallback available — answer not delivered". Only the last is a loss, 178 of its 186
+      are a two-day burst on 08-28/29, and `adf53b95` (2026-09-06) already split the
+      false-loss case out. It also said `replay_missed=0` on all 15 daily jobs; it is 3
+      of 15. GROUPING BY `.msg` BEFORE COUNTING is what separated them - a single grep
+      for "stream-miss" reports one number for three different events.
+    validated: >-
+      Guard MUTATION-PROVEN from a file copy: making the achievement stop asking
+      (`if True`) fails `test_the_achievement_asks_the_destination` by name; restore
+      returned 4 passed. Derived targeted path 45 passed; `tests/pipeline` +
+      `tests/pipeline/durable` 1,923 passed. LIVE after `./start.sh`: the boot carrying
+      this change is `[startup] core: code watcher armed` at 2026-09-09T11:14:39.284Z,
+      and the restart was confirmed by a COUNT INCREASE (28 -> 29) rather than a string
+      match — last loop's wait-loop was satisfied by an existing line and "verified" a
+      boot sixteen minutes before its own commit.
+    MY_OWN_CLOSING_CHECK_REPORTED_CLOSEABLE_ON_PRE_FIX_ROWS: >-
+      Written with a `created_at >= '2026-09-09'` bound, it reported CLOSEABLE over 23
+      rows created that day — EVERY ONE written by the old code, because the fix was not
+      live until the restart minutes later. That is "satisfied by a case the OLD CODE
+      HANDLED TOO", the third variant this skill names, committed while fixing a
+      different one. A CALENDAR DATE IS NOT A DEPLOY. Re-bounded on the measured boot
+      timestamp and given a denominator of NEW rows so CLOSEABLE cannot be 0-over-0; it
+      now reads OPEN, honestly, until the platform creates its first delivery-achievement
+      task under the new code.
+    AND_docs_touching_EARNED_ITSELF_TWO_LOOPS_AFTER_IT_SHIPPED: >-
+      It named D07.3, whose `Source` is the DIRECTORY `pipeline/durable/` — precisely the
+      citation class DEBT-257 taught the report to attribute. Read and dismissed with a
+      `Reviewed:` sha: D07.3 is about recovery, the ledger and `delegation_link.py`, names
+      neither field, and the guard it depends on is untouched. One minute of reading,
+      surfaced BEFORE the commit rather than by a stale report on somebody's later loop —
+      which is the entire argument that tool was built on.
+    closing_check: |-
+      # Reads the DATABASE, not the logs: the defect is a row-level contradiction, so the
+      # rows are the evidence and no log line can stand in for them. CLOSEABLE when no
+      # row claims a delivery achievement without a destination to deliver to.
+      n=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%is delivered to%' AND (destination IS NULL OR destination = '')" | tail -1)
+      # THE DENOMINATOR, so a zero is never read as an empty table. Rows carrying a
+      # delivery achievement AT ALL — if this is 0 the check is vacuous, not passing.
+      d=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%is delivered to%'" | tail -1)
+      # BOUNDED ON THE DEPLOY, NOT THE CALENDAR — and the difference was measured, not
+      # assumed. A `created_at >= '2026-09-09'` bound reported CLOSEABLE over 23 rows
+      # created that day, EVERY ONE of them written by the old code, because the fix was
+      # not live until the restart. That is "satisfied by a case the old code handled
+      # too" exactly. 2026-09-09T11:14:39Z is the boot that first carried this change
+      # (`[startup] core: code watcher armed`), so only rows after it can evidence it.
+      new=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%is delivered to%' AND (destination IS NULL OR destination = '') AND created_at >= '2026-09-09T11:14:39'" | tail -1)
+      # THE DENOMINATOR OF NEW ROWS, so CLOSEABLE cannot be 0-over-0. Until the platform
+      # has actually created a task carrying a delivery achievement under the new code,
+      # there is nothing to be right about.
+      newd=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%is delivered to%' AND created_at >= '2026-09-09T11:14:39'" | tail -1)
+      if [ "${newd:-0}" -eq 0 ]; then
+        echo "OPEN no task carrying a delivery achievement has been created since the fix went live at 2026-09-09T11:14:39Z, so nothing yet distinguishes it from its predecessor; $d such rows exist in total and $n of them (all pre-fix) claim a delivery with no destination"
+      elif [ "${new:-0}" -eq 0 ]; then
+        echo "CLOSEABLE $newd row(s) created under the new code carry a delivery achievement and ALL of them carry a destination; $n legacy rows remain, written before the fix"
+      else
+        echo "OPEN $new of $newd rows created since the fix still claim a delivery achievement with a NULL destination"
+      fi
   - id: DEBT-260
     found: 2026-09-09
     what: >-

@@ -166,6 +166,15 @@ class DurableTaskRunner:
         # 'secretary'/'cli' (the latent wrong-owl bug). Empty strings are coerced
         # to None so recovery's NULL-fallback (legacy rows) and an explicitly
         # contextless drive behave identically.
+        # ONE DECISION, TWO FIELDS. `destination` and `achievement` encode the same
+        # contract — what this row owes before it may call itself complete — and they
+        # were written by two independent decisions on adjacent lines below. Computed
+        # here so the achievement can ASK the destination rather than assert past it.
+        _destination = destination_for_turn(
+            channel=state.channel,
+            reply_target=state.reply_target,
+            defer_delivery=state.defer_delivery,
+        )
         await self._store.create(
             DurableTask(
                 task_id=task_id,
@@ -204,12 +213,30 @@ class DurableTaskRunner:
                 #
                 # Built through turn_task's helper rather than by hand, so the two
                 # writers cannot disagree about the shape again — a test pins it.
-                destination=destination_for_turn(
-                    channel=state.channel,
-                    reply_target=state.reply_target,
-                    defer_delivery=state.defer_delivery,
+                destination=_destination,
+                # DERIVED, NOT WRITTEN BESIDE IT. Until 2026-09-09 this was an
+                # unconditional literal asserting a delivery, next to a destination
+                # that `destination_for_turn` returns None for whenever the turn owes
+                # nothing. So a row could say "the answer is delivered to the job's
+                # targets" while carrying no destination to deliver to.
+                #
+                # MEASURED 2026-09-09: of the 6 rows carrying that achievement, THREE
+                # had a NULL destination — the same stated contract, half of them
+                # without the only field that can enforce it. `_owes_delivery` keys on
+                # `destination`, so for those three the guard that exists to stop
+                # exactly this overclaim was disabled by the missing field, while the
+                # row itself said delivery was required.
+                #
+                # THIS IS THE THIRD ROUND OF ONE DEFECT. The comment above records the
+                # first two — "a channel NAME IS NOT AN ADDRESS" — and both were about
+                # getting the destination right. Neither asked whether the sentence
+                # beside it still matched.
+                achievement=(
+                    "the answer is delivered to the job's targets"
+                    if _destination
+                    else "the drive finishes; this turn owes no delivery, because it "
+                         "is deferred and unaddressed and its parent delivers"
                 ),
-                achievement="the answer is delivered to the job's targets",
                 created_at=now,
                 updated_at=now,
             )
