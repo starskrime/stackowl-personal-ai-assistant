@@ -20924,6 +20924,15 @@ known_debt:
       unconditional fails `test_it_speaks_only_when_a_memory_is_actually_removed`.
       Restore returned 4 passed. The guard was written FIRST and was red on both counts
       before the change. Derived targeted path: 293 passed in 121s.
+    live_after_a_real_restart_checked_against_the_commit_clock_not_a_PID: >-
+      `./start.sh` after the push. Commit `b482d46b` at 2026-09-09T10:21:03Z,
+      `[startup] core: code watcher armed` at 10:22:00.418Z - 57 seconds later, so the
+      running image carries the new witness. AND THE FIRST READ OF THIS WAS WRONG: an
+      `until grep -q "code watcher armed"` loop matched an EXISTING line and returned a
+      boot at 10:05:36Z, sixteen minutes BEFORE the commit, which would have "verified"
+      the restart against the previous incarnation. A wait-for-a-string loop over an
+      append-only log is satisfied by history — the same shape as an unbounded closing
+      check, one layer down in the shell.
     AND_MY_OWN_CHECKS_FIRST_DENOMINATOR_WAS_THE_DEFECT_ITSELF: >-
       The closing check's first denominator was `store: exit` - the DEBUG line this whole
       item is about. It printed "0 store calls have run" for a function that runs on every
