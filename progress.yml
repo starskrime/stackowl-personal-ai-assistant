@@ -20899,6 +20899,14 @@ known_debt:
       test: done
       validate: partial
       document: no_change_needed
+    validate_is_PARTIAL_and_the_reason_is_not_a_gap: >-
+      The code is LIVE - restarted at 00:56:47, twelve seconds after commit `0262c298`,
+      so the running core holds it. What cannot be forced is the EVENT: closing this
+      needs a read-severity tool to over-claim, and 6 overclaims since 2026-09-09 were
+      all other culprits. Driving a synthetic one would prove the branch reachable,
+      which the behavioural test already proves and the `if False` mutation confirms;
+      it would not prove production takes it. So the stage stays partial with a runnable
+      check rather than claiming a validation nobody performed.
     closing_check: |
       # `overclaim.redone` is a NEW message — it has never appeared in any retained
       # log, so any occurrence is evidence only this code could produce, and it cannot
