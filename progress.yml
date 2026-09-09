@@ -21068,7 +21068,21 @@ known_debt:
       n=$(./scripts/log_since.sh 2026-09-09 'provider rejected the REQUEST'); w=$(./scripts/log_since.sh 2026-09-09 '_output_cap: window not resolved yet'); echo "400s=$n assumed-window budgetings=$w — a 400 here means the clamp is still bypassed somewhere; a WARNING with no 400 beside it is the fix working"
     closing_check: >-
       n=$(./scripts/log_since.sh 2026-09-09 'provider rejected the REQUEST'); w=$(./scripts/log_since.sh 2026-09-09 '_output_cap: window not resolved yet'); if [ "$n" -eq 0 ] && [ "$w" -gt 0 ]; then echo "CLOSEABLE $w assumed-window budgetings since the fix shipped and 0 context-window 400s beside them — the branch RAN and did not overflow"; else echo "OPEN 400s=$n budgetings=$w since 2026-09-09. 21 400s all-time, newest 2026-09-08T22:46, all PRE-FIX. w=0 is NO OPPORTUNITY, not failure: the branch needs a cache MISS, which happens only before the probe answers for a (provider, model) pair"; fi
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
+    validated_live_on_dee113e3_AND_THE_RACE_IS_REAL: >-
+      Restarted (boot markers 804 -> 805, 2026-09-09T17:51:59Z, after the commit) and then
+      DROVE A REAL TURN through `scripts/dev_ingress.py` rather than asserting anything.
+      The branch FIRED, twice, on that turn: `[openai] _output_cap: window not resolved yet`
+      at 17:52:42.380 and 17:52:43.141, carrying `assumed_window=100000 from_config=false
+      ceiling=250000 model=neraai-v1-raw`. The request was budgeted against the fallback
+      instead of asking for the 250,000 ceiling — the exact substitution this item is.
+    and_the_race_it_exposes_was_a_GUESS_until_that_turn_ran: >-
+      `[model_window] resolved via openai-compatible probe` lands at 17:52:45 — TWO SECONDS
+      AFTER the first call had already taken the unresolved branch — and the turn delivered
+      normally at 17:52:53 (`[pipeline] deliver: exit`). THE FIRST REAL TURN AFTER A BOOT
+      BEATS THE PROBE. That is why the 400s clustered 2.8s and 65s after boots, and it means
+      this branch is the normal path for the first turn of every boot, not an edge case.
+      ZERO 400s since the boot, against 21 all-time. closing_check now prints CLOSEABLE.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-267
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, recorded here per the skill's rule for an unmapped finding."
