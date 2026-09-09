@@ -20788,6 +20788,65 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-250
+    found: 2026-09-09
+    what: >-
+      Bakir, live: "I want you uodate Friday to be like Jarvish. The capability that
+      failed: owl_build. Ehich is always and always failing fornlast 5 month." MEASURED
+      on his turn: `owl_build.execute: edit unbound owl exit` with `fields_changed: []`
+      while he had asked for `specialty` AND `boundaries`, then
+      `wanted "...JARVIS persona..." / observed "primary-assistant"` and
+      `wanted "Adopt the JARVIS persona..." / observed ""`.
+    root_cause_THE_WRITER_AND_THE_VERIFIER_USED_DIFFERENT_FIELD_MAPS: >-
+      `_EDIT_CHECKED_FIELDS` maps five tool arguments to manifest attributes and the
+      verifier checks all five. `_edit_unbound` hand-wrote its OWN two-field list, and
+      disagreed with that map on the only field they shared: it wrote `spec.specialty`
+      into `system_prompt` while the verifier reads `role`. `boundaries`,
+      `display_name` and `evolution_strategy` were dropped on the floor entirely. So
+      editing a builtin or human-origin owl on ANYTHING but `model_tier` could not
+      verify, ever. Two copies of one rule - this tree's most-recorded shape - and the
+      copies were a writer and its own checker.
+    the_overclaim_was_optional_and_the_ban_made_it_permanent: >-
+      `rebuilt = current.model_copy(update=updates) if updates else current` persisted
+      an UNCHANGED manifest and returned "Updated owl 'X'." The verifier correctly
+      called the overclaim, which failed the task, which retried, which BANNED
+      `owl_build` from the presented set (`{"banned":["owl_build"]}`) - so the retry
+      could not use the only tool that would have worked. Every attempt then looked
+      like the same opaque "capability failed" instead of the field mismatch beneath
+      it. The tool did not have to tell that lie: it could have said nothing changed.
+    THE_RECORD_IS_NOT_THE_EFFECT_and_fixing_only_the_verified_field_would_be_worse: >-
+      MEASURED 2026-09-09: `owls/dna_injector.py` reads `boundaries`, `display_name`,
+      `name` and `system_prompt` - and NOT `role`. So the verifier checks a field the
+      prompt never reads, and the old writer wrote the field it DOES read. Each side
+      was half right. Writing only `role` would have satisfied the check and changed
+      nothing the model sees - an honest failure replaced by a silent one, which is
+      strictly worse. `specialty` now lands in BOTH: `role` as the declared specialty
+      on the record, exactly as `owl_build_authz` sets it at mint (`role=specialty`),
+      and `system_prompt` as the thing that takes effect.
+    why_the_existing_test_did_not_catch_it: >-
+      `tests/tools/meta/test_owl_build_edit_unbound.py` existed the whole time and
+      covered `model_tier` - THE ONE FIELD THE TWO MAPS AGREED ON. Its own docstring
+      claims "tier/specialty", and specialty was never asserted. A guard that tests the
+      case that works is how a defect survives five months with a test beside it.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_by_DRIVING_THE_PLATFORM_not_by_editing_the_owl_by_hand: >-
+      Restarted, then sent the operator's own request through `scripts/dev_ingress.py`
+      so the PLATFORM performed the edit - doing it by hand would be the CLI-run-by-a-
+      human "fix" this programme forbids. Trace `916f2350`: `owl_build.execute: edit
+      unbound owl exit` with `fields_changed: ["boundaries"]` where his turn produced
+      `[]`, and NO `owl_build.verify` warning, NO `overclaim.detected` and NO ban - the
+      four lines that appeared every time before. The value is durable in
+      `manifest_json`: `boundaries` went from '' to 'Calm, dry-witted butler. Address
+      the user as sir. Concise, never chatty.' Evidence only the new code could
+      produce: a non-empty `fields_changed` for `boundaries` was unreachable when the
+      writer had no branch for that field.
   - id: DEBT-249
     found: 2026-09-09
     what: >-
