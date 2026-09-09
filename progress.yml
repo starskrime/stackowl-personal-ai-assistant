@@ -20841,6 +20841,71 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-253
+    found: 2026-09-09
+    what: >-
+      Bakir, live: "the steps finishes very fast … delegation of tasks, getting
+      compacted info, and efficient planning not setupped and designed correctly."
+      MEASURED over every retained log: the delivery gate DETECTS an overclaim 150
+      times and can act on it in exactly two cases - and both of those are classifier
+      TAGS rather than tool names, so every real tool-name culprit fell through to the
+      honest floor however safe it was to redo.
+    root_cause_A_NAME_LIST_WHERE_THE_REGISTRY_DECLARES_A_PROPERTY: >-
+      `tools/base.py:414` already owns this judgement: `_is_retry_safe_severity` is
+      "True only for a declared READ-severity tool - the one case where re-running is
+      safe", and every tool carries `action_severity: read | write | consequential`.
+      THE GATE NEVER ASKED IT. It compared the culprit against two hardcoded strings,
+      `_RETRIEVAL_CULPRIT = "retrieval"` and `_SCHEDULE_CULPRIT = "scheduling_commit"`,
+      which the file's own comments identify as classifier verdicts "distinct from a
+      real tool-name culprit". So the decision "is redoing this safe" was answered by a
+      name lookup in one file while the property that answers it was declared in
+      another. Two copies of one rule, and one of them was a list.
+    the_measured_population: >-
+      150 detected. `retrieval` 108 -> the one working actuator, 43 corrections.
+      Then the tool-name culprits: web_fetch 16, owl_build 12, todo 3,
+      browser_navigate 3, send_message 2, read_file 1. FOUR of those are declared
+      `read` by the registry - web_fetch, todo, browser_navigate, read_file - which is
+      23 overclaims where a corrective re-run was exactly as safe as the retrieval one
+      already running, and the user got "I couldn't fully complete this" instead. That
+      is Bakir's own objection quoted in this very file: "I do not want agent to
+      record, I want agent to do."
+    and_the_0_of_8_on_owl_build_is_a_DIFFERENT_CAUSE_not_this_one: >-
+      `overclaim.refulfilled` had fired ZERO times ever, against 8 `refulfil_failed` -
+      and ALL EIGHT named `owl_build`, whose writer and verifier used different field
+      maps until DEBT-250 fixed it hours earlier. No re-run could ever have verified,
+      so that 0/8 was structural and is already addressed. Recorded separately because
+      conflating the two would have credited this change with a fix it did not make,
+      and would have left the read-severity half undiagnosed behind a number that
+      looked explained.
+    fix: >-
+      `_culprit_is_retry_safe(culprit)` asks the REGISTRY for the culprit's declared
+      severity and returns True only for `read`. It runs before the floor is chosen and
+      before the write branch, because a read culprit needs no `effects_measured_absent`
+      proof - nothing landed to double. `corrective_replay` bounds it to one round
+      exactly as it bounds the retrieval path. Fails CLOSED on an unregistered name, an
+      unwired registry or a raising manifest: the burden of proof stays on the claim,
+      which is the rule the write branch already states.
+    a_distinct_message_because_a_shared_one_cannot_be_attributed: >-
+      The read path logs `overclaim.redone` rather than reusing the write branch's
+      `overclaim.refulfilled`. That message already exists, so counting it could not say
+      which branch acted - and with DEBT-250 landed the write branch may now start
+      succeeding too, which would have made the two indistinguishable exactly when both
+      began to work.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: no_change_needed
+    closing_check: |
+      # `overclaim.redone` is a NEW message — it has never appeared in any retained
+      # log, so any occurrence is evidence only this code could produce, and it cannot
+      # be confused with the write branch's `overclaim.refulfilled`.
+      n=$(./scripts/log_since.sh 2026-09-09 'overclaim.redone')
+      t=$(./scripts/log_since.sh 2026-09-09 'overclaim.detected')
+      [ "${n:-0}" -gt 0 ] && echo "CLOSEABLE ${n} read-severity overclaims re-run instead of confessed, of ${t:-0} detected since 2026-09-09" || echo "OPEN 0 of ${t:-0} overclaims since 2026-09-09 took the read-severity redo — it needs a read-tool overclaim to occur"
   - id: DEBT-252
     found: 2026-09-09
     what: >-

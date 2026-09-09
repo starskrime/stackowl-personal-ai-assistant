@@ -1276,6 +1276,48 @@ _RETRIEVAL_CULPRIT = "retrieval"
 _SCHEDULE_CULPRIT = "scheduling_commit"
 
 
+def _culprit_is_retry_safe(culprit: str) -> bool:
+    """Is re-running this culprit safe? ASK THE REGISTRY — never a hardcoded name.
+
+    `tools/base.py:414` already owns this judgement: `_is_retry_safe_severity` is
+    "True only for a declared READ-severity tool — the one case where re-running is
+    safe". The gate did not ask it. It compared the culprit against two hardcoded
+    strings, and those two are CLASSIFIER TAGS (`retrieval`, `scheduling_commit`) —
+    not tool names at all — so every real tool-name culprit fell through to the floor
+    however safe it was to redo.
+
+    MEASURED 2026-09-09 over every retained log: 150 overclaims detected. `retrieval`
+    (108) has an actuator and produced 43 corrections. Of the rest, FOUR culprits are
+    tools the registry declares `read` — web_fetch (16), todo (3), browser_navigate (3)
+    and read_file (1) — 23 overclaims where a corrective re-run was exactly as safe as
+    the retrieval one already running, and the user got "I couldn't fully complete
+    this" instead.
+
+    Fail CLOSED on anything unknown: an unregistered name, an unwired registry or a
+    raising manifest keeps the floor, because the burden of proof stays on the claim —
+    the same rule the `effects_measured_absent` branch below states for write culprits.
+    """
+    if not culprit or culprit in (_RETRIEVAL_CULPRIT, _SCHEDULE_CULPRIT):
+        return False
+    try:
+        registry = get_services().tool_registry
+        if registry is None:
+            return False
+        # `get` returns None for an unregistered name — it does not raise. Handling
+        # that explicitly rather than letting an AttributeError fall into the except
+        # below: both keep the floor, but only one of them says so on purpose.
+        tool = registry.get(culprit)
+        if tool is None:
+            return False
+        return bool(tool.manifest.action_severity == "read")
+    except Exception as exc:  # noqa: BLE001 — unknown severity keeps the floor
+        log.engine.debug(
+            "[overclaim_gate] culprit severity unresolved — keeping the floor",
+            exc_info=exc, extra={"_fields": {"culprit": culprit}},
+        )
+        return False
+
+
 def _is_overclaim(state: PipelineState) -> tuple[bool, str | None]:
     """Return (True, culprit) if the current draft is a structural overclaim.
 
@@ -1536,6 +1578,32 @@ async def surface_overclaim_gate(state: PipelineState) -> PipelineState:
         # verify() observed the effect to be ABSENT — redoing those cannot double
         # anything, because nothing landed. An UNKNOWN outcome still keeps the
         # floor, so the burden of proof stays on the claim.
+        # A READ-SEVERITY CULPRIT IS SAFE TO REDO, and that is a PROPERTY the registry
+        # already declares — not a name this file should be keeping a list of. Placed
+        # before the write branch because it needs no `effects_measured_absent` proof:
+        # nothing landed to double. `corrective_replay` bounds it to one round exactly
+        # as it bounds the retrieval path.
+        if _culprit_is_retry_safe(culprit or ""):
+            redone = await _try_corrective_rerun(
+                state,
+                f"it claimed a result from `{culprit}`, but that tool did not actually "
+                f"run or did not succeed. Call `{culprit}` for real now and answer only "
+                f"from what it returns.",
+            )
+            if redone is not None:
+                # A DISTINCT MESSAGE, not the write branch's `overclaim.refulfilled`.
+                # That one already exists and would make a count unattributable — this
+                # claim is specifically about READ-severity culprits, and a check must
+                # be able to tell which branch acted.
+                log.engine.info(
+                    "overclaim.redone — read-severity culprit re-run instead of confessed",
+                    extra={"_fields": {"trace_id": state.trace_id, "culprit": culprit}},
+                )
+                return state.evolve(responses=redone)
+            log.engine.info(
+                "overclaim.refulfil_failed",
+                extra={"_fields": {"trace_id": state.trace_id, "culprit": culprit}},
+            )
         if culprit and culprit in (state.effects_measured_absent or ()):
             fulfilled = await _try_corrective_rerun(
                 state,
