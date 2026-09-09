@@ -2346,6 +2346,8 @@ current:
       cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT186_2026_09_07_open_items_that_closed_twenty_minutes_after_they_were_written:
     claim_check: >-
+      n=$(./scripts/db_query.sh "SELECT COUNT(*) FROM staged_facts WHERE content LIKE '%[/skill use]%'" 2>/dev/null | tr -dc '0-9'); [ "${n:-0}" -gt 0 ] && echo "OPEN — $n staged_fact(s) still attribute a machine-composed steer to the user" || echo "SETTLED — 0 rows"
+    settled_note: >-
       RE-MEASURED 2026-09-09 and UNCHANGED, so this stays recorded-not-fixed rather than
       quietly ageing into a closed claim: ./scripts/db_query.sh "SELECT COUNT(*) FROM
       staged_facts WHERE content LIKE '%[/skill use]%'" still returns exactly 1 — the buffer
@@ -3166,6 +3168,8 @@ current:
       than exactly.
   DEBT174_2026_09_07_a_security_boundary_re_proven_by_mutation_not_by_a_green_suite:
     claim_check: >-
+      b=$(grep -ahc "\[sandbox.ptc\] channel started" ~/.stackowl/logs/stackowl*.jsonl | paste -sd+ | bc); e=$(grep -ahc '"execute_code' ~/.stackowl/logs/stackowl*.jsonl | paste -sd+ | bc); [ "$b" -le 1 ] && echo "NO OPPORTUNITY HOLDS — channel started $b, execute_code $e" || echo "LIVE-TESTABLE NOW — channel started $b"
+    settled_note: >-
       RE-MEASURED 2026-09-09 and the NO-OPPORTUNITY verdict HOLDS, now against a denominator
       3.3x larger: `[sandbox.ptc] channel started` is still EXACTLY 1 across the whole
       retained window, while `execute_code` has gone 42 -> 140. So the zero owl-tool calls
@@ -5808,6 +5812,8 @@ current:
     NEXT: "D17.1 · Dangerous-command approval (P2, wave 9, order 78)."
   D16_5_2026_09_04_the_doctrine_was_already_adopted_the_evidence_line_was_not:
     claim_check: >-
+      n=$(grep -rliE "footprint ladder|ladder rung|extend existing code|CLI command \+ skill|service-gated tool|MCP server|new core tool" docs/reference-mapping/designs/*.md | wc -l); t=$(ls docs/reference-mapping/designs/*.md | wc -l); echo "STANDS — $n of $t design documents name a ladder rung; retrofitting the rest was a recorded decision, not a defect"
+    settled_note: >-
       SETTLED AS A DECISION THAT STANDS, and the re-measurement found a second thing worth
       more than the number. The claim read "24 of 47 design docs name a ladder rung" and
       RECORDED NO METHOD, so it cannot be re-measured — only re-invented, which is a
@@ -12527,6 +12533,8 @@ current:
 
   DRAIN_2026_09_01_the_scheduler_defers_to_turns_and_nothing_waited_for_it:
     claim_check: >-
+      o=$(grep -rl "test_slow_job_does_not_delay_sibling_dispatch" tests/ 2>/dev/null | wc -l); n=$(grep -rl "test_the_overlap_check_can_actually_FAIL" tests/ 2>/dev/null | wc -l); [ "$o" -eq 0 ] && [ "$n" -gt 0 ] && echo "SETTLED — the named flake is gone; a8b02858 replaced it with an overlap assertion plus a vacuity control" || echo "OPEN — old=$o new=$n"
+    settled_note: >-
       RE-MEASURED 2026-09-09. The claim was "a flake deserves its own item", naming
       `test_slow_job_does_not_delay_sibling_dispatch`. That test NO LONGER EXISTS —
       `a8b02858` renamed it the same day it was recorded, to
