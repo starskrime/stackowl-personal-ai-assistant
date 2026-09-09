@@ -108,26 +108,16 @@ def _logged_literals() -> tuple[tuple[str, str], ...]:
     `_INDIRECT_EMITTERS` is for — an exemption that has to cite live proof and is itself
     checked for staleness.
     """
-    out: list[tuple[str, str]] = []
-    for path in _SRC.rglob("*.py"):
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-        except SyntaxError:  # pragma: no cover
-            continue
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-                continue
-            level = node.func.attr
-            if level not in _PRODUCTION_LEVELS | {"debug"} or not node.args:
-                continue
-            first = node.args[0]
-            if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                out.append((first.value, level))
-            elif isinstance(first, ast.JoinedStr):
-                for part in first.values:
-                    if isinstance(part, ast.Constant) and isinstance(part.value, str):
-                        out.append((part.value, level))
-    return tuple(out)
+    # ASKS THE ONE SOURCE, as `_emitters` below already does for `progress_lint`.
+    # The walk moved to `scripts/retired_log_messages.py` when a second consumer
+    # appeared: that script answers "can the code still emit this string?" over the
+    # LOG CORPUS, which is the same question this file asks over the RECORD. Two
+    # copies of an AST walk is the shape this repo pays for most, and the copies
+    # would have drifted immediately — the script needed placeholder handling this
+    # one never did.
+    from retired_log_messages import logged_literals
+
+    return logged_literals()
 
 
 def _log_patterns(check: str) -> list[str]:

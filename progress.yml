@@ -21018,6 +21018,64 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-270
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work, found by this loop losing itself in the log."
+    what: >-
+      A RETIRED LOG MESSAGE LEAVES ITS HISTORY BEHIND, AND NOTHING MARKS IT RETIRED. This
+      loop opened three investigations off live-looking log signals and every one was
+      already answered. The sharpest: `[pipeline] deliver: no registry in services —
+      discarding responses`, 153 occurrences across 12 days, which reads as the platform
+      throwing away answers — the one failure this programme cares most about. It is the
+      OLD WORDING of a line `4f3caf19` had already split. The current code branches on
+      `state.interactive`: the replay lane logs INFO by design, and the WARNING that means a
+      real loss has fired ZERO times. Every one of the 153 was a `shadow-validate-*` session
+      — the isolation seam working.
+    why_not_what: >-
+      The retained corpus keeps every message a deleted line ever wrote, and nothing
+      distinguishes it from one the code can still produce. The ONLY signal is that the
+      string is gone from `src/`, and the reader has to know to look — I checked it by hand
+      three times in one loop and got the wrong answer twice before checking. A count from
+      the logs is not a report about the present unless the emitter still exists, and every
+      instrument this repo has (`log_since.sh`, `doc_check`, the closing-check guards)
+      answers WHEN or WHETHER-IT-CAN-EXIST, never WHETHER-IT-STILL-CAN.
+    the_instrument_and_the_three_classifiers_it_took: >-
+      `scripts/retired_log_messages.py`. Its own number moved twice before it was right, and
+      that is recorded in its docstring because the two wrong answers are the interesting
+      part. Comparing rendered messages against whole source literals called 120 of 328
+      retired — every f-string counts as retired, because the rendered text carries
+      substituted values the literal never had. Restricting to the CONSTANT parts of a
+      `JoinedStr` fixed the f-strings and still said 120, because %-STYLE calls
+      (`log.warning("[startup] gateway: browser runtime skipped — %s", reason)`) keep the
+      placeholder INSIDE the literal, so the literal is not a substring of the rendered line
+      either. Truncating each fragment at its first placeholder gives the real answer:
+      **37 of 328 retired, 291 still producible.** The line that exposed the second error had
+      fired minutes earlier and is correctly LIVE — a false positive I could see.
+    one_source_not_two: >-
+      The AST walk already existed as `_logged_literals` inside
+      `test_a_closing_check_looks_for_evidence_that_can_exist.py`. It MOVED to the script and
+      the test now asks for it, the same way that file already asks `progress_lint` for
+      `log_pattern_fragment`. Proven behaviour-preserving by SET EQUALITY, not by the tests
+      passing: both consumers return the identical 6,548 fragments, and its 24 tests pass.
+      The copies would have drifted immediately — the script needed placeholder handling the
+      test never did.
+    what_it_does_NOT_claim: >-
+      A retired message is not a defect and not a cleanup task. The corpus SHOULD hold what
+      the platform used to say; deleting that history would be worse. This is a caveat for
+      the reader, and it is deliberately a report rather than a gate — a tripwire failing
+      whenever a log line is reworded would fire on ordinary work, which is how a gate gets
+      bypassed rather than satisfied.
+    validated_by_running_it_on_the_corpus_that_produced_the_defect: >-
+      No restart and none claimed — this change is a script, a test delegation and a record,
+      and nothing in it runs in production. The evidence is that the instrument REPRODUCES
+      the hand measurement that motivated it: `328 distinct message(s); 291 still producible
+      by src/, 37 RETIRED`, and it names `[pipeline] deliver: no registry in services` among
+      the 37 — the exact line that sent this loop chasing a fixed defect. The refactor is
+      proven by set equality (6,548 == 6,548) and 24 passing tests in the file that gave up
+      the walk.
+    claim_check: >-
+      uv run python scripts/retired_log_messages.py | sed -n '2p'
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-269
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, found by draining the last STALE document."

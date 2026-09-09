@@ -473,6 +473,19 @@ log measurement.
 **Count incidents, not log lines.** "19 database-is-locked events" was 19 LINES; one
 contention moment emits four.
 
+**AND CHECK THE MESSAGE IS STILL ONE THE CODE CAN WRITE.** The corpus keeps every
+message a DELETED line ever wrote, and nothing marks it deleted, so a grep returns a
+confident count for behaviour that cannot happen again. MEASURED 2026-09-09: **37 of
+328** distinct WARNING/ERROR/CRITICAL messages are retired wording. One of them —
+`[pipeline] deliver: no registry in services — discarding responses`, 153 hits over 12
+days — reads as the platform discarding answers and cost this loop three
+investigations before `4f3caf19` turned up, which had already split that branch; the
+WARNING that means a real loss has fired ZERO times. Run
+`uv run python scripts/retired_log_messages.py` before treating a log count as current
+behaviour. It is a REPORT, not a gate, and its own number moved twice before it was
+right: whole-literal matching calls every f-string retired, and JoinedStr-parts still
+calls every `%s` call retired, because the placeholder lives inside the literal.
+
 **Print the real shape before you filter it.** Seven times in one session a search
 returned a confident wrong answer because it matched something other than the thing:
 `discover` is a MODE of `session_search`, not a tool, so "0 invocations" was reported
