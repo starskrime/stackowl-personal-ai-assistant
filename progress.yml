@@ -2345,6 +2345,13 @@ current:
     stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed,
       cleanup: no_change_needed, test: done, validate: done, document: done}
   DEBT186_2026_09_07_open_items_that_closed_twenty_minutes_after_they_were_written:
+    claim_check: >-
+      RE-MEASURED 2026-09-09 and UNCHANGED, so this stays recorded-not-fixed rather than
+      quietly ageing into a closed claim: ./scripts/db_query.sh "SELECT COUNT(*) FROM
+      staged_facts WHERE content LIKE '%[/skill use]%'" still returns exactly 1 — the buffer
+      still attributes a machine-composed steer to the user. Prints OPEN while that count is
+      > 0; the fix is on the WRITER, not the row, because a deleted row with a live writer is
+      re-seeded.
     map_check: >-
       D10.5 — the oldest DELETION-stale document. Verification RUN, and the finding was in
       its "Still open" list rather than its checks.
@@ -3158,6 +3165,17 @@ current:
       test, and with the honest note that its premise re-measures approximately rather
       than exactly.
   DEBT174_2026_09_07_a_security_boundary_re_proven_by_mutation_not_by_a_green_suite:
+    claim_check: >-
+      RE-MEASURED 2026-09-09 and the NO-OPPORTUNITY verdict HOLDS, now against a denominator
+      3.3x larger: `[sandbox.ptc] channel started` is still EXACTLY 1 across the whole
+      retained window, while `execute_code` has gone 42 -> 140. So the zero owl-tool calls
+      through the channel remain an absence of traffic, not a failed boundary — and the
+      denominator growing without the numerator moving is what makes that readable rather
+      than assumed. Runnable: grep -ahc "\[sandbox.ptc\] channel started"
+      ~/.stackowl/logs/stackowl*.jsonl | paste -sd+ | bc  (expect 1), beside
+      grep -ahc '"execute_code' ~/.stackowl/logs/stackowl*.jsonl | paste -sd+ | bc.
+      Prints NO OPPORTUNITY while the first is 1; a second `channel started` is what makes
+      the boundary live-testable, and only then does a zero mean anything.
     map_check: >-
       D05.5 — a MAPPED item and the oldest stale document. It INVERTS A DEFAULT-DENY, so
       its Verification was re-run INCLUDING the mutation: a suite that merely passes
@@ -5789,6 +5807,24 @@ current:
       this time because a Python comment is not an AST node.
     NEXT: "D17.1 · Dangerous-command approval (P2, wave 9, order 78)."
   D16_5_2026_09_04_the_doctrine_was_already_adopted_the_evidence_line_was_not:
+    claim_check: >-
+      SETTLED AS A DECISION THAT STANDS, and the re-measurement found a second thing worth
+      more than the number. The claim read "24 of 47 design docs name a ladder rung" and
+      RECORDED NO METHOD, so it cannot be re-measured — only re-invented, which is a
+      different act. Re-measured 2026-09-09 with the method stated in full: a document names
+      a rung if it contains "footprint ladder", "ladder rung", or one of PROCESS.md's rung
+      phrases ("extend existing code", "CLI command + skill", "service-gated tool", "MCP
+      server", "new core tool"); the bare word "plugin" is EXCLUDED as too common to be
+      evidence of a rung choice. That gives 24 of 84. The NUMERATOR is unchanged at 24 while
+      the corpus is now every file in designs/; what the original 47 selected is
+      unrecoverable, so the two fractions must not be subtracted from one another.
+      Runnable: the seven-phrase scan above over docs/reference-mapping/designs/*.md.
+    and_the_generalisable_half: >-
+      A measured claim recorded WITHOUT ITS METHOD is not re-measurable. This one survived
+      five days looking like a trend line ("24 of 47" -> "N of 84") when the denominators
+      answer different questions. The recorded DECISION is untouched and still right —
+      filling a rung onto closed documents would be completing a form, not making a
+      decision — so this settles as standing, not as a defect.
     map_check: "D16.5 — MCP (PARITY, P3, wave 9). Stages verified not_started first. Ask: adopt the DOCTRINE."
     ALREADY_ADOPTED: >-
       PROCESS.md's Footprint Ladder already reads "extend existing code -> CLI command + skill
@@ -12490,6 +12526,16 @@ current:
       rather than assumed.
 
   DRAIN_2026_09_01_the_scheduler_defers_to_turns_and_nothing_waited_for_it:
+    claim_check: >-
+      RE-MEASURED 2026-09-09. The claim was "a flake deserves its own item", naming
+      `test_slow_job_does_not_delay_sibling_dispatch`. That test NO LONGER EXISTS —
+      `a8b02858` renamed it the same day it was recorded, to
+      `test_a_slow_job_does_not_delay_its_sibling`, which asserts by OVERLAP rather than by
+      a wall-clock margin and ships a vacuity control beside it
+      (`test_the_overlap_check_can_actually_FAIL`). Settled as ALREADY FIXED.
+      Runnable: grep -rc "test_slow_job_does_not_delay_sibling_dispatch" tests/ | grep -v ":0"
+      returns nothing, and `grep -rl test_the_overlap_check_can_actually_FAIL tests/` names
+      tests/scheduler/test_concurrent_dispatch.py.
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-108."
     how_this_item_was_reached: >-
       Round 0 found spend at ZERO since 04:00 — which is the incident furnace being out, a
@@ -14698,6 +14744,29 @@ current:
       detection_raised: "[scheduler] incident_escalation.execute: detection raised — 1 occurrence, an exception inside _detect_incidents. Caught and returned as a failed JobResult, so it degrades rather than wedging, but the cause is un-diagnosed."
       tool_build_consent: "tool_build.execute: no channel/session to scope consent — refused, x4, for verify_shell_effect_before_retry with interactive=false and channel=null. The authority-vs-address shape Bakir's ★★ memory names: an autonomous lane cannot obtain consent because it has no address to ask at."
       not_stopped_on_timeout: "A timed-out handler is still not cancelled. The cap makes the timeout far less likely rather than making cancellation work; structured cancellation of spawned children is a scheduler-wide change."
+    RE_MEASURED_2026_09_09_both_sub_claims_settled: >-
+      tool_build_consent was recorded as "x4". It is TWENTY, and the number that matters is
+      that it is 20 OF 20: every `tool_build.execute: entry` this box has ever retained was
+      followed by a refusal. The assistant has never once self-extended on this path. All 20
+      came from ONE caller — `rca_router.consume_fix_verdict` inside `incident_escalation`,
+      never a live turn — so the record's reading of it as "an autonomous lane cannot obtain
+      consent because it has no address" is CORRECT and is the whole population. 15 carried
+      `session_key: job:incident_escalation-9fb1c485` with `channel: null` (the half
+      `ee3ba6e0` fixed by binding a channel to a job's trace); the other 5 ran with
+      `trace_id`, `span_id` AND `session_key` all null — no TraceContext bound at all, which
+      `ee3ba6e0` does not reach. detection_raised has grown 1 -> 4.
+    but_the_fix_is_UNPROVEN_and_that_is_a_denominator_not_a_verdict: >-
+      `tool_build` has had ZERO invocations since 2026-08-31, so no traffic has tested
+      `ee3ba6e0`. A zero here is NO OPPORTUNITY, not a failed fix — and the reason nobody
+      could tell the difference is DEBT-267: `route_rca_verdict` declined at DEBUG and
+      consumed at INFO, so the path that leads to `tool_build` went dark on 2026-09-03 while
+      `incident_escalation: RCA complete` fired 41 more times. That is now INFO, so the next
+      decline is visible and this claim becomes answerable by traffic rather than by reading.
+    claim_check: >-
+      E=$(grep -ahc "tool_build.execute: entry" ~/.stackowl/logs/stackowl*.jsonl | paste -sd+
+      | bc); R=$(grep -ahc "tool_build.execute: no channel/session" ~/.stackowl/logs/stackowl*.jsonl
+      | paste -sd+ | bc); [ "$E" -eq "$R" ] && echo "STILL 100% REFUSED — $R of $E" || echo
+      "SETTLED — $R refused of $E attempts, so the lane now has an address"
   FTS_PRUNE_2026_08_31_the_index_offered_147_skills_that_do_not_exist_and_now_does_not:
     map_check: "No mapped item matches — evidence-led work, recorded as DEBT-65."
     what_was_wrong: "skills 28 rows, skills_fts 179, of which 147 named a skill that is gone. Skill search could surface and rank jarvis_warm_greeting, download-youtube-video and the-chiefs-dashboard. Third occurrence of this shape; committed_facts_fts indexed 1,112 dead rows before it."
@@ -20901,6 +20970,81 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-267
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work, recorded here per the skill's rule for an unmapped finding."
+    what: >-
+      THE SELF-HEALING LOOP'S DECLINE WAS INVISIBLE, SO "DEAD" AND "DECLINING" WERE THE SAME
+      LOG. `route_rca_verdict` consumes every RCA verdict the incident-escalation handler
+      produces. It logged its entry and its `not verdict.verified` early return at DEBUG and
+      only its consumption at INFO. Its last INFO line is 2026-09-03; `incident_escalation:
+      RCA complete` has fired 41 times since. This loop spent its whole measurement budget
+      unable to answer whether self-healing had stopped or was simply declining every
+      verdict, because both outcomes write nothing.
+    the_instrument_is_the_finding: >-
+      MEASURED 2026-09-09 across every retained log: 652,309 INFO, 13,547 WARNING, 11,250
+      ERROR, 2 CRITICAL and **ZERO DEBUG** — 677,108 records. A DEBUG line is not a faint
+      signal in this deployment, it is no signal. The control that proves it is the function
+      itself: `route_rca_verdict: entry` 0, `unverified verdict` 0, `exit` 86. The only
+      observable outcome was the one where it acted.
+    and_the_platforms_own_confessions_were_at_debug: >-
+      Nine background sites announced a MISSING COLLABORATOR at DEBUG — `no db wired`
+      (goal_execution, twice), `no skill curator wired` and `no audit retention wired`
+      (knowledge_prune), `no embedding registry` and `no embedder` (lessons_index), `no
+      provider registry wired` (objective driver, twice) and `flag off — noop`
+      (incident_escalation). That is the BUILT-BUT-NOT-WIRED family CLAUDE.md names as the
+      shape accounting for nearly every real defect here, reporting itself at a level nobody
+      can read. They are defensive `| None = None` defaults — knowledge_prune's two
+      collaborators are both wired at assembly.py:280 — so in a healthy deployment they fire
+      ZERO times. Promoting them costs nothing in health and speaks exactly when something
+      is missing.
+    why_not_what: >-
+      CLAUDE.md says "Production runs at INFO. A `log.*.debug` line does not exist when you
+      need it." `item-loop/SKILL.md` says it again. TWO COPIES, ZERO ENFORCEMENT — this
+      repo's own named shape, "two copies of one rule; one source, have the other ask it" —
+      so it recurred. And it has recurred a lot: MEASURED, TEN records in this file each
+      carry a repair of this exact shape (DEBT-2, DEBT-145, DEBT-219, DEBT-240, DEBT-252,
+      DEBT-256, DEBT-260, and ESC-70/71/73, which are session journals holding one apiece),
+      the most recent within days. Ten symptom fixes and no cause fix. The cause is that the 4-point logging convention assigns a LEVEL BY
+      POSITION (entry and exit are DEBUG) when the level should be assigned by whether the
+      branch is an OUTCOME someone must be able to see.
+    what_else_that_cause_reaches: >-
+      MEASURED: 237 functions across 29 packages log loudly on one return path and only at
+      DEBUG on another. 29 of them are in the five BACKGROUND packages (scheduler,
+      parliament, learning, notifications, objectives) and those are the ones enforced — a
+      per-turn tool that returns quietly is still observed, because its turn has a user, a
+      reply and a cost record, whereas a scheduler tick has none of those and the log is the
+      only witness there is. The other 208 are REPORTED by `--all` and deliberately not
+      gated; that limit is stated rather than hidden.
+    the_guard: >-
+      `scripts/logging_visibility.py` names the shape mechanically (a return path logging at
+      INFO/WARNING/ERROR beside one whose only log is DEBUG, adjacency-scoped so a return is
+      never paired with a sibling branch's line). `tests/audit/
+      test_a_background_subsystem_that_declines_still_says_so.py` ratchets it: a NEW key
+      fails by name, a STALE exemption also fails so the allowlist cannot rot, a vacuity
+      control feeds it a synthetic tree it must find, and the motivating instance is proven
+      by DRIVING `route_rca_verdict` with an unverified verdict and requiring a record at
+      >= INFO rather than reading its source.
+    claim_check: >-
+      uv run python scripts/logging_visibility.py | head -2   # must read 19, and
+      `uv run pytest tests/audit/test_a_background_subsystem_that_declines_still_says_so.py`
+      must be 4 passed. Then, once the platform has been restarted onto this code and an RCA
+      has declined once: `grep -ah "route_rca_verdict: unverified" ~/.stackowl/logs/stackowl*.jsonl | wc -l`
+      is > 0, which was structurally impossible before this change.
+    closing_check: >-
+      B=$(./scripts/log_since.sh 2026-09-09 'route_rca_verdict: unverified verdict');
+      D=$(./scripts/log_since.sh 2026-09-09 'incident_escalation: RCA complete');
+      [ "$B" -gt 0 ] && echo "CLOSEABLE — $B declines visible since the ship date, over $D
+      RCA completions" || echo "OPEN — 0 declines over $D RCA completions SINCE 2026-09-09;
+      the line is emitted only when a verdict arrives unverified, so a zero here is NO
+      OPPORTUNITY rather than a failed fix"
+    why_the_date_bound_is_not_decoration_here: >-
+      The gate caught this check reading the logs unbounded and REFUSED THE COMMIT. It was
+      arguably safe — the INFO line cannot exist before this change, so history could not
+      satisfy it — but that is a judgement about one check, and the guard enforces a
+      property. Bounding it costs nothing and removes the judgement. Exactly the shape this
+      item is about: a rule nothing enforces gets applied unevenly.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
   - id: DEBT-266
     found: 2026-09-09
     what: >-

@@ -802,7 +802,7 @@ class ObjectiveDriverHandler(JobHandler):
             }},
         )
         if self._provider_registry is None:
-            log.scheduler.debug(
+            log.scheduler.warning(
                 "[scheduler] objective_driver._maybe_decompose_further: no provider "
                 "registry wired — running as-is",
                 extra={"_fields": {"subgoal_id": subgoal.subgoal_id}},
@@ -875,7 +875,7 @@ class ObjectiveDriverHandler(JobHandler):
             )
             return done[0].result or fallback
         if self._provider_registry is None:
-            log.scheduler.debug(
+            log.scheduler.warning(
                 "[scheduler] objective_driver._synthesize_completion: no provider "
                 "registry wired — concatenating step results",
                 extra={"_fields": {"objective_id": objective.objective_id}},

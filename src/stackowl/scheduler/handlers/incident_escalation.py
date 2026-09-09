@@ -657,7 +657,7 @@ class IncidentEscalationHandler(JobHandler):
         )
         t0 = time.monotonic()
         if not _incident_escalation_enabled():
-            log.scheduler.debug(
+            log.scheduler.warning(
                 "[scheduler] incident_escalation.execute: flag off — noop",
                 extra={"_fields": {"job_id": job.job_id}},
             )

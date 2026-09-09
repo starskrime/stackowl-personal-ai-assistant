@@ -191,7 +191,7 @@ async def route_rca_verdict(
     # 2. DECISION — only a VERIFIED verdict is ever consumed (an unverified/
     # rejected one is treated exactly like "no verdict yet", same as the miner).
     if not verdict.verified:
-        log.scheduler.debug(
+        log.scheduler.info(
             "[rca_router] route_rca_verdict: unverified verdict — no consumption",
             extra={"_fields": {"capability_class": verdict.capability_class}},
         )

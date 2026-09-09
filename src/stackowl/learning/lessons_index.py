@@ -83,7 +83,7 @@ class LessonsIndex:
             }},
         )
         if self._embedder is None:
-            log.memory.debug(
+            log.memory.warning(
                 "[learning] index.publish: exit — no embedding registry",
             )
             return False
@@ -132,7 +132,7 @@ class LessonsIndex:
             extra={"_fields": {"n": len(drafts)}},
         )
         if self._embedder is None:
-            log.memory.debug("[learning] index.publish_many: exit — no embedder")
+            log.memory.warning("[learning] index.publish_many: exit — no embedder")
             return 0
         texts = [d.content for d in drafts if d.content.strip()]
         if not texts:

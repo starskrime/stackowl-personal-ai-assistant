@@ -276,7 +276,7 @@ class MorningBriefHandler(JobHandler):
         key = assembler.key
         enabled = toggles.get(key, True)
         if not enabled:
-            log.scheduler.debug(
+            log.scheduler.info(
                 "[scheduler] morning_brief._run_assembler: section disabled by settings",
                 extra={"_fields": {"key": key}},
             )

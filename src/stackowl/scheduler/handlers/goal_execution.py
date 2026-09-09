@@ -594,7 +594,7 @@ class GoalExecutionHandler(JobHandler):
     ) -> None:
         """Insert a row into ``job_results`` — degrades to noop if db is None."""
         if self._db is None:
-            log.scheduler.debug(
+            log.scheduler.warning(
                 "[scheduler] goal_execution._record_result: no db wired — skipping persist",
                 extra={"_fields": {"job_id": job_id, "status": status}},
             )
@@ -620,7 +620,7 @@ class GoalExecutionHandler(JobHandler):
     async def _delete_job(self, job_id: str) -> None:
         """Remove a one-shot agent from the ``jobs`` table after a successful run."""
         if self._db is None:
-            log.scheduler.debug(
+            log.scheduler.warning(
                 "[scheduler] goal_execution._delete_job: no db wired — skipping delete",
                 extra={"_fields": {"job_id": job_id}},
             )

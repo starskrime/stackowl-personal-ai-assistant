@@ -150,6 +150,7 @@ at a process table. Measured, in order:
 | 2026-09-09 | **`12721 passed, 17 skipped, 0 failed in 2372.38s` (rc=0)**, `SUITE TREE STILL` — twenty-fourth, on `b6a991f2`. Launched at the START of the loop, per the note the previous loop left itself. DEBT-263 was measured, authored and dry-run off-tree for the whole 40 minutes, and the wait paid for itself twice: it caught that `Job` is a PYDANTIC model whose `idempotency_key`/`next_run_at` are required `str` (the drafted test passed None and would have failed on construction), and it bought a threshold calibrated against 319 real inter-sweep gaps rather than chosen. |
 | 2026-09-09 | **RED — `1 failed, 12728 passed, 17 skipped in 2398.07s` (rc=1)**, `SUITE TREE STILL`, on `13b6894d` — twenty-fifth, and the failure was MINE: the previous loop's `Reviewed:` line on D14.4 says "the alert half this document records as honestly OPEN", a new `\bOPEN\b` line nobody had judged, and DEBT-256's ground-truth table demands a judgement for every occurrence. **THE GATE COULD NOT HAVE CAUGHT IT, BY DESIGN**: that test is deliberately not a tripwire, because it fires whenever a design document gains or edits an OPEN line — ordinary work here — and a gate that fails on ordinary work gets bypassed rather than satisfied. The cost of that trade is exactly this: a doc edit ships and the full run finds it 40 minutes later. Paid once, recorded, not re-litigated. |
 | 2026-09-09 | **`12732 passed, 17 skipped, 0 failed in 2390.37s` (rc=0)**, `SUITE TREE STILL` — twenty-sixth, on `4b940381`, GREEN again on the tree carrying the fix for the red run above. Launched at the START of the loop because the previous verdict was rc=1, which is the right reason to spend 40 minutes. DEBT-265 — a `progress.yml`-only change — was authored and dry-run against a scratch copy for the whole run and applied when it printed: `progress.yml` is outside the FINGERPRINT and inside the SUITE, and a mid-run write is exactly what voided the 17th. |
+| 2026-09-09 | **`12738 passed, 17 skipped, 0 failed in 2414.98s` (rc=0)**, `SUITE TREE STILL` — twenty-seventh, on `e1dd243d`. Launched at the START of the loop; DEBT-267 was measured, built, mutation-proven and dry-run against an off-tree MIRROR for the whole 40 minutes. The wait paid for itself TWICE: it caught that my throwaway sweep's looser adjacency rule had inflated 237 asymmetric functions to **280**, one edit before that number went into this file as fact; and it caught that the new test read `caplog`, which reaches records only while `stackowl` still propagates — `configure_logging` sets `propagate = False`, so the guard would have passed alone and failed in any session that had configured logging first. It reads the named logger directly now. |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so
@@ -340,6 +341,42 @@ is not a style note: D08.1's fourth acceptance check sat open for days because i
 evidence line was DEBUG, and no volume of live traffic could ever have closed it. If a
 log line is the evidence for a claim, it must be INFO — and run the query that would
 close the claim *before* you need it, to confirm it returns something.
+
+**MEASURED 2026-09-09, and the number is starker than the rule sounds: 652,309 INFO,
+13,547 WARNING, 11,250 ERROR, 2 CRITICAL and ZERO DEBUG across 677,108 retained
+records.** Not "rarely useful" — a `log.*.debug` line has never once been written by
+this deployment.
+
+**AND WRITING THE RULE DOWN TWICE DID NOT ENFORCE IT.** It is here and in
+`item-loop/SKILL.md`, and TEN records in `progress.yml` each carry a repair of
+this exact shape — DEBT-2, 145, 219, 240, 252, 256, 260 and ESC-70/71/73 (the last three
+are session journals, one instance apiece) — the latest within days of this line. Ten symptom fixes, no cause fix, which is this file's own "two copies of one
+rule" shape applied to itself. The cause: 4-point logging assigns a level BY POSITION
+(entry and exit are DEBUG) when the level belongs to whether the branch is an OUTCOME
+someone must be able to see.
+
+**So it is now a gate, not a paragraph:**
+
+```bash
+uv run python scripts/logging_visibility.py          # the 5 background packages
+uv run python scripts/logging_visibility.py --all    # every package, reported not gated
+```
+
+It names any function that logs loudly on one return path and only at DEBUG on another —
+so its outcome is visible exactly when it ACTS and invisible when it declines, which
+inverts what a reader needs. `tests/audit/test_a_background_subsystem_that_declines_still_says_so.py`
+ratchets the background set and fails on a new one BY NAME (and on a stale exemption, so
+the allowlist cannot rot). It found the shape in the self-healing loop itself:
+`route_rca_verdict` declined at DEBUG and consumed at INFO, so its last INFO line was
+2026-09-03 while `incident_escalation: RCA complete` fired 41 more times — a whole
+session could not tell a DEAD self-healing loop from a DECLINING one. Nine other sites
+were the platform confessing a MISSING COLLABORATOR (`no db wired`, `no skill curator
+wired`, `no embedding registry`, `flag off — noop`) — the built-but-not-wired family
+this file calls the commonest defect here, reporting itself where nobody could read it.
+
+Scoped to `scheduler/`, `parliament/`, `learning/`, `notifications/` and `objectives/` on
+purpose: a per-turn tool that returns quietly is still observed, because its turn has a
+user, a reply and a cost record. A scheduler tick has none of those.
 
 ## Measuring is the job, and the instrument lies too
 

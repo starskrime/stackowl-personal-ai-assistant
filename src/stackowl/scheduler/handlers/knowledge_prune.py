@@ -120,7 +120,7 @@ class KnowledgePruneHandler(JobHandler):
         the other. `prune()` is synchronous sqlite and brief, so it runs inline.
         """
         if self._audit_retention is None:
-            log.scheduler.debug(
+            log.scheduler.warning(
                 "[scheduler] knowledge_prune: no audit retention wired — skipping",
                 extra={"_fields": {"job_id": job.job_id}},
             )
@@ -153,7 +153,7 @@ class KnowledgePruneHandler(JobHandler):
     async def _run_curator(self, job: Job) -> int:
         """Run the skill decay pass. Never raises — returns how many moved."""
         if self._curator is None:
-            log.scheduler.debug(
+            log.scheduler.warning(
                 "[scheduler] knowledge_prune: no skill curator wired — skipping",
                 extra={"_fields": {"job_id": job.job_id}},
             )
