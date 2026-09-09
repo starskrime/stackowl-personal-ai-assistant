@@ -137,3 +137,36 @@ def test_every_reviewed_commit_records_WHY_it_does_not_apply() -> None:
             f"of reason. Record WHY the change does not touch this document's claims "
             f"— the next reader has to be able to disagree with it."
         )
+
+
+@pytest.mark.tripwire
+def test_a_reviewed_field_that_names_no_commit_is_not_a_dismissal() -> None:
+    """THE VACUITY THE OTHER THREE CANNOT SEE, because `_entries()` drops it.
+
+    `_reviewed_shas` extracts backticked hex only, and `_entries()` above keeps a
+    document only `if shas`. So a `Reviewed:` field naming something that is not a
+    commit yields the EMPTY SET and vanishes from every guard in this file: the
+    document reads as reviewed to a person, counts as unreviewed to `doc_check`,
+    and is checked by nothing. A zero numerator over a zero denominator is not a
+    pass — this repo's own rule, applied to its own guard.
+
+    MEASURED 2026-09-09: 22 documents carry the field and TWO yielded nothing —
+    D07.3 said `DEBT-261` and D14.4 said `DEBT-263`, naming the ITEM that made the
+    change rather than the COMMIT that made it. Both were written by the loops that
+    shipped those items, and both left their document in the STALE list while
+    looking answered. Writing the item id is the natural mistake: it is what the
+    author has in mind, and nothing said the field is machine-read.
+    """
+    mod = _doc_check()
+    offenders: list[str] = []
+    for doc in sorted(_DESIGNS.glob("*.md")):
+        head = mod._header(doc.read_text(encoding="utf-8"))  # noqa: SLF001
+        if "Reviewed" not in head:
+            continue
+        if not mod._reviewed_shas(head):  # noqa: SLF001
+            offenders.append(f"{doc.name}: {head['Reviewed'][:70]!r}")
+    assert not offenders, (
+        "these documents carry a `Reviewed:` field that yields NO commit sha, so it "
+        "dismisses nothing and every other guard in this file skips them — write the "
+        "backticked short sha (an item id is not a commit):\n  " + "\n  ".join(offenders)
+    )

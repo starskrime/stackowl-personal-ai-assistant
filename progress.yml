@@ -21018,6 +21018,67 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-269
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work, found by draining the last STALE document."
+    what: >-
+      A `Reviewed:` FIELD THAT NAMES THE ITEM INSTEAD OF THE COMMIT IS WORTH NOTHING, AND
+      NOTHING SAID SO. `doc_check._reviewed_shas` extracts backticked hex only. D07.3 said
+      `DEBT-261` and D14.4 said `DEBT-263` — the ITEM that made the change rather than the
+      COMMIT that made it — so both extract to the EMPTY SET. D07.3 therefore sat on the
+      STALE list while reading, to a person, as answered.
+    why_not_what: >-
+      THE THREE GUARDS COULD NOT SEE IT, BY CONSTRUCTION. `test_a_reviewed_commit_is_a_real_commit.py`
+      checks that each reviewed sha touched a cited source, is newer than `Last verified`,
+      and carries a reason — and its `_entries()` helper keeps a document only `if shas`. An
+      empty set is not a failing document, it is an ABSENT one, so all three passed
+      vacuously on the two documents that were wrong. That is this repo's own rule turned on
+      its own guard: a zero numerator over a zero denominator is not a pass.
+    and_the_deeper_half_is_that_nobody_was_ever_TOLD: >-
+      MEASURED: `DOC_STANDARD.md` — the document that defines what every design document
+      must contain — does not mention `Reviewed:` ANYWHERE. Not in its header template, not
+      in its numbered rules. The field is machine-read by `doc_check.py`, validated by three
+      tests, and undocumented at the one surface an author consults before writing it. So
+      writing the item id is not carelessness; it is the only thing an author had to go on.
+      Both offenders were written by the loops that shipped DEBT-261 and DEBT-263 — by me,
+      twice, for the same reason.
+    what_else_that_cause_reaches_MEASURED_and_it_is_SMALL: >-
+      The tempting claim is "DOC_STANDARD describes almost none of the header fields" —
+      MEASURED, 30 distinct fields are in use across the corpus and only FIVE are described.
+      That number is nearly meaningless: most are one-off prose (`Purpose`, `Verdict`,
+      `Requested by`, each in ONE document) and the `Item.`/`Ask.` genre is already recorded
+      elsewhere as a known divergence. The denominator that matters is what `doc_check`
+      CONSUMES, and that is exactly three families — `Source` (plus four tolerated
+      spellings), `Last verified`, and `Reviewed`. Two of the three are in the standard.
+      `Reviewed` is the ONLY machine-read field entirely absent from it, so the reach of
+      this cause is one field, and it is the one being fixed. Recorded this way round
+      because "25 undescribed fields" would have justified a sweep that was mostly noise.
+    fix: >-
+      Three surfaces in one change, which is what "retired means deleted" teaches about
+      partial fixes. (1) Both documents now name the real commit — `84bd91c1` for D07.3,
+      `57cf776e` for D14.4 — each VERIFIED to touch a cited `Source` (task_runner.py under
+      `pipeline/durable/`; `health_sweep.py`) and to postdate its document's `Last verified`
+      of 2026-09-08, so the two existing guards actually bind now. (2) A fourth guard,
+      `test_a_reviewed_field_that_names_no_commit_is_not_a_dismissal`, walks every document
+      rather than `_entries()` and fails on a field yielding no sha. (3) DOC_STANDARD gains
+      the field in its template and rule 8, including that the header parser keeps only the
+      LAST `Reviewed:` line — the duplicate-field trap DEBT-268 hit hours earlier.
+    tests: >-
+      DISCRIMINATION PROVEN, not asserted: the new guard FAILS against the tree as it stood
+      (naming both documents) and the extraction was shown to go from the empty set to
+      {'84bd91c1'} / {'57cf776e'} on the corrected text — verified against the STRING so
+      nothing under test was touched while a full suite ran.
+    claim_check: >-
+      uv run python -c "import importlib.util,pathlib; spec=importlib.util.spec_from_file_location('dc','scripts/doc_check.py'); dc=importlib.util.module_from_spec(spec); spec.loader.exec_module(dc); docs=sorted(pathlib.Path('docs/reference-mapping/designs').glob('*.md')); bad=[p.name for p in docs if 'Reviewed' in dc._header(p.read_text(encoding='utf-8')) and not dc._reviewed_shas(dc._header(p.read_text(encoding='utf-8')))]; print('SETTLED — every Reviewed field names a commit' if not bad else 'OPEN — worth nothing: '+', '.join(bad))"
+    validated_by_the_report_this_item_exists_to_correct: >-
+      MEASURED AFTER LANDING, not drafted before it. `doc_check.py`'s STALE section went
+      1 -> 0 — it prints no STALE block at all now — and `REVIEWED, NOT RE-RUN` went 18 ->
+      19 as D07.3 moved across, which is the correct destination for a document whose only
+      change was read and dismissed. The claim_check prints SETTLED. And the new guard
+      DISCRIMINATES: it failed against the tree as it stood, naming both documents, and all
+      four tests in the file pass now. No restart was needed and none is claimed — this
+      change touches docs/, tests/ and a standard, and nothing in it runs in production.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-268
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, found by draining DEBT-203's residue."

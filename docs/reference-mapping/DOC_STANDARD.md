@@ -39,6 +39,7 @@ than brevity.
 > **Source:** `src/stackowl/<path>`, `src/stackowl/<other>`
 > **Config:** `<section>` in `stackowl.yaml`
 > **Last verified:** YYYY-MM-DD, against commit `<sha>`
+> **Reviewed:** `<short sha>`[, `<short sha>`] — why it does not apply   (optional)
 
 ## Why this exists
 
@@ -163,6 +164,26 @@ expected output is what goes wrong.
 
 7. **`Last verified` is a date and a commit.** Not "recently". Re-verify when you touch the
    subsystem; if you cannot, move the status to `stale` rather than leaving a confident lie.
+
+8. **`Reviewed:` names COMMITS, in backticks, or it is worth nothing.** It is the honest
+   third answer when a commit touches a cited `Source` without touching a claim here:
+   neither re-run the whole Verification section nor bump the date — record the sha and
+   say why it does not apply. **It is MACHINE-READ.** `doc_check.py` extracts
+   ``` `[0-9a-f]{7,40}` ``` and treats only those commits as dismissed, and
+   `tests/audit/test_a_reviewed_commit_is_a_real_commit.py` checks that each one really
+   touched a cited source, is newer than `Last verified`, and carries a reason.
+
+   MEASURED 2026-09-09, and this rule is written here because its absence produced the
+   defect: of 22 documents carrying the field, TWO named the ITEM instead of the commit —
+   D07.3 said `DEBT-261`, D14.4 said `DEBT-263`. Both extract to the EMPTY SET, so the
+   documents stayed on the stale list while reading as answered to a person, and all
+   three guards SKIPPED them, because the helper that feeds them keeps a document only
+   `if shas`. A zero numerator over a zero denominator is not a pass. Writing the item id
+   is the natural mistake — it is what the author has in mind, and until now this
+   standard did not say the field existed, let alone that a script reads it. There is now
+   a fourth guard for the empty case; this entry is the half a guard cannot supply, which
+   is telling the author before they write it. Only one `Reviewed:` line per document —
+   the header parser keeps the LAST, so a second silently discards the first.
 
 ---
 
