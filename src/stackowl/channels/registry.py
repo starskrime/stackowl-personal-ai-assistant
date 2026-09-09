@@ -65,6 +65,59 @@ class ChannelRegistry:
             extra={"_fields": {"channel": name, "total_after": len(self._adapters)}},
         )
 
+    def ensure_registered(self, adapter: ChannelAdapter) -> bool:
+        """Publish *adapter* unless its channel is already there. True if it registered.
+
+        THE ONE PLACE THAT ANSWERS "make sure this channel resolves", because two
+        callers were answering it separately and only one was right.
+
+        `register` RAISES on a duplicate, and warns before it raises — correctly, since
+        for its own contract a duplicate is a caller error. But both publishers of a
+        socket proxy want something else: *ensure* it is there, where already-present is
+        the ordinary case, not a fault. `channels/socket_adapter.py` expressed that by
+        asking `get()` first; `startup/orchestrator.py`'s core ingress loop expressed it
+        as `contextlib.suppress(Exception)` around the attempt, which is not the same
+        thing twice — it is the right answer and the wrong one.
+
+        MEASURED 2026-09-09: 82 `[channel_registry] register: duplicate` warnings, EVERY
+        ONE `channel: telegram`, roughly one per boot, in the operator's alarm channel on
+        an entirely normal path. The orchestrator's comment claimed the call was
+        "idempotent — guarded by `registered`", and that set guards its own call site
+        only; the boot-time socket-proxy registration publishes the same names into this
+        same singleton first.
+
+        AND THE BROAD SUPPRESS HID MORE THAN THE DUPLICATE. `suppress(Exception)` would
+        swallow a genuine registration failure just as quietly, and that failure is
+        silent by nature: proactive sends to the channel simply stop resolving. So this
+        NEVER RAISES and logs the real failure, which is the no-hidden-errors rule in the
+        one place both callers now share.
+        """
+        name = adapter.channel_name
+        try:
+            self.get(name)
+        except ChannelNotFoundError:
+            pass
+        else:
+            log.gateway.debug(
+                "[channel_registry] ensure_registered: already present — no-op",
+                extra={"_fields": {"channel": name}},
+            )
+            return False
+        try:
+            self.register(adapter)
+        except ChannelAlreadyRegisteredError:
+            # Raced with another registrar between the ask and the register.
+            return False
+        except Exception as exc:  # noqa: BLE001 — a publisher must never be blocked
+            log.gateway.warning(
+                "[channel_registry] ensure_registered: registration FAILED — proactive "
+                "sends to this channel will not resolve",
+                exc_info=exc,
+                extra={"_fields": {"channel": name}},
+            )
+            return False
+        return True
+
     def unregister_by_source(self, source_name: str) -> int:
         """Remove all adapters registered under source_name. Returns count removed."""
         log.gateway.debug(

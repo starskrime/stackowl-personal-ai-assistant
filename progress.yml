@@ -21018,6 +21018,58 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-272
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work, found by the CURRENT bucket of the report DEBT-271 built."
+    what: >-
+      PUBLISHING A CHANNEL THAT IS ALREADY PUBLISHED WARNED IN THE OPERATOR'S ALARM
+      CHANNEL, ONCE A BOOT. MEASURED across 13 retained files: **82**
+      `[channel_registry] register: duplicate` warnings, EVERY ONE `channel: telegram`,
+      still firing today. A socket proxy must be in the core's `ChannelRegistry` or
+      proactive sends fail "unknown channel", and TWO places put it there —
+      `channels/socket_adapter.py` at boot, and the core ingress loop in
+      `startup/orchestrator.py` when a channel first appears.
+    why_not_what: >-
+      TWO PUBLISHERS WANTED THE SAME THING AND ONLY ONE ASKED FOR IT. `socket_adapter`
+      called `registry.get()` first and skipped when present. The orchestrator wrote
+      `contextlib.suppress(Exception)` around a bare `register()` and its comment called
+      that "idempotent — guarded by `registered`" — a set that guards its own call site and
+      knows nothing about the boot-time registration into the same singleton. `register`
+      itself is right to warn and raise: for ITS contract a duplicate IS a caller error.
+      What was missing is the operation both callers actually wanted — *ensure* it is
+      there, where already-present is the ordinary case. Two copies of one rule, and only
+      one of them was the rule.
+    and_the_broad_suppress_hid_more_than_the_duplicate: >-
+      `suppress(Exception)` swallows a GENUINE registration failure just as quietly, and
+      that failure is silent by nature: proactive sends to the channel stop resolving and
+      nothing says why. That is the no-hidden-errors rule inverted — the catch was not
+      hiding an error it had handled, it was hiding one nobody would ever see.
+    fix: >-
+      `ChannelRegistry.ensure_registered(adapter) -> bool` is now the one place that
+      answers "make sure this channel resolves", and BOTH publishers ask it. It asks
+      `get()` first, narrows the duplicate suppression to `ChannelAlreadyRegisteredError`
+      (a genuine race between the ask and the register), and LOGS anything else at WARNING
+      rather than swallowing it. It never raises, because a publisher must not be blocked
+      by bookkeeping it is doing on the side. `register` is deliberately unchanged.
+      Three imports in `socket_adapter.py` died with the old shape — `contextlib` and both
+      exceptions — and were deleted in the same change, after checking that the remaining
+      `ChannelNotFoundError` mentions are prose inside docstrings.
+    tests: >-
+      `tests/channels/test_publishing_a_channel_twice_is_not_an_alarm.py`, four tests,
+      fully DRIVEN — no source reading. MUTATION-PROVEN: making the pre-check never
+      short-circuit fails the regression test, and the restore was from a FILE COPY with
+      the re-run as its only proof (4 passed again). It carries its own positive control:
+      bare `register` twice still warns, so the absence the main test asserts is something
+      the handler can actually see. And it reads the named logger directly rather than
+      through `caplog`, because `configure_logging` sets `propagate = False` — DEBT-267 is
+      the record of that trap.
+    validated_live_on_the_restart_after_the_fix: >-
+      PENDING until the platform is restarted onto this commit — see closing_check. The
+      evidence to look for is a boot with a `telegram` proxy publication and NO
+      `register: duplicate` beside it, which is the whole population of the 82.
+    closing_check: >-
+      d=$(./scripts/log_since.sh 2026-09-09 'channel_registry] register: duplicate'); e=$(./scripts/log_since.sh 2026-09-09 'channel_registry] register: exit'); if [ "$d" -eq 0 ] && [ "$e" -gt 0 ]; then echo "CLOSEABLE 0 duplicate warnings since the fix shipped, over $e successful registrations"; else echo "OPEN duplicates=$d registrations=$e since 2026-09-09 — a duplicate here means a publisher still attempts-and-swallows; e=0 is NO OPPORTUNITY (no channel has been published since the restart)"; fi
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
   - id: DEBT-271
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work; the instrument shipped one loop earlier failed on its own next use."

@@ -19,13 +19,11 @@ acks route home; the per-turn answer stream routes by ``trace_id`` regardless.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from stackowl.channels.base import ChannelAdapter
-from stackowl.exceptions import ChannelAlreadyRegisteredError, ChannelNotFoundError
 from stackowl.gateway.scanner import IngressMessage
 from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
@@ -309,16 +307,12 @@ def register_socket_channel_proxies(
     )
     registered: list[str] = []
     for channel in configured:
-        # 2. DECISION — skip a channel the reactive inbound path already registered.
-        try:
-            registry.get(channel)
-        except ChannelNotFoundError:
-            pass
-        else:
-            continue
-        # 3. STEP — register a socket proxy so proactive sends resolve this channel.
-        with contextlib.suppress(ChannelAlreadyRegisteredError):
-            registry.register(SocketChannelAdapter(conn, channel_name=channel))
+        # 2/3. DECISION + STEP — publish a socket proxy so proactive sends resolve this
+        # channel, unless the reactive inbound path already registered one. THE ASK AND
+        # THE REGISTER MOVED INTO `ensure_registered` so the core ingress loop can share
+        # them: it was expressing the same intent as `suppress(Exception)` around a bare
+        # `register`, which warned on every boot and hid real failures. See that method.
+        if registry.ensure_registered(SocketChannelAdapter(conn, channel_name=channel)):
             registered.append(channel)
     # 4. EXIT
     log.gateway.info(

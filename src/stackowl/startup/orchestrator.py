@@ -3322,11 +3322,32 @@ class StartupOrchestrator:
                         # send_file/send_message tools) can resolve this channel.
                         # Without it those fail "unknown channel"/"channel
                         # unavailable" because the real adapter lives in the
-                        # gateway. Idempotent — guarded by `registered`.
+                        # gateway.
+                        #
+                        # ASK, DO NOT ATTEMPT-AND-SWALLOW. The old comment claimed
+                        # "idempotent — guarded by `registered`", and `registered`
+                        # guards THIS call site only. The boot-time socket-proxy
+                        # registration in `channels/socket_adapter.py` publishes the
+                        # same channel names into the same singleton, so this line
+                        # re-registered a channel that was already there and
+                        # `ChannelRegistry.register` warned before raising. MEASURED
+                        # 2026-09-09: 82 `[channel_registry] register: duplicate`
+                        # warnings, EVERY ONE `channel: telegram`, about one per boot —
+                        # in the operator's alarm channel, on the normal path.
+                        #
+                        # AND `suppress(Exception)` HID MORE THAN THE DUPLICATE: a
+                        # genuine registration failure went just as quietly, and its
+                        # cost is silent — proactive sends to that channel stop
+                        # resolving. That is the no-hidden-errors rule inverted.
+                        #
+                        # THE CORRECT SHAPE ALREADY EXISTED ONE FILE OVER, so this is
+                        # not a new rule: `socket_adapter.py` asks `registry.get()`
+                        # first, skips when present, and narrows its suppression to
+                        # `ChannelAlreadyRegisteredError`. Two copies of one rule, and
+                        # only this one was wrong.
                         from stackowl.channels.registry import ChannelRegistry
 
-                        with contextlib.suppress(Exception):
-                            ChannelRegistry.instance().register(chan_adapter)
+                        ChannelRegistry.instance().ensure_registered(chan_adapter)
                         registered.add(msg.channel)
                     try:
                         await turn_client.submit(msg)
