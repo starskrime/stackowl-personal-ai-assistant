@@ -20893,8 +20893,18 @@ known_debt:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: no_change_needed
+    validated_LIVE_and_the_boot_that_carried_it_was_not_mine: >-
+      CLOSED 2026-09-09. Six sweep exits now carry `since_previous_s`, gaps of 319.5 to
+      330.6 seconds against a 300-second cadence, `missed_runs: 0` on all six - the
+      healthy state, measured rather than asserted - and ZERO blind-window warnings,
+      which is the desired reading and is reported separately so the two are never
+      conflated. AND THE BOOT THAT MADE IT LIVE WAS NOT MY RESTART: the first
+      gap-carrying record is 12:32:00, three minutes after a CodeWatcher re-exec at
+      12:28:59 triggered by my own edit to `health_sweep.py`. My explicit `./start.sh`
+      came later at 13:00:58. Stated because claiming the restart produced it would be a
+      true-sounding sentence about the wrong cause.
     the_fix: >-
       `_sweep_gap(job)` returns (seconds since the previous run, whole runs missed).
       `Job.last_run_at` holds the PREVIOUS stamp at execute time - the completion UPDATE
@@ -21080,6 +21090,14 @@ known_debt:
       test: done
       validate: partial
       document: no_change_needed
+    validate_stays_PARTIAL_because_the_first_CLOSEABLE_did_not_discriminate: >-
+      The check reported CLOSEABLE on one row created after the fix carrying a delivery
+      achievement AND a destination — and reading the row before believing it showed the
+      achievement was "the reply is delivered to the user who asked", written by
+      `turn_task.py:338`, a line that was always correct and that this item never
+      touched. Satisfied by a case the old code handled too. Narrowed to
+      `%delivered to the job%`, the achievement `task_runner.py` actually writes, so only
+      a row from the changed line can close it.
     what_this_does_NOT_claim: >-
       It does not change which rows complete - the guard already keys on `destination`
       and still does. It stops the RECORD asserting a delivery the row never owed, which
@@ -21134,11 +21152,18 @@ known_debt:
       # not live until the restart. That is "satisfied by a case the old code handled
       # too" exactly. 2026-09-09T11:14:39Z is the boot that first carried this change
       # (`[startup] core: code watcher armed`), so only rows after it can evidence it.
-      new=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%is delivered to%' AND (destination IS NULL OR destination = '') AND created_at >= '2026-09-09T11:14:39'" | tail -1)
+      # NARROWED 2026-09-09 TO THE ACHIEVEMENT THIS FIX CONTROLS. The check first read
+      # `LIKE '%is delivered to%'`, and reported CLOSEABLE on a row whose achievement is
+      # "the reply is delivered to the user who asked" — written by `turn_task.py:338`,
+      # which was ALWAYS correct and which this item did not touch. That is "satisfied by
+      # a case the old code handled too", caught by reading the row before believing the
+      # verdict. The changed line is `task_runner.py`'s job-targets achievement, so that
+      # is the only string that can evidence it.
+      new=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%delivered to the job%' AND (destination IS NULL OR destination = '') AND created_at >= '2026-09-09T11:14:39'" | tail -1)
       # THE DENOMINATOR OF NEW ROWS, so CLOSEABLE cannot be 0-over-0. Until the platform
       # has actually created a task carrying a delivery achievement under the new code,
       # there is nothing to be right about.
-      newd=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%is delivered to%' AND created_at >= '2026-09-09T11:14:39'" | tail -1)
+      newd=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE achievement LIKE '%delivered to the job%' AND created_at >= '2026-09-09T11:14:39'" | tail -1)
       if [ "${newd:-0}" -eq 0 ]; then
         echo "OPEN no task carrying a delivery achievement has been created since the fix went live at 2026-09-09T11:14:39Z, so nothing yet distinguishes it from its predecessor; $d such rows exist in total and $n of them (all pre-fix) claim a delivery with no destination"
       elif [ "${new:-0}" -eq 0 ]; then
@@ -21182,8 +21207,14 @@ known_debt:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: no_change_needed
+    validated_LIVE: >-
+      CLOSED 2026-09-09 on a real eviction: `[memory] sqlite_bridge.store: conversation
+      turns EVICTED past the retention window` at 12:47:55 with `trimmed: 1, keep: 60,
+      session_key: 72055773`. Before this item that deletion left NO production record at
+      all - it existed only in a DEBUG exit line - so the record is evidence only the new
+      code could produce.
     closing_check: |-
       # BOUNDED TO THE PROMOTION DATE and earned: the string is new, introduced by this
       # item, so no retained line can predate it — but the message ALSO cannot be
