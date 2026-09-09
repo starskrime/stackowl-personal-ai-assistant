@@ -18501,6 +18501,59 @@ current:
         Telegram are gone; if replies still read badly it is a length/tables question rather
         than a markdown one, and the spend report shipped tonight gives a place to judge it.
       what_is_blocked: "Nothing."
+    ESC_161_should_a_52_hour_old_answer_be_delivered_at_all:
+      premise_check: |
+        # HOLDS while stale retried chat tasks exist AND nothing in the durable loop
+        # bounds relevance. EXPIRED the moment a freshness bound ships.
+        n=$(./scripts/db_query.sh "SELECT COUNT(*) FROM tasks WHERE attempt_count > 0 AND (julianday(updated_at)-julianday(created_at))*24 > 6" | tail -1)
+        g=$(grep -rlE "answer_is_still_wanted|freshness|max_answer_age" --include=*.py src/stackowl/pipeline/durable/ | grep -c . )
+        [ "${g:-0}" -gt 0 ] && echo "EXPIRED a freshness bound now exists in the durable loop" || echo "HOLDS ${n:-0} retried chat tasks older than 6h, and no freshness bound in src/stackowl/pipeline/durable/"
+      question: >-
+        When a chat task is recovered and its answer is many hours old, should it be
+        DELIVERED, SUPPRESSED, or delivered only under some age? DEBT-251 made such an
+        answer say which question it answers, which needed no decision. Dropping one is
+        removing something user-facing, which this programme does not do autonomously.
+      why_evidence_cannot_settle_it: >-
+        The logs can say how old an answer was and that nobody was waiting for it. They
+        cannot say whether Bakir would rather have a late answer or none - that is
+        product intent. Both readings are defensible: a research answer 17 hours later
+        may still be valuable, and a "what is the weather" answer 52 hours later is
+        noise.
+      the_measurement: >-
+        221 recovery re-drives across the retained logs. 83 retried tasks, averaging
+        1,028 minutes (17.1 HOURS) between creation and last attempt, maximum 3,157
+        minutes (52.6 hours); 75 of the 83 are over 6 hours. The out-of-band send fires
+        43 times against 1,176 normal deliveries. The ONLY time concept in
+        `src/stackowl/pipeline/durable/` is the LEASE, which answers "did the worker
+        die", not "is this still wanted" - `task_loop_runner.py` says so in its own
+        docstring.
+      panel_recommendation: >-
+        SUPERSESSION, NOT AGE - and this recommendation was CHANGED by evidence after it
+        was first drafted. My first answer was "an age bound with a labelled floor, never
+        a hard drop", reasoning that dropping makes the loop's own "complete when the
+        outcome reached its DESTINATION" rule unsatisfiable. THE REFERENCE PLATFORM DOES
+        THE OPPOSITE AND HAS A BETTER RULE: it stamps every run with a monotonic
+        per-session generation token and DISCARDS a late result outright -
+        `gateway/run.py:13940` (line re-verified), "Discarding stale agent result ... generation %d is no
+        longer current" - bumped by /stop, /new and /resume. The discriminator is not
+        AGE, it is whether the conversation has MOVED ON. A 52-hour-old answer to a
+        question nobody superseded is still wanted; a 30-second-old answer the user
+        already re-asked differently is not, and an age bound gets both backwards. So the
+        recommendation is now: drop when superseded, deliver-with-label otherwise, and
+        let age drive nothing.
+      what_the_reference_platform_does_measured_by_a_subagent_2026_09_09: >-
+        Monotonic run generations that DISCARD stale results before delivery
+        (`gateway/run.py:18941` mint, `:18970` check, `:13940` drop). A per-session TURN
+        LEASE keyed by the RESOLVED TRANSCRIPT ID rather than the routing key
+        (`gateway/turn_lease.py`), whose own file header describes this exact bug: two
+        routing keys mapping to one session "so no per-key guard ever sees the collision
+        ... the second turn runs on a history base that never saw the first turn's
+        exchange". That keying is the part StackOwl lacks - our recovery turns carry
+        `owl:secretary:recovery:<task>`, a THIRD key, which is precisely the gap a
+        per-lane guard cannot see.
+      what_is_blocked: >-
+        Nothing. DEBT-251 shipped the additive half and the answer is now legible either
+        way. This only decides whether an age bound is added on top.
     ESC_96_a_scheduled_goal_now_carries_an_ADDRESS_and_that_touches_consent:
       premise_check: |
         grep -q 'reply_target' src/stackowl/scheduler/handlers/goal_execution.py && echo 'HOLDS address still carried' || echo EXPIRED
@@ -20788,6 +20841,72 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-251
+    found: 2026-09-09
+    what: >-
+      Bakir, live: "I did ask question and it was answered to old my question which
+      tells me todays context switching, compaction, memory handling, long term memory
+      does not work correctly." He was right that something is wrong and the mechanism
+      is NOT memory: a chat task whose LEASE expired is re-driven by the durable loop
+      and its answer pushed into the chat afterwards, unlabelled.
+    root_cause_A_LEASE_ANSWERS_DID_THE_WORKER_DIE_NOT_IS_THIS_STILL_WANTED: >-
+      MEASURED: 221 recovery re-drives across the retained logs. 83 retried tasks
+      average 1,028 minutes - 17.1 HOURS - between creation and last attempt, maximum
+      3,157 minutes (52.6 hours), and 75 of the 83 are over six hours. Trace
+      `6e6cf497` was asked at 02:49:45, re-driven at 02:56:27 as a NEW message arrived,
+      and delivered at 02:58:24. The only time concept in `pipeline/durable/` is the
+      lease, and `task_loop_runner.py` states it: "A chat task only reaches here after
+      its LEASE EXPIRED." Nothing anywhere bounds RELEVANCE.
+    and_the_recovery_turn_runs_under_a_DIFFERENT_session_key: >-
+      Those turns carry `session_key: owl:secretary:recovery:<task>` rather than the
+      conversation's key, so they assemble history from a different bucket than the
+      chat they deliver into. That is the "context switching" half of his report, and
+      it is a second defect living in the same path - recorded here rather than fixed,
+      because it is not what this item changed.
+    fix_THE_ADDITIVE_HALF_ONLY: >-
+      `_proactive_fallback` fires exactly when the live reader is gone - 43 times
+      against 1,176 normal deliveries - so its recipient is BY CONSTRUCTION not the
+      person waiting on a stream, and an unlabelled answer reads as a reply to whatever
+      they asked most recently. The answer now leads with the question it answers,
+      quoted and bounded. Nothing is suppressed: whether a 52-hour-old answer should be
+      SENT is user-facing removal, which this programme escalates rather than decides,
+      and it is queued as ESC-161.
+    the_in_band_reply_is_deliberately_untouched: >-
+      A live reply the user is watching arrive must not be prefixed with "Answering
+      your earlier message" - the label is a signpost for an answer that arrives out of
+      order, and on the normal path it would be noise on 1,176 deliveries to fix 43. A
+      guard asserts the lead appears exactly twice in the module: its definition and
+      the out-of-band send.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: done
+      test: done
+      validate: partial
+      document: no_change_needed
+    closing_check: |
+      # The delivered TEXT is never logged, so "the label shipped" could only be
+      # asserted, not checked. A DISTINCT INFO line now records it — a JSON field would
+      # not do, because a check must wait on a string a `log.*` call actually EMITS,
+      # and today's three pre-fix lines carry no such field at all, so excluding
+      # "false" would have counted them as labelled.
+      n=$(./scripts/log_since.sh 2026-09-09 'out-of-band answer labelled with the question it answers')
+      t=$(./scripts/log_since.sh 2026-09-09 'stream-miss: live reader gone')
+      [ "${n:-0}" -gt 0 ] && echo "CLOSEABLE ${n} of ${t:-0} out-of-band answers since 2026-09-09 carried the question they answer" || echo "OPEN 0 of ${t:-0} out-of-band deliveries since 2026-09-09 carried a label"
+    a_timing_flake_found_and_fixed_on_the_way_past: >-
+      The derived targeted run failed on
+      `tests/memory/test_outcome_capture.py::test_backend_run_populates_step_durations_on_state`,
+      and A CONTROL RUN WITHOUT MY CHANGE FAILED IT TOO - so it was not mine, and it is
+      not red in the full suite either (the 29th green ran it). It passes alone, passes
+      in its own file, and fails inside a 17-file targeted run: the cross-test timing
+      signature. Its own comment named the bet - "no `unaccounted` bucket: the residual
+      here is under the 1ms floor" - which is a claim about how fast this box ran the
+      test, not about the pipeline. `unaccounted` is a RESIDUAL MARKER, not a step
+      (`pipeline/backends/shared.py:344`), so the exact-set assertion now excludes it:
+      a NEW STEP still breaks the test, which is the property its author wanted, and
+      the 1ms bet is gone. Fixed here rather than filed, because it was found while
+      doing this item.
   - id: DEBT-250
     found: 2026-09-09
     what: >-

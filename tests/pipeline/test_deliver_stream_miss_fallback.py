@@ -72,7 +72,17 @@ async def test_stream_miss_top_level_falls_back_to_proactive(monkeypatch) -> Non
     # The computed answer was handed to the durable proactive path (not dropped).
     assert len(deliverer.delivered) == 1
     note = deliverer.delivered[0]
-    assert note.message == "the answer is 42"
+    # THE ANSWER IS NOW LABELLED, and the assertion says why rather than just
+    # loosening. DEBT-251: this path fires only when the live reader is GONE, so its
+    # recipient is by construction not the person waiting on a stream — an unlabelled
+    # answer reads as a reply to whatever they asked most recently. The body must
+    # still arrive intact; it is now preceded by the question it answers.
+    assert "the answer is 42" in note.message, "the computed answer was lost"
+    assert note.message.endswith("the answer is 42"), (
+        "the answer must be the END of the message — a lead that trails the body is "
+        "not a signpost"
+    )
+    assert "Answering your earlier message" in note.message
     assert note.channel_name == "telegram"
     assert note.target == 4242  # routed via the turn's own reply_target
 

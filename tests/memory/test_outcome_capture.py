@@ -421,11 +421,28 @@ async def test_backend_run_populates_step_durations_on_state(tmp_db: DbPool) -> 
     # is the right shape here — it is what caught the addition — so it moves with
     # the intended change rather than being loosened to a superset.
     expected = {"triage", "execute", "deliver", "delivery_gate"}
+
+    # THE EXACT-SET ASSERTION IS KEPT — IT JUST NO LONGER BETS ON A 1ms MARGIN.
+    # This line used to compare the raw set and the comment beside it said "no
+    # ``unaccounted`` bucket: the residual here is under the 1ms floor". That is a
+    # claim about how fast THIS BOX ran the test, not about the pipeline: under load
+    # the residual crosses 1ms, the bucket appears, and the test fails. MEASURED
+    # 2026-09-09 — it passes alone, passes in this file, passed in the green full
+    # suite, and failed inside a 17-file targeted run, which is the cross-test
+    # timing signature this repo has already paid for once (a concurrency test that
+    # bet 50ms).
+    #
+    # `unaccounted` is a RESIDUAL MARKER, not a pipeline step
+    # (`pipeline/backends/shared.py:344`), so excluding it keeps exactly the property
+    # the original comment wanted — a NEW STEP still breaks this — while dropping the
+    # timing bet that was never part of the intent.
+    residual = {"unaccounted"}
     step_names = {name for name, _ in final.step_durations}
-    assert step_names == expected
-    # No ``unaccounted`` bucket: the residual here is under the 1ms floor that
-    # exists so a fully-accounted turn gets no noise in its breakdown.
+    assert step_names - residual == expected
+    assert step_names <= expected | residual, (
+        f"an unexpected non-step name entered the breakdown: {step_names - expected - residual}"
+    )
     # And the backend persisted an outcome row.
     out = await TaskOutcomeStore(tmp_db).get_by_trace_id("t-dur")
     assert out is not None
-    assert out.step_durations.keys() == expected
+    assert set(out.step_durations.keys()) - residual == expected

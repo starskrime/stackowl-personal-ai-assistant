@@ -506,6 +506,40 @@ async def _complete_turn(state: PipelineState, services: StepServices) -> str:
     )
 
 
+#: How much of the original question the lead line quotes.
+_LEAD_QUOTE_CHARS = 80
+
+
+def _answering_lead(state: PipelineState) -> str:
+    """A one-line "this answers X" header for an answer arriving OUT OF BAND.
+
+    WHY THIS EXISTS. Bakir, 2026-09-09: "I did ask question and it was answered to
+    old my question." MEASURED: a chat task whose lease expired is re-driven by the
+    durable loop and its answer PUSHED into the chat later - 221 re-drives across the
+    retained logs, and the tasks are old: 83 retried tasks average 17.1 HOURS between
+    creation and last attempt, with a maximum of 52.6 hours. This function is reached
+    only from `_proactive_fallback`, which fires when the live reader is already gone
+    (43 times against 1,176 normal deliveries), so by construction the recipient is
+    NOT the person waiting on a stream - they have moved on, and an unlabelled answer
+    reads as a reply to whatever they asked last.
+
+    The answer is not suppressed here. Whether a 52-hour-old answer should be sent at
+    all is a product decision for the operator, and it is queued as one; saying WHAT
+    is being answered is additive, needs no such decision, and is what makes the
+    delivery legible either way.
+
+    Empty when there is nothing honest to quote - a command-authored turn is not a
+    question the user typed, and a blank input cannot be named.
+    """
+    asked = (state.input_text or "").strip()
+    if not asked or getattr(state, "input_is_command", False):
+        return ""
+    quoted = asked if len(asked) <= _LEAD_QUOTE_CHARS else (
+        asked[: _LEAD_QUOTE_CHARS - 1].rstrip() + "\u2026"
+    )
+    return f'Answering your earlier message: "{quoted}"\n\n'
+
+
 async def _proactive_fallback(
     state: PipelineState, services: StepServices
 ) -> str | None:
@@ -581,8 +615,22 @@ async def _proactive_fallback(
     # no import cycle at module load (notifications imports pipeline types).
     from stackowl.notifications.router import Notification
 
+    lead = _answering_lead(state)
+    if lead:
+        # A DISTINCT MESSAGE, not just a field. The delivered TEXT is never logged, so
+        # "the label shipped" needs evidence a check can look for — and a check must
+        # wait on a string some `log.*` call actually EMITS, never on a JSON field
+        # rendered at log time. INFO because production runs at INFO.
+        log.gateway.info(
+            "[deliver] out-of-band answer labelled with the question it answers",
+            extra={"_fields": {
+                "request_id": state.trace_id,
+                "session_key": state.session_key,
+                "lead_len": len(lead),
+            }},
+        )
     note = Notification(
-        message=body,
+        message=lead + body,
         urgency="critical",  # a direct answer must not be batched/suppressed away
         category="turn_answer",
         channel_name=state.channel,
@@ -611,6 +659,10 @@ async def _proactive_fallback(
         "channel": state.channel,
         "status": status,
         "body_len": len(body),
+        # INFO-level evidence that the answer said WHAT it answers. Without this the
+        # claim is unfalsifiable from the outside: the delivered text is never logged,
+        # so "the label shipped" could only ever be asserted, never checked.
+        "labelled": bool(lead),
     }
     if not arrived:
         # THIS USED TO CLAIM DELIVERY REGARDLESS OF THE STATUS IT PRINTED. The
