@@ -20811,22 +20811,76 @@ known_debt:
       shape to put one, so the feature could be designed and could not be wired. A
       durable summary needs its own row keyed by session with the turn watermark it
       covers, which is a migration plus a writer plus a reader.
-    NOT_FIXED_and_saying_so: >-
-      DEBT-248 raised the trigger to a share of the resolved window, so on this
-      deployment compaction effectively no longer fires and the repeated cost is gone in
-      practice. It is NOT gone in principle: any small-window deployment still
-      re-summarizes from scratch on every turn past its budget. Recorded as its own item
-      rather than folded into DEBT-248, because claiming the fix covered it would be the
-      exact move this programme forbids.
+    it_was_filed_NOT_FIXED_and_is_now_FIXED: >-
+      Filed open on 2026-09-09 with the diagnosis complete, and built the same day
+      rather than left as a note. DEBT-248 had already raised the trigger so compaction
+      effectively stops firing on THIS deployment, but the reuse gap was never gone in
+      principle: any small-window deployment still re-summarized from scratch on every
+      turn past its budget, and every compaction anywhere lost the context older than
+      the read depth.
+    fix: >-
+      Migration 0141 adds `conversation_summaries`, keyed by `scope_key` - the SAME key
+      the turns are filed under, `owner_scope_key(state)` - so a summary lives in
+      exactly the bucket its conversation does. `get_conversation_summary` and
+      `set_conversation_summary` join the conversation seam on `MemoryBridge` beside
+      `recent_conversation_turns`, with concrete defaults on the ABC exactly as that
+      method has, and real implementations on `SqliteMemoryBridge`. `_compress_history`
+      reads the stored summary, puts it back through `cc.as_message()` - the marker
+      form `select()` already looks for - and writes the new one after summarizing. The
+      compressor engine itself is UNCHANGED: the contract was always there, and only
+      the producer was missing.
+    no_covered_through_column_and_that_is_deliberate: >-
+      The first draft carried one: the newest turn a summary accounts for, so a later
+      pass could trim already-represented turns out of the raw read. NOTHING IN THIS
+      CHANGE WOULD HAVE WRITTEN A REAL VALUE INTO IT, and a column with no meaningful
+      writer is the exact defect this item exists to fix, one table over. It goes in
+      when the trimming step is built and can populate it honestly.
+    giving_the_path_a_producer_EXPOSED_A_LATENT_BUG_IN_IT: >-
+      FOUND BY RUNNING THE ROUND TRIP, NOT BY READING IT. `select()` extracted
+      `m.content` INCLUDING `SUMMARY_MARKER` into `prior_summary`, and `apply()` passed
+      that straight back through `as_message()`, which prepends the marker again - so a
+      reused summary carried TWO marker lines, and it COMPOUNDS: one more per reuse,
+      forever. It survived because `prior_summary` was None on all 34 recorded
+      compactions, so the round trip never once happened. `select` now extracts the
+      TEXT.
+      THE COMMENT RIGHT ABOVE IT ANTICIPATED STACKING AND GUARDED THE WRONG THING: "A
+      prior summary is not a turn - it is folded into the next one, never kept alongside
+      it, or every compaction would stack another copy" is about stacking MESSAGES. The
+      markers stacked instead. A dormant path's bugs are invisible by construction, so
+      wiring one up is the moment to exercise it end to end rather than trust it.
+    and_it_carries_a_correction_to_DEBT_248: >-
+      DEBT-248 made the history budget window-relative, which silently made the SUMMARY
+      ceiling window-relative too. `SUMMARY_BUDGET_SHARE` (0.25) was calibrated against
+      a FIXED 12,000 budget - a 3,000-token ceiling - and 0.25 of 196,608 is 49,152. I
+      shipped a 16x widening without measuring it. Nothing broke, because `_bounded`'s
+      clip has never fired in the entire retained window, WHICH IS EXACTLY WHY IT HAD TO
+      BE MEASURED RATHER THAN NOTICED. `SUMMARY_MAX_TOKENS = 3_000` now caps the share,
+      and a lean model still gets the smaller of the two.
     stages:
       brainstorm: done
       architect: no_change_needed
-      implement: blocked
-      cleanup: no_change_needed
-      test: no_change_needed
-      validate: partial
+      implement: done
+      cleanup: done
+      test: done
+      validate: done
       document: no_change_needed
-    closing_check: |
+    validated_on_the_LIVE_database_after_a_restart: >-
+      Restarted; migration 0141 applied (`schema_migrations` tops out at 0141) and
+      `conversation_summaries` exists on the production schema. Then the REAL
+      `SqliteMemoryBridge` was driven against the LIVE database: read None, wrote
+      "RESOLVED: the live round trip" and read it back, wrote again and read the
+      replacement, confirmed ONE row for the key rather than an append, deleted the test
+      row and read None. Evidence only the new code could produce - the table did not
+      exist an hour ago and has exactly one writer.
+    what_could_NOT_be_evidenced_and_why_that_is_a_CONSEQUENCE_not_a_gap: >-
+      The end-to-end reuse - a compaction that reports `had_prior_summary=true` - cannot
+      be observed on THIS deployment, and that is DEBT-248 working rather than a hole.
+      Compaction now needs history past 0.75 of a 262,144 window (196,608 tokens) while
+      the 40-turn read cap bounds history at ~46,640, so this box will not compact again
+      in normal use. A lean-window deployment exercises it on the first long
+      conversation. Saying "validated end to end" here would be the claim-without-
+      evidence this programme forbids.
+    superseded_closing_check_kept_because_it_is_still_the_right_question: |
       # CLOSEABLE only when a compaction REUSES a previous one. `had_prior_summary` is
       # emitted by classify on EVERY compression, so a true reading is evidence only a
       # writer could produce - there has never been one in 34 events across six days.
