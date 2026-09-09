@@ -20788,6 +20788,69 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-247
+    found: 2026-09-08
+    what: >-
+      `doc_check.py`'s symbol narrowing - which dates a document by the SYMBOLS it cites
+      rather than by every commit touching the file - read only `path.py::symbol`.
+      MEASURED over the design set: that notation appears 5 times in 5 documents, and the
+      form the corpus actually writes, `path.py` followed by a parenthesised backticked
+      name, appears 27 times in 15. The instrument served 16% of the citations it existed
+      for, and narrowed 4 of 84 documents where it should narrow 12.
+    root_cause_THE_NOTATION_WAS_INVENTED_BY_ITS_AUTHOR_NOT_READ_FROM_THE_CORPUS: >-
+      I built this narrowing in DEBT-241 and chose `::` because it is unambiguous. I
+      never asked what the documents already wrote. That is one worse than DEBT-245's
+      "anchored to the form it first saw": this was anchored to a form the corpus had
+      NEVER used, so the feature was born blind rather than aged into blindness. The
+      general rule both share - a parser's vocabulary is a claim about the corpus, and a
+      claim about the corpus has to be measured against the corpus.
+    a_second_blind_spot_QUALIFIED_NAMES: >-
+      `_symbol_span` located symbols with `ast.walk` and `node.name == symbol`, so a
+      QUALIFIED citation - `ModelProvider._resilient_round`, `Tool.__call__` - matched
+      nothing and returned None. The caller reads None as UNKNOWN and UNKNOWN MEANS
+      STALE, so a citation that named its symbol PRECISELY was silently demoted to
+      whole-file dating, which is the opposite of what naming it was for. MEASURED: 3
+      such citations across D14.4 and D16.1, against 21 bare ones. Qualified names are
+      now resolved by walking into the class.
+    MY_OWN_COMMIT_MESSAGE_CLAIMED_THIS_FEATURE_AND_WAS_WRONG: >-
+      DEBT-244's commit `27b276fc` says D03.2's `Source:` "now cites the watch BY SYMBOL,
+      so doc_check dates the document by `window_fraction`/`window_pressure` rather than
+      by every commit touching those modules - the narrowing built in DEBT-241, used for
+      the first time." D03.2 uses the PARENTHESISED form, so at the moment that sentence
+      was written the narrowing could not read it and the document was dated whole-file.
+      The claim is true only AFTER this change. It is corrected here rather than in the
+      commit, which is pushed and must not be rewritten.
+    effect_MEASURED_and_every_freed_document_verified: >-
+      STALE 4 -> 3 and reviewed-not-rerun 11 -> 9. D16.1 leaves the stale list because it
+      was a FALSE POSITIVE: it cites exactly one symbol in `providers/base.py`,
+      `_resilient_round` at lines 203-296, and `2290001e` touched `window_fraction` at
+      102-114. D05.1 and D05.7 become genuinely fresh. All three were checked by printing
+      the symbols each commit ACTUALLY touched beside the verdict - D05.1 cites
+      `with_defaults` while its three commits touched `to_provider_schema`, `ToolRegistry`
+      and `_fit_envelope_to_window`; D05.7 cites `_dispatch` while its commit touched
+      `build_tool_schemas` and `_run_with_tools`. A smaller number is not evidence; the
+      touched-symbol list is.
+    the_guard_floor_could_not_have_seen_a_revert: >-
+      `test_the_corpus_actually_carries_symbol_citations` asserted `>= 3` narrowable
+      documents. Reading only `::` gives 4 and reading both gives 12, so that floor
+      passed either way and would have sat green through the loss of two thirds of the
+      feature. Raised to 8, which a revert to 4 fails and which leaves headroom for a
+      document legitimately closing its citations.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_by_running_the_instrument_on_the_live_corpus: >-
+      `doc_check.py` is an instrument, not a running service, so its live evidence is the
+      report over the real 84-document corpus, with the mirror artefact held constant by
+      running unpatched and patched from the same directory. BEFORE: `checked 49, STALE 4,
+      reviewed-not-rerun 11`. AFTER: `checked 49, STALE 3, reviewed-not-rerun 9`. The
+      guard goes 8 passed patched and 4 failed / 4 passed unpatched, restored to 8 passed
+      from a file copy.
   - id: DEBT-246
     found: 2026-09-08
     what: >-

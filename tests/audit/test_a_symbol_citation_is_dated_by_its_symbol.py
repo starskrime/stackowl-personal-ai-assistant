@@ -110,14 +110,21 @@ def test_a_path_cited_bare_anywhere_keeps_whole_file_dating(dc) -> None:
     `tools/registry.py::to_provider_schema` with a symbol. The bare citation is a
     claim about the whole file; letting the precise one narrow it would silence a
     real staleness on the strength of an unrelated citation."""
-    mixed = dc._cited_symbols([  # noqa: SLF001
-        "pipeline/steps/execute.py",
-        "pipeline/steps/execute.py::_turn_context_prefix",
-    ])
+    mixed = dc._cited_symbols(  # noqa: SLF001
+        "`pipeline/steps/execute.py` and `pipeline/steps/execute.py::_turn_context_prefix`"
+    )
     assert not mixed, f"a bare citation was overridden by a symbol one: {mixed}"
 
-    only_symbol = dc._cited_symbols(["pipeline/steps/execute.py::_turn_context_prefix"])  # noqa: SLF001
+    only_symbol = dc._cited_symbols(  # noqa: SLF001
+        "`pipeline/steps/execute.py::_turn_context_prefix`"
+    )
     assert only_symbol, "a path cited ONLY by symbol is not being narrowed at all"
+
+    # the SAME rule in the notation the corpus actually writes
+    mixed_paren = dc._cited_symbols(  # noqa: SLF001
+        "`pipeline/steps/execute.py`, `pipeline/steps/execute.py` (`_turn_context_prefix`)"
+    )
+    assert not mixed_paren, f"a bare citation was overridden by a paren one: {mixed_paren}"
 
 
 @pytest.mark.tripwire
@@ -128,19 +135,66 @@ def test_the_corpus_actually_carries_symbol_citations(dc) -> None:
     designs = sorted((_ROOT / "docs" / "reference-mapping" / "designs").glob("*.md"))
     assert len(designs) > 50, f"only {len(designs)} design documents found"
 
-    import re
-
     with_symbols = 0
     for d in designs:
         head = dc._header(d.read_text(encoding="utf-8"))  # noqa: SLF001
-        cited = [
-            p for p in re.findall(dc._CITATION, dc._source_fields(head))  # noqa: SLF001
-            if "/" in p
-        ]
-        if dc._cited_symbols(cited):  # noqa: SLF001
+        if dc._cited_symbols(dc._source_fields(head)):  # noqa: SLF001
             with_symbols += 1
-    assert with_symbols >= 3, (
+    # THE FLOOR IS 8 BECAUSE 3 COULD NOT SEE A REVERT. MEASURED 2026-09-08: reading
+    # only `path.py::symbol` narrows 4 documents; reading the corpus's own
+    # parenthesised form as well narrows 12. A floor of 3 passed either way, so the
+    # guard would have sat green through the loss of two thirds of the feature.
+    assert with_symbols >= 8, (
         f"only {with_symbols} document(s) have a narrowable symbol citation across "
         f"{len(designs)} documents; the feature has no corpus and every assertion "
-        f"above is about a case that does not occur"
+        f"above is about a case that does not occur — and a fall to ~4 means the "
+        f"parenthesised notation stopped being read"
     )
+
+
+@pytest.mark.tripwire
+def test_a_symbol_in_PARENTHESES_narrows_exactly_like_a_double_colon(dc) -> None:
+    """THE NOTATION THE CORPUS ACTUALLY WRITES.
+
+    MEASURED 2026-09-08 over the design set: `path.py::symbol` appears 5 times in 5
+    documents; ``path.py` (`symbol`)` appears 27 times in 15. The narrowing shipped
+    reading only the first — a form invented when it was built and never checked
+    against the documents — so it served 16% of the citations it existed for.
+    """
+    colon = dc._cited_symbols("`providers/base.py::window_fraction`")  # noqa: SLF001
+    paren = dc._cited_symbols("`providers/base.py` (`window_fraction`)")  # noqa: SLF001
+    assert paren == colon, f"the two notations disagree: {paren} vs {colon}"
+
+    two = dc._cited_symbols(  # noqa: SLF001
+        "`providers/base.py` (`window_fraction`, `window_pressure`)"
+    )
+    assert two == {"src/stackowl/providers/base.py":
+                   frozenset({"window_fraction", "window_pressure"})}, two
+
+
+@pytest.mark.tripwire
+def test_a_QUALIFIED_name_is_located_by_walking_into_its_class(dc) -> None:
+    """`ast.walk` compares a flat `node.name`, so `Class.method` matched nothing and
+    returned None — which the caller reads as UNKNOWN and therefore STALE. A citation
+    that named its symbol precisely was demoted to whole-file dating, the opposite of
+    what naming it was for. D16.1 was reported stale for a commit touching
+    `window_fraction` while the only symbol it cites in that file is 89 lines away.
+    """
+    # The real case. `_FILE` cannot serve: at `_COMMIT` execute.py declares no class
+    # at all, so a qualified citation there is not expressible.
+    sha, path = "2290001e", "src/stackowl/providers/base.py"
+    span = dc._symbol_span(sha, path, "ModelProvider._resilient_round")  # noqa: SLF001
+    assert span is not None, "a qualified name is still unlocatable"
+    bare = dc._symbol_span(sha, path, "_resilient_round")  # noqa: SLF001
+    assert span == bare, f"qualified {span} disagrees with bare {bare}"
+
+    # and it must still DISCRIMINATE: that commit touched window_fraction, not this
+    assert not dc._commit_reaches_symbols(  # noqa: SLF001
+        sha, path, frozenset({"ModelProvider._resilient_round"})
+    ), "a commit 89 lines away is still reported as reaching the cited symbol"
+    assert dc._commit_reaches_symbols(  # noqa: SLF001
+        sha, path, frozenset({"window_fraction"})
+    ), "the symbol the commit DID change is not reported — the check has gone blind"
+
+    assert dc._symbol_span(sha, path, "ModelProvider.no_such_method") is None  # noqa: SLF001
+    assert dc._symbol_span(sha, path, "NoSuchClass._resilient_round") is None  # noqa: SLF001

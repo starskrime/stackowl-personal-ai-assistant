@@ -283,6 +283,34 @@ def _symbol_span(sha: str, path: str, symbol: str) -> tuple[int, int] | None:
         tree = ast.parse(src)
     except Exception:  # pragma: no cover — absent file, syntax error at that commit
         return None
+    # A QUALIFIED NAME IS RESOLVED HIERARCHICALLY, added 2026-09-08 (DEBT-247).
+    # `ast.walk` compares a flat `node.name`, so `ModelProvider._resilient_round`
+    # matched nothing, returned None, and hit the UNKNOWN-MEANS-YES branch above -
+    # a citation that named its symbol precisely was silently demoted to whole-file
+    # dating, which is the OPPOSITE of what naming it was for. MEASURED: 3 such
+    # citations across D14.4 and D16.1, against 21 bare ones. D16.1 was reported
+    # STALE for a commit touching `window_fraction` while the only symbol it cites
+    # in that file is `_resilient_round`, 89 lines away.
+    if "." in symbol:
+        nodes: list[ast.stmt] = list(tree.body)
+        found: ast.AST | None = None
+        for part in symbol.split("."):
+            found = next(
+                (
+                    n for n in nodes
+                    if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+                    and n.name == part
+                ),
+                None,
+            )
+            if found is None:
+                return None
+            nodes = list(getattr(found, "body", []))
+        if found is not None:
+            end = getattr(found, "end_lineno", found.lineno) or found.lineno
+            return (found.lineno, end)
+        return None
+
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
@@ -373,21 +401,50 @@ def _commit_reaches_symbols(sha: str, path: str, symbols: frozenset[str]) -> boo
     )
 
 
-def _cited_symbols(cited: list[str]) -> dict[str, frozenset[str]]:
+#: A path followed by a parenthesised list of backticked names.
+#:
+#: THE CORPUS'S ACTUAL NOTATION, and the reason this regex exists. The narrowing
+#: shipped reading ONLY `path.py::symbol` - a form I invented when I built it and
+#: never checked against the documents. MEASURED over the design set: `::` appears
+#: **5 times in 5 documents**; `path.py` (`symbol`) appears **27 times in 15**.
+#: The instrument read the notation used 5 times and was blind to the one used 27,
+#: so it covered 16% of the symbol citations it existed to serve - and D16.1 was
+#: reported STALE for a commit that touched `window_fraction`, while the document
+#: cites exactly one symbol in that file and it is `_resilient_round`.
+_CITED_WITH_SYMBOLS = re.compile(
+    _CITATION + r"(?:\s*\(\s*(`[A-Za-z0-9_.]+`(?:\s*,\s*`[A-Za-z0-9_.]+`)*)\s*\))?"
+)
+_BACKTICKED = re.compile(r"`([A-Za-z0-9_.]+)`")
+
+
+def _cited_symbols(source: str) -> dict[str, frozenset[str]]:
     """resolved path -> cited symbols, ONLY where EVERY citation names one.
 
     A path cited bare anywhere is a claim about the whole file and keeps whole-file
     dating. D05.4 does exactly that: `pipeline/steps/execute.py` bare beside
     `tools/registry.py::to_provider_schema`.
+
+    Reads BOTH notations - `path.py::symbol` and `path.py` (`symbol`, ...) -
+    because the corpus writes the second far more often than the first. Takes the
+    Source TEXT rather than a token list: whether a citation names a symbol is a
+    property of the occurrence and its neighbours, which a flat list has already
+    thrown away.
     """
     seen: dict[str, set[str | None]] = {}
-    for raw in cited:
+    for match in _CITED_WITH_SYMBOLS.finditer(source):
+        raw, group = match.group(1), match.group(2)
+        if "/" not in raw:
+            continue
         resolved = _resolve(raw)
         if resolved is None:
             continue
-        seen.setdefault(resolved, set()).add(
-            raw.split("::", 1)[1] if "::" in raw else None
-        )
+        if "::" in raw:
+            seen.setdefault(resolved, set()).add(raw.split("::", 1)[1])
+        elif group:
+            found = _BACKTICKED.findall(group)
+            seen.setdefault(resolved, set()).update(found or [None])
+        else:
+            seen.setdefault(resolved, set()).add(None)
     return {
         path: frozenset(s for s in syms if s)
         for path, syms in seen.items()
@@ -1329,7 +1386,7 @@ def main(argv: list[str] | None = None) -> int:
                 why = "dated, but declares no Source — staleness cannot be computed"
             unmeasurable.append((doc.name, why))
             continue
-        changes = _changes_since(real, date.group(1), _cited_symbols(cited))
+        changes = _changes_since(real, date.group(1), _cited_symbols(source))
         reviewed = _reviewed_shas(head)
         unreviewed = [c for c in changes if c[1][:8] not in reviewed]
         if changes and not unreviewed:
