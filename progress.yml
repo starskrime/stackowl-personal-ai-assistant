@@ -20854,6 +20854,110 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-258
+    found: 2026-09-09
+    what: >-
+      The last report still carrying anything - OPEN BUT NOT TRACKED, 7 acceptance checks
+      in 3 documents whose items say `validate: done`. Two loops ago I recorded that these
+      were "blocked on evidence their own item must earn". THAT WAS WRONG, and measuring
+      it was the item: THREE of the seven were already CLOSEABLE on evidence sitting in
+      the logs, and the remaining four are not waiting either - they are unreachable while
+      a named configuration holds. NOT ONE of the seven was "not yet", which is the only
+      thing the word OPEN can mean to a reader.
+    WHY_a_sample_bound_is_not_a_design_property: >-
+      Each verdict was drawn from ONE bounded sample and then written down as a property
+      of the DESIGN. D05.4 concluded "`I2` is not waiting on traffic. It is waiting on a
+      shape this design does not produce" from 233 rebuilds; the shape occurs at ~1 in 220,
+      so that window was expected to contain about ONE, and the three it did contain were
+      the three that failed the secondary condition. Its own words - "The reason is
+      structural, not statistical" - are the inversion exactly. D10.6 recorded "step 4 = 0
+      exactly as the document predicts"; the line had entered `src/` the previous day and
+      first fired hours after the verification commit. D05.8 says I1/I2 "close only if the
+      cap drops below 79", which is the CATALOGUE, while the path that section is about
+      presents a planner subset of 4-11.
+    the_measurements: >-
+      D05.4 I2: 1,562 rebuild records, 11 with `measured != basis`, and SEVEN satisfying
+      the full stated pass (tools unchanged from that owl's previous rebuild, all at 79),
+      spanning 2026-08-28 to 2026-09-06 across `secretary` and `rca_gatherer`, in both
+      directions. D10.6 check 4: `rendering summaries LEAN` fired 411 times, first
+      2026-09-02T06:04:13Z, against a line introduced 2026-09-01 (`dc19b973`) and a
+      verification commit `cf4a7842` timestamped 2026-09-01T22:33Z. D05.8: cap 150,
+      catalogue 79 read from the rebuild line's own `tools` field, envelope `tools` of 4
+      and 11 across 48 `[planner] plan: envelope set` records (43 at the last reading), and
+      both clip lines still 0.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    AND_D05_8s_RECORD_CONTRADICTED_ITS_OWN_DOCUMENT_for_ten_days: >-
+      `validate: done  # I2 CLOSED 2026-08-30 - 869 cap-breach events` sat against a
+      document table reading I2 OPEN at 0. Both were true of their own moment: the 869 were
+      measured when `tool_count_cap` was 30, BELOW the 79-tool catalogue, so the cap bound
+      on every turn; DEBT-238 raised it to 150 and the events stopped. AN EVIDENCE COUNT IS
+      SCOPED TO THE CONFIGURATION THAT PRODUCED IT, and a count carried forward without its
+      configuration is a claim about a machine that no longer exists.
+    the_fix: >-
+      D05.4's I2 and D10.6's check 4 CLOSED with their evidence, and the wrong REASONING
+      corrected in place rather than deleted, because the way it was wrong is the finding.
+      D05.8's I1/I2 restated from OPEN - which reads *not yet* - to UNREACHABLE WHILE THE
+      CAP EXCEEDS THE PRESENTED SET, with the two per-path thresholds separated, and the
+      item moved to `partial` with a closing check that MEASURES THE ANTECEDENT: it reads
+      the live cap, reads the catalogue off the rebuild line's own `tools` field rather
+      than assuming it, and prints why the zero is a zero. A count that cannot distinguish
+      "forbidden" from "not yet" is the ambiguous zero this programme already names once;
+      this is the same defect one level up, where the antecedent rather than the emitter is
+      what nobody checked.
+    validated: >-
+      `validate_check.py` moved 19 -> 20 checked, with D05.8 now printing
+      "OPEN 0 clips, and UNREACHABLE BY CONFIGURATION rather than not-yet: cap=150 sits
+      above the catalogue=79 and above this path's 4-11 envelope; 48 envelopes ran" - a
+      verdict a reader cannot mistake for *not yet*. `doc_check`'s OPEN BUT NOT TRACKED
+      report went 7 -> the D05.8 rows only, since the two closed items leave the
+      `validate: done` population by closing rather than by hiding.
+    AND_DEBT_255s_GUARD_CAUGHT_IT_AS_WELL_a_third_of_my_own_guards_in_three_loops: >-
+      The D05.8 check was first written with `--all`, and
+      `test_every_log_since_call_names_a_real_date_or_earns_all` failed naming all three
+      patterns with their src dates: 2026-08-15, 2026-08-22 and 2026-06-17, every one
+      BEFORE the retained window opens on 2026-08-28. It was right, and for a reason
+      stronger than the rule states here: before DEBT-240 (`bf603ef7`, 2026-09-08) the
+      envelope path was sized by `max_tools` alone and COULD NOT CLIP BY CONSTRUCTION, so
+      a pre-fix line would evidence code that no longer exists. Bounded to that ship date -
+      and THE DENOMINATOR TOO, which is the part I nearly left unbounded: 5 envelopes under
+      the current implementation, not the 48 across every configuration this path has ever
+      had. An unbounded denominator under a bounded numerator is the ratio quietly measured
+      against the wrong population.
+    DEBT_256s_GUARD_CAUGHT_THIS_LOOP_TOO_which_is_what_it_was_for: >-
+      Closing four markers made four ground-truth entries stale and introduced one new
+      OPEN line, and `test_the_table_knows_every_line_in_the_corpus` /
+      `test_every_table_entry_still_matches_exactly_one_line` failed by name until each
+      was re-judged. That is the self-maintaining half doing exactly its job two loops
+      after it was built - an OPEN line changing is precisely when someone must decide
+      what it now means. The new line was PROSE about the word ("the honest verdict is not
+      OPEN, which reads as not yet"), and rather than adding a second known-false-positive
+      I used the corpus's own idiom and BACKTICKED it: `_CODE_SPAN` blanks code spans
+      before the search, so a backticked marker is prose by construction. Cheaper than
+      widening an exemption list, and it is the convention D13.1 already established.
+    validated_by_mutation_and_ONE_MUTANT_SURVIVED_FIRST: >-
+      Restored from file copies, never git. Mutant A - flattening the OPEN branch back to
+      a bare "0 clips: cap=.. catalogue=.." - killed
+      `test_the_configuration_blocked_check_names_its_antecedent` by name. MUTANT B
+      SURVIVED on the first attempt and the survival was the useful part: I removed ONE of
+      the two places D05.4 states the 1-in-220 rate and the guard still passed, because a
+      substring search over a whole document is satisfied by any occurrence. That is not a
+      real mutation of the property, so I re-ran it removing BOTH (the document states it
+      twice, deliberately - once in the correction and once in the row it corrects) and the
+      guard failed. A MUTANT THAT SURVIVES IS EITHER A WEAK GUARD OR A WEAK MUTANT, and
+      checking which is not optional: stopping at the first result would have recorded a
+      guard as proven on an experiment that never tested it.
+    no_full_suite_and_the_reason: >-
+      `git diff 15ec3c83..HEAD -- src` is EMPTY, so `src/` is byte-identical to the tree
+      the 22nd green ran on; the only drift is added `tests/audit` files, which the derived
+      targeted path runs directly. Spending 38 minutes to re-verify an unchanged `src/`
+      would be the "polling as work" shape wearing a gate's clothes.
   - id: DEBT-257
     found: 2026-09-09
     what: >-
@@ -36543,7 +36647,7 @@ items:
       validate:   done
       document:   done
     doc: "docs/reference-mapping/designs/D05.4.md"
-    doc_last_verified: "2026-08-21 against 76dfd48c — Verification RUN, and running it found three defects in the document itself"
+    doc_last_verified: "2026-09-09 against 5c981c7e — I2 CLOSED over a 1,562-record window: 11 rows read measured != basis and SEVEN satisfy the full stated pass (tools unchanged at 79), newest 2026-09-06T22:57:39Z. The document's claim that this was 'a shape this design does not produce' was drawn from 233 records against a ~1-in-220 phenomenon and is corrected in place. Previously '2026-08-21 against 76dfd48c — Verification RUN, and running it found three defects in the document itself'."
     VALIDATE_AND_DOCUMENT_CLOSED_2026_08_22:
       closed_on: >-
         Bakir's recorded call (5df33c61, doc section "Standing watch"): close the item on
@@ -37148,10 +37252,47 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   done   # I2 CLOSED 2026-08-30 — 869 cap-breach events; the 0-over-0 is gone
+      # CORRECTED 2026-09-09 (DEBT-258). The comment below claimed I2 CLOSED on 869
+      # cap-breach events while the DOCUMENT's table said I2 was OPEN at 0 — a record and
+      # its own document asserting opposite things for ten days. Both were true of their
+      # own moment: the 869 were measured when `tool_count_cap` was 30, BELOW the 79-tool
+      # catalogue, so the cap bound on every turn. DEBT-238 raised it to 150 and the
+      # events stopped. AN EVIDENCE COUNT IS SCOPED TO THE CONFIGURATION THAT PRODUCED IT,
+      # and nothing re-asked because `done` is the word that stops anyone looking.
+      validate:   partial
       document:   done
     blocked_on: null   # CLEARED 2026-08-22 — 159 live interactive turns measured; see current.D05_8_ROUND_0_MEASUREMENT_2026_08_22
     doc: "docs/reference-mapping/designs/D05.8.md"
+    closing_check: |-
+      # MEASURES THE ANTECEDENT, NOT THE EVENT — the point of DEBT-258. I1/I2 need a
+      # tool CLIP, and a clip needs the cap to sit below the presented set. On this
+      # deployment it does not: cap 150, catalogue 79, and the envelope path presents
+      # 4-11. So a bare count of the clip lines is a zero that means "the configuration
+      # forbids it", which reads identically to "not yet" and has for eighteen days.
+      # This prints the antecedent's state first, so the zero is never ambiguous again.
+      cap=$(grep -oP 'tool_count_cap:\s*\K[0-9]+' ~/.stackowl/stackowl.yaml 2>/dev/null | head -1)
+      cap=${cap:-unset}
+      # The catalogue size is carried per record by the rebuild line, so it is READ, not
+      # assumed — `tools` is the eligible count at that moment.
+      cat=$(grep -ah 'presented tools — rebuilt' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null \
+            | sort | tail -1 | jq -r '.fields.tools // "unknown"' 2>/dev/null)
+      # BOUNDED TO 2026-09-08, THE DAY DEBT-240 SHIPPED (bf603ef7), and the bound is
+      # earned rather than habitual. All three strings predate the retained window —
+      # 2026-08-15, 2026-08-22 and 2026-06-17 — so `--all` is the satisfied-by-history
+      # defect, and `test_every_log_since_call_names_a_real_date_or_earns_all` said so
+      # when this check was first written with it. More than that: before DEBT-240 the
+      # envelope path was sized by `max_tools` alone and could not clip by construction,
+      # so a pre-fix line would evidence code that no longer exists. The denominator is
+      # bounded too, deliberately — 5 envelopes under the current implementation, not the
+      # 48 across every configuration this path has ever had.
+      n=$(./scripts/log_since.sh 2026-09-08 'eligible tools NOT presented')
+      w=$(./scripts/log_since.sh 2026-09-08 'planned envelope is wider')
+      env=$(./scripts/log_since.sh 2026-09-08 'plan: envelope set')
+      if [ "$n" -gt 0 ] || [ "$w" -gt 0 ]; then
+        echo "CLOSEABLE $n cap-breach and $w wider-envelope line(s) since DEBT-240 shipped 2026-09-08 (cap=$cap catalogue=$cat envelopes=$env)"
+      else
+        echo "OPEN 0 clips since DEBT-240 shipped 2026-09-08, and UNREACHABLE BY CONFIGURATION rather than not-yet: cap=$cap sits above the catalogue=$cat and above this path's 4-11 envelope; $env envelopes ran on the current implementation, so the path is alive and the cap simply never binds"
+      fi
     doc_last_verified: "2026-08-22 against af8cf60e — Verification section RUN, not trusted"
     decisions:
       - date: 2026-08-04
@@ -40032,7 +40173,7 @@ items:
       validate:   done
       document:   done
     doc: "docs/reference-mapping/designs/D10.6.md"
-    doc_last_verified: "2026-09-02 against commit cf4a7842 — Verification section RUN, not trusted: step 1 = 7 passed, step 2 = 527 passed, step 3 = chars 3668 / entries_with_text 19 / present 33 of 33, step 4 = 0 exactly as the document predicts."
+    doc_last_verified: "2026-09-09 against commit 5c981c7e — step 4 CLOSED at 411 firings of 'rendering summaries LEAN', first at 2026-09-02T06:04:13Z. Previously '2026-09-02 against cf4a7842 … step 4 = 0 exactly as the document predicts', which was TRUE WHEN TAKEN and false within hours: the line entered src on 2026-09-01 (dc19b973) and cf4a7842 is timestamped 2026-09-01T22:33Z. Steps 1-3 unchanged (7 passed, 527 passed, chars 3668 / 19 entries / 33 of 33)."
     decisions:
       - date: 2026-08-29
         stage: brainstorm
