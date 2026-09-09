@@ -21018,6 +21018,59 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-271
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work; the instrument shipped one loop earlier failed on its own next use."
+    what: >-
+      "STILL PRODUCIBLE" IS NOT "STILL HAPPENING", AND DEBT-270 COULD NOT TELL THE
+      DIFFERENCE. The instrument shipped last loop separates messages the code can still
+      emit from wording it cannot. On its very next use it let a fixed defect through
+      anyway: `[scheduler] compute_next_run: cron parse failed — defaulting to +1d`, 326
+      occurrences, all carrying `schedule: "manual"` — the sentinel for "no automatic
+      schedule" fed to `croniter` and silently rescheduled a day out. It is LIVE by
+      DEBT-270's test, because the line is still in `scheduler_helpers.py`. Its last
+      occurrence is 2026-08-31.
+    why_not_what: >-
+      A message has THREE provenances and the instrument modelled two. RETIRED (no `log.*`
+      call can emit it), CURRENT (the platform said it today), and DORMANT — emittable, but
+      nothing has reached it in days, usually because the branch that led there is gone. The
+      cron line is dormant: `scheduler.py` now asks `_is_recurring(job)` and gives a one-shot
+      `ONE_SHOT_TERMINAL_STATUS`, so the +1d value is computed and discarded. Every manual
+      job in the live database is `completed`. Its comment even REJECTS the fix the log
+      invites — "manual is not a cadence, so tightening compute_next_run would only change
+      WHICH wrong cadence a one-shot gets" — so I would have made a change a previous loop
+      had already reasoned its way out of.
+    the_number_is_the_argument: >-
+      MEASURED 2026-09-09 over 13 retained files: of 328 distinct WARNING-and-above
+      messages, **47 are CURRENT, 244 are DORMANT and 37 are RETIRED**. Only 47 describe
+      what the platform is doing now; 86% of the distinct error vocabulary is history of one
+      kind or another. That ratio is why a reader who greps the corpus for a signal lands on
+      something already answered roughly five times in six — which is exactly what happened
+      to me twice in one loop, once WITH the new instrument already in hand.
+    the_cutoff_is_read_not_chosen: >-
+      The boundary is the corpus's own newest date, taken from the records themselves. A
+      constant — "7 days", "since the last boot" — would be a second thing to keep true, and
+      a boot-relative bound is worse than useless because a restart would make every message
+      dormant. With no records at all everything falls to DORMANT rather than to a guessed
+      date. And both counts come from ONE pass: re-reading 13 files to answer two questions
+      about the same records is how a report becomes the one nobody runs.
+    what_it_does_NOT_claim: >-
+      Dormant is not a defect and not a cleanup task, exactly as retired is not. A branch may
+      be seasonal, or waiting on a condition that has not arisen — `_output_cap: prompt
+      leaves little/no headroom` is dormant and entirely correct. The report says WHEN a
+      message was last seen and leaves the judgement to the reader; it stays a report rather
+      than a gate for the same reason DEBT-270 did.
+    validated_by_the_case_that_defeated_its_predecessor: >-
+      No restart, and none claimed — this is a script and a record, and nothing in it runs in
+      production. The evidence is that the report now classifies the exact message that
+      defeated the previous version: `cron parse failed` appears under DORMANT with
+      `2026-08-31` beside it, where before it sat indistinguishable among 291 "live" lines.
+      `logged_literals` is byte-identical, so the one-source import
+      `test_a_closing_check_looks_for_evidence_that_can_exist.py` took in DEBT-270 is
+      untouched — verified by diffing the function, not by assuming it.
+    claim_check: >-
+      uv run python scripts/retired_log_messages.py | sed -n '2p'
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-270
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, found by this loop losing itself in the log."

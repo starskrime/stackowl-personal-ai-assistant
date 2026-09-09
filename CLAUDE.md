@@ -153,6 +153,7 @@ at a process table. Measured, in order:
 | 2026-09-09 | **`12738 passed, 17 skipped, 0 failed in 2414.98s` (rc=0)**, `SUITE TREE STILL` — twenty-seventh, on `e1dd243d`. Launched at the START of the loop; DEBT-267 was measured, built, mutation-proven and dry-run against an off-tree MIRROR for the whole 40 minutes. The wait paid for itself TWICE: it caught that my throwaway sweep's looser adjacency rule had inflated 237 asymmetric functions to **280**, one edit before that number went into this file as fact; and it caught that the new test read `caplog`, which reaches records only while `stackowl` still propagates — `configure_logging` sets `propagate = False`, so the guard would have passed alone and failed in any session that had configured logging first. It reads the named logger directly now. |
 | 2026-09-09 | **`12742 passed, 17 skipped, 0 failed in 2403.74s` (rc=0)**, `SUITE TREE STILL` — twenty-eighth, on `2c538145`. DEBT-268 was measured, built, discrimination-proven and dry-run against an off-tree mirror for the whole 40 minutes. **AND THE PROGRESS BAR LIED AGAIN, exactly as this file warns.** At ~65 minutes elapsed it read 38%, and `ps` reported the pytest process with an `etime` of 22 minutes — together those look like a run that restarted itself. Both were red herrings: the CPU-time delta was +32s in 60s and the bar moved **38% -> 52% in that same minute**, because the early `tests/db` directories are a quarter of the clock. Check the CPU delta and the log's growth; never the percentage, and never `etime` on a pid matched by a loose pattern — the first `pgrep` hit was a transient process with 0 CPU. |
 | 2026-09-09 | **`12747 passed, 17 skipped, 0 failed in 2409.67s` (rc=0)**, `SUITE TREE STILL` — twenty-ninth, on `e1102a1d`. DEBT-269 was measured, built and discrimination-proven for the whole 40 minutes WITHOUT WRITING TO `docs/` — the corrected `Reviewed:` text was fed to `doc_check._reviewed_shas` as a STRING, which proved the extraction goes empty -> `{sha}` while the tree stayed still. docs/ is outside the fingerprint and inside the SUITE, so that distinction is the whole technique. |
+| 2026-09-09 | **`12748 passed, 17 skipped, 0 failed in 2404.49s` (rc=0)**, `SUITE TREE STILL` — thirtieth, on `d9ce9e31`. DEBT-271 was built off-tree for the whole 40 minutes, and the REASON is a consequence the previous loop created: DEBT-270 moved an AST walk into `scripts/retired_log_messages.py` and had `tests/audit` import it, which put that script inside the SUITE's blast radius. A one-source refactor can move a file from free-during-a-run to held-during-a-run, and nothing announces that. |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so
@@ -473,10 +474,16 @@ log measurement.
 **Count incidents, not log lines.** "19 database-is-locked events" was 19 LINES; one
 contention moment emits four.
 
-**AND CHECK THE MESSAGE IS STILL ONE THE CODE CAN WRITE.** The corpus keeps every
-message a DELETED line ever wrote, and nothing marks it deleted, so a grep returns a
-confident count for behaviour that cannot happen again. MEASURED 2026-09-09: **37 of
-328** distinct WARNING/ERROR/CRITICAL messages are retired wording. One of them —
+**AND CHECK THE MESSAGE IS STILL ONE THE CODE CAN WRITE — AND THAT IT STILL DOES.**
+The corpus keeps every message a DELETED line ever wrote, and nothing marks it deleted,
+so a grep returns a confident count for behaviour that cannot happen again. MEASURED
+2026-09-09 over 13 retained files: of **328** distinct WARNING/ERROR/CRITICAL messages,
+**47 are CURRENT, 244 are DORMANT and 37 are RETIRED** — only 47 describe what the
+platform is doing NOW, so five greps in six land on something already answered.
+**DORMANT is the one that fooled the instrument built for RETIRED**, on its very next
+use: `compute_next_run: cron parse failed` is emittable, has 326 hits, and has not
+fired since 2026-08-31 because `scheduler.py` learned to ask `_is_recurring` — whose
+comment already rejects the tightening the log invites. One of them —
 `[pipeline] deliver: no registry in services — discarding responses`, 153 hits over 12
 days — reads as the platform discarding answers and cost this loop three
 investigations before `4f3caf19` turned up, which had already split that branch; the
