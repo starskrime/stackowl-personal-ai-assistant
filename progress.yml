@@ -20865,6 +20865,125 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-263
+    found: 2026-09-09
+    what: >-
+      Monitoring went blind for three hours during the 2026-09-07 database incident and
+      said NOTHING when it came back. MEASURED: health_sweep entries ran 10-11 an hour
+      all day, then 5 / 0 / 0 / 0 / 4 across hours 14-18, while the database failed
+      419 / 838 / 839 / 838 / 520 times in those same hours. THREE COMPLETE HOURS with no
+      sweep at all, and the monitor was silent exactly when there was most to report.
+    the_coupling_and_the_part_of_it_that_is_fixable: >-
+      The sweep is a scheduled job, the scheduler reads `jobs` from the database to
+      dispatch it, and the database was down - so the monitor shares a failure domain
+      with the thing it monitors. WORSE: the check that would have noticed,
+      `store_cadence`, ALREADY watches `jobs.last_run_at` for staleness - and it is a
+      CONTRIBUTOR TO THE SWEEP. The detector for "the sweep stopped" was inside the
+      sweep. Nothing in this process can report while it cannot reach its database, and
+      the external-watchdog half is already settled by the operator (ESC-159: "leave this
+      box alone - the question is the CUSTOMER deployment"), so this adds no watchdog.
+    YOU_CANNOT_DETECT_YOUR_OWN_ABSENCE_WHILE_ABSENT_BUT_YOU_CAN_ON_RETURN: >-
+      That is the whole item, and nothing did. When the sweep resumed at 18:37 it logged
+      an ordinary exit, identical to the ten before the incident. Nothing in the record
+      said "there was no monitoring for four hours", so the gap was recoverable only by
+      counting log lines per hour by hand - which is exactly how this item was found.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: partial
+      document: no_change_needed
+    the_fix: >-
+      `_sweep_gap(job)` returns (seconds since the previous run, whole runs missed).
+      `Job.last_run_at` holds the PREVIOUS stamp at execute time - the completion UPDATE
+      that overwrites it runs after the handler - so no new plumbing and no second
+      source. The interval comes from `parse_every`, the same function `compute_next_run`
+      and `is_valid_schedule` use, so the sweep cannot disagree with the scheduler about
+      its own cadence. MISSED RUNS, NOT SECONDS: a seconds threshold is a constant nobody
+      can justify and rots when the cadence changes; `gap / interval - 1` is derived from
+      the job's own schedule, so a five-minute sweep and a daily one are both right
+      without a second number. Computed INSIDE `_log_exit` because there are FOUR call
+      sites and doing it at each is the actuator-on-some-paths shape this repo names
+      first. Two missed runs is the floor - one is jitter, and warning on jitter trains
+      the reader to skip the line that matters.
+    THE_THRESHOLD_WAS_CALIBRATED_AGAINST_REAL_GAPS_not_chosen: >-
+      Replayed every `health_sweep.execute: exit` in the retained window - 320 sweeps,
+      319 gaps - and asked how often `missed >= 2` would have fired: ONCE, 0.3%. 311
+      gaps sit at missed==0 and 7 at missed==1, so the jitter band is real and correctly
+      silent; the largest normal gaps are 629, 633, 649 and 658 seconds against a
+      300-second cadence. The single firing is a genuine 945s gap on 2026-09-09
+      02:26:55 -> 02:42:40. A warning that fires 0.3% of the time on a real gap is a
+      signal; one that fired on the 7 jitter gaps as well would be noise.
+      AND THE SAMPLE IS HONESTLY BOUNDED: the exit line was introduced 2026-09-08 and
+      its oldest record is 2026-09-08T06:07:37, AFTER the 09-07 incident. So this sample
+      shows the warning is SILENT IN HEALTH and does NOT retro-prove it would have caught
+      the outage - though that arithmetic is trivial and stated rather than implied:
+      4h05m at a 5-minute cadence is 48 missed runs, twenty-four times the threshold.
+    closing_check: |-
+      # THE FIELD IS THE EVIDENCE ONLY THE NEW CODE CAN PRODUCE. `since_previous_s` did
+      # not exist before this item, so no retained line can carry it and `--all` is
+      # earned. It rides the exit line that fires on EVERY sweep, so this closes on
+      # ordinary traffic rather than waiting for another outage.
+      n=$(./scripts/log_since.sh --all 'health_sweep.execute: exit')
+      f=$(grep -ah 'health_sweep.execute: exit' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null \
+          | jq -s '[.[]|select(.fields.since_previous_s != null)]|length' 2>/dev/null)
+      f=${f:-0}
+      # THE ANNOUNCEMENT is a separate question and must NOT gate this one: a healthy
+      # platform never goes blind, so a zero there is the desired state, not a failure.
+      # Counted and reported so the two are never conflated.
+      # DATE-BOUNDED, NOT `--all`, AND THE GUARD IS RIGHT TO INSIST. DEBT-255's rule
+      # earns `--all` only when `git log --reverse -S` shows the string arriving with
+      # the fix — and for a string this very commit introduces, that search finds
+      # nothing, because the commit does not exist yet. It flagged this as "in no src/
+      # commit", which is conservative and correct. A ship-date bound is the right form
+      # for a string you are shipping: it cannot predate today, and it will not expire
+      # until the retained window passes 2026-09-09.
+      b=$(./scripts/log_since.sh 2026-09-09 'MONITORING WAS BLIND')
+      [ "$f" -gt 0 ] && echo "CLOSEABLE $f of $n sweep exits now carry the gap field, so a blind window is countable from the record rather than by hand ($b blind-window warnings since 2026-09-09 — zero is the healthy state)" || echo "OPEN 0 of $n sweep exits carry since_previous_s; the field ships with this item, so this closes on the first sweep after the restart"
+    validated: >-
+      MUTATION-PROVEN from a file copy, three mutants, all killed BY NAME on the second
+      attempt: disarming the announcement (`if False:`) fails
+      `test_a_blind_window_is_ANNOUNCED`, hardcoding the cadence instead of asking
+      `parse_every` fails `test_an_unparseable_or_absent_schedule_says_nothing`, and
+      widening the threshold to `missed >= 0` fails `test_a_healthy_cadence_announces_
+      NOTHING`. Restore returned 8 passed. Helper logic proven against the REAL `Job`
+      model on six cases before applying: 300s -> 0 missed, 600s -> 1, the 4h05m
+      incident -> exactly 48, and never-run / cron-schedule / unparseable-stamp all -> 0.
+    A_MUTANT_SURVIVED_FIRST_and_it_was_the_guard_this_repo_already_wrote_down: >-
+      `if False:` passed all seven tests. The announcement assertion read the SOURCE for
+      "MONITORING WAS BLIND" and "log.scheduler.warning" - both of which are still there
+      in a branch that can never run. That is this repo's own recorded lesson about
+      vacuous guards ("`if False and _culprit_is_retry_safe(...)` survived all six
+      source-reading assertions"), committed AGAIN while writing the guard against it.
+      Replaced with a DRIVEN test that calls `_log_exit` and reads `caplog`, plus its
+      mirror asserting a healthy cadence announces nothing. ONLY RUNNING THE THING CAN
+      TELL A LIVE BRANCH FROM A DEAD ONE.
+    AND_IT_BLOCKED_IT_A_SECOND_TIME_on_a_real_chicken_and_egg: >-
+      The second gate run failed `test_every_log_since_call_names_a_real_date_or_earns_
+      all` with "DEBT-263: --all on 'MONITORING WAS BLIND', which is in no src/ commit".
+      Correct, and not a defect in the guard: DEBT-255 earns `--all` only when
+      `git log --reverse -S` shows the string arriving WITH the fix, and for a string
+      this very commit introduces that search finds nothing because the commit does not
+      exist yet. THE REMEDY IS THE DATE BOUND, which is the right form anyway - a string
+      you are shipping today cannot predate today, and the bound will not expire until
+      the retained window passes 2026-09-09. Recorded so the next author reaches for the
+      date rather than widening the guard: `--all` is for a string an EARLIER commit
+      introduced, never for one you are adding.
+    THE_GATE_BLOCKED_THIS_COMMIT_and_that_is_the_gate_working: >-
+      First run printed `ruff findings: 37`, `RUFF BASELINE ROSE`, `TRIPWIRES FAILED — do
+      not commit`, rc=1 — and because the gate is run BARE and the commit chained on its
+      status, nothing went out. Two UP017 findings: `datetime.timezone.utc` where this
+      codebase uses the `datetime.UTC` alias. Fixed at source rather than by raising the
+      baseline; back to exactly 35. This is the third distinct thing that caught this one
+      item — the suite wait caught the pydantic signature, the mutation run caught a
+      vacuous assertion, and the gate caught the lint.
+    AND_THE_PYDANTIC_MODEL_WAS_CAUGHT_BEFORE_THE_APPLY_not_by_a_red_run: >-
+      `Job` is a pydantic BaseModel and `idempotency_key` / `next_run_at` are REQUIRED
+      `str`, not optional. The drafted test passed None for both and would have failed on
+      construction. Found by reading the model during the suite wait rather than by a
+      failing run - which is what the off-tree hold is for.
   - id: DEBT-262
     found: 2026-09-09
     what: >-

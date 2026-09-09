@@ -113,6 +113,65 @@ def _health_loop_enabled() -> bool:
         return False
 
 
+def _sweep_gap(job: Job) -> tuple[float | None, int]:
+    """(seconds since this sweep last ran, whole runs missed).
+
+    YOU CANNOT DETECT YOUR OWN ABSENCE WHILE ABSENT — BUT YOU CAN ON RETURN.
+
+    MEASURED 2026-09-09 on the incident of 2026-09-07: health_sweep entries ran
+    10-11 an hour all day, then 5 / 0 / 0 / 0 / 4 across hours 14-18, while the
+    database failed 419 / 838 / 839 / 838 / 520 times in those same hours. THREE
+    COMPLETE HOURS with no sweep at all, and the monitor was silent exactly when
+    there was most to report.
+
+    The sweep is a scheduled job, the scheduler reads `jobs` to dispatch it, and the
+    database was down — so the monitor shares a failure domain with the thing it
+    monitors. Worse, the check that would have noticed (`store_cadence`, which already
+    watches `jobs.last_run_at` for staleness) is a CONTRIBUTOR TO THE SWEEP: the
+    detector for "the sweep stopped" was inside the sweep.
+
+    Nothing in this process can report while it cannot reach its database, and the
+    external-watchdog half is already settled (ESC-159: "leave this box alone — the
+    question is the CUSTOMER deployment"). What was missing is smaller and entirely
+    in reach: when the sweep RESUMED at 18:37 it logged an ordinary exit, identical
+    to the ten before the incident. Nothing said "there was no monitoring for four
+    hours", so the gap was recoverable only by counting log lines per hour by hand.
+
+    `job.last_run_at` holds the PREVIOUS run's stamp at execute time — the completion
+    UPDATE that overwrites it runs after the handler — so this needs no new plumbing
+    and no second source. The interval comes from `parse_every`, the same function
+    `compute_next_run` and `is_valid_schedule` use, so the sweep cannot disagree with
+    the scheduler about its own cadence.
+
+    MISSED RUNS, NOT SECONDS. A seconds threshold would be a constant nobody could
+    justify and would rot the moment the cadence changed. `gap / interval - 1` is
+    derived from the job's own schedule, so a five-minute sweep and a daily one are
+    both right without a second number.
+
+    Degrades to silence, never to a false alarm: a first-ever run, a cron-style
+    schedule with no fixed interval, or an unparseable stamp all report nothing.
+    """
+    from datetime import UTC, datetime
+
+    from stackowl.scheduler.scheduler_helpers import parse_every
+
+    if not job.last_run_at:
+        return None, 0
+    try:
+        previous = datetime.fromisoformat(job.last_run_at)
+        if previous.tzinfo is None:
+            previous = previous.replace(tzinfo=UTC)
+        gap = (datetime.now(UTC) - previous).total_seconds()
+    except (ValueError, TypeError):
+        # A stamp this cannot read is a reason to say nothing, not to guess. Never
+        # raises: losing the gap costs a log field, losing the sweep costs the sweep.
+        return None, 0
+    interval = parse_every(job.schedule or "")
+    if interval is None or interval.total_seconds() <= 0:
+        return gap, 0
+    return gap, max(0, int(gap // interval.total_seconds()) - 1)
+
+
 def _log_exit(
     job: Job, *, verdict: str, total: int, duration_ms: float, **extra: int
 ) -> None:
@@ -132,11 +191,31 @@ def _log_exit(
     exactly as they are — an unhealthy subsystem is still an ERROR — this only
     adds the line that makes them countable.
     """
+    gap_s, missed = _sweep_gap(job)
+    if missed >= 2:
+        # ANNOUNCED, NOT MERELY RECORDED. The field below makes the gap countable
+        # afterwards; it is not a signal. Two missed runs is the floor because one is
+        # jitter — a slow handler or a busy box — and warning on jitter would train
+        # the reader to skip the line that matters.
+        log.scheduler.warning(
+            "[scheduler] health_sweep: MONITORING WAS BLIND — this sweep is the "
+            "first since a gap, and nothing was watching the platform during it",
+            extra={"_fields": {
+                "job_id": job.job_id, "missed_runs": missed,
+                "since_previous_s": round(gap_s or 0.0, 1), "schedule": job.schedule,
+            }},
+        )
     log.scheduler.info(
         "[scheduler] health_sweep.execute: exit",
         extra={"_fields": {
             "job_id": job.job_id, "verdict": verdict, "total": total,
-            "duration_ms": duration_ms, **extra,
+            "duration_ms": duration_ms,
+            # COMPUTED HERE, in the ONE exit helper, because there are four
+            # `_log_exit` call sites and doing it at each would be the
+            # actuator-wired-on-some-paths shape this repo names first.
+            "since_previous_s": round(gap_s, 1) if gap_s is not None else None,
+            "missed_runs": missed,
+            **extra,
         }},
     )
 
