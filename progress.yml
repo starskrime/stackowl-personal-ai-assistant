@@ -20843,6 +20843,100 @@ known_debt:
       file-copy restore - an unrunnable check planted in `known_debt` fails it with
       `unexpected EOF while looking for matching quote`, and the restore returns it to 15
       passed with `git diff progress.yml` empty.
+  - id: DEBT-245
+    found: 2026-09-08
+    what: >-
+      `doc_check.py`'s OPEN BUT NOT TRACKED report - the instrument that finds acceptance
+      checks marked OPEN inside items whose `validate` is `done`, which nothing else will
+      ever re-ask - reported 2 checks in 1 document. MEASURED: the answer is 6 in 3.
+    root_cause_THE_WIDENING_MEASURED_PRECISION_AND_NEVER_RECALL: >-
+      `_OPEN_CHECK` was widened once already, on 2026-09-08, after D09.2 sat OPEN for
+      nine days unseen. That correction was measured, and its own comment records the
+      measurement: "the widening adds TWO lines, both in D09.2, both genuine, and NO
+      others." THAT SENTENCE MEASURES PRECISION. It asks whether the new pattern INVENTS
+      markers. It never asks what marker forms the corpus ALREADY CONTAINS that the
+      pattern still cannot see. `tests/audit/test_an_open_verdict_is_seen_wherever_it_is
+      _written.py` had a test for each direction of precision - verdicts found, prose not
+      swept - and NO test for recall at all.
+    what_the_pattern_could_not_see: >-
+      Both alternatives required OPEN at the START of a line, or a DASH immediately after
+      it. Every acceptance table in this corpus puts its verdict in the LAST cell, where
+      it starts no line, and writes it `**OPEN.**`, `**OPEN**,` or `**OPEN,`. Four
+      genuine markers were invisible - D05.4:420 and D05.4:539 (the basis across a
+      rebuild), D05.8:506 (the envelope witness) and D09.5:226.
+    and_the_correction_was_anchored_to_the_form_IT_first_saw: >-
+      That is the same shape as the defect it fixed, one iteration later. The guard's
+      docstring already names the shape - "an instrument anchored to the form it first
+      saw, blind to a document that writes the same fact differently" - and the fix for
+      it generalised from ONE document rather than from the corpus's vocabulary. So the
+      durable cure is not a third literal: it is the RECALL assertion, which makes the
+      next unseen form fail a test instead of hiding.
+    the_one_false_positive_is_the_sharpest_part: >-
+      Bold is the discriminator, not punctuation - but a widening to `**OPEN` sweeps in
+      D13.1:195, "This check read `**OPEN**` for a day after it closed", which is the
+      corpus RECORDING THIS EXACT DEFECT. Code spans are therefore blanked
+      (length-preserving, so reported columns stay true) before the search: a quoted
+      marker is prose ABOUT a marker. MEASURED - that blanking also removes a
+      PRE-EXISTING false positive, since the old pattern already swept in a quoted
+      `OPEN - no opportunity`.
+    THE_DEEPER_CAUSE_A_DENOMINATOR_MADE_BY_THE_INSTRUMENT_UNDER_TEST: >-
+      This report already carried the cure for silence: it prints a denominator, and its
+      own words say why - "the denominator is printed because a silent detector and a
+      clean corpus look identical". THAT DENOMINATOR IS COMPUTED BY THE BLIND FUNCTION
+      ITSELF: `open_markers += len(_open_acceptance_lines(body))`. So it could
+      distinguish "considered N, flagged none" from "considered nothing at all", and
+      could NEVER distinguish "considered N" from "there were N+4". A denominator
+      produced by the instrument under test cannot reveal that instrument's blindness -
+      which is why the report read a confident, well-instrumented 2 while the answer was
+      6. The cure has to come from OUTSIDE the detector, and that is what the new recall
+      test is: it finds candidate markers by a plain substring rule the regex has no part
+      in, then demands the detector return every one.
+    what_else_the_same_cause_reaches_NOT_YET_EVIDENCED: >-
+      The self-denominator SHAPE is present in this file's sibling reports - EVIDENCE
+      OLDER THAN THE LOGS increments `dated_blocks` inside its own finder, and BLIND
+      AFTER MIDNIGHT counts `on_purpose` the same way. I DID NOT ESTABLISH THAT ANY OF
+      THEM IS ACTUALLY BLIND. An independent probe counted 116 dated-result LINES across
+      33 documents against the report's 39 dated BLOCKS, and those are different units,
+      so the comparison cannot convict it - recorded as a hypothesis with its
+      disconfirming detail attached rather than as a finding, because a confident wrong
+      number is the failure this file exists to prevent.
+    measured_and_NOT_fixed_because_it_is_0_over_0: >-
+      `_validate_stages` reads `items` only, never `known_debt`, and maps a document to
+      an item by STEM rather than by the `doc:` field - so a design document owned only
+      by a DEBT record would be invisible. MEASURED: exactly 1 design document is named
+      by a `known_debt` `doc:` (D03.2, by DEBT-244) and it HAS a same-named item, so the
+      blind spot has ZERO live instances. Left alone deliberately - a change whose effect
+      cannot be measured is the vacuity this programme keeps paying for, and the report
+      already prints `staged_docs` as its denominator, so blindness is visible in the
+      output rather than silent.
+    the_six_are_genuine_not_stale_prose: >-
+      All six were read. D05.8's I1/I2 are open for a DEPLOYMENT reason the document
+      states correctly - this box resolves a 262,144 window against a 77-tool catalogue,
+      so neither the count cap nor the window can clip, and the records they watch cannot
+      exist here - RE-MEASURED on the live instance rather than copied from the
+      document: `[tools] registry.with_defaults: discovered {tools: 77}` at boot, and
+      `tool_count_cap: 150` in `~/.stackowl/stackowl.yaml`, so the cap sits ABOVE the
+      catalogue and cannot bind. D05.4's two need a rebuild the retained window has not seen. D09.5's
+      says in its own line that it cannot be closed. None is superseded by a close
+      statement anywhere in its document, which is what the report's second line reports.
+      Surfacing them IS the fix; closing them is not this item's job and would be a claim
+      nobody measured.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    validated_by_running_the_instrument_on_the_live_corpus: >-
+      Not a platform restart - `doc_check.py` is an instrument, not a running service, so
+      its live evidence is the report itself over the real 84-document corpus. BEFORE:
+      "OPEN BUT NOT TRACKED - 2 acceptance check(s) in 1 document(s)". AFTER: "6 in 3",
+      naming D05.4:420, D05.4:539, D05.8:485, D05.8:486, D05.8:506 and D09.5:226. A
+      whole-report diff with the mirror artefact held constant shows ONLY that section
+      changed - every other report byte-identical. All six were read in full and are
+      genuine open questions, not stale prose.
   - id: DEBT-244
     found: 2026-09-08
     what: >-

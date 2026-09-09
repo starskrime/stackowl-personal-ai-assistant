@@ -612,7 +612,29 @@ def _on_purpose_queries(text: str) -> int:
 #: MEASURED against the whole corpus before it was believed, exactly as that decision
 #: demanded: it adds TWO lines, both in D09.2, both genuine, and NO others. Zero false
 #: positives is what earns the loosening.
-_OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\bOPEN\s*[—–-]", re.M)
+#: AND THAT WIDENING MEASURED PRECISION AND NEVER RECALL - corrected 2026-09-08.
+#: "It adds TWO lines and NO others" asks whether the pattern INVENTS markers. It
+#: does not ask what marker forms the corpus already CONTAINS and the pattern still
+#: cannot see. MEASURED over every `\bOPEN\b` in the design set: the two alternatives
+#: above require OPEN at the start of a line, or a dash immediately after it - and a
+#: verdict inside a TABLE CELL is written `**OPEN.**`, `**OPEN**,` or `**OPEN,`, which
+#: is neither. Four genuine markers were invisible: D05.4:420 and D05.4:539 (the basis
+#: across a rebuild), D05.8:506 (the envelope witness) and D09.5:226. The report said
+#: 2 when the answer was 6.
+#:
+#: BOLD is the discriminator, not punctuation. A status marker is emphasised
+#: (`**OPEN`); prose uses the bare word mid-sentence - "a breaker OPEN for", "an OPEN
+#: escalation" - and there are 20 such lines that must stay unflagged.
+_OPEN_CHECK = re.compile(r"^\s*\**OPEN\b|\bOPEN\s*[—–-]|\*\*OPEN\b", re.M)
+
+#: A backticked marker is PROSE ABOUT a marker, never a marker.
+#:
+#: Load-bearing, and measured: without it D13.1:195 - "This check read `**OPEN**` for
+#: a day after it closed" - matches the bold alternative above. That line is the
+#: document RECORDING this exact defect, so the widened detector's only false positive
+#: would have been the corpus's own account of the lesson. Code spans are blanked
+#: (length-preserving, so reported columns stay true) before the search.
+_CODE_SPAN = re.compile(r"`[^`]*`")
 
 
 #: A statement that some check in this document was CLOSED or RESOLVED. Its presence
@@ -1008,11 +1030,15 @@ def _close_note(body: str, open_line: int) -> str:
 
 
 def _open_acceptance_lines(text: str) -> list[tuple[int, str]]:
-    """(line_no, line) for every acceptance check the document marks OPEN."""
+    """(line_no, line) for every acceptance check the document marks OPEN.
+
+    Searches the line with its CODE SPANS BLANKED, so a document quoting a marker is
+    not mistaken for one carrying it. The reported line is the original.
+    """
     return [
         (i, line.strip())
         for i, line in enumerate(text.splitlines(), 1)
-        if _OPEN_CHECK.search(line)
+        if _OPEN_CHECK.search(_CODE_SPAN.sub(lambda m: " " * len(m.group()), line))
     ]
 
 
