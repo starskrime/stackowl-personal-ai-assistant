@@ -20883,9 +20883,19 @@ known_debt:
       implement: done
       cleanup: done
       test: done
-      validate: partial
+      validate: done
       document: no_change_needed
-    closing_check: |
+    validated_on_a_real_out_of_band_delivery_after_a_restart: >-
+      Restarted, then drove a real turn through `scripts/dev_ingress.py`, which has no
+      live reader and so takes exactly the out-of-band path. Trace `5b1387dd`:
+      `[deliver] out-of-band answer labelled with the question it answers`
+      (`lead_len: 54`) fires immediately before `router.deliver: delivered` and
+      `stream-miss: live reader gone`. The closing check reads CLOSEABLE - "2 of 5
+      out-of-band answers since 2026-09-09 carried the question they answer" - and the
+      split is the proof: the THREE deliveries from before the fix carried no label and
+      the TWO after it did. Evidence only the new code could produce, since that
+      message did not exist an hour ago.
+    superseded_closing_check_kept_because_it_still_answers_the_right_question: |
       # The delivered TEXT is never logged, so "the label shipped" could only be
       # asserted, not checked. A DISTINCT INFO line now records it — a JSON field would
       # not do, because a check must wait on a string a `log.*` call actually EMITS,
