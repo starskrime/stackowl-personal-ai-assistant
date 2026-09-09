@@ -61,6 +61,10 @@ class ConversationStore(Protocol):
 
     async def clear_session(self, session_key: str) -> int: ...
 
+    async def get_conversation_summary(self, scope_key: str) -> str | None: ...
+
+    async def set_conversation_summary(self, scope_key: str, summary: str) -> None: ...
+
     async def health(self) -> HealthReport: ...
 
 
@@ -160,6 +164,34 @@ class MemoryBridge(ABC):
         Default implementation returns ``[]``; concrete bridges override.
         """
         return []
+
+    async def get_conversation_summary(self, scope_key: str) -> str | None:
+        """The stored compaction summary for this conversation, or None.
+
+        THE HALF THAT WAS MISSING. `conversation_compressor.select()` reads a prior
+        summary out of the history it is handed, `apply()` branches on it, and NOTHING
+        ANYWHERE PRODUCED ONE - 34 compactions over six days, `had_prior_summary=false`
+        on every one. It could not be produced through `recent_conversation_turns`,
+        whose unit is a user/assistant TURN PAIR: a summary is neither half of a turn,
+        so there was nowhere in the store's shape to put it.
+
+        Default returns None; concrete bridges override.
+        """
+        return None
+
+    async def set_conversation_summary(self, scope_key: str, summary: str) -> None:
+        """Remember this compaction so the next one folds it in instead of losing it.
+
+        Default is a no-op that SAYS SO; concrete bridges override. A silent empty
+        body would make "the summary was stored" and "this bridge cannot store one"
+        look identical to the next reader — which is the ambiguity that let the reuse
+        path sit unwired for six days.
+        """
+        log.memory.debug(
+            "[memory] MemoryBridge.set_conversation_summary: noop — this bridge does "
+            "not persist summaries, so the next compaction starts from scratch",
+            extra={"_fields": {"scope_key": scope_key, "summary_len": len(summary)}},
+        )
 
     async def health(self) -> HealthReport:
         """Probe bridge health. Concrete implementations override with real checks."""

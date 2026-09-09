@@ -46,6 +46,20 @@ def test_the_live_half_is_exactly_these_five_methods() -> None:
         "recent_conversation_turns",
         "clear_session",
         "health",
+        # ADMITTED 2026-09-09 (DEBT-249) ON THIS TEST'S OWN CRITERION: load-bearing
+        # on a normal turn, not a convenient reach-through. `_compress_history` runs
+        # UNCONDITIONALLY on every turn and reads the stored summary there; the write
+        # fires whenever a compaction happens.
+        #
+        # They are here rather than on the fact half because a conversation summary IS
+        # conversation state — it is keyed by the same scope key the turns are, and it
+        # is read on the same path that reads them. The retired extraction pipeline is
+        # not involved. Before this, `Selection.prior_summary` was read by the
+        # compressor and written by NOTHING: 34 compactions over six days with
+        # `had_prior_summary=false` every time, because there was nowhere in this
+        # seam's shape to put one.
+        "get_conversation_summary",
+        "set_conversation_summary",
     }
     declared = {
         name for name in dir(ConversationStore)

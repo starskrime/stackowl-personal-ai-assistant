@@ -62,6 +62,18 @@ TAIL_TURNS = 6
 #: this a cost with no benefit. Enforced in :func:`apply`.
 SUMMARY_BUDGET_SHARE = 0.25
 
+#: Hard ceiling on a stored summary, whatever share of the window the budget allows.
+#:
+#: DEBT-248 WIDENED THIS 16x WITHOUT MEASURING IT, and this is that correction.
+#: `SUMMARY_BUDGET_SHARE` was calibrated against a FIXED 12,000-token budget, giving a
+#: 3,000-token summary ceiling. Making the budget window-relative made the share
+#: window-relative too: 0.25 of 196,608 is 49,152. Nothing broke, because the clip has
+#: never fired in the entire retained window — which is exactly why it needed measuring
+#: rather than noticing. A 49,152-token "summary" is the failure `_bounded`'s own
+#: docstring warns about: larger than the turns it replaced, a model call that saves
+#: nothing. The share still shrinks the ceiling on lean models; this stops it growing.
+SUMMARY_MAX_TOKENS = 3_000
+
 #: A filter-safe preamble. The turns being summarized are SOURCE MATERIAL, not
 #: instructions — without this a prior turn reading "ignore previous
 #: instructions" (or simply "reply in French") is executed by the summarizer.
@@ -189,9 +201,12 @@ def select(messages: Sequence[Message], *, budget_tokens: int) -> Selection:
         model call should be made in that case.
     """
     msgs = list(messages or ())
-    prior = next(
+    _marked = next(
         (m.content for m in msgs if (m.content or "").startswith(SUMMARY_MARKER)), None
     )
+    # The TEXT, not the marked message: `as_message` re-applies the marker, so
+    # carrying it here stacks one per round trip.
+    prior = _marked[len(SUMMARY_MARKER):].lstrip("\n") if _marked else None
     # A prior summary is not a turn — it is folded into the next one, never kept
     # alongside it, or every compaction would stack another copy.
     msgs = [m for m in msgs if not (m.content or "").startswith(SUMMARY_MARKER)]
@@ -258,7 +273,7 @@ def _bounded(text: str, budget_tokens: int) -> str:
     structure survives, and the earliest headings win because RESOLVED and
     PENDING are what the next turn needs.
     """
-    ceiling = max(1, int(budget_tokens * SUMMARY_BUDGET_SHARE))
+    ceiling = max(1, min(int(budget_tokens * SUMMARY_BUDGET_SHARE), SUMMARY_MAX_TOKENS))
     if estimate_tokens(text) <= ceiling:
         return text
     kept: list[str] = []

@@ -182,6 +182,14 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
 
     # --- ON_DEMAND: only a person's action writes these -----------------------
     _on_demand("owls", "created_at", "11.8 days idle and CORRECT — no owl created."),
+    _on_demand(
+        "conversation_summaries", "updated_at",
+        "written ONLY when a conversation exceeds the history budget and is "
+        "compacted. Since DEBT-248 that budget is 0.75 of the resolved model "
+        "window — 196,608 tokens here — and the 40-turn read cap bounds history "
+        "at ~46,640, so on THIS deployment silence is expected and correct. A "
+        "lean-window deployment writes here often.",
+    ),
     _on_demand("owl_dna", "updated_at"),
     _on_demand("owl_dna_authored", "updated_at"),
     _on_demand("owl_profiles", "created_at"),

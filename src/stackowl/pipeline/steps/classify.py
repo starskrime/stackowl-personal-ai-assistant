@@ -698,6 +698,19 @@ async def _compress_history(history: list[Message], state: PipelineState) -> lis
         # which is memoized and quiet. None keeps the old fixed budget.
         window = state.model_window or await resolve_turn_window(get_services(), state)
         budget = cc.history_budget(window)
+
+        # REMEMBER THE LAST COMPACTION (DEBT-249). Bakir, 2026-09-09: "platfomr does
+        # not remember when last time did compaction and now doing for my each
+        # request." MEASURED: 34 compactions over six days, `had_prior_summary=false`
+        # on EVERY ONE, because nothing anywhere wrote one. `select()` finds a prior
+        # summary only if it arrives INSIDE the history, so the stored one is put back
+        # where the engine already knows how to look for it.
+        bridge = get_services().conversation_store
+        scope = owner_scope_key(state)
+        prior = await bridge.get_conversation_summary(scope) if bridge else None
+        if prior:
+            history = [cc.as_message(prior), *history]
+
         selection = cc.plan(history, window=window)
         if not selection.needs_compression:
             return cc.apply(selection, None, budget_tokens=budget)
@@ -715,6 +728,11 @@ async def _compress_history(history: list[Message], state: PipelineState) -> lis
             }},
         )
         summary = await _summarize_region(cc.build_prompt(selection), state)
+        if summary and bridge is not None:
+            # THE WRITER THAT DID NOT EXIST. Without this the next turn re-reads the
+            # raw turns and summarizes from scratch, losing everything older than the
+            # read depth — which is what "does not remember" meant.
+            await bridge.set_conversation_summary(scope, summary)
         out = cc.apply(selection, summary, budget_tokens=budget)
         log.engine.info(
             "[pipeline] classify: conversation compressed",

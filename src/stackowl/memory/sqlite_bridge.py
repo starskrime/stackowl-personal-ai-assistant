@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import time
 from typing import TYPE_CHECKING, Literal
 
@@ -830,6 +831,75 @@ class SqliteMemoryBridge(MemoryBridge):
             extra={"_fields": {"session_key": session_key, "n_results": len(results)}},
         )
         return results
+
+    async def get_conversation_summary(self, scope_key: str) -> str | None:
+        """The stored compaction summary for this conversation, or None.
+
+        Keyed by the SAME scope key the turns are, so a summary lives in the same
+        bucket as the conversation it summarizes. Never raises: a missing summary
+        must degrade to "compress from scratch", which is what happened on every
+        turn before this existed.
+        """
+        log.memory.debug(
+            "[memory] sqlite_bridge.get_conversation_summary: entry",
+            extra={"_fields": {"scope_key": scope_key}},
+        )
+        try:
+            rows = await self._db.fetch_all(
+                "SELECT summary FROM conversation_summaries WHERE scope_key = ?",
+                (scope_key,),
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail a turn over a summary
+            log.memory.warning(
+                "[memory] sqlite_bridge.get_conversation_summary: read failed — "
+                "compressing from scratch",
+                exc_info=exc, extra={"_fields": {"scope_key": scope_key}},
+            )
+            return None
+        text = (rows[0]["summary"] if rows else None) or None
+        log.memory.debug(
+            "[memory] sqlite_bridge.get_conversation_summary: exit",
+            extra={"_fields": {"scope_key": scope_key, "found": text is not None}},
+        )
+        return text
+
+    async def set_conversation_summary(self, scope_key: str, summary: str) -> None:
+        """Remember this compaction. One row per conversation, replaced each time.
+
+        INFO, not DEBUG, and deliberately: this line is the evidence that the reuse
+        path has a writer at all, and a DEBUG line does not exist in production.
+        """
+        log.memory.debug(
+            "[memory] sqlite_bridge.set_conversation_summary: entry",
+            extra={"_fields": {"scope_key": scope_key, "summary_len": len(summary)}},
+        )
+        now = datetime.datetime.now(tz=datetime.UTC).isoformat()
+        try:
+            await self._db.execute(
+                """
+                INSERT INTO conversation_summaries
+                    (scope_key, summary, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(scope_key) DO UPDATE SET
+                    summary = excluded.summary,
+                    updated_at = excluded.updated_at
+                """,
+                (scope_key, summary, now),
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail a turn over a summary
+            log.memory.error(
+                "[memory] sqlite_bridge.set_conversation_summary: write failed — "
+                "the next compaction will start from scratch",
+                exc_info=exc, extra={"_fields": {"scope_key": scope_key}},
+            )
+            return
+        log.memory.info(
+            "[memory] conversation summary remembered",
+            extra={"_fields": {
+                "scope_key": scope_key,
+                "summary_len": len(summary),
+            }},
+        )
 
     async def clear_session(self, session_key: str) -> int:
         """Delete all conversation staged facts for *session_key*.
