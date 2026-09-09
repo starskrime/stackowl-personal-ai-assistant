@@ -21031,6 +21031,15 @@ known_debt:
       must be 4 passed. Then, once the platform has been restarted onto this code and an RCA
       has declined once: `grep -ah "route_rca_verdict: unverified" ~/.stackowl/logs/stackowl*.jsonl | wc -l`
       is > 0, which was structurally impossible before this change.
+    validated_live_on_cda77bf3: >-
+      Restarted and CONFIRMED BY A COUNT INCREASE, not a grep match: `core: code watcher
+      armed` 802 -> 803, newest boot 2026-09-09T16:26:15Z, after the commit. Then the
+      measurement that matters and it is a NEGATIVE one: ZERO degradation confessions since
+      that boot — no `no db wired`, no `no skill curator wired`, no `no embedding registry`,
+      no `flag off — noop`. Every collaborator is wired, which is the healthy answer and the
+      one the DEBUG level could never have told anybody. The self-healing decline line is
+      event-gated on a verdict arriving unverified, so it stays OPEN below with its
+      denominator rather than being called done.
     closing_check: >-
       B=$(./scripts/log_since.sh 2026-09-09 'route_rca_verdict: unverified verdict');
       D=$(./scripts/log_since.sh 2026-09-09 'incident_escalation: RCA complete');
