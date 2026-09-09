@@ -20889,9 +20889,23 @@ known_debt:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: no_change_needed
-    closing_check: |
+    validated_live_AND_ITS_FIRST_ACT_WAS_TO_REFUTE_ITS_AUTHOR: >-
+      Restarted and drove a real turn. Trace `0a49b021` logs `scope_key: 72055773,
+      read_turns: 54, turns: 54, read_depth: 40, tokens: 9000, compressed: false` -
+      history IS being assembled (54 turns, 9,000 tokens against a 196,608 budget, so
+      compaction correctly does not fire). Evidence only the new code could produce:
+      that message did not exist an hour ago.
+      AND IT IMMEDIATELY FALSIFIED DEBT-251's CONTEXT CLAIM, which is the whole reason
+      to build an instrument rather than argue. The recovery twin
+      `recover-0a49b0212ed7` logs the SAME `scope_key: 72055773` and the SAME 54 turns
+      / 9,000 tokens as the ordinary turn. Recovery turns do NOT read a different
+      bucket: history is read under `owner_scope_key` = `identity_key or session_key`,
+      and identity resolves to the chat id for both. I had read a key off a log line,
+      assumed it was the one the read used, and written it into the record. DEBT-251's
+      entry is corrected.
+    superseded_closing_check_kept_because_it_still_answers_the_right_question: |
       # The line is new, so any occurrence is evidence only this code could produce.
       n=$(./scripts/log_since.sh 2026-09-09 'classify: history assembled')
       [ "${n:-0}" -gt 0 ] && echo "CLOSEABLE ${n} turns since 2026-09-09 recorded what history they assembled" || echo "OPEN 0 turns have recorded their assembled history"
@@ -20911,12 +20925,23 @@ known_debt:
       and delivered at 02:58:24. The only time concept in `pipeline/durable/` is the
       lease, and `task_loop_runner.py` states it: "A chat task only reaches here after
       its LEASE EXPIRED." Nothing anywhere bounds RELEVANCE.
-    and_the_recovery_turn_runs_under_a_DIFFERENT_session_key: >-
-      Those turns carry `session_key: owl:secretary:recovery:<task>` rather than the
-      conversation's key, so they assemble history from a different bucket than the
-      chat they deliver into. That is the "context switching" half of his report, and
-      it is a second defect living in the same path - recorded here rather than fixed,
-      because it is not what this item changed.
+    and_the_recovery_turn_runs_under_a_DIFFERENT_session_key_WHICH_WAS_WRONG: >-
+      I recorded here that recovery turns "assemble history from a different bucket
+      than the chat they deliver into", on the strength of their
+      `session_key: owl:secretary:recovery:<task>`. THAT CLAIM IS FALSE, and DEBT-252's
+      instrument refuted it within minutes of shipping - which is what the instrument
+      was for. MEASURED 2026-09-09 on trace `0a49b021`: the ordinary turn logs
+      `scope_key: 72055773, read_turns: 54, tokens: 9000` and its recovery twin
+      `recover-0a49b0212ed7` logs `scope_key: 72055773, read_turns: 54, tokens: 9000` -
+      the SAME key, the SAME history, byte for byte.
+      WHY I WAS WRONG: history is read under `owner_scope_key(state)`, which is
+      `identity_key or session_key` (`pipeline/services.py:291`), and the identity
+      resolver yields the chat id for both turns. The synthetic recovery string is the
+      SESSION key, not the SCOPE key, and it is deliberate - `sessions/models.py:288`
+      classifies `owl:*:recovery:*` as a MACHINE LANE so those turns are not filed as
+      durable facts about the user. I read a key in a log line, assumed it was the one
+      the read used, and wrote it down without checking. The stale-answer defect this
+      item fixed is real and measured; this sentence about context was not.
     fix_THE_ADDITIVE_HALF_ONLY: >-
       `_proactive_fallback` fires exactly when the live reader is gone - 43 times
       against 1,176 normal deliveries - so its recipient is BY CONSTRUCTION not the
