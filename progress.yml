@@ -20865,6 +20865,66 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-262
+    found: 2026-09-09
+    what: >-
+      Chasing the recorded four-hour database incident I ran
+      `./scripts/log_since.sh --all '[loop] tick failed'`, got ZERO, and was one sentence
+      from reporting that a number in the record was fabricated. The literal pattern
+      returns 2,974. `[loop]` is a CHARACTER CLASS - it matches one character from
+      {l,o,p} followed by " tick failed", which no log line looks like. THE RECORD WAS
+      RIGHT AND MY MEASUREMENT WAS WRONG.
+    AND_IT_CUTS_BOTH_WAYS_which_is_what_makes_it_dangerous: >-
+      `--all '[cost] '` returns 197,684 against the literal `'cost] '` at 16,184 - a 12x
+      OVERCOUNT, because the class matches any of c/o/s/t before a space and that is most
+      lines in the corpus. The same slip produces a false ZERO in one direction and a
+      false ORDER OF MAGNITUDE in the other, and neither looks wrong on the page.
+    the_denominator_is_why_this_is_not_exotic: >-
+      `grep -rhoE '"\[[a-z_]+\]' src/` finds 5,145 log calls across 180 distinct
+      bracketed prefixes - essentially every message in the tree. So the obvious, natural
+      way to grep for ANY log line here is exactly the broken way.
+    WHY_the_recorded_checks_were_clean_and_that_is_the_point: >-
+      All three closing checks passing a bracketed pattern already escape it
+      (`\[curated\]`, `\[resilient_round\]`, `\["`), and zero document Verification
+      greps use one. Somebody was careful, once, per check. The INTERACTIVE path - what a
+      loop types while measuring - had no protection at all, and that is where both of
+      this loop's wrong numbers came from. A CONVENTION HELD BY CARE IS HELD UNTIL THE
+      DAY NOBODY IS CAREFUL. This corpus already paid for the same class once, in D09.4's
+      `[skills] nudge` check; that fix corrected ONE check rather than the tool.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: no_change_needed
+    the_fix_WARNS_rather_than_refusing: >-
+      `log_since.sh` now announces an UNESCAPED bracketed prefix on stderr and answers as
+      asked. A malformed date exits 2 because no window can be honoured; a truncated
+      window WARNS because the answer is real, just narrower. This is the second kind - a
+      bracket may be a deliberate class, and breaking a working check to prevent a likely
+      mistake teaches the reader to route around the tool. stderr is the right channel
+      because `validate_check.py` already reads it, which is how WINDOW TRUNCATED reaches
+      the board.
+    validated: >-
+      LIVE, both directions, against the real logs: the unescaped call now prints the
+      warning and still answers 0, and the escaped form returns 2,974 in silence. Ran the
+      whole validate board and counted the warning: 0 of 22 checks trip it, so no
+      recorded check regressed. MUTATION-PROVEN from a file copy - disarming the
+      condition fails the two warning tests by name, and widening it to ANY bracket fails
+      `test_the_escaped_form_is_silent_AND_correct`, which is the assertion that stops it
+      crying wolf on correct usage. Restore returned 6 passed.
+    the_ratchet_starts_at_zero_and_says_so: >-
+      `test_no_closing_check_passes_an_unescaped_bracketed_prefix` currently has no
+      offenders, stated plainly rather than dressed as a fix, with a vacuity control
+      asserting the walk actually reaches the three escaped patterns. It stops the next
+      one arriving unnoticed.
+    a_wart_seen_and_deliberately_not_pinned: >-
+      A zero count exits 1, because `grep | wc -l` runs under `set -o pipefail`. Harmless
+      - every caller reads the number through `$(...)` and never the status - and
+      asserting it would pin behaviour this item did not decide to change. Recorded so
+      the next reader knows it was seen rather than missed.
   - id: DEBT-261
     found: 2026-09-09
     what: >-

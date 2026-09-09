@@ -118,6 +118,35 @@ if [ "$unbounded" -eq 0 ] && [[ "$since" > "$today" ]]; then
     exit 2
 fi
 
+# A BRACKETED LOG PREFIX IS A CHARACTER CLASS, and every message in this tree has one.
+#
+# MEASURED 2026-09-09, on this loop's own measurement, twice:
+#
+#   log_since.sh --all '[loop] tick failed'   ->        0
+#   log_since.sh --all 'loop\] tick failed'   ->    2,974
+#   log_since.sh --all '[cost] '              ->  197,684
+#   log_since.sh --all 'cost] '               ->   16,184
+#
+# `[loop]` matches ONE character from {l,o,p}, so the first is a false ZERO and the
+# third a false 12x OVERCOUNT — the same slip producing opposite errors, neither of
+# which looks wrong. `grep -rhoE '"\[[a-z_]+\]' src/` finds 5,145 log calls across 180
+# distinct prefixes, so the obvious way to grep for ANY line here is the broken way.
+#
+# The recorded checks are all correctly escaped; the INTERACTIVE path had nothing, and
+# that is where both of this loop's wrong numbers came from. This corpus already paid
+# for the same class once, in D09.4's `[skills] nudge` check — that fix corrected ONE
+# check, and a convention held by care is held until nobody is careful.
+#
+# WARN, DO NOT REFUSE. A malformed date exits 2 because no window can be honoured; a
+# truncated window warns because the answer is real, just narrower. This is the second
+# kind: the bracket may be a deliberate class, and breaking a working check to prevent a
+# likely mistake teaches the reader to route around the tool.
+if [[ "$pattern" =~ (^|[^\\])\[[a-zA-Z_][a-zA-Z_]*\] ]]; then
+    echo "log_since: PATTERN LOOKS LITERAL BUT [...] IS A CHARACTER CLASS — '$pattern'" \
+         "will match ONE character from inside the brackets, not the prefix itself." \
+         "Escape it (\\[name\\]) or drop the prefix. Answering as asked." >&2
+fi
+
 shopt -s nullglob
 stamped=("$dir"/stackowl-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].jsonl)
 
