@@ -188,6 +188,32 @@ def _resolve(path: str) -> str | None:
     return None
 
 
+def cites(changed: str, cited: str) -> bool:
+    """Does `cited` — a path a document declares as its Source — cover `changed`?
+
+    A CITATION CAN BE A DIRECTORY, and until 2026-09-09 nothing here knew that.
+    MEASURED: 15 of the 180 resolvable Source citations across the design set are
+    directories — `src/stackowl/commands` (D14.2), `src/stackowl/sandbox` (D06.1,
+    D06.3), `src/stackowl/tools/code` (D13.4) and twelve more. `git log -- <dir>`
+    dates them correctly, so the STALE verdict was right; the ATTRIBUTION was
+    computed with `f in wanted`, an exact string match against `--name-only`
+    output, which never equals a directory. Every one of those thirteen documents
+    could only ever be reported as `<- ?`, and D14.2 was, on the run that found
+    this.
+
+    That is the halfway failure this report already names in `_changes_since`:
+    "a report that names a cause its detector did not use is worse than one that
+    names none". Here it named NO cause while the detector had one.
+
+    It lives as a function rather than an inline condition because
+    `scripts/docs_touching.py` has to answer the same question in the opposite
+    direction — which documents cover the file I just changed — and two copies of
+    a path rule is the shape this repo pays for most.
+    """
+    cited = cited.rstrip("/")
+    return changed == cited or changed.startswith(cited + "/")
+
+
 #: A commit subject that REMOVES something. A deletion is the change most likely to
 #: leave a document asserting a thing that no longer exists — D05.7 described
 #: `hard_stop_enabled` for eight days after ESC-68 deleted it, and the module
@@ -490,7 +516,9 @@ def _changes_since(
         parts = head.split("\x1f", 2)
         if len(parts) != 3 or parts[0] <= verified:
             continue
-        touched = sorted(f for f in rest.split("\n") if f in wanted)
+        touched = sorted({
+            c for f in rest.split("\n") if f for c in wanted if cites(f, c)
+        })
         if symbols:
             # A citation that names a SYMBOL is only reached by a commit that changed
             # that symbol. `bf603ef7` touched ten lines of `build_tool_schemas` and

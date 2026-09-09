@@ -145,6 +145,7 @@ at a process table. Measured, in order:
 | 2026-09-08 | **`12568 passed, 17 skipped, 0 failed in 2188.04s` (rc=0)** — nineteenth, GREEN again on `39cd90d6`, the tree carrying the fixes for the red run above. **Launched at the START of a loop rather than the end**, which is the sequencing rule three loops paid for: a run begun when an item finishes guarantees the NEXT loop opens blocked. Start it first, work the item off-tree in the scratchpad, land it when the verdict prints — one loop absorbs the 37 minutes instead of blocking the next. See DEBT-234. |
 | 2026-09-08 | **`12577 passed, 17 skipped, 0 failed in 2212.17s` (rc=0)** — twentieth, on `a937743d`, `SUITE TREE STILL`. First DELIBERATE use of the sequencing rule: launched at the start of the loop and the whole of DEBT-236 built against a scratch copy of the record while it ran. |
 | 2026-09-08 | **`12583 passed, 17 skipped, 0 failed in 2188.25s` (rc=0)**, `SUITE TREE STILL` — twenty-first, on `f22bfd32`. Launched at the START of the loop again; DEBT-239 — a new `doc_check` report, a `tests_touching` blind spot, ten guards and four document corrections — was measured, built, mutation-proven and dry-run entirely off-tree while it ran. |
+| 2026-09-09 | **`12682 passed, 17 skipped, 0 failed in 2272.25s` (rc=0)**, `SUITE TREE STILL` — twenty-second, on `15ec3c83`. Launched at the START of the loop; DEBT-257 was measured, built, mutation-proven and dry-run against an off-tree MIRROR (`docs/`, `src/` and `.git` symlinked) for the whole 38 minutes. **And the rule that a commit voids a verdict was VERIFIED rather than trusted**: `tree_fingerprint` hashes `git rev-parse HEAD` alongside the `src/`+`tests/` listing, so a docs-only commit voids it too — and the script then re-runs itself once, so the cost is another 38 minutes, not a lost answer. |
 
 The old line here said "it hangs on this box" and had said so since 2026-08-10. It was
 wrong, and the wrongness was expensive twice over. "It hangs" reads as *impossible*, so
@@ -273,7 +274,17 @@ package path touches one of them.
 ```bash
 uv run python scripts/tests_touching.py            # what you changed
 uv run python scripts/tests_touching.py src/…/x.py # or name the files
+uv run python scripts/docs_touching.py             # and which DOCUMENTS declare it
 ```
+
+**The third line is the same lesson one surface over.** This file says the design
+document is the fifth surface of a change, and it said so while `1897e0c3` — a
+one-line log-level promotion in `commands/registry.py` — left D14.1 and D14.2 stale
+for the next loop to find. MEASURED over the last 60 commits: **15 touched a path
+some document declares as its `Source`**, one in four, `bf603ef7` reaching NINE of
+them. Two whole loops went on draining staleness that earlier loops created. The
+re-reading is real work and cannot be automated; doing it on the loop that made the
+change, while you still remember whether it concerned the document, can be.
 
 It names every test that imports OR NAMES each changed module — the string-mention
 half is not optional here, because this tree monkeypatches by dotted name and reads

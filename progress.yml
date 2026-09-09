@@ -20854,6 +20854,78 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-257
+    found: 2026-09-09
+    what: >-
+      The previous loop's own commit `1897e0c3` promoted ONE log line in
+      `commands/registry.py` from DEBUG to INFO and left TWO design documents stale -
+      D14.1 and D14.2 - which this loop's `doc_check` run duly reported. The
+      fifth-surface rule failed in the one place hardest to excuse: the author had read
+      the rule, in the skill, in the same session.
+    WHY_and_the_rule_was_never_the_problem: >-
+      CLAUDE.md and the item-loop skill both say the design document is the FIFTH
+      SURFACE of a change, in the strongest terms this corpus has. A WARNING NAMES THE
+      HAZARD; THE READER NEEDS THE ANSWER - which is the exact sentence
+      `tests_touching.py` was built on after DEBT-228 shipped a red test whose warning
+      was already written down. The TEST question has had a derived answer since
+      DEBT-231. The DOCUMENT question had only `doc_check`'s post-hoc STALE report,
+      which is to say an answer that arrives on somebody else's loop.
+    what_that_costs_MEASURED: >-
+      Over the last 60 commits, 15 touched a path some design document declares as its
+      `Source` - one in four. `bf603ef7` reached NINE documents and `c82dac21` seven.
+      TWO WHOLE LOOPS (DEBT-242, DEBT-254) were spent draining staleness earlier loops
+      created, and DEBT-254's own record says its eight documents "were made stale by MY
+      OWN commits in this session". The re-reading is real judgement and cannot be
+      automated; doing it on the loop that made the change can be.
+    AND_THE_INVERSE_MAP_WAS_BROKEN_WHERE_IT_MATTERED_MOST: >-
+      15 of the 180 resolvable citations are DIRECTORIES - `src/stackowl/commands`
+      (D14.2), `src/stackowl/sandbox` (D06.1, D06.3), `src/stackowl/tools/code` (D13.4)
+      and twelve more, across THIRTEEN documents. `git log -- <dir>` dates them
+      correctly, so the STALE verdict was right; the ATTRIBUTION used `f in wanted`, an
+      exact match against `--name-only` output, which never equals a directory. Every
+      one of those documents could only ever print `<- ?`, and D14.2 did, on the very
+      run that found this. `_changes_since`'s own docstring names the failure: "a report
+      that names a cause its detector did not use is worse than one that names none" -
+      here it named NO cause while the detector had one.
+    stages:
+      brainstorm: done
+      architect: no_change_needed
+      implement: done
+      cleanup: no_change_needed
+      test: done
+      validate: done
+      document: done
+    the_fix: >-
+      `doc_check.cites(changed, cited)` - ONE path rule, containment not equality, used
+      by `_changes_since` for the report and by the new `scripts/docs_touching.py` for
+      the opposite direction. The tool mirrors `tests_touching.py` deliberately: no args
+      = working-tree changes, or name the files. It reuses `doc_check`'s header parsing
+      rather than re-deriving it, because that parser has already paid for `Source
+      (new):`, package-relative citations and `module.py::Symbol`, and the copy that
+      drifts is always the one nobody runs. BOTH LIVE INSTRUCTION SURFACES updated in the
+      same change - `grep -rln tests_touching` returns exactly four files, two of which
+      are what a loop is TOLD, and a tool nobody is pointed at is decoration.
+    validated_ENTIRELY_OFF_TREE_while_the_full_suite_ran: >-
+      The sequencing rule, used as normal practice: the suite was launched FIRST and
+      every part of this item - the measurement, both scripts, the guard, the document
+      dismissals and this record - was built, dry-run and MUTATION-PROVEN against a
+      scratch mirror (`docs/`, `src/` and `.git` symlinked, `scripts/` and `tests/audit`
+      real copies) for the whole run. TWO MUTANTS, both killed and both restored from a
+      file copy: equality-only `cites` failed FOUR tests by name including the
+      command-level one; `startswith` without the separator failed
+      `test_a_shared_PREFIX_is_not_containment` alone, which is the assertion that stops
+      `commands_other/` being read as a child of `commands`. Restore returned 10 passed.
+      ONE SLIP, recorded: early on I swapped the live `scripts/doc_check.py` for two
+      seconds to unit-check the matcher - `tests/audit` imports that file, so a run
+      could have read it. `git status` confirmed the live file intact and the suite was
+      unaffected, but the 17th run was voided by exactly this and the mirror existed
+      precisely to avoid it.
+    the_two_stale_documents_drained_in_the_same_change: >-
+      D14.1 dismissed: its claim is about where command metadata is DERIVED (one
+      registry, thirteen consumers of fourteen), and a log level is not a derivation.
+      D14.2 dismissed: it is a COUNT of 84 reference command definitions walked against
+      ours, and the change added, removed and renamed nothing. Each carries a `Reviewed:`
+      sha with that reason, which is the form `_reviewed_shas` can actually read.
   - id: DEBT-256
     found: 2026-09-09
     what: >-
