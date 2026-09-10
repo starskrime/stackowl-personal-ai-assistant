@@ -21316,7 +21316,24 @@ known_debt:
       today), which no amount of closing can drive to zero.
       Caught by the full run at 0%, which is the only thing that could: it is
       deliberately not a tripwire, so the gate ran clean four times over it.
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    validated_2026_09_10_the_first_shell_outcome_this_deployment_has_ever_recorded: >-
+      LIVE on `94bcc8c3`. Restarted with `./start.sh`, then a real turn driven through
+      `scripts/dev_ingress.py` (trace `a931d5d3…`, answer delivered to the actual chat,
+      which is this platform's definition of complete) so the model — not I — invoked the
+      shell tool. RAW RECORD:
+      `2026-09-10T19:56:39.249867Z INFO shell.execute: exit`,
+      `duration_ms 6.81`, `{success: true, returncode: 0, output_len: 14,
+      artifact_path: null}` — the kernel version is 14 characters.
+      **That string existed ZERO times in 677,108 retained records**, so only the promoted
+      level can have produced it; there is no reading on which the old code satisfies this.
+      All five fields an auditor wants are present, `duration_ms` promoted to the record's
+      top level by the formatter.
+      THE PLACEHOLDER HALF is checked structurally, for the reason recorded above, and the
+      live picture agrees: the newest `browser_tool.execute: exit` is 19:05:00Z, fifty
+      minutes BEFORE the restart, so nothing has been filed under it on the fixed code.
+      That is corroboration rather than proof — no browser tool has run since — and the
+      tripwire is what actually holds it.
     validate_is_PARTIAL_and_the_reason_is_named: >-
       Both fixed lines need real traffic: a shell command run by the model, and a browser
       tool returning through `_ok`/`_err`. Both are frequent, so this closes on its own
@@ -21330,8 +21347,6 @@ known_debt:
       ABSENCE that is the wrong question. The tree is the right instrument for an
       absence: the tripwire asserts `_ok`/`_err` have no `tool` default and that all 40
       call sites name their tool, which is the property, not its shadow in a log.
-    closing_check: >-
-      s=$(./scripts/log_since.sh 2026-09-10 'shell.execute: exit'); if [ "${s:-0}" -gt 0 ]; then echo "CLOSEABLE ${s} shell outcome(s) recorded — this string existed 0 times in 677,108 records, because only the promoted level can emit it"; else echo "OPEN 0 — no shell command has completed on the fixed code yet"; fi
   - id: DEBT-295
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. Reached by re-opening the one INCIDENT record whose brainstorm is still `partial`, and asking what its own closing check was asking FOR."
