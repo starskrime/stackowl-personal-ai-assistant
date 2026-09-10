@@ -21078,6 +21078,14 @@ known_debt:
       ARGUMENT of the `classify_failure` CALL, and the mutation fails as it should. This is
       "a conjunction across a whole file is not a statement" at method scope, and the
       second vacuous test mutation has caught for me in two loops.
+    live_on_b6174c06_the_chain_is_running: >-
+      Restarted 2026-09-10T05:59:28 and the LIVE objects were asked, not the files: the
+      prose alone still classifies as '' (the defect, unchanged and correctly so — the
+      substring table was not widened); an exception CARRYING the attribute classifies as
+      'budget' and `wants_reshaping` is True; `RetryOutcome` has the field; and
+      `task_loop_runner` attaches it. All four ends of the chain are in the process that
+      serves turns. What is still missing is the EVENT — a budget-exhausted task — which
+      is what keeps the stage partial.
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
     validate_is_PARTIAL_and_the_reason_is_named: >-
       Closing needs a real budget-exhausted task to fail and then be reshaped. The check
