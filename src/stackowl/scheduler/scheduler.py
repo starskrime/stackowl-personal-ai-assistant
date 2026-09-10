@@ -61,6 +61,28 @@ _MAX_DEFER_SEC = 900.0
 ONE_SHOT_TERMINAL_STATUS = "completed"
 
 _HANDLER_TIMEOUT_SEC = 1200.0
+
+
+def longest_legitimate_silence_seconds() -> float:
+    """How long this scheduler may complete NOTHING and still be perfectly healthy.
+
+    ONE SOURCE FOR A BOUND TWO SUBSYSTEMS NEED. An out-of-process supervisor has to
+    know when silence stops meaning "quiet" and starts meaning "wedged", and the only
+    honest answer is the sum of the delays this module itself permits: a job deferred
+    to the starvation cap, then a handler running all the way to its timeout, then one
+    more poll interval before the next dispatch can land.
+
+    It exists because the alternative is a literal in the supervisor, which would be a
+    second copy of a number this module owns — and the failure mode is silent in the
+    worst direction. Raise ``_HANDLER_TIMEOUT_SEC`` with a literal downstream and the
+    guard does not get more patient, it starts killing healthy processes.
+
+    Consequently this is also the platform's DETECTION FLOOR: no supervisor can call a
+    process wedged sooner than the process is allowed to stay quiet. Wanting a faster
+    verdict is an argument for a shorter handler timeout, never for a tighter guard.
+    """
+    return _MAX_DEFER_SEC + _HANDLER_TIMEOUT_SEC + _POLL_INTERVAL_SEC
+
 # ESC-53. Backoff ladder for RE-ARMING a one-shot that failed transiently. Bakir,
 # 2026-08-24: "Re-arm one-shots too." Backoff is what makes never-give-up safe —
 # it bounds the RATE rather than the number of attempts, exactly as a recurring

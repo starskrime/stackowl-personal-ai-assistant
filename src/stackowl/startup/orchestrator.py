@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -20,6 +21,7 @@ from stackowl.config.settings import Settings
 from stackowl.db.migrations.runner import MigrationRunner
 from stackowl.db.pool import DbPool, default_db_path
 from stackowl.exceptions import ConfigurationError, StartupError
+from stackowl.health.status import HealthStatus
 from stackowl.paths import StackowlHome
 from stackowl.runtime.turn_client import IngressHandler, LocalTurnClient, TurnClient
 from stackowl.service.watchdog import WatchdogService
@@ -136,6 +138,95 @@ def _log_pipeline_crash(task: asyncio.Task) -> None:  # type: ignore[type-arg]
 # (providers/memory/skills/MCP/browser) before it connects.
 _CORE_BOOT_TIMEOUT_S = 120.0
 
+#: How often the gateway asks whether the core is still turning. Well under the stall
+#: budget, which is measured in tens of minutes — this only bounds how late a verdict
+#: is, never how patient it is.
+_STALL_POLL_SECONDS = 60.0
+
+#: Consecutive stall-restarts with no observed progress in between, after which the
+#: gateway STOPS restarting and only alerts.
+#:
+#: Restarting is a repair the first time and a symptom the fourth. The respawn backoff
+#: caps at 30s, so without this an unrecoverable wedge becomes a permanent kill cycle
+#: that looks, from the outside, exactly like a platform working hard. Any healthy
+#: verdict resets the count, so this bounds a FAILING sequence and never a long uptime.
+_MAX_CONSECUTIVE_STALL_RESTARTS = 3
+
+
+async def _wait_for_exit_or_stall(
+    proc: asyncio.subprocess.Process,
+    stall_probe: Callable[[datetime], Awaitable[HealthStatus]] | None,
+    watch_started: datetime,
+) -> tuple[int | None, bool, bool]:
+    """Wait for the core to exit — or for it to stop DOING anything and kill it.
+
+    THE GAP THIS CLOSES IS THE WHOLE POINT. ``proc.wait()`` returns when the core
+    EXITS; a core that is alive and no longer serving never satisfies it. On
+    2026-09-08 that state lasted 7h21m with every instrument reporting healthy,
+    because every liveness signal this platform has is read INSIDE the core — the
+    health sweep is itself a job on the scheduler that had stopped turning.
+
+    A supervisor outside the process is the only thing that can answer the question,
+    and the platform already had one: this loop. It was watching the wrong event.
+
+    Returns ``(rc, was_stall, saw_progress)``. On a stall the core is killed, which
+    makes ``proc.wait()`` return and hands recovery to the EXISTING respawn path
+    below — never a second restart engine.
+    """
+    if stall_probe is None:
+        return (await proc.wait(), False, False)
+
+    waiter = asyncio.ensure_future(proc.wait())
+    saw_progress = False
+    last_status: str | None = None
+    try:
+        while True:
+            done, _ = await asyncio.wait({waiter}, timeout=_STALL_POLL_SECONDS)
+            if done:
+                return (waiter.result(), False, saw_progress)
+            try:
+                status = await stall_probe(watch_started)
+            except Exception as exc:  # noqa: BLE001 — a broken probe must never kill
+                log.error(
+                    "[startup] gateway: core stall probe raised — treating the core "
+                    "as live (a probe failure is not evidence of a stall)",
+                    exc_info=exc,
+                )
+                continue
+            # SAY IT WHEN THE VERDICT MOVES, at INFO, on every branch including the
+            # declining one. A guard whose refusals are invisible is the shape that
+            # let `WatchdogService` skip 1,115 times without anyone noticing; a line
+            # per poll would be 1,440 a day and would be filtered instead of read.
+            if status.status != last_status:
+                log.info(
+                    "[startup] gateway: core liveness verdict — %s",
+                    status.status,
+                    extra={"_fields": {
+                        "verdict": status.status,
+                        "detail": status.message,
+                        "previous": last_status,
+                    }},
+                )
+                last_status = status.status
+            if status.status == "ok":
+                saw_progress = True
+                continue
+            if status.status != "down":
+                continue
+            log.error(
+                "★ CORE IS ALIVE AND NOT SERVING ★ — %s. Restarting it, because "
+                "nothing else can: every other liveness signal this platform has is "
+                "read by the core itself.",
+                status.message,
+                extra={"_fields": {"pid": proc.pid, "remedy": status.remedy}},
+            )
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            return (await waiter, True, saw_progress)
+    finally:
+        if not waiter.done():
+            waiter.cancel()
+
 
 async def _supervise_core(
     proc_holder: dict[str, asyncio.subprocess.Process],
@@ -143,6 +234,7 @@ async def _supervise_core(
     stop_event: asyncio.Event,
     first_conn_event: asyncio.Event | None = None,
     on_crash: Callable[[int | None], Awaitable[None]] | None = None,
+    stall_probe: Callable[[datetime], Awaitable[HealthStatus]] | None = None,
 ) -> None:
     """Phase 5 — respawn the core if it *crashes* (exits unexpectedly).
 
@@ -166,15 +258,40 @@ async def _supervise_core(
     if socket_path is None:
         return
     backoff = 1.0
+    # DEBT-295 — consecutive restarts that were provoked by a STALL rather than a
+    # crash, with no healthy verdict seen in between. Reset by any progress.
+    stall_restarts = 0
     while not stop_event.is_set():
         proc = proc_holder.get("proc")
         if proc is None:
             return
-        rc = await proc.wait()
+        watch_started = datetime.now(UTC)
+        probe = stall_probe if stall_restarts < _MAX_CONSECUTIVE_STALL_RESTARTS else None
+        rc, was_stall, saw_progress = await _wait_for_exit_or_stall(
+            proc, probe, watch_started
+        )
         if stop_event.is_set():
             return
+        if saw_progress:
+            stall_restarts = 0
+        if was_stall:
+            stall_restarts += 1
+            if stall_restarts >= _MAX_CONSECUTIVE_STALL_RESTARTS:
+                # RESTARTING IS A REPAIR ONCE AND A SYMPTOM THREE TIMES. Say so, and
+                # stop killing: a permanent 30s-backoff kill cycle is indistinguishable
+                # from a busy platform, which is the failure this whole guard exists to
+                # end. The respawn below still happens — we simply stop arming the
+                # detector against the next core, so a wedge that survives restarts
+                # stays visible instead of being ground into a loop.
+                log.critical(
+                    "★ RESTARTING IS NOT FIXING IT ★ — %d consecutive cores have gone "
+                    "quiet with no work completed in between. The stall detector is "
+                    "STANDING DOWN; this needs a person.",
+                    stall_restarts,
+                )
         log.warning(
-            "[startup] gateway: core exited unexpectedly — respawning (rc=%s, backoff=%.1fs)",
+            "[startup] gateway: core %s — respawning (rc=%s, backoff=%.1fs)",
+            "STOPPED SERVING while still alive" if was_stall else "exited unexpectedly",
             rc,
             backoff,
         )
@@ -265,12 +382,22 @@ def _build_liveness_aggregator() -> HealthAggregator:
     network provider contributors (a provider outage must not kill the process)
     nor browser/resilience (live-runtime refs, may report 'not constructed')."""
     from stackowl.health.aggregator import HealthAggregator
-    from stackowl.health.contributors import DbContributor, FilesystemContributor
+    from stackowl.health.contributors import (
+        DbContributor,
+        FilesystemContributor,
+        SchedulerProgressContributor,
+    )
     from stackowl.startup.fs_probe import _data_dir, _log_dir
 
     agg = HealthAggregator()
     agg.register(DbContributor(default_db_path()))
     agg.register(FilesystemContributor(_data_dir(), _log_dir()))
+    # DEBT-295 — and the third one is the reason this recipe is finally load-bearing.
+    # db + filesystem answer "can I reach my dependencies"; both said yes for 7h21m on
+    # 2026-09-08 while nothing was served. Only progress answers "am I still working".
+    # Anchored at NOW so a process that has just started is judged on what it has done
+    # since, never on a hole it woke up beside.
+    agg.register(SchedulerProgressContributor(default_db_path(), since=datetime.now(UTC)))
     return agg
 
 
@@ -4632,6 +4759,18 @@ class StartupOrchestrator:
                     channel_name=brief_channels[0] if brief_channels else None,
                 ))
 
+            # DEBT-295 — the gateway is the only observer OUTSIDE the process that
+            # wedges, and until now it watched only for the core exiting. One probe
+            # per core generation, anchored at the moment supervision of that
+            # generation began. Built here rather than passed a live object because a
+            # respawned core needs a fresh anchor, not the previous one's.
+            async def _probe_core_stall(since: datetime) -> HealthStatus:
+                from stackowl.health.contributors import SchedulerProgressContributor
+
+                return await SchedulerProgressContributor(
+                    default_db_path(), since=since
+                ).health_check()
+
             supervise_task = asyncio.create_task(
                 _supervise_core(
                     core_proc_holder,
@@ -4639,6 +4778,7 @@ class StartupOrchestrator:
                     stop_event,
                     gateway_first_conn_ready,
                     on_crash=_notify_core_crash,
+                    stall_probe=_probe_core_stall,
                 )
             )
         try:

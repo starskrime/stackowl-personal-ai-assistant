@@ -693,22 +693,41 @@ current:
       because a 400 is OUR bug by that line's own reasoning, not an outage symptom.
     stages: {brainstorm: partial, architect: not_started, implement: not_started,
       cleanup: not_started, test: not_started, validate: not_started, document: not_started}
+    THE_CHECK_ITSELF_ENCODED_THE_SETUP_ANSWER_AND_THAT_IS_ITS_OWN_FINDING: >-
+      REWRITTEN 2026-09-10 (DEBT-295). The first version asked `systemctl show
+      stackowl.service -p WatchdogUSec` and called the incident closed when a systemd unit
+      was armed. That made "the operator installs a unit file" the DEFINITION OF DONE for a
+      platform defect — the exact shape Bakir rules out ("users clone from GitHub; set X in
+      your yaml is a setup answer, never the fix"), sitting inside the mechanism that
+      decides when this incident stops being open. A check can be bounded, runnable, and
+      immune to rotation, and still be asking the wrong side of the question. It now asks
+      whether THIS PLATFORM notices, which is what the incident was ever about.
+    THE_REMAINING_UNKNOWN_IS_UNCHANGED_AND_IS_NOT_WHAT_THIS_FIXES: >-
+      Why the 19:10:07Z process produced zero log records is STILL undetermined and is not
+      answered by DEBT-295. What is answered is the second half of this record — "what
+      notices if this degrades silently: NOTHING DOES" — which was the half with an
+      actuator behind it. A platform that cannot yet explain a wedge can still be built to
+      survive one, and those are different jobs.
     closing_check: |-
-      # NOT A LOG QUERY, and the gate is what taught me that. The first version grepped
-      # the logs for "systemd watchdog not configured" and
-      # `test_no_closing_check_greps_the_logs_unbounded` refused the commit — correctly,
-      # and for a deeper reason than the rule it enforces: the question here is not "what
-      # did the platform say", it is "does a mechanism EXIST that would notice". That is
-      # answerable from the tree and the service manager, so it never rots and cannot be
-      # satisfied by history.
-      unit=$(systemctl show stackowl.service -p WatchdogUSec --value 2>/dev/null)
-      cfg=$(grep -rl "WatchdogSec\|sd_notify\|WATCHDOG_USEC" --include="*.service" \
-            --include="*.py" src/ 2>/dev/null | head -1)
-      if [ -n "$unit" ] && [ "$unit" != "0" ] && [ "$unit" != "infinity" ]; then
-        echo "CLOSEABLE — a liveness watchdog is armed (WatchdogUSec=$unit)"
+      # NOT A LOG QUERY ALONE, and the gate is what taught me the first half of that:
+      # `test_no_closing_check_greps_the_logs_unbounded` refused an unbounded grep, and
+      # for a deeper reason than the rule it enforces — the question here is not "what did
+      # the platform say", it is "does a mechanism EXIST that would notice". That part is
+      # answerable from the TREE and never rots.
+      #
+      # What changed on 2026-09-10 is WHICH mechanism it asks about. It used to ask the
+      # service manager for a systemd watchdog, which made an operator's unit file the
+      # definition of done for a platform defect. It now asks the platform.
+      code=$(grep -rl "stall_probe=_probe_core_stall" src/ 2>/dev/null | head -1)
+      live=$(./scripts/log_since.sh 2026-09-10 'gateway: core liveness verdict')
+      if [ -n "$code" ] && [ "${live:-0}" -gt 0 ]; then
+        echo "CLOSEABLE — an out-of-process stall detector is wired in $code and has published $live verdict(s)"
+      elif [ -n "$code" ]; then
+        echo "OPEN — the detector is wired in $code but has published no verdict yet (0 live)"
       else
-        echo "OPEN — no armed liveness watchdog; nothing would notice the next silent stall (unit=${unit:-none}, code=${cfg:-none})"
+        echo "OPEN — nothing outside the core asks whether the core is still serving"
       fi
+
   DEBT213_2026_09_07_the_one_source_for_closing_checks_knew_two_of_the_records_three_sections:
     map_check: >-
       No mapped item. Found BY DEBT-212 — my own record landed in `current` and its
@@ -16468,6 +16487,40 @@ current:
         restructure changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry,
         and carried over only what was open at that moment — so every already-answered escalation
         lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_169_how_long_may_this_platform_be_DOWN_before_it_restarts_itself:
+      question: >-
+        DEBT-295 gives the platform its first out-of-process stall detector, and its
+        detection floor is **71 minutes**. Is that the right amount of downtime to accept
+        before the platform heals itself?
+      why_evidence_cannot_settle_it: >-
+        The floor is not a guess and not tunable in isolation — it is the scheduler's own
+        worst legal silence, doubled. `longest_legitimate_silence_seconds()` is defer cap
+        (900s) + handler timeout (1200s) + one poll interval (30s) = 2130s, and no honest
+        supervisor may call a process wedged sooner than that process is ALLOWED to stay
+        quiet. So a faster verdict costs a shorter `_HANDLER_TIMEOUT_SEC`, which means
+        cancelling long jobs sooner. Both sides are measurable; the exchange rate between
+        "an hour of silent downtime" and "a long job killed at 10 minutes instead of 20"
+        is a price, and a price is yours.
+      what_was_measured: >-
+        The two real outages in the retained corpus lasted **26,527.9s (7h22m)** and
+        **15,146.0s (4h12m)**; a 71-minute floor catches both with 3.6x margin. Against
+        22,919 consecutive job completions the largest HEALTHY gap is 711.7s — twelve
+        minutes — so the empirical evidence would support a much tighter budget than the
+        derived one. The gap between 712s (what actually happens) and 2130s (what is
+        permitted) is the whole question: the scheduler's declared patience is three times
+        anything it has ever used.
+      the_panel_recommendation: >-
+        Leave the derivation alone and lower `_HANDLER_TIMEOUT_SEC` if you want a faster
+        verdict — that keeps ONE number honest instead of adding a second. 1200s is itself
+        unmeasured against what handlers actually take; if the slowest real handler is well
+        under it, the timeout can fall and the detector tightens for free. Measuring that
+        distribution is a loop's work, not a decision, and it is not blocked by this.
+      what_is_blocked: >-
+        Nothing. The detector ships armed at the derived floor and catches both recorded
+        outages. This decides whether 71 minutes of silent downtime is acceptable for a
+        product, which is a statement about customers rather than about code.
+      premise_check: >-
+        f=$(uv run python -c "from stackowl.scheduler.scheduler import longest_legitimate_silence_seconds as f; print(int(f()*2))" 2>/dev/null); if [ "${f:-0}" -gt 900 ]; then echo "HOLDS the detection floor is ${f}s — still far above the 711.7s largest healthy gap"; else echo "EXPIRED the floor is now ${f}s, at or under the observed healthy band — the question has been answered by a shorter handler timeout"; fi
     ESC_168_what_may_a_DECOMPOSED_ask_spend_in_total:
       question: >-
         When one task is split into N children because it overspent, what is the family
@@ -21129,6 +21182,115 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-295
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led. Reached by re-opening the one INCIDENT record whose brainstorm is still `partial`, and asking what its own closing check was asking FOR."
+    what: >-
+      **EVERY LIVENESS SIGNAL THIS PLATFORM OWNS IS READ BY THE PROCESS THAT WEDGES.**
+      On 2026-09-08 a StackOwl process stayed alive for 7h21m and served nothing; `ps`
+      found it, the socket was up, the last line read `orchestrator.run: exit — ready`,
+      and the gate was green. Nothing noticed. `health_sweep` is itself a job on the
+      scheduler that had stopped turning, `ChannelLivenessStore` is read by a core
+      contributor, and the send canary is scored by a core contributor — so the
+      invigilator goes down with the thing it invigilates, every time.
+    root_cause_measured: >-
+      THE ONE MECHANISM DESIGNED TO BE READ FROM OUTSIDE HAS NEVER RUN.
+      `HealthAggregator.is_live` is a real liveness verdict and it is wired — to
+      `WatchdogService`, which returns from `start()` before creating its loop unless
+      systemd exports `WATCHDOG_USEC`. MEASURED across every retained log: **1,115 boots,
+      1,115 `[watchdog] systemd watchdog not configured — skipping`, ZERO
+      `watchdog task created`, ZERO `is_live` verdicts, ever.** The verdict function was
+      written, wired, tested and never once called on this install — and no test ever
+      failed, because nothing asserted the loop EXISTS.
+      The cause under that: **the mechanism was made conditional on its TRANSPORT.**
+      Liveness was designed as something to REPORT UPWARD to an external supervisor, so
+      when the supervisor is absent the platform does not fall back to a weaker answer —
+      it stops asking the question. That is also why the fix is not a unit file: users
+      clone this repo and run `./start.sh`, and "install a systemd unit" is a setup
+      answer to a platform defect.
+    what_else_that_same_cause_reaches: >-
+      `KeepAliveService` has the identical shape one platform over (a launchd stub that
+      no-ops everywhere else). And the general form: any capability whose EXISTENCE is
+      gated on an optional integration's presence will be absent exactly on the
+      deployments that ship with nothing configured — which is every fresh clone.
+    the_signal_was_already_being_written_and_nobody_read_it: >-
+      `jobs.last_run_at` is updated on every scheduler dispatch, success or failure
+      (`scheduler.py` 703 / 794 / 918). MEASURED over **22,919 consecutive job
+      completions across 7.7 days**: mean gap 29.1s; >2min 101, >5min 7, >10min 3,
+      **>15min 2, >30min 2, >1h 2**. The only two gaps above fifteen minutes ARE THE TWO
+      RECORDED OUTAGES — 26,527.9s (this incident) and 15,146.0s (the 2026-09-07 database
+      failure). The third largest is 711.7s, so the band between 712s and 15,146s is
+      EMPTY and every threshold in it returns the identical verdict on all 22,919
+      observations: two true positives, zero false positives. **The table held the
+      evidence of both outages the whole time.**
+    fix: >-
+      `SchedulerProgressContributor` — one definition of "this process is still WORKING",
+      as distinct from the db/filesystem contributors' "it can still REACH its
+      dependencies", which both answered yes for 7h21m. It is registered into
+      `_build_liveness_aggregator()` so the systemd gate gains it too, and the GATEWAY —
+      the only observer outside the process that wedges — consults it every 60s from the
+      supervise loop it already runs. On `down` it kills the core, which makes the
+      existing `proc.wait()` return and hands recovery to the EXISTING respawn path: no
+      second restart engine, no new table, no new writer, no migration.
+    the_threshold_is_DERIVED_and_that_is_the_load_bearing_part: >-
+      `scheduler.longest_legitimate_silence_seconds()` is the scheduler declaring its own
+      worst legal silence — defer cap + handler timeout + one poll interval = 2130s — and
+      the guard is twice that. A literal would have been a second copy of a number
+      `scheduler.py` owns, and the failure mode is silent in the worst direction: raise
+      `_HANDLER_TIMEOUT_SEC` one day and a hardcoded guard does not get more patient, it
+      starts killing healthy processes. The panel caught this; my first draft was 1800s,
+      only 1.46x the scheduler's own bound. It also means the DETECTION FLOOR is the
+      scheduler's patience — anyone wanting a faster verdict should shorten the handler
+      timeout, not tighten the guard.
+    the_four_fail_open_branches_are_the_safety_property: >-
+      This is the only `down` in the tree with a process kill behind it, so "I could not
+      measure it" must never render as "it has stopped" — DEBT-288's distinction, where
+      it finally has teeth. No enabled job (an install that schedules nothing has no
+      cadence to be late for, and `MAX()` over an empty set is NULL forever — the restart
+      bomb this would otherwise have shipped); no completion recorded yet; an unparseable
+      timestamp; and a read that raised, so a lock storm cannot become a kill storm. All
+      four return `degraded`, which by `is_live`'s existing contract does not trip
+      liveness. The database is opened READ-ONLY through a URI, because a supervisor that
+      creates the file it is asking about answers its own question wrongly on every fresh
+      install.
+      And `since`: staleness is measured from the LATER of the last completion and the
+      moment supervision began, so a platform restarted beside an eight-hour hole is
+      judged on what it has done since — without it the first poll after any long
+      downtime kills the core it just started, forever.
+    restarting_is_a_repair_once_and_a_symptom_three_times: >-
+      Three consecutive stall-restarts with no healthy verdict in between and the
+      detector STANDS DOWN with a CRITICAL line, because the respawn backoff caps at 30s
+      and an unrecoverable wedge would otherwise become a permanent kill cycle that looks,
+      from outside, exactly like a platform working hard. Any progress resets the count,
+      so this bounds a failing sequence and never a long uptime.
+    what_the_panel_changed_and_what_it_got_wrong: >-
+      CHANGED: the derived threshold (above), the consecutive-restart stand-down, and the
+      requirement that the declining branch log at INFO. REFUTED: one lens reported the
+      gateway does not open a db pool — it does, `orchestrator.py:897` sits at method
+      indentation with no early return on the gateway path, checked rather than believed.
+      REFUTED: one lens recommended DELETING `WatchdogService` under "retired means
+      deleted" — `stackowl install-service` is a live CLI command with a real installer,
+      so systemd supervision is a shipped deployment mode that has simply never been used
+      HERE. Deleting it would remove something user-facing, which is stop-and-brief 1.
+    tests: >-
+      `tests/startup/test_a_process_that_is_alive_and_not_serving_is_restarted.py`.
+      The structural pair is the point: one test asserts the shared liveness recipe
+      contains the contributor, another asserts the real wiring passes the probe with no
+      env var, setting or flag in front of it — **that single assertion is what
+      `WATCHDOG_USEC` never had**, and its absence is why 1,115 boots skipped silently.
+      A vacuity control pins that `_supervise_core` still DEFAULTS to exit-watching, so
+      the wiring assertion is the only thing standing between this platform and another
+      silent 7h21m. Calibration is pinned too: 711.7s (the largest healthy gap ever
+      measured) must read `ok`, and the budget must stay below 15,146s or it detects
+      neither real outage.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The acting branch cannot be evidenced without wedging the platform on purpose. What
+      CAN be evidenced, and is what the closing check asks for, is that the detector is
+      ARMED and PRODUCING VERDICTS — the exact property `WatchdogService` never had and
+      nothing ever noticed.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'gateway: core liveness verdict'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} out-of-process liveness verdict(s) — a line only the new code emits, against 1,115 boots that produced none"; else echo "OPEN 0 — the gateway has not yet published a liveness verdict for the core"; fi
   - id: DEBT-294
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by asking what the operator actually WAITS for and following the slowest turns."
@@ -21732,7 +21894,7 @@ known_debt:
       now proves a different and stronger thing than it claims. Renamed and corrected in
       the same change rather than left to read as a decision it is not.
     baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
     validated_live_on_bd4059a1_the_code_path_is_proven_on_a_real_operator_surface: >-
       Restarted 2026-09-10T10:00:57Z on the tree carrying the fix, then the EXACT BRANCH
       that fired during the four-hour outage was driven through the real CLI — a
@@ -21750,15 +21912,17 @@ known_debt:
       `StackowlHome.db_path()` is `<home>/workspace/stackowl.db`. Reading the path out of
       the platform rather than assuming its shape is what put the probe on the right
       branch.
-    validate_is_STILL_PARTIAL_and_the_reason_is_named: >-
-      The CLI half is closed above; the SWEEP half is not. Nothing has failed inside the
-      running platform since the restart, so `health_sweep` has had no unhealthy subsystem
-      to attach a remedy to — and manufacturing one there would mean breaking a live
-      subsystem, which the CLI probe achieves without. The breaker case will close this on
-      its own the next time the unreachable provider is probed while its circuit is open;
-      the corpus says that happens in bursts (421 occurrences, last 2026-09-07).
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-10 'the diagnosis says what to do about itself'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} unhealthy sweep(s) carried a named remedy — 0 of 822 did before, and only the new code can emit this line"; else echo "OPEN 0 — no contributor has failed on the fixed code yet"; fi
+    validated_2026_09_10_the_field_that_had_never_been_populated_was_populated: >-
+      CLOSED, on live traffic, by evidence only the new code could produce: of 822 unhealthy
+      sweeps before this change, ZERO carried a remedy. RAW RECORD read rather than trusted
+      — `2026-09-10T16:31:23.893886Z`, `down: [store_cadence, owl_ratings]`,
+      `remedies: [store_cadence, owl_ratings]`. Both are ARRIVED failures (their
+      contributors raised), which is exactly the set that had 0 of 10 before, and the
+      companion INFO line `health_sweep.execute: the diagnosis says what to do about itself`
+      fired 0.4ms later naming the same two. The alert carrying it was delivered:
+      `[notifications] router.deliver: delivered channel=telegram urgency=critical
+      category=operator_health`, 1.1ms after the detection. Same evidence closes D14.4's
+      alert half, which had been honestly OPEN for four days.
   - id: DEBT-287
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, from Bakir's own sentence about what should and should not be approved."
@@ -45109,19 +45273,17 @@ items:
     notes: null
 
   - id: D14.4
-    closing_check: |-
-      # THE CLI HALF IS LIVE-EVIDENCED; THIS IS THE ALERT HALF. `_compose_alert` only runs
-      # when a subsystem is actually unhealthy, and the boot after this shipped had
-      # ok=15/15. Scoped to the day it shipped, because the alert line has existed for
-      # months and an unbounded count would report CLOSEABLE on pre-change evidence.
-      # REWRITTEN 2026-09-06. The first version grepped for 'health sweep found
-      # unhealthy' and COULD NEVER HAVE CLOSED: _compose_alert RETURNS that string to
-      # the alert sink and to JobResult.output, and nothing logs it — the sweep found
-      # unhealthy subsystems 735 times while that phrase appeared in the logs zero
-      # times, ever. The detection line IS logged, so the observable question is
-      # whether a remedy was attached to it.
-      n=$(./scripts/log_since.sh 2026-09-06 'UNHEALTHY subsystems detected.*"remedies": \["')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n unhealthy sweep(s) carried a remedy since 2026-09-06" || echo "OPEN 0 unhealthy sweeps with a remedy since the field shipped; the CLI half IS live-evidenced"
+    validated_2026_09_10_the_alert_half_finally_fired: >-
+      CLOSED. The alert half sat honestly OPEN for four days because `_compose_alert` only
+      runs when a subsystem is actually unhealthy AND a remedy is attached, and until
+      DEBT-288 no arrived failure ever carried one — 0 of 822 sweeps. RAW EVIDENCE, read
+      rather than trusted: `2026-09-10T16:31:23.893886Z`, `down: [store_cadence,
+      owl_ratings]`, `remedies: [store_cadence, owl_ratings]`, followed 0.6ms later by
+      `[notifications] router.deliver: delivered channel=telegram urgency=critical
+      category=operator_health`. So the remedy was composed AND the alert carrying it was
+      delivered to a real chat — both halves of the claim, in one sweep, on live traffic.
+      `_compose_alert(down, degraded)` at `health_sweep.py:420` runs unconditionally and
+      its output is what the sink received.
     title: "Doctor"
     domain: D14
     verdict: PARTIAL
@@ -45140,7 +45302,7 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial
+      validate:   done
       document:   done
     doc: docs/reference-mapping/designs/D14.4.md
     doc_last_verified: "2026-09-06 against commit 63059348 — Verification RUN: 9 passed; 698 passed 0 failed; the CLI prints the browser remedy and exits 1; every JSON entry carries the key, 1 of 5 with a value"

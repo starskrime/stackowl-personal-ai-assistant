@@ -1057,3 +1057,214 @@ class OwlRatingHealthContributor:
             ),
             latency_ms=latency_ms,
         )
+
+
+#: MULTIPLIER OVER THE SCHEDULER'S OWN WORST LEGITIMATE SILENCE — the threshold is
+#: DERIVED, never chosen, and that is the point rather than a nicety. A literal here
+#: would be a second copy of a bound `scheduler.py` already owns: raise the handler
+#: timeout one day and a hardcoded guard silently becomes a false-firing one, which
+#: is this repo's most-paid-for defect shape wearing a supervisor's clothes.
+#:
+#: The empirical picture agrees and is far wider than the derived bound needs.
+#: MEASURED over 22,919 consecutive job completions across 7.7 days on this install:
+#:
+#:     mean gap 29.1s   >2min 101   >5min 7   >10min 3   >15min 2   >30min 2   >1h 2
+#:
+#: The ONLY two gaps above fifteen minutes are the two recorded outages — 26,527.9s
+#: (the 2026-09-08 seven-hour stall this contributor exists for) and 15,146.0s (the
+#: 2026-09-07 four-hour database failure). The third largest is 711.7s, and **the band
+#: between 712s and 15,146s is empty**, so every threshold from twelve minutes to four
+#: hours returns the identical verdict on all 22,919 observations: two true positives,
+#: zero false positives. The derived value lands inside that empty band.
+#:
+#: SO THE DETECTION FLOOR IS THE SCHEDULER'S OWN PATIENCE, and anyone who wants a
+#: faster verdict should lower `_HANDLER_TIMEOUT_SEC`, not this factor. A guard cannot
+#: honestly call a process wedged before that process is allowed to stop answering.
+_STALL_SAFETY_FACTOR = 2.0
+
+
+class SchedulerProgressContributor:
+    """Health contributor: is the process that owns the scheduler still turning?
+
+    THE ONE QUESTION NOTHING ELSE IN THIS PLATFORM ASKS, and it is the question the
+    2026-09-08 outage turned on — the platform ran for 7h21m, served nothing, and
+    every instrument reported healthy. Every other liveness signal here is read by
+    the CORE: `health_sweep` is itself a job on the scheduler, `ChannelLivenessStore`
+    is read by a core contributor, the send canary is scored by a core contributor.
+    A wedged core takes its own invigilator down with it. The one mechanism designed
+    to be read from OUTSIDE — `WatchdogService`'s `WATCHDOG=1` ping — arms only when
+    systemd sets `WATCHDOG_USEC`: MEASURED, 1,115 boots on this install, 1,115
+    "[watchdog] systemd watchdog not configured — skipping", and ZERO verdicts ever
+    produced. The verdict function was written, wired, and never once called.
+
+    `jobs.last_run_at` is the signal because the core ALREADY writes it, on every
+    dispatch, success or failure (`scheduler.py` lines 703 / 794 / 918). No new
+    writer, no new table, and 7.7 days of history to calibrate against — a fresh
+    heartbeat column would have shipped with a threshold nobody could check.
+
+    THE FOUR FAIL-OPEN CASES ARE THE SAFETY PROPERTY, not defensive padding. This
+    contributor's `down` is the only one in the tree with a process kill behind it,
+    so "I could not measure it" must never render as "it has stopped" — the
+    distinction DEBT-288 drew for arrived failures, applied where it finally has
+    teeth:
+
+      * **No enabled job at all.** An install that schedules nothing has no cadence
+        to be late for, and `MAX(...)` over an empty set is NULL forever — the
+        restart bomb this design would otherwise ship with.
+      * **No completion recorded yet.** A first boot, or a database restored from a
+        snapshot; the column is legitimately NULL.
+      * **An unparseable timestamp.** Garbage is not evidence of a stall.
+      * **The read itself failed.** A locked or unreachable database makes the query
+        raise, and a lock storm must not become a kill storm.
+
+    All four return `degraded`, which by `HealthAggregator.is_live`'s contract does
+    NOT trip liveness. Only a timestamp that was READ and is genuinely stale is `down`.
+
+    ``since`` is the other half of that: staleness is measured from the LATER of the
+    last completion and the moment supervision began, so a platform restarted after
+    an eight-hour outage is judged on what it has done since it started rather than
+    on the hole it woke up beside. Without it the first poll after any long downtime
+    kills a perfectly healthy core.
+
+    The database is opened READ-ONLY through a URI: a supervisor that can create the
+    file it is asking about would answer its own question wrongly on a fresh install.
+    """
+
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        since: datetime,
+        clock: Clock | None = None,
+        stall_seconds: float | None = None,
+    ) -> None:
+        self._db_path = db_path
+        # A NAIVE ANCHOR WOULD RAISE, NOT MISCOMPARE — `max(aware, naive)` is a
+        # TypeError, and it would surface as "the probe raised" (fail-open) on every
+        # poll forever, which is the quietest possible way for a supervisor to die.
+        self._since = since if since.tzinfo is not None else since.replace(tzinfo=UTC)
+        self._clock = clock
+        self._stall_seconds = (
+            stall_seconds if stall_seconds is not None else default_stall_seconds()
+        )
+
+    @property
+    def contributor_name(self) -> str:
+        return "scheduler_progress"
+
+    @property
+    def stall_seconds(self) -> float:
+        """The budget this contributor is holding the scheduler to."""
+        return self._stall_seconds
+
+    def _now(self) -> datetime:
+        if self._clock is not None:
+            return self._clock.now()
+        return datetime.now(UTC)
+
+    def _degraded(self, message: str, latency_ms: float, remedy: str | None = None) -> HealthStatus:
+        """WHY THE DECLINING BRANCHES DO NOT LOG HERE, which is the shape
+        `logging_visibility.py` exists to catch and is deliberate in this one place.
+
+        This runs on a 60-second poll, so an INFO line per decline is 1,440 a day and
+        gets filtered rather than read. The decline is not invisible: the SUPERVISOR
+        logs the verdict at INFO whenever it CHANGES, carrying `message` as its detail —
+        so "I could not measure it, and here is why" reaches the operator log exactly
+        once per transition, which is the thing a reader needs. Making it visible one
+        level up is not the same as hiding it, and the level up is where the actuator is.
+        """
+        return HealthStatus(
+            name=self.contributor_name,
+            status="degraded",
+            message=message,
+            remedy=remedy,
+            latency_ms=latency_ms,
+        )
+
+    async def health_check(self) -> HealthStatus:
+        import asyncio
+
+        log.debug("[health] scheduler_progress: entry")
+        t0 = time.monotonic()
+
+        def _read() -> tuple[int, str | None]:
+            # `as_uri()` rather than an f-string: a Windows path is `C:\\...` and a
+            # POSIX one may hold a space or a `?`, and both make a hand-built
+            # `file:` URI silently wrong. All-hardware means the supervisor too.
+            uri = f"{Path(self._db_path).resolve().as_uri()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True)
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*), MAX(last_run_at) FROM jobs WHERE enabled = 1"
+                ).fetchone()
+            finally:
+                conn.close()
+            return (int(row[0]), row[1])
+
+        try:
+            enabled, last_run_at = await asyncio.to_thread(_read)
+        except Exception as exc:
+            latency_ms = (time.monotonic() - t0) * 1000
+            log.warning("[health] scheduler_progress: could not read the schedule: %s", exc)
+            return self._degraded(
+                f"could not measure scheduler progress: {exc}", latency_ms, remedy_for(exc)
+            )
+
+        latency_ms = (time.monotonic() - t0) * 1000
+        if enabled == 0:
+            return self._degraded(
+                "no enabled recurring job — this install schedules no cadence, so it "
+                "cannot be judged late for one",
+                latency_ms,
+            )
+        if not last_run_at:
+            return self._degraded(
+                "no job has completed yet — nothing to measure staleness against",
+                latency_ms,
+            )
+        try:
+            last = datetime.fromisoformat(str(last_run_at))
+        except ValueError as exc:
+            log.warning("[health] scheduler_progress: unparseable last_run_at %r", last_run_at)
+            return self._degraded(
+                f"unparseable last_run_at {last_run_at!r}: {exc}", latency_ms
+            )
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=UTC)
+
+        stale_for = (self._now() - max(last, self._since)).total_seconds()
+        if stale_for > self._stall_seconds:
+            log.error(
+                "[health] scheduler_progress: exit — DOWN, the scheduler has completed "
+                "nothing for %.0fs against a %.0fs budget",
+                stale_for,
+                self._stall_seconds,
+            )
+            return HealthStatus(
+                name=self.contributor_name,
+                status="down",
+                message=(
+                    f"the scheduler has completed no job for {stale_for:.0f}s "
+                    f"({enabled} enabled job(s), budget {self._stall_seconds:.0f}s) — "
+                    "this process is running and its loop is not turning"
+                ),
+                remedy="restart the process; its event loop is no longer running work",
+                latency_ms=latency_ms,
+            )
+        log.debug("[health] scheduler_progress: exit — ok (stale_for=%.0fs)", stale_for)
+        return HealthStatus(
+            name=self.contributor_name, status="ok", message=None, latency_ms=latency_ms
+        )
+
+
+def default_stall_seconds() -> float:
+    """The stall budget, ASKED OF THE SCHEDULER rather than restated here.
+
+    `longest_legitimate_silence_seconds()` is the scheduler declaring how long it may
+    legitimately complete nothing: a job deferred to the starvation cap, then a
+    handler running to its timeout, then one more poll interval before the next
+    dispatch. Multiplying is this module's only contribution to the number.
+    """
+    from stackowl.scheduler.scheduler import longest_legitimate_silence_seconds
+
+    return longest_legitimate_silence_seconds() * _STALL_SAFETY_FACTOR
