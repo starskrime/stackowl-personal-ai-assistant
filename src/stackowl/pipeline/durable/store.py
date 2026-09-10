@@ -140,6 +140,64 @@ _CEILING_REACHED_SQL = (
 )
 
 
+#: WHICH ROWS A RECLAIM TAKES. Written once because it is now asked TWICE — the
+#: SELECT that NAMES the doomed rows and the UPDATE that takes them.
+#:
+#: MUTATION TESTING FOUND THIS THE MOMENT IT WAS INTRODUCED. Widening only the
+#: SELECT passed every test: the UPDATE still took the right rows, so the counts
+#: were right and the LOG named a task that had not been reclaimed. A log that
+#: names the wrong task is worse than one that names none, and two copies of one
+#: predicate is the shape `CLAUDE.md` says accounts for nearly every real defect
+#: here. Both parameter tuples still end with `(owner_id, stamp)` in that order.
+_EXPIRED_LEASE_WHERE = (
+    "owner_id=? AND status='running' "
+    "AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?"
+)
+
+
+def _reclaim_detail(
+    rows: list[dict[str, object]], moment: datetime
+) -> list[dict[str, object]]:
+    """``[{task_id, worker, overrun_s}]`` for the rows a reclaim is about to take.
+
+    WHY A COUNT WAS NOT ENOUGH, measured 2026-09-10. Eight sweeps reclaimed 15
+    tasks in one night and named none of them. A loop then spent an hour trying to
+    answer whether any of those workers had still been ALIVE — which would mean the
+    same task ran twice — and could not, from the full log corpus AND the database,
+    because the only record was `{"reclaimed": N}` and the UPDATE had already
+    nulled `lease_owner` and `lease_expires_at`. A correctness question that the
+    evidence cannot settle is the worst state to leave one in.
+
+    ``overrun_s`` IS THE DISCRIMINATOR, and it is why this is not just a list of
+    ids. A lease expired hours ago is a worker that is genuinely gone; one expired
+    by seconds is a worker that may still be running, and reclaiming it hands the
+    same task to a second worker. The sweep cannot tell those apart — it never
+    contacts the worker — but the NUMBER lets a reader tell them apart afterwards,
+    which is the whole difference between an answerable question and an
+    unanswerable one.
+
+    Same cure as `CadenceReport.empty_tables` one subsystem over: a result that
+    names only its count cannot be acted on.
+    """
+    out: list[dict[str, object]] = []
+    for row in rows:
+        expires = row.get("lease_expires_at")
+        overrun: float | None = None
+        if isinstance(expires, str) and expires:
+            try:
+                overrun = (moment - datetime.fromisoformat(expires)).total_seconds()
+            except ValueError:
+                # A malformed stamp must not cost the whole report — the task_id
+                # is the part a reader cannot get anywhere else.
+                overrun = None
+        out.append({
+            "task_id": row.get("task_id"),
+            "worker": row.get("lease_owner"),
+            "overrun_s": None if overrun is None else round(overrun, 1),
+        })
+    return out
+
+
 def _status_or_dead_letter(on_survive: str) -> str:
     """`CASE` that yields ``on_survive`` normally and 'dead_letter' at the ceiling."""
     return (
@@ -1216,7 +1274,17 @@ class DurableTaskStore(OwnedRepository):
         with nothing reporting it. Counts the attempt — a task that reliably kills
         its worker must still reach the ceiling rather than cycle for ever.
         """
-        stamp = (now or datetime.now(UTC)).isoformat()
+        moment = now or datetime.now(UTC)
+        stamp = moment.isoformat()
+        # NAME THEM BEFORE THE UPDATE CLEARS THE LEASE. The same predicate, run as
+        # a SELECT first, so the log can say WHICH tasks were taken and off WHOM.
+        # Reading them afterwards is impossible: this UPDATE nulls `lease_owner`
+        # and `lease_expires_at`, which are the two facts a reader needs.
+        doomed = await self._db.fetch_all(
+            f"SELECT task_id, lease_owner, lease_expires_at FROM {self._table} "  # noqa: S608
+            f"WHERE {_EXPIRED_LEASE_WHERE}",
+            (self._owner_id, stamp),
+        )
         affected = await self._db.execute_returning_rowcount(
             # The ceiling decides the destination. This docstring used to claim "a
             # task that reliably kills its worker must still reach the ceiling
@@ -1228,14 +1296,17 @@ class DurableTaskStore(OwnedRepository):
             "lease_expires_at=NULL, attempt_count=COALESCE(attempt_count,0)+1, "
             "last_error='worker lease expired (crash or hang)', "
             "last_failure_class='lease_expired', updated_at=? "
-            "WHERE owner_id=? AND status='running' "
-            "AND lease_expires_at IS NOT NULL AND lease_expires_at <= ?",
+            f"WHERE {_EXPIRED_LEASE_WHERE}",
             (stamp, self._owner_id, stamp),
         )
         if affected:
             log.tasks.warning(
-                "[loop] reclaimed tasks whose worker never came back",
-                extra={"_fields": {"reclaimed": affected}},
+                "[loop] reclaimed %d task(s) whose lease had expired",
+                affected,
+                extra={"_fields": {
+                    "reclaimed": affected,
+                    "tasks": _reclaim_detail(doomed, moment),
+                }},
             )
         return int(affected)
 
