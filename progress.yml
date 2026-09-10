@@ -21074,7 +21074,28 @@ known_debt:
       both sides read 141. Recorded because a mirror is the technique this session uses
       constantly, and this is the one thing it cannot model: a test that compares the tree
       to itself.
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
+    validated_live_on_262a9a69_AND_THE_SNAPSHOT_CLAIM_VERIFIED: >-
+      Restarted (boot markers 814 -> 815) and the migration APPLIED: `schema_migrations`
+      carries `0142`, both tables are gone from the live schema, and the closing_check reads
+      CLOSEABLE. `test_migration_count_is_15` — the one that failed against the mirror
+      140-vs-141 — passes on the real tree, exactly as predicted, in a 33-test run with the
+      two health files.
+    the_safety_claim_was_CHECKED_not_inherited: >-
+      The migration's comment says MigrationRunner snapshots the whole database before
+      applying anything pending. I took that sentence from `0135`'s precedent, so it was
+      INHERITED rather than measured — and a claim in a destructive migration is the last
+      place to inherit one. VERIFIED in the live log: `[db] runner.backup: entry — 1 pending
+      migration(s)` at 2026-09-09T23:55:48 and `runner.backup: exit — verified snapshot at
+      .../backups/pre-migration...` twenty-one seconds later. The runner does not merely
+      claim the file: `verify_artifact` observes it, and it REFUSES to apply anything if the
+      backup cannot be taken.
+    and_my_first_two_searches_for_it_found_nothing: >-
+      Both looked under `~/.stackowl/backups/` and bounded on 2026-09-10. The snapshots live
+      under `~/.stackowl/workspace/knowledge/backups/` and the run happened at 23:55 — so an
+      empty result read exactly like "the snapshot never happened" when it had. The same
+      hazard this record's own harness note describes, one directory over: an instrument
+      pointed at the wrong place returns a confident zero.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
     closing_check: >-
       t=$(./scripts/db_query.sh "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('reindex_queue','langgraph_checkpoints')" 2>/dev/null | tail -1); if [ "${t:-9}" -eq 0 ]; then echo "CLOSEABLE both tables are gone from the live schema"; else echo "OPEN $t of the 2 dropped tables still exist — the migration has not been applied to this database yet (it runs at boot)"; fi
   - id: DEBT-274
