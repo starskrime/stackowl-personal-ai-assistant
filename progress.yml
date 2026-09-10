@@ -21324,6 +21324,20 @@ known_debt:
       One line, one tripwire, one mutation (removing the callback fails 1, restored 21
       passed). `_log_pipeline_crash` returns early on cancellation, so the shutdown path
       that cancels this task stays quiet.
+    validated_2026_09_10_the_gateway_side_change_is_LIVE_and_still_publishing: >-
+      LIVE on `62edbdda`. A gateway-side change is not live until `./start.sh` —
+      CodeWatcher exec-replaces the CORE only — so the platform was restarted: commit
+      18:50:49Z, core connected 18:51:38Z, and the restarted gateway published
+      `core liveness verdict — ok` at **18:52:39.347529Z**, 61s later, exactly as the
+      first generation did at 18:24:39.399707Z. The running process is newer than the
+      commit, and the detector survived the change that was meant to protect it.
+      BOTH records carry `previous: null` and that is the on-change contract working, not
+      a bug: each is the FIRST poll of a new gateway generation. Worth writing down
+      because "only one line per boot" is exactly what a broken poller would also look
+      like, and the two are told apart by the boot count, never by the line count.
+      NOT EVIDENCED, and not claimed: the crash branch. `_log_pipeline_crash` fires only
+      when the supervise task raises, and forcing that would measure the forcing. The
+      tripwire is what covers it.
     the_targeted_run_and_the_mutations: >-
       548 passed across the 90 files `tests_touching.py` derived (including the three
       root-level ones no `tests/<package>` path reaches); 20/20 on the new file. FOUR
