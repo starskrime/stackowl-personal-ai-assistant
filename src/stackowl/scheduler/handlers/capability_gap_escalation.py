@@ -147,6 +147,38 @@ async def _live_owl_names(db: DbPool) -> set[str] | None:
     return names or None
 
 
+def _occurrences_in(details: object) -> int:
+    """The count an escalation was raised at, from its audit row's `details`.
+
+    Returns 0 when the row predates the field, is malformed, or holds something other
+    than a whole number — and 0 means the bar is cleared by any recurrence, so such a
+    pair is RAISED AGAIN rather than skipped.
+
+    THAT IS A REAL BEHAVIOUR CHANGE FOR AN UNREADABLE ROW and it is the deliberate
+    direction. The alternative — treating a row nobody can parse as "already told
+    him" — silences that owl+tool pair FOREVER on the strength of a value no reader
+    can see, and a permanently suppressed operator-facing signal is the worse of the
+    two failures. One extra message is recoverable; a signal that can never fire is
+    the defect this whole handler exists to end.
+    It is theoretical on this install: all NINE `capability.escalated` rows in the
+    live audit log carry `occurrences`, and `AuditLogger.append` has written it since
+    the handler shipped. The test fixture is what did not — it wrote `details="{}"`,
+    which is this file's own recorded second-defect shape.
+    """
+    if isinstance(details, str):
+        try:
+            details = json.loads(details)
+        except (ValueError, TypeError):
+            return 0
+    if isinstance(details, dict):
+        value = details.get("occurrences")
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+    return 0
+
+
 async def find_recurring_gaps(
     db: DbPool, *, min_occurrences: int, window_days: int
 ) -> list[CapabilityGap]:
@@ -159,31 +191,75 @@ async def find_recurring_gaps(
     fail three more times before using it buys nothing. `sysdesign` runs DAILY, so
     a threshold of 3 would have left a within-ceiling gap open for three days.
 
-    A pair already carrying `capability.escalated` is skipped, so a gap that fires
-    every run alerts once rather than every sweep.
+    A pair already carrying `capability.escalated` is skipped UNTIL IT RECURS BEYOND
+    THE COUNT IT WAS RAISED AT — the contract this module's docstring has always
+    stated and which, until DEBT-297, was not implemented.
+
+    TWO READS, TWO LIFETIMES, AND THAT SEPARATION IS THE FIX. Both halves used to
+    come from ONE windowed query, which forced both of its errors:
+
+      * **The memory expired on the evidence clock.** `capability.escalated` rows
+        were filtered by the same `timestamp >= since` as the denials, so once an
+        escalation aged past `window_days` the pair read as never-raised and was
+        put in front of the operator again. MEASURED: `jobmarket`/`shell` was
+        escalated 2026-09-03 07:50:42 and again 2026-09-10 08:32:12 — seven days
+        and forty-one minutes, just past the seven-day window. A decision the
+        operator has already been shown is not evidence that decays, so the
+        escalation read carries NO lower bound.
+      * **The count was thrown away.** The query selected `event_type, actor,
+        target` and never `details`, while every escalation row has carried
+        `{"delivered": …, "occurrences": N}` since the day the handler shipped.
+        `escalated_at` — a name that means *the count it was raised at* — held a
+        tally of events and was used as a boolean. Everything needed for the
+        documented behaviour was already on disk and unread.
+
+    What that cost, on real rows: the 2026-09-03 escalation was raised at **15**
+    occurrences and the 2026-09-10 repeat at **6**. It had got BETTER, and the
+    comment beside the skip said "it has not meaningfully worsened since" while no
+    comparison existed. Under the contract, 6 > 15 is false and the operator is not
+    interrupted.
     """
     since = time.time() - (window_days * 86_400)
-    rows = await db.fetch_all(
-        "SELECT event_type, actor, target FROM audit_log "
-        "WHERE event_type IN ('capability.denied', 'capability.escalated') "
+    denied_rows = await db.fetch_all(
+        "SELECT actor, target FROM audit_log "
+        "WHERE event_type = 'capability.denied' "
         "AND timestamp >= ? AND target IS NOT NULL",
         (since,),
     )
+    # NO LOWER BOUND, deliberately. See the docstring: this is the record of what
+    # the operator has already been shown, and it must outlive the evidence window.
+    escalated_rows = await db.fetch_all(
+        "SELECT actor, target, details FROM audit_log "
+        "WHERE event_type = 'capability.escalated' AND target IS NOT NULL",
+    )
     denied: Counter[tuple[str, str]] = Counter()
+    for row in denied_rows:
+        denied[(str(row["actor"]), str(row["target"]))] += 1
     escalated_at: dict[tuple[str, str], int] = {}
-    for row in rows:
+    for row in escalated_rows:
         key = (str(row["actor"]), str(row["target"]))
-        if row["event_type"] == "capability.denied":
-            denied[key] += 1
-        else:
-            escalated_at[key] = escalated_at.get(key, 0) + 1
+        raised_at = _occurrences_in(row["details"])
+        # HIGHEST WATERMARK WINS. A pair raised twice keeps the larger count, so a
+        # later, smaller escalation can never lower the bar it must clear.
+        if raised_at > escalated_at.get(key, 0):
+            escalated_at[key] = raised_at
 
     live = await _live_owl_names(db)
     dropped: set[str] = set()
+    held_back: list[tuple[str, str, int, int]] = []
     gaps: list[CapabilityGap] = []
     for (owl, tool), count in denied.items():
-        # Escalated once already, and it has not meaningfully worsened since.
-        if escalated_at.get((owl, tool)):
+        # Escalated once already, and it has not meaningfully worsened since. That
+        # sentence stood above `if escalated_at.get(...)` — a truthiness test with
+        # no comparison in it — for as long as this handler has existed. It is a
+        # comparison now.
+        # A DIFFERENT NAME FROM THE `raised_at` ABOVE, and mypy is why: that one is an
+        # `int` read out of a row, this one is `int | None` because the pair may never
+        # have been raised. Reusing the name narrowed the declared type from the first
+        # binding and the checker refused it — a type error reading as a naming one.
+        raised_before = escalated_at.get((owl, tool))
+        if raised_before is not None and count <= raised_before:
+            held_back.append((owl, tool, count, raised_before))
             continue
         # A GAP FOR AN OWL THAT DOES NOT EXIST IS NOT A GAP. Measured 2026-08-31:
         # 75 of 90 `capability.denied` rows (83%) named a deleted owl — jobmarket
@@ -205,6 +281,28 @@ async def find_recurring_gaps(
             "[scheduler] capability_gap_escalation: refusals from a deleted owl "
             "are not gaps — dropped",
             extra={"_fields": {"dropped": len(dropped), "owls": sorted(dropped)}},
+        )
+    if held_back:
+        # THE DECLINE HAS TO BE AS VISIBLE AS THE ACT, and until DEBT-297 the skip was
+        # a bare `continue`: nothing anywhere recorded that the operator had been
+        # spared an interruption, or on what grounds. That is the same shape DEBT-296
+        # found on `shell.execute: exit` — a branch whose outcome is invisible exactly
+        # when it declines.
+        #
+        # ONE SUMMARY LINE PER SWEEP, not one per pair. The sweep runs 4x a day and
+        # this module's whole subject is not training a reader to ignore a channel;
+        # a line per pair per sweep would do to the LOG what the naive alert would
+        # have done to the operator.
+        log.scheduler.info(
+            "[scheduler] capability_gap_escalation: already raised and no worse — "
+            "the operator is not asked again",
+            extra={"_fields": {
+                "held": len(held_back),
+                "pairs": [
+                    {"owl": o, "tool": t, "now": c, "raised_at": r}
+                    for o, t, c, r in sorted(held_back)
+                ],
+            }},
         )
     gaps.sort(key=lambda g: (-g.occurrences, g.owl, g.tool))
     return gaps

@@ -21189,6 +21189,110 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-297
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led. Reached by asking what the platform's own escalation channel has told the operator, and finding it told him the same thing twice."
+    what: >-
+      **THE SUPPRESSION MEMORY EXPIRES ON THE EVIDENCE CLOCK.** The module docstring
+      states the contract exactly — *"a gap already escalated is skipped UNTIL IT
+      RECURS BEYOND THE COUNT IT WAS RAISED AT"* — and the code implemented neither
+      half. MEASURED on the live audit log: `capability.escalated jobmarket shell`
+      appears at **2026-09-03 07:50:42** and again at **2026-09-10 08:32:12**, seven
+      days and forty-one minutes apart, just past the seven-day window. The operator
+      was interrupted twice about one gap, and will be every seven days for as long
+      as the owl keeps being refused.
+    root_cause_measured: >-
+      ONE WINDOWED QUERY DOING TWO JOBS WITH DIFFERENT LIFETIMES, and deriving the
+      suppression from it forced BOTH errors:
+      (1) `capability.escalated` was filtered by the same `timestamp >= since` as
+      `capability.denied`, so the record of what the operator had already been shown
+      aged out on the same clock as the evidence. **A decision he has already been
+      given is not evidence that decays.**
+      (2) The query selected `event_type, actor, target` and never `details` — while
+      **every one of the nine live escalation rows carries
+      `{"delivered": …, "occurrences": N}`**, and has since the handler shipped. So
+      `escalated_at`, a name that means *the count it was raised at*, held a tally of
+      EVENTS and was used as a boolean: `if escalated_at.get(pair): continue`. The
+      comment directly above it read *"Escalated once already, and it has not
+      meaningfully worsened since"* — there was no comparison in the statement it
+      described.
+      Everything the documented behaviour needed was already on disk and unread, which
+      is this repo's write-with-no-reader shape with the specification sitting in the
+      same file.
+    what_it_cost_on_real_rows: >-
+      The 2026-09-03 escalation was raised at **15** occurrences; the 2026-09-10 repeat
+      at **6**. The gap had got BETTER and was put in front of him again. Under the
+      documented contract 6 > 15 is false and he is not interrupted — 1 of the 9
+      escalations in the retained corpus, and **100% of the repeats**, since that pair
+      is the only one raised twice.
+    what_else_that_same_cause_reaches: >-
+      Any suppression state derived from a bounded read rather than kept as a record.
+      The general form: a window is the right bound for "what happened recently" and
+      the wrong bound for "what I already decided", and one query cannot carry both.
+    three_seams_were_MEASURED_AND_REFUTED_before_this_one: >-
+      (1) **849 failed tasks against 283 completed** looks like a 75% failure rate on
+      the one loop — the by-day breakdown puts every one of them in 2026-08-08..15 and
+      **ZERO since 2026-09-08**. Sixth time that rule has fired here.
+      (2) **`capability_gap_escalation: owl vanished before self-heal` x165** against 2
+      self-heals — 98.8% — reads like a broken lookup. All 165 are 2026-08-28..31, none
+      since, and the handler already carries the fix and the measurement in a comment.
+      (3) **Every capability escalation ends `proactive_job.deliver_for_job: no channels
+      configured`** — 34 such records across SIX job types, and the five jobs the
+      platform seeds for itself carry no `target_channels` while the two a human created
+      through the schedule tool do. That looked like the item. It is not: the body is
+      persisted and surfaced as a next-contact banner on the operator's next turn, and
+      the LATENCY is the discriminator — mean **0.3h**, max 4.8h for `no_deliverer`, and
+      the capability rows specifically at 0.0 / 0.0 / 1.6 / 2.1 / 2.1 / 4.8 hours. He is
+      told, within hours, by a path that works. Refuted on the measurement that would
+      have made it real.
+    fix: >-
+      Two reads with two lifetimes. Denials keep the window; escalations are read with
+      **no lower bound**, selecting `details`, and `_occurrences_in` extracts the count
+      the row already carries. The skip becomes the comparison the comment always
+      claimed: `count <= raised_at`. A pair raised twice keeps the **highest**
+      watermark, so a later smaller escalation can never lower the bar it must clear.
+    the_unreadable_row_is_a_DELIBERATE_direction_not_a_default: >-
+      `_occurrences_in` returns 0 for a row that predates the field or cannot be parsed,
+      which means the bar is cleared by any recurrence and the pair is RAISED AGAIN.
+      That is a real behaviour change and it is the right direction: treating an
+      unparseable row as "already told him" silences that owl+tool pair FOREVER on a
+      value no reader can see, and a permanently dead operator signal is the exact
+      defect this handler was built to end. One extra message is recoverable.
+    tests: >-
+      Six added to `tests/scheduler/handlers/test_capability_gap_escalation.py`: the
+      live defect reproduced (escalated at 15, aged 7.1 days, 6 denials -> suppressed);
+      a gap that got better; a gap that WORSENED 3 -> 9 (raised, without which the
+      suppression is just a mute button); the highest-watermark rule; the unreadable
+      row raising rather than silencing; and a VACUITY CONTROL that the DENIAL window
+      is still bounded, because removing the lower bound from one read must not remove
+      it from the other.
+      **AND THE FIXTURE WAS THE SECOND DEFECT.** `_escalate` wrote `details="{}"` — a
+      shape no real escalation has ever had — so it could only ever exercise the
+      truthiness test that stood in for the comparison. `at=` is now required. This
+      file's own docstring already names that shape: "a fixture that stopped resembling
+      the real thing, in the exact shape this codebase names as its second recurring
+      defect."
+      PROVEN OFF-TREE against a fake db while the full suite held the real one, with an
+      assertion inside the fake that the escalation SQL carries no `timestamp >=`.
+    AND_THE_FIXTURE_DEFECT_HAD_A_SECOND_COPY_THE_APPLY_FOUND: >-
+      `tests/scheduler/handlers/test_a_deleted_owl_is_not_a_capability_gap.py` writes its
+      own escalation row inline — also `details="{}"` — and
+      `test_an_already_escalated_pair_is_still_skipped` went red the moment the comparison
+      went in. Corrected the same way, with the count the real writer records. This is
+      this repo's own "correcting one copy of a rule is not correcting the rule", met
+      inside a FIXTURE rather than a document: the off-tree proof could not see it,
+      because a fake db cannot fail a test that inserts its own row.
+      FOUR MUTATIONS, each restored from a file copy with the tree re-run green after
+      (28 passed): restoring the window bound on the escalation read fails 3; reverting
+      the comparison to a truthiness test fails 1; letting the LAST escalation win instead
+      of the highest fails 1; and removing the held-back INFO line fails 1.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The sweep runs every 6h and only speaks when a gap crosses the threshold. What
+      closes this is the NEXT sweep saying it held a pair back — a line the old code
+      could not emit for an aged-out escalation, because it did not know one existed.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'already raised and no worse'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} sweep(s) held a pair back because it had already been raised and had not worsened — a line the old code could not emit, since it kept neither the count nor an aged-out escalation"; else echo "OPEN 0 — the 6-hourly sweep has not held a pair back on the fixed code yet"; fi
   - id: DEBT-296
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. Reached by pairing every tool's `execute: entry` against its `execute: exit` across the retained corpus, an instrument that did not exist."

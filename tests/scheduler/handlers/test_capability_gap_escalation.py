@@ -16,6 +16,7 @@ could ever cross a threshold.
 
 from __future__ import annotations
 
+import json
 import time
 import uuid
 from datetime import UTC, datetime
@@ -74,8 +75,28 @@ async def _deny(db: DbPool, owl: str, tool: str, n: int, *, age_days: float = 0)
         await _write(db, "capability.denied", owl, tool, ts)
 
 
-async def _escalate(db: DbPool, owl: str, tool: str) -> None:
-    await _write(db, "capability.escalated", owl, tool, time.time())
+async def _escalate(
+    db: DbPool, owl: str, tool: str, *, at: int, age_days: float = 0
+) -> None:
+    """Exactly as the handler writes it — `details` carries the count it was raised at.
+
+    `at` IS REQUIRED, and that is DEBT-297's correction to this fixture. It used to
+    write `details="{}"`, which no real escalation has ever done: all nine live
+    `capability.escalated` rows carry `{"delivered": …, "occurrences": N}`. The
+    suppression contract is a COMPARISON against that number, so a fixture without it
+    could only ever exercise the truthiness test that stood in for the comparison —
+    this file's own docstring calls that "a fixture that stopped resembling the real
+    thing, in the exact shape this codebase names as its second recurring defect".
+    """
+    ts = time.time() - (age_days * 86_400)
+    await db.execute(
+        "INSERT INTO audit_log (event_type, actor, target, timestamp, details, "
+        "integrity_hash, chain_version) VALUES (?,?,?,?,?,?,?)",
+        (
+            "capability.escalated", owl, tool, ts,
+            json.dumps({"delivered": False, "occurrences": at}), "", "v1",
+        ),
+    )
 
 
 async def test_the_real_measured_shape_is_found(tmp_db: DbPool) -> None:
@@ -129,7 +150,7 @@ async def test_a_gap_is_raised_ONCE_not_once_per_occurrence(tmp_db: DbPool) -> N
     """
     await _audit_table(tmp_db)
     await _deny(tmp_db, "mailbutler", "shell", 24)
-    await _escalate(tmp_db, "mailbutler", "shell")
+    await _escalate(tmp_db, "mailbutler", "shell", at=24)
 
     assert await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7) == []
 
@@ -281,3 +302,125 @@ async def test_an_unbounded_owl_is_not_healed() -> None:
     """bounds=None is already unbounded; there is no narrower set to widen."""
     m = _Manifest(bounds=None, ceiling=BoundsSpec(tools=frozenset({"shell"})))
     assert within_ceiling(m, "shell") is False
+
+
+class TestTheSuppressionOUTLIVESTheEvidenceWindow:
+    """DEBT-297. Both halves came from ONE windowed query, and that forced both bugs."""
+
+    async def test_an_escalation_older_than_the_window_still_suppresses(
+        self, tmp_db: DbPool
+    ) -> None:
+        """THE LIVE DEFECT, reproduced. `jobmarket`/`shell` was escalated
+        2026-09-03 07:50:42 and again 2026-09-10 08:32:12 — seven days and forty-one
+        minutes, just past the seven-day window. The escalation row aged out of the
+        same filter as the denials, so the pair read as never-raised.
+
+        A decision the operator has already been shown is not evidence that decays."""
+        await _audit_table(tmp_db)
+        await _escalate(tmp_db, "jobmarket", "shell", at=15, age_days=7.1)
+        await _deny(tmp_db, "jobmarket", "shell", 6)
+
+        assert await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7) == []
+
+    async def test_a_gap_that_got_BETTER_is_not_raised_again(
+        self, tmp_db: DbPool
+    ) -> None:
+        """The real numbers: raised at 15, recurred at 6. The comment beside the skip
+        said "it has not meaningfully worsened since" while no comparison existed."""
+        await _audit_table(tmp_db)
+        await _escalate(tmp_db, "jobmarket", "shell", at=15)
+        await _deny(tmp_db, "jobmarket", "shell", 6)
+
+        assert await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7) == []
+
+    async def test_a_gap_that_WORSENED_is_raised_again(self, tmp_db: DbPool) -> None:
+        """The other half, and without it the suppression is just a mute button.
+        Escalated at 3, now 9 — the operator's earlier answer was about a smaller
+        problem, so he gets asked again."""
+        await _audit_table(tmp_db)
+        await _escalate(tmp_db, "mailbutler", "shell", at=3)
+        await _deny(tmp_db, "mailbutler", "shell", 9)
+
+        found = await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7)
+        assert [(g.owl, g.tool, g.occurrences) for g in found] == [
+            ("mailbutler", "shell", 9)
+        ]
+
+    async def test_the_bar_is_the_HIGHEST_count_ever_raised(
+        self, tmp_db: DbPool
+    ) -> None:
+        """Two escalations exist for `jobmarket`/`shell` in the live log — 15, then 6.
+        If the later one won, the bar would have DROPPED to 6 and the next seven
+        denials would raise it again. The watermark never falls."""
+        await _audit_table(tmp_db)
+        await _escalate(tmp_db, "jobmarket", "shell", at=15, age_days=7.1)
+        await _escalate(tmp_db, "jobmarket", "shell", at=6)
+        await _deny(tmp_db, "jobmarket", "shell", 9)
+
+        assert await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7) == []
+
+    async def test_an_unreadable_details_raises_rather_than_silences(
+        self, tmp_db: DbPool
+    ) -> None:
+        """The deliberate direction for a row nobody can parse: raise again.
+        Treating it as "already told him" would silence that pair FOREVER on the
+        strength of a value no reader can see, and a signal that can never fire is
+        the defect this handler exists to end."""
+        await _audit_table(tmp_db)
+        await _write(tmp_db, "capability.escalated", "scout", "shell", time.time())
+        await _deny(tmp_db, "scout", "shell", 4)
+
+        found = await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7)
+        assert [(g.owl, g.tool) for g in found] == [("scout", "shell")]
+
+    async def test_holding_a_pair_back_is_SAID_OUT_LOUD(self, tmp_db: DbPool) -> None:
+        """A decline has to be as visible as an act. Until DEBT-297 the skip was a bare
+        `continue`: nothing recorded that the operator had been spared an interruption
+        or on what grounds, which is the same shape DEBT-296 found on
+        `shell.execute: exit`. Production runs at INFO and this deployment has never
+        written a DEBUG record, so the level is the whole of it."""
+        import logging
+
+        await _audit_table(tmp_db)
+        await _escalate(tmp_db, "jobmarket", "shell", at=15, age_days=7.1)
+        await _deny(tmp_db, "jobmarket", "shell", 6)
+
+        seen: list[tuple[str, str, dict]] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                seen.append(
+                    (record.levelname, record.getMessage(), getattr(record, "_fields", {}))
+                )
+
+        # The named logger DIRECTLY, not caplog: `configure_logging` sets
+        # propagate = False, so a caplog assertion would pass alone and fail in any
+        # session that had configured logging first.
+        logger = logging.getLogger("stackowl.scheduler")
+        handler = _Capture()
+        previous = logger.level
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+        try:
+            assert await find_recurring_gaps(
+                tmp_db, min_occurrences=3, window_days=7
+            ) == []
+        finally:
+            logger.removeHandler(handler)
+            logger.setLevel(previous)
+
+        held = [r for r in seen if "already raised and no worse" in r[1]]
+        assert len(held) == 1, seen
+        assert held[0][0] == "INFO"
+        assert held[0][2]["pairs"] == [
+            {"owl": "jobmarket", "tool": "shell", "now": 6, "raised_at": 15}
+        ], held[0][2]
+
+    async def test_the_denial_window_is_still_bounded(self, tmp_db: DbPool) -> None:
+        """VACUITY CONTROL on the change above. Removing the lower bound from the
+        ESCALATION read must not remove it from the DENIAL read — a tool an owl
+        stopped needing weeks ago still has to stop nagging."""
+        await _audit_table(tmp_db)
+        await _deny(tmp_db, "mailbutler", "claude_code", 9, age_days=30)
+
+        assert await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7) == []

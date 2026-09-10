@@ -38,6 +38,7 @@ without ever creating an owl.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 
@@ -144,13 +145,29 @@ async def test_the_drop_is_reported_at_INFO(
 
 
 async def test_an_already_escalated_pair_is_still_skipped(tmp_db: DbPool) -> None:
-    """The pre-existing rule must survive: a gap alerts once, not every sweep."""
+    """The pre-existing rule must survive: a gap alerts once, not every sweep.
+
+    `details` NOW CARRIES THE COUNT, and that is DEBT-297's correction to a SECOND
+    copy of the same fixture defect. This row used to be written as `details="{}"` —
+    a shape no real escalation has ever had, since `AuditLogger.append` has recorded
+    `{"delivered": …, "occurrences": N}` since the handler shipped. The suppression
+    contract is a COMPARISON against that number ("skipped until it recurs beyond the
+    count it was raised at"), so a `{}` row could only ever exercise the truthiness
+    test that stood in for the comparison.
+
+    The other copy lived in `test_capability_gap_escalation.py` and was fixed first;
+    this one failed the moment the comparison went in — which is this repo's own
+    "correcting one copy of a rule is not correcting the rule", met inside a fixture.
+    """
     await _owl(tmp_db, "mailbutler")
     await _deny(tmp_db, "mailbutler", "shell", 24)
     await tmp_db.execute(
         "INSERT INTO audit_log (event_type, actor, target, timestamp, details, "
         "integrity_hash, chain_version) VALUES (?,?,?,?,?,?,?)",
-        ("capability.escalated", "mailbutler", "shell", time.time(), "{}", "", "v1"),
+        (
+            "capability.escalated", "mailbutler", "shell", time.time(),
+            json.dumps({"delivered": False, "occurrences": 24}), "", "v1",
+        ),
     )
 
     assert await find_recurring_gaps(tmp_db, min_occurrences=3, window_days=7) == []
