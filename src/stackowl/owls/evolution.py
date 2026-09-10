@@ -190,6 +190,11 @@ class EvolutionCoordinator(JobHandler):
         # under the shared in-flight governor, so one stuck owl (e.g. a hung LLM
         # fallback call) cannot stall the whole nightly batch.
         self._per_owl_timeout_s = per_owl_timeout_s
+        #: Per-owl elapsed ms from the LAST completed evolution in this batch, so
+        #: the batch summary can state its worst case against the budget. Cleared
+        #: per owl at entry so a stale figure from a previous batch can never be
+        #: reported as this one's.
+        self._last_owl_ms: dict[str, float] = {}
         self._governor = delegation_governor
         # Learning Commit 4 — attribution-based evolution. Injectable so tests
         # can supply a deterministic RNG; production gets the default
@@ -259,7 +264,12 @@ class EvolutionCoordinator(JobHandler):
                 error=str(exc),
                 duration_ms=duration_ms,
             )
+        slowest_owl: str | None = None
+        slowest_ms = 0.0
         for manifest, outcome in zip(manifests, results, strict=True):
+            elapsed_ms = self._last_owl_ms.get(manifest.name)
+            if elapsed_ms is not None and elapsed_ms > slowest_ms:
+                slowest_owl, slowest_ms = manifest.name, elapsed_ms
             if isinstance(outcome, BaseException):
                 # A per-owl crash (not a timeout) — logged in the helper; counted
                 # as stuck so the batch result stays honest without failing.
@@ -287,6 +297,28 @@ class EvolutionCoordinator(JobHandler):
                 }
             },
         )
+        # THE COMPARISON, IN ONE SENTENCE (DEBT-290).
+        #
+        # The per-owl durations are now on `evolve_one: exit`, but they are a
+        # FIELD — so answering "is 120s short?" would mean joining records, and a
+        # question that costs a join is one nobody asks. This states the batch's
+        # worst case against the budget it is measured by, which is the whole
+        # comparison the constant was missing. Guarded on having timed at least
+        # one owl, because a batch where every owl timed out has no completed
+        # duration to report and must not print a confident zero.
+        if slowest_owl is not None:
+            log.engine.info(
+                "[dna] coordinator.execute: slowest owl this batch took %.1fs of a "
+                "%.0fs per-owl budget",
+                slowest_ms / 1000,
+                self._per_owl_timeout_s,
+                extra={"_fields": {
+                    "owl": slowest_owl,
+                    "slowest_ms": round(slowest_ms, 1),
+                    "budget_s": self._per_owl_timeout_s,
+                    "stuck": stuck_owls,
+                }},
+            )
         return JobResult(
             job_id=job.job_id,
             effect_class="state_change",
@@ -318,6 +350,8 @@ class EvolutionCoordinator(JobHandler):
            through to the LLM path with a stats summary embedded in the prompt.
         """
         # 1. ENTRY
+        t_owl = time.monotonic()
+        self._last_owl_ms.pop(manifest.name, None)
         log.engine.debug(
             "[dna] coordinator.evolve_one: entry",
             extra={"_fields": {"owl": manifest.name}},
@@ -423,8 +457,15 @@ class EvolutionCoordinator(JobHandler):
                 "mutated_traits": list(deltas.keys()),
                 "explore_fired": attribution.explore_fired,
                 "promoted": promoted,
+                # WHAT THE 120s TIMEOUT IS COMPARED AGAINST (DEBT-290). The batch
+                # has always logged its own duration; the per-owl figure — the one
+                # `_per_owl_timeout_s` actually bounds — was never recorded, so
+                # the owls that time out could not be told from owls that are
+                # merely slow.
+                "duration_ms": round((time.monotonic() - t_owl) * 1000, 1),
             }},
         )
+        self._last_owl_ms[manifest.name] = (time.monotonic() - t_owl) * 1000
         return promoted
 
     async def _apply_decay(
@@ -736,6 +777,7 @@ class EvolutionCoordinator(JobHandler):
         """
         for attempt in range(_EVOLUTION_MAX_ATTEMPTS):
             is_last = attempt == _EVOLUTION_MAX_ATTEMPTS - 1
+            t_attempt = time.monotonic()
             try:
                 return await self._evolve_one_attempt(manifest)
             except (TimeoutError, TransientError) as exc:  # transient → recoverable
@@ -760,6 +802,14 @@ class EvolutionCoordinator(JobHandler):
                         "owl": manifest.name, "kind": kind,
                         "attempts": attempt + 1,
                         "timeout_s": self._per_owl_timeout_s,
+                        # BUDGET *AND* ACTUAL, never the budget alone (DEBT-290).
+                        # `timeout_s` on its own says what we allowed, which a
+                        # reader can already read off the config; `elapsed_s` says
+                        # what it cost, and the two together are what distinguish
+                        # an owl that died AT the wall — the shape all 26 recorded
+                        # stuck events have — from one that crashed early and was
+                        # mislabelled a timeout.
+                        "elapsed_s": round(time.monotonic() - t_attempt, 1),
                     }},
                 )
                 return None
@@ -776,6 +826,13 @@ class EvolutionCoordinator(JobHandler):
 
         Raises :class:`TimeoutError` on timeout (handled as transient by the
         caller); all other exceptions propagate unchanged.
+
+        DEBT-290 — the elapsed time is recorded on the CALLER's timeout branch
+        rather than here, and the reason matters: the governor slot is acquired
+        BEFORE ``wait_for`` starts, so queueing for a slot is not charged to the
+        budget. Timing from inside this method would therefore measure the same
+        thing twice; timing the attempt from the caller would measure the queue
+        as well and read as a longer overrun than the timeout ever saw.
         """
         if self._governor is None:
             return await asyncio.wait_for(

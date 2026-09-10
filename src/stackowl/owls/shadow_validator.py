@@ -250,9 +250,23 @@ class ShadowValidator:
         n_replayed = 0
         failures: list[dict[str, object]] = []
         passed = False
+        # THE COST THIS WORK ACTUALLY HAS, kept rather than discarded (DEBT-290).
+        #
+        # `_score_replay` already sums `result_state.step_durations` into a
+        # `latency_ms` — three lines from here — and puts it on a `TaskOutcome`
+        # built ONLY to feed the critic prompt, which is never persisted. So the
+        # per-replay cost was computed on every replay and thrown away, while the
+        # 120s per-owl timeout that bounds the SUM of these is a constant. Result,
+        # MEASURED over 13 days: 26 `evolution.stuck_owl` timeouts across three
+        # owls, and the record could not say whether the budget was short by five
+        # seconds or by five hundred.
+        t_validate = time.monotonic()
+        replay_ms_total = 0.0
         for outcome in held_out:
             n_replayed += 1
+            t_replay = time.monotonic()
             result_state = await self._replay_one(outcome, owl_name, scratch_services)
+            replay_ms_total += (time.monotonic() - t_replay) * 1000
             quality = await self._score_replay(outcome, result_state, critic_provider, critic_model)
             success = not result_state.errors
             # Quality-score proxy for `verified` (AC #2) — this story has no live
@@ -300,6 +314,12 @@ class ShadowValidator:
             extra={"_fields": {
                 "owl": owl_name, "passed": passed,
                 "consecutive_non_regressions": consecutive, "n_replayed": n_replayed,
+                # BOTH FACTORS, because the budget is compared against their
+                # PRODUCT and neither alone answers it: `replay_ms` is the part
+                # that scales with the held-out sample, `duration_ms` is the whole
+                # validation including scoring.
+                "replay_ms": round(replay_ms_total, 1),
+                "duration_ms": round((time.monotonic() - t_validate) * 1000, 1),
             }},
         )
         return result

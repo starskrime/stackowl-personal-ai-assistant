@@ -21036,6 +21036,103 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-290
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, reached by asking why the SAME three owls appear in every stuck-evolution warning."
+    what: >-
+      A CONSTANT BOUNDED A VARIABLE COST, AND NEITHER SIDE OF THE COMPARISON WAS KEPT.
+      MEASURED over the 13 retained logs: **26 `evolution.stuck_owl` events** — `verifier`
+      12, `hypothesis` 8, `rca_gatherer` 6 — every one `kind: "timeout"`, `attempts: 2`,
+      `timeout_s: 120`. Steady at 1-3 a day and current through 2026-09-09. **And the
+      record cannot say whether 120s was short by five seconds or by five hundred.**
+    root_cause_measured: >-
+      NOTHING ANYWHERE MEASURED WHAT A PER-OWL EVOLUTION COSTS.
+      `_evolve_one_bounded` logged the BUDGET (`timeout_s`) and never the ELAPSED.
+      `coordinator.evolve_one: exit` carried five fields, not one of them a duration —
+      while `coordinator.execute: exit` has logged the whole BATCH's `duration_ms` since
+      it was written, so the one figure `_per_owl_timeout_s` actually bounds was the one
+      figure missing. `[shadow] validate: exit` carried `n_replayed`, the COUNT, and not
+      the cost.
+      **AND THE COST WAS ALREADY COMPUTED, THREE LINES AWAY.** `_score_replay` sums
+      `result_state.step_durations` into `latency_ms` on a `TaskOutcome` built ONLY to
+      feed the critic prompt — an object its own docstring says must never be persisted.
+      Every replay measured its own cost and threw it away, while the constant that bounds
+      the SUM of those costs had no comparison at all.
+    it_is_a_lesson_this_programme_has_already_been_taught: >-
+      Bakir, 2026-09-09, on the history compressor: a trigger that is a token count cannot
+      weigh the trade, because **the decision it gates is a COMPARISON and a constant only
+      has one side of it**. `HISTORY_BUDGET_TOKENS = 12_000` was 4.6% of the real window
+      and fired at turn ~10. This is the same shape in the evolution loop, and
+      `health/aggregator.py` already states the cure in its own comment — *"A fix that
+      moves a THRESHOLD must log the MEASUREMENT the threshold is compared against, or its
+      effect is unfalsifiable."* Written there, not applied here.
+    what_else_that_same_cause_reaches: >-
+      Any fixed timeout over work whose cost scales with data. The shadow validator's cost
+      is `n_replayed` x per-replay latency, and BOTH factors were unlogged; the same
+      question is open for every `wait_for` in this tree whose budget is a module constant.
+      And the self-referential part is worth naming: the three owls that cannot be evolved
+      are `verifier`, `hypothesis` and `rca_gatherer` — **the platform's own RCA trio**, so
+      the self-IMPROVING loop has been unable to improve the self-HEALING loop for at least
+      13 days, and the reason was unmeasurable.
+    fix: >-
+      Instrumentation only, and deliberately no behaviour change: `evolve_one: exit` gains
+      the per-owl `duration_ms`; `[shadow] validate: exit` gains `replay_ms` (the cost it
+      already computed) beside its existing `n_replayed`, plus the whole validation's
+      `duration_ms`; the stuck WARNING gains `elapsed_s` beside `timeout_s`, because the
+      budget alone is something a reader can already get from config and only the PAIR
+      distinguishes an owl that died at the wall from one that crashed early and was
+      mislabelled a timeout. One new INFO sentence states the batch's worst case against
+      the budget — a field makes the question answerable, a sentence makes it asked, and a
+      question that costs a join is one nobody asks.
+    what_this_deliberately_does_NOT_do: >-
+      CHANGE THE TIMEOUT. One of the three stuck owls has never completed an evolution at
+      all, so the distribution that would size a budget does not exist yet — picking a
+      number now is exactly the guess the missing measurement invites. A tripwire pins
+      `EVOLUTION_PER_OWL_TIMEOUT_SECONDS = 120.0` so that a later change to it fails and
+      whoever makes it has to say what evidence they used. This is not deferring a
+      diagnosis: the diagnosis is that the threshold question is UNANSWERABLE, and the fix
+      is to make it answerable.
+    the_stuck_marker_still_has_no_follower_and_that_is_stated_not_hidden: >-
+      `evolution.stuck_owl` is documented as "a marker for follow-up" and MEASURED, `grep
+      -rn stuck_owl src/` returns only `evolution.py` — the producer. Nothing consumes it;
+      the batch's `stuck_owls` list goes into one log line's fields and is dropped. That is
+      the identical shape `CapabilityGapEscalationHandler` was built to cure for a sibling
+      signal, whose docstring names it exactly: *"Per-turn state doing a durable job."*
+      Here it is per-BATCH. An actuator is NOT built in this item because it would have to
+      escalate "these owls keep timing out", and until the durations exist that escalation
+      cannot say whether the right answer is a bigger budget or a broken owl — it would
+      hand the operator the diagnosis instead of a decision.
+    tests: >-
+      `tests/owls/test_a_timeout_records_what_it_was_compared_against.py`, 6 tests, all
+      tripwires, all reading the AST of the log calls rather than their text.
+      SIX MUTATIONS, each restored from a file copy with the tree re-run green after:
+      removing `elapsed_s`, removing the per-owl duration, discarding the replay cost,
+      demoting the exit line to DEBUG, raising the timeout to 300, and emitting the batch
+      summary unguarded all fail exactly one test each.
+    my_own_instrument_was_wrong_three_ways_on_its_first_run: >-
+      The helper that reads a log call's `_fields` failed on all three assertions at once,
+      and the errors were mine rather than the tree's: the class is `EvolutionCoordinator`
+      not `DnaEvolutionCoordinator`; the constant is `EVOLUTION_PER_OWL_TIMEOUT_SECONDS`
+      with no leading underscore; and `ast.parse` raises `IndentationError` on the source
+      of a METHOD, which `inspect.getsource` returns still indented. All three read as
+      "the fix is missing" rather than "the test is broken". `textwrap.dedent` and the real
+      names, with the reason recorded in the helper.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    document_is_no_change_needed_and_it_was_CHECKED: >-
+      `docs_touching.py` reports that NO design document declares `owls/evolution.py` or
+      `owls/shadow_validator.py` as a `Source`. It is silent about the 35 documents that
+      declare none, so the three that MENTION these files were read by hand: D04.4 (the
+      `quality=None` fail-closed concern), D05.2 (evolution deliberately not wired to the
+      presented-set memo) and D01.7 (runner lanes). This change adds log fields and one
+      INFO line and alters no behaviour any of them describes.
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The evolution batch is a SCHEDULED job that has run 15 times in 13 days — roughly
+      once a day — so the evidence arrives on its own timetable rather than on this loop's.
+      Nothing can be driven into it without invoking the job by hand, which would measure
+      a run this loop caused rather than one the platform performs.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'slowest owl this batch took'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} batch(es) stated their worst case against the budget — the comparison a constant could not make, and a literal only the new code emits"; else echo "OPEN 0 — the nightly evolution batch has not run on the fixed code yet"; fi
   - id: DEBT-289
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, and reached by asking what the ONE remaining unexplained CURRENT warning ever produced."
