@@ -21116,13 +21116,25 @@ known_debt:
       4 requires: `browser_probe.check` appears 1,108 times in the corpus and
       `browser_install` 2,216, so both are greppable rather than plausible.
     baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      The evidence arrives on its own: the gateway role registers the browser as absent on
-      every boot, so the new line fires once per boot rather than waiting for traffic. It
-      is `partial` only until the restart and the read.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-10 'the absent browser capability now carries a remedy'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} boot(s) registered the capability WITH what to do about it — a literal only the new code emits, against 57 of 57 records carrying remedy:null before"; else echo "OPEN 0 — no gateway-role boot on the fixed code yet"; fi
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    validated_live_on_ddbe9d07: >-
+      Restarted 2026-09-10T11:14:39Z on the tree carrying the fix, and the FIRST BOOT
+      produced it at 11:14:49, INFO:
+      `[startup] gateway: the absent browser capability now carries a remedy — nothing to
+      do — the browser is hosted by the CORE process and browser tools work there; this
+      process is the gateway, which never hosts it`.
+      Closing check reads 1. Against 57 of 57 records carrying `remedy: null` before, and
+      a literal only the new code can emit.
+    what_is_evidenced_and_what_is_INFERRED_stated_apart: >-
+      OBSERVED live: the resource is registered WITH a remedy, on the real process.
+      NOT YET OBSERVED: the per-turn `[capabilities] resolve: capability UNAVAILABLE`
+      line carrying it — the gateway has not resolved the browser since the restart, and a
+      driven turn goes to the CORE, which hosts the browser and therefore never takes this
+      branch. That the field will carry it is a property of code rather than a hope:
+      `resolve()` reads `getattr(resource, "remedy", None)` off the same object, and
+      `test_the_remedy_survives_the_resolver` proves that hop on the real
+      `_UnavailableCapability`. Recorded as inference, not as a reading, because the two
+      are not the same claim.
   - id: DEBT-288
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by ranking the alarm channel and then asking what the loudest CURRENT warning ever produced."
