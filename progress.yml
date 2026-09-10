@@ -21081,6 +21081,13 @@ known_debt:
       property and the reason is recorded in the test. Found by DERIVING the targeted path
       with `tests_touching.py` rather than guessing it: that file is the closest test to
       the branch changed and would have gone red in the full run.
+    live_on_8f49567e_the_code_is_running: >-
+      Restarted 2026-09-10T02:18:57 (`[startup] core: socket consent prompter registered`,
+      `code watcher armed`) and the LIVE object was asked rather than the file: the three
+      states are present, `_DECIDED_MEMORY` reads 256, and an AST walk over
+      `inspect.getsource` finds ZERO string literals carrying the old sentence — it
+      survives only inside the comment that records why it was removed. So the only thing
+      still missing is the EVENT, which is what keeps the stage partial.
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
     validate_is_PARTIAL_and_the_reason_is_named: >-
       Closing this needs a real second tap on a real answered approval, which cannot be
@@ -21166,6 +21173,10 @@ known_debt:
       `tests/pipeline/backends`, the capability and overclaim paths and all 8 root-level
       files no package path reaches — 386 passed, 1 skipped. `docs_touching.py`: no design
       document declares either changed file as a Source.
+    live_on_a4fc2759_the_code_is_running: >-
+      Restarted 2026-09-10T02:18:57 and `stackowl.pipeline.services` exposes
+      `_report_unbound` on the running interpreter, so the reporting path is in the process
+      that serves turns — not merely in the tree.
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
     validate_is_PARTIAL_and_the_reason_is_named: >-
       The code is live, but the LINE it adds needs the condition to recur, and the
