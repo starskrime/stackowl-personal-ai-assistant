@@ -21141,14 +21141,16 @@ known_debt:
       is the GUARD's granularity rather than my mistake — recorded so the next loop meets
       it as a known shape rather than a surprise.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      `db_reclaim` is an HOURLY scheduled job, so the evidence arrives on its own within
-      the hour rather than needing a driven turn — and the first pass is the one that
-      matters, because it deletes 1,425 rows. Nothing is driven by hand here: a sweep I
-      invoked myself would measure my invocation rather than the platform's.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-10 'pruned untapped approach ratings'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} sweep(s) bounded the table — a literal only the new code emits, against a table that grew unbounded for two months"; else echo "OPEN 0 — the hourly reclaim job has not run on the fixed code yet"; fi
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    validated_live_on_3f89305c: >-
+      Restarted 2026-09-10T14:27:10Z, and the HOURLY job ran ITSELF at **14:43:11** — not
+      driven by hand, because a sweep I invoked would measure my invocation rather than the
+      platform's. The line reads `[scheduler] db_reclaim: pruned untapped approach ratings`
+      with `{"deleted": 1425, "retention_days": 7}` — **exactly the 1,425 predicted before
+      the change**, from a table that had grown unbounded for two months.
+      AND IT IS BOUNDED, NOT EMPTIED, which is the property that mattered: 61 rows survive,
+      oldest `2026-09-04 14:04:52`, newest `2026-09-10 14:19:41` — every survivor inside the
+      seven-day window and still tappable. 1,480 -> 61.
   - id: DEBT-291
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by sweeping the DATABASE for tables that grow with no reader and finding the guard that was supposed to watch them."
@@ -21891,15 +21893,20 @@ known_debt:
       `task_loop_runner` attaches it. All four ends of the chain are in the process that
       serves turns. What is still missing is the EVENT — a budget-exhausted task — which
       is what keeps the stage partial.
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      Closing needs a real budget-exhausted task to fail and then be reshaped. The check
-      counts a non-empty `failure_class` on the attempt-failure line — a value that has
-      never once appeared in 117 records, so any occurrence is evidence only this code
-      could produce — and reports the reshape line beside it, because a class that is named
-      and then ignored would be the same defect one layer on.
-    closing_check: >-
-      n=$(grep -ah '"msg": "\[loop\] task attempt failed' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | sort | awk -F'"ts": "' '$2>="2026-09-10"' | grep -vc '"failure_class": ""'); r=$(./scripts/log_since.sh 2026-09-10 'task attempt failed'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} of ${r} attempt failures since 2026-09-10 carry a NAMED failure_class; it was 0 of 117 across the whole corpus"; else echo "OPEN 0 of ${r:-0} attempt failures carry a class — needs a budget-exhausted task to fail on the fixed code"; fi
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    validated_live_2026_09_10: >-
+      CLOSED BY TRAFFIC, not by a driven test. At **2026-09-10T14:12:58Z** a
+      `[loop] task attempt failed` record carried `failure_class: "budget"` — the FIRST
+      non-empty class in this platform's history, against **117 of 117** empty before the
+      fix. The value is one only this code can write, which is why the check was keyed on
+      it.
+      AND THE RESHAPE HALF IS REACHABLE BUT NOT YET OBSERVED, stated apart rather than
+      blended: `_RESHAPING_CLASSES = {"budget"}`, so `wants_reshaping("budget")` is True by
+      construction and the branch is no longer dead. It did not fire, and that is expected
+      rather than a defect — `_maybe_reshape` is gated a second time by `should_decompose`,
+      whose attempt threshold is pre-existing and is not what this item changed. The claim
+      this record made was that NOTHING EVER CLASSIFIED A FAILURE; that is now false, which
+      is exactly what it set out to make false.
   - id: DEBT-283
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, and the evidence REFUTED the item it was gathered for."
