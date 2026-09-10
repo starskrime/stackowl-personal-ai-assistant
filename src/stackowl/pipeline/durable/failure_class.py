@@ -92,6 +92,21 @@ def classify_failure(error: str | BaseException | None) -> str:
     because both arrive in practice and both mean the same thing to the retry
     policy. "" is the honest answer for "no idea", and it keeps the task retryable.
     """
+    # WHAT THE PRODUCER NAMED BEATS WHAT A READER CAN INFER. An exception raised
+    # by the durable runner carries `failure_class` set at the point that still
+    # held the evidence — `final_state.errors`, where the `budget:stop:` marker
+    # lives. The substring table below reads a MESSAGE, and the message the
+    # runner raises is deliberately the WORK's prose (so the next attempt, a
+    # model, can act on it), which contains no marker at all.
+    #
+    # MEASURED 2026-09-10: 117 of 117 `[loop] task attempt failed` records had
+    # `failure_class: ""`, so `wants_reshaping` was never true and the
+    # decompose-before-retrying path — the one thing `_RESHAPING_CLASSES` exists
+    # for — had never run. One string cannot serve a model and a classifier.
+    named = getattr(error, "failure_class", "")
+    if isinstance(named, str) and named:
+        return named
+
     if error is None:
         return ""
     if isinstance(error, BaseException):

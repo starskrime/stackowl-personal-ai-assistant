@@ -31,6 +31,7 @@ from stackowl.pipeline.delivery_gate import (
     describe_attempt_evidence,
     failed_capabilities_for_state,
 )
+from stackowl.pipeline.durable.failure_class import classify_failure
 from stackowl.pipeline.retry_attempt import RetryAttempt
 from stackowl.pipeline.state import PipelineState
 
@@ -85,6 +86,21 @@ class RetryOutcome:
     #: task's last_error, which is what the next attempt is then shown as "what
     #: happened last time". A tautology cannot change a strategy.
     reason: str = ''
+    #: WHAT KIND of failure, named where the evidence still exists.
+    #:
+    #: `reason` above is deliberately the WORK's prose, because the next attempt
+    #: is a model reading "what happened last time". The durable loop needs a
+    #: different thing from the same event — a stable CLASS — and until
+    #: 2026-09-10 it tried to recover one by substring-matching that prose.
+    #: MEASURED: 117 of 117 `[loop] task attempt failed` records carry
+    #: `failure_class: ""`, so `wants_reshaping` has never once been true and the
+    #: decompose-before-retrying path has never run.
+    #:
+    #: ONE STRING CANNOT SERVE BOTH READERS. The markers the classifier looks for
+    #: (`budget:stop:…`) live in `final_state.errors`; the prose that helps the
+    #: model does not contain them. This field carries the class from the point
+    #: that HOLDS the evidence instead of asking a later reader to infer it.
+    failure_class: str = ''
     #: Whether the answer actually REACHED somebody. ``status`` alone cannot say
     #: it: a "completed" attempt whose answer had no addressee did the work and
     #: delivered nothing, and reporting those identically is how 60 discarded
@@ -322,6 +338,12 @@ class RetryActuator:
             # carry THAT instead, and fall back to the old wording only when the
             # attempt touched nothing to describe.
             reason = describe_attempt_evidence(final_state) or "retry attempt still floored"
+            # CLASSIFY HERE, WHERE THE MARKERS STILL EXIST. `final_state.errors`
+            # holds the platform's own `budget:stop:…` marker; `reason` is prose
+            # composed for the model and does not. Asking the shared vocabulary
+            # NOW keeps one source for the rule and stops a later reader having
+            # to infer a class from a sentence written for someone else.
+            failure_class = classify_failure(" ".join(final_state.errors or ()))
             log.scheduler.info(
                 "retry_actuator.attempt_retry: carrying the attempt's evidence "
                 "forward",
@@ -331,6 +353,7 @@ class RetryActuator:
             )
             outcome = await self._handle_failure(
                 row, reason, newly_failed_capability=newly_failed,
+                failure_class=failure_class,
             )
             # 4. EXIT
             log.scheduler.info(
@@ -537,6 +560,7 @@ class RetryActuator:
 
     async def _handle_failure(
         self, row: RetryAttempt, error: str, *, newly_failed_capability: str,
+        failure_class: str = "",
     ) -> RetryOutcome:
         # THE STORE ROUND-TRIP IS GONE, AND ITS EXCEPT BRANCH WAS ALREADY THE
         # IMPLEMENTATION. mark_attempt_failed raised on every call — the row is
@@ -569,4 +593,5 @@ class RetryActuator:
             status="pending",
             banned=(newly_failed_capability,) if newly_failed_capability else (),
             reason=error,
+            failure_class=failure_class,
         )

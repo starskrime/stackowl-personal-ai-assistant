@@ -120,6 +120,17 @@ def build_task_runner(actuator: Any) -> Callable[[DurableTask], Awaitable[str]]:
             err.banned_capabilities = tuple(  # type: ignore[attr-defined]
                 getattr(outcome, "banned", ()) or ()
             )
+            # AND SO DOES THE CLASS. Same channel, same reason: a raise is all
+            # this runner has. `reason` above is the WORK's prose — chosen
+            # deliberately, because the next attempt is a model reading "what
+            # happened last time" — and the platform's own `budget:stop:` marker
+            # is not in it. The loop's `classify_failure` was left inferring a
+            # class from that sentence and got "" every time: MEASURED, 117 of
+            # 117 attempt-failure records, so `wants_reshaping` has never been
+            # true and the decompose-before-retrying path has never run.
+            err.failure_class = str(  # type: ignore[attr-defined]
+                getattr(outcome, "failure_class", "") or ""
+            )
             raise err
         # SAY WHICH OF THE TWO THINGS HAPPENED. `_dispatch` guards the overclaim
         # with `if not result.strip()` — and this line is the value it inspects,

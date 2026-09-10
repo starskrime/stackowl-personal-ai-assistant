@@ -21018,6 +21018,133 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-284
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, found by ranking the alarm channel with the denominator DEBT-283 added, then applying the by-day check FIRST."
+    what: >-
+      THE DECOMPOSE-BEFORE-RETRYING PATH HAS NEVER RUN. MEASURED across every retained log:
+      **117 of 117** `[loop] task attempt failed` records carry `failure_class: ""`. So
+      `wants_reshaping` has never once been true, and `_maybe_reshape` — whose call site
+      carries the comment "CHANGE THE SHAPE BEFORE SPENDING ANOTHER ATTEMPT" and cites
+      Bakir's task `43be4591` dying on `budget:stop:steps:limit=20.0:actual=20.0` — has
+      never reshaped anything. **18 of those failures are from TODAY, the highest single
+      day in the corpus.**
+    why_not_what: >-
+      ONE STRING, TWO READERS THAT NEED OPPOSITE THINGS. `task_loop_runner` raises the
+      WORK's reason rather than the machinery's status, and that was a deliberate and
+      CORRECT fix: `loop.py` stores the exception text as `last_error` and `_augment_goal`
+      shows it to the next attempt as "what happened last time", so "retry did not deliver
+      (actuator reported 'pending')" was true and useless. The model-facing reader was
+      served. The OTHER reader is `classify_failure`, which substring-matches the
+      platform's own markers — `budget:stop:…` — and those live in `final_state.errors`,
+      not in prose composed for a model. So the classifier read a sentence written for
+      somebody else and returned "" every time.
+    it_failed_SILENTLY_by_design: >-
+      `failure_class.py`'s docstring says the "" default is deliberately the safe one: "an
+      unrecognised failure returns '' — not permanent", because a wrong "permanent"
+      strands a task. That choice is right AND it is why this was invisible: an
+      unclassified failure is indistinguishable from an ordinary retryable one. The
+      consequence is exactly what `loop.py`'s own comment says must not happen — re-running
+      spends the same ceiling and stops at the same step — and that same file already
+      records task `8b7c4029` failing IDENTICALLY 74 times against a ceiling of 30.
+    the_fix_is_NOT_a_better_regex: >-
+      Adding "ran out of tokens" to the substring table would be the symptom fix, and the
+      table's own comment warns against it: the prose is composed per-attempt from the
+      turn's evidence and its wording is free to change, so "a regex that quietly stops
+      matching downgrades a permanent error to retryable without anyone noticing". The
+      class is now NAMED WHERE THE EVIDENCE STILL EXISTS — in the actuator, from
+      `final_state.errors` — and rides the exception beside `banned_capabilities`, which
+      already travels that way for the same stated reason ("a raise is the only channel
+      this runner has"). `classify_failure` prefers what the producer named and keeps the
+      substring table as the fallback for exceptions carrying no attribute.
+    what_else_that_cause_reaches: >-
+      Any consumer that recovers structure by parsing a string another component composed
+      for a different audience. The shape is DEBT-277's mirror: there, one lost context
+      made 51 collaborators report themselves missing; here, one string optimised for a
+      model made a classifier see nothing. Both are invisible because the degraded answer
+      — empty services, empty class — is a legitimate value.
+    tests: >-
+      `tests/pipeline/durable/test_the_class_rides_the_exception_not_the_prose.py`, seven
+      tripwires. The live prose and the live marker are both pinned verbatim from the
+      newest 2026-09-10 record, so the test states the defect rather than describing it.
+      MUTATIONS, each restored from a file copy: ignoring the attribute (the pre-fix state)
+      FAILS; the runner not attaching it FAILS; letting a blank attribute SHADOW the table
+      FAILS THREE — a half-wired producer must not be worse than none.
+    AND_A_MUTATION_CAUGHT_A_VACUOUS_TEST_OF_MINE: >-
+      The fourth mutation — classifying the PROSE instead of the markers — passed all
+      seven. The assertion was `"final_state.errors" in inspect.getsource(attempt_retry)`,
+      and the COMMENT I had written above the call says `final_state.errors` too. My own
+      explanation satisfied my own test. It now parses the method and asserts on the
+      ARGUMENT of the `classify_failure` CALL, and the mutation fails as it should. This is
+      "a conjunction across a whole file is not a statement" at method scope, and the
+      second vacuous test mutation has caught for me in two loops.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      Closing needs a real budget-exhausted task to fail and then be reshaped. The check
+      counts a non-empty `failure_class` on the attempt-failure line — a value that has
+      never once appeared in 117 records, so any occurrence is evidence only this code
+      could produce — and reports the reshape line beside it, because a class that is named
+      and then ignored would be the same defect one layer on.
+    closing_check: >-
+      n=$(grep -ah '"msg": "\[loop\] task attempt failed' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | sort | awk -F'"ts": "' '$2>="2026-09-10"' | grep -vc '"failure_class": ""'); r=$(./scripts/log_since.sh 2026-09-10 'task attempt failed'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} of ${r} attempt failures since 2026-09-10 carry a NAMED failure_class; it was 0 of 117 across the whole corpus"; else echo "OPEN 0 of ${r:-0} attempt failures carry a class — needs a budget-exhausted task to fail on the fixed code"; fi
+  - id: DEBT-283
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, and the evidence REFUTED the item it was gathered for."
+    what: >-
+      RANKING AN ALARM CHANNEL BY TOTAL PROMOTES STARTUP FACTS IN PROPORTION TO HOW MUCH
+      CODE WAS EDITED THAT WEEK. `retired_log_messages.py` was used THREE times today to
+      pick work by ranking WARNING-and-above messages on raw occurrence count. It has no
+      denominator, and on this box the denominator for a once-per-process message is BOOTS
+      — of which MEASURED **580 of 1,096 are CodeWatcher re-execs**, this programme editing
+      the instance it is measuring.
+    THE_ITEM_THIS_LOOP_STARTED_WITH_WAS_WRONG_and_that_is_the_finding: >-
+      The report's top entry was `[tools] registry.register: thin tool description` at
+      **827** — the largest single message in the corpus, all 827 naming ONE learned tool
+      whose description has not changed since 2026-08-28. An item was built on it: dedupe
+      the lint, because it "must" be re-announcing a static fact. Its own docstring even
+      says "Surfacing that ONCE, at registration", which read like the intent and the code
+      disagreeing.
+      **IT WAS NOT.** Bracketing the corpus by process lifetimes: **827 windows with
+      exactly one occurrence, 269 with none, and ZERO with more than one.** The lint
+      already did precisely what its docstring says. The fix — written, tested and
+      mutation-proven — was REVERTED before it shipped, because a dedupe with nothing to
+      dedupe is decoration, and decoration is the shape this repo names most.
+    why_not_what: >-
+      A TOTAL IS NOT A RATE. `CLAUDE.md` already says "count incidents, not log lines" and
+      "check what a denominator is MADE OF"; I applied the first to the database-lock
+      signal earlier in this same loop and then failed to apply it one message later. The
+      instrument is what made that easy: it presents a bare count as a ranking, so the
+      reader supplies the denominator from memory or not at all.
+    the_ratio_is_NOT_the_discriminator_and_the_first_cut_got_that_wrong_too: >-
+      An earlier version flagged "startup fact" on a per-boot rate between 0.8 and 1.2 — a
+      magic number, and it MISSES this very message, which sits at 0.75/boot because it
+      fires in 827 of 1,096 lifetimes and not in the other 269. The property that settles
+      it is the MAXIMUM: a message that never fired twice in ONE process cannot be a
+      recurring condition, whatever its total. That is measured, not chosen, and it is
+      exactly the fact that refuted the item.
+    what_the_report_says_now: >-
+      Each CURRENT message carries its rate, the header states the denominator and WHY a
+      boot count is not neutral on this box, and a message whose maximum is 1 is marked
+      `STARTUP FACT (max 1 per process)`. Live: **18 of 50** CURRENT messages are startup
+      facts — including the one that fooled me and `browser runtime skipped`, which is
+      correct behaviour announced once per gateway. `health_sweep: UNHEALTHY subsystems
+      detected` sits at the same 0.75/boot and is NOT flagged, because it recurs within a
+      process — the discrimination the rate alone could not make.
+    tests: >-
+      `tests/audit/test_a_total_is_not_a_rate_when_the_box_restarts_itself.py`, five
+      tripwires over synthetic corpora. MUTATIONS, restored from a file copy: counting
+      globally instead of per-window FAILS THREE; dropping the report's denominator FAILS
+      the one that pins it. **AND THE SECOND MUTATION EXPOSED A VACUOUS TEST OF MINE** —
+      deleting the final window flush changed nothing, because the case I had written
+      (occurrences BEFORE the first boot marker) is flushed by the marker that follows it.
+      The edge that needed a test is the TRAILING one, which is the process running right
+      now; rewritten, the mutation fails as it should.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: no_change_needed, document: no_change_needed}
+    validate_is_no_change_needed_and_the_reason: >-
+      A report script, not platform code. Nothing ships to the running process, so there is
+      no live behaviour to restart and observe. The evidence is the report's own output on
+      the real corpus — 1,096 lifetimes, 18 of 50 CURRENT marked startup facts — which is
+      re-runnable at any time and is the whole of the claim.
   - id: DEBT-282
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led: the fifth-surface debt THIS SESSION'S OWN commits created."
