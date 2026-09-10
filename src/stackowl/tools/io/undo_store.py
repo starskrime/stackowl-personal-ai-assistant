@@ -373,7 +373,15 @@ class UndoWriteTool(Tool):
 
         ok, message = self._store.restore(token)
         duration_ms = (time.monotonic() - t0) * 1000
-        log.tool.debug("undo_write.execute: exit", extra={"_fields": {"success": ok, "duration_ms": duration_ms}})
+        # INFO, NOT DEBUG (DEBT-298). This is the ONLY record that a file was
+        # reverted, and production runs at INFO: MEASURED across 677,108 retained
+        # records, this deployment has written ZERO DEBUG lines, so the corpus
+        # shows 0 entries and 0 exits for this tool while `~/.stackowl/undo` holds
+        # 17 snapshots proving writes happened. The one message this tool DOES emit
+        # at INFO+ is `path traversal denied` — so a REFUSED write is on the record
+        # and a SUCCESSFUL one is not, which is the inversion exactly backwards.
+        # The fields were always right; only the level was wrong.
+        log.tool.info("undo_write.execute: exit", extra={"_fields": {"success": ok, "duration_ms": duration_ms}})
         if not ok:
             return ToolResult(success=False, output="", error=message, duration_ms=duration_ms)
         return ToolResult(success=True, output=message, duration_ms=duration_ms)

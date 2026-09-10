@@ -35,7 +35,12 @@ import pytest
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_ROOT / "scripts"))
 
-from four_point_pairs import entry_exit_levels, unpaired  # noqa: E402
+from four_point_pairs import (  # noqa: E402
+    declared_severities,
+    entry_exit_levels,
+    mutating_without_a_loud_outcome,
+    unpaired,
+)
 
 _BROWSER = _ROOT / "src" / "stackowl" / "tools" / "browser"
 
@@ -56,7 +61,7 @@ class TestEveryLoudEntryHasALoudExit:
     @pytest.mark.tripwire
     def test_the_allowlist_is_not_hiding_a_tool_that_now_pairs(self) -> None:
         """A stale exemption rots into permission. None are granted today."""
-        assert _ALLOWED_UNPAIRED <= set(unpaired()), (
+        assert set(unpaired()) >= _ALLOWED_UNPAIRED, (
             "an exemption names a tool that no longer needs one — delete it"
         )
 
@@ -83,6 +88,50 @@ class TestEveryLoudEntryHasALoudExit:
             "the forwarded-name resolution is broken: a tool whose exit exists only "
             "inside an f-string helper now reads as having none"
         )
+
+
+class TestATOOLTHATCHANGESSOMETHINGSAYSSO:
+    """DEBT-298. Four tools CHANGED FILES and left no record in production.
+
+    `write_file`, `edit`, `apply_patch` and `undo_write` logged BOTH entry and exit at
+    DEBUG, and this deployment has written zero DEBUG records in 677,108 — so the
+    corpus holds 0 entries and 0 exits for each of them while `~/.stackowl/undo` holds
+    17 snapshots proving the writes happened. The one message each DOES emit at INFO+
+    is `path traversal denied`: a REFUSED write on the record, a SUCCESSFUL one absent.
+
+    The rule is DERIVED from the platform's own vocabulary rather than from a list.
+    `ToolManifest.action_severity` is already `Literal["read", "write",
+    "consequential"]` and 56 tools declare it, so "does this change anything?" is a
+    question the platform answers about itself — nothing had ever asked it about
+    LOGGING."""
+
+    @pytest.mark.tripwire
+    def test_a_tool_that_changes_something_records_its_outcome_loudly(self) -> None:
+        offenders = mutating_without_a_loud_outcome()
+        assert not offenders, (
+            "these tools declare `write` or `consequential` and log their outcome only "
+            f"at DEBUG, so production has no record they ever ran: {offenders}"
+        )
+
+    @pytest.mark.tripwire
+    def test_the_severity_walk_sees_a_real_population(self) -> None:
+        """VACUITY CONTROL. A walk that stopped finding `action_severity` would report
+        zero offenders forever, which is indistinguishable from a clean tree."""
+        severities = declared_severities()
+        assert len(severities) >= 50, f"only {len(severities)} tools declare a severity"
+        changing = [t for t, v in severities.items() if v != "read"]
+        assert len(changing) >= 15, f"only {len(changing)} declare write/consequential"
+
+    @pytest.mark.tripwire
+    def test_read_is_exempt_BY_THE_DECLARATION_not_by_judgement(self) -> None:
+        """DISCRIMINATION CONTROL, and it pins the scope decision rather than leaving it
+        to prose. `read_file` logs entry AND exit at DEBUG exactly as the four did, and
+        is deliberately NOT swept in: its volume cannot be measured precisely because it
+        is unlogged, and promoting an unmeasured rate is how a channel gets filtered
+        instead of read. If this ever fails, `read_file` has changed severity and the
+        exemption has to be re-argued."""
+        assert declared_severities().get("read_file") == "read"
+        assert "read_file" not in mutating_without_a_loud_outcome()
 
 
 class TestTheHelperCannotInventAToolName:

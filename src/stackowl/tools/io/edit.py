@@ -198,7 +198,15 @@ class EditTool(Tool):
         # the model/user can catch a wrong-but-similar-line edit (the diff shows it).
         diff = self._unified_diff(content, new_content, path_str)
         duration_ms = (time.monotonic() - t0) * 1000
-        log.tool.debug(
+        # INFO, NOT DEBUG (DEBT-298). This is the ONLY record that a file was
+        # edited, and production runs at INFO: MEASURED across 677,108 retained
+        # records, this deployment has written ZERO DEBUG lines, so the corpus
+        # shows 0 entries and 0 exits for this tool while `~/.stackowl/undo` holds
+        # 17 snapshots proving writes happened. The one message this tool DOES emit
+        # at INFO+ is `path traversal denied` — so a REFUSED write is on the record
+        # and a SUCCESSFUL one is not, which is the inversion exactly backwards.
+        # The fields were always right; only the level was wrong.
+        log.tool.info(
             "edit.execute: exit",
             extra={"_fields": {"path": path_str, "strategy": strategy, "token": token, "duration_ms": duration_ms}},
         )

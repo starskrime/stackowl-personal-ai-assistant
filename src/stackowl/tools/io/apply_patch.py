@@ -238,7 +238,15 @@ class ApplyPatchTool(Tool):
         duration_ms = (time.monotonic() - t0) * 1000
         group_token = self._store.snapshot_group(state.pre_images, state.created)
         undo_hint = f"Undo token: {group_token} (call undo_write to revert this ENTIRE patch — all files)"
-        log.tool.debug(
+        # INFO, NOT DEBUG (DEBT-298). This is the ONLY record that a file was
+        # patched, and production runs at INFO: MEASURED across 677,108 retained
+        # records, this deployment has written ZERO DEBUG lines, so the corpus
+        # shows 0 entries and 0 exits for this tool while `~/.stackowl/undo` holds
+        # 17 snapshots proving writes happened. The one message this tool DOES emit
+        # at INFO+ is `path traversal denied` — so a REFUSED write is on the record
+        # and a SUCCESSFUL one is not, which is the inversion exactly backwards.
+        # The fields were always right; only the level was wrong.
+        log.tool.info(
             "apply_patch.execute: exit",
             extra={
                 "_fields": {

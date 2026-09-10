@@ -130,6 +130,77 @@ def unpaired(root: pathlib.Path | None = None) -> list[str]:
     return sorted(bad)
 
 
+def declared_severities(root: pathlib.Path | None = None) -> dict[str, str]:
+    """Every tool's own `action_severity`, read from the class that names it.
+
+    `ToolManifest.action_severity` is already `Literal["read", "write",
+    "consequential"]` and 56 tools declare it, so "does this tool change anything?"
+    is a question the platform answers about itself. Nothing had ever asked it about
+    LOGGING.
+
+    Reads the `action_severity=` keyword form only. A tool that sets the field some
+    other way is invisible here and the count below is the honest denominator.
+    """
+    src = root or _SRC
+    out: dict[str, str] = {}
+    for path in sorted(src.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for cls in ast.walk(tree):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            name = None
+            for fn in cls.body:
+                if not (isinstance(fn, ast.FunctionDef) and fn.name == "name"):
+                    continue
+                for r in ast.walk(fn):
+                    if isinstance(r, ast.Return) and isinstance(r.value, ast.Constant):
+                        name = r.value.value
+            if not name:
+                continue
+            for n in ast.walk(cls):
+                if (
+                    isinstance(n, ast.keyword)
+                    and n.arg == "action_severity"
+                    and isinstance(n.value, ast.Constant)
+                ):
+                    out[str(name)] = str(n.value.value)
+    return out
+
+
+def mutating_without_a_loud_outcome(root: pathlib.Path | None = None) -> list[str]:
+    """Tools that CHANGE something and whose outcome is invisible in production.
+
+    DEBT-298. Four of them — `write_file`, `edit`, `apply_patch`, `undo_write` — logged
+    both entry and exit at DEBUG, so the corpus held ZERO records of either while
+    `~/.stackowl/undo` held 17 snapshots proving the writes happened. The one message
+    each of them DOES emit at INFO+ is `path traversal denied`: a REFUSED write on the
+    record and a SUCCESSFUL one absent, which is the inversion this repo names most
+    often, in its purest form.
+
+    The rule is DERIVED rather than listed, and from the platform's own vocabulary: a
+    tool declaring `write` or `consequential` must record its outcome where production
+    can see it. `read` is exempt BY THAT SAME DECLARATION rather than by anyone's
+    judgement — which is also why `read_file` is not swept in here. Its volume cannot
+    be measured precisely because it is unlogged, and promoting an unmeasured rate is
+    how a channel gets filtered instead of read.
+    """
+    severities = declared_severities(root)
+    levels = entry_exit_levels(root)
+    bad = []
+    for tool, severity in sorted(severities.items()):
+        if severity == "read":
+            continue
+        info = levels.get(tool)
+        if info is None:
+            continue
+        if not (set(info["exits"]) & _LOUD):  # type: ignore[arg-type]
+            bad.append(tool)
+    return bad
+
+
 def corpus_pairs(log_dir: pathlib.Path) -> dict[str, tuple[int, int]]:
     """Live entry/exit counts per tool across every retained log."""
     counts: dict[str, list[int]] = collections.defaultdict(lambda: [0, 0])
@@ -158,6 +229,15 @@ def main() -> None:
             print(f"    {t:<22} entry={i['entry']} exits={','.join(i['exits']) or 'NONE'}  {i['file']}:{i['line']}")
     else:
         print("  every loud entry has a loud exit.")
+    severities = declared_severities()
+    mutating = mutating_without_a_loud_outcome()
+    print(f"\n  {len(severities)} tools declare `action_severity`; "
+          f"{sum(1 for v in severities.values() if v != 'read')} of them CHANGE something")
+    if mutating:
+        print(f"  MUTATES AND ITS OUTCOME IS NOT AT INFO+ ({len(mutating)}): {', '.join(mutating)}")
+    else:
+        print("  every tool that changes something records its outcome where production can see it.")
+
     quiet = sorted(t for t, i in static.items() if i["entry"] not in _LOUD)
     print(f"\n  ENTRY ITSELF AT DEBUG ({len(quiet)}) — invisible in production either way,")
     print("  but consistently so, which is a different question from an ASYMMETRIC pair:")

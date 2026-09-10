@@ -21189,6 +21189,93 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-298
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led. Found by taking the handoff DEBT-296 deliberately left: it measured the DEBUG-entry set, scoped it out, and printed the number so a later loop could decide with it rather than re-measure."
+    what: >-
+      **THE PLATFORM CAN WRITE, EDIT, PATCH AND REVERT FILES AND LEAVE NO RECORD THAT
+      IT DID.** `write_file`, `edit`, `apply_patch` and `undo_write` log BOTH entry and
+      exit at DEBUG, and this deployment has written **ZERO DEBUG records in 677,108** —
+      so the corpus holds **0 entries and 0 exits** for each of the four, while
+      `~/.stackowl/undo` holds **17 retained snapshots** proving the writes actually
+      happened — and `_MAX_SNAPSHOTS` is 50, so nothing has been evicted and 17 is the
+      real count rather than a ceiling.
+      And the one message each of them DOES emit at INFO+ is
+      `<tool>.execute: path traversal denied`. **A REFUSED write is on the record; a
+      SUCCESSFUL one is not.**
+    root_cause_measured: >-
+      THE SAME CAUSE DEBT-296 FOUND, ONE STEP FURTHER ALONG. The 4-point convention
+      assigns a level BY POSITION — entry and exit are DEBUG — when the level belongs to
+      whether the branch is an OUTCOME someone must be able to see. DEBT-296 repaired
+      the tool where entry had been promoted and exit had not (`shell`, 312 entries and
+      0 exits); this is the set where NEITHER was promoted, so there is nothing to
+      notice: no asymmetry, no gap between two counts, just silence.
+      `logging_visibility.py` exists for exactly this shape and is scoped to five
+      BACKGROUND packages, exempting `tools/` on the reasoning that "a per-turn tool
+      that returns quietly is still observed, because its turn has a user, a reply and a
+      cost record". That reasoning is about whether a HUMAN NOTICES; it was relied on
+      for whether the PLATFORM CAN SAY WHAT IT DID. A turn's reply may mention a file
+      was written. Nothing anywhere records which file, how many bytes, or whether it
+      worked — except the DEBUG line that carries all three and is never written.
+    the_rule_is_DERIVED_from_the_platforms_own_vocabulary: >-
+      `ToolManifest.action_severity` is already `Literal["read", "write",
+      "consequential"]`, and **56 tools declare it**. So "does this tool change
+      anything?" is a question the platform already answers about itself — and nothing
+      had ever asked it about LOGGING. The rule is: a tool declaring `write` or
+      `consequential` must record its outcome at INFO or above. MEASURED against that
+      rule, exactly **FOUR** of the 56 fail, all four in `tools/io/`, and the other 52
+      are already correct — which is what makes four measurable rather than a
+      preference.
+      **`read` is exempt BY THAT SAME DECLARATION rather than by my judgement**, which
+      is why `read_file` — entry and exit both DEBUG, identical shape — is not swept in.
+      Its volume cannot be measured precisely because it is unlogged, and promoting an
+      unmeasured rate is how a channel gets filtered instead of read. A test pins that
+      exemption to the declaration, so if `read_file` ever changes severity the scope
+      decision has to be re-argued rather than inherited.
+    fix: >-
+      Four one-word promotions, DEBUG -> INFO, with the reason written beside each. The
+      FIELDS were always right — `path`/`bytes`/`duration_ms` on the write, `path`/
+      `strategy`/`token` on the edit, `files`/`created`/`pre_images`/`group_token` on the
+      patch, `success`/`duration_ms` on the revert. Only the level was wrong. The ENTRY
+      lines stay at DEBUG deliberately: the exit carries the outcome, and one line per
+      mutation is what an auditor needs at the least cost in noise.
+    tests: >-
+      Three added to `tests/audit/test_a_tool_that_says_it_started_says_how_it_ended.py`
+      (DEBT-296's file — same subject, one place). The rule itself; a VACUITY CONTROL on
+      the population (>= 50 tools declare a severity, >= 15 of them change something),
+      because a walk that stopped finding `action_severity` would report zero offenders
+      forever and look identical to a clean tree; and a DISCRIMINATION CONTROL that
+      `read_file` is still `read`, which pins the scope decision to the declaration
+      instead of to prose.
+      PROVEN BY BEFORE/AFTER off-tree while the full suite held the real tree:
+      `mutating_without_a_loud_outcome()` returns
+      `['apply_patch', 'edit', 'undo_write', 'write_file']` on the unfixed tree and `[]`
+      on the fixed one, with the severity count unchanged at 56 so the walk is not what
+      moved.
+    what_else_that_same_cause_reaches: >-
+      `scripts/four_point_pairs.py` now reports the severity rule beside its two existing
+      halves, so the next reader sees "56 declare a severity, N of them change something,
+      and here are the ones whose outcome production cannot see" without re-deriving it.
+      The walk reads the `action_severity=` KEYWORD form only and says so — a tool that
+      sets the field another way is invisible to it, and that is the honest denominator
+      rather than an implied completeness.
+      **AND THE GAP THAT LEAVES IS EXACTLY THE INTERESTING ONE.** `learned_shell_tool`
+      passes `action_severity=self._spec.action_severity` — a VARIABLE — so a
+      MODEL-AUTHORED tool's severity is chosen at runtime and no AST walk can read it.
+      The same is true of `mcp_tool`. Both log entry AND exit at DEBUG, so their
+      invocations are as invisible as the four fixed here, and the derived rule cannot
+      reach them: a scan over literals is blind to precisely the tools whose authority is
+      decided by something other than a person typing a constant. That is the same limit
+      the CORPUS caught twice during DEBT-296 (a helper's `f"{tool}.execute: exit"` is a
+      string no walk can read), recorded here rather than papered over, and it is why
+      `four_point_pairs.py` keeps its live-pairing half beside the static one.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The line needs a real file write by the model. `~/.stackowl/undo` shows writes do
+      happen, but not on a schedule, so this closes when one occurs rather than on a
+      timer.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'write_file.execute: exit'); e=$(./scripts/log_since.sh 2026-09-10 'edit.execute: exit'); t=$(( ${n:-0} + ${e:-0} )); if [ "$t" -gt 0 ]; then echo "CLOSEABLE ${t} file mutation(s) now recorded (write=${n:-0} edit=${e:-0}) — both strings existed 0 times in 677,108 records, because only the promoted level can emit them"; else echo "OPEN 0 — no file has been written or edited on the fixed code yet"; fi
   - id: DEBT-297
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. Reached by asking what the platform's own escalation channel has told the operator, and finding it told him the same thing twice."
