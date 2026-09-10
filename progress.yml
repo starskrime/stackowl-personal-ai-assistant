@@ -21154,6 +21154,13 @@ known_debt:
       with the query that settles it rather than as a result, because the two failures look
       identical from the outside and crediting this change with both is exactly how a fix
       gets believed to be bigger than it is.
+    live_on_b70928ca_the_code_is_running: >-
+      Restarted 2026-09-10T04:58:52 and the LIVE objects were asked, not the files:
+      `REPLY_CATEGORIES` reads `['agent_file', 'agent_message']`, `ConsentPolicy()` exposes
+      the same set (so the gate is asking one source rather than holding a second copy),
+      `ConsequentialActionGate._is_reply_to_the_requester` exists, and the exemption branch
+      is present in `check`'s source. What is still missing is the EVENT, which is what
+      keeps the stage partial.
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
     validate_is_PARTIAL_and_the_reason_is_named: >-
       Closing needs a real reply to go out on the lane it was asked from without a prompt.
