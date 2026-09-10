@@ -12,10 +12,17 @@ from stackowl.owls.dna_defaults import TRAIT_NAMES
 from stackowl.owls.dna_hydrator import _coerce_dna
 from stackowl.owls.dna_storage import upsert_owl_dna
 from stackowl.owls.registry import OwlRegistry
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
+# owner_id predicate is mandatory, and this read went without one until
+# 2026-09-10 (DEBT-291). `upsert_owl_dna`'s own docstring says owner_id is
+# written explicitly "rather than left to the SQL column's DEFAULT — the read
+# side scopes every query with" it: the WRITE side documented a property of the
+# READ side that the read side did not have. `dna_hydrator.py` is the precedent
+# it names, and it has carried the predicate all along.
 _SELECT_AUTHORED = (
     "SELECT challenge_level, verbosity, curiosity, formality, creativity, precision, "
-    "completion_drive FROM owl_dna_authored WHERE owl_name = ?"
+    "completion_drive FROM owl_dna_authored WHERE owl_name = ? AND owner_id = ?"
 )
 
 
@@ -68,17 +75,21 @@ async def capture_authored_dna(registry: OwlRegistry, db: DbPool) -> int:
     return captured
 
 
-async def read_authored_dna(db: DbPool, owl_name: str) -> OwlDNA | None:
+async def read_authored_dna(
+    db: DbPool, owl_name: str, owner_id: str = DEFAULT_PRINCIPAL_ID
+) -> OwlDNA | None:
     """Read an owl's authored DNA, coerced (NaN/inf/out-of-range guarded).
 
-    Returns None if no row exists for this owl.
+    Returns None if no row exists for this owl AND this owner. The default
+    matches ``dna_hydrator.py``'s read side and ``upsert_owl_dna``'s write side,
+    so no caller had to change.
     """
     log.engine.debug(
         "[owls] read_authored_dna: entry",
         extra={"_fields": {"owl": owl_name}},
     )
     try:
-        rows = await db.fetch_all(_SELECT_AUTHORED, (owl_name,))
+        rows = await db.fetch_all(_SELECT_AUTHORED, (owl_name, owner_id))
     except Exception as exc:
         log.engine.error(
             "[owls] read_authored_dna failed",

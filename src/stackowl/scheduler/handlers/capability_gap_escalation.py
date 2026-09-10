@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import HandlerRegistry, JobHandler
 from stackowl.scheduler.job import Job, JobResult
+from stackowl.tenancy import DEFAULT_PRINCIPAL_ID
 
 if TYPE_CHECKING:  # pragma: no cover — typing only
     from stackowl.audit.logger import AuditLogger
@@ -128,7 +129,13 @@ async def _live_owl_names(db: DbPool) -> set[str] | None:
     the same guard, for the same reason, as ``OrphanReconciliationHandler``'s.
     """
     try:
-        rows = await db.fetch_all("SELECT name FROM owls")
+        # OWNER-SCOPED since 2026-09-10 (DEBT-291). `owls` carries `owner_id`
+        # and this roster read had no predicate — on a second principal it would
+        # have kept another owner's gaps alive and dropped none of them. The
+        # default matches every other roster read in this tree.
+        rows = await db.fetch_all(
+            "SELECT name FROM owls WHERE owner_id = ?", (DEFAULT_PRINCIPAL_ID,)
+        )
     except Exception as exc:  # never let a hygiene filter cost a real self-heal
         log.scheduler.warning(
             "[scheduler] capability_gap_escalation: could not read the owl roster — "

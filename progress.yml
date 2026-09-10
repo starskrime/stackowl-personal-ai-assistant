@@ -16468,6 +16468,35 @@ current:
         restructure changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry,
         and carried over only what was open at that moment — so every already-answered escalation
         lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_166_the_session_store_is_not_owner_scoped_and_is_not_an_OwnedRepository:
+      question: >-
+        Should `SessionStore` become owner-scoped, or is a globally-unique `session_key` the
+        intended identity for sessions in a multi-user deployment?
+      why_evidence_cannot_settle_it: >-
+        Both designs are coherent and the live data cannot distinguish them: there is ONE
+        principal, so every session already belongs to the same owner and no behaviour
+        differs today. It is a decision about what a session IS when there are ten
+        principals, not a defect the numbers can expose.
+      what_was_measured: >-
+        143 sessions, ONE distinct `owner_id`, one principal — no cross-owner exposure
+        exists today. `sessions.session_key` is the table's PRIMARY KEY, so five of the
+        store's seven statements cannot reach another owner's row even unscoped; the two
+        that can are the enumerations (`SELECT ... ORDER BY updated_at DESC` and the
+        retention sweep's `WHERE updated_at < ?`). The table has carried `owner_id` since a
+        migration later than 0045, which is why the owner-scope guard never saw it — see
+        DEBT-291.
+      the_panel_recommendation: >-
+        Scope the two ENUMERATIONS by owner and leave the PK lookups alone. It closes the
+        only statements that can cross an owner boundary without the constructor-threading
+        refactor, and it is reversible. The alternative — making `SessionStore` an
+        `OwnedRepository` — is the Pass-2 refactor deliberately deferred for every non-Store
+        accessor, and doing it for one class alone would be inconsistent rather than safer.
+      what_is_blocked: >-
+        Nothing today. The gap is allowlisted with its measurement, and
+        `test_allowlist_has_no_stale_entries` removes the entry automatically once the gap
+        is closed, so it cannot rot.
+      premise_check: >-
+        n=$(./scripts/db_query.sh "SELECT COUNT(DISTINCT owner_id) FROM sessions" 2>/dev/null | tail -1); if [ "${n:-1}" -le 1 ]; then echo "HOLDS ${n} distinct owner in sessions — still a design question, not a live exposure"; else echo "EXPIRED ${n} distinct owners now hold sessions — the enumerations cross an owner boundary TODAY"; fi
     ESC_160_the_only_remedy_the_reclaimer_names_is_one_it_is_forbidden_to_run:
       question: >-
         `db_reclaim` detects that incremental reclaim does not work on this database,
@@ -21036,6 +21065,86 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-291
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, reached by sweeping the DATABASE for tables that grow with no reader and finding the guard that was supposed to watch them."
+    what: >-
+      A DRIFT TEST ANCHORED TO A POINT IN HISTORY CANNOT DETECT DRIFT. The owner-scope
+      tripwire's governed-table set was a hand-written frozenset, and the test that
+      existed to keep it honest — `test_owner_governed_list_matches_migrations` — asserted
+      it equalled the `owner_id` tables in **two named migrations**, `0043` and `0045`.
+      Its comment said the constant "can never silently drift from the schema". It could
+      not drift from THOSE TWO FILES; the schema is not those two files.
+      MEASURED 2026-09-10 against the live database: **30 tables carry an `owner_id`
+      column and the set named 17 of them.** Thirteen owner-governed tables had no
+      enforcement at all, and the test designed to prevent exactly that passed the whole
+      time.
+    what_was_hiding_behind_it: >-
+      THREE REAL UNSCOPED ACCESSORS, found the moment the set was completed —
+      `owls/dna_authored.py :: owl_dna_authored`,
+      `scheduler/handlers/capability_gap_escalation.py :: owls`, and
+      `sessions/store.py :: sessions`. The first is the sharpest: `upsert_owl_dna`'s
+      docstring says `owner_id` is written explicitly "rather than left to the SQL
+      column's DEFAULT — **the read side scopes every query with**" it, and the read side
+      did not. The WRITE side documented a property of the READ side that the read side
+      did not have.
+    root_cause_measured: >-
+      The set was a list somebody REMEMBERED, pinned by a check against a list somebody
+      remembered at the same moment. That is this file's own recorded lesson — "the
+      correction was applied to a list someone REMEMBERED, not to a set someone SWEPT" —
+      and it reaches any guard whose scope is enumerated rather than derived. The tables
+      it missed all gained `owner_id` in a LATER migration: `approach_rating_pending`
+      (0084), `objectives`, `objective_subgoals`, `objective_events`, `learning_artifacts`,
+      `message_ledger`, `owl_dna_authored`, `owls`, `sessions`, `skill_ownership`,
+      `undelivered_outbox`, `command_sequence_edges`, `command_sequence_last`.
+    fix: >-
+      `_OWNER_GOVERNED_TABLES` is now DERIVED from every `*.sql` in the migrations
+      directory rather than written down — the copy is removed, not synced. The old
+      equality test becomes a VACUITY CONTROL, which a derived set needs and a literal did
+      not: the derivation must still find the original twenty (`_HISTORICAL_FLOOR`) and
+      must find MORE than twenty, so a parser that stops matching cannot silently empty
+      the set and disarm the guard. Two of the three accessors are now owner-scoped.
+    the_one_left_open_is_a_DECISION_not_a_diagnosis: >-
+      `SessionStore` is not an `OwnedRepository` and has no `_owner_id` at all, so scoping
+      it means threading an owner through the constructor and every caller — the Pass-2
+      refactor this allowlist was created to defer, and its entries already carry
+      `TODO(Epic 9 multi-user)`. Allowlisted WITH the measurement rather than waved
+      through: ONE principal, 143 sessions, ONE distinct `owner_id`, so no cross-owner
+      exposure exists today; and five of its seven statements key on `session_key`, the
+      table's PRIMARY KEY, so they cannot reach another owner's row even unscoped. The two
+      that can are the enumerations. ESC-166 carries the decision.
+    tests: >-
+      The guard's own file, rewritten where it was wrong. THREE MUTATIONS, each restored
+      from a file copy with the tree re-run green after: pinning the derivation back to
+      the two migrations fails TWO tests — the vacuity control AND the bypass scan, which
+      is the defect reproducing itself; unscoping the owl roster read fails one;
+      unscoping the authored-DNA read fails one.
+    a_second_finding_measured_and_NOT_shipped_this_loop: >-
+      The sweep that found this started from `approach_rating_pending`: **1,480 pending
+      rows spanning 2026-07-13 to 2026-09-10 against 61 ratings ever recorded**, so the
+      store's own comment — "unbounded is fine for now... add a periodic
+      delete-older-than-N-days sweep IF UNTAPPED VOTES EVER ACCUMULATE" — names a
+      condition that fired and nothing re-read it. Every tap in the corpus was timed
+      against its answer's `captured_at`: 13 taps, **maximum latency 3m32s**, so a
+      retention window is derivable rather than chosen. It is NOT in this change because
+      it is a different defect with a different cause, and shipping it here would have
+      added a FOURTH unscoped accessor to a guard that could not see it. Measured, not
+      deferred as unknown.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    document_is_no_change_needed_and_it_was_CHECKED: >-
+      `docs_touching.py` reports that no design document declares either changed source as
+      a `Source`, and says plainly that it cannot speak for the 35 documents declaring
+      none. The guard's own file carries the whole account, which is where a reader of a
+      tripwire looks.
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The guard half IS a test and is evidenced by the tripwire run. The two SRC changes
+      need the live database: `read_authored_dna` now requires `owner_id` to match, and if
+      the rows carry a different owner the read returns None and the DNA envelope anchor
+      silently vanishes — a wrong predicate looks exactly like "no row exists". That is
+      checked against real rows after the restart, not inferred.
+    closing_check: >-
+      n=$(./scripts/db_query.sh "SELECT COUNT(*) FROM owl_dna_authored WHERE owner_id = 'principal-default'" 2>/dev/null | tail -1); t=$(./scripts/db_query.sh "SELECT COUNT(*) FROM owl_dna_authored" 2>/dev/null | tail -1); if [ "${n:-0}" -gt 0 ] && [ "${n:-0}" = "${t:-x}" ]; then echo "CLOSEABLE all ${t} authored-DNA rows carry the owner the scoped read asks for — the predicate matches reality, so no anchor was lost"; else echo "OPEN ${n:-0} of ${t:-?} rows match the default owner — a scoped read would return None for the rest"; fi
   - id: DEBT-290
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by asking why the SAME three owls appear in every stuck-evolution warning."

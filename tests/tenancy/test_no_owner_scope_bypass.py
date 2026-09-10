@@ -35,6 +35,7 @@ import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
+
 import pytest
 
 # CROSS-CUTTING GUARD. This protects a property of the WHOLE repo, so a
@@ -45,15 +46,28 @@ import pytest
 pytestmark = pytest.mark.tripwire
 
 # --------------------------------------------------------------------------- #
-# Authoritative owner-governed table list.
-# Source of truth: src/stackowl/db/migrations/0043_owner_scope_columns.sql
-# (the 18 retrofit tables that gained an owner_id column) and
-# 0045_durable_tasks.sql (tasks + side_effect_ledger, born owner-scoped).
-# The test `test_owner_governed_list_matches_migrations` asserts this set
-# equals the set of tables that ADD/define an owner_id column in those files,
-# so the constant can never silently drift from the schema.
+# Authoritative owner-governed table list — DERIVED, since 2026-09-10 (DEBT-291).
+#
+# It used to be this hand-written set, pinned by a drift test to TWO migrations:
+# `0043_owner_scope_columns.sql` and `0045_durable_tasks.sql`. The comment said
+# the constant "can never silently drift from the schema", and the test it named
+# did compare the two exactly — against a schema frozen at migration 0045.
+#
+# MEASURED 2026-09-10 against the live database: **30 tables carry an `owner_id`
+# column and this set named 17 of them.** Every table that gained one in a LATER
+# migration was invisible to the guard AND to the test that existed to stop
+# exactly this: `approach_rating_pending` (0084), `objectives`,
+# `objective_subgoals`, `objective_events`, `learning_artifacts`,
+# `message_ledger`, `owl_dna_authored`, `owls`, `sessions`, `skill_ownership`,
+# `undelivered_outbox`, `command_sequence_edges`, `command_sequence_last`.
+# Three REAL unscoped accessors were hiding behind that gap.
+#
+# So the set is now read from EVERY migration rather than from two remembered
+# ones. `_HISTORICAL_FLOOR` below is the vacuity control: the derivation must
+# still find the original twenty, so a parser that silently stops matching
+# cannot quietly disarm the whole guard.
 # --------------------------------------------------------------------------- #
-_OWNER_GOVERNED_TABLES: frozenset[str] = frozenset(
+_HISTORICAL_FLOOR: frozenset[str] = frozenset(
     {
         # --- migration 0043 (18 retrofit tables) ---
         "conversations",
@@ -80,10 +94,45 @@ _OWNER_GOVERNED_TABLES: frozenset[str] = frozenset(
     }
 )
 
+_OWNER_ID_ADD_RE = re.compile(
+    r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+owner_id\b", re.IGNORECASE
+)
+_CREATE_TABLE_RE = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", re.IGNORECASE
+)
+_SQL_COMMENT_RE = re.compile(r"--[^\n]*")
+
+
+def _discover_owner_governed_tables() -> frozenset[str]:
+    """Every table any migration gives an ``owner_id`` column.
+
+    Reads the WHOLE migrations directory. SQL line comments are stripped first,
+    so prose like "owner_id is enforced" or a `CREATE TABLE` named inside a
+    comment cannot be misparsed — the same precaution the two-file version took,
+    kept because it was right.
+    """
+    discovered: set[str] = set()
+    for path in sorted(_MIGRATIONS_ROOT.glob("*.sql")):
+        sql = _SQL_COMMENT_RE.sub("", path.read_text(encoding="utf-8"))
+        discovered.update(m.group(1) for m in _OWNER_ID_ADD_RE.finditer(sql))
+        for m in _CREATE_TABLE_RE.finditer(sql):
+            end = sql.find(";", m.end())
+            body = sql[m.end() : end if end != -1 else len(sql)]
+            if "owner_id" in body.lower():
+                discovered.add(m.group(1))
+    return frozenset(discovered)
+
+
+
+
 # A repo root anchor: this file lives at v2/tests/tenancy/, so two parents up.
 _REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 _SRC_ROOT: Path = _REPO_ROOT / "src" / "stackowl"
 _MIGRATIONS_ROOT: Path = _SRC_ROOT / "db" / "migrations"
+
+# Derived HERE rather than beside its function, because the paths it reads are
+# defined on the line above — module-level order is the whole constraint.
+_OWNER_GOVERNED_TABLES: frozenset[str] = _discover_owner_governed_tables()
 
 # A string literal is treated as a SQL statement only if it contains a real
 # DML verb. This filters out prose/docstrings that merely happen to contain a
@@ -206,6 +255,19 @@ class OwnerScopeDetector:
 # --------------------------------------------------------------------------- #
 _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
+        # --- became VISIBLE 2026-09-10 when the governed set stopped being two
+        #     remembered migrations (DEBT-291). Pre-existing, not new.
+        # TODO(Epic 9 multi-user): `SessionStore` is not an `OwnedRepository` — it
+        # has no `_owner_id` at all, so scoping it means threading an owner through
+        # the constructor and every caller, which is the Pass-2 refactor this
+        # allowlist was created to defer. MEASURED 2026-09-10, and it is why this
+        # is a queued decision rather than an open hole: ONE principal, 143
+        # sessions, ONE distinct owner_id — no cross-owner exposure exists today.
+        # Five of its seven statements key on `session_key`, which is the table's
+        # PRIMARY KEY, so they cannot reach another owner's row even unscoped; the
+        # two that can are the enumerations (`ORDER BY updated_at DESC` and the
+        # retention sweep). See ESC-166.
+        ("sessions/store.py", "sessions"),
         # --- command-layer helpers (slash commands; not Store subclasses) ---
         # TODO(Epic 9 multi-user): owner-scope cost_records purge in cost_command
         ("commands/cost_command.py", "cost_records"),
@@ -324,38 +386,29 @@ def _scan_repo() -> list[tuple[str, Violation]]:
 # Tests
 # --------------------------------------------------------------------------- #
 def test_owner_governed_list_matches_migrations() -> None:
-    """The hardcoded table set must equal owner_id tables in 0043 + 0045.
+    """The derived set must still contain every table the original two named.
 
-    Guards against the constant drifting from the schema. We parse the two
-    migration files for every table that adds/defines an ``owner_id`` column.
+    THIS TEST USED TO BE THE DEFECT. It asserted the hand-written set EQUALLED
+    the owner_id tables in migrations 0043 and 0045 — two files, frozen — and
+    passed for months while the schema grew thirteen more owner-governed tables
+    the guard could not see. A drift test anchored to a point in history cannot
+    detect drift; it only pins the past.
+
+    Now the set is derived from every migration, and this is the VACUITY CONTROL:
+    the derivation must still find the original twenty. A parser that stops
+    matching would otherwise empty the set and disarm the whole guard silently,
+    which is the one failure mode a derived set has that a literal does not.
     """
-    add_col_re = re.compile(
-        r"ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+owner_id\b", re.IGNORECASE
+    missing = _HISTORICAL_FLOOR - _OWNER_GOVERNED_TABLES
+    assert not missing, (
+        "the derivation stopped finding tables migrations 0043/0045 grant an "
+        f"owner_id: {sorted(missing)}. The guard is now weaker than the "
+        "hand-written set it replaced."
     )
-    # tasks/side_effect_ledger define owner_id inline in CREATE TABLE.
-    create_re = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)", re.IGNORECASE)
-
-    comment_re = re.compile(r"--[^\n]*")
-
-    discovered: set[str] = set()
-    for name in ("0043_owner_scope_columns.sql", "0045_durable_tasks.sql"):
-        raw = (_MIGRATIONS_ROOT / name).read_text(encoding="utf-8")
-        # Strip SQL line comments so prose like "owner_id is enforced" or a
-        # "CREATE TABLE ..." mention inside a comment cannot be misparsed.
-        sql = comment_re.sub("", raw)
-        discovered.update(m.group(1) for m in add_col_re.finditer(sql))
-        # For CREATE TABLE migrations, only count tables whose body has owner_id.
-        for m in create_re.finditer(sql):
-            table = m.group(1)
-            # crude body slice: from this CREATE to the next ';'
-            body = sql[m.end() : sql.find(";", m.end())]
-            if "owner_id" in body.lower():
-                discovered.add(table)
-
-    assert discovered == set(_OWNER_GOVERNED_TABLES), (
-        "owner-governed table list drifted from migrations 0043/0045. "
-        f"In migrations not in constant: {discovered - set(_OWNER_GOVERNED_TABLES)}; "
-        f"in constant not in migrations: {set(_OWNER_GOVERNED_TABLES) - discovered}"
+    assert len(_OWNER_GOVERNED_TABLES) > len(_HISTORICAL_FLOOR), (
+        "the derived set is no larger than the original twenty, which was true "
+        "at migration 0045 and has not been true since 0084. Either the parser "
+        "regressed or every later migration stopped granting owner_id."
     )
 
 
