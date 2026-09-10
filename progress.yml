@@ -17017,6 +17017,24 @@ current:
         Nothing is blocked. The gauge and the INFO line ship now, so the next occurrence is
         visible and quantified rather than silent, whichever way this is decided.
     ESC_146_the_two_turn_budgets_contradict_each_other_and_only_you_own_the_numbers:
+      resolution: >-
+        EXPIRED 2026-09-10 — AND THE PREMISE MOVED RATHER THAN THE DESIGN.
+        CLOSED by its own `premise_check`, and the reason matters more than the closure.
+        The premise was that the two caps are COINCIDENT — the token meter crossing 500,000
+        at ~20.15 rounds against a 20-step cap, a 1% margin — so which one fired was
+        effectively arbitrary. RE-MEASURED 2026-09-10: the crossover is now **~14.5 rounds**
+        (median big round 34,401 tok, was 24,811). Tokens now bind FIRST with ~27% to
+        spare, so the question as posed is void: option (d), "leave both and accept that
+        tokens is the real bound", is simply the factual state.
+        **NOTHING WAS DECIDED AND NOTHING WAS FIXED — one side of the comparison moved.**
+        The median big round rose 42% in three days (23,592 on 09-07 -> 33,627 on 09-10),
+        and it is a MIX shift plus a real rise: the `goal` lane went from n=35/median 19,976
+        to n=392/median 34,670 while one decomposed job ran nine subtasks to completion,
+        several taking 12 attempts. The system prompt is flat (13.8k -> 15.8k chars), so
+        prompt growth explains about a twentieth of it.
+        SO THE DECISION IS STILL YOURS and it is now a different one: the caps are no
+        longer coincident, but the crossover is a function of per-round cost, which moves
+        with workload. A number chosen today is a number chosen against this week's mix.
       premise_check: |
         uv run python -c "
         import sqlite3, statistics
@@ -21018,6 +21036,134 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-286
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led: settling the correctness question DEBT-285 left open, which led one layer further out."
+    what: >-
+      A FIELD NAMED `idempotency_key` THAT ENFORCED NOTHING, ON THE PATH THAT TALKS TO THE
+      OPERATOR. `Notification.idempotency_key` was consumed by exactly one line —
+      `notification_id = notification.idempotency_key or uuid4().hex` — and handed to the
+      `notification_log` INSERT as the ROW ID. **Nothing anywhere asked whether that id had
+      been delivered before.**
+    why_not_what: >-
+      ONE PACKAGE, ONE WORD, TWO MEANINGS. `notifications/delivery_ledger` uses
+      `idempotency_key` for a JOB's occurrence key — `occurrence_key =
+      idempotency_key@next_run_at` — and that one IS enforced: a second write on the same
+      key is refused. The `Notification` field borrowed the same word and bought nothing,
+      so the weaker of the two meanings guarded the user-visible side. A reader who knows
+      the enforced one reasonably assumes the other.
+    it_cost_this_loop_an_hour: >-
+      DEBT-285 left open whether a reclaimed-and-re-dispatched task could run twice. The
+      side-effect half is SETTLED and the answer is good: `side_effect_ledger` keys on
+      `sha256(task_id, step_index, tool_name, canonical_args)` — deterministic and
+      independent of trace or attempt — enforced by `idempotency_key TEXT PRIMARY KEY`.
+      MEASURED: 1,971 rows, 1,971 distinct keys, zero collisions ever. A re-run computes
+      the SAME key and the second write is refused.
+      **But `send_message` and `send_file` are not in that ledger at all** — 0 of its 1,971
+      rows — and they are the tools that talk to Bakir. Reasoning about their once-ness on
+      the strength of a field NAME is what cost the hour.
+    the_measured_consequence: >-
+      16 identical messages delivered twice within two minutes of each other: 13
+      `goal_answer` all on 2026-07-14, and three `turn_answer` — 2026-08-18, 2026-08-30 and
+      2026-09-08, the last with a 4.0s gap. Counted as REPEATS OF ONE HASH WITHIN A WINDOW,
+      not as repeated hashes: the commonest hash recurs 4,472 times across 71 days and is a
+      recurring scheduled message, which a naive duplicate count would have called a defect.
+    why_this_RENAMES_rather_than_wires_and_that_is_the_honest_half: >-
+      Enforcing the key as it stands is a NO-OP IN BOTH DIRECTIONS. Both senders pass
+      `str(trace_id)`, and a retry mints a new trace (`retry-x` then `retry-x-fix`) — so a
+      DUPLICATE carries a different key and would pass any check, and a legitimate
+      RECURRENCE carries a different key too and would pass the same check. Once-ness needs
+      a key stable across attempts and distinct across recurrences, and choosing it needs
+      the CAUSE of those 16 — which is NOT ISOLATED: re-dispatch and the stream-miss
+      fallback (`[deliver] stream-miss: live reader gone`, 49 occurrences) both re-deliver,
+      and nothing today distinguishes them. Shipping a check now would be a guess wearing a
+      guarantee's name, which is the defect being fixed.
+    what_else_that_cause_reaches: >-
+      Any name that asserts a property the code does not enforce. This is the seventh
+      instance in one session — `web_fetch` naming a healthy browser (DEBT-277), consent
+      naming an expiry for a granted approval (DEBT-278), one verdict for two facts
+      (DEBT-279), a deadline owned by a transport (DEBT-280), a class inferred from prose
+      (DEBT-284), a reclaim asserting a worker never came back (DEBT-285). The constant is
+      that the degraded state is a legitimate value, so nothing looks wrong.
+    tests: >-
+      `tests/notifications/test_a_name_that_promises_once_ness_must_enforce_it.py`, four
+      tripwires. `extra="forbid"` is what makes the rename REAL rather than cosmetic — a
+      caller passing the old word now fails loudly instead of having its value dropped, and
+      a test proves that. MUTATIONS, each restored from a file copy: restoring the
+      misleading name FAILS TWO; keeping BOTH names as an alias FAILS TWO (an alias is the
+      dead seat this repo forbids); renaming the JOB key as well FAILS the control that the
+      word is TRUE there and must stay. A fourth test walks `src/` for any
+      `Notification(...)` built with an idempotency-named kwarg, so a sender nobody has
+      written yet cannot reintroduce the claim.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      Nothing about DELIVERY changes, so there is no new behaviour to observe — the check
+      therefore watches the thing that would prove the claim wrong: another identical
+      answer delivered twice inside two minutes. It reads `notification_log` rather than a
+      log line, because the duplicate is a DATABASE fact and the rename emits nothing.
+    closing_check: >-
+      n=$(uv run python scripts/duplicate_answers.py --since 2026-09-10 2>/dev/null | tail -1); if [ "${n:-x}" = "0" ]; then echo "CLOSEABLE 0 identical answers delivered twice within 120s since 2026-09-10 — and note the rename cannot have caused that, so this reads as the signal still being quiet"; else echo "OPEN ${n} duplicate answer(s) since 2026-09-10 — the cause is still unisolated (re-dispatch vs stream-miss fallback)"; fi
+  - id: DEBT-285
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, reached by closing the EXPIRED escalation ESC-146 and following the cost rise that expired it."
+    what: >-
+      A SWEEP THAT DECLARES WORK ABANDONED RECORDED ONLY HOW MANY. MEASURED over every
+      retained log: eight sweeps reclaimed **15** tasks in one night and named NONE of
+      them — `[loop] reclaimed tasks whose worker never came back` carried
+      `{"reclaimed": N}` and nothing else. 8 of the 13 lease expiries in the whole corpus
+      are from 2026-09-10, after ten quiet days.
+    why_not_what: >-
+      THE ACT OF RECORDING DESTROYED THE EVIDENCE. `reclaim_expired` is one bulk UPDATE
+      that nulls `lease_owner` and `lease_expires_at` — the two facts a reader needs — and
+      the only trace it leaves is a rowcount. So the record cannot be reconstructed from
+      the row afterwards, and there is nowhere else it exists.
+    what_that_cost_and_it_is_why_this_is_not_a_nicety: >-
+      This loop spent an hour trying to answer whether any reclaimed worker had still been
+      ALIVE — which would mean the same task ran twice, and `send_message` / `send_file`
+      are on that path — and COULD NOT ANSWER IT from the full log corpus AND the database.
+      The sweep names no task; the row no longer names a worker. **A correctness question
+      the evidence cannot settle is the worst state to leave one in**, and the honest
+      record of this item is that it is still unsettled: three goal traces were still
+      emitting model calls at the moment of a sweep, which is SUGGESTIVE and is not proof,
+      because nothing said which task that sweep took.
+    the_message_also_asserted_a_cause_it_never_checked: >-
+      "the worker never came back" is a claim about a worker the sweep does not contact,
+      and the row it writes says "(crash or hang)" — admitting in its own parenthesis that
+      it cannot tell those apart. Sixth instance of this session's shape: `web_fetch`
+      naming a healthy browser (DEBT-277), consent naming an expiry for a granted approval
+      (DEBT-278), the verifier with one verdict for two facts (DEBT-279). The message now
+      states what happened — a lease expired — and leaves the cause to the evidence.
+    overrun_s_is_the_discriminator: >-
+      A lease expired hours ago is a worker that is genuinely gone; one expired by seconds
+      may still be running, and reclaiming it hands the same task to a second worker. The
+      sweep still cannot tell — it never contacts the worker, and that is a deliberate
+      property of a lease — but the NUMBER lets a reader tell AFTERWARDS. That is the whole
+      difference between an answerable question and this loop's hour.
+    AND_MUTATION_TESTING_CAUGHT_A_DEFECT_I_INTRODUCED: >-
+      Naming the rows means asking for them TWICE — a SELECT before the UPDATE. Widening
+      only the SELECT passed every test: the UPDATE still took the right rows, the counts
+      were right, and the LOG named a task that had not been reclaimed. **A log that names
+      the wrong task is worse than one that names none.** `_EXPIRED_LEASE_WHERE` is now the
+      single predicate both ask, and the mutation fails as it should. I had introduced
+      two-copies-of-one-rule while fixing a different defect, in the file whose own
+      docstrings cite that shape.
+    tests: >-
+      `tests/pipeline/durable/test_a_reclaim_names_what_it_took.py`, five tripwires driving
+      a REAL `DurableTaskStore` against a real sqlite schema. MUTATIONS, each restored from
+      a file copy: logging the count alone FAILS THREE; SELECTing after the UPDATE — when
+      the lease is already gone — FAILS THREE; dropping `overrun_s` FAILS the
+      discriminator test; widening the shared predicate FAILS the control that a live
+      lease is left alone. Two controls exist on purpose: a sweep that finds nothing must
+      stay SILENT (a warning on every quiet pass is how a channel stops meaning anything,
+      measured at 24% earlier today), and a lease that still holds must never be taken.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      Closing needs a real lease to expire on the fixed code. The check reads the new
+      `tasks` FIELD, which has never appeared in any retained record, so any occurrence is
+      evidence only this code could produce — and it reports the overruns it found, because
+      a named list with no overrun would be the same defect one field short.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'whose lease had expired'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} reclaim sweep(s) now name the tasks they took and how late each lease was"; else echo "OPEN 0 sweeps carry a named task list — needs a lease to expire on the fixed code"; fi
   - id: DEBT-284
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, found by ranking the alarm channel with the denominator DEBT-283 added, then applying the by-day check FIRST."

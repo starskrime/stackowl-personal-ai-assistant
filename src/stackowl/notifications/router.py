@@ -72,7 +72,37 @@ class Notification(BaseModel):
     category: str
     channel_name: str | None = None
     job_id: str | None = None
-    idempotency_key: str | None = None
+    #: The IDENTITY this delivery is filed under in `notification_log`. It is NOT
+    #: an idempotency guarantee, and it was called `idempotency_key` until
+    #: 2026-09-10.
+    #:
+    #: WHY THE NAME WAS A DEFECT. One module over, `delivery_ledger` uses
+    #: `idempotency_key` for a JOB's occurrence key —
+    #: `occurrence_key = idempotency_key@next_run_at` — and that one IS enforced:
+    #: a second write with the same key is refused. The same word here bought
+    #: nothing. `_route` reads it as
+    #: `notification_id = notification.idempotency_key or uuid4().hex` and hands it
+    #: to the INSERT as the row id; **nothing anywhere asks whether that id has
+    #: been delivered before.** Two meanings for one word inside one package, and
+    #: the weaker one guards the user-visible side.
+    #:
+    #: WHAT IT COST, MEASURED 2026-09-10: 16 identical answers delivered twice
+    #: within two minutes of each other — 13 `goal_answer` on 2026-07-14 and three
+    #: `turn_answer` (2026-08-18, 2026-08-30, 2026-09-08, the last with a 4.0s
+    #: gap). A loop spent an hour reasoning about exactly-once delivery on the
+    #: strength of this name before reading the one line that consumes it.
+    #:
+    #: AND ENFORCING IT AS IT STANDS WOULD FIX NOTHING, which is why this change
+    #: renames rather than wires. `send_message` and `send_file` both pass
+    #: `str(trace_id)`, and a retry mints a NEW trace (`retry-x` then
+    #: `retry-x-fix`) — so a duplicate carries a different key and would pass any
+    #: check, while a legitimate recurrence carries a different key too and would
+    #: pass the same check. Once-ness needs a key that is stable across attempts
+    #: and distinct across recurrences; choosing it needs the CAUSE of those 16,
+    #: which is not yet isolated (re-dispatch, or the stream-miss fallback, both
+    #: of which re-deliver). Naming the field honestly is what stops the next
+    #: reader assuming the guarantee, which is the part that is provable today.
+    notification_id: str | None = None
     # Optional outbound file/media attachment (E8 send_file). When set, the
     # ProactiveDeliverer routes to the channel adapter's ``send_file`` instead of
     # the text path, using ``message`` as the (optional) caption. None preserves
@@ -187,7 +217,7 @@ class NotificationRouter:
         )
 
         channel = notification.channel_name or self._settings.notifications.default_channel
-        notification_id = notification.idempotency_key or uuid.uuid4().hex
+        notification_id = notification.notification_id or uuid.uuid4().hex
 
         # 2b. FREQUENCY CAP — outbound rate limit per (job_id, channel)
         if decision == "delivered" and notification.job_id is not None:

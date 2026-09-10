@@ -371,7 +371,10 @@ class SendFileTool(Tool):
             urgency=clamp_agent_urgency("normal"),
             category=_CATEGORY,
             channel_name=target,
-            idempotency_key=str(trace_id) if trace_id else None,
+            # The log-row identity, NOT a once-ness guarantee — see
+            # `Notification.notification_id`. A retry mints a new trace, so
+            # this value differs between attempts by construction.
+            notification_id=str(trace_id) if trace_id else None,
             file_path=file_path,
             target_chat_id=await resolve_recipient(target, session_key, get_services().session_store),
         )
