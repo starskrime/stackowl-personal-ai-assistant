@@ -13,6 +13,7 @@ Fail-closed: a send failure, a malformed callback, or a timeout all resolve to
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import uuid4
@@ -36,6 +37,15 @@ _CALLBACK_PREFIX = "consent"
 #: expired, failed closed, and was recorded as `user_denied` — blaming him for a
 #: refusal he never made.
 _DEFAULT_TIMEOUT_SECONDS = 1200.0
+
+#: How many resolved requests stay answerable after they resolve.
+#:
+#: Sized for the case it exists to fix — a person tapping a second button on a
+#: prompt they just answered, seconds later — with enough slack that a busy hour
+#: of approvals cannot push a still-visible prompt out of memory. Past it the
+#: reply degrades to "I no longer have that request", which is true, rather than
+#: to a claim that it expired, which was not.
+_DECIDED_MEMORY = 256
 
 # Decision → leading symbol, mapped once over the whole ConsentScope enum.
 # Language-neutral on purpose (the platform is multilingual): a glyph conveys
@@ -96,6 +106,32 @@ class TelegramConsentPrompter:
         self._timeout = timeout_seconds
         self._lang = lang
         self._pending: dict[str, _Pending] = {}
+        # WHAT WAS DECIDED, kept after the request resolves.
+        #
+        # Bakir, 2026-09-10: "I do not like when approval is expiring. It kills
+        # all platform vibe." MEASURED on the run he was describing: his tap
+        # RESOLVED at 01:46:51 and `skill_manage` ran in the same second — the job
+        # continued and finished. Two further taps on that same, already-answered
+        # request, 11s and 25s later, were told "That approval request has
+        # expired, so the tap did nothing. Ask me again and I'll re-request it."
+        #
+        # Every word of that was wrong: the tap HAD done something, it had not
+        # expired, and asking again would have re-run a consequential action that
+        # had already run. Without this map the prompter cannot tell an ANSWERED
+        # request from a LOST one, because both are simply absent from _pending.
+        #
+        # BOUNDED, because failure shape #4 in CLAUDE.md is anything that only
+        # appends. An OrderedDict used as an LRU keeps the newest _DECIDED_MEMORY
+        # and forgets the rest; forgetting degrades to the honest "I no longer
+        # have that request" branch, never to the false expiry claim.
+        self._decided: OrderedDict[str, ConsentScope] = OrderedDict()
+
+    def _remember_decision(self, rid: str, scope: ConsentScope) -> None:
+        """Record how a request ended so a later tap can be answered truthfully."""
+        self._decided[rid] = scope
+        self._decided.move_to_end(rid)
+        while len(self._decided) > _DECIDED_MEMORY:
+            self._decided.popitem(last=False)
 
     async def prompt(self, req: ConsentRequest) -> ConsentScope:
         """Send the keyboard and suspend until a button resolves it (or timeout)."""
@@ -169,6 +205,11 @@ class TelegramConsentPrompter:
         try:
             scope = await asyncio.wait_for(future, timeout=self._timeout)
         except TimeoutError:
+            # REMEMBER THAT IT TIMED OUT. A tap arriving after the window closed
+            # deserves to be told that specifically — it is the one case where
+            # "expired" is the true word, and it is distinguishable from a request
+            # that was answered only because this line records which happened.
+            self._remember_decision(rid, ConsentScope.DENY)
             log.telegram.warning(
                 "[telegram] consent.prompt: timed out — denying (fail closed)",
                 extra={"_fields": {"tool": req.tool_name, "timeout_s": self._timeout}},
@@ -210,30 +251,36 @@ class TelegramConsentPrompter:
         rid, scope_raw = parts[1], parts[2]
         pending = self._pending.get(rid)
         if pending is None or pending.future.done():
-            # SAY SO, never swallow it. Any window can expire, and a button that
-            # eats taps is indistinguishable from a broken platform — which is
-            # exactly how it felt to Bakir. INFO, not DEBUG: production runs at
-            # INFO, and this line is the evidence that a click arrived at all.
+            # THREE STATES, NOT ONE. This branch is reached by a request that was
+            # ANSWERED, one that TIMED OUT, and one this process never saw — and
+            # it used to answer all three with "That approval request has expired,
+            # so the tap did nothing. Ask me again and I'll re-request it."
+            #
+            # For the commonest of the three that is false in every clause, and
+            # MEASURED so on 2026-09-10: the tap resolved at 01:46:51 and
+            # `skill_manage` ran in the same second, then two further taps at
+            # 01:47:02 and 01:47:16 were told nothing had happened. Telling
+            # someone to ask again for a consequential action that already ran is
+            # an invitation to do it twice.
+            decided = self._decided.get(rid)
+            state = (
+                "already_answered" if decided is not None and decided != ConsentScope.DENY
+                else "already_declined" if decided is not None
+                else "not_known_to_this_process"
+            )
+            # INFO, not DEBUG: production runs at INFO, and this line is the
+            # evidence that a click arrived at all.
             log.telegram.info(
-                "[telegram] consent.handle_callback: the approval had already "
-                "expired when it was clicked — telling the user",
-                extra={"_fields": {"rid": rid, "chat_id": chat_id}},
+                "[telegram] consent.handle_callback: a tap arrived for a request "
+                "that is no longer pending — telling the user which of the three "
+                "things actually happened",
+                extra={"_fields": {
+                    "rid": rid, "chat_id": chat_id, "state": state,
+                    "scope": decided.value if decided is not None else None,
+                }},
             )
             if chat_id is not None:
-                try:
-                    await self._adapter.send_inline_keyboard(
-                        "That approval request has expired, so the tap did nothing. "
-                        "Ask me again and I'll re-request it.",
-                        {},
-                        chat_id=chat_id,
-                        parse_mode=None,
-                    )
-                except Exception as exc:  # never raise into the callback router
-                    log.telegram.error(
-                        "[telegram] consent.handle_callback: could not tell the "
-                        "user their approval had expired",
-                        exc_info=exc, extra={"_fields": {"rid": rid}},
-                    )
+                await self._tell_the_truth_about(rid, chat_id, state)
             return
         try:
             scope = ConsentScope(scope_raw)
@@ -246,6 +293,7 @@ class TelegramConsentPrompter:
         # Resolve the decision FIRST — the prompt() coroutine must wake regardless
         # of whether the cosmetic message edit below succeeds (fail-open UX).
         pending.future.set_result(scope)
+        self._remember_decision(rid, scope)
         log.telegram.info(
             "[telegram] consent.handle_callback: resolved",
             extra={"_fields": {"rid": rid, "scope": scope.value}},
@@ -254,6 +302,42 @@ class TelegramConsentPrompter:
         # keyboard so it reads as resolved and can't be re-tapped. Best-effort —
         # the decision is already recorded; a failed edit must never lose it.
         await self._edit_to_decision(pending, scope)
+
+    async def _tell_the_truth_about(self, rid: str, chat_id: int, state: str) -> None:
+        """Reply to a tap on a request that is no longer pending. Never raises.
+
+        NO SENTENCE HERE MAY CLAIM SOMETHING THIS METHOD DID NOT CHECK. The text
+        it replaces asserted an expiry, a no-op and a re-request in eleven words,
+        and on the measured occurrence all three were untrue.
+        """
+        messages = {
+            # The one that bit him. The decision stood and the work went ahead, so
+            # this says exactly that and asks for nothing.
+            "already_answered": (
+                "You already approved that one — it went ahead. "
+                "Nothing more to do."
+            ),
+            "already_declined": (
+                "You already declined that one, so nothing ran."
+            ),
+            # The honest version of the old message: this process has no record of
+            # the request, which happens when it was raised before a restart. It
+            # does NOT claim the request expired, because that is not known here.
+            "not_known_to_this_process": (
+                "I no longer have that request — it was raised before my last "
+                "restart, so nothing ran. Tell me to go ahead and I'll redo it."
+            ),
+        }
+        try:
+            await self._adapter.send_inline_keyboard(
+                messages[state], {}, chat_id=chat_id, parse_mode=None,
+            )
+        except Exception as exc:  # never raise into the callback router
+            log.telegram.error(
+                "[telegram] consent.handle_callback: could not tell the user what "
+                "happened to their approval",
+                exc_info=exc, extra={"_fields": {"rid": rid, "state": state}},
+            )
 
     async def _edit_to_decision(self, pending: _Pending, scope: ConsentScope) -> None:
         """Best-effort: rewrite the prompt message to "{symbol} {summary}", no keys."""

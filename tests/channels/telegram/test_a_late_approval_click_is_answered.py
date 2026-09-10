@@ -76,13 +76,27 @@ class TestAnExpiredClickTellsTheUser:
         assert "expire" in text.lower() or "no longer" in text.lower()
 
     async def test_it_says_what_to_do_next(self) -> None:
-        """"It expired" without "ask again" leaves him exactly as stuck."""
+        """"It expired" with no way forward leaves him exactly as stuck.
+
+        THE REQUIREMENT IS A NEXT STEP, NOT THE WORD "again". This asserted the
+        literal word until 2026-09-10, when Bakir objected to the sentence it was
+        pinning — "Ask me again and I'll re-request it" — because on the occasion
+        he hit, the request had already been APPROVED and the work had already
+        run, so being told to ask again invited doing it twice. The wording moved
+        to "Tell me to go ahead and I'll redo it"; the requirement did not move at
+        all. A test that copies a phrase stops covering the requirement the moment
+        the phrase is improved — the shape
+        `test_a_test_asks_the_constant_instead_of_restating_it` exists for.
+        """
         adapter = _Adapter()
         prompter = TelegramConsentPrompter(adapter)
 
         await prompter.handle_callback("cb1", "consent:gone:once", chat_id=99)
 
-        assert "again" in adapter.sent[0][0].lower()
+        text = adapter.sent[0][0].lower()
+        assert any(step in text for step in ("again", "tell me", "ask me")), (
+            f"no next step offered — this is the dead end the test exists for: {text}"
+        )
 
     async def test_a_non_consent_callback_is_still_ignored_quietly(self) -> None:
         """Other features share the callback stream — clarify:, cmd:, vtx:. Replying

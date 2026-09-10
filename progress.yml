@@ -21018,6 +21018,164 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-278
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led work, reported live by Bakir mid-loop."
+    the_report: >-
+      Bakir, 2026-09-10, live: "I do not like when approval is expiring . It kills all
+      platform vibe. Acces should wait till user appprove and continue the same hob and not
+      give error like That approval request has expired, so the tap did nothing. Ask me
+      again and I'll re-request it. Like today"
+    what_ACTUALLY_happened_and_it_is_the_opposite_of_what_he_was_told: >-
+      HIS APPROVAL WORKED AND THE JOB RAN. MEASURED on the occurrence he was describing:
+      the tap RESOLVED at 2026-09-10T01:46:51 — `consent.handle_callback: resolved`,
+      `consent.prompt: exit` — and `skill_manage.execute: entry` fired in the SAME SECOND,
+      followed by `store.audit_write: stored`, `record_skill_mutation: audited` and the
+      loader registering the skills. Two further taps on that same, already-answered
+      request, at 01:47:02 and 01:47:16, each received "That approval request has expired,
+      so the tap did nothing. Ask me again and I'll re-request it." At 01:47:26 the
+      platform failed to deliver even that (Telegram ConnectTimeout).
+      Every clause of the message was false: it had not expired, the tap HAD done
+      something, and asking again would have re-run a consequential action that had
+      already run.
+    why_not_what: >-
+      ONE PREDICATE, THREE HISTORIES, ONE SENTENCE. `if pending is None or
+      pending.future.done():` is reached by a request that was ANSWERED, one that TIMED
+      OUT, and one this process never saw — and a single message was written for all
+      three, asserting the worst of them and adding an instruction that is wrong for two.
+      Nothing RECORDED which had happened, so nothing COULD tell them apart: an answered
+      request and a lost one are both simply absent from `_pending`. The fix is not new
+      wording, it is the missing state — `_remember_decision` on both exits (the resolve
+      and the timeout), so the branch has a fact to read instead of a guess.
+    the_same_shape_as_DEBT_277_in_the_same_session: >-
+      A message asserting a cause it never checked. DEBT-277's `web_fetch` said "Browser
+      runtime not initialized" while the browser was running; this said "expired" while
+      the approval had been granted and acted on. Both cost trust in exactly the way Bakir
+      names — one sent an engineer down three wrong paths, the other told the operator his
+      decision had done nothing. Worth recording as a pair: the platform's error text is a
+      claim, and a claim needs the same evidence as any other.
+    what_is_NOT_claimed_here: >-
+      His durability point — "wait till user approve and continue the same job" — is a
+      REAL and SEPARATE gap and this item does not fix it. `_pending` is an in-memory dict,
+      so a request raised before a restart is orphaned, and CodeWatcher re-execs the core on
+      about seven of every ten boots on this box. That did NOT happen on the occurrence he
+      hit (his tap resolved inside the window and the job continued), so folding it in here
+      would be inventing scope and crediting this change with a fix it did not make. The
+      honest reply for that case now says the request is gone and offers to redo it,
+      instead of claiming an expiry this process cannot know about.
+    tests: >-
+      `tests/channels/telegram/test_a_second_tap_is_not_told_the_approval_expired.py`,
+      four tripwires driving the REAL sequence — prompt, resolve by tap, tap again — and
+      asserting on what the user would actually see. MUTATIONS, restored from a file copy:
+      removing `_remember_decision` fails the two answered-request tests (that is exactly
+      the pre-fix blindness); restoring the single message for all three states fails
+      THREE, including the never-seen control, which is what proves the fix is a
+      distinction rather than a blanket rewording. The decision memory is an LRU bounded at
+      `_DECIDED_MEMORY` and a test proves it evicts — failure shape #4, and past the bound
+      the reply degrades to the TRUE "I no longer have that request" rather than to the
+      false expiry.
+    one_existing_test_was_pinning_the_sentence_rather_than_the_requirement: >-
+      `test_a_late_approval_click_is_answered.py::test_it_says_what_to_do_next` asserted
+      the literal word "again", which is the phrase Bakir objected to. Its docstring names
+      the real requirement — do not leave him stuck — so the assertion moved to that
+      property and the reason is recorded in the test. Found by DERIVING the targeted path
+      with `tests_touching.py` rather than guessing it: that file is the closest test to
+      the branch changed and would have gone red in the full run.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      Closing this needs a real second tap on a real answered approval, which cannot be
+      forced honestly — the behavioural test drives the sequence and proves the branch,
+      and that is not proof production took it. The check counts the new state field, which
+      has never appeared in any retained log, so any occurrence is evidence only this code
+      could produce and it names WHICH of the three states was reported.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'a tap arrived for a request'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} non-pending tap(s) answered with the state that actually applied"; else echo "OPEN 0 non-pending taps since 2026-09-10 — needs a real tap on a request that is no longer pending"; fi
+  - id: DEBT-277
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led work, found by closing DEBT-253's validate and asking why 6 web_fetch overclaims produced only 1 redo."
+    what: >-
+      LOSING THE TURN CONTEXT MADE THE PLATFORM ACCUSE 51 INNOCENT SUBSYSTEMS.
+      `get_services()` caught `LookupError` and returned a bare `StepServices()` — all 51
+      collaborators None — and logged NOTHING. Every consumer then reported ITS OWN
+      collaborator as missing, so one unbound call became up to 51 different messages, not
+      one of which mentions the context. MEASURED: `web_fetch` logged
+      `runtime not initialized` 30 times (2 on 08-29, 5 on 09-08, 36 events on 09-10) and
+      told the model "Browser runtime not initialized."
+    the_browser_was_running_the_whole_time: >-
+      At 00:42:30 a call reported the runtime missing; at 00:42:36, SAME PROCESS, another
+      `web_fetch` exited successfully, and at 00:42:39 `browser_navigate` logged
+      `[browser] sessions.acquire: reusing this owner's live session`. The runtime had
+      started cleanly at 00:04:52 and did not stop until 00:57:28. So the failure is
+      PER-CALL, not per-process — which is the fact that identifies a context problem and
+      rules out every subsystem explanation.
+    what_it_cost_the_operator: >-
+      Downstream of each miss: three attempts, `[pipeline] execute: same-tool failure
+      threshold reached — circuit open`, a model that claimed a web_fetch result it never
+      received, `overclaim.detected`, and a floored turn. FIVE goal turns on
+      `goal-owl_lifecycle-jobmarket` were delivered as the honest floor on 2026-09-10
+      alone. That is Bakir's own standing objection — "I do not want agent to record, I
+      want agent to do" — produced by a swallowed exception.
+    why_not_what: >-
+      A CAUGHT EXCEPTION THAT LOGGED NOTHING, on the one path where the platform loses
+      every service it has. `CLAUDE.md` makes this mandatory in two places — "every
+      `except` logs" and "no hidden errors: recover loudly or propagate" — and this was the
+      exception. The silence is not incidental to the defect; it IS the defect, because the
+      empty object is a legitimate degradation and the only thing wrong was that nobody
+      could see it happen.
+    what_else_that_cause_reaches_MEASURED: >-
+      Swept `src/` with an AST walk for `except LookupError`: there is exactly ONE handler
+      in the entire tree, and it is this one. So the class is closed rather than merely
+      sampled — and the guard re-runs that sweep, so a second one cannot appear silently.
+      The blast radius of the single instance is the opposite of small: 51 fields, and
+      `scripts/tests_touching.py` returns 306 test files for `services.py`.
+    the_message_asserted_a_cause_it_never_checked: >-
+      `web_fetch` answered "Browser runtime not initialized." — a claim about a SUBSYSTEM,
+      made without asking the subsystem anything. It now says no browser runtime is
+      reachable from this turn's services, tells the model not to claim a fetched result,
+      and points at the new `[services] get_services` line. This is not cosmetic: the wrong
+      attribution is what made the diagnosis expensive.
+    three_readings_were_pursued_and_abandoned_before_the_context_was_suspected: >-
+      (1) The browser failed to start — refuted: `[browser] runtime.start: exit` at
+      00:04:52 and the "failed to start" warning has fired ONCE ever, on 2026-09-07.
+      (2) The turns ran in the GATEWAY, which skips the browser by design — refuted by
+      reading the split: the gateway sets `turn_client = gateway_link` and forwards an
+      IngressFrame; it never runs a pipeline turn. (3) The context was empty — dismissed
+      too early because `web_search` succeeded in the same TURNS, which compared different
+      CALLS; the 00:42:30-vs-00:42:36 pair is the comparison that settles it. Recorded
+      because each was refuted by evidence the platform already held, and a message naming
+      a healthy subsystem is what pointed all three at subsystems.
+    it_reports_once_per_call_site_and_that_bound_is_deliberate: >-
+      `get_services` runs once per tool per turn, so an unconditional WARNING would flood
+      the log it exists to make readable, and a once-per-PROCESS line would hide every site
+      but the first. The key is the caller's code location, so the set is bounded by the
+      number of lines in this tree that call the function. WARNING, not DEBUG: this
+      deployment has written 677,108 records and ZERO are DEBUG.
+    tests: >-
+      `tests/audit/test_losing_the_turn_context_says_so_once.py`, five tripwires plus a
+      message check, built and mutation-proven against an off-tree mirror while the 35th
+      full-suite run held the real tree. Reads the named logger DIRECTLY rather than
+      `caplog`, because `configure_logging` sets `propagate = False` — the trap DEBT-267
+      already paid for. MUTATIONS, restored from a file copy: removing the report call
+      fails FOUR tests; demoting the line to DEBUG fails the level test by name; the
+      restore re-runs green. A bound context must stay silent (the vacuity control) — a
+      warning that fired on the normal path would be switched off within a week. The AST
+      guard resolves ONE level through a named helper, because delegating to a reporting
+      function is the correct shape and a body-only rule would have failed the very fix it
+      protects. Targeted run derived with `tests_touching.py`: it returns 306 files for
+      `services.py`, so a representative set was run — `tests/tools/io`,
+      `tests/pipeline/backends`, the capability and overclaim paths and all 8 root-level
+      files no package path reaches — 386 passed, 1 skipped. `docs_touching.py`: no design
+      document declares either changed file as a Source.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The code is live, but the LINE it adds needs the condition to recur, and the
+      condition is not one this loop can force honestly: a synthetic unbound call proves
+      the branch reachable (the tests do that) and would not prove production takes it.
+      The `closing_check` reads the new message, which has never appeared in any retained
+      log — so any occurrence is evidence only this code could produce, and it names the
+      CALLER, which is the fact three abandoned readings could not obtain.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'get_services: no services bound'); w=$(./scripts/log_since.sh 2026-09-10 "no browser runtime in this turn's services"); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} unbound-context report(s) naming their caller; ${w:-0} web_fetch refusals since"; else echo "OPEN 0 unbound-context reports since 2026-09-10 (${w:-0} web_fetch refusals) — the line needs the condition to recur"; fi
   - id: DEBT-276
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, found by asking the DATABASE which tables grow without decay and reading the one retention sweep that exists."
@@ -22909,9 +23067,27 @@ known_debt:
       implement: done
       cleanup: no_change_needed
       test: done
-      validate: partial
+      validate: done
       document: no_change_needed
-    validate_is_PARTIAL_and_the_reason_is_not_a_gap: >-
+    validated_live_2026_09_10_the_read_severity_redo_FIRED: >-
+      CLOSED. `overclaim.redone — read-severity culprit re-run instead of confessed` at
+      2026-09-10T00:32:53, culprit `web_fetch`, trace `retry-a2e3b152` — and that message
+      appears exactly ONCE in the entire retained corpus, so it is evidence only this code
+      could produce and cannot be confused with the write branch's `refulfil_failed`. The
+      chain is complete in the log: `overclaim.detected` (WARN, failed_capability
+      web_fetch) -> `retry_actuator.run_corrective: entry` -> `exit corrected=true` ->
+      `overclaim.redone`, with NO honest-floor line on that trace. The running core held
+      the fix: it committed 2026-09-09 and the boot before the event was 2026-09-10T00:04:52.
+      13 overclaims were detected since 2026-09-09 and this is the one whose culprit the
+      registry declares `read`.
+    and_the_OTHER_five_web_fetch_overclaims_were_a_DIFFERENT_defect: >-
+      Asking why 6 web_fetch detections produced 1 redo is what found DEBT-277. The redo
+      RAN for the others and failed honestly — `run_corrective exit corrected=false` — 
+      because web_fetch itself was returning "runtime not initialized" while the browser
+      was up. So this actuator behaved correctly on every one of them; the floor they
+      reached was earned by a fault one layer down. Recorded here because a 1-of-6 ratio
+      reads like a broken gate, and it is not one.
+    validate_was_PARTIAL_and_the_reason_was_not_a_gap: >-
       The code is LIVE - restarted at 00:56:47, twelve seconds after commit `0262c298`,
       so the running core holds it. What cannot be forced is the EVENT: closing this
       needs a read-severity tool to over-claim, and 6 overclaims since 2026-09-09 were
