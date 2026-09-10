@@ -21018,6 +21018,151 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-282
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led: the fifth-surface debt THIS SESSION'S OWN commits created."
+    what: >-
+      TEN DESIGN DOCUMENTS WERE STALE AND EVERY ONE WAS MINE. `doc_check.py` named ten, and
+      the causing commits are all from this session — `a4fc2759` (DEBT-277), `4ff88e6e`
+      (DEBT-272), `7a047a5a` (DEBT-273), `8f49567e` (DEBT-278) and `161d5550` (DEBT-280).
+      `CLAUDE.md` says the re-reading belongs to the loop that made the change, and five
+      loops running did not do it. STALE is now **0** — the first zero in this programme's
+      records — with 23 reviewed-not-rerun.
+    why_not_what: >-
+      THE RE-READ IS CHEAP AND THE DEFERRAL IS EXPENSIVE, and the ratio is the whole
+      lesson. Of the ten, NINE were incidental: a commit touched a cited `Source` without
+      touching a claim, and the honest answer is a `Reviewed:` sha with the reason, not a
+      re-run and not a bumped date. Judging nine of them took minutes. Deferring them cost
+      two whole later loops in this programme's history, which is recorded in `CLAUDE.md`
+      and happened again here.
+    ONE_WAS_GENUINELY_FALSE_and_that_is_why_the_re_read_is_not_a_formality: >-
+      D12.8 stated "`web_fetch` and `pdf` call the fence, and neither has produced a wrap",
+      resting on `web_fetch`'s last successful run being 2026-08-31. RE-MEASURED over every
+      retained log: `web_fetch` has produced **82** wraps, the FIRST at 2026-09-05T17:39:08
+      — the very day the document was stamped — and its last successful exit is
+      2026-09-10T02:41:08. The fence overall has 11,185 wraps (web_search 10,691,
+      browser_navigate 272, browser_extract 140, web_fetch 82, pdf 0). `pdf` is still 0, so
+      the correction NARROWS the claim rather than deleting it, and the document's own
+      epistemics were right: it said an unexercised path is neither pass nor failure and is
+      recorded so nobody diagnoses it as a hole. That is exactly the kind of claim one day
+      of ordinary traffic overturns.
+    THE_INSTRUMENT_CAUGHT_ME_TWICE_and_both_would_have_shipped_silently: >-
+      FIRST, replacing rather than appending. Five of the ten already carried a `Reviewed:`
+      line naming earlier shas with reasons; the parser keeps only the LAST occurrence, and
+      my first pass REPLACED those lines — destroying judgements made in previous loops. It
+      was caught by diffing against the pristine tree before landing, and the fix was to
+      rebuild from pristine and append. SECOND, appending in the wrong HALF:
+      `_reviewed_shas` reads `field.split("—", 1)[0]`, so a sha after the em-dash is prose
+      and is not parsed at all. Nine stamps went in and only four documents moved — the
+      count is what exposed it. Both are the same shape as the defects this session has
+      been fixing all day: the thing that decides is not the thing that looks like it
+      decides. **RUN THE INSTRUMENT AFTER THE EDIT, NOT BEFORE.**
+    tests: >-
+      No new test. The mechanism is already guarded — `test_a_reviewed_commit_is_a_real_commit`
+      refuses a sha that is not a real commit touching a cited source, and a `Reviewed:`
+      entry expires by construction the moment anything else lands. What this item adds is
+      the JUDGEMENTS, which no test can make. D13.1's Verification section was RE-RUN rather
+      than reviewed — 9 passed, the channel set still exactly {rca, telegram, cli} at
+      rca 152 / telegram 144 / cli 70 — so it is re-stamped against `161d5550` rather than
+      carrying a Reviewed sha.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed, cleanup: no_change_needed, test: no_change_needed, validate: no_change_needed, document: done}
+    validate_is_no_change_needed_and_the_reason: >-
+      Documents only. Nothing ships to the running platform, so there is no live behaviour
+      to restart and observe — and `doc_check.py` reporting STALE 0 is the whole of the
+      evidence, re-runnable at any time.
+  - id: DEBT-281
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, reported live by Bakir."
+    the_report: >-
+      Bakir, 2026-09-10: "Platform does not know user communicating with the channel and if
+      he asked something then it needs to delivered back on channel from where it asked.
+      also it is aksing approval for everthing which is limting autonomous of platform. Only
+      dangerous commnds should be approved liked removing os or platform components, or
+      something dangerous not simple task should be asked for approval."
+    BOTH_HALVES_OF_THAT_SENTENCE_ARE_ONE_DEFECT: >-
+      THE PLATFORM WAS ASKING HIS PERMISSION TO ANSWER HIM. `send_message` and `send_file`
+      are the tools that carry a turn's answer back to the person who asked. Both declare
+      `action_severity="consequential"`, so the registry gate prompts before execute.
+      MEASURED over every retained log: of **26** send_message/send_file gate decisions,
+      **17 were denied `not_approved`** — two thirds of those replies never left. That is
+      not a second complaint about delivery; it IS the delivery complaint, seen from
+      inside the gate.
+    why_not_what: >-
+      THE CAREFUL LIST IS NOT WHAT BINDS. `_DEFAULT_ALWAYS_ASK_TOOLS` and
+      `_DEFAULT_ALWAYS_ASK_CATEGORIES` are narrow and are exactly the dangerous things he
+      describes — destructive, lock, alarm, authority_widening, owl_build, computer_use.
+      But `policy.request` then reads `tier = self.tiers.get(tool_name, ALWAYS_ASK)`, so a
+      tool nobody has classified is asked about anyway. The reasoned list is decoration
+      over an unreasoned default, which is the same shape as DEBT-280's five deadlines and
+      DEBT-279's one-verdict-for-two-facts: the thing that actually decides is not the
+      thing anyone wrote down.
+    the_missing_distinction: >-
+      The gate could not tell REPLYING TO THE REQUESTER from SENDING SOMETHING TO SOMEONE.
+      Those are different acts: one is the answer to a question already asked on a lane the
+      person is already on, the other reaches someone who did not ask. Consent exists for
+      the second. Having only one category for both meant the platform interrupted him to
+      ask whether it might reply to him.
+    WHY_THE_EXEMPTION_IS_SAFE_and_it_is_a_property_not_a_judgement: >-
+      Neither tool can address a third party. `_deliver` sets
+      `target_chat_id=await resolve_recipient(target, session_key, ...)`, which takes the
+      recipient from the LANE — the session store's recorded target, or the session key
+      itself. The model's `target` argument selects only WHICH CHANNEL to reach the same
+      requester on. So a send naming the turn's own channel goes to the person who asked,
+      BY CONSTRUCTION, and the model gains nothing by lying: naming its own lane is the
+      only thing the exemption accepts, and that is where the answer was already going.
+    it_does_NOT_weaken_the_B2_rule: >-
+      Authority is still never taken from raw LLM-supplied args. The comparison is against
+      a TRUSTED value the turn already carries, and a call arg can only MATCH it, never
+      exceed it. A send naming any other channel still goes to the gate; a turn with NO
+      channel — cron, MCP, a webhook — is not exempt at all, because there is no requester
+      to reply to; and an always-ask tool is still always-ask. Four of the nine tests exist
+      only to pin those refusals.
+    keyed_on_the_declared_category_like_its_sibling: >-
+      `REPLY_CATEGORIES` sits beside the other category sets in `consent.py` and the policy
+      exposes it, so the gate ASKS rather than importing a second copy — the same
+      one-source discipline `always_ask_tools` already has, and the same reasoning the
+      browser exemption recorded when it keyed on `toolset_group` rather than five
+      severity literals.
+    tests: >-
+      `tests/tools/test_answering_the_person_who_asked_is_not_an_outbound_action.py`, nine
+      tripwires driving the REAL `ConsequentialActionGate` against a policy that RAISES on
+      any request, so a prompt cannot pass as a pass. An OMITTED target is covered
+      explicitly and is the common case — both tools document `target` as defaulting to the
+      turn's channel, so an exemption requiring the argument would have covered the rare
+      call and missed every real one. MUTATIONS, restored from a file copy: removing the
+      exemption (the state he complained about) fails FOUR; exempting any delivery send
+      regardless of target fails THREE; treating a missing channel as a reply fails ONE.
+      `docs_touching.py` named four documents; all four were READ and none describes the
+      consent gating of these tools — they list them for presentation and budget — so none
+      is made stale.
+    and_one_failure_that_was_MY_HARNESS: >-
+      The mirror also failed `test_story_12_2::test_demo_owls_yaml_exists`, which reads
+      `configs/demo/owls.yaml` — a directory the mirror does not copy. 20/20 on the real
+      tree. Third mirror artefact this session (the others wanted `.claude/` and
+      `start.sh`), and the pattern is now clear enough to state: a mirror models `src/`,
+      `tests/` and `docs/`, and every test that reads a SIBLING directory fails in it for
+      free. Check a mirror failure against the real tree before believing it.
+    what_this_should_also_reach_stated_as_a_PREDICTION_not_a_claim: >-
+      At 03:35:27 his session produced `[telegram] consent.prompt: session_key is not a
+      chat id — denying (fail closed)` for lane `owl:secretary:recovery:d3c6529977d8`,
+      tool `send_file`, channel `telegram` — literally the platform not knowing which chat
+      he is on, and refusing. The exemption fires BEFORE the prompter is reached, so that
+      consent denial should stop occurring for a reply on its own lane. It does NOT follow
+      that the file then arrives: `resolve_recipient` must still find a chat for an
+      `owl:...:recovery:` lane, and if it cannot the send becomes `deferred` one layer on.
+      That is a DIFFERENT defect and this item does not claim it. Recorded as a prediction
+      with the query that settles it rather than as a result, because the two failures look
+      identical from the outside and crediting this change with both is exactly how a fix
+      gets believed to be bigger than it is.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      Closing needs a real reply to go out on the lane it was asked from without a prompt.
+      The check counts the new exemption line, which has never appeared in any retained log,
+      so any occurrence is evidence only this code could produce — and it counts the
+      `not_approved` denials for those two tools in the same window, so the fall is visible
+      rather than assumed.
+    closing_check: >-
+      e=$(./scripts/log_since.sh 2026-09-10 'is a REPLY, not an outbound action'); d=$(grep -ah '"msg": "\[consent\] policy.request: exit' ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | sort | awk -F'"ts": "' '$2>="2026-09-10"' | grep -c 'not_approved'); if [ "${e:-0}" -gt 0 ]; then echo "CLOSEABLE ${e} reply(s) delivered without a prompt; ${d:-0} not_approved denials remain in the window"; else echo "OPEN 0 reply exemptions since 2026-09-10 (${d:-0} not_approved denials) — needs a real reply on the lane it was asked from"; fi
   - id: DEBT-280
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reported live by Bakir: 'your approval fix is stupid. It is still expiring.'"
@@ -21224,9 +21369,19 @@ known_debt:
       `inspect.getsource` finds ZERO string literals carrying the old sentence — it
       survives only inside the comment that records why it was removed. So the only thing
       still missing is the EVENT, which is what keeps the stage partial.
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      Closing this needs a real second tap on a real answered approval, which cannot be
+    validated_live_2026_09_10_the_state_was_reported_TRUTHFULLY: >-
+      CLOSED, verified against the raw record: `[telegram] consent.handle_callback: a tap
+      arrived for a request that is no longer pending — telling the user which of the three
+      things actually happened` at 2026-09-10T03:35:22, `state=not_known_to_this_process`.
+      The `state` FIELD is new, so only this code could have produced it. BE PRECISE ABOUT
+      WHICH BRANCH: the state observed is the RESTART case — the request was raised before
+      the 03:34:56 restart — not the `already_answered` case he originally hit. So what is
+      evidenced is that the branch now reports the state that ACTUALLY applied instead of
+      claiming an expiry; `already_answered` has not yet recurred in production and is
+      proven only by the behavioural test.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
+    superseded_closing_check_kept_as_the_record_of_how_it_closed: >-
+      Closing this needed a real second tap on a real answered approval, which cannot be
       forced honestly — the behavioural test drives the sequence and proves the branch,
       and that is not proof production took it. The check counts the new state field, which
       has never appeared in any retained log, so any occurrence is evidence only this code
