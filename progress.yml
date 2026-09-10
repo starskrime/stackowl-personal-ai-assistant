@@ -21065,6 +21065,80 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-292
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led. The measurement was taken during DEBT-291 and the fix withheld for a stated reason that DEBT-291 then removed."
+    what: >-
+      THE CODE WROTE DOWN ITS OWN EXPIRY CONDITION, AND NOBODY RE-READ IT WHEN IT FIRED.
+      `ApproachRatingTracker` carried a note explaining why its table needed no bound —
+      *"no size cap / TTL sweep — a DB row is small and rare (one per qualifying Telegram
+      answer, cleared on tap), so an unbounded table is fine for now. Add a periodic
+      delete-older-than-N-days sweep IF UNTAPPED VOTES EVER ACCUMULATE."*
+      MEASURED 2026-09-10: **1,480 pending rows spanning 2026-07-13 to today** against
+      **61 ratings ever recorded**, and **1,425 of them already older than a week**. The
+      condition the note named to invalidate itself had been true for two months.
+    root_cause_measured: >-
+      The premise — "rare, and cleared on tap" — was never measured, and nothing anywhere
+      compares a table's growth against the REASON it was allowed to grow. "Cleared on
+      tap" clears **4%** of what it writes. This is the second instance of the shape in
+      this session: `93e4c4ea` fixed a page that recorded its own expiry condition and
+      went on being used after it fired. A condition written in a comment is a condition
+      nothing can check.
+    what_else_that_same_cause_reaches: >-
+      Every table in this database that grows without a time bound, which is nearly all of
+      them: MEASURED, only TWO have time-bounded retention anywhere in `src/` —
+      `audit_log` (`audit/retention.py`) and `job_runs` (`db_reclaim`). Twenty-two tables
+      have a `DELETE`, but the rest are per-row deletes on a specific key, not a sweep.
+      This item adds the third; it does not pretend to have solved the class.
+    the_window_is_DERIVED_not_chosen: >-
+      Every tap in the retained corpus was timed against its own answer's `captured_at`:
+      13 taps, latencies 11s, 15s, 27s, 29s, 48s, 52s, 55s, 1m18, 1m25, 1m57, 2m07, 2m42
+      and **3m32 — the maximum**. Not one tap in 1,541 offers arrived more than four
+      minutes after the offer, so a row a week old has never been tapped in this
+      platform's history. Seven days is ~2,800x that maximum and MATCHES the `job_runs`
+      window beside it, so the codebase has one retention number rather than two.
+    and_deleting_a_row_cannot_lose_a_vote_read_from_the_handler: >-
+      `ApproachRatingHandler.handle` records the vote by calling
+      `set_approach_rating(trace_id, vote)` against `task_outcomes` DIRECTLY. The pending
+      row is consulted only afterwards, for the message LOCATION used to edit the Telegram
+      message, and `get_message` returning None is an existing logged path — "vote
+      recorded but no message location — edit skipped" — which has already fired in this
+      corpus. So a tap on a swept row still records; only the cosmetic edit is skipped.
+      Read from the handler rather than assumed, because "deleting is safe" is exactly the
+      claim that deserves evidence.
+    it_is_OWNER_SCOPED_and_that_is_only_assertable_because_of_DEBT_291: >-
+      `approach_rating_pending` carries `owner_id` and became visible to the owner-scope
+      tripwire only YESTERDAY, when that guard stopped deriving its table set from two
+      remembered migrations. The sweep therefore iterates `principals` and issues one
+      scoped statement per owner rather than one unscoped DELETE by time. **On a
+      single-principal install the two forms are indistinguishable**, which is precisely
+      how an unscoped one survives review — and is why the fix was withheld from DEBT-291
+      rather than shipped beside it.
+    the_authorisation_is_recorded_not_assumed: >-
+      Deleting 1,425 of the operator's rows is a data deletion, which this skill's
+      stop-list names. It proceeds on TWO recorded authorisations rather than on my
+      judgement: his standing grant of 2026-09-08 pre-authorises data deletion, and the
+      store's own note asks for this specific sweep by name once the condition fires.
+    tests: >-
+      `tests/scheduler/handlers/test_the_note_that_asked_for_this_sweep_was_never_re_read.py`,
+      5 tests. Bounded not emptied (a fresh row survives — and the fresh rows are precisely
+      the ones anybody has ever tapped); the sweep never reaches an owner the tenancy store
+      does not hold; an empty `principals` table deletes NOTHING rather than falling back
+      to deleting by time ("an empty table is a QUESTION, not an answer"); a failure
+      returns 0 rather than failing the tick; and a tripwire pins the window against the
+      measurement and against its neighbour.
+      FOUR MUTATIONS, each restored from a file copy with the tree re-run green after:
+      deleting by time alone; dropping the window predicate; raising retention to 30 days;
+      re-raising instead of returning 0. Each fails exactly one test.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      `db_reclaim` is an HOURLY scheduled job, so the evidence arrives on its own within
+      the hour rather than needing a driven turn — and the first pass is the one that
+      matters, because it deletes 1,425 rows. Nothing is driven by hand here: a sweep I
+      invoked myself would measure my invocation rather than the platform's.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'pruned untapped approach ratings'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} sweep(s) bounded the table — a literal only the new code emits, against a table that grew unbounded for two months"; else echo "OPEN 0 — the hourly reclaim job has not run on the fixed code yet"; fi
   - id: DEBT-291
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by sweeping the DATABASE for tables that grow with no reader and finding the guard that was supposed to watch them."

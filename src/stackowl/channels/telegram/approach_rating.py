@@ -79,10 +79,18 @@ class ApproachRatingTracker(OwnedRepository):
     hand-rolled SQL via ``self._db.execute``/``fetch_all`` with an explicit
     ``owner_id = ?`` bind on every query.
 
-    # ponytail: no size cap / TTL sweep — a DB row is small (short text +
-    # two ints) and rare (one per qualifying Telegram answer, cleared on
-    # tap), so an unbounded table is fine for now. Add a periodic
-    # delete-older-than-N-days sweep if untapped votes ever accumulate.
+    BOUNDED SINCE 2026-09-10 (DEBT-292), and the note it replaces is worth keeping
+    in view. It read: *"no size cap / TTL sweep — a DB row is small (short text +
+    two ints) and rare (one per qualifying Telegram answer, cleared on tap), so an
+    unbounded table is fine for now. Add a periodic delete-older-than-N-days sweep
+    if untapped votes ever accumulate."*
+
+    **They accumulated, and nothing re-read the condition the note itself named.**
+    MEASURED: 1,480 pending rows spanning 2026-07-13 to 2026-09-10 against 61
+    ratings ever recorded, so "cleared on tap" clears 4% of what it writes. The
+    sweep the note asked for lives in `scheduler/handlers/db_reclaim.py`, beside
+    the one that bounds `job_runs`; the window and the evidence behind it are
+    stated once, on `_RATING_PENDING_RETENTION_DAYS`.
     """
 
     _table = "approach_rating_pending"

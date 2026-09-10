@@ -188,6 +188,38 @@ async def needs_one_time_vacuum(pool: DbPool) -> bool:
 #: There is no time window in the guard for this to shorten.
 _RUN_HISTORY_RETENTION_DAYS = 7
 
+#: THE SECOND TABLE NOTHING HAD EVER BOUNDED, and the window is MEASURED rather
+#: than chosen (DEBT-292).
+#:
+#: `approach_rating_pending` holds one row per qualifying answer awaiting a
+#: thumbs-up/down tap, and its own store said, in a comment: *"no size cap / TTL
+#: sweep — a DB row is small and rare (one per qualifying Telegram answer, cleared
+#: on tap), so an unbounded table is fine for now. Add a periodic
+#: delete-older-than-N-days sweep IF UNTAPPED VOTES EVER ACCUMULATE."*
+#:
+#: THEY ACCUMULATED, AND NOTHING RE-READ THE CONDITION THE NOTE ITSELF NAMED.
+#: MEASURED 2026-09-10: **1,480 pending rows spanning 2026-07-13 to today** against
+#: **61 ratings ever recorded** — "cleared on tap" clears 4% of what it writes, and
+#: 1,425 of those rows are already older than this window.
+#:
+#: WHY SEVEN DAYS IS NOT A GUESS. Every tap in the retained corpus was timed
+#: against its own answer's `captured_at`: 13 taps, latencies 11s, 15s, 27s, 29s,
+#: 48s, 52s, 55s, 1m18, 1m25, 1m57, 2m07, 2m42 and **3m32 — the maximum**. Not one
+#: tap in 1,541 offers arrived more than four minutes after the offer. Seven days is
+#: ~2,800x that maximum, and MATCHES ITS NEIGHBOUR above rather than being tuned
+#: separately: given the evidence every value from hours upward is equivalent, so
+#: the useful property is that this codebase has one retention window, not two.
+#:
+#: AND DELETING A ROW CANNOT LOSE A VOTE — read from the handler, not assumed.
+#: `ApproachRatingHandler.handle` records the vote by calling
+#: `set_approach_rating(trace_id, vote)` against `task_outcomes` DIRECTLY; the
+#: pending row is consulted only afterwards, for the message LOCATION used to edit
+#: the Telegram message. `get_message` returning None is an existing, logged path
+#: ("vote recorded but no message location — edit skipped") which has already fired
+#: in this corpus. So a tap on a swept row still records the vote; only the cosmetic
+#: edit is skipped.
+_RATING_PENDING_RETENTION_DAYS = 7
+
 #: Rows deleted per statement. A single DELETE over 223,266 rows holds SQLite's
 #: write lock for the whole statement, and this repo has already paid for
 #: database-is-locked events — one contention moment emits four of them. Batching
@@ -284,6 +316,86 @@ class DbReclaimHandler(JobHandler):
             )
             return 0
 
+    async def _known_principals(self) -> list[str]:
+        """Principal ids the tenancy store holds. Empty list on any failure.
+
+        Same shape as `DurableTaskStore._known_principals`, and asked for the same
+        reason: a maintenance sweep over an OWNER-GOVERNED table has to name an
+        owner per statement, and the only honest source of owners is the tenancy
+        store rather than a default constant.
+        """
+        try:
+            rows = await self._pool.fetch_all("SELECT principal_id FROM principals", ())
+            return [str(r["principal_id"]) for r in rows or []]
+        except Exception as exc:  # noqa: BLE001 — maintenance may not fail a tick
+            log.scheduler.warning(
+                "[scheduler] db_reclaim: could not read the principals table — "
+                "skipping the rating sweep this tick",
+                exc_info=exc,
+            )
+            return []
+
+    async def _prune_untapped_ratings(self) -> int:
+        """Bound ``approach_rating_pending``, the second table nothing bounded.
+
+        THE WINDOW, THE MEASUREMENT BEHIND IT AND THE ARGUMENT THAT DELETING IS
+        SAFE ARE STATED ONCE — on :data:`_RATING_PENDING_RETENTION_DAYS`. Read them
+        there. Do not restate them here: the sibling above carries a paragraph
+        explaining that a duplicated safety argument DRIFTED, and left the method
+        that performs a deletion documenting itself as having declined to.
+
+        PER OWNER, one statement each. `approach_rating_pending` carries `owner_id`
+        and became visible to the owner-scope tripwire only in DEBT-291, which is
+        exactly why this sweep is written this way rather than as one unscoped
+        DELETE: a maintenance job is not an exemption from the tenancy boundary,
+        and on a single-principal install the two forms are indistinguishable —
+        which is how an unscoped one would have survived review.
+
+        Unbatched, deliberately, and that is a property of the numbers rather than
+        an omission: the whole backlog is 1,425 expired rows against a
+        `_PRUNE_BATCH` of 5,000, so one statement holds the write lock for a
+        fraction of what the `job_runs` sweep already holds it for. If this table
+        ever reaches that size, the batching above is the shape to copy.
+
+        Returns:
+            Rows deleted across all owners. 0 on any failure — maintenance may
+            never fail a tick.
+        """
+        cutoff = f"strftime('%s','now','-{_RATING_PENDING_RETENTION_DAYS} days')"
+        deleted = 0
+        for owner_id in await self._known_principals():
+            try:
+                before = await self._pool.fetch_all(
+                    "SELECT COUNT(*) AS n FROM approach_rating_pending "
+                    f"WHERE owner_id = ? AND created_at < {cutoff}",
+                    (owner_id,),
+                )
+                n = int(before[0]["n"]) if before else 0
+                if not n:
+                    continue
+                await self._pool.execute(
+                    "DELETE FROM approach_rating_pending "
+                    f"WHERE owner_id = ? AND created_at < {cutoff}",
+                    (owner_id,),
+                )
+                deleted += n
+            except Exception as exc:  # noqa: BLE001 — maintenance may not fail a tick
+                log.scheduler.warning(
+                    "[scheduler] db_reclaim: could not prune approach_rating_pending "
+                    "for one owner — the table stays unbounded until the next tick",
+                    exc_info=exc, extra={"_fields": {"owner_id": owner_id}},
+                )
+        if deleted:
+            log.scheduler.info(
+                "[scheduler] db_reclaim: pruned untapped approach ratings — the "
+                "store's own comment asked for this once they accumulated",
+                extra={"_fields": {
+                    "deleted": deleted,
+                    "retention_days": _RATING_PENDING_RETENTION_DAYS,
+                }},
+            )
+        return deleted
+
     async def execute(self, job: Job) -> JobResult:
         # 1. ENTRY
         t0 = time.monotonic()
@@ -323,6 +435,7 @@ class DbReclaimHandler(JobHandler):
         # hand back pages something has already freed. Pruning after vacuuming
         # would leave the freed pages until the next hourly tick.
         pruned = await self._prune_run_history()
+        pruned_ratings = await self._prune_untapped_ratings()
 
         # 3. STEP — bounded reclaim.
         try:
@@ -401,6 +514,7 @@ class DbReclaimHandler(JobHandler):
                 "stalled": stalled,
                 "freelist_after": free_after,
                 "pruned_runs": pruned,
+                "pruned_ratings": pruned_ratings,
                 "reclaimed_mb": round(page_size * reclaimed / 1e6, 1),
                 "file_mb": round(page_size * pages_after / 1e6, 1),
                 "free_ratio": round(free_ratio, 3),
