@@ -4781,6 +4781,16 @@ class StartupOrchestrator:
                     stall_probe=_probe_core_stall,
                 )
             )
+            # AND THE SUPERVISOR THAT WATCHES FOR A SILENT DEATH COULD DIE SILENTLY
+            # ITSELF — this item's own subject, one level up, found while writing it.
+            # A bare `create_task` swallows its exception: nothing awaits this until
+            # shutdown, so a raise inside the loop would end core supervision AND the
+            # stall detector with no record anywhere. `_log_pipeline_crash` already
+            # exists in this module for exactly that and is used by four other tasks;
+            # this one was missed when Phase 5 added it, and the stall detector is
+            # what makes the omission expensive. It returns early on cancellation, so
+            # the shutdown path below stays quiet.
+            supervise_task.add_done_callback(_log_pipeline_crash)
         try:
             if self._role == "core":
                 # No TUI to run — the inbound-frame loop is the blocking driver.

@@ -344,6 +344,21 @@ class TestItIsArmedUNCONDITIONALLY:
             )
 
     @pytest.mark.tripwire
+    def test_the_supervisor_itself_cannot_die_silently(self) -> None:
+        """THE SUBJECT OF THIS ITEM, ONE LEVEL UP. A bare `create_task` swallows its
+        exception — nothing awaits the supervise task until shutdown — so a raise
+        inside the loop would end core supervision AND this detector with no record
+        anywhere. `_log_pipeline_crash` already existed in the module and was wired to
+        four other tasks; this one was missed when Phase 5 added it, and the detector
+        is what makes the omission expensive."""
+        src = inspect.getsource(orchestrator.StartupOrchestrator)
+        i = src.index("supervise_task = asyncio.create_task")
+        assert "supervise_task.add_done_callback(_log_pipeline_crash)" in src[i:], (
+            "the process supervisor can raise and leave no record — the exact shape "
+            "this file exists to end"
+        )
+
+    @pytest.mark.tripwire
     def test_the_supervisor_defaults_to_watching_only_for_an_exit(self) -> None:
         """A vacuity control on the test above. `_supervise_core` keeps `stall_probe`
         optional so its many existing callers and tests are untouched — which means the

@@ -21307,6 +21307,23 @@ known_debt:
       What is NOT evidenced and is not claimed: the acting branch. Killing a wedged core
       needs a wedged core, and forcing one measures the forcing. The structural tests
       cover it; live traffic has not.
+    AND_THE_SUPERVISOR_THAT_WATCHES_FOR_A_SILENT_DEATH_COULD_DIE_SILENTLY_ITSELF: >-
+      THIS ITEM'S OWN SUBJECT, ONE LEVEL UP, and it was found by asking the panel's
+      fourth question of the finished work: *what notices if this guard stops working?*
+      The detector logs its verdict only when the verdict CHANGES — one line per
+      transition, because a line per 60-second poll is 1,440 a day and gets filtered
+      rather than read. That is right for a reader and it means a DEAD poller and a
+      healthy one produce the identical log, which is precisely the ambiguity this whole
+      item exists to remove.
+      MEASURED: `supervise_task` is a bare `asyncio.create_task` with no done-callback.
+      Nothing awaits it until shutdown, so a raise inside the loop would end core
+      supervision AND the stall detector with no record anywhere. `_log_pipeline_crash`
+      has been in the same module the whole time and is wired to FOUR other tasks; this
+      one was missed when Phase 5 added it. It predates this item — what the item changed
+      is the cost, because the omission now takes the liveness detector with it.
+      One line, one tripwire, one mutation (removing the callback fails 1, restored 21
+      passed). `_log_pipeline_crash` returns early on cancellation, so the shutdown path
+      that cancels this task stays quiet.
     the_targeted_run_and_the_mutations: >-
       548 passed across the 90 files `tests_touching.py` derived (including the three
       root-level ones no `tests/<package>` path reaches); 20/20 on the new file. FOUR
