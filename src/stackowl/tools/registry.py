@@ -11,7 +11,12 @@ if TYPE_CHECKING:
 
 from stackowl.infra.observability import log
 from stackowl.tools.base import Tool
-from stackowl.tools.consent import ConsentPolicy, ConsentRequest, ConsentScope
+from stackowl.tools.consent import (
+    REPLY_CATEGORIES,
+    ConsentPolicy,
+    ConsentRequest,
+    ConsentScope,
+)
 
 # A tool declaring one of these consent categories MUST be consequential — else
 # it would declare itself dangerous yet skip the consent gate (E1-S4 / §17).
@@ -158,6 +163,41 @@ class ConsequentialActionGate:
         # category (e.g. a tool computing it from validated args) may supplement it,
         # but never from raw LLM-supplied call args (E0-S1 / B2).
         effective_category = tool.manifest.consent_category or category
+        # REPLYING TO THE REQUESTER IS NOT AN OUTBOUND ACTION.
+        #
+        # Bakir, 2026-09-10: "if he asked something then it needs to delivered back
+        # on channel from where it asked ... Only dangerous commnds should be
+        # approved." The platform was asking his permission to answer him: 17 of 26
+        # send_message/send_file gate decisions were denied `not_approved`, so two
+        # thirds of those replies never left.
+        #
+        # SAFE BY CONSTRUCTION, not by trust. Neither tool can address a third
+        # party — `_deliver` resolves `target_chat_id` from the LANE via
+        # `resolve_recipient`, so the model's `target` chooses only WHICH CHANNEL to
+        # reach the same requester on. Naming the turn's own channel is therefore a
+        # reply to the person who asked, and a call arg that merely MATCHES a
+        # trusted value cannot widen authority (B2 stands). Any other target still
+        # goes to the gate, and an always-ask tool is still always-ask — the same
+        # discriminator the browser exemption above uses, asked rather than copied.
+        reply_categories: frozenset[str] = getattr(
+            self._policy, "reply_categories", REPLY_CATEGORIES
+        )
+        if (
+            effective_category in reply_categories
+            and tool.name not in always_ask
+            and self._is_reply_to_the_requester(call_args, channel)
+        ):
+            # INFO: this line is the evidence that the exemption, not a grant, is
+            # what let the answer through — and a DEBUG line could never close that.
+            log.tool.info(
+                "[gate] check: exit — delivering this turn's own answer back to the "
+                "lane it was asked from is a REPLY, not an outbound action",
+                extra={"_fields": {
+                    "tool": tool.name, "channel": channel,
+                    "category": effective_category,
+                }},
+            )
+            return True
         summary = self._build_summary(tool, call_args)
         reversible = self._is_reversible(tool)
         allowed = await self._policy.request(
@@ -177,6 +217,27 @@ class ConsequentialActionGate:
             extra={"_fields": {"tool": tool.name, "allowed": allowed}},
         )
         return allowed
+
+    @staticmethod
+    def _is_reply_to_the_requester(
+        call_args: dict[str, object] | None, channel: str | None
+    ) -> bool:
+        """Is this send aimed at the lane the turn arrived on?
+
+        ABSENT COUNTS, and that is the common case rather than a loophole: both
+        tools document ``target`` as defaulting to "the channel this turn came
+        from", so omitting it IS naming it. Anything else — a different channel, or
+        a value that is not a plain string — falls through to the gate.
+        """
+        if not channel:
+            return False
+        raw = (call_args or {}).get("target")
+        if raw is None:
+            return True
+        if not isinstance(raw, str):
+            return False
+        target = raw.strip()
+        return target in ("", channel)
 
     @staticmethod
     def _is_reversible(tool: Tool) -> bool:

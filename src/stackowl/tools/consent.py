@@ -279,6 +279,39 @@ _DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset(
     {"lock", "alarm", "destructive", "prompt_surface", "authority_widening",
      "owl_build"}
 )
+#: Categories whose tools carry the TURN'S OWN ANSWER back to the person who asked.
+#:
+#: Bakir, 2026-09-10: "Platform does not know user communicating with the channel
+#: and if he asked something then it needs to delivered back on channel from where
+#: it asked. also it is aksing approval for everthing which is limting autonomous
+#: of platform. Only dangerous commnds should be approved."
+#:
+#: THE PLATFORM WAS ASKING PERMISSION TO ANSWER HIM. `send_message` and `send_file`
+#: declare `action_severity="consequential"`, so the registry gate prompts before
+#: execute; anything without an explicit tier then falls to
+#: `tiers.get(tool_name, ALWAYS_ASK)`. MEASURED over every retained log: of 26
+#: send_message/send_file gate decisions, **17 were denied `not_approved`** — so
+#: two thirds of the time the reply simply never left. That is the same fact as
+#: the first half of his sentence: the answer did not come back to the lane he
+#: asked from.
+#:
+#: WHY THIS IS SAFE, and it is a property of the code rather than a judgement.
+#: Neither tool can address a third party. `_deliver` sets
+#: `target_chat_id=await resolve_recipient(target, session_key, ...)`, which reads
+#: the recipient from the LANE — the session store's recorded target, or the
+#: session key itself. The model's `target` argument selects only WHICH CHANNEL to
+#: reach the same requester on. So a send whose target is the turn's own channel
+#: goes to the person who asked, by construction, and the model cannot widen that
+#: by lying: naming its own lane is the only thing the exemption accepts, and that
+#: is where the answer was always going.
+#:
+#: THIS DOES NOT WEAKEN THE B2 RULE that authority is never taken from raw
+#: LLM-supplied args. The comparison is against a TRUSTED value the turn already
+#: carries; a call arg can only MATCH it, never exceed it. A send aimed at any
+#: other channel still goes to the gate, and an always-ask tool or category is
+#: still always-ask.
+REPLY_CATEGORIES = frozenset({"agent_message", "agent_file"})
+
 _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 
 #: How long the platform waits for a PERSON to decide. The ONE source.
@@ -700,6 +733,9 @@ class ConsentPolicy:
     tiers: dict[str, TrustTier] = field(default_factory=dict)
     always_ask_tools: frozenset[str] = _DEFAULT_ALWAYS_ASK_TOOLS
     always_ask_categories: frozenset[str] = _DEFAULT_ALWAYS_ASK_CATEGORIES
+    #: Exposed on the policy for the SAME reason `always_ask_tools` is: the gate
+    #: asks the policy rather than importing a second copy of the rule.
+    reply_categories: frozenset[str] = REPLY_CATEGORIES
     window_seconds: float = _DEFAULT_WINDOW_SECONDS
 
     # ephemeral grant state
