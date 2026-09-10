@@ -11,9 +11,11 @@ MEASURED 2026-09-01 across the retained logs, both halves of one contradiction:
   — ``python3 - <<PY``, ``node -e`` — unattended, unprompted, and unrecorded as
   code execution.
 
-``shell``'s only consent gate is ``is_catastrophic``, which looks for ``rm -rf
-/`` and fork bombs. A heredoc of arbitrary Python is not that shape, so it ran
-silently. The recorded decision was NAMED and never ENFORCED, and the refusal
+``shell``'s only consent gate is ``is_catastrophic``, which at that time asked
+only about destruction by path — ``rm -rf /``, a device write, a fork bomb. A
+heredoc of arbitrary Python is not that shape, so it ran silently. (The detector
+has since grown a software-REMOVAL class; it still says nothing about launching
+an interpreter, which is what this test is about.) The recorded decision was NAMED and never ENFORCED, and the refusal
 bought nothing: the model reached the identical effect through ``shell`` on the
 next round while the RCA lost its evidence tool and a turn.
 

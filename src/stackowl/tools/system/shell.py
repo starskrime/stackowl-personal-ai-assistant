@@ -1,14 +1,15 @@
 """ShellTool — runs shell commands via subprocess, never shell=True (ARCH-75).
 
 Maximum-autonomy model: ANY command runs SILENTLY (install/network/write — no
-prompt, no allowlist). Only a narrow set of truly catastrophic, system-destroying
-command shapes (``rm -rf`` on a system/home root, ``dd``/``mkfs``/``shred``/
-``wipefs`` on a block device, recursive chmod/chown on a system root, a classic
-fork bomb) require explicit user approval via the consent gate. When no
-interactive user is present to approve, a catastrophic command fails CLOSED
-(deny) — it is never auto-refused otherwise. ``shell=False`` +
-``create_subprocess_exec`` keep real injection safety (pipes/redirects/chaining
-are inert).
+prompt, no allowlist). Only two classes need the user's explicit approval —
+DESTROYING THE MACHINE (a system or home path, a block device, a system root's
+ownership, a fork bomb) and REMOVING SOFTWARE IT RUNS (uninstalling a package,
+permanently disabling a service). :func:`is_catastrophic` is the one place either
+question is answered; this docstring names the classes rather than their members
+so that adding a member cannot falsify it. When no interactive user is present to
+approve, such a command fails CLOSED (deny) — it is never auto-refused
+otherwise. ``shell=False`` + ``create_subprocess_exec`` keep real injection
+safety (pipes/redirects/chaining are inert).
 """
 
 from __future__ import annotations
@@ -282,6 +283,166 @@ def _redirect_target(argv: list[str]) -> str | None:
     return target
 
 
+#: REMOVAL OF INSTALLED SOFTWARE — a destruction class the predicates above
+#: cannot see, and the reason it was invisible rather than merely missing.
+#:
+#: Every other branch of :func:`_is_catastrophic_segment` matches a command that
+#: destroys BYTES AT A PATH: ``rm`` a system root, ``dd``/``mkfs``/``wipefs``/
+#: ``shred`` a block device, recursive ``chmod``/``chown`` a system root. Each is
+#: found by reading the operands and asking "is this a protected path".
+#: ``apt-get purge systemd`` names NO path — the package manager resolves the file
+#: list itself — so no amount of widening :data:`_SYSTEM_ROOTS` could ever have
+#: reached it. The class had no address; this is the address.
+#:
+#: Bakir, 2026-09-10: "Only dangerous commnds should be approved liked removing
+#: os or platform components, or something dangerous". MEASURED over the 13
+#: retained logs before this shipped: of 479 commands this tool actually ran,
+#: ZERO were removals — the only two package/service-manager invocations in the
+#: whole corpus are ``systemctl --state=failed`` and ``systemctl --failed``, both
+#: status queries. So this gate costs the observed workload nothing. It is not a
+#: trade against his "asking approval for everything" objection; it is the other
+#: half of the same sentence.
+#:
+#: Subcommand names are a formal CLI grammar, not natural language — the same
+#: reasoning :data:`_SQL_WRITE_STATEMENT` records for SQL keywords — so the
+#: no-hardcoded-word-list rule does not reach them.
+_PACKAGE_MANAGERS: frozenset[str] = frozenset(
+    {
+        "apt", "apt-get", "aptitude", "dpkg", "yum", "dnf", "zypper", "pacman",
+        "apk", "snap", "flatpak", "brew", "port",
+        "pip", "pip3", "pipx", "uv", "conda", "poetry",
+        "npm", "pnpm", "yarn", "gem", "cargo",
+    }
+)
+
+#: The subcommand that means "take it off this machine". Deliberately excludes
+#: ``clean``/``prune``/``autoclean`` (caches, not software) and every install or
+#: query verb — this tool's description promises that installs run silently.
+#: ``rm``/``un``/``del`` are here as the ALIASES their managers document (``brew
+#: rm``, ``npm un``, ``apk del``); they are only ever read as the first operand of
+#: a manager, so the ordinary ``rm`` and ``git rm`` cannot reach them.
+_REMOVAL_VERBS: frozenset[str] = frozenset(
+    {"remove", "uninstall", "purge", "autoremove", "erase", "del", "un", "rm"}
+)
+
+#: ``dpkg`` and ``pacman`` express removal as a FLAG rather than a subcommand.
+_REMOVAL_FLAGS: dict[str, frozenset[str]] = {
+    "dpkg": frozenset({"-r", "-P", "--remove", "--purge"}),
+    "pacman": frozenset({"-R", "-Rs", "-Rns", "-Rn", "-Rss", "-Rdd", "-Rsc"}),
+}
+
+#: Service managers, and the verbs that stop a service COMING BACK.
+#:
+#: ``stop`` and ``restart`` are deliberately absent, on the discriminator this
+#: codebase already uses everywhere else — REVERSIBILITY. A stopped service
+#: returns on the next boot or the next ``start``; ``disable`` and ``mask``
+#: persist, and a masked unit cannot be started again until it is unmasked. The
+#: platform's own restart path stops things, and refusing that would break the
+#: self-heal loop to guard against something a reboot undoes.
+_SERVICE_MANAGERS: frozenset[str] = frozenset(
+    {"systemctl", "service", "launchctl", "chkconfig", "update-rc.d"}
+)
+_SERVICE_DISABLE_VERBS: frozenset[str] = frozenset({"disable", "mask", "unload"})
+
+#: Wrappers that change WHO or WHERE a command runs, never WHAT it does. Peeled
+#: before classification, because ``sudo apt purge systemd`` is the dangerous
+#: form and its base word is ``sudo``.
+_COMMAND_WRAPPERS: frozenset[str] = frozenset(
+    {"sudo", "doas", "nohup", "time", "nice", "ionice", "stdbuf", "command", "exec"}
+)
+
+
+def _peel_wrappers(args: list[str]) -> list[str]:
+    """Strip privilege/environment wrappers so the real command is classified.
+
+    Handles ``sudo``/``doas``/``nohup``/``time`` and ``env FOO=bar`` (including
+    ``env`` with no assignments). Bounded: never loops more than the token count.
+    """
+    out = list(args)
+    for _ in range(len(args)):
+        if not out:
+            return out
+        head = Path(out[0]).name
+        if head in _COMMAND_WRAPPERS:
+            out = out[1:]
+            continue
+        if head == "env":
+            out = out[1:]
+            while out and "=" in out[0] and not out[0].startswith("-"):
+                out = out[1:]
+            continue
+        return out
+    return out
+
+
+def _manager_and_operands(args: list[str]) -> tuple[str, list[str], list[str]]:
+    """Resolve (manager, flags, operands), following the two indirect forms.
+
+    ``python3 -m pip uninstall x`` and ``uv pip uninstall x`` both remove software
+    while their base word is not a manager. Both are one hop: an interpreter
+    naming a module, and a manager fronting another manager. Returns the empty
+    string as the manager when the command is neither.
+    """
+    if not args:
+        return ("", [], [])
+    base = Path(args[0]).name
+    rest = args[1:]
+
+    # `python -m pip ...` — the interpreter delegates to a module.
+    if base.startswith("python") and "-m" in rest:
+        i = rest.index("-m")
+        if i + 1 < len(rest):
+            module = rest[i + 1]
+            if module in _PACKAGE_MANAGERS:
+                flags, operands = _split_flags_and_operands(rest[i + 2:])
+                return (module, flags, operands)
+
+    flags, operands = _split_flags_and_operands(rest)
+
+    # `uv pip ...` — one manager fronting another. One hop only, deliberately:
+    # a chain deeper than this is not a shape any real tool uses.
+    if base in _PACKAGE_MANAGERS and operands and operands[0] in _PACKAGE_MANAGERS:
+        return (operands[0], flags, operands[1:])
+
+    return (base, flags, operands)
+
+
+def removes_installed_software(args: list[str]) -> tuple[bool, str]:
+    """Detect a command that uninstalls software or permanently disables a service.
+
+    ``args`` is ONE shlex-split sub-command (no shell operators). Returns
+    ``(True, human_reason)`` on a match and ``(False, "")`` otherwise.
+    Pure-lexical and never raises, exactly like the path predicates beside it.
+
+    Conservative in the direction that matters: a manager invoked with no
+    non-flag operand (``systemctl --failed``, ``apt list``) cannot match, so the
+    read-only uses that make up the live corpus stay silent.
+    """
+    if not args:
+        return (False, "")
+    peeled = _peel_wrappers(args)
+    if not peeled:
+        return (False, "")
+
+    manager, flags, operands = _manager_and_operands(peeled)
+    if not manager:
+        return (False, "")
+
+    if manager in _REMOVAL_FLAGS and any(f in _REMOVAL_FLAGS[manager] for f in flags):
+        return (True, f"{manager} removing an installed package")
+
+    if manager in _PACKAGE_MANAGERS and operands and operands[0] in _REMOVAL_VERBS:
+        target = operands[1] if len(operands) > 1 else "(unnamed)"
+        return (True, f"{manager} {operands[0]} — uninstalling software: {target}")
+
+    if manager in _SERVICE_MANAGERS:
+        for tok in operands:
+            if tok in _SERVICE_DISABLE_VERBS:
+                return (True, f"{manager} {tok} — permanently disabling a service")
+
+    return (False, "")
+
+
 def is_catastrophic(args: list[str]) -> tuple[bool, str]:
     """Detect a truly system-destroying command shape (conservative).
 
@@ -306,6 +467,10 @@ def _is_catastrophic_segment(args: list[str]) -> tuple[bool, str]:
     (multilingual-safe — no natural-language keywords), and errs toward catching
     only the obvious catastrophic shapes so that normal file writes/deletes
     (``rm -rf ./build``, ``echo x > f.txt``) run silently.
+
+    The path predicates below cover destruction that names a PATH. Destruction
+    that names a PACKAGE is a different question and is asked last, by
+    :func:`removes_installed_software`.
     """
     if not args:
         return (False, "")
@@ -345,7 +510,9 @@ def _is_catastrophic_segment(args: list[str]) -> tuple[bool, str]:
             target = next(op for op in operands if _hits_system_root(op))
             return (True, f"recursive {base} on a system root: {target}")
 
-    return (False, "")
+    # Removal of installed software. See removes_installed_software for why this
+    # class could not be reached by widening the path predicates above.
+    return removes_installed_software(args)
 
 
 #: SQL statement SHAPES, not verbs. Two-token grammar so a verb appearing as a
@@ -633,6 +800,24 @@ async def run_argv(
     # system-destroying shapes, which require the user's explicit approval.
     catastrophic, reason = is_catastrophic(argv)
     if catastrophic:
+        # The removal class says so IN ITS OWN LITERAL, not only through the
+        # shared gate's `reason` field. Two things need that. A closing check can
+        # only be trusted when the string it greps for is emitted by a `log.*`
+        # call the AST walk can SEE — a reason assembled elsewhere and passed in
+        # as a field is invisible to that guard, and adding an exemption for
+        # myself would be the stale-allowlist shape this repo already pays for.
+        # And it makes the evidence discriminating: the pre-existing gate line
+        # fires for `rm -rf /` too, so it could never tell this fix from its
+        # predecessor.
+        if any(removes_installed_software(seg)[0] for seg in _shell_segments(argv)):
+            log.tool.warning(
+                "shell.execute: the command REMOVES INSTALLED SOFTWARE — requiring consent",
+                extra={"_fields": {
+                    "tool": tool_name,
+                    "reason": reason,
+                    "command_head": rendered[:120],
+                }},
+            )
         decision = await _gate_catastrophic(tool_name=tool_name, command=rendered, reason=reason)
         if decision is not None:
             return decision  # refused / declined / fail-closed — never spawns
@@ -777,10 +962,12 @@ class ShellTool(Tool):
             "Run a shell command in a subprocess. Full shell syntax works: "
             "builtins (cd), operators (&&, ||, ;), pipes (|) and redirects (>). "
             "Installs, downloads, network and file writes run silently with no "
-            "prompt. Only truly catastrophic, system-destroying commands "
-            "(rm -rf on a system/home root, dd/mkfs/shred/wipefs on a device, "
-            "recursive chmod/chown on a system root, fork bombs) require the user's "
-            "explicit approval; if no user is present to approve, they are refused. "
+            "prompt. Two classes need the user's explicit approval: commands that "
+            "DESTROY THE MACHINE (deleting a system or home root, overwriting a "
+            "block device, recursive chmod/chown on a system root, a fork bomb) "
+            "and commands that REMOVE SOFTWARE IT RUNS (uninstalling a package "
+            "through any package manager, permanently disabling a service). If no "
+            "user is present to approve, they are refused. "
             f"PYTHON: a shared virtualenv already exists at {StackowlHome.python_env()} "
             "— install into it and run from its bin/python. Do NOT create a new venv "
             "per task; only build a separate one if you need a dependency version "
@@ -795,6 +982,11 @@ class ShellTool(Tool):
         the delegation gate treats a shell-capable owl as already-acted, WITHOUT
         adding a consent prompt (the gate fires only on 'consequential'; the
         narrow catastrophic-shape consent path is separate, inside run_argv).
+
+        This is deliberate and is the answer to "why is the most destructive tool
+        here not 'consequential'": danger belongs to the CALL, not the tool, and
+        this is the one tool where that is actually computed per call. Raising the
+        severity would prompt on ``ls``.
         """
         return ToolManifest(
             name=self.name,

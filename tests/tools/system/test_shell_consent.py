@@ -1,11 +1,17 @@
 """Shell consent model — run-all-silently + catastrophic-only consent.
 
-The shell tool drops its hardcoded allowlist: ANY command runs silently. Only a
-narrow set of truly catastrophic, system-destroying command shapes
-(``rm -rf /``, ``dd of=/dev/...``, ``mkfs``/``shred``/``wipefs`` on devices,
-recursive chmod/chown on system roots, fork bombs) require user approval via the
-existing consent gate. When no interactive user is present, a catastrophic
-command fails closed (deny); it is NEVER auto-refused otherwise.
+The shell tool drops its hardcoded allowlist: ANY command runs silently. Only
+commands that DESTROY THE MACHINE (``rm -rf /``, ``dd of=/dev/...``,
+``mkfs``/``shred``/``wipefs`` on devices, recursive chmod/chown on system roots,
+fork bombs) require user approval via the existing consent gate. When no
+interactive user is present, such a command fails closed (deny); it is NEVER
+auto-refused otherwise.
+
+The second gated class — REMOVING SOFTWARE THE MACHINE RUNS — has its own file,
+``test_the_gate_knows_removal_from_deletion.py``. Kept apart deliberately: this
+file is about destruction that names a PATH, and that one is about destruction
+that names a PACKAGE, which is why widening these cases could never have reached
+it.
 """
 
 from __future__ import annotations

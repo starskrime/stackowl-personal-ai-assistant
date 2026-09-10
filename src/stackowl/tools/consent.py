@@ -57,9 +57,12 @@ __all__ = [
 #: times — every one on the RCA lane, "always-ask and no human is attached" —
 #: while ``shell`` invoked a general-purpose interpreter **110 times out of 153
 #: (72%)**, unattended, with no prompt and no audit of it as code execution.
-#: ``shell``'s only consent gate is :func:`is_catastrophic`, which looks for
-#: ``rm -rf /`` and fork bombs; ``python3 - <<PY`` is not catastrophic by that
-#: detector, so arbitrary code ran freely under a different tool's name.
+#: ``shell``'s only consent gate is :func:`is_catastrophic`, which THEN asked
+#: about destruction by path — ``rm -rf /``, a device write, a fork bomb — and
+#: nothing else; ``python3 - <<PY`` is not that shape, so arbitrary code ran
+#: freely under a different tool's name. (That detector has since grown a second
+#: class, software REMOVAL, for the same reason one level over. It still says
+#: nothing about launching an interpreter, which is what this constant is for.)
 #:
 #: So the gate was keyed on a NAME while the risk belongs to a CAPABILITY, and
 #: the refusal bought nothing: the model reached the identical effect through

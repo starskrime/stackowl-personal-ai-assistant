@@ -21036,6 +21036,112 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-287
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, from Bakir's own sentence about what should and should not be approved."
+    what: >-
+      THE ONE CLASS HE NAMED WAS THE ONE CLASS THE DANGER GATE COULD NOT SEE. Bakir,
+      2026-09-10: *"Only dangerous commnds should be approved liked removing os or platform
+      components, or something dangerous not simple task should be asked for approval."*
+      MEASURED against the shipped detector before any change: `apt purge -y systemd`,
+      `pip uninstall -y stackowl`, `systemctl disable --now stackowl`, `dpkg --purge libc6`,
+      `snap remove core`, `yum remove -y kernel` and `pacman -Rns base` ALL ran silently —
+      no prompt, no refusal, and nothing in the record telling them apart from `ls`. `rm -rf /usr` was caught. The gate held the door
+      and left the window open.
+    why_not_what: >-
+      NOT A LIST THAT WAS TOO SHORT — A QUESTION THAT WAS NEVER ASKED. Every branch of
+      `_is_catastrophic_segment` matches destruction that names a PATH: `rm` a system root,
+      `dd`/`mkfs`/`wipefs`/`shred` a device, recursive `chmod`/`chown` a system root. Each
+      one is decided by reading the operands and asking *is this a protected path*.
+      `apt-get purge systemd` names NO path — the package manager resolves the file list
+      itself — so no amount of widening `_SYSTEM_ROOTS` could ever have reached it, however
+      far it was widened. The class had no address. Adding a seventh `if` would have been
+      the symptom fix; naming the property (`removes_installed_software`) is the address the
+      next removal channel attaches to.
+    what_else_that_same_cause_reaches: >-
+      Every removal channel that names a PACKAGE rather than a PATH — the twenty-three
+      managers now in `_PACKAGE_MANAGERS`, and the two indirect forms that hide the manager
+      from the base word (`uv pip uninstall`, `python3 -m pip uninstall`). And the same
+      blind spot one surface over: the tool's own DESCRIPTION, which the model reads on
+      every turn, ENUMERATED the gated shapes — so growing the gated set silently made the
+      model's instructions wrong IN THE UNSAFE DIRECTION ("that one runs silently"). Fixed
+      by removing the copy, not syncing it: it names the two CLASSES, which a new member
+      cannot falsify, and a tripwire fails if a list regrows there.
+    what_it_costs_him_measured_not_assumed: >-
+      NOTHING, on the observed workload. Of the 294 commands this tool has actually run
+      across the 13 retained logs, ZERO are removals — the only two package/service-manager
+      invocations in the entire corpus are `systemctl --state=failed` and `systemctl
+      --failed`, both status queries, and both stay silent under the new class. So this is
+      not a trade against the other half of his sentence ("it is aksing approval for
+      everthing which is limting autonomous of platform"); it is the half that was missing.
+      TWO INDEPENDENT INSTRUMENTS AGREE, which is why the zero is believable. Running the
+      new classifier over all 294 returns 0 — but 21 of them cannot be `shlex.split` (a
+      heredoc with unbalanced quotes), so that instrument is blind to 7% of the corpus. A
+      raw token grep for `uninstall|purge|autoremove|remove` and for every manager name,
+      which needs no parsing at all, returns 0 removals over all 294 and finds only those
+      two `systemctl` status queries. The blind spot and the answer do not overlap.
+    the_line_that_was_drawn_and_why: >-
+      REVERSIBILITY, the discriminator this codebase already uses everywhere else.
+      `systemctl disable` and `mask` persist across a boot and are gated; `stop` and
+      `restart` are NOT, because a stopped service returns and the platform's own restart
+      path stops things — gating that would break the self-heal loop to guard against
+      something a reboot undoes. `pkill`/`kill` are deliberately absent for the same reason
+      and it is recorded here rather than silently omitted.
+    fix: >-
+      `removes_installed_software()` in `tools/system/shell.py`, joined into
+      `is_catastrophic` so it inherits the EXISTING consent path unchanged — ask the user,
+      fail CLOSED when nobody is attached. Three small tables state the class as data
+      (`_PACKAGE_MANAGERS`, `_REMOVAL_VERBS`, `_SERVICE_MANAGERS`) rather than as code
+      branches, plus `_REMOVAL_FLAGS` for `dpkg`/`pacman`, which express removal as a flag.
+      `_peel_wrappers` strips `sudo`/`doas`/`env`/`nohup` first — the dangerous form's base
+      word is `sudo`, so that is load-bearing, not tidiness. Subcommand names are a formal
+      CLI grammar, not natural language, which is the same exemption `_SQL_WRITE_STATEMENT`
+      already records in this file for SQL keywords.
+    tests: >-
+      `tests/tools/system/test_the_gate_knows_removal_from_deletion.py`, 61 tests, all
+      tripwires. 36 removal dialects must be caught; 21 ordinary commands must stay silent,
+      and that second list is the one that decided whether this ships. It includes the
+      TWO REAL package/service-manager commands from the live corpus by name.
+      `test_the_live_corpus_gains_no_prompts` reads the retained logs rather than a fixture,
+      because the number that matters is how many of HIS commands would now stop and ask —
+      a fixture could only restate my belief about what he runs; it SKIPS when the corpus
+      has rotated, so an aged-out check can never read as a pass.
+      FIVE MUTATIONS, each restored from a file copy and the tree re-run green after:
+      making the new predicate always return False fails 38; not peeling wrappers fails 3;
+      adding `stop` to the disable verbs fails exactly `systemctl stop docker`;
+      re-enumerating managers in the tool description fails the prose guard; and replacing
+      the class-naming log literal fails the end-to-end test.
+      The prose guard's FIRST DRAFT WAS A BAD INSTRUMENT and its own run caught it: a
+      substring test for `"pip"` matched the word `pipes` in the sentence about shell
+      syntax. Word-boundary now, and the reason is in the test.
+    the_fifth_surface: >-
+      FOUR live prose copies stated the gated set as a list. Corrected in the same change,
+      and by REMOVING the copy rather than syncing it wherever the copy could go stale: the
+      module docstring and the model-facing description now name the CLASSES; the two
+      records that describe what the detector looked for on 2026-09-01 (`tools/consent.py`
+      and `test_the_consent_gate_knows_a_capability_from_a_name.py`) were written in the
+      present tense and now say plainly that the class has since grown and still says
+      nothing about launching an interpreter, which is what those two are about.
+      `test_shell_consent.py` keeps the PATH class and points at the new file for the
+      PACKAGE class.
+    it_reaches_every_host_subprocess_path_and_that_is_the_point: >-
+      The class was joined into `is_catastrophic`, which lives inside `run_argv` — the ONE
+      spawn seam. So it covers all SEVEN callers without any of them being touched:
+      `shell`, `git_tool`, `run_tests`, `claude_code`, `objective_tool`, `epic_runner`,
+      `owls_command` — and `learned_shell_tool`, which is the one that matters most,
+      because a learned tool's argv template is MODEL-AUTHORED. Had the class been added
+      at the `ShellTool.execute` level instead, a tool the platform wrote for itself would
+      have been the one path still able to uninstall things silently.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      MEASURED: the class has fired ZERO times in the whole retained corpus, because nobody
+      has ever asked this platform to uninstall anything. So waiting for traffic would
+      leave this reading OPEN forever, which is the ambiguous-zero this programme has
+      already paid for. The evidence has to be MADE, by driving the live platform through
+      the real ingress with a removal command whose target does not exist.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'REMOVES INSTALLED SOFTWARE'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} command(s) stopped by the removal class — a literal only the new code emits, and one the pre-existing gate line could not discriminate"; else echo "OPEN 0 — the class has not been exercised on the live process yet"; fi
   - id: DEBT-286
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led: settling the correctness question DEBT-285 left open, which led one layer further out."
@@ -21108,7 +21214,7 @@ known_debt:
       answer delivered twice inside two minutes. It reads `notification_log` rather than a
       log line, because the duplicate is a DATABASE fact and the rename emits nothing.
     closing_check: >-
-      n=$(uv run python scripts/duplicate_answers.py --since 2026-09-10 2>/dev/null | tail -1); if [ "${n:-x}" = "0" ]; then echo "CLOSEABLE 0 identical answers delivered twice within 120s since 2026-09-10 — and note the rename cannot have caused that, so this reads as the signal still being quiet"; else echo "OPEN ${n} duplicate answer(s) since 2026-09-10 — the cause is still unisolated (re-dispatch vs stream-miss fallback)"; fi
+      n=$(uv run python scripts/duplicate_answers.py --since 2026-09-10 2>/dev/null | tail -1); if [ "${n:-x}" = "0" ]; then echo "OPEN 0 identical answers delivered twice within 120s since 2026-09-10 — a quiet FALSIFIER closes nothing, and this one cannot ever close: the rename emits no behaviour, so only a duplicate could move it, and that would REFUTE the record rather than confirm it"; else echo "OPEN ${n} duplicate answer(s) since 2026-09-10 — the cause is still unisolated (re-dispatch vs stream-miss fallback)"; fi
   - id: DEBT-285
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by closing the EXPIRED escalation ESC-146 and following the cost rise that expired it."
