@@ -90,7 +90,7 @@ def _audit_consequential(event_type: str, target: str | None, details: dict[str,
         )
 
 
-def _err(msg: str, t0: float, *, tool: str = "browser_tool", committed: bool = True) -> ToolResult:
+def _err(msg: str, t0: float, *, tool: str, committed: bool = True) -> ToolResult:
     """Structured failure. ``committed`` defaults True (conservative); callers pass
     False at a pre-execution refusal (runtime/session unavailable, arg-validation,
     missing local resource) reached BEFORE the page action runs, so it does not trip
@@ -118,7 +118,26 @@ def _browser_failure(msg: str, exc: BaseException, t0: float, *, tool: str) -> T
     return _err(msg, t0, tool=tool)
 
 
-def _ok(payload: dict[str, Any] | list[Any] | str, t0: float, *, tool: str = "browser_tool") -> ToolResult:
+def _ok(payload: dict[str, Any] | list[Any] | str, t0: float, *, tool: str) -> ToolResult:
+    """``tool`` IS REQUIRED, and removing its default is the whole fix (DEBT-296).
+
+    It defaulted to ``"browser_tool"`` — a name no tool has; it is this helper's own
+    parameter name wearing a tool's clothes. MEASURED across every retained log:
+    **1,235 records of `browser_tool.execute: exit` and ZERO of
+    `browser_tool.execute: entry`**, because nothing ever enters a tool by that name.
+    Forty call sites across two modules omitted the keyword, so forty return paths
+    filed their outcome under a placeholder and `browser_eval_js` — which logs its
+    entry with its real name — showed 48 entries against 1 exit.
+
+    Nothing looked wrong at any point. Every layer worked: the helper logged, the
+    field was populated, the level was INFO. The defect is only visible by PAIRING
+    entry against exit per tool over the corpus, which is why it survived and why
+    `scripts/four_point_pairs.py` now does exactly that.
+
+    Making it required is the same move DEBT-289 made for `remedy`: an argument with
+    a plausible default is an argument that gets forgotten, and the forgetting is
+    silent. There is no honest default here — the helper cannot know which tool
+    called it, and inventing a name is worse than refusing to guess."""
     output = payload if isinstance(payload, str) else json.dumps(payload, default=str)
     duration_ms = (time.monotonic() - t0) * 1000
     log.tool.info(
@@ -234,10 +253,10 @@ class BrowserNavigateTool(_BrowserTool):
             extra={"_fields": {"url": log_url, "session_id": session_id, "profile": profile_name}},
         )
         if not url:
-            return _err("Missing url parameter", t0)
+            return _err("Missing url parameter", t0, tool="browser_navigate")
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, tool="browser_navigate")
 
         await runtime.acquire_domain_slot(url)
 
@@ -288,7 +307,7 @@ class BrowserNavigateTool(_BrowserTool):
             "title": untrusted.wrap(title, source=f"browser_navigate:{log_url}"),
             "status": status,
             "captcha_detected": captcha_kind,
-        }, t0)
+        }, t0, tool="browser_navigate")
 
 
 class BrowserExtractTool(_BrowserTool):
@@ -339,7 +358,7 @@ class BrowserExtractTool(_BrowserTool):
         )
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, tool="browser_extract")
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             if selector:
@@ -371,7 +390,7 @@ class BrowserExtractTool(_BrowserTool):
         # agent. MEASURED 2026-09-03: browser_extract shared a turn with shell 13
         # times and with write_file 7 times in 7 days, and the marker that pdf.py
         # has always applied reached none of those turns.
-        return _ok(untrusted.wrap(output, source=f"browser_extract:{page.url}"), t0)
+        return _ok(untrusted.wrap(output, source=f"browser_extract:{page.url}"), t0, tool="browser_extract")
 
 
 class BrowserClickTool(_BrowserTool):
@@ -500,7 +519,7 @@ class BrowserTypeTool(_BrowserTool):
         )
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_type")
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             await page.fill(selector, text, timeout=_DEFAULT_SELECTOR_TIMEOUT_MS)
@@ -547,7 +566,7 @@ class BrowserScreenshotTool(_BrowserTool):
         )
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, tool="browser_screenshot")
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             out_dir: Path = runtime.settings.screenshots_dir
@@ -568,7 +587,7 @@ class BrowserScreenshotTool(_BrowserTool):
             )
         with contextlib.suppress(OSError):
             out_path.chmod(0o600)
-        return _ok({"path": str(out_path)}, t0)
+        return _ok({"path": str(out_path)}, t0, tool="browser_screenshot")
 
 
 class BrowserScrollTool(_BrowserTool):
@@ -603,7 +622,7 @@ class BrowserScrollTool(_BrowserTool):
         amount = str(kwargs.get("amount", "page"))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_scroll")
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             if direction == "top":
@@ -659,7 +678,7 @@ class BrowserWaitForTool(_BrowserTool):
         timeout_ms = int(timeout_raw) if isinstance(timeout_raw, int | str) else _DEFAULT_SELECTOR_TIMEOUT_MS
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, tool="browser_wait_for")
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
         except _BROWSER_ERRORS as exc:
@@ -718,7 +737,7 @@ class BrowserEvalJsTool(_BrowserTool):
         )
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_eval_js")
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             result = await page.evaluate(script)
@@ -737,7 +756,7 @@ class BrowserEvalJsTool(_BrowserTool):
             url_path_only(page.url),
             {"session_id": session_id, "script_len": len(script), "script_sha256_prefix": script_sha256},
         )
-        return _ok(payload, t0)
+        return _ok(payload, t0, tool="browser_eval_js")
 
 
 class BrowserUploadTool(_BrowserTool):
@@ -772,10 +791,10 @@ class BrowserUploadTool(_BrowserTool):
         selector = str(kwargs.get("selector", ""))
         file_path = Path(str(kwargs.get("file_path", "")))
         if not file_path.exists():
-            return _err(f"File not found: {file_path}", t0, committed=False)
+            return _err(f"File not found: {file_path}", t0, committed=False, tool="browser_upload")
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_upload")
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             await page.set_input_files(selector, str(file_path))
@@ -790,7 +809,7 @@ class BrowserUploadTool(_BrowserTool):
             url_path_only(page.url),
             {"session_id": session_id, "selector_len": len(selector), "file_path": str(file_path)},
         )
-        return _ok({"ok": True}, t0)
+        return _ok({"ok": True}, t0, tool="browser_upload")
 
 
 class BrowserDownloadTool(_BrowserTool):
@@ -828,7 +847,7 @@ class BrowserDownloadTool(_BrowserTool):
         max_bytes = int(max_bytes_raw) if isinstance(max_bytes_raw, int | str) else 10_485_760
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_download")
         try:
             sess, page, _ph = await sessions.get_page(session_id, str(page_handle) if page_handle else None)
             downloads_dir: Path = runtime.settings.downloads_dir
@@ -850,14 +869,14 @@ class BrowserDownloadTool(_BrowserTool):
         size = out_path.stat().st_size
         if size > max_bytes:
             out_path.unlink(missing_ok=True)
-            return _err(f"Download exceeded max_bytes ({size} > {max_bytes})", t0)
+            return _err(f"Download exceeded max_bytes ({size} > {max_bytes})", t0, tool="browser_download")
         sha = hashlib.sha256(out_path.read_bytes()).hexdigest()
         _audit_consequential(
             "browser_download",
             url_path_only(page.url),
             {"session_id": session_id, "bytes": size, "sha256": sha, "stored_path": str(out_path)},
         )
-        return _ok({"path": str(out_path), "bytes": size, "sha256": sha}, t0)
+        return _ok({"path": str(out_path), "bytes": size, "sha256": sha}, t0, tool="browser_download")
 
 
 class BrowserCookiesGetTool(_BrowserTool):
@@ -886,7 +905,7 @@ class BrowserCookiesGetTool(_BrowserTool):
         domain = kwargs.get("domain")
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, tool="browser_cookies_get")
         try:
             sess = await sessions.get(session_id)
             cookies = await sess.context.cookies()
@@ -929,7 +948,7 @@ class BrowserCookiesSetTool(_BrowserTool):
         cookies = kwargs.get("cookies", [])
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_cookies_set")
         cookies_list = list(cookies) if isinstance(cookies, list) else []
         try:
             sess = await sessions.get(session_id)
@@ -944,7 +963,7 @@ class BrowserCookiesSetTool(_BrowserTool):
             None,
             {"session_id": session_id, "cookie_count": len(cookies_list)},
         )
-        return _ok({"ok": True}, t0)
+        return _ok({"ok": True}, t0, tool="browser_cookies_set")
 
 
 class BrowserCookiesClearTool(_BrowserTool):
@@ -969,7 +988,7 @@ class BrowserCookiesClearTool(_BrowserTool):
         session_id = str(kwargs.get("session_id", ""))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_cookies_clear")
         try:
             sess = await sessions.get(session_id)
             await sess.context.clear_cookies()
@@ -1000,7 +1019,7 @@ class BrowserTabOpenTool(_BrowserTool):
         session_id = str(kwargs.get("session_id", ""))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, tool="browser_tab_open")
         try:
             # THE one caller that genuinely wants a new tab — now stated, not
             # inherited from "no handle happens to create one".
@@ -1034,7 +1053,7 @@ class BrowserTabListTool(_BrowserTool):
         session_id = str(kwargs.get("session_id", ""))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0)
+            return _err(err, t0, tool="browser_tab_list")
         try:
             sess = await sessions.get(session_id)
         except _BROWSER_ERRORS as exc:
@@ -1073,7 +1092,7 @@ class BrowserTabCloseTool(_BrowserTool):
         page_handle = str(kwargs.get("page_handle", ""))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_tab_close")
         try:
             sess = await sessions.get(session_id)
         except _BROWSER_ERRORS as exc:
@@ -1088,10 +1107,10 @@ class BrowserTabCloseTool(_BrowserTool):
         if closed_obs is not None:
             sessions._cancel_dialog_timers(closed_obs)
         if page is None:
-            return _err(f"page_handle not found: {page_handle}", t0)
+            return _err(f"page_handle not found: {page_handle}", t0, tool="browser_tab_close")
         with contextlib.suppress(Exception):
             await page.close()
-        return _ok({"ok": True}, t0)
+        return _ok({"ok": True}, t0, tool="browser_tab_close")
 
 
 class BrowserCloseTool(_BrowserTool):
@@ -1115,7 +1134,7 @@ class BrowserCloseTool(_BrowserTool):
         session_id = str(kwargs.get("session_id", ""))
         runtime, sessions, err = _services_or_unavailable()
         if err:
-            return _err(err, t0, committed=False)
+            return _err(err, t0, committed=False, tool="browser_close")
         try:
             await sessions.close(session_id)
         except _BROWSER_ERRORS as exc:
@@ -1162,7 +1181,7 @@ class BrowserRecallUrlTool(_BrowserTool):
         needle = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", url).rstrip("/")
         # 2. DECISION
         if not needle:
-            return _err("browser_recall_url requires a 'url'.", t0)
+            return _err("browser_recall_url requires a 'url'.", t0, tool="browser_recall_url")
         try:
             from stackowl.memory.curated import shared_memory
 
@@ -1180,14 +1199,14 @@ class BrowserRecallUrlTool(_BrowserTool):
             )
             return _err(
                 f"Curated memory search failed: {truncate_for_error(str(exc))}", t0
-            )
+            , tool="browser_recall_url")
         # 3. STEP + 4. EXIT
         if not hits:
             log.tool.info(
                 "[browser] recall_url: exit — nothing noted",
                 extra={"_fields": {"needle": needle}},
             )
-            return _ok({"found": False}, t0)
+            return _ok({"found": False}, t0, tool="browser_recall_url")
         log.tool.info(
             "[browser] recall_url: exit — found",
             extra={"_fields": {"needle": needle, "hits": len(hits)}},
@@ -1195,7 +1214,7 @@ class BrowserRecallUrlTool(_BrowserTool):
         return _ok({
             "found": True,
             "notes": [f"[{target}] {text}" for target, text in hits][:5],
-        }, t0)
+        }, t0, tool="browser_recall_url")
 
 
 # --------------------------------------------------------------------------- registry helper

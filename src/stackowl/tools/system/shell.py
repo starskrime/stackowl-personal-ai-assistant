@@ -917,7 +917,18 @@ async def run_argv(
         redir = _redirect_target(argv)
         if redir is not None:
             artifact_path = redir if os.path.isabs(redir) else os.path.join(base, redir)
-    log.tool.debug(
+    # INFO, NOT DEBUG (DEBT-296). This is the ONLY record of what a shell command
+    # actually did — success, returncode, output size, artifact, duration — and it
+    # was at DEBUG while `shell.execute: entry` beside it was at INFO. MEASURED
+    # across 677,108 retained records: 312 entries, ZERO exits, because this
+    # deployment has never written a single DEBUG line. An auditor could see that
+    # the agent ran a shell command 312 times and not one outcome.
+    #
+    # The reasoning was already in this function, EIGHT LINES BELOW: "INFO,
+    # deliberately: ... Production runs at INFO". Someone applied the rule correctly
+    # to the line they were adding and never looked up at the line above it, which
+    # is what a per-line level convention costs.
+    log.tool.info(
         "shell.execute: exit",
         extra={
             "_fields": {

@@ -138,10 +138,54 @@ class TestTheLiveCorpusStaysClean:
             + "\n  ".join(offenders)
         )
 
-    def test_the_sweep_sees_a_real_population(self) -> None:
-        """VACUITY CONTROL. The assertion above passes over an empty corpus, and the
-        three escaped patterns are what prove the walk reaches them at all."""
+    def test_the_sweep_reaches_a_bracketed_pattern_when_one_EXISTS(self) -> None:
+        """VACUITY CONTROL, PROVEN AGAINST A CONTROL INPUT — and that change is the
+        whole repair (DEBT-296).
+
+        It used to count bracketed patterns in the LIVE record and demand at least
+        three. That is a property of the RECORD, not of the walk, and this programme's
+        normal work SHRINKS it: closing a `partial` validate deletes its
+        `closing_check`. Two closed in one loop, the count fell 3 -> 2, and the full
+        suite went red on a guard that had found nothing wrong — a control whose
+        denominator is the very thing the loop exists to reduce will keep failing, at
+        unpredictable moments, for doing its job.
+
+        A vacuity control answers "can this walk see anything at all", so it must be
+        asked of an input the test OWNS. The live half below then only has to be
+        non-empty, which no amount of closing checks can break."""
         import re
+        import sys
+
+        sys.path.insert(0, str(_ROOT / "scripts"))
+        from progress_lint import entries_with_closing_checks as record_checks
+
+        planted = {
+            "known_debt": [
+                {
+                    "id": "CONTROL-1",
+                    "stages": {"validate": "partial"},
+                    "closing_check": (
+                        "n=$(./scripts/log_since.sh 2026-01-01 '[scheduler] planted')"
+                    ),
+                }
+            ]
+        }
+        found = [
+            pattern
+            for _ident, raw in record_checks(planted)
+            for pattern in re.findall(r"log_since\.sh\s+\S+\s+'([^']*)'", raw)
+            if "[" in pattern
+        ]
+        assert found == ["[scheduler] planted"], (
+            "the walk cannot reach a bracketed pattern that is definitely there — "
+            f"the extraction is broken, not the record: {found}"
+        )
+
+    def test_the_live_record_still_has_checks_to_sweep(self) -> None:
+        """The other half, and it is keyed on something that does NOT shrink to zero
+        by ordinary work: that `progress.yml` carries closing checks at all. If this
+        ever reads zero the reader is a helper that broke, not a programme that
+        finished."""
         import sys
 
         import yaml
@@ -150,8 +194,6 @@ class TestTheLiveCorpusStaysClean:
         from progress_lint import entries_with_closing_checks as record_checks
 
         data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
-        bracketed = 0
-        for _ident, raw in record_checks(data):
-            for pattern in re.findall(r"log_since\.sh\s+\S+\s+'([^']*)'", raw):
-                bracketed += "[" in pattern
-        assert bracketed >= 3, f"only {bracketed} bracketed patterns found; walk broken"
+        assert len(list(record_checks(data))) >= 10, (
+            "the record reader found almost no closing checks — the helper is blind"
+        )

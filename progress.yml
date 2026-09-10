@@ -21189,6 +21189,149 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-296
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led. Reached by pairing every tool's `execute: entry` against its `execute: exit` across the retained corpus, an instrument that did not exist."
+    what: >-
+      **312 SHELL COMMANDS RAN AND NOT ONE OUTCOME WAS EVER WRITTEN DOWN.**
+      `shell.execute: entry` is logged at INFO. `shell.execute: exit` — carrying
+      success, returncode, output length, artifact path and duration, every field an
+      auditor would want — was logged at DEBUG, and this deployment has written **zero
+      DEBUG records in 677,108**. An operator reading these logs can see that the agent
+      started an arbitrary command 312 times and cannot see the result of a single one.
+      The second half is the same contract broken by IDENTITY instead of level:
+      **1,235 records of `browser_tool.execute: exit` against ZERO
+      `browser_tool.execute: entry`**, because `browser_tool` is not a tool — it is
+      `_ok`/`_err`'s default keyword value. THIRTY-TWO call sites omitted `tool=`, so
+      thirty-two return paths filed their outcome under a placeholder, and
+      `browser_eval_js` (which logs its entry with its real name) showed 48 entries
+      against 1 exit.
+    root_cause_measured: >-
+      THE EXIT HALF OF THE PAIR IS SUPPLIED BY HAND AT EACH SITE, AND NOTHING COMPARES
+      IT TO THE ENTRY THAT OPENED IT. Two mechanisms, one cause:
+      (1) the LEVEL is chosen per line. `shell`'s reasoning was already inside that same
+      function, EIGHT LINES BELOW the DEBUG call — a comment explaining why a different
+      line there had to be INFO ("Production runs at INFO, and a capability nothing sets
+      is decoration"). Someone applied the rule correctly to the line they were adding
+      and never looked up at the line above it.
+      (2) the NAME is a defaulted keyword. `tool: str = "browser_tool"` is the
+      parameter's own name wearing a tool's clothes, and every layer worked perfectly
+      with the keyword absent — the helper logged, the field was populated, the level was
+      INFO. Nothing looked wrong at any point.
+      `logging_visibility.py` exists for exactly this shape and is scoped to five
+      BACKGROUND packages, exempting `tools/` on the reasoning that "a per-turn tool that
+      returns quietly is still observed, because its turn has a user, a reply and a cost
+      record". **That reasoning is about whether a HUMAN NOTICES, and it was relied on
+      for whether the PLATFORM CAN SAY WHAT IT DID.** A turn's reply tells the user the
+      command failed; nothing anywhere records what it ran or what came back.
+    the_instrument_is_most_of_the_finding: >-
+      TWO STATIC SCANS WERE WRITTEN FOR THIS AND BOTH WERE WRONG, and both looked
+      authoritative. Function-scoped reported **66 of 66** tools as offenders — because
+      most tools log their exit from a shared helper — and 66-of-66 is the shape of an
+      instrument error, not a finding. Module-scoped reported five, of which **four were
+      false**: browser tools whose exit IS logged, through a helper that builds the
+      message as `f"{tool}.execute: exit"`, a string no AST walk can read.
+      THE CORPUS SETTLED BOTH INSTANTLY, because it counts what was actually written.
+      Of ~35 tools with traffic every one pairs within 0.5% — `web_search` 1462/1460,
+      `browser_extract` 430/430, `memory` 312/312, `todo` 127/127 — which is what makes
+      the three exceptions measurable at all. `scripts/four_point_pairs.py` now carries
+      BOTH halves and reports them separately: the static contract a tripwire can ratchet,
+      and the live pairing that tells you the static half is asking the right question.
+    what_else_that_same_cause_reaches_and_is_NOT_fixed_here: >-
+      THE ASYMMETRY RUNS BOTH WAYS AND THE OTHER DIRECTION IS BIGGER BY VOLUME.
+      MEASURED: 2,173 exits with no entry (`browser_tool` 1,235, `note_applied_lesson`
+      612, `tool_search` 147, `read_logs` 104, `tool_describe` 75) against 563 entries
+      with no exit. Fixing `browser_tool` removes 1,235 of those; the rest are tools
+      whose ENTRY is at DEBUG and whose exit is at INFO — the mirror image of `shell`.
+      DELIBERATELY NOT FIXED, and the reason is a real difference rather than a scope
+      cut: an entry with no exit hides an OUTCOME, which is the harmful direction; an
+      exit with no entry is merely asymmetric, and the exit is the record that carries
+      the outcome. The script reports the two sets separately so a later loop decides
+      with the number in front of it rather than re-measuring.
+      `web_fetch` (814 entry / 610 exit) is the third live gap and is also left: its five
+      early returns each `log.tool.warning` first, so the failure IS visible — only the
+      pairing is broken. Adding an exit there would double-log the same event.
+    fix: >-
+      `shell.execute: exit` DEBUG -> INFO, with the reason written beside it rather than
+      eight lines below. `_ok`/`_err` lose the `tool` default entirely — there is no
+      honest default, because the helper cannot know which tool called it and the one it
+      had produced 1,235 records under a name nothing enters by. All THIRTY-TWO call sites
+      now name their tool, derived from each enclosing class's own `name` property rather
+      than guessed. Same move DEBT-289 made for `remedy`: an argument with a plausible
+      default is an argument that gets forgotten, silently.
+    the_scripted_edit_needed_THREE_attempts_and_the_syntax_gate_caught_every_one: >-
+      Attempt 1 indexed the line as a STRING at `end_col_offset` — that is a UTF-8 BYTE
+      offset, and these files are full of em-dashes, so it raised IndexError. Attempt 2
+      used bytes but decided "does the text before the paren end in a comma?" from THAT
+      LINE ALONE — a multi-line call closes on a line whose only content is `)`, so it
+      inserted a leading comma and `ast.parse` refused it. Attempt 3 works on absolute
+      byte offsets across the whole file. **The syntax gate as the FIRST check is what
+      made all three loud instead of subtle**, and the read-back was the SPAN, not a
+      count: every one of the 40 diffs was printed and the derived name checked against
+      its enclosing class.
+    AND_THE_EDIT_MATCHED_BY_NAME_WHEN_IT_SHOULD_HAVE_MATCHED_BY_BINDING: >-
+      MYPY CAUGHT A RUNTIME BREAK I HAD ALREADY WRITTEN. The scripted edit found
+      `_ok(`/`_err(` by NAME and reported FORTY sites. Eight are in `browse.py`, which
+      defines its OWN `_err` — a documented pre-loop refusal taking no `tool` and logging
+      nothing. Adding the keyword there produced `Unexpected keyword argument "tool" for
+      "_err"` eight times, and without the type checker it would have been a TypeError on
+      every `browser_browse` refusal.
+      Reverted; the real number is THIRTY-TWO, all in `tools.py`. The guard was born with
+      the same bug and now resolves the way the edit should have: a module defining its
+      own `_ok`/`_err` is skipped, and the skipped SET is asserted BY NAME so a new
+      shadowing module cannot arrive as silence.
+      `browser_browse`'s eight refusals therefore still return with no exit line —
+      MEASURED AND LEFT: a different helper with its own recorded reasoning, and the
+      corpus puts `browser_browse` at 8 entries / 9 exits, so that path is close to
+      unused. Widening a fix into a helper whose author documented why it is silent is a
+      judgement, not a tidy-up.
+    tests: >-
+      `tests/audit/test_a_tool_that_says_it_started_says_how_it_ended.py`. The
+      discrimination control is the load-bearing one: `browser_type`'s exit string exists
+      in NO source file — it is assembled inside the helper — so a walk that could not
+      follow the `tool=` keyword would report it unpaired, which is exactly what this
+      item's second failed scan did. Plus a vacuity control on the population (>= 45
+      tools, >= 40 at INFO+), a call-site control (>= 40 `_ok`/`_err` sites), an empty
+      allowlist that is itself checked for staleness, and a direct assertion on the
+      highest-privilege tool in the tree.
+      PROVEN BY BEFORE/AFTER rather than asserted: `unpaired()` returns
+      `['browser_eval_js', 'shell']` on the unfixed tree and `[]` on the fixed one, run
+      off-tree against a copy while the full suite held the real one.
+    AND_THE_FULL_SUITE_WENT_RED_ON_MY_OWN_PREVIOUS_LOOP_WHILE_THIS_WAS_BEING_BUILT: >-
+      A VACUITY CONTROL WHOSE DENOMINATOR IS THE THING THE PROGRAMME EXISTS TO REDUCE.
+      `test_the_sweep_sees_a_real_population` counted `closing_check` patterns in the
+      LIVE record containing a bracketed log prefix and demanded at least THREE, to
+      prove its extraction reaches them. DEBT-295's loop closed two `partial` validates
+      — which DELETES their closing checks — the count fell 3 -> 2, and the run went red
+      on a guard that had found nothing wrong.
+      It will keep happening: closing a check is what a good loop does, so this control
+      fails at unpredictable moments FOR THE PROGRAMME WORKING. And it is not a
+      threshold to lower — 2 becomes 1 becomes 0.
+      THE SHAPE: a vacuity control answers "can this walk see anything at all", which is
+      a property of the WALK. Asking it of the live record makes the guard's health
+      depend on the record's contents. It now plants a synthetic entry carrying
+      `'[scheduler] planted'` and asserts the extraction returns exactly that — an input
+      the test OWNS — while a second, separate assertion keeps the live half honest by
+      requiring only that `progress.yml` carries closing checks AT ALL (>= 10 of 26
+      today), which no amount of closing can drive to zero.
+      Caught by the full run at 0%, which is the only thing that could: it is
+      deliberately not a tripwire, so the gate ran clean four times over it.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      Both fixed lines need real traffic: a shell command run by the model, and a browser
+      tool returning through `_ok`/`_err`. Both are frequent, so this closes on its own
+      within a day rather than needing to be driven.
+    the_placeholder_half_is_checked_STRUCTURALLY_and_here_is_why: >-
+      A first draft asked for ZERO new `browser_tool.execute: exit` records since the
+      fix. That check can never pass: `log_since.sh`'s window includes TODAY'S file,
+      which already holds this morning's pre-fix records, so the count starts non-zero
+      and a negative condition has nothing to subtract them with. The
+      satisfied-by-history trap in the mirror — a date bound answers *when*, and for an
+      ABSENCE that is the wrong question. The tree is the right instrument for an
+      absence: the tripwire asserts `_ok`/`_err` have no `tool` default and that all 40
+      call sites name their tool, which is the property, not its shadow in a log.
+    closing_check: >-
+      s=$(./scripts/log_since.sh 2026-09-10 'shell.execute: exit'); if [ "${s:-0}" -gt 0 ]; then echo "CLOSEABLE ${s} shell outcome(s) recorded — this string existed 0 times in 677,108 records, because only the promoted level can emit it"; else echo "OPEN 0 — no shell command has completed on the fixed code yet"; fi
   - id: DEBT-295
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. Reached by re-opening the one INCIDENT record whose brainstorm is still `partial`, and asking what its own closing check was asking FOR."
