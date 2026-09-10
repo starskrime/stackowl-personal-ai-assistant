@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import datetime
+import sys
 from collections.abc import Callable
 from contextvars import ContextVar, Token
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
@@ -280,12 +281,81 @@ def reset_services(token: Token[StepServices]) -> None:
     _ctx.reset(token)
 
 
+#: Call sites already reported as running without bound services.
+#:
+#: BOUNDED BY THE SOURCE, not by a counter. ``get_services`` is called once per
+#: tool per turn, so an unconditional WARNING would flood; a once-per-process
+#: line would hide every site but the first. Keying on the caller's code location
+#: gives exactly one line per distinct place that runs unbound — a set whose size
+#: is bounded by the number of lines in this tree that call this function.
+_unbound_sites: set[str] = set()
+
+
 def get_services() -> StepServices:
-    """Return the current step services. Returns empty StepServices if not set."""
+    """Return the current step services, or an EMPTY set if none are bound.
+
+    THE EMPTY FALLBACK IS LOAD-BEARING AND USED TO BE SILENT. ``StepServices``
+    carries 51 collaborators; when the ContextVar is unbound this returns all 51
+    as ``None``, and every consumer then reports ITS OWN collaborator as missing.
+    One unbound call becomes 51 different messages, not one of which mentions the
+    context.
+
+    WHAT THAT COST, MEASURED 2026-09-10. ``web_fetch`` logged
+    ``runtime not initialized`` 30 times and answered the model
+    "Browser runtime not initialized." The browser was RUNNING: at 00:42:30 a
+    call reported the runtime missing while at 00:42:36 another ``web_fetch``
+    in the SAME PROCESS exited successfully and ``browser_navigate`` reused a
+    live session five seconds later. The message named a subsystem that was up,
+    so three separate readings — a failed browser start, the gateway role, a
+    services object built too early — were pursued and abandoned before the
+    context was suspected at all.
+
+    Downstream the cost was the operator's: three tool attempts, a tripped
+    same-tool circuit breaker, a model that claimed a result it never got, and
+    five goal turns delivered as "I couldn't fully complete this".
+
+    SO IT SAYS SO NOW. The rule this violated is not a style note — ``CLAUDE.md``
+    makes "every ``except`` logs" mandatory and "no hidden errors" a standing
+    correction, and this was a caught exception that logged nothing on the exact
+    path where the platform loses every service it has.
+
+    Still returns the empty set rather than raising: callers are tools and steps
+    mid-turn, and a raise here would turn a degraded turn into a crashed one. The
+    fix is that the degradation is now VISIBLE, not that it is fatal.
+    """
     try:
         return _ctx.get()
     except LookupError:
+        _report_unbound()
         return StepServices()
+
+
+def _report_unbound() -> None:
+    """Name the caller running without services — once per call site.
+
+    WARNING, not DEBUG. This deployment has written 677,108 log records and ZERO
+    of them are DEBUG, so a DEBUG line here would not exist when it is needed —
+    which is the whole reason the condition above went unnamed for as long as it
+    did.
+    """
+    try:
+        frame = sys._getframe(2)  # noqa: SLF001 — caller of get_services()
+        site = (
+            f"{frame.f_globals.get('__name__', '?')}"
+            f":{frame.f_code.co_name}:{frame.f_lineno}"
+        )
+    except Exception:  # noqa: BLE001 — diagnosis must never break the turn
+        site = "<unknown>"
+    if site in _unbound_sites:
+        return
+    _unbound_sites.add(site)
+    log.engine.warning(
+        "[services] get_services: no services bound for this context — EVERY "
+        "collaborator will read as missing, so any 'not initialized' or 'not "
+        "wired' message downstream of here is about the CONTEXT, not the "
+        "subsystem it names",
+        extra={"_fields": {"caller": site, "fields_nulled": len(fields(StepServices))}},
+    )
 
 
 def owner_scope_key(state: PipelineState) -> str:

@@ -141,10 +141,27 @@ class WebFetchTool(Tool):
         services = get_services()
         runtime = services.browser_runtime
         if runtime is None:
-            log.tool.warning("web_fetch.execute: runtime not initialized")
+            # SAY WHAT IS KNOWN, NOT WHAT IS GUESSED. This branch used to log
+            # "runtime not initialized" and answer the model "Browser runtime not
+            # initialized." — a claim about a SUBSYSTEM, made without asking the
+            # subsystem anything. MEASURED 2026-09-10: it fired 30 times while the
+            # browser was RUNNING. At 00:42:30 it fired; at 00:42:36 another
+            # web_fetch in the same process exited successfully, and five seconds
+            # later browser_navigate reused a live session. What this branch
+            # actually knows is that the SERVICES IT WAS HANDED carry no browser —
+            # which is equally satisfied by an unbound turn context, where all 51
+            # collaborators are None. `get_services` now says so on its own line.
+            log.tool.warning(
+                "web_fetch.execute: no browser runtime in this turn's services — "
+                "the runtime may be running and simply not reachable from here; "
+                "check for a [services] get_services warning on this trace",
+            )
             return ToolResult(
                 success=False, output="",
-                error="Browser runtime not initialized.",
+                error=(
+                    "No browser runtime is available to this turn. Do not claim a "
+                    "fetched result. Use web_search, or answer from what you have."
+                ),
                 duration_ms=(time.monotonic() - t0) * 1000,
             )
 
