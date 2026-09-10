@@ -708,24 +708,31 @@ current:
       notices if this degrades silently: NOTHING DOES" — which was the half with an
       actuator behind it. A platform that cannot yet explain a wedge can still be built to
       survive one, and those are different jobs.
+    THE_HALF_WITH_AN_ACTUATOR_IS_CLOSED_2026_09_10: >-
+      RESOLVED by DEBT-295, live on `41898f68`. The gateway now publishes a liveness
+      verdict about the core it supervises — first one at 2026-09-10T18:24:39.399707Z,
+      against 1,115 boots that produced none — and restarts a core that has stopped
+      turning. The previous closing check asked `systemctl` for a watchdog unit and would
+      have read OPEN forever on a box where none is installed and none ships. Its three
+      branches were exercised in one loop: nothing wired, wired-but-silent, then closed.
     closing_check: |-
-      # NOT A LOG QUERY ALONE, and the gate is what taught me the first half of that:
-      # `test_no_closing_check_greps_the_logs_unbounded` refused an unbounded grep, and
-      # for a deeper reason than the rule it enforces — the question here is not "what did
-      # the platform say", it is "does a mechanism EXIST that would notice". That part is
-      # answerable from the TREE and never rots.
+      # THIS NOW TRACKS THE REMAINING UNKNOWN, not the fixed half. Why a StackOwl process
+      # can be alive and produce zero log records is still undetermined, and the honest
+      # thing that would settle it is the NEXT occurrence being caught in the act —
+      # which is exactly what DEBT-295's detector does, loudly, with the stall duration.
+      # So: has anything stalled since the detector was armed?
       #
-      # What changed on 2026-09-10 is WHICH mechanism it asks about. It used to ask the
-      # service manager for a systemd watchdog, which made an operator's unit file the
-      # definition of done for a platform defect. It now asks the platform.
-      code=$(grep -rl "stall_probe=_probe_core_stall" src/ 2>/dev/null | head -1)
-      live=$(./scripts/log_since.sh 2026-09-10 'gateway: core liveness verdict')
-      if [ -n "$code" ] && [ "${live:-0}" -gt 0 ]; then
-        echo "CLOSEABLE — an out-of-process stall detector is wired in $code and has published $live verdict(s)"
-      elif [ -n "$code" ]; then
-        echo "OPEN — the detector is wired in $code but has published no verdict yet (0 live)"
+      # Deliberately date-bound to the day the detector shipped: an unbounded count would
+      # be satisfied by nothing (the string is new) but the bound says what the zero MEANS.
+      # A zero here is the good outcome and reads as one, which is rare enough to say.
+      armed=$(grep -rl "stall_probe=_probe_core_stall" src/ 2>/dev/null | head -1)
+      fired=$(./scripts/log_since.sh 2026-09-10 'CORE IS ALIVE AND NOT SERVING')
+      if [ -z "$armed" ]; then
+        echo "OPEN — the detector is no longer wired; nothing would catch the next stall"
+      elif [ "${fired:-0}" -gt 0 ]; then
+        echo "CLOSEABLE — a stall was caught in the act $fired time(s); the logs around it are the diagnosis this record is missing"
       else
-        echo "OPEN — nothing outside the core asks whether the core is still serving"
+        echo "OPEN — armed and nothing has stalled since; the ORIGINAL question (why a live process wrote zero records) still has no instance to answer it"
       fi
 
   DEBT213_2026_09_07_the_one_source_for_closing_checks_knew_two_of_the_records_three_sections:
@@ -21283,14 +21290,35 @@ known_debt:
       silent 7h21m. Calibration is pinned too: 711.7s (the largest healthy gap ever
       measured) must read `ok`, and the budget must stay below 15,146s or it detects
       neither real outage.
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    validated_2026_09_10_the_first_out_of_process_liveness_verdict_this_platform_has_ever_published: >-
+      LIVE, on `41898f68`, restarted with `./start.sh`. Core spawned 18:23:35Z, connected
+      18:23:38Z, and at **2026-09-10T18:24:39.399707Z** the GATEWAY published
+      `[startup] gateway: core liveness verdict — ok` with `previous: null` — the first
+      poll of the first generation. Against **1,115 boots that produced zero**, and the
+      same boot logs `[watchdog] systemd watchdog not configured — skipping` one line
+      below the reconnect, so the two paths are visibly independent: the systemd
+      transport is still absent and the platform now answers anyway.
+      THE CHECK PROVED ITSELF BY MOVING THROUGH ALL THREE OF ITS BRANCHES IN ONE LOOP —
+      "nothing outside the core asks whether the core is still serving" before the apply,
+      "wired in src/stackowl/startup/orchestrator.py but no verdict yet (0 live)" after
+      it, and CLOSEABLE after the boot. A check that has been seen to say all three
+      things cannot be the kind that only ever says one.
+      What is NOT evidenced and is not claimed: the acting branch. Killing a wedged core
+      needs a wedged core, and forcing one measures the forcing. The structural tests
+      cover it; live traffic has not.
+    the_targeted_run_and_the_mutations: >-
+      548 passed across the 90 files `tests_touching.py` derived (including the three
+      root-level ones no `tests/<package>` path reaches); 20/20 on the new file. FOUR
+      MUTATIONS, each restored from a file copy with the tree re-run green after:
+      removing the `since` floor fails 1, turning the no-enabled-job branch into `down`
+      fails 1, replacing the derived budget with `1800.0` fails 2, unwiring the probe from
+      the gateway fails 1. Gate PASS, ruff 35 and mypy 65 both exactly at baseline.
     validate_is_PARTIAL_and_the_reason_is_named: >-
       The acting branch cannot be evidenced without wedging the platform on purpose. What
       CAN be evidenced, and is what the closing check asks for, is that the detector is
       ARMED and PRODUCING VERDICTS — the exact property `WatchdogService` never had and
       nothing ever noticed.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-10 'gateway: core liveness verdict'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} out-of-process liveness verdict(s) — a line only the new code emits, against 1,115 boots that produced none"; else echo "OPEN 0 — the gateway has not yet published a liveness verdict for the core"; fi
   - id: DEBT-294
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by asking what the operator actually WAITS for and following the slowest turns."
