@@ -21269,13 +21269,32 @@ known_debt:
       the CORPUS caught twice during DEBT-296 (a helper's `f"{tool}.execute: exit"` is a
       string no walk can read), recorded here rather than papered over, and it is why
       `four_point_pairs.py` keeps its live-pairing half beside the static one.
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    validated_2026_09_10_the_first_file_mutation_this_deployment_has_ever_recorded: >-
+      LIVE on `34eee7b3`. Restarted (commit 22:21:28Z, core connected 22:22:17Z — 49s
+      later), then a real turn driven through `scripts/dev_ingress.py` so the MODEL
+      invoked the tool. RAW RECORD:
+      `2026-09-10T22:28:45.870768Z INFO write_file.execute: exit`, `duration_ms 2.05`,
+      `{path: "debt298-check.txt", bytes: 2}`. **That string existed ZERO times in
+      677,108 retained records**, so only the promoted level can have produced it.
+    AND_THE_FIRST_ATTEMPT_FAILED_IN_THE_MOST_USEFUL_WAY_POSSIBLE: >-
+      I asked for `/tmp/stackowl-debt298-check.txt`. `write_file` confines to the
+      workspace, so the trace reads:
+      `22:23:36 WARNING write_file.execute: path traversal denied` -> `22:23:41 INFO
+      shell.execute: entry` -> `22:23:41 INFO shell.execute: exit` — **the model was
+      refused, fell back to `shell`, and wrote the file that way.** The file appeared on
+      disk at 17:23 local, 2 bytes.
+      **THAT IS THIS ITEM'S DEFECT DEMONSTRATED ON LIVE TRAFFIC RATHER THAN ARGUED**, and
+      it is only legible because of DEBT-296: before that fix `shell.execute: exit` was
+      DEBUG, so the same trace would have read REFUSAL, then silence, then a file
+      existing with no record of what created it. The refusal was always visible; the act
+      never was. Two loops of this session are what make that five-line sequence readable.
+      My PROMPT was wrong, not the fix — recorded because "the fix did not fire" and "the
+      path was not taken" look identical from a zero, and this one was the second.
     validate_is_PARTIAL_and_the_reason_is_named: >-
       The line needs a real file write by the model. `~/.stackowl/undo` shows writes do
       happen, but not on a schedule, so this closes when one occurs rather than on a
       timer.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-10 'write_file.execute: exit'); e=$(./scripts/log_since.sh 2026-09-10 'edit.execute: exit'); t=$(( ${n:-0} + ${e:-0} )); if [ "$t" -gt 0 ]; then echo "CLOSEABLE ${t} file mutation(s) now recorded (write=${n:-0} edit=${e:-0}) — both strings existed 0 times in 677,108 records, because only the promoted level can emit them"; else echo "OPEN 0 — no file has been written or edited on the fixed code yet"; fi
   - id: DEBT-297
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. Reached by asking what the platform's own escalation channel has told the operator, and finding it told him the same thing twice."
