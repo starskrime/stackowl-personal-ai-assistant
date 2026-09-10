@@ -21131,20 +21131,22 @@ known_debt:
       added a FOURTH unscoped accessor to a guard that could not see it. Measured, not
       deferred as unknown.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
     document_is_no_change_needed_and_it_was_CHECKED: >-
       `docs_touching.py` reports that no design document declares either changed source as
       a `Source`, and says plainly that it cannot speak for the 35 documents declaring
       none. The guard's own file carries the whole account, which is where a reader of a
       tripwire looks.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      The guard half IS a test and is evidenced by the tripwire run. The two SRC changes
-      need the live database: `read_authored_dna` now requires `owner_id` to match, and if
-      the rows carry a different owner the read returns None and the DNA envelope anchor
-      silently vanishes — a wrong predicate looks exactly like "no row exists". That is
-      checked against real rows after the restart, not inferred.
-    closing_check: >-
-      n=$(./scripts/db_query.sh "SELECT COUNT(*) FROM owl_dna_authored WHERE owner_id = 'principal-default'" 2>/dev/null | tail -1); t=$(./scripts/db_query.sh "SELECT COUNT(*) FROM owl_dna_authored" 2>/dev/null | tail -1); if [ "${n:-0}" -gt 0 ] && [ "${n:-0}" = "${t:-x}" ]; then echo "CLOSEABLE all ${t} authored-DNA rows carry the owner the scoped read asks for — the predicate matches reality, so no anchor was lost"; else echo "OPEN ${n:-0} of ${t:-?} rows match the default owner — a scoped read would return None for the rest"; fi
+    validated_live_on_ad699915: >-
+      Restarted 2026-09-10T13:22:28Z on the tree carrying the fix, then the scoped read was
+      run against REAL ROWS — because a wrong owner predicate looks exactly like "no row
+      exists", and the DNA envelope anchor would vanish silently rather than fail.
+      `read_authored_dna` returned DNA for `archivist`, `english_tutor` and `hypothesis`,
+      and all 11 `owl_dna_authored` rows carry the owner the predicate asks for. (The probe
+      printed an aiosqlite "Event loop is closed" traceback on teardown — my throwaway
+      script not closing its pool, AFTER the three results printed. Named so it is not read
+      later as a platform fault.) The guard half IS a test, evidenced by the tripwire run
+      on the real tree.
   - id: DEBT-290
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by asking why the SAME three owls appear in every stuck-evolution warning."
