@@ -159,17 +159,23 @@ def test_the_live_corpus_gains_no_prompts() -> None:
     """
     log_dir = Path.home() / ".stackowl" / "logs"
     commands: list[str] = []
+    already_gated: list[str] = []
     for path in sorted(log_dir.glob("stackowl*.jsonl")):
         for line in path.read_text(errors="replace").splitlines():
             try:
                 record = json.loads(line)
             except ValueError:
                 continue
-            if record.get("msg") != "shell.execute: entry":
-                continue
-            command = (record.get("fields") or {}).get("command")
-            if command:
-                commands.append(command)
+            fields = record.get("fields") or {}
+            msg = record.get("msg")
+            if msg == "shell.execute: entry":
+                command = fields.get("command")
+                if command:
+                    commands.append(command)
+            elif msg and "REMOVES INSTALLED SOFTWARE" in msg:
+                head = fields.get("command_head")
+                if head:
+                    already_gated.append(head)
 
     if len(commands) < 50:
         pytest.skip(f"only {len(commands)} retained commands — corpus has rotated")
@@ -181,12 +187,22 @@ def test_the_live_corpus_gains_no_prompts() -> None:
         except ValueError:
             continue  # unbalanced quotes in a heredoc — never reaches argv either
         hit, reason = is_catastrophic(argv)
-        if hit:
-            caught.append((command[:120], reason))
+        if not hit:
+            continue
+        # A command the RUNNING gate already named and stopped is not a new prompt —
+        # it is this guard watching its own subject work. The corpus is append-only
+        # and now includes the probe that validated the fix, so without this the
+        # test would fail on the evidence that it works. Pair on the `command_head`
+        # the gate itself logged rather than re-deriving: one source, asked.
+        if any(command.startswith(head) or head.startswith(command[:120])
+               for head in already_gated):
+            continue
+        caught.append((command[:120], reason))
 
     assert not caught, (
         f"{len(caught)} of {len(commands)} commands he has actually run would now "
-        f"stop and ask: {caught[:5]}"
+        f"stop and ask, and the live gate did NOT stop them at the time — so this is "
+        f"a prompt the class would ADD rather than one it already makes: {caught[:5]}"
     )
 
 

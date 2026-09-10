@@ -21133,13 +21133,43 @@ known_debt:
       at the `ShellTool.execute` level instead, a tool the platform wrote for itself would
       have been the one path still able to uninstall things silently.
     baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      MEASURED: the class has fired ZERO times in the whole retained corpus, because nobody
-      has ever asked this platform to uninstall anything. So waiting for traffic would
-      leave this reading OPEN forever, which is the ambiguous-zero this programme has
-      already paid for. The evidence has to be MADE, by driving the live platform through
-      the real ingress with a removal command whose target does not exist.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    the_evidence_had_to_be_MADE_and_that_was_the_right_call: >-
+      MEASURED: the class had fired ZERO times in the whole retained corpus, because nobody
+      has ever asked this platform to uninstall anything. Waiting for traffic would have
+      left this OPEN forever — the ambiguous-zero this programme has already paid for — so
+      the evidence was MADE by driving the live platform, not by watching it.
+    validated_live_on_3a2aac4d: >-
+      Restarted 2026-09-10T08:28:42Z on the tree carrying the fix, then driven through the
+      REAL ingress (`scripts/dev_ingress.py`, trace `45550201656844569d1e3f1e2b720a39`)
+      with `pip uninstall -y stackowl-probe-package-that-does-not-exist` — a target that
+      does not exist, so approval could not have removed anything either.
+      THREE LINES, IN ORDER, at 08:29:29 — WARNING `shell.execute: the command REMOVES
+      INSTALLED SOFTWARE — requiring consent` with `reason: "pip uninstall — uninstalling
+      software: stackowl-probe-package-that-does-not-exist"`; WARNING `catastrophic command
+      — requiring consent`; ERROR `catastrophic command and no user present — refused (fail
+      closed)`. It never spawned. Before this commit that command would simply have run.
+      AND THE LIVE DISCRIMINATION PROOF CAME FREE, better than any fixture could give.
+      Having been refused, the model's NEXT command in the same turn was `pip show
+      stackowl-probe-package-that-does-not-exist` — the same manager, the same package,
+      and it ran SILENTLY, because the subcommand is a query. The gate separated them on
+      the live process, not in a test.
+      The refusal rather than a prompt is correct and is worth stating: an injected lane is
+      `interactive: false`, so the fail-closed branch is the right one and Bakir was never
+      interrupted to prove this.
+    AND_THE_GATE_REFUSED_THE_VALIDATION_COMMIT_ON_MY_OWN_GUARD: >-
+      `test_the_live_corpus_gains_no_prompts` reads the retained logs, the corpus is
+      APPEND-ONLY, and the probe I had just injected was now in it — so the guard failed on
+      the very evidence that the fix works. The lazy repair is a date bound, which freezes
+      the test into a record and stops it watching new traffic. The real defect is that the
+      predicate was wrong: it asked "would this command be caught NOW", when the claim is
+      "would this class ADD a prompt". A command the LIVE gate already named and stopped
+      adds nothing. It now pairs each catch against the `command_head` the gate itself
+      logged — one source, asked rather than re-derived — and a control proves the
+      exclusion is load-bearing rather than a way to make the test quiet: disabling it
+      turns the test RED on the probe, and restoring it green.
+      Fourth gate refusal in two days that was CORRECT. Each one caught something a
+      targeted run could not, and this one caught a guard whose own subject invalidated it.
     closing_check: >-
       n=$(./scripts/log_since.sh 2026-09-10 'REMOVES INSTALLED SOFTWARE'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} command(s) stopped by the removal class — a literal only the new code emits, and one the pre-existing gate line could not discriminate"; else echo "OPEN 0 — the class has not been exercised on the live process yet"; fi
   - id: DEBT-286
