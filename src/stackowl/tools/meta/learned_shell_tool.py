@@ -118,7 +118,15 @@ class LearnedShellTool(Tool):
         # create_subprocess_exec + timeout). shell=False keeps values inert data.
         result = await run_argv(argv, tool_name=self.name, timeout_sec=self._timeout())
         # 4. EXIT
-        log.tool.debug(
+        # INFO, NOT DEBUG (DEBT-299). This tool's severity is decided at RUNTIME —
+        # the MODEL wrote the spec — so no static rule can classify it, and
+        # DEBT-298's rule exempted it by treating "cannot tell" as "read".
+        # MEASURED: `count: 2` learned tools were loaded on today's boot and the
+        # corpus holds ZERO `learned_tool.execute` records of either kind, because
+        # this deployment has never written a DEBUG line. A MODEL-AUTHORED SHELL
+        # TOOL RAN AND NOTHING SAID SO. The field already carries `self.name`, so
+        # the record names WHICH one.
+        log.tool.info(
             "learned_tool.execute: exit",
             extra={"_fields": {"tool": self.name, "success": result.success}},
         )

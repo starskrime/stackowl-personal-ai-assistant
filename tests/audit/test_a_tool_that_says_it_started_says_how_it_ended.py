@@ -123,6 +123,104 @@ class TestATOOLTHATCHANGESSOMETHINGSAYSSO:
         assert len(changing) >= 15, f"only {len(changing)} declare write/consequential"
 
     @pytest.mark.tripwire
+    def test_a_tool_whose_severity_CANNOT_BE_READ_is_still_covered(self) -> None:
+        """DEBT-299. The first version of this rule iterated the DECLARED severities,
+        so a tool whose severity no AST walk can read fell out of the loop and was
+        exempted BY SILENCE — fail-OPEN on authority.
+
+        And the tools it let through were exactly the ones nobody wrote by hand:
+        `learned_tool` takes `action_severity=self._spec.action_severity` (the MODEL
+        wrote the spec) and `mcp_tool` takes its severity from an EXTERNAL server. The
+        two whose behaviour is defined outside this codebase were the two production
+        could not see.
+
+        This asserts the population the old rule skipped is REAL and non-empty — the
+        DATA half. It does NOT pin the loop, and that was MEASURED rather than assumed:
+        reverting the walk to iterating declarations, with both promotions left in place,
+        leaves all thirteen tests in this file green, because the two shapes agree on
+        TODAY'S tree and diverge only on a tool that does not exist yet. The RULE half is
+        pinned by the synthetic-root test below."""
+        logging_tools = set(entry_exit_levels())
+        declared = set(declared_severities())
+        undeclared = logging_tools - declared
+        assert len(undeclared) >= 5, (
+            "almost every logging tool now declares a severity statically — re-read "
+            f"this guard before trusting it: {sorted(undeclared)}"
+        )
+        assert "learned_tool" in undeclared, (
+            "the model-authored tool now declares a static severity; the fail-open "
+            "hole this test pins may have moved"
+        )
+
+    @pytest.mark.tripwire
+    def test_the_RULE_and_not_just_the_DATA_treats_cannot_tell_as_changing(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """THE DISCRIMINATION TEST DEBT-299 NEEDED AND ALMOST SHIPPED WITHOUT.
+
+        Mutation testing on the applied tree found it: reverting the walk to
+        `for tool, severity in declared_severities().items()` — restoring the exact
+        fail-open this item exists to close — left every other test here GREEN. The
+        two loop shapes agree on today's tree and diverge only on a tool that does not
+        exist yet, so no assertion over the REAL tree can tell them apart. A guard that
+        pins the data cannot pin the rule.
+
+        So this builds the tool that does not exist yet. Two synthetic modules, one
+        undeclared and one declaring `read`, both logging a loud entry and a quiet exit:
+        the correct rule reports the first and exempts the second; the fail-open rule
+        reports NEITHER, because neither is reachable from a declaration it can read."""
+        (tmp_path / "undeclared.py").write_text(
+            "class UndeclaredTool:\n"
+            "    def name(self) -> str:\n"
+            '        return "synthetic_undeclared"\n'
+            "    async def execute(self):\n"
+            '        log.tool.info("synthetic_undeclared.execute: entry")\n'
+            '        log.tool.debug("synthetic_undeclared.execute: exit")\n',
+            encoding="utf-8",
+        )
+        (tmp_path / "declared_read.py").write_text(
+            "class DeclaredReadTool:\n"
+            "    def name(self) -> str:\n"
+            '        return "synthetic_read"\n'
+            "    def manifest(self):\n"
+            '        return ToolManifest(action_severity="read")\n'
+            "    async def execute(self):\n"
+            '        log.tool.info("synthetic_read.execute: entry")\n'
+            '        log.tool.debug("synthetic_read.execute: exit")\n',
+            encoding="utf-8",
+        )
+
+        assert declared_severities(tmp_path) == {"synthetic_read": "read"}, (
+            "the fixture is not exercising the split it exists to exercise"
+        )
+        assert sorted(entry_exit_levels(tmp_path)) == [
+            "synthetic_read",
+            "synthetic_undeclared",
+        ], "both synthetic tools must be visible to the logging walk"
+
+        assert mutating_without_a_loud_outcome(tmp_path) == ["synthetic_undeclared"], (
+            "a tool whose severity CANNOT be read must be treated as changing "
+            "something; only an explicit `read` is exempt"
+        )
+
+    @pytest.mark.tripwire
+    def test_no_tool_escapes_the_rule_by_logging_no_ENTRY_at_all(self) -> None:
+        """THE OTHER AXIS OF THE SAME FAIL-OPEN, closed before it could be found the
+        hard way. The walk keys on tools that log an `X.execute: entry` literal, so a
+        tool declaring `write` and logging NO entry would not appear in the population
+        at all and would escape by absence rather than by exemption — the same accident
+        as DEBT-299's, one axis over.
+
+        MEASURED 2026-09-10: ZERO of the 56 tools declaring a severity are missing from
+        the logging population, so this holds today and this test is what keeps it
+        holding."""
+        missing = sorted(set(declared_severities()) - set(entry_exit_levels()))
+        assert not missing, (
+            "these tools declare a severity and log no `execute: entry` literal, so the "
+            f"outcome rule cannot see them at all: {missing}"
+        )
+
+    @pytest.mark.tripwire
     def test_read_is_exempt_BY_THE_DECLARATION_not_by_judgement(self) -> None:
         """DISCRIMINATION CONTROL, and it pins the scope decision rather than leaving it
         to prose. `read_file` logs entry AND exit at DEBUG exactly as the four did, and

@@ -186,16 +186,29 @@ def mutating_without_a_loud_outcome(root: pathlib.Path | None = None) -> list[st
     judgement — which is also why `read_file` is not swept in here. Its volume cannot
     be measured precisely because it is unlogged, and promoting an unmeasured rate is
     how a channel gets filtered instead of read.
+
+    ONLY AN EXPLICIT `read` IS EXEMPT — "CANNOT TELL" IS NOT (DEBT-299). The first
+    version of this rule iterated the DECLARED severities, so a tool whose severity no
+    AST walk can read fell out of the loop entirely and was exempted by silence. That is
+    fail-OPEN on authority, and the tools it let through are exactly the ones nobody
+    wrote by hand: MEASURED, of 67 tools logging an entry, 56 declare a severity
+    statically and 11 do not — and the only two of those eleven with a quiet outcome
+    were `learned_tool` (a MODEL-AUTHORED shell tool, `action_severity=self._spec.
+    action_severity`) and `mcp_tool` (an EXTERNAL server's tool). The two whose
+    behaviour is defined outside this codebase were the two production could not see.
+
+    So the walk now runs over every tool that LOGS, and skips only a severity read as
+    literally "read". Undeterminable is treated as changing something, which is the same
+    stance this repo takes everywhere else that authority is in question: `remedy` is
+    required rather than defaulted, and `_UnavailableCapability` refuses to guess.
     """
     severities = declared_severities(root)
     levels = entry_exit_levels(root)
     bad = []
-    for tool, severity in sorted(severities.items()):
-        if severity == "read":
+    for tool in sorted(levels):
+        if severities.get(tool) == "read":
             continue
-        info = levels.get(tool)
-        if info is None:
-            continue
+        info = levels[tool]
         if not (set(info["exits"]) & _LOUD):  # type: ignore[arg-type]
             bad.append(tool)
     return bad

@@ -116,7 +116,13 @@ class McpTool(Tool):
                 self._server_config, self._definition.name, dict(kwargs)
             )
             duration_ms = (time.monotonic() - t0) * 1000
-            log.debug(
+            # INFO, NOT DEBUG (DEBT-299). An MCP tool's severity comes from the
+            # EXTERNAL server, so it cannot be read statically and DEBT-298's rule
+            # exempted it by treating "cannot tell" as "read". Nothing on this
+            # install has ever configured MCP — ZERO `[mcp]` records in the whole
+            # corpus — so this is correct here and will be EXERCISED on a clone
+            # that uses one. Recorded rather than claimed.
+            log.info(
                 "mcp_tool.execute: exit",
                 extra={"_fields": {"tool": self.name, "duration_ms": duration_ms}},
             )

@@ -21189,6 +21189,97 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-299
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, and it is the hole DEBT-298 measured and named in its own record one loop earlier rather than a new discovery."
+    what: >-
+      **THE RULE I SHIPPED LAST LOOP EXEMPTED THE TWO TOOLS NOBODY WROTE BY HAND.**
+      DEBT-298's guard iterated the DECLARED severities, so a tool whose severity no AST
+      walk can read fell out of the loop entirely and was exempted BY SILENCE.
+      MEASURED: of **67 tools that log an entry, 56 declare a severity statically and 11
+      do not** — and of those eleven, exactly **two** have a quiet outcome:
+      `learned_tool` (`action_severity=self._spec.action_severity` — the MODEL wrote the
+      spec) and `mcp_tool` (its severity comes from an EXTERNAL server). Both log entry
+      AND exit at DEBUG, and this deployment has written zero DEBUG records in 677,108.
+      **A MODEL-AUTHORED SHELL TOOL AND AN EXTERNAL MCP TOOL COULD RUN AND NOTHING SAID
+      SO** — while `count: 2` learned tools were loaded on today's 22:22:28Z boot.
+    root_cause_measured: >-
+      A STATIC RULE TREATED "CANNOT TELL" AS "NO", AND THE THINGS IT CANNOT TELL ABOUT
+      ARE PRECISELY THE ONES DEFINED OUTSIDE THIS CODEBASE. That is fail-OPEN on
+      authority, and it is the opposite of the stance this repo takes everywhere else the
+      question arises: DEBT-289 made `remedy` REQUIRED rather than defaulted, and
+      `_UnavailableCapability` refuses to guess rather than falling open.
+      The mechanism is one line: `for tool, severity in declared_severities().items()`.
+      Iterating the DECLARATIONS rather than the TOOLS makes the undeterminable set
+      invisible to the loop — there is no branch to read, no exemption to review, nothing
+      to notice. **An exemption you can see is a decision; an exemption produced by the
+      shape of a loop is an accident.**
+    it_is_the_handoff_DEBT_298_LEFT_and_that_is_the_point: >-
+      DEBT-298's own record names this hole in full — the variable severity, the two
+      tools, "a scan over literals is blind to precisely the tools whose authority is not
+      typed by a person" — and shipped without closing it. That was the right call at the
+      time (the four measurable offenders were the item) and it is only right BECAUSE the
+      measurement was left behind for the next loop. This is the second consecutive item
+      to arrive that way. **A scope cut is only honest if it leaves the number.**
+    fix: >-
+      The walk now runs over every tool that LOGS and skips only a severity read as
+      literally `"read"`. Undeterminable is treated as changing something. Plus two
+      one-word promotions, DEBUG -> INFO, with the reason beside each — and the fields
+      were already right: `learned_tool` carries `{tool: self.name, success}`, so the
+      record names WHICH model-authored tool ran, and `mcp_tool` carries
+      `{tool, duration_ms}`.
+    what_can_and_cannot_be_evidenced_here: >-
+      `learned_tool` IS live: `[startup] gateway: learned tools loaded {count: 2}` on
+      today's boot, and the startup census names `instagram_media_extractor` as invoked
+      and `run_claude_code_demo` as never invoked. So the line can fire on this box, on
+      the next use of a learned tool.
+      `mcp_tool` CANNOT be evidenced here and that is stated rather than glossed: **zero
+      `[mcp]` records exist in the entire retained corpus** — nothing on this install has
+      ever configured an MCP server. The fix is correct and will be exercised on a clone
+      that uses one. A closing check keyed to it would read OPEN forever, which is the
+      ambiguous-zero this file's rules forbid, so the check names the learned tool only.
+    AND_THE_SAME_ACCIDENT_HAS_A_SECOND_AXIS_CLOSED_HERE_BEFORE_IT_WAS_FOUND: >-
+      The walk keys on tools that log an `X.execute: entry` LITERAL. A tool declaring
+      `write` and logging no entry would therefore not appear in the population at all —
+      escaping by ABSENCE rather than by exemption, which is DEBT-299's accident one axis
+      over. MEASURED before assuming: **ZERO of the 56 tools declaring a severity are
+      missing from the logging population**, so it holds today. A guard now keeps it
+      holding, because a hole that is currently empty is still a hole.
+    tests: >-
+      THREE added to `tests/audit/test_a_tool_that_says_it_started_says_how_it_ended.py`,
+      and THE THIRD ONE IS THE ITEM'S REAL LESSON. The first two pin the DATA: the
+      population the old rule skipped must be real and non-empty (>= 5 logging tools with
+      no static severity) and must still contain `learned_tool`; and no tool may escape
+      the other way, by declaring a severity and logging no entry at all.
+      PROVEN BY BEFORE/AFTER off-tree while the full suite held the real tree: with the
+      corrected rule, `mutating_without_a_loud_outcome()` returns
+      `['learned_tool', 'mcp_tool']` on the unfixed tree and `[]` on the fixed one, with
+      the population unchanged at 67 logging / 56 declaring so the walk is not what moved.
+    AND_THE_GUARDS_I_DRAFTED_DID_NOT_PIN_THE_RULE_measured_by_mutation_on_the_applied_tree: >-
+      I wrote into this record that without the population guard "the walk could quietly
+      revert to iterating declarations and every other assertion would still pass" — as
+      if the guard stopped that. MUTATION TESTING ON THE APPLIED TREE REFUTED IT: with
+      the walk reverted to `for tool, severity in declared_severities().items()` —
+      restoring the exact fail-open this item exists to close — ALL THIRTEEN TESTS STAYED
+      GREEN. Reverting either INFO promotion failed loudly; reverting the RULE failed
+      nothing.
+      The reason is the same one that made the original hole invisible: the two loop
+      shapes AGREE on today's tree and diverge only on a tool that does not exist yet, so
+      no assertion over the real tree can distinguish them. **A guard that pins the DATA
+      cannot pin the RULE, and I had written the claim that it did before measuring it.**
+      The fix builds the tool that does not exist yet: a synthetic root of two modules,
+      one undeclared and one declaring `read`, both logging a loud entry and a quiet
+      exit. The correct rule reports the first and exempts the second; the fail-open rule
+      reports NEITHER. Re-run under mutation: `Right contains one more item:
+      'synthetic_undeclared'` — the revert now fails by name. This is why the off-tree
+      dry run is never the proof: the apply and the mutation are.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The line needs the model to invoke a LEARNED tool. Two are registered and one has
+      been used before, but not on a schedule — so this closes when it happens rather
+      than on a timer, and forcing it would measure my forcing.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'learned_tool.execute: exit'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} model-authored tool run(s) now recorded — the string existed 0 times in 677,108 records, because only the promoted level can emit it"; else echo "OPEN 0 — no learned tool has been invoked on the fixed code yet (2 are registered)"; fi
   - id: DEBT-298
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. Found by taking the handoff DEBT-296 deliberately left: it measured the DEBUG-entry set, scoped it out, and printed the number so a later loop could decide with it rather than re-measure."
