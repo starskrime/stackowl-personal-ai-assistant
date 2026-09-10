@@ -21130,6 +21130,16 @@ known_debt:
       FOUR MUTATIONS, each restored from a file copy with the tree re-run green after:
       deleting by time alone; dropping the window predicate; raising retention to 30 days;
       re-raising instead of returning 0. Each fails exactly one test.
+    the_gate_refused_the_document_stamp_for_a_LIMIT_worth_naming: >-
+      `test_a_reviewed_commit_is_newer_than_the_verification_it_supplements` compares
+      DATES. D13.1 was verified earlier the SAME DAY against `161d5550`, so this item's
+      `3f89305c` — which landed hours later — read as "already covered". On a repo that
+      ships several commits a day, a same-day `Reviewed:` sha can never be recorded at all.
+      The dismissal moved into the `Last verified` prose, which is where that document
+      already lists the same-day commits it absorbed, and the limitation is written beside
+      it. Third gate refusal in three loops from this one guard family, and the first that
+      is the GUARD's granularity rather than my mistake — recorded so the next loop meets
+      it as a known shape rather than a surprise.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
     validate_is_PARTIAL_and_the_reason_is_named: >-
