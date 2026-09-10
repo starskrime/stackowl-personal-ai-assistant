@@ -21287,6 +21287,16 @@ known_debt:
       the comparison to a truthiness test fails 1; letting the LAST escalation win instead
       of the highest fails 1; and removing the held-back INFO line fails 1.
     stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    the_code_is_LIVE_and_that_is_a_separate_fact_from_the_check: >-
+      Restarted on `e69e9915`: commit 21:07:39Z, core connected 21:08:28Z — forty-nine
+      seconds later, so the running process carries the change. That is evidence the
+      code is LOADED and it is deliberately not written as evidence the behaviour
+      FIRED; those are different claims and conflating them is how a validate goes
+      `done` on a path nothing took.
+      The next sweep is scheduled for **2026-09-11T02:32:51Z** (`every 6h`, read from
+      the `jobs` row), so the check answers on its own within hours. Running the handler
+      by hand would measure my forcing rather than the wiring — the trap DEBT-215
+      recorded — so it is left to the scheduler.
     validate_is_PARTIAL_and_the_reason_is_named: >-
       The sweep runs every 6h and only speaks when a gap crosses the threshold. What
       closes this is the NEXT sweep saying it held a pair back — a line the old code
