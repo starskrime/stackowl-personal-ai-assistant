@@ -21095,6 +21095,12 @@ known_debt:
       word is TRUE there and must stay. A fourth test walks `src/` for any
       `Notification(...)` built with an idempotency-named kwarg, so a sender nobody has
       written yet cannot reintroduce the claim.
+    live_on_08725f4b_the_rename_is_real_in_the_running_process: >-
+      Restarted 2026-09-10T07:15:01 and the LIVE model was asked: `notification_id` is a
+      field and `idempotency_key` is NOT — so a caller passing the old word fails in the
+      process that serves turns, not merely in a test. `scripts/duplicate_answers.py`
+      reads 0 since 2026-09-10, and the record says plainly that the rename cannot have
+      caused that: the signal is quiet, not cured.
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
     validate_is_PARTIAL_and_the_reason_is_named: >-
       Nothing about DELIVERY changes, so there is no new behaviour to observe — the check
@@ -21156,6 +21162,11 @@ known_debt:
       lease is left alone. Two controls exist on purpose: a sweep that finds nothing must
       stay SILENT (a warning on every quiet pass is how a channel stops meaning anything,
       measured at 24% earlier today), and a lease that still holds must never be taken.
+    live_on_8bb20bcc_the_code_is_running: >-
+      Restarted 2026-09-10T07:15:01 and the LIVE module was asked, not the file:
+      `_reclaim_detail` is present, and the shared predicate occurs EXACTLY ONCE in the
+      source — the property the mutation exposed. Only the EVENT is missing, which is what
+      keeps the stage partial.
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
     validate_is_PARTIAL_and_the_reason_is_named: >-
       Closing needs a real lease to expire on the fixed code. The check reads the new
