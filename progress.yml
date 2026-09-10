@@ -21131,12 +21131,30 @@ known_debt:
       the same change rather than left to read as a decision it is not.
     baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      The remedy only appears when a contributor actually fails, and on a healthy box none
-      do. The evidence therefore has to be MADE the way DEBT-287's was — drive the live
-      process into the branch — or waited for. Both are available here: the breaker case
-      fires on its own whenever the unreachable provider is probed, which the corpus says
-      happens in bursts, so this one can genuinely close on traffic.
+    validated_live_on_bd4059a1_the_code_path_is_proven_on_a_real_operator_surface: >-
+      Restarted 2026-09-10T10:00:57Z on the tree carrying the fix, then the EXACT BRANCH
+      that fired during the four-hour outage was driven through the real CLI — a
+      `STACKOWL_HOME` whose `workspace/stackowl.db` is a DIRECTORY, so `Path.exists()` is
+      True and the file-missing branch (the one that already had a remedy) is NOT the one
+      taken. `stackowl health --json` returns for `db`:
+      `status=down`, `message="unable to open database file"`, and
+      `remedy="the path exists in config but not on disk, or its directory is not readable
+      — check STACKOWL_HOME points at the install you mean"`.
+      Before this commit that branch had no `remedy=` keyword at all, so the field
+      defaulted to None by construction. Non-destructive: a temp home, the real database
+      untouched.
+      THE FIRST ATTEMPT MISSED THE BRANCH and the message said so — placing the directory
+      at `$STACKOWL_HOME/stackowl.db` produced "database not found", because
+      `StackowlHome.db_path()` is `<home>/workspace/stackowl.db`. Reading the path out of
+      the platform rather than assuming its shape is what put the probe on the right
+      branch.
+    validate_is_STILL_PARTIAL_and_the_reason_is_named: >-
+      The CLI half is closed above; the SWEEP half is not. Nothing has failed inside the
+      running platform since the restart, so `health_sweep` has had no unhealthy subsystem
+      to attach a remedy to — and manufacturing one there would mean breaking a live
+      subsystem, which the CLI probe achieves without. The breaker case will close this on
+      its own the next time the unreachable provider is probed while its circuit is open;
+      the corpus says that happens in bursts (421 occurrences, last 2026-09-07).
     closing_check: >-
       n=$(./scripts/log_since.sh 2026-09-10 'the diagnosis says what to do about itself'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} unhealthy sweep(s) carried a named remedy — 0 of 822 did before, and only the new code can emit this line"; else echo "OPEN 0 — no contributor has failed on the fixed code yet"; fi
   - id: DEBT-287
