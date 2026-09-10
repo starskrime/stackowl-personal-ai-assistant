@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from stackowl.health.status import HealthStatus
+from stackowl.health.status import HealthStatus, remedy_for
 from stackowl.infra import prompt_metrics
 from stackowl.infra.observability import log
 from stackowl.infra.trace import TraceContext
@@ -722,6 +722,7 @@ class ModelProvider(ABC):
                 name=self.name,
                 status="degraded",
                 message=str(exc),
+                remedy=remedy_for(exc),
                 latency_ms=(time.monotonic() - t0) * 1000,
             )
         latency_ms = (time.monotonic() - t0) * 1000

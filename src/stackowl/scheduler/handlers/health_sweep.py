@@ -439,6 +439,24 @@ class HealthSweepHandler(JobHandler):
                 }
             },
         )
+        # AND SAY IT AS A LITERAL WHEN THE ANSWER IS YES (DEBT-288).
+        #
+        # The field above is the right record and it cannot be a closing check's
+        # pattern: `"remedies": ["` is JSON rendered at LOG time, so no AST walk over
+        # `log.*` literals can see it, and the exemption list for that shape demands
+        # live proof this string has never had — 0 of 822 unhealthy sweeps carried a
+        # remedy before today. A sentence the code actually holds is checkable.
+        #
+        # Guarded on the LIST BEING NON-EMPTY, which is the branch a reader must
+        # watch: the sweep firing is not the event, a remedy surviving to the sweep
+        # is.
+        remedied = [s.name for s in (*down, *degraded) if s.remedy]
+        if remedied:
+            log.scheduler.info(
+                "[scheduler] health_sweep.execute: the diagnosis says what to do "
+                "about itself",
+                extra={"_fields": {"job_id": job.job_id, "subsystems": remedied}},
+            )
         # Only alert for subsystems that survived dedup (a new incident, an
         # escalation, or a backoff-elapsed heartbeat) — an unrelated ongoing
         # incident's suppression must never swallow a different, new incident.

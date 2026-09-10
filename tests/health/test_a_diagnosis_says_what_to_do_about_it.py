@@ -101,9 +101,20 @@ class TestNoRemedyIsInventedWhereThereIsNoAction:
     report measurements about the platform's own behaviour — a growing prompt prefix,
     unattributed spend, a store past its cadence — and there is no command an operator
     can run to fix any of them. Their remedy stays None on purpose.
+
+    CORRECTED 2026-09-10, because this docstring described a branch the test below
+    does not take. It drives the contributor with a `_Db` that RAISES, so what it
+    exercises is the instrument FAILING, not the measurement degrading — two states
+    the contributor's own comment already separates in the message ("I could not
+    measure it is not it has regressed") and which received one remedy policy between
+    them. Since DEBT-288 that branch asks `remedy_for(exc)`; it still answers None
+    here, and for the reason this class is about — a bare `RuntimeError` carries no
+    evidence, so there is nothing to say. See
+    `test_a_failure_that_arrived_can_say_what_to_do.py` for the case where the same
+    branch has something to say and now says it.
     """
 
-    async def test_a_measurement_degradation_carries_no_invented_fix(self) -> None:
+    async def test_an_instrument_failure_with_no_evidence_invents_nothing(self) -> None:
         from stackowl.health.contributors import PrefixGrowthContributor
 
         class _Db:

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from stackowl.authz.bounds import DEFAULT_TURN_MAX_INPUT_TOKENS
 from stackowl.config.provider import ProviderConfig
-from stackowl.health.status import HealthStatus
+from stackowl.health.status import HealthStatus, remedy_for
 
 if TYPE_CHECKING:
     from stackowl.channels.liveness import ChannelLivenessStore
@@ -167,7 +167,10 @@ class DbContributor:
         except Exception as exc:
             latency_ms = (time.monotonic() - t0) * 1000
             log.warning("[health] db_contributor: ping failed: %s", exc)
-            return HealthStatus(name="db", status="down", message=str(exc), latency_ms=latency_ms)
+            return HealthStatus(
+                name="db", status="down", message=str(exc),
+                remedy=remedy_for(exc), latency_ms=latency_ms,
+            )
 
 
 # LanceDBHealthContributor stood here, shimming the adapter's HealthReport into
@@ -331,7 +334,11 @@ class PrefixGrowthContributor:
             log.warning("[health] prefix_growth: check failed: %s", exc)
             return HealthStatus(
                 name="prefix_growth", status="degraded",
-                message=f"could not measure prefix growth: {exc}", latency_ms=latency_ms,
+                message=f"could not measure prefix growth: {exc}",
+                # The MEASUREMENT degrading has no remedy — that is D14.4's decision
+                # and it stands. This is the other branch: the instrument itself
+                # failed, and the exception may say what to do about that.
+                remedy=remedy_for(exc), latency_ms=latency_ms,
             )
 
         latency_ms = (time.monotonic() - t0) * 1000
@@ -443,7 +450,8 @@ class UnattributedSpendContributor:
             log.warning("[health] unattributed_spend: check failed: %s", exc)
             return HealthStatus(
                 name="unattributed_spend", status="degraded",
-                message=f"could not measure attribution: {exc}", latency_ms=latency_ms,
+                message=f"could not measure attribution: {exc}",
+                remedy=remedy_for(exc), latency_ms=latency_ms,
             )
 
         row = (rows or [{}])[0]
@@ -525,7 +533,8 @@ class StoreCadenceContributor:
             log.warning("[health] store_cadence: check failed: %s", exc)
             return HealthStatus(
                 name="store_cadence", status="degraded",
-                message=f"cadence check failed: {exc}", latency_ms=latency_ms,
+                message=f"cadence check failed: {exc}",
+                remedy=remedy_for(exc), latency_ms=latency_ms,
             )
         latency_ms = (time.monotonic() - t0) * 1000
         if not silent:

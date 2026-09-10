@@ -45,7 +45,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from stackowl.health.status import HealthStatus
+from stackowl.health.status import HealthStatus, remedy_for
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.pipeline.durable.recovery import DurableTaskRecoverer
@@ -296,6 +296,7 @@ class TaskLivenessSweepHandler(JobHandler):
             self._set_cache(available=False, reason=str(exc))
             return HealthStatus(
                 name=self.contributor_name, status="down", message=str(exc),
+                remedy=remedy_for(exc),
                 latency_ms=(time.monotonic() - t0) * 1000,
             )
         self._set_cache(

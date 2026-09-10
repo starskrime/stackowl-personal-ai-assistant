@@ -8,7 +8,7 @@ from typing import Any
 
 from stackowl.brief.models import BriefSection
 from stackowl.exceptions import UnsupportedActionError
-from stackowl.health.status import HealthStatus
+from stackowl.health.status import HealthStatus, remedy_for
 from stackowl.integrations.base import ActionResult, IntegrationAdapter
 from stackowl.integrations.oauth_manager import OAuthManager
 
@@ -332,5 +332,6 @@ class GoogleCalendarAdapter(IntegrationAdapter):
                 name=self.contributor_name,
                 status="degraded",
                 message=f"calendarList probe failed: {exc}",
+                remedy=remedy_for(exc),
                 latency_ms=(time.time() - t0) * 1000,
             )

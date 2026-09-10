@@ -6,7 +6,7 @@ import asyncio
 import logging
 import time
 
-from stackowl.health.status import HealthContributor, HealthStatus
+from stackowl.health.status import HealthContributor, HealthStatus, remedy_for
 
 log = logging.getLogger("stackowl.health")
 
@@ -100,7 +100,10 @@ class HealthAggregator:
         except Exception as exc:
             latency_ms = (time.monotonic() - t0) * 1000
             log.warning("[health] aggregator: %s raised: %s", name, exc)
-            return HealthStatus(name=name, status="down", message=str(exc), latency_ms=latency_ms)
+            return HealthStatus(
+                name=name, status="down", message=str(exc),
+                remedy=remedy_for(exc), latency_ms=latency_ms,
+            )
 
     async def _confirm_timeout(
         self, contributor: HealthContributor, t0: float,
@@ -143,13 +146,19 @@ class HealthAggregator:
                     f"health check timed out twice "
                     f"(>{_CONTRIBUTOR_TIMEOUT:.0f}s, then >{_CONTRIBUTOR_RETRY_TIMEOUT:.0f}s)"
                 ),
+                # A double timeout is the one `down` with no exception behind it, and
+                # it is also the one most likely to be about the HOST rather than the
+                # subsystem. Passing the TimeoutError says that out loud instead of
+                # leaving a reader to infer an outage from a non-answer.
+                remedy=remedy_for(TimeoutError()),
                 latency_ms=latency_ms,
             )
         except Exception as exc:
             latency_ms = (time.monotonic() - t0) * 1000
             log.warning("[health] aggregator: %s raised on re-probe: %s", name, exc)
             return HealthStatus(
-                name=name, status="down", message=str(exc), latency_ms=latency_ms,
+                name=name, status="down", message=str(exc),
+                remedy=remedy_for(exc), latency_ms=latency_ms,
             )
         # SAY WHEN THE WIDER WINDOW IS WHAT SAVED IT, and say it as a STRING.
         #

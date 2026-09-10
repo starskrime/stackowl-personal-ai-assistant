@@ -21036,6 +21036,109 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-288
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, reached by ranking the alarm channel and then asking what the loudest CURRENT warning ever produced."
+    what: >-
+      **822 SWEEPS REPORTED UNHEALTHY SUBSYSTEMS AND EVERY ONE CARRIED `remedies: []`.**
+      Not one, ever. `[scheduler] health_sweep.execute: UNHEALTHY subsystems detected` is
+      the loudest non-startup message in the CURRENT bucket (0.74/boot), and the field
+      D14.4 added four days earlier as "the other half of a diagnosis" has never once
+      been populated in reality.
+    root_cause_measured: >-
+      TWO SETS THAT NEVER INTERSECT, counted by an AST walk over `src/`:
+      72 `HealthStatus(...)` construction sites; 41 report `down` or `degraded`; **10 of
+      those sit inside an `except`** — a failure that actually ARRIVED — and 5 carry a
+      `remedy`. **INSIDE an except AND carrying a remedy: ZERO.**
+      Every remedy in the tree sits on a branch the author could PREDICT — a database
+      file that is not there, a browser runtime never constructed. Every branch that
+      turns an arrived failure into a status has none. That is not carelessness: at the
+      keyboard an `except` has no exception in hand, so there is genuinely nothing to
+      write, and writing ten more strings by hand would put them in the same place. **The
+      only moment the question can be answered is when the exception EXISTS.**
+    the_incident_that_makes_it_concrete: >-
+      `DbContributor` has TWO `down` branches. The file-missing branch carries a remedy
+      and has never fired on a running install. The ping-raised branch carries none — and
+      it is the one that fired at **2026-09-07T14:32:02Z**, the first minute of the
+      four-hour total database failure already recorded in this file, in which every write
+      raised `sqlite3.OperationalError: disk I/O error`. The single sweep in the whole
+      corpus that ever reported `db` down is that one, and its `remedies` is `[]`.
+      The one moment this platform most needed to tell its operator where to look, the
+      field built for exactly that was empty BY CONSTRUCTION.
+    what_else_that_same_cause_reaches: >-
+      All ten arrived-failure sites, across five packages — `health/aggregator.py` (x3,
+      including the double-timeout branch), `health/contributors.py` (x4),
+      `providers/base.py`, `integrations/google_calendar.py`,
+      `scheduler/handlers/task_liveness_sweep.py`. And the general shape: any optional
+      "explain yourself" field populated by per-site authorial judgement will be populated
+      exactly where it is least needed, because the predictable case is the one a person
+      can imagine at authoring time.
+    it_REFINES_a_recorded_decision_rather_than_contradicting_it: >-
+      D14.4 records that `prefix_growth`, `unattributed_spend` and `store_cadence`
+      deliberately carry no remedy, because a measurement that has DEGRADED has no command
+      that fixes it. THAT STANDS and is untouched. Those three contributors have a SECOND,
+      different state — "I could not measure it, because `exc`" — which their own comments
+      already separate from the first in the MESSAGE ("I could not measure it is not it
+      has regressed") and which then received the same empty remedy. One contributor, two
+      kinds of failure, one policy. Only the second is changed. Checked before building,
+      because a panel answer contradicting a recorded decision is a stop-and-brief.
+    fix: >-
+      `remedy_for(exc)` in `health/status.py` — ONE place that turns an arrived exception
+      into operator advice, and returns **None** unless the exception carries the evidence
+      itself: an `errno` (a POSIX numeric table, so not a word list in any language) or
+      one of SQLite's fixed operational phrases (a LIBRARY API contract, the same
+      exemption this tree already records for SQL keywords in `tools/system/shell.py`).
+      All ten arrived-failure sites now pass their exception to it. D14.4's rule that a
+      remedy must never be invented is not weakened — it is enforced in one place instead
+      of by ten authors' restraint, so a new contributor inherits what is known today and
+      gains what is learned tomorrow without its author thinking about it.
+      The double-timeout branch gets the one remedy with no exception behind it, and it
+      is the honest one: a non-answer is not an outage. MEASURED on this install — four
+      contributors were declared `down` at 2026-09-10T01:37Z **while a full test suite was
+      running on the same box**, which is this file's own rule about measuring the loop
+      instead of the platform, arriving through the health sweep.
+    the_loudest_case_needed_no_new_vocabulary_at_all: >-
+      THE EXCEPTION ALREADY CARRIED THE ANSWER. MEASURED: of 959 unhealthy subsystem
+      reports, **421 are `provider:NeraAiRaw`** — the single largest group by a factor of
+      1.5 — and every probe failure behind them raises
+      `CircuitOpenError: Circuit open for 'NeraAiRaw' — retry after Ns`, which carries
+      `provider_name` and `retry_after_seconds` as ATTRIBUTES. That is not an outage
+      anyone should act on: the breaker is doing its job and retries by itself. The
+      remedy now says so, with the window. **The platform's most repeated alarm goes from
+      "something is wrong" to "known, self-recovering, and here is when"** — and this is
+      what makes the fix load-bearing rather than decoration, because a remedy that fires
+      on nothing real would be exactly the shape this repo calls shipped decoration.
+    tests: >-
+      `tests/health/test_a_failure_that_arrived_can_say_what_to_do.py`, 20 tests, all
+      tripwires. The structural guard is the point: it requires every unhealthy
+      `HealthStatus` built inside an `except` to PASS ITS EXCEPTION to `remedy_for`, never
+      that it produce a string — because a per-site judgement about the string is what
+      produced 0 of 10. Nine evidence-carrying exceptions must yield advice; five that
+      carry none must yield None, and that control ships in the same file because a
+      function that answers for everything makes the first half meaningless.
+      A vacuity control pins the population (>= 10 arrived-failure sites) so the AST walk
+      cannot silently stop finding anything.
+      FOUR MUTATIONS, each restored from a file copy with the tree re-run green after:
+      the db contributor no longer asking fails 2; `remedy_for` answering for everything
+      fails 5 (the control); the timeout branch no longer asking fails 1; the
+      circuit-open branch removed fails 1.
+    the_fifth_surface_inside_a_TEST: >-
+      `TestNoRemedyIsInventedWhereThereIsNoAction` documents itself as being about
+      measurement degradations, and the test under it drives a `_Db` that RAISES — so it
+      exercises the instrument-failure branch, not the one its docstring describes. It
+      still passes (a bare `RuntimeError` carries no evidence, so None is right), but it
+      now proves a different and stronger thing than it claims. Renamed and corrected in
+      the same change rather than left to read as a decision it is not.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The remedy only appears when a contributor actually fails, and on a healthy box none
+      do. The evidence therefore has to be MADE the way DEBT-287's was — drive the live
+      process into the branch — or waited for. Both are available here: the breaker case
+      fires on its own whenever the unreachable provider is probed, which the corpus says
+      happens in bursts, so this one can genuinely close on traffic.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'the diagnosis says what to do about itself'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} unhealthy sweep(s) carried a named remedy — 0 of 822 did before, and only the new code can emit this line"; else echo "OPEN 0 — no contributor has failed on the fixed code yet"; fi
   - id: DEBT-287
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, from Bakir's own sentence about what should and should not be approved."
