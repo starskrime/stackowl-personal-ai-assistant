@@ -21085,13 +21085,18 @@ known_debt:
       cannot be slipped in. `docs_touching.py`: no design document declares `runner.py` as
       a Source, so D18.9 was found by READING it, not by the tool — recorded because that
       is exactly the gap `docs_touching.py` says it has.
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      Closing needs a boot on the fixed code, which cannot happen until this lands. The
-      check counts the new ACKNOWLEDGED line, which has never appeared in any retained log,
-      so any occurrence is evidence only this code could produce — and it counts the OLD
-      warning in the same window, so a fall to zero is visible rather than assumed.
-    closing_check: >-
+    validated_live_on_79a45b9b: >-
+      CLOSED. Restarted 2026-09-10T03:34 and BOTH lines are now INFO, with the row still
+      named and the reason carried in the log: `[db] runner.verify: applied migration 0137
+      (0137_migration_semantic_checksum.sql) has no file in the tree, and that is
+      ACKNOWLEDGED — withdrawn before ...`, and the summary `exit — 141 applied
+      migration(s) match their files, 1 acknowledged (0137_migration_semantic_checksum.sql)`.
+      Both were WARNING on every previous boot. The ACKNOWLEDGED message has never appeared
+      in any earlier record, so it is evidence only this code could produce. The 11
+      old-style warnings the check still counts for 2026-09-10 all predate the restart,
+      which is exactly why the check reports BOTH numbers rather than asserting a fall.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    superseded_closing_check_kept_as_the_record_of_how_it_closed: >-
       a=$(./scripts/log_since.sh 2026-09-10 'has no file in the tree, and that is ACKNOWLEDGED'); w=$(./scripts/log_since.sh 2026-09-10 'has no file in the tree — this database ran something'); if [ "${a:-0}" -gt 0 ]; then echo "CLOSEABLE ${a} acknowledged report(s) at INFO; ${w:-0} unacknowledged warnings remain"; else echo "OPEN 0 acknowledged reports since 2026-09-10 (${w:-0} old-style warnings) — needs a boot on the fixed code"; fi
   - id: DEBT-278
     found: 2026-09-10
