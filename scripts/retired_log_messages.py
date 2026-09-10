@@ -122,6 +122,87 @@ def static_prefixes(root: pathlib.Path | None = None) -> set[str]:
     return out
 
 
+#: A line every process writes exactly once, at startup.
+#:
+#: THE DENOMINATOR THIS REPORT WAS MISSING. It is emitted at INFO, so it is not in
+#: the WARNING-and-above corpus this report normally reads — it is counted in a
+#: separate, level-blind pass for that reason.
+_BOOT_MARKER = "[startup] browser_probe.check: exit"
+
+
+def per_boot(
+    paths: list[pathlib.Path], levels: set[str] | None
+) -> tuple[int, dict[str, int]]:
+    """``(process lifetimes, {message: the MOST it ever fired in one lifetime})``.
+
+    THE RATIO WAS NOT ENOUGH, and this is the measurement that proved it. An
+    earlier cut flagged "startup fact" on a rate between 0.8 and 1.2 per boot —
+    a magic number, and it MISSED the message that prompted this: the thin-tool
+    lint sits at 0.75/boot because it fires in 827 of 1,096 lifetimes and not at
+    all in the other 269. Its rate looks unremarkable; its MAXIMUM is 1, and that
+    is the fact that settles it.
+
+    A message whose maximum is 1 cannot be a recurring condition, whatever its
+    total: the total is then a measure of how often this box RESTARTS. That
+    matters here more than anywhere, because MEASURED 2026-09-10 **580 of the
+    boots in this corpus are CodeWatcher re-execs** — this programme editing the
+    instance it is measuring. Ranking by total therefore promotes startup facts
+    in proportion to how much code was edited that week.
+    """
+    events: list[tuple[str, str | None]] = []
+    for path in paths:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            if not line.startswith('{"ts"'):
+                continue
+            boot = _BOOT_MARKER in line
+            # Cheap reject before the parse: the level check is what makes this
+            # affordable over a 15 MB file.
+            if (
+                not boot
+                and levels is not None
+                and not any(f'"level": "{lv}"' in line for lv in levels)
+            ):
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            ts = rec.get("ts")
+            if not isinstance(ts, str):
+                continue
+            if boot:
+                events.append((ts, None))
+                continue
+            if levels is not None and rec.get("level") not in levels:
+                continue
+            msg = rec.get("msg")
+            if isinstance(msg, str) and msg:
+                events.append((ts, msg))
+    events.sort()
+    boots = 0
+    window: dict[str, int] = {}
+    maxima: dict[str, int] = {}
+    for _ts, msg in events:
+        if msg is None:
+            for m, n in window.items():
+                if n > maxima.get(m, 0):
+                    maxima[m] = n
+            window = {}
+            boots += 1
+            continue
+        window[msg] = window.get(msg, 0) + 1
+    for m, n in window.items():
+        if n > maxima.get(m, 0):
+            maxima[m] = n
+    return boots, maxima
+
+
 def corpus_messages(
     paths: list[pathlib.Path], levels: set[str] | None
 ) -> tuple[dict[str, int], dict[str, str]]:
@@ -207,9 +288,19 @@ def main(argv: list[str] | None = None) -> int:
     print("  DORMANT — the code CAN still emit it, but nothing has since the date shown.")
     print("            Producible is not happening: the branch may already be unreachable.")
     print()
+    boots, maxima = per_boot(paths, levels)
     print(f"CURRENT ({len(current)}) — seen on {newest_day}")
+    if boots:
+        startup = sum(1 for _n, _d, m in current if maxima.get(m) == 1)
+        print(f"  Denominator: {boots} process lifetimes. A message marked STARTUP FACT "
+              f"never fired twice in ONE process, so its TOTAL measures how often this box "
+              f"RESTARTS, not how often the condition occurs — and on this box most boots "
+              f"are CodeWatcher re-execs after a src/ edit. {startup} of {len(current)} "
+              f"CURRENT messages are startup facts; rank on the rest.")
     for n, _d, msg in sorted(current, reverse=True):
-        print(f"{n:>7}  {msg[:104]}")
+        rate = f"{n / boots:>6.2f}/boot" if boots else " " * 11
+        flag = "  STARTUP FACT (max 1 per process)" if maxima.get(msg) == 1 else ""
+        print(f"{n:>7} {rate}  {msg[:88]}{flag}")
     print()
     print(f"DORMANT ({len(dormant)}) — producible, last seen:")
     for n, d, msg in sorted(dormant, key=lambda x: (x[1], -x[0])):
