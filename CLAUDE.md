@@ -176,6 +176,33 @@ new sessions. The failure is one level up from the one recorded above: the corre
 applied to a list someone REMEMBERED, not to a set someone SWEPT. Correcting the copies
 you can think of is not correcting the rule either.
 
+**AND THE SECOND COPY CAN BE INSIDE ONE FILE, which no sweep of FILES can see.**
+Both corrections above widened the SET OF FILES to sweep. MEASURED 2026-09-09:
+`db_reclaim.py` stated its `job_runs` retention window in THREE rationale blocks —
+the `#:` comment on `_RUN_HISTORY_RETENTION_DAYS`, the docstring of
+`_prune_run_history` which performs the DELETE, and the module docstring of
+`tests/scheduler/handlers/test_the_run_history_is_finally_bounded.py`. `c628d1bf`
+tightened it on Bakir's authority and rewrote the first. The other two went on
+saying the window deleted nothing and that tightening it had been escalated to him
+rather than taken — while eleven passes deleted 3,909, 4,087 and 4,151 of his rows.
+**A reader auditing what this platform deletes would have read the method that does
+the deleting and concluded it deletes nothing.** The cure is to REMOVE the extra
+copies, never to sync them; syncing leaves the trap armed for the next change.
+`scripts/superseded_constants.py` now finds prose stating a value its own constant
+no longer has, in `src/` and in the `tests/` files that import it. Only EIGHT
+constants in this tree have ever held a superseded value, so the class is small and
+is now swept rather than remembered.
+
+**`git log -S` DOES NOT FIND A VALUE CHANGE — use `-G`.** `-S` reports commits where
+the COUNT of a string changed, so for `NAME = <number>` it sees the commit that
+INTRODUCED the constant and is blind to every commit that only changed its VALUE.
+Against `_RUN_HISTORY_RETENTION_DAYS`, `-S` returns one commit and `-G` returns two,
+and the one it misses is the change being traced. A constant edited twice hides its
+middle value entirely. Found by a control test, not by reading: the scan still
+reported the stale site, because the value it happened to need was the constant's
+first. **A query that returns the right answer for the wrong reason is the hardest
+instrument error to see, because nothing looks wrong.**
+
 **The sweep, so the next person runs it instead of counting:**
 
 ```bash

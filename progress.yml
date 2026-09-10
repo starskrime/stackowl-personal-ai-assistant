@@ -21018,6 +21018,113 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-276
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work, found by asking the DATABASE which tables grow without decay and reading the one retention sweep that exists."
+    what: >-
+      THE METHOD THAT DELETES THE OPERATOR'S RUN HISTORY DOCUMENTED ITSELF AS HAVING
+      REFUSED TO. `db_reclaim.py` stated its retention window in TWO rationale blocks — the
+      `#:` comment on `_RUN_HISTORY_RETENTION_DAYS`, and the docstring of
+      `_prune_run_history`, which performs the DELETE. `c628d1bf` tightened the window from
+      100 days to 7 on Bakir's authority and rewrote the first. The second went on saying
+      "At 100 days this deletes ZERO rows today" and "Tightening it is a data-deletion
+      decision that belongs to the operator, not to this loop ... Escalated with those
+      numbers rather than taken." MEASURED in the live log: eleven prune passes have run,
+      the last three deleting 3,909, 4,087 and 4,151 rows, each logging `retention_days: 7`,
+      and `job_runs` now spans 8 days rather than 92. The duplicated SAFETY argument had
+      drifted too, citing 252,905 rows where the constant cites 255,363. AND THERE WAS A
+      THIRD COPY, found only because deriving the targeted path named the file: the module
+      docstring of `tests/scheduler/handlers/test_the_run_history_is_finally_bounded.py`
+      carried both blocks and was stale in the same way.
+    why_not_what: >-
+      ONE TUNABLE, TWO RATIONALE BLOCKS, IN ONE FILE. `CLAUDE.md` is organised around
+      "correcting one copy of a rule is not correcting the rule", and every cure it records
+      widened the set of FILES swept — SKILL.md after CLAUDE.md, then D04.1 and
+      SESSION_PROMPT.md after a census of five, then the design document as the fifth
+      surface. NO SWEEP OF FILES CAN SEE TWO COPIES INSIDE ONE FILE. Both blocks were
+      written as the authoritative explanation, so the author of the change updated the one
+      attached to the constant and had no reason to suspect a second.
+    the_fix_removes_the_second_source_rather_than_syncing_it: >-
+      Syncing the blocks would have left the trap armed for the next tightening. The
+      method's docstring now states neither the window nor the safety argument: it names
+      `_RUN_HISTORY_RETENTION_DAYS` and says to read them there. It also records what went
+      wrong, DELIBERATELY WITHOUT QUOTING THE OLD FIGURE — the first draft quoted "At 100
+      days ..." verbatim and thereby re-introduced the very literal the detector keys on,
+      which would have re-armed the trap inside the record of disarming it. THE TOOL CAUGHT
+      ME DOING IT AGAIN, in the new test's own docstring, which is the clearest evidence
+      that the guard works on the thing it is about.
+    what_else_that_cause_reaches_MEASURED: >-
+      `scripts/superseded_constants.py` answers it for the whole tree. 575 module-level
+      numeric constants; 177 carry a unit in their name; 57 have prose naming a DIFFERENT
+      figure in that unit — and a detector that stopped there is noise, because this tree's
+      prose is mostly evidence ("19,285 pages sat free", "384,429,704 tokens", "the oldest
+      row was 92 days old"). GIT is the discriminator: a figure is suspicious only when the
+      constant ITSELF once held it. That takes 57 to 3. Only EIGHT constants in the whole
+      tree have ever held a superseded value, so this class is small and now fully swept.
+    it_scans_tests_too_and_that_is_the_point: >-
+      A same-file rule could never have found the third copy, because a test declares no
+      constant. The scan pairs a constant with any file that IMPORTS its module. The first
+      cut paired on the module's file STEM instead, and the stems here include `base`,
+      `store`, `shared` and `registry` — ordinary English words, so every test answered to
+      those modules' constants. Reading the import table is exact AND cheaper: candidates
+      fell 81 to 57. It found one further site in that same test file, and that one is
+      CORRECT — `test_the_window_is_the_one_the_operator_chose` pins the constant and
+      explains the sequence that produced it, which is history kept where it belongs.
+    the_instrument_lied_twice_and_its_own_control_caught_one: >-
+      FIRST, it printed `0 site(s)` with every denominator intact, because it was being run
+      from a staging directory that is not a git checkout — `git log` returned nothing and
+      every candidate was filtered away. A clean tree and a broken history lookup print the
+      same result, so `test_the_git_step_is_actually_reading_history` now asserts the
+      lookup still yields both the 100 and the 7. SECOND, that control immediately failed
+      on the REAL tree: `git log -S` reports commits where the COUNT of a string changed,
+      so it sees where a constant was INTRODUCED and is blind to every commit that only
+      changed its VALUE. Against this constant `-S` returns one commit and `-G` returns
+      two, and the one it misses is `c628d1bf` itself. The scan had still found the stale
+      site — by luck, because the value it needed happened to be the constant's first — and
+      a constant edited twice would have hidden its middle value entirely.
+    and_I_misjudged_the_second_finding_before_reading_it: >-
+      The `curated.py` exemption was first recorded as "'WAS 10 — the reference platform's
+      default' is history kept on purpose". That sentence is in the file and is NOT the line
+      the tool reported. The reported line is a row of a measured traffic table —
+      "2026-08-11  5 boots  10 turns  max 4 per lifetime" — where 10 is what was OBSERVED
+      and merely COLLIDES with a value the constant once held. Caught by a mutation that
+      failed to fire: rewording the sentence I had excused changed nothing. Read the line
+      the tool names, not the one the file makes obvious. Both the script and the test now
+      carry the collision class explicitly, because it is a different reason from kept
+      history and a reader judging the next finding needs both.
+    the_code_copy_was_guarded_and_the_prose_copy_was_not: >-
+      `tests/audit/test_a_test_asks_the_constant_instead_of_restating_it.py` already flags a
+      test that restates a constant's values IN CODE — exact set equality on a literal
+      collection, deliberately narrow because a wider rule reported 26 hits of which 24 were
+      legitimate. It could not have seen this one: the duplicate is PROSE, the value is
+      SUPERSEDED rather than current, and the tunable is a scalar. The copy a reader
+      actually reads was the unguarded one.
+    tests: >-
+      `tests/audit/test_a_tunable_states_its_value_in_one_place.py`, five tripwires, built
+      and mutation-proven against an off-tree mirror while the 34th full-suite run held the
+      real tree. The ratchet keys on file+constant+value and CARRIES THE COUNT — keying on
+      the LINE would expire the judgement on any edit above it (the silently-expiring
+      exemption this repo has paid for), and keying on the value alone would let a second
+      stale mention hide behind the first, which is this exact defect. MUTATIONS, each
+      restored from a file copy: a second stale mention of 100 days FAILS the count ratchet;
+      changing `_DEFAULT_MAX_PAGES` so its own prose goes stale FAILS by naming the new key;
+      rewording the excused line FAILS as a dead exemption; and restoring the stale copy to
+      the TESTS file FAILS the count ratchet, which is the cross-file half. The whole file
+      costs ~32s because the git step is what makes it precise — ~12% on a gate already at
+      ~4.5 minutes — and one memoized scan serves all five tests rather than five.
+      `scripts/docs_touching.py`: no design document declares `db_reclaim.py` as a Source,
+      so the fifth surface is clear. The three derived scheduler test files pass 18/18.
+    validated_live_on_27299c47_after_restart: >-
+      Restarted with `./start.sh` and verified from the log, never a PID: `[scheduler]
+      db_reclaim handler registered` and `[startup] core: code watcher armed` at
+      2026-09-10T00:58:21, so the running core carries this code. Asked the LIVE object
+      rather than the file: `inspect.getdoc(DbReclaimHandler._prune_run_history)` states no
+      window of its own and names `_RUN_HISTORY_RETENTION_DAYS`, which reads 7. The prune
+      itself needs no re-proving — it is the ELEVEN recorded passes that made the docstring
+      false, and they are what this item measured.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
+    closing_check: >-
+      n=$(uv run python scripts/superseded_constants.py 2>/dev/null | grep -cF "handlers/db_reclaim.py::"); if [ "${n:-9}" -eq 1 ]; then echo "CLOSEABLE db_reclaim states the retention window once, in the constant's own history note"; else echo "OPEN $n site(s) in db_reclaim.py state a superseded value; exactly 1 is judged deliberate"; fi
   - id: DEBT-275
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, found by asking the DATABASE instead of the log."

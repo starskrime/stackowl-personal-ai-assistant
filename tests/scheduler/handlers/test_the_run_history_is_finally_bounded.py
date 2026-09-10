@@ -1,4 +1,4 @@
-"""Nothing has ever bounded `job_runs`, and it is 19% of the database.
+"""Nothing had ever bounded `job_runs`, and it was 19% of the database.
 
 MEASURED 2026-09-02 on the live store: **252,905 rows, every one
 `status='completed'`**, spanning 2026-06-02 to today — 45.1 MB of table plus
@@ -8,20 +8,17 @@ table that has zero rows.
 
 Recorded failure shape #4: anything that only appends will poison its reader.
 
-WHY DELETING OLD ROWS IS PROVABLY SAFE, which is the whole argument. `job_runs`
-has exactly ONE reader — the exactly-once guard in `scheduler._dispatch`, which
-looks up `idempotency_key`. That key is `_occurrence_key`:
-`{job.idempotency_key}@{job.next_run_at}`, so it EMBEDS the scheduled instant,
-and all 252,905 keys in the live table are distinct. Once an instant has passed
-and the job has moved on, its key can never be queried again. There is no time
-window in the guard that a retention could shorten.
+THE WINDOW, AND THE ARGUMENT THAT DELETING IS SAFE, ARE STATED ONCE — on
+`_RUN_HISTORY_RETENTION_DAYS` in `db_reclaim.py`. Read them there.
 
-THE WINDOW IS DELIBERATELY LOOSE, AND THAT IS NOT AN OVERSIGHT. At 100 days this
-deletes ZERO rows today — the oldest row is 92 days old — while capping the table
-for ever. The DEFECT is the unbounded append, and any bound fixes it. How tight
-the bound should be is a data-deletion decision that belongs to the operator, and
-"any data deletion" is a stop-and-brief item in this loop's own rules. The numbers
-are on the table for him: 7 days would reclaim 88% of the rows and about 56 MB.
+THIS FILE WAS THE THIRD COPY, and that is why the instruction is here. It stated
+both, and went on describing the deliberately loose window that predated the
+operator's authorisation long after `c628d1bf` tightened it on his authority and
+rewrote only the constant's block. A tunable's rationale spreads to the test that
+covers it as readily as to the method that uses it, and `CLAUDE.md`'s rule that
+correcting one copy is not correcting the rule reaches inside a single file and
+across into `tests/`. `scripts/superseded_constants.py` now scans both, pairing a
+test with the module it names.
 
 NOT A SECOND ENGINE. `db_reclaim` already runs hourly and already owns database
 maintenance; retention runs there, before the incremental vacuum, because

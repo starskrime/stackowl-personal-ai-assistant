@@ -214,28 +214,33 @@ class DbReclaimHandler(JobHandler):
         return "db_reclaim"
 
     async def _prune_run_history(self) -> int:
-        """Bound ``job_runs``, which nothing has ever bounded. Never raises.
+        """Bound ``job_runs``, which nothing had ever bounded. Never raises.
 
         MEASURED 2026-09-02: 252,905 rows, every one ``status='completed'``,
         spanning 2026-06-02 to today — **45.1 MB of table plus 19.1 MB of
         idempotency index, 19% of a 342 MB database**. The largest single
         contributor is ``objective_driver`` at 67,551 runs, firing every minute
-        against a table that has zero rows. Nothing has ever deleted one of these.
+        against a table that has zero rows. Nothing had ever deleted one of these.
 
-        WHY DELETING OLD ROWS IS PROVABLY SAFE, and this is the whole argument.
-        ``job_runs`` has exactly ONE reader — the exactly-once guard in
-        ``scheduler._dispatch``, which looks up ``idempotency_key``. That key is
-        ``_occurrence_key``: ``{job.idempotency_key}@{job.next_run_at}``, so it
-        EMBEDS the scheduled instant, and all 252,905 keys in the live table are
-        distinct. Once an instant has passed and the job has moved on, its key can
-        never be queried again. There is no time window in the guard to shorten.
+        THE WINDOW, AND THE ARGUMENT THAT DELETING IS SAFE, ARE STATED ONCE — on
+        ``_RUN_HISTORY_RETENTION_DAYS``, together with the sequence by which the
+        operator authorised it. Read them there. Do not restate them here.
 
-        THE WINDOW IS DELIBERATELY LOOSE AND THAT IS NOT AN OVERSIGHT. At 100 days
-        this deletes ZERO rows today (the oldest is 92 days old) while capping the
-        table for ever — the defect is the UNBOUNDED append, and that is fixed by
-        any bound. Tightening it is a data-deletion decision that belongs to the
-        operator, not to this loop: 7 days would reclaim 88% of the rows and about
-        56 MB. Escalated with those numbers rather than taken.
+        THAT INSTRUCTION IS A FIX, not tidiness, so it is worth the lines. Both
+        were stated in this docstring as well until 2026-09-09, and `c628d1bf`
+        tightened the window on the operator's authority by rewriting only the
+        constant's block. This one went on describing the deliberately loose
+        window that predated his authorisation, and on saying that tightening it
+        was a decision escalated to him rather than taken. Eleven passes had by
+        then deleted his rows — 3,909, 4,087 and 4,151 on the last three, each
+        logging ``retention_days: 7`` — so the method that performs the deletion
+        documented itself as having declined to. The duplicated safety argument
+        had drifted as well, citing 252,905 rows where the constant cites 255,363.
+
+        Syncing the two blocks would have left the trap armed for the next
+        change; removing one of them is what disarms it.
+        `scripts/superseded_constants.py` now finds prose anywhere in ``src/``
+        that states a value its own constant no longer has.
 
         Returns:
             Rows deleted. 0 on any failure — maintenance may never fail a tick.
