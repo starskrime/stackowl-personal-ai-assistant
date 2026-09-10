@@ -21018,6 +21018,65 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-275
+    found: 2026-09-09
+    map_check: "No mapped item matches — evidence-led work, found by asking the DATABASE instead of the log."
+    what: >-
+      TWO TABLES THE CODE ITSELF CALLED "LEFTOVERS TO DELETE" WERE STILL BEING CREATED ON
+      EVERY DEPLOYMENT. `health/store_cadence.py` declares a RETIRED cadence for a store
+      "whose writer is gone", and the comment above `reindex_queue` and
+      `langgraph_checkpoints` reads, verbatim, "these are leftovers to delete ... zero
+      references anywhere in src/; 0 rows" — MEASURED 2026-09-03 "by the same standard by
+      which `job_queue` was deleted". Six days later both tables were still in the schema,
+      still created by migrations 0015 and 0008 for every fresh clone.
+    why_not_what: >-
+      A LABEL IS NOT A DELETION. `_retired()` records that a writer is gone and there is no
+      actuator behind it — the registry can hold a permanent "should be deleted" state
+      forever, and did. That is `diagnose and defer` frozen into the source: the measurement
+      was complete on 2026-09-03 and the deletion was simply not the same change.
+    what_else_that_cause_reaches_and_why_only_TWO_are_dropped: >-
+      The RETIRED list holds FIVE, and three are deliberately NOT dropped, each for a
+      different reason — which is why "delete everything marked retired" would have been
+      wrong. `contradiction_scan_state` has one row that its own note calls "the EVIDENCE of
+      when the writer died", so deleting it destroys evidence rather than residue.
+      `committed_facts` still has FOUR readers in src/ — wire-or-retire is a real question,
+      not a leftover. `dna_checkpoints` holds 8 rows and is ESC-91, the operator's call.
+      Only the two with 0 rows AND 0 references match the standard the note itself cites.
+    the_five_surfaces_in_one_change: >-
+      Migration `0142` drops both tables; their two `_retired(...)` declarations go with
+      them; `tests/test_story_6_4b.py::test_reindex_queue_table_present` — which asserts the
+      leftover EXISTS, the retired contract, and sits at ROOT level where no
+      `tests/<package>` path reaches it — is deleted; and the `ORPHANED` tuple in
+      `tests/health/...` drops to one entry, because naming a dropped table there would
+      demand a declaration that must no longer exist. Migrations 0008 and 0015 themselves
+      SURVIVE: history is the record of what the platform did, and
+      `test_migration_0015_exists` asks for the FILE, so it stays green.
+    it_is_a_destructive_migration_and_that_was_checked_not_waved: >-
+      Precedent is recorded and followed: `0133_drop_two_tables_that_outlived_their_writers`
+      and `0135_drop_the_retry_queue_table` did exactly this, so it applies a decision
+      already made rather than making a new one. Safe by construction — no code in this tree
+      reads or writes either table, so no deployment running this code can hold a row it
+      could still use. And the recovery claim was VERIFIED rather than trusted:
+      `MigrationRunner` snapshots the whole database before applying anything pending and
+      `verify_artifact` checks the snapshot landed.
+    tests: >-
+      Validated against a MIRROR with the migration and the declaration removal applied:
+      the two health files pass 24/24, INCLUDING the `test_no_declaration_outlives_its_table`
+      tripwire, which seeds a real schema from the migrations and fails on a declaration
+      whose table is gone — so the drop and the registry are proven consistent rather than
+      assumed. `tests/db/test_migration_0043_owner_scope.py` needs no edit: it already reads
+      later DROPs out of the migrations, which a previous loop built for exactly this case.
+    and_one_failure_that_was_MY_HARNESS_not_the_change: >-
+      Running the unmodified `test_story_6_4b.py` against the mirror also failed
+      `test_migration_count_is_15`. That test GLOBS the repo's migration directory (140
+      files) while `migration_runner.run()` executes the MIRROR's (141) — an artifact of
+      testing a migration from outside the tree, and it resolves when the file lands and
+      both sides read 141. Recorded because a mirror is the technique this session uses
+      constantly, and this is the one thing it cannot model: a test that compares the tree
+      to itself.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
+    closing_check: >-
+      t=$(./scripts/db_query.sh "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('reindex_queue','langgraph_checkpoints')" 2>/dev/null | tail -1); if [ "${t:-9}" -eq 0 ]; then echo "CLOSEABLE both tables are gone from the live schema"; else echo "OPEN $t of the 2 dropped tables still exist — the migration has not been applied to this database yet (it runs at boot)"; fi
   - id: DEBT-274
     found: 2026-09-09
     map_check: "No mapped item matches — evidence-led work, from the CURRENT bucket of the provenance report."

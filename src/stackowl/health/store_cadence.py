@@ -212,14 +212,14 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     _seed("stackowl_meta", "updated_at"),
     _seed("schema_migrations", "applied_at"),
 
-    # --- RETIRED: the writer is gone; these are leftovers to delete -----------
-    # MEASURED 2026-09-03. All four were filed UNMEASURABLE ("no timestamp
-    # column") and all four have one. Three have ZERO references anywhere in
-    # `src/` — the same standard by which `job_queue` was deleted.
-    _retired("reindex_queue", "queued_at",
-             "zero references anywhere in src/; 0 rows"),
-    _retired("langgraph_checkpoints", "created_at",
-             "zero references anywhere in src/; 0 rows"),
+    # --- RETIRED: the writer is gone ------------------------------------------
+    # MEASURED 2026-09-03: all four were filed UNMEASURABLE ("no timestamp
+    # column") and all four have one. That note called three of them "leftovers
+    # to delete" and they stayed six days, because a LABEL is not a DELETION.
+    # `0142` finished two of them — `reindex_queue` and `langgraph_checkpoints`,
+    # both 0 rows and 0 references — and their declarations went with the tables.
+    # The three below are each retired for a reason that is NOT "just residue",
+    # so each says why it survives.
     _retired("contradiction_scan_state", "last_contradiction_scan_at",
              "zero references in src/; watermark frozen at 2026-08-10T19:15:12, "
              "the last memory.contradiction row, when migration 0112 retired the "

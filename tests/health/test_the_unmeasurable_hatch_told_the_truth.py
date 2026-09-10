@@ -56,8 +56,13 @@ import pytest
 
 from stackowl.health.store_cadence import DECLARATIONS, Cadence
 
-#: The three with zero references anywhere in src/ — measured, not assumed.
-ORPHANED = ("reindex_queue", "langgraph_checkpoints", "contradiction_scan_state")
+#: With zero references anywhere in src/ — measured, not assumed. It was THREE
+#: until `0142` dropped `reindex_queue` and `langgraph_checkpoints`: their
+#: declarations went with the tables, so naming them here would ask for a
+#: declaration that must no longer exist. `contradiction_scan_state` stays
+#: because its single row is the frozen watermark its own note calls the EVIDENCE
+#: of when the writer died — residue is deletable, evidence is not.
+ORPHANED = ("contradiction_scan_state",)
 
 #: Moved out of the hatch into real measurement by this change.
 NOW_MEASURED = ("job_results", "staged_facts", "channel_liveness", "callback_log")

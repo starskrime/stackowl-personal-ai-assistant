@@ -1,0 +1,44 @@
+-- Two tables the registry has called "leftovers to delete" since 2026-09-03.
+--
+-- `health/store_cadence.py` declares a RETIRED cadence for a store "whose writer
+-- is gone", and its own comment on these two reads "these are leftovers to
+-- delete ... zero references anywhere in src/; 0 rows". That was measured on
+-- 2026-09-03 by the same standard that deleted `job_queue`, and then the tables
+-- stayed. Retiring means DELETING — a label is not a deletion, and every fresh
+-- clone has been creating both ever since.
+--
+-- RE-MEASURED 2026-09-09, immediately before the drop, because a six-day-old
+-- measurement is a record rather than a check:
+--
+--   reindex_queue           0 rows; 0 references in src/ outside the retirement
+--                           declaration itself; created by 0015, retrofitted by
+--                           0043 (which lists it under SKIPPED, so it never
+--                           gained the owner columns)
+--   langgraph_checkpoints   0 rows; 0 references in src/ outside the same
+--                           declaration; created by 0008, same 0043 status
+--
+-- WHAT GOES WITH THEM IN THIS SAME CHANGE, because the surfaces are the point:
+--   * their two `_retired(...)` entries in health/store_cadence.py
+--   * `tests/test_story_6_4b.py::test_reindex_queue_table_present`, which asserts
+--     the leftover EXISTS — the retired contract, and a root-level test no
+--     `tests/<package>` path would have reached
+--   * the `ORPHANED` tuple in tests/health/test_the_unmeasurable_hatch_told_the_truth.py
+--
+-- WHAT DELIBERATELY SURVIVES:
+--   * migrations 0008 and 0015 themselves. History is the record of what the
+--     platform did; `tests/test_story_6_4b.py::test_migration_0015_exists` asks
+--     for the FILE and stays green.
+--   * `contradiction_scan_state`, the third orphan, is NOT dropped here: its one
+--     row is the frozen watermark its own declaration calls "the EVIDENCE of when
+--     the writer died", so deleting it destroys the evidence rather than residue.
+--     `committed_facts` still has readers, and `dna_checkpoints` is ESC-91 —
+--     both are the operator's call, not a leftover.
+--
+-- SAFE BY CONSTRUCTION, not by luck: no code in this tree reads or writes either
+-- table, so no deployment running this code can hold a row it could still use.
+-- And MigrationRunner snapshots the WHOLE database (VACUUMed, and the artifact is
+-- verified) before applying anything pending, so the pre-drop state is on disk and
+-- the schema is in git history.
+
+DROP TABLE IF EXISTS reindex_queue;
+DROP TABLE IF EXISTS langgraph_checkpoints;

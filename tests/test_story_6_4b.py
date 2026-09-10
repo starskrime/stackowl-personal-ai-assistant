@@ -212,18 +212,3 @@ def test_migration_count_is_15(migration_runner: Any) -> None:
     expected = len(sorted(migrations_dir.glob("*.sql")))
     results = migration_runner.run()
     assert len(results) == expected
-
-
-async def test_reindex_queue_table_present(tmp_path: Path) -> None:
-    db_path = tmp_path / "rq.db"
-    seed_schema(db_path)
-    pool = DbPool(db_path=db_path)
-    await pool.open()
-    try:
-        rows = await pool.fetch_all(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='reindex_queue'"
-        )
-        assert len(rows) == 1
-    finally:
-        await pool.close()
