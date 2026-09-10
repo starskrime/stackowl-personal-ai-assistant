@@ -436,6 +436,28 @@ class TaskLoop:
             await self._store.set_dependencies(
                 task.task_id, tuple(c.task_id for c in children),
             )
+            # WHAT THE SPLIT DOES TO THE BUDGET, said here because here is where
+            # it happens (DEBT-294). The parent's cumulative meter is a COLUMN with
+            # no field on `DurableTask`, so every child starts at the column's
+            # DEFAULT 0 — the mechanism that fires BECAUSE a task overspent resets
+            # the meter that measured the overspend. Best-effort: a read failure
+            # must never stop a reshape that has already been persisted.
+            # ASKED THROUGH `getattr`, DELIBERATELY. `_Store` is a narrow protocol
+            # listing only what this loop needs to drive a task, and a reshape must
+            # not require every test double to grow a budget method to keep
+            # working. A store that cannot answer simply reports -1.
+            _read_tokens = getattr(self._store, "get_accumulated_input_tokens", None)
+            try:
+                parent_tokens = (
+                    await _read_tokens(task.task_id) if _read_tokens is not None else -1
+                )
+            except Exception as exc:  # noqa: BLE001 — never fail a completed reshape
+                log.tasks.warning(
+                    "[loop] could not read the parent's accumulated tokens for the "
+                    "reshape record — the split still happened",
+                    exc_info=exc, extra={"_fields": {"task_id": task.task_id}},
+                )
+                parent_tokens = -1
             log.tasks.info(
                 "[loop] task RESHAPED — repeating it could not have worked",
                 extra={"_fields": {
@@ -443,6 +465,17 @@ class TaskLoop:
                     "failure_class": getattr(task, "last_failure_class", ""),
                     "attempt": getattr(task, "attempt_count", 0),
                     "children": [c.task_id for c in children],
+                    "parent_accumulated_input_tokens": parent_tokens,
+                }},
+            )
+            log.tasks.info(
+                "[loop] the split RESET the cumulative token budget — %d child(ren) "
+                "each start at 0, against a parent that had reached %d",
+                len(children), parent_tokens,
+                extra={"_fields": {
+                    "task_id": task.task_id, "children": len(children),
+                    "parent_accumulated_input_tokens": parent_tokens,
+                    "child_accumulated_input_tokens": 0,
                 }},
             )
         except Exception as exc:

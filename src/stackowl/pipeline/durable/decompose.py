@@ -81,6 +81,45 @@ def should_decompose(task: DurableTask, *, prior_failures: int = 0) -> bool:
     return not task.parent_task_id
 
 
+#: THE CUMULATIVE BUDGET COLUMNS A CHILD DOES **NOT** INHERIT, each with the
+#: reason — because until 2026-09-10 nothing anywhere stated that they were reset
+#: at all (DEBT-294).
+#:
+#: WHY THEY WERE INVISIBLE. `accumulated_input_tokens` and `accumulated_cost_usd`
+#: are COLUMNS ON THE `tasks` TABLE WITH NO FIELD ON :class:`DurableTask`. They are
+#: reachable only through four store methods, so every constructor in this tree —
+#: including the child list below, which enumerates its inherited fields one by
+#: one — cannot see them. They were not forgotten; they were never visible to be
+#: forgotten, and a new row simply takes the column's ``DEFAULT 0``.
+#:
+#: WHAT THAT COSTS, MEASURED 2026-09-10. `task-89b6c47ac995` was seeded at
+#: **508,225** accumulated input tokens — it had breached the 500k cap, and that
+#: breach is the `budget` failure class that makes `wants_reshaping` true in the
+#: first place. Its NINE children each show `accumulated_input_tokens = 0`, with
+#: attempt counts 12, 12, 4, 3, 2, 1, 1, 1; two of those lineages burned 117.9 and
+#: 84.9 minutes. **The mechanism that exists because a task overspent resets the
+#: meter that measured the overspend.** Over the two days to 2026-09-10 `jobmarket`
+#: took 483.8 minutes — 8.06 hours, 82% of ALL turn time across every owl — and 71%
+#: of its turns were retries.
+#:
+#: WHY THEY ARE NOT SIMPLY INHERITED, which is the half a reader will ask about.
+#: The parent breached the cap BEFORE deciding to split, so a child inheriting
+#: 508,225 against a 500,000 cap is dead on arrival and decomposition becomes a
+#: no-op. Inheriting is as wrong as resetting; what a split ask should be allowed
+#: to spend in total is a product decision and is queued as ESC-168. What ships
+#: here is that the reset is STATED, MEASURED at the moment it happens, and cannot
+#: silently acquire a third member.
+_NOT_INHERITED_BY_A_CHILD: dict[str, str] = {
+    "accumulated_input_tokens": (
+        "reset to 0 — inheriting the parent's breaching total would kill every "
+        "child immediately; see ESC-168"
+    ),
+    "accumulated_cost_usd": (
+        "reset to 0.0 — same reasoning as the token meter it is persisted beside"
+    ),
+}
+
+
 async def plan_subtasks(
     task: DurableTask, decomposer: Any,
 ) -> list[DurableTask]:
