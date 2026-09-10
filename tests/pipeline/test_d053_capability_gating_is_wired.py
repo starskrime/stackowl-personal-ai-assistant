@@ -216,6 +216,16 @@ async def test_tool_search_still_lists_a_gated_tool_with_reason_and_remedy():
     the reference platform's "absent entirely": an owl that cannot see a
     capability can never report what is blocking it, let alone ask for it to be
     enabled.
+
+    WHAT THIS TEST DOES NOT PROVE, added 2026-09-10 (DEBT-289). The fake resource
+    above declares `remedy = "sudo apt install libx11-xcb1"`, and until that day no
+    REAL resource in this tree declared one — so this assertion passed continuously
+    from 2026-08-02 while `tool_search`'s `— fix:` append had never once executed in
+    production: MEASURED, 57 of 57 `capability UNAVAILABLE` records carried
+    `remedy: null`. The renderer was never the broken half. A double that is
+    healthier than anything real is how a complete-looking path stays unwired under
+    a green suite; the production side is now guarded separately, by
+    `tests/infra/test_a_capability_that_is_absent_says_what_to_do.py`.
     """
     from stackowl.pipeline.services import StepServices, reset_services, set_services
     from stackowl.tools.registry import ToolRegistry

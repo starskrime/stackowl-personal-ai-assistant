@@ -307,7 +307,35 @@ class _UnavailableCapability:
     succeeding would report a repair that never happened.
     """
 
-    def __init__(self, reason: str, remedy: str | None = None) -> None:
+    def __init__(self, reason: str, remedy: str) -> None:
+        """``remedy`` is REQUIRED, and that is the whole fix of DEBT-289.
+
+        It was `str | None = None`, and the one call site never passed it — so
+        all 57 `capability UNAVAILABLE` records in the retained corpus carry
+        `remedy: null` and `tool_search`'s "— fix: …" branch has never once
+        rendered. Every layer worked perfectly with the argument absent, which is
+        why nothing anywhere noticed.
+
+        The protocol keeps `remedy` OPTIONAL on purpose (D05.3: a resource with
+        nothing useful to say omits it, and declaring it would make ten
+        implementers conform to a property whose honest value is usually None).
+        That reasoning is about resources in general. It does not apply to THIS
+        class, whose entire purpose is to say "absent, and here is why" — if the
+        cause is known well enough to name a reason, it is known well enough to
+        name what to do. Requiring it here is where the general rule and this
+        specific one stop agreeing.
+        """
+        # AND IT MUST SAY SOMETHING. Making the argument positional stops it
+        # being FORGOTTEN; it does not stop it being satisfied with "". Found by
+        # mutation: passing an empty string survived every static guard, and the
+        # verdict a reader got was byte-identical to the defect being fixed. The
+        # invariant belongs at the boundary that constructs the thing, not in a
+        # test that has to imagine the shape.
+        if not reason.strip() or not remedy.strip():
+            raise ValueError(
+                "an absent capability must name BOTH why it is absent and what to "
+                f"do about it (reason={reason!r}, remedy={remedy!r})"
+            )
         self._reason, self._remedy = reason, remedy
 
     @property
@@ -1265,14 +1293,32 @@ class StartupOrchestrator:
             # probe logged binary=True — two lines from one boot contradicting
             # each other. Found while reading for D05.3, where it cost ten
             # minutes of chasing a non-existent missing binary.
+            # THE CAUSE IS DECIDED HERE, so the REMEDY is decided here too.
+            # Until DEBT-289 this branch distinguished three causes and then threw
+            # the distinction away one line later, registering all of them with no
+            # remedy at all — so a reader saw the same "UNAVAILABLE, reason: …"
+            # whether the browser was structurally absent from this role, missing
+            # from disk, or unprobed, and had nothing telling them which of those
+            # they could act on.
+            from stackowl.startup.browser_probe import (
+                REMEDY_BINARY_MISSING,
+                REMEDY_CAUSE_UNKNOWN,
+                REMEDY_NOT_HOSTED_HERE,
+                REMEDY_PROBE_DID_NOT_RUN,
+            )
+
             if self._role == "gateway":
                 reason = "this process runs the gateway role; the browser is hosted by core"
+                remedy = REMEDY_NOT_HOSTED_HERE
             elif probe is None:
                 reason = "probe did not run"
+                remedy = REMEDY_PROBE_DID_NOT_RUN
             elif not probe.binary_ok:
                 reason = "camoufox binary not found"
+                remedy = REMEDY_BINARY_MISSING
             else:
                 reason = "unknown — the guard rejected it but no cause matched"
+                remedy = REMEDY_CAUSE_UNKNOWN
             log.warning("[startup] gateway: browser runtime skipped — %s", reason)
             # D05.3 — REGISTER THE CAPABILITY AS UNAVAILABLE, do not just skip.
             #
@@ -1288,7 +1334,21 @@ class StartupOrchestrator:
             # names nobody has an answer for, not for ones we do.
             from stackowl.infra import capabilities as _capabilities
 
-            _capabilities.register("browser", _UnavailableCapability(reason))
+            _capabilities.register("browser", _UnavailableCapability(reason, remedy))
+            # SAY WHICH REMEDY WAS CHOSEN, at the moment it is chosen (DEBT-289).
+            #
+            # The per-turn `[capabilities] resolve: capability UNAVAILABLE` line
+            # carries `remedy` as a FIELD, which is the right record and cannot be
+            # a closing check's pattern: a field VALUE is invisible to the AST walk
+            # over `log.*` message literals. This is a sentence the code holds, and
+            # it fires exactly once per boot in a role that does not host the
+            # browser — so the claim "a capability now says what to do about
+            # itself" becomes one the logs can settle in minutes rather than never.
+            log.info(
+                "[startup] gateway: the absent browser capability now carries a "
+                "remedy — %s",
+                remedy,
+            )
 
         # E0-S1 — consent gate: combination consent policy + per-channel prompters.
         # Routing prompter is mutable so the Telegram prompter can register after

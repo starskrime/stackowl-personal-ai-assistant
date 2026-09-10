@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from stackowl.authz.bounds import DEFAULT_TURN_MAX_INPUT_TOKENS
 from stackowl.config.provider import ProviderConfig
 from stackowl.health.status import HealthStatus, remedy_for
+from stackowl.startup.browser_probe import REMEDY_BINARY_MISSING
 
 if TYPE_CHECKING:
     from stackowl.channels.liveness import ChannelLivenessStore
@@ -660,10 +661,11 @@ class BrowserContributor:
             return HealthStatus(
                 name="browser", status="down",
                 message=f"unavailable: {reason}",
-                remedy=(
-                    "the browser binary auto-installs at startup; check the reason "
-                    "above and the startup log for browser_install"
-                ),
+                # ASKED, not copied. `browser_probe` owns the auto-install and
+                # therefore owns what to say when the binary is not there; this
+                # file used to carry its own wording of the same advice, which is
+                # the two-copies-of-one-rule shape that goes stale silently.
+                remedy=REMEDY_BINARY_MISSING,
                 latency_ms=(time.monotonic() - t0) * 1000,
             )
         cold = getattr(runtime, "cold_start_ms", None)

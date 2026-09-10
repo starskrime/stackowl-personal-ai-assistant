@@ -21036,6 +21036,93 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-289
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, and reached by asking what the ONE remaining unexplained CURRENT warning ever produced."
+    what: >-
+      FIVE LAYERS BUILT END TO END, AND THE LAST INCH NEVER WIRED. MEASURED over every
+      retained log: **57 of 57** `[capabilities] resolve: capability UNAVAILABLE —
+      dependent tools will not be presented this turn` records carry `remedy: null`.
+      Every one. So `tool_search`'s `— fix: {remedy}` branch has never rendered, in any
+      turn, ever.
+    root_cause_measured: >-
+      The channel has been complete since D05.3 — `Availability.remedy` exists,
+      `resolve()` reads it via `getattr(resource, "remedy", None)`, `tool_search` renders
+      it, and `_UnavailableCapability.__init__` ACCEPTS it as
+      `remedy: str | None = None`. **The single call site that registers it never passed
+      one.** And `resilience.py`'s protocol comment invites exactly this — "Implement it
+      when the subsystem knows a CONCRETE operator action — e.g. the browser runtime
+      knowing …" — which NO resource in this tree does.
+      WHY IT COULD SIT THERE UNNOTICED: optional at the protocol (deliberately), read
+      through `getattr`, defaulted at the constructor. Every layer works perfectly with
+      the argument absent, so nothing fails, nothing warns, and the verdict a reader gets
+      is a legitimate value. That is the same property `HealthStatus.remedy = None` had
+      before DEBT-288, one type over — the ninth instance this session of a degraded
+      state that is indistinguishable from a healthy one.
+    and_the_cause_was_already_known_one_line_above: >-
+      `orchestrator.py` distinguishes FOUR causes — gateway role, probe never ran, binary
+      missing, guard bug — writes a different `reason` for each, and then discarded the
+      distinction by registering all four with no remedy. A reader saw the same shape
+      whether the browser was structurally absent from this process ROLE (nothing to do),
+      missing from DISK (there is a log to read), or UNPROBED (restart). All 57 records
+      are the role case: `"this process runs the gateway role; the browser is hosted by
+      core"` — a permanent, correct architectural fact, reported as an unexplained
+      capability loss.
+    what_else_that_same_cause_reaches: >-
+      Every future capability registered unavailable — the protocol comment explicitly
+      invites more implementers — and `tool_search`'s renderer, which is the surface an
+      owl uses to report what is blocking it. D05.3's own failure-mode table promises
+      "The agent reports the blocker AND ITS REMEDY", a claim that has never once been
+      true.
+    fix: >-
+      `remedy` is now REQUIRED positionally on `_UnavailableCapability`, and empty or
+      whitespace-only is refused at construction with a `ValueError`. Four remedy
+      constants live in `startup/browser_probe.py` — the module that decides the causes,
+      runs the checks and owns the auto-install — one per cause, and the orchestrator
+      passes the one its own branch selected. `health/contributors.py` now ASKS for the
+      install advice instead of keeping its own wording of it.
+      THE PROTOCOL STAYS OPTIONAL, deliberately: D05.3's reasoning (a resource with
+      nothing useful to say omits it; declaring it would make ten implementers conform to
+      a property whose honest value is usually None) is about resources in GENERAL and is
+      untouched. It does not reach a class whose entire purpose is to say "absent, and
+      here is why" — if the cause is known well enough to name a reason, it is known well
+      enough to name what to do.
+    tests: >-
+      `tests/infra/test_a_capability_that_is_absent_says_what_to_do.py`, 8 tests, all
+      tripwires. Four causes must give four DISTINCT remedies — a single generic string
+      would satisfy every other assertion here and be worth nothing, because "the gateway
+      never hosts it" and "the binary is not on disk" call for opposite responses.
+      FOUR MUTATIONS, each restored from a file copy with the tree re-run green after:
+      restoring the `= None` default fails 1; giving every cause the same string fails 1;
+      the health contributor keeping its own copy fails 1; the registration passing a
+      literal fails 1.
+    the_mutation_that_GOT_AWAY_and_what_it_bought: >-
+      Passing `""` as the remedy at the register site survived every static guard in the
+      file AND all 124 tests in `tests/startup` — because nothing there constructs the
+      gateway-role path, so the new `ValueError` would only fire at boot. The verdict a
+      reader got was byte-identical to the defect being fixed. TWO things closed it: the
+      constructor now refuses an empty remedy (the invariant belongs where the object is
+      built, not where a test imagines the shape), and the call site is read as an AST —
+      both arguments must be the NAMES the branch computed, never literals. A text search
+      for the argument name would have been satisfied by the comment above it, which this
+      repo has already paid for once.
+    the_guard_that_cried_wolf_on_its_first_run: >-
+      The one-source check first matched `browser_install` as well as the advice
+      sentence, and flagged THREE legitimate hits in `orchestrator.py` — the name of a
+      startup PHASE and its own two log lines, none of them a copy of anything. A guard
+      that fires on the emitter it tells you to read is the cry-wolf failure this repo
+      keeps paying for. Narrowed to the advice sentence, with the reason in the test.
+      The same run also checked the remedy names something REAL, which D14.4's invariant
+      4 requires: `browser_probe.check` appears 1,108 times in the corpus and
+      `browser_install` 2,216, so both are greppable rather than plausible.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The evidence arrives on its own: the gateway role registers the browser as absent on
+      every boot, so the new line fires once per boot rather than waiting for traffic. It
+      is `partial` only until the restart and the read.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'the absent browser capability now carries a remedy'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} boot(s) registered the capability WITH what to do about it — a literal only the new code emits, against 57 of 57 records carrying remedy:null before"; else echo "OPEN 0 — no gateway-role boot on the fixed code yet"; fi
   - id: DEBT-288
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, reached by ranking the alarm channel and then asking what the loudest CURRENT warning ever produced."

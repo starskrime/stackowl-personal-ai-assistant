@@ -18,6 +18,42 @@ log = logging.getLogger("stackowl.startup")
 #: (``libX11-xcb.so.1``); see :func:`_check_lib`.
 _REQUIRED_LIBS_LINUX = ("libgtk-3", "libx11-xcb", "libasound")
 
+#: WHAT AN OPERATOR SHOULD DO when the browser capability is absent, one string
+#: per CAUSE. They live here because this module is what decides the causes — the
+#: probe runs the checks and owns the auto-install — and because two other places
+#: need the same words: `startup/orchestrator.py` registers the capability as
+#: unavailable, and `health/contributors.py` reports the same subsystem to
+#: `stackowl health`. Before this, the health contributor carried its own copy of
+#: the install advice and the capability registry carried NONE at all.
+#:
+#: MEASURED 2026-09-10, and it is why these exist: of 57 `[capabilities] resolve:
+#: capability UNAVAILABLE` records in the whole retained corpus, **57 carry
+#: `remedy: null`**. `Availability.remedy` exists, `resolve()` reads it,
+#: `tool_search` renders it as "— fix: …", and `_UnavailableCapability` accepts it
+#: as a constructor argument — five layers, complete end to end, and the single
+#: call site never passed one. So the "— fix:" branch has never rendered, ever.
+REMEDY_NOT_HOSTED_HERE = (
+    "nothing to do — the browser is hosted by the CORE process and browser tools "
+    "work there; this process is the gateway, which never hosts it"
+)
+#: Both strings named here are LIVE and greppable, which invariant 4 of D14.4
+#: requires of any remedy: MEASURED 2026-09-10 across the retained corpus,
+#: `browser_probe.check` appears 1,108 times (once a boot) and `browser_install`
+#: 2,216. Advice that names a log line nobody emits is worse than none.
+REMEDY_BINARY_MISSING = (
+    "the browser binary auto-installs at startup — read `[startup] "
+    "browser_install` and `[startup] browser_probe.check` in the log, plus the "
+    "reason reported above"
+)
+REMEDY_PROBE_DID_NOT_RUN = (
+    "the startup probe never ran, so nothing is known about the binary — restart "
+    "with `./start.sh` and read `[startup] browser_probe.check` in the log"
+)
+REMEDY_CAUSE_UNKNOWN = (
+    "the guard rejected the runtime but no known cause matched — this is a defect "
+    "in the startup guard itself; read `[startup] gateway: browser runtime skipped`"
+)
+
 
 @dataclass
 class BrowserProbeResult:
