@@ -21018,6 +21018,62 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-280
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led, reported live by Bakir: 'your approval fix is stupid. It is still expiring.'"
+    the_report_and_it_was_RIGHT: >-
+      Bakir, 2026-09-10: "your approval fix is stupid . It is still expiring". DEBT-278 had
+      fixed the case where a tap arrived for a request that was ALREADY ANSWERED. That is a
+      real defect and it was not his. The deadline that actually expires sits one layer
+      BELOW the button, in the core-to-gateway bridge, and no amount of work in the button's
+      own layer could ever have reached it.
+    what: >-
+      FIVE COPIES OF ONE DEADLINE, DISAGREEING, AND THE ONE THAT KNOWS NOTHING ABOUT USERS
+      WAS THE ONE THAT BOUND. `telegram/consent.py` 1200s; `discord`, `slack`, `whatsapp`
+      and `runtime/socket_consent.py` 120s each. `SocketConsentPrompter` WRAPS whichever
+      channel prompter answers and `orchestrator.py:1312` constructs it with no override —
+      so the real budget on EVERY channel was two minutes, however long that channel
+      advertised. The Telegram twenty minutes was decoration.
+    the_evidence_is_a_fifty_second_gap: >-
+      MEASURED from his own session: a `send_file` consent at 03:30:48 was denied at
+      03:32:48 — exactly 120.0s, `[ipc] socket consent: no decision — denying` — and at
+      03:33:38, FIFTY SECONDS LATER, the gateway logged `consent.handle_callback: resolved`.
+      He pressed the button, the button worked, and the core had already given up and moved
+      on. From where he sits that is a tap that did nothing, which is the exact complaint,
+      and the two halves of it were recorded by two different components neither of which
+      could see the other.
+    why_not_what: >-
+      A TRANSPORT OWNED A HUMAN'S DEADLINE. `wait_for(future, timeout=...)` in the IPC
+      prompter is written like a transport timeout and is in fact the window a PERSON has
+      to answer a phone notification. Because it is the outermost wait it silently
+      overrides every inner one, so every discussion about how long a person should get
+      happened in files that did not decide it. Failure shape #3 — two copies of one rule —
+      with the twist that made it invisible: the binding copy was the one nobody thought of
+      as being about people.
+    the_fix_is_ONE_SOURCE_not_a_bigger_number: >-
+      `HUMAN_DECISION_TIMEOUT_SECONDS` lives once, in `tools/consent.py` beside
+      `ConsentScope`, and all five prompters ask it. The VALUE is not new — 1200s is the
+      figure the Telegram prompter already advertised and the only one ever chosen with a
+      human in mind, so this applies an existing decision rather than making a new one,
+      which is deliberately not a policy question for him to answer.
+    tests: >-
+      `tests/audit/test_one_deadline_for_one_human_decision.py`, three tripwires and a
+      vacuity control. The second asserts the ASYMMETRY rather than equality — the bridge
+      may never be STRICTER than the UI it wraps, which is the actual mechanism and holds
+      even if a channel is deliberately given longer. The third reads the SOURCE, not the
+      value, so a sixth module that happens to write 1200.0 still fails: passing today and
+      drifting tomorrow is exactly how these five came to disagree. MUTATIONS, restored
+      from file copies: putting the 120s literal back in the bridge — his exact defect —
+      fails THREE; setting the shared value to 120s fails the control that five modules
+      agreeing on two minutes is the defect uniformly applied. Derived path via
+      `tests_touching.py`: 2,730 passed, 4 skipped.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      Closing needs a real consent decision taken more than 120s after the prompt — the one
+      case that used to be impossible. It cannot be forced honestly from here; the tests
+      prove the wiring, not that production took it.
+    closing_check: >-
+      d=$(./scripts/log_since.sh 2026-09-10 'socket consent: no decision — denying'); r=$(./scripts/log_since.sh 2026-09-10 'socket consent: requesting decision from gateway'); if [ "${r:-0}" -gt 0 ] && [ "${d:-0}" -eq 0 ]; then echo "CLOSEABLE ${r} bridge consent request(s) since 2026-09-10 and ZERO gave up early"; else echo "OPEN ${d:-0} early denials over ${r:-0} bridge requests — a decision taken later than 120s has not yet been observed"; fi
   - id: DEBT-279
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led work, found by ranking the CURRENT alarm channel by volume."

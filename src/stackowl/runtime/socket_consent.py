@@ -20,9 +20,18 @@ from uuid import uuid4
 from stackowl.infra.observability import log
 from stackowl.ipc.connection import FrameConnection
 from stackowl.ipc.frames import ConsentRequestFrame
-from stackowl.tools.consent import ConsentRequest, ConsentScope
+from stackowl.tools.consent import (
+    HUMAN_DECISION_TIMEOUT_SECONDS,
+    ConsentRequest,
+    ConsentScope,
+)
 
-_DEFAULT_TIMEOUT_SECONDS = 120.0
+#: ASKED, NEVER RESTATED. This was a local literal until 2026-09-10, when five
+#: copies of one deadline were found disagreeing — this bridge WRAPS whichever
+#: channel prompter answers, so ITS deadline bound every channel however long
+#: that channel advertised.
+#: Failure shape #3: one source, and the others ask it.
+_DEFAULT_TIMEOUT_SECONDS = HUMAN_DECISION_TIMEOUT_SECONDS
 
 
 class SocketConsentPrompter:

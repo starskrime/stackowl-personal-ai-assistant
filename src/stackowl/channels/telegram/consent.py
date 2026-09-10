@@ -21,7 +21,11 @@ from uuid import uuid4
 from stackowl.channels.chat_id import chat_id_from_session
 from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
 from stackowl.infra.observability import log
-from stackowl.tools.consent import ConsentRequest, ConsentScope
+from stackowl.tools.consent import (
+    HUMAN_DECISION_TIMEOUT_SECONDS,
+    ConsentRequest,
+    ConsentScope,
+)
 from stackowl.tui.i18n import localize
 
 __all__ = ["TelegramConsentPrompter"]
@@ -36,7 +40,11 @@ _CALLBACK_PREFIX = "consent"
 #: appeared in any log: no click had ever landed inside the window. Every prompt
 #: expired, failed closed, and was recorded as `user_denied` — blaming him for a
 #: refusal he never made.
-_DEFAULT_TIMEOUT_SECONDS = 1200.0
+#: ASKED, NEVER RESTATED. This was a local literal until 2026-09-10, when five
+#: copies of one deadline were found disagreeing — this copy already held the
+#: right value and was overridden by the bridge underneath it.
+#: Failure shape #3: one source, and the others ask it.
+_DEFAULT_TIMEOUT_SECONDS = HUMAN_DECISION_TIMEOUT_SECONDS
 
 #: How many resolved requests stay answerable after they resolve.
 #:

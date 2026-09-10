@@ -25,7 +25,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from stackowl.infra.observability import log
-from stackowl.tools.consent import ConsentRequest, ConsentScope
+from stackowl.tools.consent import (
+    HUMAN_DECISION_TIMEOUT_SECONDS,
+    ConsentRequest,
+    ConsentScope,
+)
 from stackowl.tui.i18n import localize
 
 if TYPE_CHECKING:  # pragma: no cover — typing-only
@@ -34,7 +38,10 @@ if TYPE_CHECKING:  # pragma: no cover — typing-only
 __all__ = ["WhatsAppConsentPrompter"]
 
 # Default time a consent prompt stays open before failing closed.
-_DEFAULT_TIMEOUT_SECONDS = 120.0
+#: ASKED, NEVER RESTATED. This was a local literal until 2026-09-10, when five
+#: copies of one deadline were found disagreeing — a person decides at human speed here too.
+#: Failure shape #3: one source, and the others ask it.
+_DEFAULT_TIMEOUT_SECONDS = HUMAN_DECISION_TIMEOUT_SECONDS
 # The numbered reply tokens (control tokens, NOT user-facing copy — the labels
 # beside them are localized). "1" approves, "2" denies.
 _APPROVE_CHOICE = "1"

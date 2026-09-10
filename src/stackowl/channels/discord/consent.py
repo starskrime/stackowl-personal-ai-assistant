@@ -26,14 +26,21 @@ from uuid import uuid4
 
 from stackowl.channels.telegram.keyboard import InlineKeyboardBuilder
 from stackowl.infra.observability import log
-from stackowl.tools.consent import ConsentRequest, ConsentScope
+from stackowl.tools.consent import (
+    HUMAN_DECISION_TIMEOUT_SECONDS,
+    ConsentRequest,
+    ConsentScope,
+)
 from stackowl.tui.i18n import localize
 
 __all__ = ["DiscordConsentPrompter"]
 
 _CALLBACK_PREFIX = "consent"
 # Default time a consent prompt stays open before failing closed.
-_DEFAULT_TIMEOUT_SECONDS = 120.0
+#: ASKED, NEVER RESTATED. This was a local literal until 2026-09-10, when five
+#: copies of one deadline were found disagreeing — a person decides at human speed here too.
+#: Failure shape #3: one source, and the others ask it.
+_DEFAULT_TIMEOUT_SECONDS = HUMAN_DECISION_TIMEOUT_SECONDS
 
 # Decision → leading symbol, mapped once over the whole ConsentScope enum.
 # Language-neutral on purpose (the platform is multilingual): a glyph conveys the

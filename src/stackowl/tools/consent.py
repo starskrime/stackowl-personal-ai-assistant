@@ -281,6 +281,36 @@ _DEFAULT_ALWAYS_ASK_CATEGORIES = frozenset(
 )
 _DEFAULT_WINDOW_SECONDS = 900.0  # 15-minute trust window
 
+#: How long the platform waits for a PERSON to decide. The ONE source.
+#:
+#: Bakir, 2026-09-10, after being told an approval had expired again: "your
+#: approval fix is stupid. It is still expiring." He was right, and the fix
+#: before this one was in the layer that never expires.
+#:
+#: MEASURED the same hour, five copies of this one deadline and they disagreed:
+#: telegram 1200s, discord 120s, slack 120s, whatsapp 120s, and the core->gateway
+#: IPC bridge 120s. **The IPC one WRAPS all of them**, and it is constructed with
+#: no override, so the real budget on EVERY channel was two minutes however long
+#: that channel's own prompter advertised. The Telegram twenty minutes was
+#: decoration.
+#:
+#: WHAT THAT DID TO HIM, from the log: a `send_file` request at 03:30:48 was
+#: denied at 03:32:48 — exactly 120.0s — and at 03:33:38, fifty seconds later, the
+#: gateway logged `consent.handle_callback: resolved`. He tapped it, the button
+#: worked, and the core had already given up and moved on. That is the "it did
+#: nothing" experience, and no amount of work in the button's own layer could
+#: have reached it.
+#:
+#: THE VALUE IS NOT NEW. 1200s is the figure the Telegram prompter has always
+#: advertised and the only one chosen with a human in mind; the 120s copies are
+#: transport defaults applied to a person. Adopting the existing decision rather
+#: than inventing a number is deliberate — this is a wiring fault, not a policy
+#: question.
+#:
+#: A TRANSPORT MUST NOT OWN A HUMAN'S DEADLINE. That is the whole rule: the layer
+#: that knows nothing about the user was the one that bound.
+HUMAN_DECISION_TIMEOUT_SECONDS = 1200.0
+
 
 class ConsentScope(StrEnum):
     """The scope a user grants when approving a consequential action."""
