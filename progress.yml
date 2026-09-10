@@ -21018,6 +21018,81 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-279
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led work, found by ranking the CURRENT alarm channel by volume."
+    what: >-
+      A QUESTION SETTLED ON 2026-09-05 WAS STILL BEING ASKED AT THE SEVERITY OF AN OPEN ONE,
+      TWICE A BOOT, FOR FIVE DAYS. `_verify_applied` warns when an applied migration has no
+      file in the tree. `0137` is such a row on this box and its absence is DELIBERATE —
+      D18.9 records that the `sql_checksum` column was first drafted as that migration, that
+      this was wrong because `schema_migrations` is the runner's own bootstrap bookkeeping,
+      and that the file was withdrawn before it was ever committed. MEASURED over every
+      retained log: **426** warnings across two lines per boot, and **172 of 703**
+      WARNING/ERROR records in the current window — **24% of the operator's entire alarm
+      channel** for a non-event.
+    why_not_what: >-
+      ONE VERDICT FOR TWO DIFFERENT FACTS. The check could not distinguish a divergence
+      NOBODY HAS EXPLAINED from one this repo has already examined and accepted, so it
+      re-raised the settled one for ever at the severity of the real thing. And the
+      knowledge was already in the tree the whole time: D18.9 explains 0137 and
+      `test_a_migration_number_the_ledger_already_claims_is_never_reused` reserves the
+      number — the CODE that checks it on every boot was simply never told. One rule, three
+      places, and the enforcing copy is the one that was missed, which is DEBT-276's shape
+      arriving again four items later.
+    the_cost_is_the_DETECTOR_not_the_volume: >-
+      This loop reads that channel every invocation to find defects. Ranking it is how this
+      item was found, and THREE candidates ahead of it had to be checked and discarded as
+      already-settled first — the RCA consent refusals (DORMANT since 09-02), the apology
+      cascade (last fired 09-07, caught only because a by-day breakdown contradicted a
+      3-day window), and `trending-research-owl` (ESC-127, correctly queued). A channel
+      where a quarter of the traffic is a known non-event is one where the next REAL
+      mismatch arrives looking exactly like the noise.
+    what_it_does_NOT_do: >-
+      Nothing is silenced. An acknowledged row is reported at INFO WITH ITS REASON and is
+      still named in the summary; an UNACKNOWLEDGED divergence warns in the same words at
+      the same level, which a control test pins. A severity is corrected to match a fact —
+      the row is not deleted, because deleting it would falsify the ledger's account of
+      what this database actually ran, and that is a data deletion this loop may not take.
+    it_ships_in_the_TREE_which_is_the_whole_point: >-
+      `ACKNOWLEDGED_MISSING` lives in `runner.py`, not in local config. "Ignore that
+      warning" is a setup answer and Bakir's standing rule forbids it; an entry in the
+      repo is reviewable, travels with every clone, states its reason, and is checked for
+      staleness on every boot. The general defect is not specific to this box: any
+      deployment that ends up with an applied-but-absent migration — a withdrawn draft, a
+      rollback, a squashed history — got a permanent unactionable warning and no way to
+      record that someone had looked.
+    the_allowlist_cannot_rot: >-
+      Every boot re-checks the acknowledgements themselves: an entry naming a version this
+      database never applied, or one whose file IS in the tree, is reported as STALE. The
+      second is the dangerous half — an entry left behind after a file returns stands ready
+      to excuse a REAL divergence on that number. Same discipline as the ratchets in
+      DEBT-267 and DEBT-276, applied to the exemption rather than to the finding.
+    the_document_asserted_a_state_its_own_subject_disproved: >-
+      D18.9 ended the applied-minus-disk paragraph "There are zero today — which was luck,
+      not a guard." It was ALREADY FALSE when written: `0137` was applied on 2026-09-05 at
+      12:24:21, and the guard's first live act was to report its own author's row. The
+      document is corrected in the same change and the old sentence is kept as a quotation
+      of itself, because the mistake is the useful part.
+    tests: >-
+      `tests/db/test_an_acknowledged_divergence_is_not_an_alarm.py`, six tripwires driving
+      a REAL `MigrationRunner` against a real sqlite ledger rather than reading source.
+      MUTATIONS, each restored from a file copy and re-run green: silencing the branch
+      instead of explaining it FAILS (that is a mute, not a distinction); treating every
+      missing file as acknowledged FAILS the control that an unexplained divergence still
+      warns; deleting the stale-acknowledgement sweep FAILS two. A shape test pins that
+      every entry carries a reason long enough to be one, so an empty-string exemption
+      cannot be slipped in. `docs_touching.py`: no design document declares `runner.py` as
+      a Source, so D18.9 was found by READING it, not by the tool — recorded because that
+      is exactly the gap `docs_touching.py` says it has.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      Closing needs a boot on the fixed code, which cannot happen until this lands. The
+      check counts the new ACKNOWLEDGED line, which has never appeared in any retained log,
+      so any occurrence is evidence only this code could produce — and it counts the OLD
+      warning in the same window, so a fall to zero is visible rather than assumed.
+    closing_check: >-
+      a=$(./scripts/log_since.sh 2026-09-10 'has no file in the tree, and that is ACKNOWLEDGED'); w=$(./scripts/log_since.sh 2026-09-10 'has no file in the tree — this database ran something'); if [ "${a:-0}" -gt 0 ]; then echo "CLOSEABLE ${a} acknowledged report(s) at INFO; ${w:-0} unacknowledged warnings remain"; else echo "OPEN 0 acknowledged reports since 2026-09-10 (${w:-0} old-style warnings) — needs a boot on the fixed code"; fi
   - id: DEBT-278
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led work, reported live by Bakir mid-loop."
@@ -21883,20 +21958,20 @@ known_debt:
       one the DEBUG level could never have told anybody. The self-healing decline line is
       event-gated on a verdict arriving unverified, so it stays OPEN below with its
       denominator rather than being called done.
-    closing_check: >-
-      B=$(./scripts/log_since.sh 2026-09-09 'route_rca_verdict: unverified verdict');
-      D=$(./scripts/log_since.sh 2026-09-09 'incident_escalation: RCA complete');
-      [ "$B" -gt 0 ] && echo "CLOSEABLE — $B declines visible since the ship date, over $D
-      RCA completions" || echo "OPEN — 0 declines over $D RCA completions SINCE 2026-09-09;
-      the line is emitted only when a verdict arrives unverified, so a zero here is NO
-      OPPORTUNITY rather than a failed fix"
     why_the_date_bound_is_not_decoration_here: >-
       The gate caught this check reading the logs unbounded and REFUSED THE COMMIT. It was
       arguably safe — the INFO line cannot exist before this change, so history could not
       satisfy it — but that is a judgement about one check, and the guard enforces a
       property. Bounding it costs nothing and removes the judgement. Exactly the shape this
       item is about: a rule nothing enforces gets applied unevenly.
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: partial, document: done}
+    validated_live_2026_09_10_the_DECLINE_is_finally_visible: >-
+      CLOSED, and it is the exact thing this item existed for. `[rca_router]
+      route_rca_verdict: unverified verdict — no consumption` at 2026-09-10T01:43:25, at
+      INFO. Before this item that branch logged at DEBUG while the consume path logged at
+      INFO, so a whole session could not tell a DEAD self-healing router from a DECLINING
+      one — 41 RCA completions with no observable outcome either way. The line that proves
+      it is the DECLINE, which is the half that was invisible.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: done}
   - id: DEBT-266
     found: 2026-09-09
     what: >-
@@ -37239,12 +37314,19 @@ items:
       implement:  done
       cleanup:    done
       test:       done
-      validate:   partial
+      validate:   done
       document:   done
+    validated_live_2026_09_10_the_decline_line_FIRED: >-
+      CLOSED, and verified against the RAW record rather than the script's verdict:
+      `[escalation_signal] escalation declined — no stronger tier to reach; every rung of
+      the ladder ...` at 2026-09-10T01:37:57, at INFO. The premise this check was rewritten
+      around holds — it watches the BOUNCE and the DECLINE, not the breaker OPEN, because
+      the emitter sits behind a re-dispatch guard and 52 opens had produced only 12
+      bounces. A first sloppy pass matched `consequential action declined by gate` and
+      `tool already declined this run`, neither of which is this line; the exact pattern
+      was re-run before this was written.
     doc: "docs/reference-mapping/designs/D04.5.md"
     doc_last_verified: "2026-09-07"
-    closing_check: >-
-      n=$(./scripts/log_since.sh --all 'escalation declined — no stronger tier'); b=$(./scripts/log_since.sh 2026-09-05 'circuit open — tool bounced for remainder of turn'); if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n decline lines against $b bounces since the fix shipped"; else echo "OPEN — 0 decline lines and $b bounces since 2026-09-05; watch the BOUNCE, not the breaker OPEN — 52 opens produced 12 bounces, all of them 08-28..08-31"; fi
     decisions:
       - "IT SURVIVES, verified three ways rather than assumed: the gate exists and asks
          the real question; on the live configuration it answers FALSE because the

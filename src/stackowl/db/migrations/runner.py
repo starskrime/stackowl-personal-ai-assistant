@@ -230,6 +230,53 @@ def _exclusive_tx(conn: sqlite3.Connection) -> Iterator[None]:
         raise
 
 
+#: Applied versions KNOWN to have no file in the tree, each with the reason.
+#:
+#: WHY THIS EXISTS. Without it the integrity check has ONE verdict for two
+#: different facts: a divergence nobody has explained, and one this repo has
+#: already examined and accepted. It re-raised the settled one on every boot, at
+#: the same severity as the real thing.
+#:
+#: MEASURED 2026-09-10 over the retained logs: `0137` alone produced **426**
+#: warnings across two lines per boot, and in the current window it is **172 of
+#: 703** WARNING/ERROR records — 24% of the operator's whole alarm channel for a
+#: question that was settled on 2026-09-05. A channel where a quarter of the
+#: traffic is a known non-event is one where the next real mismatch arrives
+#: looking exactly like the noise, and this is the detector the loop itself reads
+#: to find defects.
+#:
+#: IT SHIPS IN THE TREE, NOT IN LOCAL CONFIG, and that is the point rather than a
+#: convenience. An operator told to ignore a warning has been given a setup
+#: answer; an entry here is reviewable, travels with every clone, and is checked
+#: for staleness on every boot. Adding one is a claim that someone looked.
+#:
+#: THE BAR FOR AN ENTRY: the version must be genuinely un-restorable, and the
+#: effect it applied must be accounted for somewhere the tree can show. Anything
+#: less is an unexplained divergence and must keep warning.
+ACKNOWLEDGED_MISSING: dict[str, str] = {
+    # D18.9. The `sql_checksum` column was first drafted AS this migration, and
+    # the design document records why that was wrong: `schema_migrations` is the
+    # runner's own bookkeeping, created by `_CREATE_SCHEMA_MIGRATIONS` and never
+    # by a migration, so a numbered migration would have had to run before the
+    # column it adds could be read, and every runner pointed at a different
+    # migrations directory would never have got the column at all. The file was
+    # withdrawn before it was ever committed — `git log --all -- <path>` returns
+    # nothing — and `_ensure_sql_checksum_column` adds the column at bootstrap
+    # instead, so the effect this row records is achieved, and achieved for every
+    # deployment rather than only for one that ran 0137.
+    #
+    # The row survives on any database that applied the draft. It is NOT deleted:
+    # deleting it would falsify the ledger's account of what this database ran,
+    # and the number stays reserved — `0138` follows `0136` in the tree, pinned by
+    # `test_a_migration_number_the_ledger_already_claims_is_never_reused`.
+    "0137": (
+        "withdrawn before it was ever committed; the sql_checksum column it "
+        "drafted is added at bootstrap by _ensure_sql_checksum_column instead "
+        "(D18.9), and the number is reserved, never reused"
+    ),
+}
+
+
 class MigrationRunner:
     """Runs SQL migration files in numeric order, tracking applied versions."""
 
@@ -308,6 +355,7 @@ class MigrationRunner:
                 "SELECT version, name, sql_checksum FROM schema_migrations ORDER BY version"
             ).fetchall()
             drifted: list[str] = []
+            acknowledged: list[str] = []
             backfilled = 0
             # WHAT WAS ACTUALLY COMPARED, kept separately from what was walked.
             # MEASURED 2026-09-08 on the live database: the exit line said "139
@@ -323,6 +371,21 @@ class MigrationRunner:
                 if path is None:
                     # An applied migration whose FILE is gone is its own alarm: this
                     # database ran something the tree can no longer describe.
+                    #
+                    # UNLESS IT IS ACKNOWLEDGED. Without that distinction the check
+                    # has one verdict for two different facts — an unexplained
+                    # divergence, and one this repo has already examined and
+                    # accepted — and it re-raises the settled one on every boot at
+                    # the same severity as the real thing.
+                    reason = ACKNOWLEDGED_MISSING.get(version)
+                    if reason is not None:
+                        acknowledged.append(name)
+                        log.info(
+                            "[db] runner.verify: applied migration %s (%s) has no "
+                            "file in the tree, and that is ACKNOWLEDGED — %s",
+                            version, name, reason,
+                        )
+                        continue
                     log.warning(
                         "[db] runner.verify: applied migration %s (%s) has no file in "
                         "the tree — this database ran something no longer present",
@@ -345,6 +408,26 @@ class MigrationRunner:
                     backfilled += 1
                 elif stored != current:
                     drifted.append(name)
+            # A STALE ACKNOWLEDGEMENT IS THE SAME DEFECT WEARING THE REVIEWER'S
+            # BADGE. An entry that no longer describes anything means either the
+            # file came back or the row is gone, and in both cases the exemption
+            # is now excusing nothing while still being able to excuse the NEXT
+            # divergence that happens to reuse the number.
+            applied_versions = {version for version, _n, _c in rows}
+            for version, reason in sorted(ACKNOWLEDGED_MISSING.items()):
+                if version not in applied_versions:
+                    log.warning(
+                        "[db] runner.verify: ACKNOWLEDGED_MISSING names %s, which this "
+                        "database has never applied — the acknowledgement is stale (%s)",
+                        version, reason,
+                    )
+                elif by_version.get(version) is not None:
+                    log.warning(
+                        "[db] runner.verify: ACKNOWLEDGED_MISSING names %s, but the file "
+                        "IS in the tree — the acknowledgement is stale and would now "
+                        "excuse a real divergence (%s)",
+                        version, reason,
+                    )
             if backfilled:
                 conn.commit()
                 log.info("[db] runner.verify: baselined %d migration checksum(s)", backfilled)
@@ -363,6 +446,14 @@ class MigrationRunner:
                 # when the two are equal. A number stated once cannot drift from
                 # itself.
                 detail = f"{verified} applied migration(s) match their files"
+                if acknowledged:
+                    # NAMED, NEVER HIDDEN. The reader is told the ledger holds an
+                    # accepted divergence and which one; what changes is that this
+                    # no longer makes the all-clear a WARNING.
+                    detail += (
+                        f", {len(acknowledged)} acknowledged "
+                        f"({', '.join(sorted(acknowledged))})"
+                    )
                 if unverifiable:
                     # The gap belongs in the SUMMARY, not left as arithmetic between
                     # it and a per-row warning that has already scrolled away.
