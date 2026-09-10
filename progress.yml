@@ -16468,6 +16468,41 @@ current:
         restructure changed this queue from a LIST PRUNED on answer to a DICT that RETAINS the entry,
         and carried over only what was open at that moment — so every already-answered escalation
         lost its record, and with it the ANSWER. Restored verbatim, not re-decided.
+    ESC_167_a_tool_using_owl_can_never_pass_the_shadow_gate:
+      question: >-
+        Should tool-using owls have a validation path at all, or is it accepted that they
+        never auto-evolve?
+      why_evidence_cannot_settle_it: >-
+        The numbers settle the DIAGNOSIS completely and settle nothing about the remedy.
+        Every option trades something only the operator can price: replaying with a tool
+        registry breaks the isolation seam that makes a shadow replay safe; a different
+        validation signal for tool-using owls is new machinery; accepting that they never
+        auto-evolve is a real answer and may be the right one.
+      what_was_measured: >-
+        Replayable samples in the 14-day lookback, per owl: `rca_gatherer` 155/479,
+        `hypothesis` 243/427, `verifier` 192/405, `secretary` 73/190, `jobmarket` 4/108,
+        `mailbutler` 1/22, `scout` 0/8, `headhunter` 0/4, `syshealth` 0/3, `archivist` 0/1.
+        Six of ten sit below the required 5; four are at zero and cannot rise, because
+        `_eligible_for_replay` requires an empty `tool_sequence` and their work is tools.
+        `scout` alone has 194 outcomes and 182 scored successes.
+      the_panel_recommendation: >-
+        Accept it for now and say so in the design document, rather than build a second
+        validation path. The four zero-sample owls are the ones whose DNA matters least —
+        their behaviour is dominated by the tools they call, not by trait drift — and the
+        three owls the platform most needs to improve (the RCA trio) have hundreds of
+        replayable samples each. If that reasoning is wrong, it is wrong in a direction the
+        operator can see.
+      what_is_blocked: >-
+        Nothing. DEBT-293 makes the refusal legible either way; this decides whether anything
+        is built for it.
+      the_first_draft_of_this_check_was_WRONG_and_running_it_is_what_found_that: >-
+        It counted scout's replayable outcomes with NO time bound and reported EXPIRED
+        immediately. Scout has 10 all-time and **0 inside the 14-day lookback the validator
+        actually reads** — so the check was measuring a different population from the code it
+        describes, which is the commonest instrument error in this programme. The window is
+        now the validator's own.
+      premise_check: >-
+        n=$(./scripts/db_query.sh "SELECT COUNT(*) FROM task_outcomes WHERE owl_name='scout' AND quality_score IS NOT NULL AND (tool_sequence IN ('[]','') OR tool_sequence IS NULL) AND captured_at > strftime('%s','now','-14 days')" 2>/dev/null | tail -1); if [ "${n:-0}" -eq 0 ]; then echo "HOLDS scout still has 0 replayable scored outcomes IN THE 14-DAY WINDOW the validator reads — the gate is still unreachable for a tool-using owl"; else echo "EXPIRED scout now has ${n} replayable scored outcome(s) in-window — the structural exclusion has broken somewhere and this question changed"; fi
     ESC_166_the_session_store_is_not_owner_scoped_and_is_not_an_OwnedRepository:
       question: >-
         Should `SessionStore` become owner-scoped, or is a globally-unique `session_key` the
@@ -21065,6 +21100,86 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-293
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led. Four candidate seams were measured and REFUTED before this one; the refutations are recorded below because they are most of the loop's work."
+    what: >-
+      A PERMANENT REFUSAL REPORTED IN THE VOCABULARY OF A TEMPORARY ONE.
+      `[shadow] validate: exit — cold start, insufficient held-out sample` fires 4-8 times
+      a day and reads as a shortage that will pass. MEASURED per owl, replayable samples
+      in the 14-day lookback: `rca_gatherer` 155/479, `hypothesis` 243/427, `verifier`
+      192/405, `secretary` 73/190, `jobmarket` **4**/108, `mailbutler` **1**/22, `scout`
+      **0**/8, `headhunter` **0**/4, `syshealth` **0**/3, `archivist` **0**/1.
+      `scout` has **194 outcomes, 182 scored successes and 0 replayable**, and has reported
+      `eligible=0` TEN separate times; `syshealth` nine. The number has never risen once.
+    root_cause_measured: >-
+      `_eligible_for_replay` requires an EMPTY `tool_sequence`, because the replay harness
+      deliberately wires no tool registry — that isolation is the whole point, a shadow
+      replay must not cause side effects. So an owl whose work IS tools can never produce
+      an eligible turn, and its refusal is structural rather than early. Six owls sit below
+      the required 5 and four are at zero. For those four "insufficient held-out sample"
+      does not mean NOT YET; it means NEVER, in the vocabulary of NOT YET.
+    it_REFINES_a_recorded_decision_and_does_not_reverse_it: >-
+      The filter's own docstring already weighed this: reporting a shortage is "the HONEST
+      answer for an owl whose history is entirely tool-driven... instead of failing on an
+      artefact of the harness". Against THAT alternative — a bogus regression verdict — it
+      is right, and nothing here reverses it. The gate still fails CLOSED, still replays
+      nothing, still returns `cold_start=True`. What the comparison never considered is a
+      THIRD option: saying which of the two facts it means. Both numbers were already in
+      hand at that line.
+      AND THE CENSUS IN THAT DOCSTRING NAMED ONLY THE OWLS THE FILTER HELPED — hypothesis,
+      verifier, rca_gatherer, secretary — which is why nobody saw that four others had gone
+      to zero. Corrected in the same change with the full ten-owl table.
+    what_else_that_same_cause_reaches: >-
+      Any verdict that folds "not yet" and "never" into one word. This is the fourth
+      instance recorded this session, after a verifier with one verdict for two facts
+      (DEBT-279), a reclaim asserting a worker never came back (DEBT-285) and a message
+      naming a healthy browser (DEBT-277). The constant is that the degraded state is a
+      legitimate value, so nothing looks wrong.
+    fix: >-
+      `validate` distinguishes the two at the point where `outcomes` and `eligible` are
+      both known: history exists and none of it is replayable gets its own INFO sentence
+      naming WHY (every turn used tools, the harness wires none); no history at all keeps
+      the cold-start sentence. No gate behaviour changes.
+    tests: >-
+      `tests/owls/test_a_permanent_refusal_is_not_a_cold_start.py`, 4 tests. The daily case
+      (20 scored, all tool-driven — `scout`'s exact shape); the CONTROL that a genuine
+      two-of-five shortage still says cold start, because replacing one undifferentiated
+      word with another would be no gain; an owl with NO history, which must not be told
+      its history is unreplayable; and a tripwire that both sentences are at INFO.
+      THREE MUTATIONS, each restored from a file copy with the tree re-run green after:
+      removing the distinction fails 1; letting the structural branch swallow a real
+      shortage fails 1; demoting the new sentence to DEBUG fails 2.
+    my_own_test_helper_was_wrong_and_it_read_as_the_fix_missing: >-
+      The first draft captured the named logger but did not LOWER its level, and two tests
+      failed with an empty message list — which reads exactly like "the line was never
+      emitted". MEASURED: under pytest `stackowl.owls` has an EFFECTIVE level of **30
+      (WARNING)**, so an `info()` call is discarded before any handler sees it. A test that
+      reads INFO has to say so, and the helper now does.
+    four_seams_measured_and_REFUTED_before_this_one: >-
+      Recorded because they are most of this loop's work and each would otherwise be
+      re-measured by a later pass. (1) The 17 permanent skips — the three bwrap journeys
+      run fine on this host (10 passed, 0 skipped); the remaining `skipif`s are legitimate
+      Windows/Xvfb/ripgrep gates, and unconditional skips already have a guard.
+      (2) `undelivered_outbox` — 218 rows, and **all 218 have `surfaced_at` set**, so the
+      outbox worked. (3) `logging_visibility --all` reports 228 functions outside the gated
+      packages, which is a RECORDED scope decision, not a defect. (4) 188 goal runs recorded
+      `completed` with an empty body — real, but **zero since 2026-08-28**, so dormant; the
+      by-day breakdown killed it exactly as it has four times before.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    document_is_no_change_needed_and_it_was_CHECKED: >-
+      `docs_touching.py` reports that no design document declares `owls/shadow_validator.py`
+      as a `Source`, and says plainly it cannot speak for the 35 that declare none. The
+      filter's own docstring carries the census and the reasoning, which is where a reader
+      of this behaviour looks.
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The evolution batch is a SCHEDULED job that runs roughly once a day, and the new
+      sentence only fires when it validates a zero-sample owl — which the corpus says
+      happens 4-8 times a day, so the evidence arrives on its own. Driving the job by hand
+      would measure my invocation rather than the platform's.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-10 'NOT a cold start'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} refusal(s) now say WHICH fact they mean — a literal only the new code emits, against a word that meant 'not yet' about a permanent state"; else echo "OPEN 0 — the evolution batch has not validated a zero-sample owl on the fixed code yet"; fi
   - id: DEBT-292
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. The measurement was taken during DEBT-291 and the fix withheld for a stated reason that DEBT-291 then removed."

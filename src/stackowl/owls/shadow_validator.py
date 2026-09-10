@@ -143,6 +143,25 @@ def _eligible_for_replay(outcomes: list[TaskOutcome]) -> list[TaskOutcome]:
     entirely tool-driven: it says "insufficient held-out sample" instead of
     failing on an artefact of the harness.
 
+    RE-MEASURED 2026-09-10, AND THE CENSUS ABOVE NAMED ONLY THE OWLS THIS FILTER
+    HELPED. Replayable samples in the 14-day window, every owl with scored
+    history::
+
+        rca_gatherer 155/479   hypothesis 243/427   verifier 192/405
+        secretary     73/190   jobmarket    4/108   mailbutler  1/22
+        scout          0/8     headhunter   0/4     syshealth   0/3
+        archivist      0/1
+
+    SIX owls sit below the required 5 and FOUR are at zero — and for those four
+    the count is not low, it is structurally unreachable: their work IS tools, so
+    no turn of theirs can ever have an empty ``tool_sequence``. The sentence above
+    calls that outcome honest, and against the alternative it was comparing with —
+    a bogus regression verdict produced by a harness artefact — it is. It is not
+    honest ENOUGH, because "insufficient held-out sample" reads as NOT YET and for
+    these owls it is NEVER. `validate` now says which of the two it means; the
+    gate itself is unchanged. Whether tool-using owls should have a validation
+    path at all is a product decision and is queued as ESC-167.
+
     ``outcomes`` is assumed already ordered newest-first (as
     ``TaskOutcomeStore.list_scored_for_owl`` returns it) — order is preserved.
     """
@@ -215,13 +234,44 @@ class ShadowValidator:
         outcomes = await store.list_scored_for_owl(owl_name, since_epoch=lookback_epoch())
         eligible = _eligible_for_replay(outcomes)
 
-        # 2. DECISION — cold-start: too little trustworthy history to validate
-        # against fails CLOSED (not a vacuous pass, not a crash).
+        # 2. DECISION — too little trustworthy history to validate against fails
+        # CLOSED (not a vacuous pass, not a crash). The GATE is unchanged; what
+        # changed on 2026-09-10 is that it stops reporting two different facts
+        # with one word (DEBT-293).
+        #
+        # "insufficient held-out sample" reads as NOT YET. For an owl with no
+        # history that is exactly right and it will grow. For an owl whose every
+        # turn uses tools it is NEVER: `_eligible_for_replay` requires an empty
+        # `tool_sequence`, because the replay harness deliberately wires no tool
+        # registry, so those turns cannot become eligible however long anyone
+        # waits. MEASURED over the 14-day window — `scout` 194 outcomes, 182
+        # scored, **0 replayable**; `syshealth` 15/15/**0**; `archivist`,
+        # `headhunter` the same; `mailbutler` 1 and `jobmarket` 4 against a
+        # required 5. Nineteen refusals for scout and syshealth alone, every one
+        # reporting `eligible=0`, and the number has never once risen.
         if len(eligible) < self._sample_size:
+            # BOTH NUMBERS ARE ALREADY IN HAND HERE, which is the whole reason
+            # this distinction costs nothing: `outcomes` is the history and
+            # `eligible` is what survived the filter.
+            if outcomes and not eligible:
+                log.owls.info(
+                    "[shadow] validate: exit — NOT a cold start: this owl has "
+                    "scored history and none of it is replayable, because every "
+                    "turn used tools and the replay harness wires none",
+                    extra={"_fields": {
+                        "owl": owl_name, "scored": len(outcomes),
+                        "eligible": 0, "required": self._sample_size,
+                    }},
+                )
+                return ShadowValidationResult(
+                    passed=False, consecutive_non_regressions=0,
+                    n_replayed=0, failures=(), cold_start=True,
+                )
             log.owls.info(
                 "[shadow] validate: exit — cold start, insufficient held-out sample",
                 extra={"_fields": {
                     "owl": owl_name, "eligible": len(eligible),
+                    "scored": len(outcomes),
                     "required": self._sample_size,
                 }},
             )
