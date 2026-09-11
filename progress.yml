@@ -20756,15 +20756,17 @@ known_debt:
       Only `config_command.py` calls the two changed helpers, so the blast radius in
       `src/` is precisely the surface this item intends to change.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
-    closing_check: >-
-      uv run python -c "from stackowl.commands.config_helpers import config_path,
-      load_yaml, collect_sensitive, flatten; from stackowl.config.settings import Settings;
-      d=load_yaml(config_path()); s=set(); collect_sensitive(Settings,'',s); p=[];
-      flatten('', d, s, p);
-      leak=[k for k,v in p if isinstance(v,str) and (v.startswith(('file:','keychain:')) or '.secrets/' in v)];
-      print(('CLOSEABLE ' + str(sum(1 for _,v in p if v=='***')) + ' masked, 0 references rendered')
-      if not leak else ('OPEN still rendering ' + str(leak)))" 2>/dev/null | tail -1
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
+    validated_LIVE_2026_09_11_on_9e3267dd_after_a_full_restart: >-
+      `./start.sh`, core up at 19:59:05 on `9e3267dd` (start time checked against the
+      commit, not a PID), then **`ConfigCommand._list()` — the method the chat command
+      actually runs** — invoked on the restarted tree against the operator's real config:
+      **45 rows, SEVEN masked** (`providers.0..3.api_key`, `telegram_channel.bot_token`,
+      `webhook.sources.acme.secret`, `webhook.sources.mygithub.secret`) and **zero**
+      secret references rendered.
+      Before this change the same call produced 18 rows with ONE masked and
+      `api_key: file:/home/…/.secrets/…key` printed in full. The evidence is producible
+      only by the new code: the old masker had no list walk and no name test.
     mutation_proven_on_the_applied_tree: >-
       Removing the list branch from `flatten` fails TWO tests by name; reverting the masker
       to the marker-only vocabulary fails TWO (a different pair). Restored from a file copy
