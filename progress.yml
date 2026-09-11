@@ -15679,12 +15679,32 @@ current:
         Corrected in the open rather than worked around: a panel answer that contradicts a
         recorded decision must be escalated, and quietly proceeding past my own escalation
         would be the silent reconciliation this skill forbids.
+      the_premise_check_was_WRONG_and_reported_EXPIRED_on_a_LIVE_question: >-
+        Caught 2026-09-11 by `escalation_check` the loop after this was written. The
+        first check asked whether A05.1's `implement` stage was done — and it is, so it
+        printed **EXPIRED** while the question had not been answered by anyone.
+        Implementing the control plane does not tell me which bind address you want; it
+        was testing the BLOCKING CONDITION I had wrongly claimed, not the question.
+        Left alone it would have dropped a live question from your queue, which this
+        record already carries as DEBT-216 — the SECOND instance of that shape.
+        THE CAUSE IS NARROWER THAN "I WROTE IT BADLY". The check mirrored a DIFFERENT
+        FIELD of this same escalation — `blocked_until_answered` — and when that field
+        was later corrected to "NOTHING", nothing re-read the check that had been
+        derived from it. A premise_check must test THE QUESTION, so that only an answer
+        (or the question becoming moot) can expire it.
+        SWEPT rather than assumed: of **85** escalations carrying a premise_check, only
+        **3** read an implementation state at all, and the other two are CORRECT —
+        ESC-153 asks which of five absent capabilities to build and expires when one
+        exists; ESC-138 asks whether to add a flake-evidence path and expires when
+        `full_suite.sh` has one. Both expire on their own answer. **One instance, not a
+        class**, so no guard is built and no sweep is queued.
       premise_check: |
         uv run python -c "
-        import yaml
-        d=yaml.safe_load(open('progress.yml'))
-        i=[x for x in d['items'] if x['id']=='A05.1'][0]
-        print('EXPIRED A05.1 implemented' if (i.get('stages') or {}).get('implement')=='done' else 'HOLDS not yet implemented')
+        from stackowl.config.control_plane_settings import ControlPlaneSettings
+        b = ControlPlaneSettings().bind_address
+        print(f'EXPIRED the default bind is now {b} — the question has been answered'
+              if b not in ('127.0.0.1', '::1', 'localhost')
+              else 'HOLDS still loopback by default; the widen/do-not-widen question stands')
         "
     ESC_170_should_the_tool_loop_hard_stop_come_back:
       question: >-
@@ -49214,6 +49234,26 @@ items:
       when no token is configured) fails 2; registering aiohttp middlewares fails 2;
       and the two credential-backend mutations are covered by the pair above. The
       restore was re-run each time and returned 38 passed.
+    the_document_stage_was_marked_done_with_EIGHT_documents_left_stale: >-
+      Corrected 2026-09-11, the loop after. `document: done` was written on the strength
+      of A05.1.md existing — and this file's own rule is that the design document is the
+      FIFTH SURFACE of a change, meaning every document that declares a changed file as
+      its `Source`, not only the one the item opens.
+      MEASURED by `doc_check` the next loop: **8 stale, every one from this single
+      commit** — D01.2, D01.7, D09.1, D10.5 and D05.3 cite `startup/orchestrator.py`;
+      D04.6 and D06.2 cite `scheduler/assembly.py`; D05.8 cites `config/settings.py`.
+      The corpus had been at **0 stale** that morning.
+      THE MISS IS SHARPER THAN "I FORGOT": I ran `docs_touching.py` in the SAME SESSION,
+      for the smaller DEBT-303 change, and read its answer ("none is declared as the
+      Source of any design document"). I did not run it for the larger change that
+      touched three of the most widely-cited files in the tree. The tool was used where
+      it happened to be cheap and skipped where it would have paid.
+      All eight now carry `6d71fdfd` as a `Reviewed:` sha with a reason specific to the
+      page — not a template: D05.3 gets a sentence because service gating is the subject
+      the change comes closest to (the control plane declares no `ToolManifest` and
+      enters no presented set, so the gate's population is unchanged), and D05.8 gets one
+      because a new settings SECTION is a plausible way for a tool count to move and this
+      one adds zero tools.
     AND_CLOSING_IT_FALSELY_CLOSED_SOMEONE_ELSES_VALIDATE_FOR_A_FEW_MINUTES: >-
       Recorded because it is the exact shape this method warns about and I did it
       anyway, hours after shipping a guard about scripted edits. The script that

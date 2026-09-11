@@ -66,6 +66,29 @@ def test_the_known_guards_carry_the_marker() -> None:
         assert "pytest.mark.tripwire" in body, f"{rel} is no longer in the gate"
 
 
+def test_the_gate_reports_which_documents_a_change_touches() -> None:
+    """The fifth surface is REPORTED by the gate, and must stay reported.
+
+    Not a gate itself — `doc_check` is deliberately not a tripwire, because most
+    documents are stale on any given day and a guard that fails ordinary work gets
+    bypassed. This pins only that the ANSWER is printed where the commit decision is
+    made. Without it the report is one edit from vanishing, which is this repo's
+    built-but-not-wired shape applied to its own instrument.
+    """
+    gate = (_ROOT / "scripts" / "tripwires.sh").read_text(encoding="utf-8")
+    assert "scripts/docs_touching.py" in gate, (
+        "the gate no longer reports which design documents declare a changed file. "
+        "MEASURED 2026-09-11: one commit left eight documents stale from a corpus at "
+        "zero, because the tool was run for a smaller change in the same session and "
+        "skipped for that one."
+    )
+    assert "|| fail=1" not in gate.split("scripts/docs_touching.py")[1].split("\n")[0], (
+        "the document report has become a GATE. It must not fail the build: 15 of 33 "
+        "measurable documents are stale on a normal day, and a guard that fails "
+        "ordinary work gets bypassed rather than satisfied."
+    )
+
+
 def test_the_loop_instructions_point_at_the_gate() -> None:
     """A gate nobody is told to run is decoration. Both the skill that drives the
     loop and the file every session reads must name it."""
