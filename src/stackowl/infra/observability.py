@@ -58,8 +58,25 @@ _IDENTIFIER_KEYS = frozenset({
 })
 
 
-def _is_sensitive(key: object) -> bool:
+def is_credential_name(key: object) -> bool:
     """Is this field name one whose VALUE must be redacted?
+
+    PUBLIC because there were TWO vocabularies for one question and a field could
+    satisfy the wrong one. The log redactor asks this — a NAME test with a
+    maintained exemption set. `/config list` asked something else entirely: an
+    opt-in ``sensitive=True`` marker a person had to remember per field.
+
+    MEASURED 2026-09-11 over all 342 settings fields: this predicate flags 15,
+    the marker flagged 7, and THE MARKED SET IS A SUBSET — "marked but not caught
+    by name" is EMPTY. So the marker has never once expressed something the name
+    does not already say, while eight credentials it missed were rendered in full
+    by ``/config list``, among them ``mcp_server.auth_token``, whose own
+    description reads "Sensitive: auto-redacted in logs by the *token
+    key-pattern." Its author thought about it, wrote down that it was covered, and
+    was right about the logs and wrong about the config surface.
+
+    The marker stays as a WIDENING for a future field whose name does not
+    advertise what it holds. It is no longer the only mechanism.
 
     TAKES ``object``, not ``str``, and that is load-bearing rather than defensive
     typing. On 2026-08-14 a caller logged its corpus shape as ``{"dims": {384:
@@ -74,6 +91,16 @@ def _is_sensitive(key: object) -> bool:
     if k in _IDENTIFIER_KEYS:
         return False
     return any(fnmatch.fnmatch(k, p) for p in _SENSITIVE_PATTERNS)
+
+
+#: The old private name, kept because SIX ASSERTIONS IMPORT IT — measured with
+#: `tests_touching.py` before renaming, not guessed:
+#: `tests/infra/test_observability_redaction.py` pulls `_is_sensitive` in at three
+#: call sites and asserts on it six times, including the `session_key` regression
+#: that the exemption set exists for. An alias keeps those pointed at the one
+#: definition; deleting the name would have split the predicate in two, which is
+#: the defect this whole change is about.
+_is_sensitive = is_credential_name
 
 
 # FX-04 — the key-only check above misses a secret that's part of a VALUE under

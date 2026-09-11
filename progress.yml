@@ -20651,6 +20651,131 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-309
+    found: 2026-09-11
+    map_check: >-
+      No match. Found while measuring A05.2 — the settings surface — BEFORE building its
+      route, which is the only reason it was found before the credentials went onto HTTP.
+    what: >-
+      `/config list` RENDERED CREDENTIALS. `mcp_server.auth_token` is redacted in the logs
+      and was printed by `/config list`; so were `providers[].api_key`,
+      `webhook.sources[].secret`, `browser.default_proxy[].password`,
+      `governance.audit_export_key`, `web_search.brave_api_key`, `tts.cloud_api_key` and
+      `image.cloud_api_key`.
+    root_cause_measured: >-
+      **FOUR IMPLEMENTATIONS OF ONE QUESTION, and the leaking pair is the one this
+      change collapses.** An earlier draft of this record said "two mechanisms, two
+      vocabularies" — understated, and in the direction that flatters the fix. SWEPT
+      2026-09-11, `src/` asks "is this name a credential" in FOUR places:
+      `observability._is_sensitive` (glob patterns + an exemption set, for logs);
+      `config_helpers` (the `sensitive=True` MARKER, for `/config list`);
+      `export/sanitizer._key_is_sensitive` (boundary-aware SEGMENT split, so `monkey`
+      does not match `key`, for exports); and `sandbox/spec.py`, which imports the
+      observability predicate and adds substring tokens plus an exact-name denylist,
+      because "the pattern-based log predicate may miss `DB_PASSWORD`".
+      This change collapses TWO of the four onto one definition — the one that was
+      LEAKING onto the one that is maintained. The other two remain separate and are
+      NOT leaking: both are strictly WIDER than the log predicate, and sanitizer's
+      segment split exists for JSON-rendered-as-text, which is a real requirement rather
+      than an accident. Folding all four is a larger item with its own measurement to
+      do, and it is named here rather than implied by silence.
+      **THE PAIR THIS FIXES: TWO VOCABULARIES, ONE QUESTION.** The log redactor asks a NAME
+      test (`is_credential_name`, patterns plus a maintained exemption set). `/config
+      list` asked something else: an opt-in `sensitive=True` marker a person had to
+      remember per field.
+      MEASURED over all **342** fields reachable from `Settings`: the name test flags
+      **15**, the marker flagged **7**, and **the marked set is a strict SUBSET** —
+      "marked but not caught by name" is EMPTY. The marker has never once expressed
+      something the name does not already say, while eight credentials it missed were
+      printed.
+      The sharpest instance is `mcp_server.auth_token`, whose own description reads
+      *"Sensitive: auto-redacted in logs by the *token key-pattern."* Its author thought
+      about it, WROTE DOWN that it was covered, and was right about the logs and wrong
+      about the config surface. That is what two vocabularies do: satisfying one reads
+      as done. The runner-up is three siblings named `cloud_api_key` —
+      transcription MARKED, tts and image NOT.
+    and_a_marker_ALONE_would_not_have_saved_three_of_them: >-
+      `flatten` descended into `dict` and stopped at `list`, so `providers` — a list of
+      models each carrying an `api_key` — was stringified WHOLE and printed as one value.
+      The key never reached the masking comparison, so marking the field would have
+      changed nothing. **All EIGHT list-of-model fields in `Settings` were invisible to
+      `collect_sensitive`.** Both halves are fixed together; either alone is decoration.
+    fix: >-
+      `is_credential_name` is published from `observability` — the predicate the logs have
+      always used — and `collect_sensitive` now records a key when the marker OR the name
+      says credential, descending into `list[BaseModel]`. `flatten` descends into lists
+      with indices (`providers.3.api_key`, so a reader with four providers knows WHICH)
+      and masks on the leaf name. The `sensitive=True` marker stays as a WIDENING for a
+      future field whose name does not advertise what it holds.
+      NO FIELD WAS MARKED BY HAND. An earlier draft of this fix marked seven fields and
+      was discarded: that is the symptom repair, and it leaves the next field to memory.
+    proven_against_the_operators_own_config: >-
+      Before: 18 rows, ONE masked, and `providers` printed whole including
+      `api_key: file:/home/boss/.stackowl/.secrets/…key`.
+      After: 45 rows, **SEVEN masked** — all four `providers.N.api_key`, both
+      `webhook.sources.*.secret`, and `telegram_channel.bot_token` — and **zero** secret
+      references still rendered.
+    the_exposure_is_stated_honestly_rather_than_dramatically: >-
+      On THIS deployment every set credential is a `file:`/`keychain:` REFERENCE, so what
+      leaked was the secret-store LAYOUT, not key material. The fields accept literals —
+      `SecretResolver` syntax is a convention, not a constraint — so a user who pastes a
+      key straight into `stackowl.yaml` had it printed in full. And
+      `telegram_channel.bot_token` holds a reference and was masked anyway, so the
+      platform's own policy already treats a reference as worth hiding. The
+      INCONSISTENCY is the defect, not a claim that keys were on screen.
+    it_changes_a_user_facing_output_and_that_is_deliberate: >-
+      `/config list` goes from 18 rows to 45, because a list of providers now renders one
+      row per field per provider instead of one unreadable blob. That is a visible change
+      to a command a person uses, made on purpose: the blob was both unmaskable and
+      unreadable. Recorded rather than escalated — nothing is removed or disabled.
+    what_else_that_same_cause_reaches: >-
+      A05.2's `/api/v1/config` route is the reason this was found and the reason it had
+      to be fixed FIRST: shipping the settings over HTTP before the mask was one commit
+      away from putting seven credential fields on a network surface. Any future surface
+      that renders settings inherits the fixed masker rather than re-deciding.
+    over_masking_measured_at_ZERO: >-
+      The risk of a name test is that it hides something a reader needs. MEASURED over
+      all 342 fields: exactly **EIGHT** become masked that were visible, and they are
+      exactly the eight credentials. No collateral — no config key, no identifier, no
+      LLM budget. `sensitive_categories`, `session_key`, `idempotency_key` and every
+      `max_*_tokens` stay readable.
+    the_new_tests_were_proven_to_FAIL_on_the_unfixed_code_BEFORE_applying: >-
+      Run against today's `collect_sensitive`/`flatten` with a constructed list-of-models:
+      the walk found **NOTHING**, `flatten` rendered `providers` as ONE key, and the
+      literal `sk-…` **was leaked**. So the two list tests are not vacuous — they fail for
+      the stated reason on the code they replace. Proven off-tree, before the tree was
+      touched.
+    and_the_derived_path_justified_the_ALIAS_rather_than_my_guess: >-
+      I kept `_is_sensitive = is_credential_name` and wrote that it was "because this
+      module calls it on every log record" — a guess. `tests_touching.py` gave the real
+      reason: `tests/infra/test_observability_redaction.py` IMPORTS the private name at
+      three call sites and asserts on it SIX times, including the `session_key` regression
+      the exemption set exists for. Deleting the name would have split the predicate in
+      two, which is the exact defect this change removes. The comment now states the
+      measured reason.
+      Only `config_command.py` calls the two changed helpers, so the blast radius in
+      `src/` is precisely the surface this item intends to change.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    closing_check: >-
+      uv run python -c "from stackowl.commands.config_helpers import config_path,
+      load_yaml, collect_sensitive, flatten; from stackowl.config.settings import Settings;
+      d=load_yaml(config_path()); s=set(); collect_sensitive(Settings,'',s); p=[];
+      flatten('', d, s, p);
+      leak=[k for k,v in p if isinstance(v,str) and (v.startswith(('file:','keychain:')) or '.secrets/' in v)];
+      print(('CLOSEABLE ' + str(sum(1 for _,v in p if v=='***')) + ' masked, 0 references rendered')
+      if not leak else ('OPEN still rendering ' + str(leak)))" 2>/dev/null | tail -1
+    mutation_proven_on_the_applied_tree: >-
+      Removing the list branch from `flatten` fails TWO tests by name; reverting the masker
+      to the marker-only vocabulary fails TWO (a different pair). Restored from a file copy
+      both times and re-run green — 11 passed. The derived path is 17 files, **185 passed**,
+      including `tests/infra/test_observability_redaction.py`, which imports the aliased
+      private name at three call sites.
+    document_is_no_change_needed_and_the_reason_is_named: >-
+      No design document declares `config_helpers.py` or `observability.py` as its
+      `Source` — verified with `docs_touching.py`, not assumed. The rule this leaves
+      behind lives in the published predicate's own docstring, where the next reader of
+      either surface will meet it.
   - id: DEBT-308
     found: 2026-09-11
     map_check: >-

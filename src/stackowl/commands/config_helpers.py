@@ -9,12 +9,12 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from pydantic import BaseModel
 from ruamel.yaml import YAML
 
-from stackowl.infra.observability import log
+from stackowl.infra.observability import is_credential_name, log
 from stackowl.paths import StackowlHome
 
 
@@ -110,13 +110,30 @@ def flatten(
     sensitive_keys: set[str],
     out: list[tuple[str, str]],
 ) -> None:
-    """Flatten nested dicts into dot-notation ``(key, repr)`` pairs."""
+    """Flatten nested dicts AND LISTS into dot-notation ``(key, repr)`` pairs.
+
+    THE LIST BRANCH IS THE FIX. Until 2026-09-11 this descended into ``dict``
+    and stopped at ``list``, so a list of models was stringified WHOLE — and
+    `providers` is a list of models with an ``api_key`` on each. `/config list`
+    printed the entire structure, credential included, as one value. Marking the
+    field would not have helped: the key never reached this comparison at all.
+
+    Indices are rendered, so ``providers.3.api_key`` names one provider rather
+    than the shape. That matters for a reader who has four providers and one
+    broken key.
+    """
     if isinstance(value, dict):
         for k, v in value.items():
             sub = f"{prefix}.{k}" if prefix else str(k)
             flatten(sub, v, sensitive_keys, out)
         return
-    rendered = "***" if prefix in sensitive_keys else stringify(value)
+    if isinstance(value, list) and any(isinstance(v, dict) for v in value):
+        for index, item in enumerate(value):
+            flatten(f"{prefix}.{index}" if prefix else str(index), item, sensitive_keys, out)
+        return
+    leaf = prefix.rsplit(".", 1)[-1]
+    masked = prefix in sensitive_keys or is_credential_name(leaf)
+    rendered = "***" if masked else stringify(value)
     out.append((prefix, rendered))
 
 
@@ -173,11 +190,25 @@ def _try_float(raw: str) -> float | None:
 
 
 def collect_sensitive(model: type[BaseModel], prefix: str, out: set[str]) -> None:
-    """Walk ``model`` recursively and record dotted keys with ``sensitive=True``."""
+    """Record dotted keys that hold a credential — by MARKER or by NAME.
+
+    The name test is `is_credential_name`, the one the log redactor has always
+    used. Two vocabularies for one question is how `mcp_server.auth_token` came
+    to be redacted in logs and printed by `/config list`.
+
+    It also descends into LISTS of models now. Every one of the eight
+    list-of-model fields in `Settings` was invisible to this walk, so a marker
+    inside one did nothing.
+    """
     for name, field in model.model_fields.items():
         dotted = f"{prefix}.{name}" if prefix else name
         extra = field.json_schema_extra if isinstance(field.json_schema_extra, dict) else {}
-        if extra.get("sensitive"):
+        if extra.get("sensitive") or is_credential_name(name):
             out.add(dotted)
-        if isinstance(field.annotation, type) and issubclass(field.annotation, BaseModel):
-            collect_sensitive(field.annotation, dotted, out)
+        annotation = field.annotation
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            collect_sensitive(annotation, dotted, out)
+            continue
+        for arg in get_args(annotation):
+            if isinstance(arg, type) and issubclass(arg, BaseModel):
+                collect_sensitive(arg, f"{dotted}[]", out)
