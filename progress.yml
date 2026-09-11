@@ -21348,30 +21348,36 @@ known_debt:
       No store reported FORMAT-UNREADABLE, which is the thing a re-dating can quietly
       break: `lessons.updated_at` is TEXT ISO and `skills`/`tool_heuristics` are REAL
       epochs, and `_as_epoch` reads both.
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
     document_is_no_change_needed_and_that_was_CHECKED: >-
       `docs_touching.py` reports that none of the three changed paths is declared as the
       `Source` of any design document. Recorded because "no document" is a measurement
       here, not an omission.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      The sweep runs on its own schedule; this closes on its first tick after the
-      restart, which is minutes away rather than days, but has not happened yet.
-    AND_THE_FIRST_CLOSING_CHECK_I_WROTE_WAS_THE_TRAP_THIS_FILE_ALREADY_RECORDS: >-
-      I drafted it as an ABSENCE — "no further UNHEALTHY sweep naming store_cadence
-      since 2026-09-11" — which is the defect DEBT-285 paid for two loops ago: a
-      date-bounded window that contains PRE-FIX records can never go empty, so the check
-      reads OPEN forever and the reader takes that for "not yet". Two such records
-      already sat in today's window, at 00:03 and 00:09.
-      The cure was already in the tree and only had to be looked for. The contributor's
-      HEALTHY branch logs `[health] store_cadence: ok — no store past its declared
-      cadence` at INFO — promoted there by an earlier loop for exactly this reason — so
-      the evidence can be POSITIVE. MEASURED before adopting it: 104 occurrences on
-      2026-09-10 and **ZERO since 2026-09-11**, because with the old registry
-      `tool_heuristics` is silent and that branch is unreachable. Emittable, bounded,
-      and satisfiable only by the fixed code, which is all three of the things this
-      programme keeps getting wrong one at a time.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-11 'store_cadence: ok — no store past its declared cadence'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} sweep(s) now report every store within its declared cadence — the literal existed 0 times today because tool_heuristics made that branch unreachable"; else echo "OPEN 0 — the sweep has not yet found every store within cadence on the fixed code"; fi
+    validated_live_on_1755b710_and_the_cut_is_EXACT: >-
+      The alarm stopped at the boot that carried the fix, with nothing in between.
+      `tool_heuristics` was reported past its declared cadence NINE times today, every
+      5.5 minutes, 00:03:49 through 00:47:50. CodeWatcher exec-replaced the core at
+      **00:50:44** — `[runtime] code change settled -> requesting core restart` then
+      `[startup] core: exec-replacing with fresh code` — and the next sweep, at
+      **00:53:06**, logged `[health] store_cadence: ok — no store past its declared
+      cadence` with `measured: 27, empty: 2, unreadable: 0`. Three more since (00:58:36,
+      01:04:07, 01:09:37), and ZERO `UNHEALTHY subsystems detected` naming store_cadence
+      after 00:47.
+      TWO THINGS THAT READING ALSO CONFIRMS, neither of them the headline. **27 measured
+      + 2 empty = 29**, which is exactly the count the static audit classifies, so the
+      scan and the live check agree on the population rather than merely both being
+      plausible. And **`unreadable: 0`** settles the one thing a re-dating can quietly
+      break: `lessons` keeps a TEXT ISO clock while `skills` and `tool_heuristics` are
+      REAL epochs, and `_as_epoch` reads all of them.
+      AND THE FIX WENT LIVE WITHOUT MY RESTART. CodeWatcher took it at 00:50:44, two
+      minutes after the files landed and twenty before `./start.sh` ran at 01:12:36 — so
+      the evidence above is dated from the exec-replace, not from my restart. Checking
+      WHICH boot carried the code is the difference between a measurement and a
+      coincidence.
+    closing_check_RESULT: >-
+      CLOSEABLE — 4. Verified rather than believed: all four records post-date the
+      00:50:44 exec-replace, the literal had fired 0 times earlier today, and the last
+      complaint was 00:47:50.
   - id: DEBT-299
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, and it is the hole DEBT-298 measured and named in its own record one loop earlier rather than a new discovery."
