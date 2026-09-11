@@ -281,6 +281,58 @@ class TestThePageActuallyParses:
 
 
 @pytest.mark.tripwire
+def test_the_page_reads_no_field_a_route_does_not_emit() -> None:
+    """The bijection one level down: PATH pairing does not check FIELD pairing.
+
+    `test_every_api_route_is_rendered_somewhere_on_the_page` proves the page
+    fetches everything the door serves. It says nothing about whether the page
+    reads the fields that actually arrive — and a renamed payload key does not
+    raise in JavaScript. `j.failure_count` becoming `j.failures` renders an
+    em-dash in every row, forever, and looks like a platform with no failures.
+
+    MEASURED 2026-09-11 across the three routes: 15 field reads, **zero**
+    mismatches. So this is a ratchet rather than a bug report — but it is not
+    vacuous: it has a real population and fires on the next rename.
+
+    THE LOOP VARIABLES ARE DERIVED, not listed. A future render function using a
+    different name would silently escape a hard-coded `s.`/`j.` scan, which is
+    the going-blind failure this repo names as worse than no guard at all.
+    """
+    from stackowl.control_plane import server as mod
+
+    emitted: set[str] = set()
+    for name in dir(mod.ControlPlaneServer):
+        if not name.startswith("_handle_"):
+            continue
+        src = textwrap.dedent(inspect.getsource(getattr(mod.ControlPlaneServer, name)))
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.Dict):
+                emitted |= {
+                    k.value for k in node.keys
+                    if isinstance(k, ast.Constant) and isinstance(k.value, str)
+                }
+    assert emitted, "no handler payload keys found — this guard has gone blind"
+
+    loop_vars = set(re.findall(r"forEach\(function \((\w+)\)", INDEX_HTML))
+    assert loop_vars, (
+        "no `forEach(function (x)` render loop found — the page stopped rendering "
+        "rows this way and this guard can no longer see the field reads"
+    )
+
+    reads: set[str] = set()
+    for var in loop_vars:
+        reads |= set(re.findall(rf"\b{re.escape(var)}\.([a-z_]+)", INDEX_HTML))
+    assert reads, f"loop variables {sorted(loop_vars)} read no fields at all"
+
+    unknown = sorted(reads - emitted)
+    assert not unknown, (
+        f"the page reads {unknown}, which no route emits — JavaScript renders "
+        "undefined as an em-dash, so this shows as missing DATA rather than as a "
+        f"broken page. Routes emit: {sorted(emitted)}"
+    )
+
+
+@pytest.mark.tripwire
 def test_every_api_route_is_rendered_somewhere_on_the_page() -> None:
     """THE RULE THIS ITEM EXISTS TO MAKE STRUCTURAL, AND ITS CAUSE.
 

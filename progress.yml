@@ -50185,8 +50185,18 @@ items:
     wave: 1
     order: 123
     gap: >-
-      Settings can be changed by TYPING but not seen as a SET, and no change leaves an
-      audit trail a customer could read.
+      Settings ARE seen as a set — by typing. `/config list` renders every configured
+      key, sorted, with credentials masked. What no surface offers is that set to
+      somebody who is not at a chat prompt, and what nothing offers at all is an audit
+      trail a CUSTOMER could read: `config.set: exit` is INFO and carries the key, but a
+      log file is not a surface.
+    gap_was_WRONG_TWICE_AND_BOTH_TIMES_IN_THE_SAME_DIRECTION: >-
+      First it read "the customer cannot change a setting without editing YAML on the
+      host" — `/config set` validates, writes and RE-READS the file to confirm (F-81).
+      Its replacement said settings were "not seen as a SET" — `/config list` shows them
+      all. Both describe a capability that EXISTS and is UNREACHABLE from anywhere but a
+      conversation, which is the shape DEBT-307 found in seven of nine gaps in this
+      series. Corrected a second time here, from the source rather than from memory.
     gap_was_MEASURABLY_FALSE_as_written_2026_09_11: >-
       It said "the customer cannot change a setting without editing YAML on the host".
       `/config set` exists and predates this item: it validates the key, refuses
@@ -50202,12 +50212,60 @@ items:
       a change takes effect without a restart.
     gap_check: >-
       python3 -c "import ast,pathlib; t=ast.parse(pathlib.Path('src/stackowl/control_plane/server.py').read_text()); routes=[a.value for n in ast.walk(t) if isinstance(n,ast.Call) and getattr(n.func,'attr','').startswith('add_') for a in n.args if isinstance(a,ast.Constant) and isinstance(a.value,str)]; print('REFUTED a control-plane route serves settings: '+str(routes) if any('config' in r or 'setting' in r for r in routes) else 'HOLDS routes are '+str(routes)+' — settings are viewable as a set from no surface')"
+    implement_2026_09_11_the_READ_half: >-
+      `GET /api/v1/config` returns every configured setting as a set, masked, and the
+      page grows a Settings table — the bijection guard from DEBT-308 REQUIRES it, so an
+      endpoint cannot ship invisible. It reads through the chat command's own four
+      helpers (`config_path`, `load_yaml`, `collect_sensitive`, `flatten`), so the two
+      surfaces cannot disagree about what is configured or about what is secret.
+      **THE ORDER WAS THE POINT.** Shipping this before DEBT-309 would have put SEVEN
+      credential fields onto a network surface — `providers[].api_key`,
+      `webhook.sources[].secret`, `mcp_server.auth_token`,
+      `browser.default_proxy[].password`, `governance.audit_export_key`,
+      `web_search.brave_api_key` and `tts`/`image.cloud_api_key` all carried no
+      `sensitive=True` marker, and `flatten` did not descend into lists at all. The
+      masking was fixed first and this route second, deliberately.
+      IT SHOWS WHAT IS CONFIGURED, NOT WHAT IS EFFECTIVE — `load_yaml` reads the FILE, so
+      a default nobody set does not appear, exactly as `/config list` behaves. Making
+      this surface resolve defaults would be a second answer to one question; it belongs
+      in the shared helpers, where the chat surface would get it too.
+    and_the_BIJECTION_GOT_A_SECOND_LEVEL_because_paths_are_not_fields: >-
+      DEBT-308's guard pairs PATHS — every registered `/api/` route appears on the page.
+      It says nothing about whether the page reads the fields that actually arrive, and
+      **a renamed payload key does not raise in JavaScript**: `j.failure_count` becoming
+      `j.failures` renders an em-dash in every row, forever, and reads as a platform with
+      no failures rather than as a broken page.
+      So the pairing now goes one level down: every `<loopvar>.<field>` the page reads
+      must be a key some handler's payload dict emits. MEASURED across the three routes —
+      **15 field reads, ZERO mismatches** — so it is a ratchet rather than a bug report,
+      and it is not vacuous. MUTATION-PROVEN off-tree: renaming `failure_count` to
+      `failures` in the route makes it fail by name.
+      **THE LOOP VARIABLES ARE DERIVED FROM THE PAGE, never listed.** A hand-written
+      `s.`/`j.` scan would go silently blind the first time a render function used a
+      different name, which this repo records as worse than having no guard.
+    the_WRITE_half_is_not_built_and_ESC_173_is_why: >-
+      Create/update/reset over HTTP stay unbuilt for the same measured reason A05.4's
+      write verbs do: exactly ONE `granted=` assignment exists under
+      `src/stackowl/control_plane/`, and it is `ALL_SEVERITIES`. "See my settings" and
+      "change my settings" would be one permission.
     evidence: >-
       Operator requirement, 2026-09-11 — "control platform". Settings already
       carry hot_reload metadata, so the read side of this exists; what is missing
       is a surface and a write path with an audit trail.
     depends_on: ['A05.1']
     blocks: []
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: partial}
+    closing_check: >-
+      c=$(./scripts/log_since.sh 2026-09-11 'server.config: exit — served');
+      [ "${c:-0}" -gt 0 ] && echo "CLOSEABLE $c config reads served"
+      || echo "OPEN 0 — the route has not answered on the live platform yet"
+    document_is_partial_and_the_reason_is_named: >-
+      A05.9 (the page) is amended and stamped; A05.2 has no design document of its own
+      yet. The route's behaviour, its masking contract and its configured-not-effective
+      caveat live in the handler docstring and in A05.9's Settings note, which is where a
+      reader of either surface meets them. A document for A05.2 belongs with the WRITE
+      half, when there is a lifecycle to describe rather than one read route.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A05.3
     title: Agents — list, create, update, remove, and set what each may do

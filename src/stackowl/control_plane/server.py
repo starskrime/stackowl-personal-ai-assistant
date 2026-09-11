@@ -30,6 +30,13 @@ import asyncio
 import time as _time
 from typing import TYPE_CHECKING, Any
 
+from stackowl.commands.config_helpers import (
+    collect_sensitive,
+    config_path,
+    flatten,
+    load_yaml,
+)
+from stackowl.config.settings import Settings
 from stackowl.control_plane.auth import (
     READ,
     UNAUTHORIZED_BODY,
@@ -124,6 +131,7 @@ class ControlPlaneServer(SupervisedTask):
         app.router.add_get("/", self._handle_index)
         app.router.add_get("/api/v1/health", self._handle_health)
         app.router.add_get("/api/v1/schedules", self._handle_schedules)
+        app.router.add_get("/api/v1/config", self._handle_config)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -363,6 +371,67 @@ class ControlPlaneServer(SupervisedTask):
             extra={"_fields": {
                 "principal_id": principal.principal_id,
                 "schedules": len(jobs),
+                "duration_ms": duration_ms,
+            }},
+        )
+        return web.json_response(payload)
+
+    async def _handle_config(self, request: Any) -> Any:
+        """`GET /api/v1/config` — every configured setting, as a SET, masked.
+
+        IT READS THROUGH THE CHAT COMMAND'S OWN FOUR HELPERS —
+        `config_path`, `load_yaml`, `collect_sensitive`, `flatten` — so this
+        surface and `/config list` cannot disagree about what is configured or
+        about what is secret. A second masking list is how a credential reaches
+        an HTTP response, and DEBT-309 is the record of what the first one cost.
+
+        SHIPPING THIS BEFORE DEBT-309 WOULD HAVE PUT SEVEN CREDENTIAL FIELDS ON
+        A NETWORK SURFACE. `providers[].api_key`, `webhook.sources[].secret`,
+        `mcp_server.auth_token` and four more carried no `sensitive=True`
+        marker, and `flatten` did not descend into lists at all. That is why the
+        masking was fixed first and this route second, in that order.
+
+        IT SHOWS WHAT IS CONFIGURED, NOT WHAT IS EFFECTIVE. `load_yaml` reads
+        the FILE, so a default the operator never set does not appear — exactly
+        as `/config list` behaves. Making this surface show resolved defaults
+        would be a second answer to one question; if that is wanted, it belongs
+        in the shared helpers where the chat surface gets it too.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.config: entry")
+
+        principal, refusal = self._guard(request, "config")
+        if principal is None:
+            return refusal
+
+        path = config_path()
+        if not path.exists():
+            log.control_plane.warning(
+                "[control_plane] server.config: exit — no config file on disk",
+                extra={"_fields": {"principal_id": principal.principal_id,
+                                   "path": str(path)}},
+            )
+            return web.json_response({"settings": [], "wired": False}, status=503)
+
+        sensitive: set[str] = set()
+        collect_sensitive(Settings, "", sensitive)
+        pairs: list[tuple[str, str]] = []
+        flatten("", load_yaml(path), sensitive, pairs)
+        pairs.sort(key=lambda kv: kv[0])
+
+        masked = sum(1 for _key, value in pairs if value == "***")
+        payload = {
+            "wired": True,
+            "settings": [{"key": k, "value": v, "masked": v == "***"} for k, v in pairs],
+        }
+        duration_ms = (_time.monotonic() - t0) * 1000
+        log.control_plane.info(
+            "[control_plane] server.config: exit — served",
+            extra={"_fields": {
+                "principal_id": principal.principal_id,
+                "settings": len(pairs),
+                "masked": masked,
                 "duration_ms": duration_ms,
             }},
         )

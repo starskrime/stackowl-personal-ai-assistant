@@ -121,6 +121,17 @@ INDEX_HTML: Final = """<!doctype html>
     </table></div>
   </section>
 
+  <section id="config" hidden>
+    <h2>Settings</h2>
+    <div class="wrap"><table>
+      <thead><tr><th>Key</th><th>Value</th></tr></thead>
+      <tbody id="configrows"></tbody>
+    </table></div>
+    <p class="note">What is CONFIGURED, not what is effective — a default nobody
+       set does not appear here, exactly as <code>/config list</code> behaves.
+       Credentials read <code>***</code>.</p>
+  </section>
+
   <p class="note" id="status"></p>
 </main>
 <script>
@@ -210,18 +221,41 @@ INDEX_HTML: Final = """<!doctype html>
     $("schedules").hidden = false;
   }
 
+  function renderConfig(payload) {
+    var body = $("configrows");
+    body.textContent = "";
+    if (!payload.wired) {
+      var r = document.createElement("tr");
+      cell(r, "no config file on disk", "mut");
+      body.appendChild(r);
+    } else {
+      (payload.settings || []).forEach(function (s) {
+        var row = document.createElement("tr");
+        cell(row, s.key);
+        cell(row, s.value, s.masked ? "mut" : "");
+        body.appendChild(row);
+      });
+    }
+    $("config").hidden = false;
+  }
+
   function load(token) {
     say("loading…");
-    Promise.all([get("/api/v1/health", token), get("/api/v1/schedules", token)])
+    Promise.all([get("/api/v1/health", token), get("/api/v1/schedules", token),
+                 get("/api/v1/config", token)])
       .then(function (r) {
         renderHealth(r[0]);
         renderSchedules(r[1]);
+        renderConfig(r[2]);
         var n = (r[1].schedules || []).length;
-        say(n + " schedule" + (n === 1 ? "" : "s") + " · read at " + new Date().toLocaleTimeString());
+        var c = (r[2].settings || []).length;
+        say(n + " schedule" + (n === 1 ? "" : "s") + " · " + c + " setting" +
+            (c === 1 ? "" : "s") + " · read at " + new Date().toLocaleTimeString());
       })
       .catch(function (e) {
         $("health").hidden = true;
         $("schedules").hidden = true;
+        $("config").hidden = true;
         say(String(e.message || e));
       });
   }
