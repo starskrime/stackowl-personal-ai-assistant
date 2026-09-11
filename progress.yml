@@ -126,8 +126,11 @@ agentic_os:
       policy -> sandbox -> subagent, where each level can only FURTHER RESTRICT and
       POLICY IS APPLIED BEFORE THE MODEL CALL, so a removed tool's schema never
       reaches the model. Ours denies at dispatch, AFTER the model has already chosen
-      the tool — which is why the deny path has fired zero times and the model is
-      shown tools it may not use. Filter the presented set, do not only refuse the call.
+      the tool — and it denies often: 96 refusals, 48 on 2026-09-10 alone. (An
+      earlier draft of this line said the deny path had fired ZERO times. That was a
+      grep for a literal nobody emits; see A01.2.) We DO narrow presentation as well,
+      and A01.2 is the item that makes that narrowing apply on every path instead of
+      only when nothing else restricts.
     SKILL_md_won: >-
       Letta, OpenHands, OpenClaw, Vercel Eve, goose and ~47 shipping clients all read
       SKILL.md, now an open standard alongside AGENTS.md at the Linux Foundation. A
@@ -21804,7 +21807,15 @@ known_debt:
       (28 passed): restoring the window bound on the escalation read fails 3; reverting
       the comparison to a truthiness test fails 1; letting the LAST escalation win instead
       of the highest fails 1; and removing the held-back INFO line fails 1.
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    validated_live_2026_09_11_the_sweep_held_a_pair_back: >-
+      CLOSEABLE, verified rather than believed. One record, 2026-09-11T02:33:06Z,
+      INFO: `already raised and no worse — the operator is not asked again`, with
+      held=1 and pairs=[{owl: jobmarket, tool: shell, now: 6, raised_at: 15}]. The
+      pair had been raised at a count of 15 and stands at 6, so it has not worsened
+      and the operator is not asked a second time — which is the whole behaviour.
+      The literal was introduced by this item's own fix commit e69e9915, so no
+      earlier code could emit it.
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
     the_code_is_LIVE_and_that_is_a_separate_fact_from_the_check: >-
       Restarted on `e69e9915`: commit 21:07:39Z, core connected 21:08:28Z — forty-nine
       seconds later, so the running process carries the change. That is evidence the
@@ -48569,15 +48580,88 @@ items:
     wave: 1
     order: 113
     gap: >-
-      Effective bounds are computed on every dispatch and have never once refused
-      anything. Either there has been nothing to refuse, or the guard cannot
-      refuse — and only one of those is acceptable.
+      The bounds guard refuses constantly and correctly, and the model is shown the
+      tools it will be refused — so a bounded owl asks for a forbidden tool, is
+      denied, and asks again.
     evidence: >-
-      MEASURED 2026-09-11 over every retained log — "effective bounds" appears
-      684 times, "bounds: DENY" ZERO times, ever. `plan: envelope set` fires ~5x
-      a day (57 total, newest 2026-09-10T22:00:17Z), so envelopes are being
-      produced continuously. This is the vacuity question the programme's own
-      rules demand asking of any guard.
+      MEASURED 2026-09-11 with the emitter's own literal: `[pipeline] execute:
+      tool refused by bounds` has fired **96** times, **48 on 2026-09-10 alone**,
+      all at WARNING with axis=tools and denied_by=owl. jobmarket/todo 35,
+      jobmarket/shell 15, jobmarket/update_plan 13, mailbutler and syshealth the
+      rest. **59 of the 96 sit on `retry-*` traces.**
+      Four of eleven owls carry a tools bound (jobmarket 16, mailbutler 8,
+      syshealth 7, english_tutor 4); the other seven are unbounded, and every
+      non-tools axis is null on all of them.
+      CORRECTION OF THIS ITEM'S OWN FIRST EVIDENCE: it read "684 computed, zero
+      denied" and both halves were false. `bounds: DENY` was a literal nobody
+      emits, and the 684 counted `[authz] compose: boundary-router tools added to
+      effective bounds` — a deliberate WIDENING so a boundary-router owl can still
+      ASK for authority, which is also why owl_build and owls_list show as
+      "outside" mailbutler's bounds without being violations.
+    root_cause_measured: >-
+      ONE COPY OF A RULE THE SAME FILE STATES CORRECTLY ELSEWHERE.
+      `_restrict_to_for_turn` says of the envelope case: "An envelope is
+      INTERSECTED, never replaced: a task granted three tools must not get the
+      whole registry back because one of them was banned." Its BAN branch does not
+      follow that rule — it builds its remainder from `all_names`, the whole
+      registry minus the bans, which for a bounded owl is a SUPERSET of what the
+      owl may call. That would be harmless, because presentation is narrowed to
+      the owl's effective bounds twenty lines later — except the narrowing was
+      guarded on `restrict_to is None`, so setting a ban restriction DISABLED it.
+      The ban path widened the presented set and then skipped the one thing that
+      would have narrowed it back. That is why 59 of 96 are retries.
+    what_else_that_same_cause_reaches: >-
+      The narrowing's own comment records the identical defect being fixed once
+      before, for a different trigger — headhunter self-reporting `web_search` as
+      present yet always refused, live 2026-07-23 — and it was fixed for the case
+      that surfaced, with a guard that left every other case open. The task-envelope
+      path had the same exposure by construction, and intersecting closes both.
+      THE DNA CAPABILITY-PROFILE HALF IS DELIBERATELY LEFT ALONE. Presentation gives
+      `restrict_to` absolute precedence — its own comment: "the broad base set +
+      profile groups are dropped for this turn" — so narrowing a PROFILED owl would
+      silently swap its DNA capability groups for its bounds. Zero of eleven owls
+      carry a capability_profile, so that cannot be measured on this deployment, and
+      changing it would be tidiness rather than evidence. A guard pins the exclusion
+      so a later pass has to argue for it rather than delete it.
+    fix: >-
+      `_narrow_to_effective_bounds`, a pure sibling of `_restrict_to_for_turn`,
+      intersects the turn's restriction with the owl's effective bounds on EVERY
+      path instead of only when nothing else restricts. Intersection is monotonic
+      narrowing and can never widen authority. An empty intersection keeps the
+      prior restriction rather than handing the model an empty menu — the reason
+      `_restrict_to_for_turn` already gives about bans: "a model with no tools
+      cannot reroute either."
+    AND_THE_PLATFORM_HAD_ALREADY_WRITTEN_DOWN_WHAT_THIS_COSTS: >-
+      `_record_capability_gap` in the same module: "MEASURED 2026-08-22: 85 bounds
+      refusals across three days and not one ever reached the user. mailbutler was
+      refused `shell` 24 TIMES — it needs the tool, asks on every run, is refused,
+      reports honestly, and starts again from nothing the next run. That is what
+      'my agents keep failing at their jobs' looks like from inside." The refusals
+      were persisted and escalated; what nobody closed is the loop that produces
+      them.
+    tests: >-
+      `tests/authz/test_a_ban_cannot_present_what_the_owl_may_not_call.py`, 6
+      tripwires: the defect end-to-end through both functions (a ban's remainder
+      must come back inside the owl's bounds); an unbounded owl left byte-identical,
+      which is the control that matters because seven of eleven owls are unbounded;
+      the original 2026-07-23 headhunter case still working; an empty intersection
+      keeping the prior restriction; a property test that narrowing NEVER widens,
+      stated as a property because that is what makes it safe on the DNA
+      capability-profile branch no owl exercises; and a call-site guard that the
+      narrowing is invoked UNCONDITIONALLY, since the old `if restrict_to is None`
+      form is exactly how the ban path escaped it.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    validate_is_PARTIAL_and_the_check_is_POSITIVE_on_purpose: >-
+      The obvious check — "denials fall to zero" — is an ABSENCE inside a window
+      that already holds 96 pre-fix records, which this programme has paid for
+      twice. So the fix emits a witness instead: `[pipeline] execute: presented set
+      narrowed to the owl's own bounds`, at INFO, carrying what was removed. Only
+      the intersecting code can emit it — the previous narrowing ran only when
+      `restrict_to` was None, so a non-None restriction being CHANGED by the owl's
+      bounds was impossible before. It needs a retry or an envelope on one of the
+      four bounded owls, which happened 59 times in the retained window.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-11 "presented set narrowed to the owl's own bounds"); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} turn(s) had the presented set narrowed back inside the owl's bounds — a line the old code could not emit, because it only narrowed when nothing else restricted"; else echo "OPEN 0 — no bounded owl has taken a retry or envelope turn on the fixed code yet (96 refusals in the retained window, 59 of them retries)"; fi
     depends_on: ['A01.1']
     blocks: []
 

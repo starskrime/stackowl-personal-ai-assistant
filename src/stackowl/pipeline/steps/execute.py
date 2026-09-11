@@ -888,6 +888,43 @@ def _restrict_to_for_turn(
     return remaining
 
 
+def _narrow_to_effective_bounds(
+    restrict_to: frozenset[str] | None,
+    effective_tools: frozenset[str] | None,
+) -> frozenset[str] | None:
+    """Intersect the turn's restriction with the owl's effective bounds.
+
+    A SIBLING OF :func:`_restrict_to_for_turn`, and it exists because that function
+    states the right rule for one case and the other case did not follow it: "An
+    envelope is INTERSECTED, never replaced." The ban branch instead builds its
+    remainder from ``all_names`` — the WHOLE registry minus the bans — which for a
+    bounded owl is a SUPERSET of what it may call.
+
+    The narrowing this replaces ran only ``if restrict_to is None``, so any other
+    restriction disabled it and the superset reached the model. MEASURED over every
+    retained log on 2026-09-11: **96** `tool refused by bounds`, 48 on 2026-09-10
+    alone, and **59 of the 96 on `retry-*` traces** — jobmarket/todo 35 times,
+    jobmarket/shell 15. The refusal itself was correct every time; what was wrong is
+    that the model was shown the tool at all, asked for it, and was refused.
+
+    `_record_capability_gap` in this same module already wrote down what that costs:
+    "mailbutler was refused `shell` 24 TIMES — it needs the tool, asks on every run,
+    is refused, reports honestly, and starts again from nothing the next run. That is
+    what 'my agents keep failing at their jobs' looks like from inside."
+
+    Intersection is monotonic narrowing and can never widen authority, so this is
+    safe on every path. An EMPTY intersection keeps the prior restriction rather than
+    handing the model an empty menu — the reason `_restrict_to_for_turn` already
+    gives about bans: "a model with no tools cannot reroute either."
+    """
+    if effective_tools is None:
+        return restrict_to
+    if restrict_to is None:
+        return effective_tools
+    narrowed = restrict_to & effective_tools
+    return narrowed or restrict_to
+
+
 def _record_capability_gap(
     *, owl: str, tool: str, denied_by: str, trace_id: str
 ) -> None:
@@ -1568,18 +1605,63 @@ async def _run_with_tools(
                                "banned": list(state.banned_capabilities),
                                "presented": len(restrict_to) if restrict_to else None}},
         )
-    # A bounded owl (bounds.tools is a real, closed allowlist) with no DNA
-    # capability_profile and no task envelope falls through to the full/budget-
-    # ranked catalog below — presenting tools the owl can NEVER call (bounds_guard
-    # always blocks them at dispatch). That mismatch surfaced live 2026-07-23: a
-    # scheduled-job owl (headhunter) self-reported web_search as present in its
-    # catalog yet always refused — its manifest bounds excluded it, but nothing
-    # had narrowed presentation to match. Narrow presentation to the owl's own
-    # effective bounds whenever one applies and nothing already narrower is set.
-    if restrict_to is None and profile is None:
+    # A bounded owl (bounds.tools is a real, closed allowlist) falls through to the
+    # full/budget-ranked catalog below unless presentation is narrowed — presenting
+    # tools the owl can NEVER call (bounds_guard always blocks them at dispatch).
+    # That mismatch surfaced live 2026-07-23: a scheduled-job owl (headhunter)
+    # self-reported web_search as present in its catalog yet always refused — its
+    # manifest bounds excluded it, but nothing had narrowed presentation to match.
+    #
+    # INTERSECT, NEVER ONLY-WHEN-UNSET (2026-09-11). The first cut of this ran only
+    # `if restrict_to is None and profile is None`, so ANY other narrowing — a task
+    # envelope, or a retry's ban subtraction — disabled it. The ban path is the one
+    # that bit: `_restrict_to_for_turn` builds its remainder from `all_names`, the
+    # WHOLE registry minus the bans, which for a bounded owl is a SUPERSET of what
+    # it may call. Setting it non-None then skipped this narrowing entirely, so a
+    # retry presented tools the owl's own bounds forbid and dispatch refused them.
+    # MEASURED over every retained log: 96 `tool refused by bounds`, 48 on
+    # 2026-09-10 alone, and **59 of the 96 sit on `retry-*` traces** — jobmarket/todo
+    # 35 times, jobmarket/shell 15. The same file already states the principle for
+    # the envelope case in `_restrict_to_for_turn`: "An envelope is INTERSECTED,
+    # never replaced." The ban case was the copy that did not follow it.
+    #
+    # Intersection is monotonic narrowing and can never widen authority, so it is
+    # safe on every path including the DNA `profile` one (no owl carries a profile
+    # today, so that branch is unexercised here and is stated rather than claimed).
+    # An EMPTY result is refused for the reason `_restrict_to_for_turn` already
+    # gives about bans: "a model with no tools cannot reroute either" — so an empty
+    # intersection keeps the prior restriction and lets dispatch do the refusing.
+    # `profile is None` is KEPT, deliberately, and only the `restrict_to is None`
+    # half is removed. Presentation gives `restrict_to` absolute precedence — "the
+    # broad base set + profile groups are dropped for this turn" — so narrowing a
+    # PROFILED owl would silently switch it from its DNA capability groups to its
+    # bounds. That may well be right, and there is no evidence for it here: zero of
+    # eleven owls carry a capability_profile, so it cannot be measured on this
+    # deployment. The defect that WAS measured is entirely the `restrict_to is None`
+    # half — a ban or an envelope disabling the narrowing — so that is all this
+    # changes.
+    _before_bounds = restrict_to
+    if profile is None:
         effective = compute_effective_bounds(state, owl_registry)
-        if effective is not None and effective.tools is not None:
-            restrict_to = effective.tools
+        restrict_to = _narrow_to_effective_bounds(
+            restrict_to, effective.tools if effective is not None else None
+        )
+    if _before_bounds is not None and restrict_to != _before_bounds:
+        # INFO, and only the intersecting code can emit it: the previous narrowing
+        # ran only when `restrict_to` was None, so a non-None restriction being
+        # CHANGED by the owl's bounds is impossible before this fix. Production runs
+        # at INFO, and this is the line that says the model was spared a tool it
+        # would have been refused.
+        log.engine.info(
+            "[pipeline] execute: presented set narrowed to the owl's own bounds",
+            extra={"_fields": {
+                "trace_id": state.trace_id,
+                "owl": state.owl_name,
+                "was": len(_before_bounds),
+                "now": len(restrict_to) if restrict_to else 0,
+                "removed": sorted(_before_bounds - (restrict_to or frozenset()))[:10],
+            }},
+        )
     # FX-07 — tools surfaced by tool_search earlier this session get promoted
     # into this turn's presented set instead of the model re-discovering the
     # same tool by name every turn. Session-scoped, not turn-scoped (survives

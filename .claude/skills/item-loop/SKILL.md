@@ -43,11 +43,20 @@ that ships it ON?* So:
   bounds`, `task_envelope`, `BudgetGovernor`) is live across dozens of modules.
   **Grep for the plan's words, not the memo's** — searching the wrong vocabulary
   is what produced a confident, wrong "never built" on 2026-09-11.
-* **A capability that already runs and has never acted is the richest seam.**
-  Effective bounds were computed **684** times in the retained logs and denied
-  **zero** times. That is either a guard with nothing to refuse or a guard that
-  cannot refuse, and only one of those is acceptable. Prefer items of that shape
-  over new construction.
+* **A capability that already runs is the richest seam — but COUNT IT WITH THE
+  EMITTER'S OWN WORDS.** This bullet shipped on 2026-09-11 saying effective bounds
+  were "computed 684 times and denied zero times", and BOTH halves were wrong,
+  measured the next morning. `bounds: DENY` was a literal I invented; the code
+  emits `"[pipeline] execute: tool refused by bounds"` and it has fired **96**
+  times, 48 on 2026-09-10 alone. The 684 was a different message entirely —
+  `[authz] compose: boundary-router tools added to effective bounds` — so it
+  counted a deliberate WIDENING, not a computation.
+  The rule this file already states for closing checks applies to every number you
+  write anywhere: **find the `log.*` call and copy its literal.** One grep settles
+  it — `grep -n '"\[pipeline\] execute: [^"]*bounds[^"]*"' src/…` — and skipping
+  it put a false measurement into this file, into `progress.yml` and into a
+  published report before anything caught it. A zero from a pattern you composed
+  yourself is not evidence of silence; it is evidence of a typo.
 
 **The three plans that were written and never finished** are on the tree and are
 the starting evidence for the authority items:
