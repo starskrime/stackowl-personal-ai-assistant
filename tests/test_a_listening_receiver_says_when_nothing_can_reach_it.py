@@ -3,11 +3,20 @@
 MEASURED 2026-09-11 over every retained log, counted by `.msg` rather than by raw
 line (see DEBT-301, which is why that distinction now matters):
 
-    [webhook] receiver.run: entry           871
-    [webhook] receiver.run: exit — listening  871
-    [webhook] receiver.handle …               0
+    [webhook] receiver.run: entry                    873
+    [webhook] receiver.run: exit — listening         873
+    [webhook] receiver.handle: event enqueued (INFO)   0
+    [webhook] receiver.handle: rate-limited (WARN)     0
+    [webhook] receiver.handle: invalid signature (WARN) 0
+    [webhook] receiver.handle: unknown source (WARN)   0
 
-The server has bound a port on 871 boots and has never answered a request. It is
+THE THIRD LINE USED TO READ `receiver.handle …  0`, WHICH PROVED NOTHING. That
+message is emitted at DEBUG, and this deployment has written 0 DEBUG records out
+of 677,108 — so its count is zero however the receiver behaved. The four loud
+lines above replace it: each one could have been non-zero, and none is. See
+DEBT-303, which is the same defect one surface over.
+
+The server has bound a port on 873 boots and has never answered a request. It is
 not idle by accident: the operator configured two real sources in
 `~/.stackowl/stackowl.yaml` — `mygithub` and `acme`, each with a secret file on
 disk — against a receiver bound to `127.0.0.1`. **A webhook sender cannot reach

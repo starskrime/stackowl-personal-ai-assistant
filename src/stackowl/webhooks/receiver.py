@@ -131,9 +131,20 @@ class WebhookReceiver(SupervisedTask):
 
         LISTENING IS NOT REACHABLE, and until now the receiver only ever reported its
         own success. MEASURED 2026-09-11 over every retained log, counted by `.msg`:
-        `receiver.run: entry` **871** times, `receiver.run: exit — listening` **871**
-        times, and `receiver.handle` — the line a served request emits — **ZERO**.
-        The server has bound a port on 871 boots and has never answered a request.
+        `receiver.run: entry` **873** times, `receiver.run: exit — listening` **873**
+        times, and every request-path line this deployment CAN write — `event
+        enqueued` (INFO), `rate-limited`, `invalid signature` and `unknown or
+        disabled source` (all WARNING) — **ZERO, all four**.
+        The server has bound a port on 873 boots and has never answered a request.
+
+        THE FIRST VERSION OF THIS PARAGRAPH CITED `receiver.handle` INSTEAD, AND THAT
+        WAS UNFALSIFIABLE. `receiver.handle: entry` is emitted at DEBUG (line 302, as
+        are `signature validated` and `exit`), and this deployment has written **0
+        DEBUG records out of 677,108**. Its count is zero by construction, whatever
+        the platform did — so it measured the LOG LEVEL and read as a measurement of
+        BEHAVIOUR. The conclusion was right and the evidence for it could not have
+        been wrong, which is the worse defect of the two. The four lines named above
+        are all loud, so any one of them could have refuted this and none did.
 
         It is not idle by accident. The operator configured two real sources in
         `~/.stackowl/stackowl.yaml`, `mygithub` and `acme`, each with a secret file on

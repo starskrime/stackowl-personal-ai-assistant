@@ -15608,6 +15608,75 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_171_an_http_transport_in_this_tree_FAILS_OPEN_may_it_stop:
+      question: >-
+        `mcp/server.py::_sse_auth_ok` reads `if not expected_token: return True`. With
+        `mcp_server.enabled: true` and no `auth_token` set, the SSE transport serves
+        the exposed TOOL SURFACE to anyone who can reach the port. It is deliberate and
+        documented ("FX-06 stage 1 … existing unconfigured deployments keep working"),
+        and `start_sse` logs a loud WARNING saying exactly this.
+        May it be closed, and in which of two ways: (a) REFUSE TO BIND without a token,
+        or (b) AUTO-PROVISION one on first boot — `secrets.token_urlsafe(32)` through
+        the existing `store_secret()`, shown once, which is precisely what
+        `/webhook register` already does for webhook secrets?
+      why_evidence_cannot_settle_it: >-
+        Both options BREAK A WORKING SETUP for anyone running enabled-without-a-token
+        today: (a) stops their server starting, (b) starts rejecting their existing
+        clients until they fetch the token. That is "removing something user-facing",
+        which this skill lists as a stop-and-brief. The diagnosis is complete and is
+        recorded here in full — what is missing is only your decision.
+      panel_recommendation: >-
+        (b). It is the one that fixes the PLATFORM rather than answering "set X in your
+        yaml", it matches the standing rule that everything ships enabled with the
+        operator switch as an opt-out, and the token-minting idiom already exists and
+        is proven in `webhook_command.py`. Option (a) converts a silent risk into a
+        boot failure, which is a worse first run for the same safety.
+      blocked_until_answered: >-
+        Nothing is blocked. But A05.1 builds a SECOND authenticated HTTP surface, and
+        the Improvement lens is right that adding a correct auth stack beside a
+        fail-open one is a symptom fix. If this is answered before A05.1 implements,
+        both surfaces can share one checker instead of becoming two copies of one rule.
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        s=pathlib.Path('src/stackowl/mcp/server.py').read_text()
+        print('HOLDS still fails open' if 'if not expected_token:' in s and 'return True' in s.split('if not expected_token:')[1][:40] else 'EXPIRED branch changed')
+        "
+    ESC_172_does_the_control_plane_bind_where_a_customer_can_reach_it:
+      question: >-
+        A05.1's control plane must choose a bind address, and the panel SPLIT on it.
+        Loopback (`127.0.0.1`) means the dashboard can only be opened from the machine
+        the platform runs on — on a headless box, that is nobody. A reachable bind
+        (`0.0.0.0`) means the operator token crosses the LAN in plaintext HTTP.
+        Which ships as the DEFAULT?
+      why_evidence_cannot_settle_it: >-
+        It is a security-posture decision about your deployment, and the two lenses
+        disagree from correct premises rather than from ignorance — that disagreement
+        IS the finding and is recorded here rather than averaged away.
+        Ease-of-use: loopback is not fail-closed, it is fail-ABSENT, and this tree has
+        the measurement — `webhook.enabled` defaults False AND `bind_address` defaults
+        loopback, and that receiver has bound a port **873 times and served zero
+        requests**. Telling the customer to set a bind address is a setup answer, which
+        is banned here.
+        Stability and Future-proof: fail-closed belongs on the AUTH decision, which the
+        token gives in full; widening the bind is a separate grant, and loopback is
+        exactly where DNS-rebinding and browser-driven CSRF land.
+      panel_recommendation: >-
+        Ship loopback as the default AND make the platform say so at WARNING when it is
+        bound somewhere nothing can reach it — the receiver already has that exact
+        warning and it is the reason this question is answerable at all. Then widening
+        is one documented setting rather than a discovery. Ease-of-use dissents and its
+        dissent is recorded: it would ship `0.0.0.0` and accept plaintext HTTP in v1.
+      blocked_until_answered: >-
+        A05.1's implement stage. Its brainstorm, architecture and auth design do not
+        depend on the answer and are being taken without it.
+      premise_check: |
+        uv run python -c "
+        import yaml
+        d=yaml.safe_load(open('progress.yml'))
+        i=[x for x in d['items'] if x['id']=='A05.1'][0]
+        print('EXPIRED A05.1 implemented' if (i.get('stages') or {}).get('implement')=='done' else 'HOLDS not yet implemented')
+        "
     ESC_170_should_the_tool_loop_hard_stop_come_back:
       question: >-
         A01.3 asked for "a budget hard stop that ships ON" and the budget stop is
@@ -20451,6 +20520,109 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-303
+    found: 2026-09-11
+    map_check: "No mapped item matches — evidence-led. Found by the A05.1 panel reading my own shipped work, not by an instrument."
+    what: >-
+      A CLAIM RESTING ON A LINE THIS DEPLOYMENT CANNOT WRITE. `receiver.py`'s
+      `_warn_if_configured_but_unreachable` docstring — shipped by me on 2026-09-11 —
+      offered as its evidence: "`receiver.handle` — the line a served request emits —
+      **ZERO**". That message is emitted at DEBUG, and this deployment has written
+      **0 DEBUG records out of 677,108**. Its count is zero BY CONSTRUCTION, whatever
+      the receiver did. The sentence reads as a measurement of BEHAVIOUR and is a
+      measurement of the LOG LEVEL.
+      The conclusion was correct — the port really has never served a request — which
+      is what let it through. An unfalsifiable claim that happens to be true is harder
+      to catch than a false one, because nothing looks wrong.
+    root_cause_measured: >-
+      `scripts/logging_visibility.py` exists precisely to stop outcome lines sitting at
+      DEBUG, and its `BACKGROUND` set is a HAND-LISTED TUPLE of five packages —
+      `scheduler, parliament, learning, notifications, objectives`. `webhooks` was not
+      in it, and meets the gate's own stated criterion exactly: the docstring admits a
+      background subsystem as one whose work has "no user, no reply and no cost
+      record", and nobody waits on a webhook's reply. So the receiver's whole request
+      path logged at DEBUG unchallenged — `handle: entry` (302), `signature validated`
+      (342), `handle: exit` (496) — and when I needed evidence, the only line naming
+      the request path was one that could never appear.
+      A rule scoped to a hand-listed CONTAINER cannot see a subsystem nobody thought to
+      list. That is this file's recorded "the census of five was itself wrong" shape,
+      one surface over: correcting the copies you can THINK OF is not correcting the rule.
+    what_else_that_same_cause_reaches: >-
+      Every package outside the five. `--all` reports 228 such functions, which is a
+      RECORDED scope decision and not re-opened here. What this item can say is that the
+      boundary is drawn by memory rather than by a property, so the next subsystem with
+      no user attached will sit outside it too, silently, until something needs its logs.
+    the_GENERALISED_guard_was_BUILT_MEASURED_and_REFUTED: >-
+      The obvious fix is a guard finding all prose that cites a DEBUG-only literal as
+      evidence of absence. It was written and run: 5,693 distinct log literals in
+      `src/`, **2,384 emitted ONLY at DEBUG**, swept against every docstring, comment,
+      `docs/` page, `progress.yml`, `CLAUDE.md` and `SKILL.md`.
+      **FOUR hits, and it is not worth shipping.** Two are the emitter's own source
+      quoted inside a plan document; one (D14.3:89) is HONEST — it states the level in
+      the same table row, `| DEBUG | 0 occurrences |`, which is the correct way to cite
+      one. So the true population is about one site, and it is the one being fixed here.
+      **AND THE GUARD COULD NOT SEE ITS OWN FOUNDING CASE.** Prose cites a log line by
+      PREFIX — "`receiver.handle`" — not by full literal, so the site that motivated the
+      instrument never appeared in its output. A guard blind to the defect that inspired
+      it is worse than none: it would have reported a clean sweep over this very item.
+      Recorded so a later loop does not rebuild it. The instrument was ALSO wrong twice
+      before that: it first reported 32 sites, every one the `log.*.debug("… nothing to
+      migrate")` CALL ITSELF — the claim-word lives inside the literal, so the line
+      contains both. A regex could not fix it either, because a multi-line call puts the
+      literal on a line carrying no `log.` at all; only the AST knows the span.
+    fix: >-
+      `webhooks` joins `BACKGROUND`, with the reason for the omission written at the
+      set rather than in a commit message. The four functions it then reports are
+      exempted ONE AT A TIME with individual reasons, not waved through: three have
+      their outcome at INFO one line above the flagged DEBUG exit marker, and
+      `resolve_source_secret` is INVERTED relative to the gate's premise — its LOUD
+      return is the failure and its quiet one the success, which is the right way round
+      and something the gate cannot distinguish. And both copies of the false citation —
+      `receiver.py`'s docstring and my test file's — are replaced with the four lines
+      that are LOUD and therefore falsifiable: `event enqueued` (INFO), `rate-limited`,
+      `invalid signature`, `unknown or disabled source` (WARNING). MEASURED 2026-09-11:
+      **873 boots, and all four at ZERO.** Any one of them could have refuted the claim.
+    what_this_deliberately_does_NOT_do: >-
+      Promote the receiver's DEBUG lines. Three of the four are redundant with an INFO
+      line already beside them, so promoting would buy noise and no signal; the item
+      that matters is that the package is now RATCHETED, so the next webhook function
+      that declines in silence fails the gate BY NAME. This matters immediately: A05.1
+      proposes a control plane, and the panel asked for it to be inside this gate on
+      day one rather than after it has gone quiet for a week.
+    AND THE GATE REFUSED THE COMMIT, WHICH FOUND THE SAME CAUSE IN A SECOND INSTRUMENT: >-
+      `test_a_done_validate_names_its_evidence` failed on this item's own two validate
+      closes — 45 against a ceiling of 43 — because I keyed them `validate_CLOSED_…`
+      while the walk matched the literal prefix `validated`. Chasing that produced the
+      better finding: **17 of the 43 records it called unevidenced NAMED THEIR EVIDENCE
+      IN FULL**, under `validate_result` (10), `validate_evidence_<date>` (3), a bare
+      `validate` (3), `validate_CLOSED_<date>` (2) and `validate_done_because` (1).
+      The corpus writes `validate_`; the guard read `validated`. A ceiling **40% false**
+      is worse than none, because it is the number later loops ratchet against — the
+      denominator error this programme's own lint docstring calls the one it pays for
+      most. Matched by SHAPE now, and the ceiling falls 43 -> 26 as a MEASUREMENT
+      CORRECTED, not as seventeen records validated.
+      **AND EIGHT RECORDS CONTRADICTED THEIR OWN STAGE**: `validate: done` beside a
+      `validate_is_PARTIAL_and_the_reason_is_named` key — DEBT-253, 261, 290, 293,
+      295, 296, 297, 298 — the present tense left behind when the stage advanced. All
+      eight re-keyed to the past tense, record-aware so the 24 genuinely `partial`
+      records keep theirs untouched. Same shape as DEBT-292: a condition written where
+      nothing re-reads it when it fires.
+      **THE SECOND MUTATION SURVIVED, AND FIXING THAT IS THE REAL GUARD.** Re-keying
+      those eight EMPTIED the population that pinned the PARTIAL exclusion, so deleting
+      the exclusion broke nothing — DEBT-300's lesson one week on, exactly. The vacuity
+      control is now built on a CONSTRUCTED population of five records (one blind, one
+      documented, one evidenced, one in the older spelling, one contradicting its own
+      stage), and both mutations die against it.
+      Its live floor was also wrong and is gone: `>= 30` against a population this
+      programme exists to REDUCE fails the day the work succeeds, which is what
+      happened here at 43 -> 26. Lowering the number moves the date; constructing the
+      population removes it. `CLAUDE.md` records the identical failure on 2026-09-10.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: no_change_needed, document: no_change_needed}
+    validate_is_no_change_needed_and_the_reason_is_named: >-
+      Nothing here changes runtime behaviour — two docstrings, one tuple entry, four
+      test exemptions, a widened matcher and a rebuilt vacuity control. There is no
+      live evidence to wait for, and saying `partial` to look rigorous would put a
+      check in the record that can never close.
   - id: DEBT-212
     found: 2026-09-07
     what: >-
@@ -21748,7 +21920,7 @@ known_debt:
       never was. Two loops of this session are what make that five-line sequence readable.
       My PROMPT was wrong, not the fix — recorded because "the fix did not fire" and "the
       path was not taken" look identical from a zero, and this one was the second.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
+    validate_was_PARTIAL_and_the_reason_is_kept_because_it_explains_the_wait: >-
       The line needs a real file write by the model. `~/.stackowl/undo` shows writes do
       happen, but not on a schedule, so this closes when one occurs rather than on a
       timer.
@@ -21868,7 +22040,7 @@ known_debt:
       the `jobs` row), so the check answers on its own within hours. Running the handler
       by hand would measure my forcing rather than the wiring — the trap DEBT-215
       recorded — so it is left to the scheduler.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
+    validate_was_PARTIAL_and_the_reason_is_kept_because_it_explains_the_wait: >-
       The sweep runs every 6h and only speaks when a gap crosses the threshold. What
       closes this is the NEXT sweep saying it held a pair back — a line the old code
       could not emit for an aged-out escalation, because it did not know one existed.
@@ -22019,7 +22191,7 @@ known_debt:
       minutes BEFORE the restart, so nothing has been filed under it on the fixed code.
       That is corroboration rather than proof — no browser tool has run since — and the
       tripwire is what actually holds it.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
+    validate_was_PARTIAL_and_the_reason_is_kept_because_it_explains_the_wait: >-
       Both fixed lines need real traffic: a shell command run by the model, and a browser
       tool returning through `_ok`/`_err`. Both are frequent, so this closes on its own
       within a day rather than needing to be driven.
@@ -22188,7 +22360,7 @@ known_debt:
       removing the `since` floor fails 1, turning the no-enabled-job branch into `down`
       fails 1, replacing the derived budget with `1800.0` fails 2, unwiring the probe from
       the gateway fails 1. Gate PASS, ruff 35 and mypy 65 both exactly at baseline.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
+    validate_was_PARTIAL_and_the_reason_is_kept_because_it_explains_the_wait: >-
       The acting branch cannot be evidenced without wedging the platform on purpose. What
       CAN be evidenced, and is what the closing check asks for, is that the detector is
       ARMED and PRODUCING VERDICTS — the exact property `WatchdogService` never had and
@@ -22325,19 +22497,30 @@ known_debt:
       `completed` with an empty body — real, but **zero since 2026-08-28**, so dormant; the
       by-day breakdown killed it exactly as it has four times before.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
     document_is_no_change_needed_and_it_was_CHECKED: >-
       `docs_touching.py` reports that no design document declares `owls/shadow_validator.py`
       as a `Source`, and says plainly it cannot speak for the 35 that declare none. The
       filter's own docstring carries the census and the reasoning, which is where a reader
       of this behaviour looks.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
+    validate_was_PARTIAL_and_the_reason_is_kept_because_it_explains_the_wait: >-
       The evolution batch is a SCHEDULED job that runs roughly once a day, and the new
       sentence only fires when it validates a zero-sample owl — which the corpus says
       happens 4-8 times a day, so the evidence arrives on its own. Driving the job by hand
       would measure my invocation rather than the platform's.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-10 'NOT a cold start'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} refusal(s) now say WHICH fact they mean — a literal only the new code emits, against a word that meant 'not yet' about a permanent state"; else echo "OPEN 0 — the evolution batch has not validated a zero-sample owl on the fixed code yet"; fi
+    validated_2026_09_11_two_refusals_named_WHICH_fact_they_meant: >-
+      The evolution batch ran at 07:00 and validated two zero-sample owls. TWO INFO
+      records, 07:00:32 and 07:00:34, `[shadow] validate: exit — NOT a cold start`,
+      naming `scout` and `syshealth` with `scored: 4, eligible: 0, required: 5`.
+      Those are the two owls this item measured at 0/8 and 0/3 replayable — the ones
+      that had been told "insufficient held-out sample" about a permanent condition.
+      The literal was introduced by this item's own fix commit `69996cb3`, so no
+      earlier code could have written it, and raw line count == `.msg` count == 2, so
+      the number is messages and not lines (DEBT-301's distinction).
+      WHAT IT PROVES AND WHAT IT DOES NOT: the sentence fires on exactly the shape it
+      was written for. It does not prove the CONTROL — that a genuine two-of-five
+      shortage still says cold start — which only the test file can assert, because
+      no owl in the live corpus is currently in that state.
   - id: DEBT-292
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. The measurement was taken during DEBT-291 and the fix withheld for a stated reason that DEBT-291 then removed."
@@ -22588,7 +22771,7 @@ known_debt:
       "the fix is missing" rather than "the test is broken". `textwrap.dedent` and the real
       names, with the reason recorded in the helper.
     baselines: "ruff src/ 35, mypy 65 — both at baseline; the new test file is ruff-clean."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
     document_is_no_change_needed_and_it_was_CHECKED: >-
       `docs_touching.py` reports that NO design document declares `owls/evolution.py` or
       `owls/shadow_validator.py` as a `Source`. It is silent about the 35 documents that
@@ -22596,13 +22779,26 @@ known_debt:
       `quality=None` fail-closed concern), D05.2 (evolution deliberately not wired to the
       presented-set memo) and D01.7 (runner lanes). This change adds log fields and one
       INFO line and alters no behaviour any of them describes.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
+    validate_was_PARTIAL_and_the_reason_is_kept_because_it_explains_the_wait: >-
       The evolution batch is a SCHEDULED job that has run 15 times in 13 days — roughly
       once a day — so the evidence arrives on its own timetable rather than on this loop's.
       Nothing can be driven into it without invoking the job by hand, which would measure
       a run this loop caused rather than one the platform performs.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-10 'slowest owl this batch took'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} batch(es) stated their worst case against the budget — the comparison a constant could not make, and a literal only the new code emits"; else echo "OPEN 0 — the nightly evolution batch has not run on the fixed code yet"; fi
+    validated_2026_09_11_and_the_answer_is_EIGHT_SECONDS: >-
+      The nightly evolution batch ran at 07:04 and stated its worst case. ONE INFO
+      record, 07:04:27, `[dna] coordinator.execute: slowest owl this batch took 111.8s
+      of a 120s per-owl budget`, fields `owl: verifier, slowest_ms: 111819,
+      budget_s: 120, stuck: ["hypothesis"]`. The literal was introduced by this item's
+      own fix commit `7bcb18bb`; raw == `.msg` == 1.
+      THE QUESTION THIS ITEM EXISTED TO MAKE ANSWERABLE IS NOW ANSWERED, and the
+      answer is that 120s was short by roughly EIGHT SECONDS — not by five hundred,
+      and not by five. `verifier` finished inside the budget with 7% of it left while
+      `hypothesis` timed out in the same batch. Before this change the record could
+      not have distinguished that from an owl that died instantly and was mislabelled.
+      IT IS STILL NOT A DISTRIBUTION, so the timeout still does not move: one batch is
+      one sample, the item's `what_this_deliberately_does_NOT_do` stands unchanged, and
+      the tripwire pinning `EVOLUTION_PER_OWL_TIMEOUT_SECONDS = 120.0` stays armed. What
+      has changed is that whoever moves it next has a number to move it AGAINST.
   - id: DEBT-289
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, and reached by asking what the ONE remaining unexplained CURRENT warning ever produced."
@@ -24868,7 +25064,7 @@ known_debt:
       test: done
       validate: done
       document: no_change_needed
-    validate_stays_PARTIAL_because_the_first_CLOSEABLE_did_not_discriminate: >-
+    validate_was_PARTIAL_and_the_reason_is_kept_because_it_explains_the_wait: >-
       The check reported CLOSEABLE on one row created after the fix carrying a delivery
       achievement AND a destination — and reading the row before believing it showed the
       achievement was "the reply is delivered to the user who asked", written by
@@ -25618,7 +25814,7 @@ known_debt:
       was up. So this actuator behaved correctly on every one of them; the floor they
       reached was earned by a fault one layer down. Recorded here because a 1-of-6 ratio
       reads like a broken gate, and it is not one.
-    validate_was_PARTIAL_and_the_reason_was_not_a_gap: >-
+    validate_was_PARTIAL_and_the_reason_is_kept_because_it_explains_the_wait: >-
       The code is LIVE - restarted at 00:56:47, twelve seconds after commit `0262c298`,
       so the running core holds it. What cannot be forced is the EVENT: closing this
       needs a read-severity tool to over-claim, and 6 overclaims since 2026-09-09 were
@@ -48908,6 +49104,56 @@ items:
     gap: >-
       There is no surface through which a customer can see or steer the
       platform. Everything is a terminal command.
+    stages: {brainstorm: done, architect: not_started, implement: not_started, cleanup: not_started, test: not_started, validate: not_started, document: not_started}
+    brainstorm_2026_09_11_five_lenses_and_what_they_SETTLED: >-
+      MOUNT — SETTLED, do NOT share the webhook receiver's aiohttp app. Not a style
+      call: `orchestrator.py` gates the entire receiver on `settings.webhook.enabled`,
+      which DEFAULTS FALSE, so a control plane mounted there would exist only for
+      operators who already opted into webhooks — shipped OFF, the defect this
+      programme names most often. Three further couplings measured: an app-level
+      middleware runs over `/webhook/{source}` too, and the receiver's 401 is
+      DELIBERATELY uniform (F139, anti-enumeration) so a control-plane rejection would
+      be indistinguishable from a bad HMAC secret; one bind cannot serve two security
+      postures; and `SupervisedTask` parks on repeated failure, so one shared app makes
+      a control-plane fault take webhook ingestion down with it. Separate port,
+      separate supervised task, SHARED auth code.
+      AUTH IS 80% ALREADY HERE — the item's framing ("build an auth stack") is wrong and
+      would produce a fourth copy of a rule already paid for. Present and measured:
+      fail-closed allowlist (`channels/telegram/helpers.py::is_authorized`, empty set
+      denies all), constant-time compare (`mcp/server.py::_sse_auth_ok`,
+      `webhooks/receiver_helpers.validate_hmac_signature`), owner scoping
+      (`tenancy/owned_repository.py`, 30 tables), fail-closed consent
+      (`runtime/socket_consent.py`), and token minting (`config/secret_writer.py::
+      store_secret` -> keyring else 0600). GENUINELY ABSENT: a peer-credential check
+      (`SO_PEERCRED` appears nowhere in `src/`), and anything resolving a credential to
+      a PRINCIPAL — `identity.resolve()` is a channel-handle alias map that never
+      reaches `owner_id`, and five owner-scoped construction sites take
+      `owner_id: str = DEFAULT_PRINCIPAL_ID` as a DEFAULT ARGUMENT.
+      THE REGISTRATION IDIOM EXISTS THREE TIMES — `scheduler/base.py::HandlerRegistry`,
+      `commands/registry.py::CommandRegistry` and `tools/registry.py::ToolRegistry` are
+      one shape instantiated thrice, and `CommandRegistry.resolve(path)` already walks
+      a path token-by-token for `/browser profile list`. Endpoints copy that, so items
+      A05.2..A05.8 each ADD a self-registering module instead of growing a switch.
+    the_two_lens_contradictions_are_RECORDED_not_averaged: >-
+      (1) THE BIND DEFAULT — Ease-of-use says loopback is not fail-closed but
+      fail-ABSENT and would ship `0.0.0.0`; Stability and Future-proof say fail-closed
+      belongs on the AUTH decision and loopback is where DNS-rebinding lands. Queued as
+      ESC-172; it blocks implement and nothing earlier.
+      (2) WHAT THE FIRST ROUTE IS — Killer-functionality wants `GET /api/v1/health` off
+      the LIVE core's aggregator and proves why it beats the terminal rather than
+      matching it: `stackowl health` registers SIX contributors from the CLI process
+      while the in-process aggregator registers ~14, and `cli/app.py`'s own comments
+      admit `BrowserContributor(runtime=None)` reports "a permanent false degraded"
+      from there and `ResilienceContributor` is held for "a future in-process
+      consumer". Improvement objects that a route with no page becomes the 874th bind
+      of a port nobody calls, and wants A05.1 landed FUSED to a browsable read. Both
+      are recorded; the architect stage decides.
+    a_claim_in_this_item_was_REFUTED_by_its_own_panel: >-
+      A05.4's gap statement was measurably false — see the correction on that item. The
+      same sweep found `tasks` at 849 failed / 258 completed / 76 dead_letter with ZERO
+      pending and ZERO running, and `last_error` NULL on all 849 despite writers
+      existing, so a "live agent activity" surface has nothing to render today. That is
+      why A05.6 is not the first route, and it is a defect in its own right.
     evidence: >-
       Operator requirement, 2026-09-11. The reference platform's design is worth
       taking wholesale: a loopback-peer check that fails closed on an
@@ -48960,7 +49206,18 @@ items:
     priority: P1
     wave: 1
     order: 125
-    gap: "Cron jobs are invisible unless the operator queries the database by hand."
+    gap: >-
+      Cron jobs are invisible to anyone who is not AT A CHAT PROMPT, and there is no
+      view of them as a set.
+    gap_was_CORRECTED_2026_09_11_the_original_was_measurably_false: >-
+      It read "cron jobs are invisible unless the operator queries the database by
+      hand", and that is not true. `tools/scheduling/cronjob.py` declares EIGHT actions
+      in its own description — create, watch, list, update, pause, resume, remove, run
+      — which is every verb this item asks for, reachable by typing. Caught by the
+      A05.1 panel's Improvement lens and verified against the source before correcting.
+      The item is NOT void: what a chat turn cannot do is show the whole set at once,
+      or show it to a customer who is not the operator. But an item built on a false
+      gap builds the wrong thing, and this one would have rebuilt a working tool.
     evidence: >-
       Operator requirement, 2026-09-11 — "crons … ability to update crons". The
       jobs table already carries schedule, enabled, last_run_at, next_run_at,

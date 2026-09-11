@@ -45,8 +45,17 @@ import sys
 LOUD: frozenset[str] = frozenset({"info", "warning", "error", "critical", "exception"})
 
 #: The packages with no user attached to their work — see the module docstring.
+#:
+#: `webhooks` JOINED 2026-09-11 (DEBT-303) and the omission had a cost. The set is
+#: hand-listed, and the criterion in the docstring — no user, no reply, no cost
+#: record — fits an inbound webhook exactly: nobody is waiting on the reply and no
+#: turn accounts for it. Because the package sat outside, its request path logged
+#: at DEBUG unchallenged, and a claim in `receiver.py` then cited one of those
+#: invisible lines as proof the path had never run.
+#: A rule scoped to a hand-listed CONTAINER cannot see a subsystem nobody thought
+#: to list. This addition does not fix that; it pays one instance of it.
 BACKGROUND: tuple[str, ...] = (
-    "scheduler", "parliament", "learning", "notifications", "objectives",
+    "scheduler", "parliament", "learning", "notifications", "objectives", "webhooks",
 )
 
 _SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "stackowl"

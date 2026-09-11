@@ -62,6 +62,23 @@ def _load_report():
 #: allowlist nobody prunes is how a document goes on advertising a flag that was
 #: deleted eight days earlier.
 _ACCEPTED: dict[str, str] = {
+    # --- webhooks, added with the package on 2026-09-11 (DEBT-303) ---
+    # ALL FOUR ARE THE SAME SHAPE, AND NONE IS THE INVERSION THIS GATE HUNTS: the
+    # function's OUTCOME is already at INFO, and the DEBUG line is the 4-point exit
+    # marker sitting beside it. Checked one at a time rather than waved through,
+    # because an exemption written to make a gate pass is worth less than no gate.
+    "src/stackowl/webhooks/receiver.py::_parse_and_enqueue":
+        "the outcome is INFO at 'event enqueued', one line above this exit marker",
+    "src/stackowl/webhooks/receiver.py::_handle_request":
+        "acceptance is recorded by the callee's INFO 'event enqueued'; the loud "
+        "returns here are the rejections, which is the right way round",
+    "src/stackowl/webhooks/handler_job.py::execute":
+        "the outcome is INFO at 'event processed (stub)', immediately above",
+    "src/stackowl/webhooks/receiver_helpers.py::resolve_source_secret":
+        "INVERTED RELATIVE TO THE GATE'S PREMISE, not a blind spot: the loud return "
+        "is the FAILURE (WARNING 'resolution failed') and the quiet one is success. "
+        "The gate cannot tell which return is the decline, so it flags this; a "
+        "reader is told when the secret cannot be resolved, which is what matters",
     # Called once per job dispatch — INFO here would be per-tick noise, and the
     # branch it guards is arithmetic, not a decision about whether to act.
     "src/stackowl/scheduler/scheduler_helpers.py::compute_next_run":

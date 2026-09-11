@@ -153,7 +153,24 @@ def entries_with_closing_checks(data: dict[str, Any]) -> list[tuple[str, str]]:
 #: DEFECT — while that entry's validate had never happened at all. A key whose NAME
 #: merely resembles evidence is not evidence, which is this repo's denominator rule
 #: reaching the instrument that was meant to enforce it.
-_VALIDATED_PREFIX = "validated"
+#: A record names its live evidence in a `validate…` key. MATCHED BY SHAPE, NOT BY
+#: ONE SPELLING — this read `"validated"` (with the d) until 2026-09-11, while the
+#: corpus overwhelmingly writes `validate_` (without it). MEASURED: of the 43 records
+#: this reported as unevidenced, **17 named their evidence perfectly well** under
+#: `validate_result` (10), `validate_evidence_<date>` (3), a bare `validate` (3),
+#: `validate_CLOSED_<date>` (2) and `validate_done_because` (1). A ceiling that is 40%
+#: false is worse than none, because it is the number a later loop ratchets against.
+#: That is DEBT-303's own cause one instrument over: a rule matching a hand-chosen
+#: STRING rather than the SHAPE it is about.
+#:
+#: A key naming PARTIAL is EXCLUDED, and that exclusion is not cosmetic. Eight records
+#: carried `validate: done` beside a `validate_is_PARTIAL_and_the_reason_is_named` key
+#: — the record contradicting its own stage — so admitting it would credit a `done`
+#: with the explanation of why it was not one. Those eight were re-keyed to the past
+#: tense in the same change; this keeps the trap disarmed.
+def _names_its_evidence(key: str) -> bool:
+    return key.startswith("validate") and "PARTIAL" not in key
+
 
 
 def entries_with_an_unevidenced_done_validate(data: dict[str, Any]) -> list[str]:
@@ -190,7 +207,7 @@ def entries_with_an_unevidenced_done_validate(data: dict[str, Any]) -> list[str]
                 continue
             if entry.get("doc"):
                 continue  # the document's Verification section is the evidence
-            if not any(k.startswith(_VALIDATED_PREFIX) for k in entry):
+            if not any(_names_its_evidence(k) for k in entry):
                 out.append(str(entry.get("id")))
     return out
 
