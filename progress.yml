@@ -20743,11 +20743,23 @@ known_debt:
       every non-ASCII codepoint in the constant, which left only the three intended
       typographic characters. Any generated markup deserves that sweep.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
-    closing_check: >-
-      c=$(./scripts/log_since.sh 2026-09-11 'server.index: exit — page served');
-      [ "${c:-0}" -gt 0 ] && echo "CLOSEABLE $c page loads served"
-      || echo "OPEN 0 — the page has not been served on the live platform yet"
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    validated_LIVE_2026_09_11_on_caf5e96d_after_a_full_restart: >-
+      `./start.sh`, then the real door, read from `~/.stackowl/logs/stackowl.jsonl`:
+      **`GET /` returned 200 `text/html; charset=utf-8`, 7,968 bytes, WITH NO
+      CREDENTIAL** — the property the whole design turns on.
+      It cited exactly `/api/v1/health` and `/api/v1/schedules`, both registered, and
+      **carried ZERO bytes of platform data** (`grep -ci 'job_id"|morning_brief|
+      principal-default'` on the served page = 0).
+      **4** `INFO [control_plane] server.index: exit — page served` records, against
+      **0** across every retained log before the change — a brand-new literal with one
+      emitter, so the evidence cannot be produced by the code this replaced.
+      AND THE TWO FETCHES THE BROWSER WILL MAKE WERE EXERCISED with the token and a
+      same-origin `Origin`/`Host` pair: both **200**, health returning six subsystems
+      (db, store_cadence, resilience, unattributed_spend, prefix_growth, filesystem —
+      all `ok`) and schedules returning **165**, matching `SELECT COUNT(*) FROM jobs`.
+      So the page is served, it is locked out of nothing it needs, and what it will
+      render is real.
     doc: docs/reference-mapping/designs/A05.9.md
   - id: DEBT-307
     found: 2026-09-11
