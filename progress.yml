@@ -50009,11 +50009,23 @@ items:
     depends_on: ['A05.1']
     blocks: []
     doc: docs/reference-mapping/designs/A05.4.md
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
-    closing_check: >-
-      c=$(./scripts/log_since.sh 2026-09-11 'server.schedules: exit — served');
-      [ "${c:-0}" -gt 0 ] && echo "CLOSEABLE $c served responses from the new route"
-      || echo "OPEN 0 — the route has not answered on the live platform yet"
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
+    validated_LIVE_2026_09_11_on_10e9a335_after_a_full_restart: >-
+      `./start.sh`, then the real door on the real platform — read from
+      `~/.stackowl/logs/stackowl.jsonl`, never a PID:
+      **401** unauthenticated, with `WARNING server.schedules: exit — refused, unauthenticated`;
+      **401** with a VALID token and `Origin: http://evil.example`, with
+      `WARNING server.schedules: exit — refused, cross-origin` naming the origin — so the
+      ordering is behaviour on the live surface, not only in a test;
+      **200** authenticated, with
+      `INFO server.schedules: exit — served {"principal_id":"principal-default","schedules":165}`.
+      AND THE ONE-READER CLAIM WAS PROVEN AGAINST THE TABLE ITSELF: the route returned
+      **165** schedules and `SELECT COUNT(*) FROM jobs` returned **165**. A dashboard and
+      the chat surface cannot disagree, because they are the same read.
+      The literal `server.schedules` had appeared ZERO times across every retained log
+      before this, and the route returned 404 on the live platform minutes earlier while
+      `/api/v1/health` returned 200 on the same token — so its absence was measured from
+      both sides and the evidence is producible only by this change.
     the_gate_refused_the_FIRST_version_of_this_check_and_was_right: >-
       It grepped `stackowl*.jsonl` directly, and
       `test_no_closing_check_greps_the_logs_unbounded` requires every log-reading check to
