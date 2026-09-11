@@ -17,6 +17,7 @@ from stackowl.channels.slack.settings import SlackSettings
 from stackowl.channels.telegram.settings import TelegramSettings
 from stackowl.channels.whatsapp.settings import WhatsAppSettings
 from stackowl.config.browser import BrowserSettings
+from stackowl.config.control_plane_settings import ControlPlaneSettings
 from stackowl.config.notification_settings import (
     NotificationSettings,
     QuietHoursSettings,
@@ -1061,6 +1062,9 @@ class Settings(BaseSettings):
     #: meanings for one config key is a trap for whoever edits stackowl.yaml next.
     owl_limits: OwlSettings = Field(default_factory=OwlSettings)
     webhook: WebhookSettings = Field(default_factory=WebhookSettings)
+    control_plane: ControlPlaneSettings = Field(
+        default_factory=ControlPlaneSettings
+    )
     discord_channel: DiscordSettings = Field(default_factory=DiscordSettings)
     slack_channel: SlackSettings = Field(default_factory=SlackSettings)
     telegram_channel: TelegramSettings = Field(default_factory=TelegramSettings)

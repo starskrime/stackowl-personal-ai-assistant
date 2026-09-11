@@ -15668,8 +15668,17 @@ current:
         is one documented setting rather than a discovery. Ease-of-use dissents and its
         dissent is recorded: it would ship `0.0.0.0` and accept plaintext HTTP in v1.
       blocked_until_answered: >-
-        A05.1's implement stage. Its brainstorm, architecture and auth design do not
-        depend on the answer and are being taken without it.
+        NOTHING, and this line is CORRECTED from the one written hours earlier, which said
+        it blocked A05.1's implement stage. That was too strong and would have stalled the
+        item for no gain. Re-read against the stop-and-brief list: the case is "removing or
+        disabling anything USER-FACING", and shipping a NEW surface on the same loopback
+        default its sibling `webhook.bind_address` already carries removes nothing and
+        disables nothing. So the safe default ships, the platform says at WARNING when it
+        is bound somewhere nothing can reach, and this question becomes "do you want it
+        WIDENED?" rather than "what ships?" — a one-line change either way.
+        Corrected in the open rather than worked around: a panel answer that contradicts a
+        recorded decision must be escalated, and quietly proceeding past my own escalation
+        would be the silent reconciliation this skill forbids.
       premise_check: |
         uv run python -c "
         import yaml
@@ -20520,6 +20529,65 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-304
+    found: 2026-09-11
+    map_check: "No mapped item matches — evidence-led. Found as a RED full-suite run on a tree I had shipped hours earlier, which is the only detector that could see it."
+    what: >-
+      A WALL-CLOCK PROXY FOR A PROPERTY THAT WAS ALWAYS A COUNT, REPAIRED TWICE AND
+      WRONG BOTH TIMES. `test_foreground_write_completes_quickly_during_chunked_
+      background_job` failed the 57th run at `0.450 < 0.790/2` — the foreground write
+      waited 0.450s of the background job's 0.790s. It passes alone every time.
+    root_cause_measured: >-
+      The property this test exists for is that a foreground write queues behind THE
+      CHUNK IN FLIGHT, not behind the whole job. That is COUNTABLE, and every version
+      so far stated it as a duration. The first asserted `fg_elapsed < _COMMIT_DELAY_S
+      * 3` — a measured duration against a CONSTANT — and failed in an 11,973-test run.
+      The 2026-09-05 repair made the right diagnosis (a constant does not inflate with
+      load) and reached for the wrong cure: `fg_elapsed < bg_total_s / 2` is still a
+      wall-clock RATIO, and it failed again six days later.
+      MEASURED 2026-09-11, seven consecutive runs: the number of commits the foreground
+      queued behind was **2, every time, with ZERO variance**, while `fg_elapsed` moved
+      0.091-0.094s and `bg_total_s` moved 0.426-0.438s — and in the failing full-suite
+      run `bg_total_s` was 0.790s, nearly double, because the box was loaded. The
+      durations track the BOX. The count tracks the BEHAVIOUR. Two is structural: the
+      background chunk holding the writer, then the foreground's own commit.
+    AND_BOTH_EARLIER_VERSIONS_WERE_BLIND_TO_THE_FAILURE_THE_STORY_FIXED: >-
+      This is the finding worth more than the flake. `pool.py:27-38` names the failure
+      mode as "a chatty background write loop committing one row at a time". MUTATION
+      TESTED: replacing the chunked job with exactly that per-row loop **PASSED** the
+      new count assertion AND passed the old duration assertion — because per-row
+      autocommit RELEASES the writer between rows, so the foreground slips in fast
+      while the job crawls. `fg 0.09s < bg 15s / 2` is true and says nothing.
+      **The tell was never in the assertions: the mutated run took 17.2s instead of
+      0.6s.** A test that takes 28x longer and still passes is not measuring what its
+      own docstring says it measures.
+      The commit count is now bounded on BOTH sides — `n_chunks <= len(commits) <=
+      n_chunks + 1` — and both starvation shapes die: one unbounded transaction gives
+      2 commits (below the floor), per-row autocommit gives 301 (above the ceiling).
+    what_else_that_same_cause_reaches: >-
+      Every timing assertion standing in for an observable property. The test's own
+      comment already named the family — DEBT-116 — and then committed the same error
+      one layer up, which is the point: the 09-05 repair knew the rule and applied it
+      to the wrong variable. Ratios of two measured durations are not load-proof; they
+      are only load-proof when the numerator and denominator inflate TOGETHER, and here
+      they do not, because one is a queue wait and the other is a sum of sleeps.
+    fix: >-
+      `_patch_commit_delay` returns the commit log; the test asserts `queued_behind <=
+      2` and `n_chunks <= len(commits) <= n_chunks + 1`. No wall-clock assertion
+      remains. Both durations are still COMPUTED and reported in the failure messages,
+      because a reader who hits this needs them — they are just no longer load-bearing.
+    tests: >-
+      The repaired test itself, run 5/5 green, plus TWO mutations each restored from a
+      file copy with the tree re-run green after: one unbounded transaction fails on
+      the floor, per-row autocommit fails on the ceiling. The per-row mutation is the
+      one neither previous version could catch.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: no_change_needed, document: no_change_needed}
+    validate_is_no_change_needed_and_the_reason_is_named: >-
+      A test-only change with no runtime behaviour. Its evidence is the mutation pair,
+      which is stronger than any live record could be here: the live platform never
+      exercises this path, because it is a simulation of the pattern rather than the
+      pattern itself.
   - id: DEBT-303
     found: 2026-09-11
     map_check: "No mapped item matches — evidence-led. Found by the A05.1 panel reading my own shipped work, not by an instrument."
@@ -49104,7 +49172,88 @@ items:
     gap: >-
       There is no surface through which a customer can see or steer the
       platform. Everything is a terminal command.
-    stages: {brainstorm: done, architect: not_started, implement: not_started, cleanup: not_started, test: not_started, validate: not_started, document: not_started}
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    implement_2026_09_11_the_surface_ships_ON_and_refuses_before_it_serves_wrong: >-
+      `control_plane/auth.py` and `control_plane/server.py`, a settings section, a
+      logger channel, the orchestrator registration and 38 tests. `enabled` defaults
+      TRUE; the bind defaults to loopback and the platform SAYS SO at WARNING, which is
+      the half ESC-172 does not block.
+      FAIL CLOSED IN THREE PLACES, and only one of them is the bind: no credential means
+      the server RAISES rather than binding (a test pins that `ensure_credential()`
+      precedes `web.Application()`, because a raise is observable and a bound port is
+      not); an unknown credential is REFUSED and never defaulted to
+      `DEFAULT_PRINCIPAL_ID`; and a test asserts the server module never NAMES that
+      constant, because the default belongs on the resolver, not the request path.
+      Authentication is an explicit per-handler call. A test DERIVES the handler set
+      from the router registrations and fails any route that does not call
+      `authenticate`, so a route added in A05.2..A05.8 cannot quietly opt out.
+    the_best_catch_was_MY_OWN_bug_and_the_document_had_already_named_it: >-
+      The design document written an hour earlier listed, under Failure modes, "keyring
+      present at boot N, absent at N+1 — a new token is minted and every saved
+      credential 401s" and marked it **this is the silent one**. THE FIRST DRAFT OF
+      `ensure_credential` HAD EXACTLY THAT BUG: it asked only the OS keyring.
+      `store_secret` writes to the keyring when it can and to a 0600 file when it
+      cannot, and does NOT tell its caller which — so on a headless box, which this one
+      is, every boot would have minted a fresh token and silently invalidated whatever
+      the operator held. Nothing would have failed. Every boot would have produced a
+      working server with a token nobody had.
+      Both backends are consulted now, and TWO tests pin it: one plants a file-stored
+      credential with the keyring failing, and one pins the RULE rather than today's
+      data — on a host WITH a keyring the first passes for a file-only resolver, so the
+      behaviour test alone proves nothing about the rule.
+    my_own_leak_guard_was_WRONG_and_fired_on_an_honest_sentence: >-
+      `test_no_log_call_in_either_module_passes_the_token` substring-matched
+      `ast.unparse(call)` and failed on this module's own line, `"exit — minted a new
+      credential"` — the WORD "minted" inside a message literal, not the variable. The
+      same conflation this record already carries elsewhere: a pattern that matches
+      something other than the thing. It walks IDENTIFIERS now, and gained two controls
+      — a CONSTRUCTED leak it must see, and a message literal it must not read as one.
+      A guard that fires on correct work gets deleted rather than satisfied.
+    FOUR_mutations_each_restored_from_a_file_copy_and_re_run_green: >-
+      Reverting the fail-closed branch to the `_sse_auth_ok` shape (return a principal
+      when no token is configured) fails 2; registering aiohttp middlewares fails 2;
+      and the two credential-backend mutations are covered by the pair above. The
+      restore was re-run each time and returned 38 passed.
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The server binds on the next core start, and the platform was NOT restarted in
+      this loop: a restart while a full suite and a 150-file targeted run were in flight
+      would measure my own interference. The evidence arrives on the next boot.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-11 'control_plane] server.run: exit — listening'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} boot(s) bound the control plane — a literal only this item's code emits"; else echo "OPEN 0 — the core has not restarted on the new code yet"; fi
+    doc: docs/reference-mapping/designs/A05.1.md
+    architect_2026_09_11_the_scope_the_panel_refuted_is_the_one_the_document_fixes: >-
+      The document names the rung (EXTEND EXISTING CODE, the highest, and it is genuinely
+      available — a table in the doc maps all eight primitives to the file already running
+      them), every file it will touch, and how both Laws hold. Three decisions are taken
+      and evidenced rather than asserted.
+      (1) SEPARATE SERVER, on four measured couplings, of which the first is decisive:
+      mounting on the webhook app inherits `webhook.enabled`, which DEFAULTS FALSE, so the
+      control plane would ship OFF to everyone who had not opted into webhooks.
+      (2) AUTHENTICATION IS AN EXPLICIT PER-HANDLER CALL, never aiohttp middleware, because
+      middleware does not run for a WebSocket upgrade and A05.6 will want one — the single
+      most expensive thing here to reverse, and the ticket STORE is deliberately left
+      unbuilt behind a Protocol.
+      (3) THE ITEM IS RESCOPED. Its own title says "build an auth stack" and the panel
+      showed that is ~80% duplication: fail-closed allowlist, constant-time compare, secret
+      minting, owner scoping and fail-closed consent all exist. Only TWO things genuinely
+      do not — a peer-credential check (`SO_PEERCRED` appears nowhere in `src/`) and
+      anything resolving a credential to a PRINCIPAL.
+    FOUR_numbers_the_panel_gave_me_were_WRONG_and_I_measured_them_before_shipping: >-
+      Every one would have entered a design document as fact. `owner_id: str =
+      DEFAULT_PRINCIPAL_ID` is **37** sites, not the five the panel listed — it gave
+      EXAMPLES and I was one edit from recording its list as a census, which is the exact
+      shape `CLAUDE.md` records under "the census of five was itself wrong". `staged_facts`
+      holds **237** rows, not the 361 carried forward from an older note. The "143 enabled
+      jobs overdue" breakdown reduces to what is actually measurable — **130** overdue
+      enabled jobs carry `schedule='manual'`, and NO recurring job is overdue at all. And
+      the in-process contributor count ("roughly fourteen") could not be verified, so the
+      document asserts the ASYMMETRY instead, which is in the source: 13 contributor
+      classes exist, `stackowl health` registers 6, and `cli/app.py`'s own comments admit
+      two of those six cannot report truthfully from the CLI process — the terminal prints
+      a PERMANENT FALSE "degraded" for the browser, and holds `ResilienceContributor` for
+      "a future in-process /health slash command", a named seat this route fills.
+      A panel lens is a READER, not an instrument. Its file:line citations were sound every
+      time; its counts were not, and a count is what a document ships.
     brainstorm_2026_09_11_five_lenses_and_what_they_SETTLED: >-
       MOUNT — SETTLED, do NOT share the webhook receiver's aiohttp app. Not a style
       call: `orchestrator.py` gates the entire receiver on `settings.webhook.enabled`,

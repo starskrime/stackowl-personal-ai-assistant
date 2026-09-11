@@ -398,6 +398,7 @@ class _Loggers:
     scheduler = logging.getLogger("stackowl.scheduler")
     notifications = logging.getLogger("stackowl.notifications")
     webhook = logging.getLogger("stackowl.webhook")
+    control_plane = logging.getLogger("stackowl.control_plane")
     cli = logging.getLogger("stackowl.cli")
     tui = logging.getLogger("stackowl.tui")
     discord = logging.getLogger("stackowl.discord")

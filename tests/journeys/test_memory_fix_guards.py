@@ -678,6 +678,12 @@ async def test_guard_memory_command_registered_via_orchestrator(
             tool_revalidation_handler=_unused(),  # type: ignore[arg-type]
             health_sweep_handler=HealthSweepHandler(_unused()),  # type: ignore[arg-type]
             incident_escalation_handler=_unused(),  # type: ignore[arg-type]
+            # A05.1 — the control plane is the aggregator's second consumer, so
+            # the container now carries it by name. This double never touches it;
+            # it is here because the field is required, which is exactly what this
+            # helper's own docstring asks for: a new required field should fail
+            # HERE with a TypeError naming it, and it did.
+            health_aggregator=_unused(),  # type: ignore[arg-type]
         )
 
     # Wrap the SINGLE registration entry: run the REAL registration (so /memory

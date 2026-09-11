@@ -145,6 +145,13 @@ class SchedulerComponents:
     tool_revalidation_handler: ToolRevalidationHandler
     health_sweep_handler: HealthSweepHandler
     incident_escalation_handler: IncidentEscalationHandler
+    #: The LIVE, in-process aggregator. Exposed by name rather than reached
+    #: for through `health_sweep_handler`'s private attribute: the container
+    #: is a record of what was wired, and the control plane is the second
+    #: consumer. `cli/app.py` builds its own from a different process and its
+    #: own comments admit two contributors cannot report truthfully from
+    #: there, so THIS one is the only aggregator that knows the whole truth.
+    health_aggregator: HealthAggregator
 
 
 class SchedulerAssembly:
@@ -1039,6 +1046,7 @@ class SchedulerAssembly:
             tool_revalidation_handler=tool_revalidation_handler,
             health_sweep_handler=health_sweep_handler,
             incident_escalation_handler=incident_escalation_handler,
+            health_aggregator=health_aggregator,
         )
 
 

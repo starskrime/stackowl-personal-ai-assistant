@@ -256,6 +256,14 @@ webhook:
   # Per-source HMAC config keyed by url-path source name.
   sources: {}
 
+control_plane:
+  # Whether the control plane serves. Defaults ON: a capability ships enabled here, and an operator switch is an opt-out only.
+  enabled: true
+  # IP the control plane binds to. Loopback by default, which means it is reachable only from this machine — see ESC-172. Widening it is one setting, and the platform warns at WARNING when the bind cannot serve the operator it is configured for.
+  bind_address: 127.0.0.1
+  # TCP port the control plane listens on.
+  port: 8787
+
 discord_channel:
   bot_token: ''
   allowed_user_ids: []

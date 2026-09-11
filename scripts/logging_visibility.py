@@ -56,6 +56,7 @@ LOUD: frozenset[str] = frozenset({"info", "warning", "error", "critical", "excep
 #: to list. This addition does not fix that; it pays one instance of it.
 BACKGROUND: tuple[str, ...] = (
     "scheduler", "parliament", "learning", "notifications", "objectives", "webhooks",
+    "control_plane",
 )
 
 _SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "stackowl"

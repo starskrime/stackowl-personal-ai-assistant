@@ -4553,6 +4553,29 @@ class StartupOrchestrator:
         # SAME app supervisor already used for browser/dream-worker/notification
         # jobs — no new subsystem. GATEWAY skips this for the same reason it
         # skips the scheduler supervisor: the core owns the running instance.
+        # A05.1 — the control plane. A SEPARATE supervised task on a separate
+        # port, deliberately NOT mounted on the webhook receiver's app: that app
+        # is gated on `webhook.enabled`, which defaults False, so mounting here
+        # would ship the control plane OFF to everyone who had not opted into
+        # webhooks. Three further couplings are recorded in the design document.
+        # GATEWAY skips it for the same reason it skips the scheduler: the core
+        # owns the running instance, and the health aggregator lives there.
+        if self._role != "gateway" and self._settings.control_plane.enabled:
+            from stackowl.control_plane.server import ControlPlaneServer
+
+            control_plane = ControlPlaneServer(
+                self._settings,
+                health=scheduler_components.health_aggregator,
+            )
+            scheduler_components.supervisor.register(control_plane)
+            log.info(
+                "[startup] core: control plane registered",
+                extra={"_fields": {
+                    "bind": self._settings.control_plane.bind_address,
+                    "port": self._settings.control_plane.port,
+                }},
+            )
+
         webhook_receiver = None
         if self._role != "gateway" and self._settings.webhook.enabled:
             from stackowl.webhooks.receiver import WebhookReceiver
