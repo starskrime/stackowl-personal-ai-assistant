@@ -20604,6 +20604,146 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-307
+    found: 2026-09-11
+    map_check: "A05.2 — and the item could not be built, because its gap statement turned out to be false. That is the finding."
+    what: >-
+      AN ITEM'S `gap` IS THE ONE CLAIM IN THIS RECORD THAT NOTHING VERIFIES, AND IT IS THE
+      CLAIM THAT DECIDES WHAT GETS BUILT. Picked up A05.2 to build it; its gap says "the
+      customer cannot change a setting without editing YAML on the host". `/config set`
+      has existed the whole time — it validates the key, refuses sensitive fields, writes
+      via `save_yaml`, and RE-READS the file to confirm the write persisted (F-81).
+      MEASURED across the 25-item Agentic OS series, written in one sitting from the
+      operator's phrasing: **17 gaps assert an ABSENCE**. NINE have now been checked
+      against the tree and **SEVEN of the nine were wrong or overstated** — only
+      A01.1 and A05.8 said what the tree says.
+    root_cause_measured: >-
+      An escalation's premise aged silently until `premise_check`. A partial stage's
+      evidence aged silently until `closing_check`. A document's claim aged silently until
+      `doc_check`. THE GAP HAD NOTHING — and it is upstream of all three, because it is
+      what a loop reads before deciding what to construct.
+      AND THE ERROR HAS ONE SHAPE, which is what makes it a class rather than three
+      mistakes: each gap says THE CAPABILITY DOES NOT EXIST when the truth is THE
+      CAPABILITY IS NOT REACHABLE AS A SET, OR FROM A BROWSER. Those imply different
+      work — the first rebuilds a working tool, the second presents one. A05.4's
+      correction had already made exactly that move on 2026-09-11 and nothing
+      generalised it.
+    the_SEVEN_that_were_WRONG_OR_OVERSTATED: >-
+      A05.2 — `/config set` exists, writes and verifies its own write.
+      A05.4 — `tools/scheduling/cronjob.py` declares EIGHT actions (create, watch, list,
+      update, pause, resume, remove, run), every verb the item asked for. Corrected
+      earlier the same day.
+      A01.4 — said stop conditions "were never built", while ESC-170 IN THIS SAME FILE
+      says "the budget stop is already on and firing — 101 stops, 19 on 2026-09-10". The
+      record contradicted itself, both halves written the same day, and nothing could
+      notice because only one of the two carried a check.
+      A04.1 — THE WORST OF THE FOUR, found while this item waited on a suite run. It
+      said "there is no single descriptor an agent can be listed from, routed by, or
+      reported on", on an evidence line reading "zero files matching AgentCard or
+      agent_card in src/" — A GREP FOR A NAME I COMPOSED, which is the failure
+      `item-loop/SKILL.md` warns about in the same breath as the programme's charter.
+      `OwlAgentManifest` has 23 fields and is read by **29 modules**, and migration
+      **0118** consolidated an owl's four homes into one on 2026-08-16. A04.1 is P1 and
+      BLOCKS A05.3 and A05.6: built as written it would have minted a SECOND descriptor
+      beside the one 29 modules share — the exact outcome its own evidence line claimed
+      to prevent. What actually holds is one third of the sentence: every field on the
+      card is static configuration, so runtime status has nowhere to live, which is the
+      half A05.6 needs.
+      A04.2 — said "no pool, no lease, no activation record". THE LEASE EXISTS:
+      `tasks.lease_owner` (migration 0053) and `lease_expires_at` (0119), a CAS claim
+      with crash reclaim, plus `ConcurrencyGovernor`'s process-local semaphore. It is
+      on the WORK, not the agent — the `owls` row carries no lease column, asked of the
+      live schema rather than of a grep. Left standing, a gap that says "no lease"
+      instructs the next loop to BUILD ONE, against the operator's standing rule that
+      everything runs on ONE loop and nothing may duplicate logic that already runs work.
+      A05.6 — "nothing shows work in flight" is false. `task_status` shows it, and
+      REQUIRES an exact `task_id`; the tool tree holds `owls_list` and `skills_list` and
+      no task list at all. The A05.5 shape again, hours later: visible PER ROW, invisible
+      AS A SET, and only the second is the item.
+    and_one_was_OVERSTATED_in_a_way_that_made_it_worse: >-
+      A05.5 said the customer "cannot see what has been remembered". `/memory search`
+      exists and works — against CURATED memory. Its own docstring says the rest: "the
+      fact store this used to search is empty". MEASURED: `committed_facts` **0 rows**,
+      `staged_facts` **237**. A command that answers "nothing" about 237 facts that exist
+      is worse than a missing command, because it reads as an answer.
+    fix: >-
+      `scripts/gap_check.py`, the fourth instance of one cure: it runs each item's
+      `gap_check` and prints HOLDS or REFUTED, and separately NAMES every absence-claiming
+      gap that carries no check. A REPORT, not a gate — 13 of the 17 still carry none, and
+      a guard failing all of them would be bypassed rather than satisfied. The NINE
+      measured this loop carry checks and all nine read HOLDS on the corrected text.
+      AND THE REPORT SEPARATES HISTORY FROM WORK: seven absence-claiming gaps belong to
+      items every stage of which is done (D01.6, D01.7, D04.4, D05.2, D10.6, D18.3 and
+      A05.1, whose control plane shipped hours earlier). Reality has refuted all seven,
+      WHICH IS WHAT SUCCESS LOOKS LIKE — so they are named and counted in the summary
+      rather than listed as work, because seven permanent entries beside eleven
+      actionable ones is how a report stops being read.
+    and_the_shape_repeated_in_every_one_of_the_seven: >-
+      NOT ONE of the seven was a capability that does not exist. Every one is a
+      capability that exists and is UNREACHABLE — as a set (A05.2 settings, A05.4
+      schedules, A05.6 tasks, A05.5 memory), from a surface other than a chat prompt
+      (A05.4), or at the level the item names rather than the level it was built at
+      (A04.1 static vs runtime, A04.2 work-lease vs agent-lease). The gaps were written
+      from what the operator ASKED FOR and never reconciled with what the tree HOLDS,
+      which is why they all fail in the same direction: they describe a missing product,
+      and the platform's actual state is a working mechanism with no door on it.
+    and_the_SAME_SHAPE_was_sitting_in_the_tool_that_derives_the_test_path: >-
+      Found by running it: with the new `scripts/gap_check.py` untracked in the tree,
+      `tests_touching.py` answered "no changed files under src/ or scripts/ — nothing to
+      map". `git diff` does not list an untracked file, so THE ONE CASE WHERE DERIVING
+      THE PATH MATTERS MOST — a module that has never had a test run against it — was
+      the case it returned silence for. And silence from this tool reads as "nothing to
+      check", which is how a new module ships untested.
+      `docs_touching.py`, its sibling written for the same purpose, carried
+      `git ls-files --others --exclude-standard` ALL ALONG. Two copies of one rule, and
+      the copy that gates the test run was the wrong one. Fixed in this change, pinned
+      by a BEHAVIOUR test that builds a throwaway repo with one untracked file (a scan
+      of the argument list would pass on a version that ran the command and discarded
+      its output), and mutation-proven: removing the clause turns it red.
+      It is the same defect as the gaps, one surface over — an instrument answering
+      "there is nothing here" when the honest answer is "I cannot see this kind of
+      thing".
+    AND_THE_DERIVED_PATH_CAUGHT_A_GUARD_THAT_PASSED_OFF_TREE: >-
+      The new guard file resolved its repo root as `parents[2]`. It sits DIRECTLY in
+      `tests/`, so that is one level too many — but in the scratchpad the extra level
+      happened to hold a `progress.yml` and a `scripts/`, so ALL SIX TESTS PASSED there
+      and every one raised `FileNotFoundError: /ssd/projects/progress.yml` on the real
+      tree. An off-tree dry run cannot see a path bug whose wrong answer is CORRECT
+      off-tree — the third time this session that applying and running the derived path
+      found what the off-tree proof structurally could not.
+      And the file it would have shipped broken is the one that sits directly in
+      `tests/`, which no `tests/<package>` run reaches and which the gate does not
+      execute — so the 44-minute full run would have been the only thing that saw it,
+      which is precisely the failure `tests_touching.py` exists to prevent. Deriving the
+      path is what ran it at all.
+    MY_OWN_CHECKS_WERE_WRONG_TWICE_AND_BOTH_WERE_THE_SAME_ERROR: >-
+      The first drafts grepped SOURCE TEXT. A01.4's asked whether `hard_stop` appears in
+      `tool_guardrails.py` — it does, in a DOCSTRING RECORDING ITS DELETION ("`hard_stop_
+      enabled` had no setter anywhere in..."). A05.2's asked whether "config" appears in
+      `control_plane/server.py` — it does, in an IMPORT line and in the word "configured".
+      Both printed REFUTED against gaps that HOLD.
+      That is the third and fourth time today one of my guards matched prose instead of
+      the thing: the control plane's leak guard matched "minted" in its own comment, and
+      the CLI guard matched `store_secret` in its own explanation. The cure is the same
+      every time — ask a STRUCTURAL question. A01.4 now asks the settings MODEL whether
+      the field exists; A05.2 asks the ROUTER what routes are registered, and prints them
+      (`['/api/v1/health']`), so the next reader sees the evidence rather than a verdict.
+    what_else_that_same_cause_reaches: >-
+      Eight more absence-claiming gaps with no check, named by the report. They are not
+      drained here and the number is left rather than a guess: SEVEN of the first NINE
+      were wrong or overstated, so the prior is that most of the rest are too.
+      AND THE INSTRUMENT DISAGREED WITH ITSELF ON THE WAY, which is the reusable part:
+      A04.1's check first counted **57** modules because `/usr/bin/grep -rl` walks
+      `__pycache__`, while this harness's own `grep` excludes it and returns 29. A number
+      that looks measured, is an artefact, and drifts with whatever has been imported.
+      `--include=*.py` settles it. CLAUDE.md records that one grep misorders and the
+      other truncates binaries; that the two disagree on the SET was not recorded.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: no_change_needed, document: no_change_needed}
+    validate_is_no_change_needed_and_the_reason_is_named: >-
+      Nothing here changes runtime behaviour — a new report script, four corrected gap
+      statements and four checks. Its evidence is that the four checks RUN and answer
+      correctly, which is shown in the tests rather than in a log line.
   - id: DEBT-306
     found: 2026-09-11
     map_check: "A05.1's own design document NAMED both of these as deliberately-not-built. That is how they survived the loop that created them, which is the finding."
@@ -49161,6 +49301,19 @@ items:
       BoundsSpec closes five axes — tools, filesystem, network, data, caps — and
       exactly one is enforced. A bound nothing reads is a promise the platform
       cannot keep.
+    gap_check: >-
+      uv run python -c "from stackowl.authz.enforcement import ENFORCED_AXES as E;
+      from stackowl.authz.bounds import BoundsSpec as B;
+      print(('HOLDS' if E == {'tools'} else 'REFUTED') + f' enforced axes {sorted(E)}
+      of modelled {list(B.model_fields)}')" 2>/dev/null | tail -1
+    gap_checked_2026_09_11: >-
+      HOLDS, and it asks the CONSTANT rather than a grep: `authz/enforcement.py`
+      declares `ENFORCED_AXES = frozenset({"tools"})` and is the single place that
+      decides. One nuance the gap text flattens and the module docstring does not:
+      `data_owner_id` IS enforced — globally, by `OwnedRepository`, on every query —
+      and is listed as unenforced here because nothing plumbs a TASK-SCOPED value.
+      Both are true, and the distinction changes the work: owner scoping does not
+      need building, per-owl plumbing does.
     evidence: >-
       MEASURED 2026-09-11 — authz/enforcement.py:29 reads
       ENFORCED_AXES = frozenset({"tools"}). The module docstring records that
@@ -49334,8 +49487,17 @@ items:
     wave: 3
     order: 115
     gap: >-
-      An agent runs until something external kills it. The operator asked for
-      stop conditions in June and they were never built.
+      An agent has a BUDGET stop and no other. The tool-loop guard is warn-only, so a
+      loop that is cheap but unproductive runs until something external kills it.
+    gap_CONTRADICTED_A_MEASUREMENT_IN_THIS_SAME_FILE_2026_09_11: >-
+      It said stop conditions "were never built". ESC-170, written the SAME DAY and
+      sitting in this file, says the opposite with a number: "the budget stop is already
+      on and firing — 101 stops, 19 on 2026-09-10. The thing that is warn-only is the
+      TOOL-LOOP guard in `pipeline/tool_guardrails.py`."
+      The record contradicted itself and the gap was the half that was wrong. Nothing
+      checks a gap statement, which is how both could stand together — see DEBT-307.
+    gap_check: >-
+      uv run python -c "from stackowl.config.settings import Settings; import json; f=json.dumps({k:1 for k in Settings().model_dump()}); print('REFUTED a tool-loop hard stop is a real setting again' if 'hard_stop' in f else 'HOLDS the tool-loop guard is warn-only; the budget stop is the only stop')"
     evidence: >-
       MEASURED 2026-09-11 — zero hits for StopPolicy or stop_policy in src/. It
       survives as four forward-reference comments naming E2-S5 in authz/bounds.py
@@ -49435,12 +49597,42 @@ items:
     wave: 2
     order: 120
     gap: >-
-      There is no single descriptor an agent can be listed from, routed by, or
-      reported on — so every surface that needs one derives its own.
-    evidence: >-
-      MEASURED 2026-09-11 — zero files matching AgentCard or agent_card in src/.
-      The control-plane items below all need this; building it once is what stops
-      the dashboard inventing a second answer.
+      ONE DESCRIPTOR ALREADY EXISTS AND IS SHARED — `OwlAgentManifest`, 23 fields,
+      read by 29 modules in `src/` including `owls_list` (list), `registry` (route)
+      and `execute` (dispatch). Every field on it is STATIC CONFIGURATION. Nothing
+      carries runtime state, so "what is this agent doing now" has nowhere to live
+      on the card, which is the half A05.6 needs and the only third of the original
+      claim that survived.
+    gap_check: >-
+      uv run python -c "import subprocess;
+      from stackowl.owls.manifest import OwlAgentManifest as M;
+      n=len(subprocess.run(['grep','-rl','--include=*.py','OwlAgentManifest','src/'],
+      capture_output=True,text=True).stdout.split());
+      r={'status','last_run_at','running','pid','activity','state','last_seen'} & set(M.model_fields);
+      print(('HOLDS' if not r and n > 1 else 'REFUTED') + f' one descriptor of
+      {len(M.model_fields)} static fields read by {n} modules; runtime fields {sorted(r)}')"
+      2>/dev/null | tail -1
+    gap_was_WRONG_and_its_evidence_line_is_the_reason_2026_09_11: >-
+      The gap said "there is no single descriptor an agent can be listed from,
+      routed by, or reported on — so every surface that needs one derives its own",
+      on an evidence line reading "zero files matching AgentCard or agent_card in
+      src/". THAT IS A GREP FOR A NAME I COMPOSED. `item-loop/SKILL.md` states the
+      rule in the same breath as this programme's charter — grep for the plan's
+      words, not the memo's — and it was written the same day as this record.
+      What the tree holds: `OwlAgentManifest` (`owls/manifest.py`), and migration
+      **0118**, whose own header says it exists because an owl lived in FOUR places
+      and consolidating them was already done on 2026-08-16. This is a P1 item
+      BLOCKING A05.3 and A05.6; built as written, it would have produced a second
+      descriptor beside the one 29 modules already share — the exact outcome its
+      evidence line said it was preventing. See DEBT-307.
+    and_the_instrument_disagreed_with_itself_by_almost_2x: >-
+      The first draft of the check counted **57** modules. `/usr/bin/grep -rl`
+      includes `__pycache__`, so 28 of those were `.pyc` files — a number that
+      looks measured, is an artefact, and DRIFTS with whatever has been imported.
+      This harness's own `grep` excludes them and returns 29 (plus migration 0118,
+      which is not a module). `--include=*.py` settles it. CLAUDE.md already
+      records that this harness's grep misorders and that `/usr/bin/grep` truncates
+      binaries; neither note covers the two disagreeing on the SET.
     depends_on: []
     blocks: ['A05.3', 'A05.6']
 
@@ -49453,8 +49645,29 @@ items:
     wave: 4
     order: 121
     gap: >-
-      Agents are always-available only in the sense that anything can construct
-      one; nothing owns their lifetime, so nothing can say what is running.
+      THE DURABLE LEASE ALREADY EXISTS AND IS ON THE WORK, NOT THE AGENT.
+      `tasks` carries `lease_owner` + `lease_expires_at` with a CAS claim and
+      crash reclaim; `ConcurrencyGovernor` bounds in-flight pipelines with a
+      process-local semaphore that dies with the process. The `owls` row carries
+      no lease column and no activation record, so "which agents are live" has no
+      answer. The work is to EXTEND that lease to the agent, never to mint a
+      second one.
+    gap_check: >-
+      o=$(./scripts/db_query.sh "SELECT group_concat(name) FROM pragma_table_info('owls')"
+      2>/dev/null | tail -1);
+      t=$(./scripts/db_query.sh "SELECT group_concat(name) FROM pragma_table_info('tasks')
+      WHERE name LIKE 'lease%'" 2>/dev/null | tail -1);
+      case "$o" in *lease*|*activ*) echo "REFUTED owls carries $o";;
+      *) echo "HOLDS the durable lease is on the WORK (tasks: $t) and the owls row carries
+      none ($o)";; esac
+    gap_was_WRONG_ON_ITS_EVIDENCE_LINE_2026_09_11: >-
+      It read "no pool, no lease, no activation record". THE LEASE EXISTS —
+      migration 0053 added `tasks.lease_owner`, 0119 added `lease_expires_at` and
+      its own header explains the crash-reclaim half. Left standing, a P2 item
+      that says "no lease" is an instruction to BUILD ONE, against the operator's
+      standing rule that everything runs on ONE loop and no implementation may
+      duplicate logic that already runs work. The gap now names the mechanism to
+      extend. See DEBT-307.
     evidence: >-
       MEASURED 2026-09-11 — no pool, no lease, no activation record. The
       reference platform has the same shape and is worse: AIAgent is constructed
@@ -49673,7 +49886,24 @@ items:
     priority: P1
     wave: 1
     order: 123
-    gap: "The customer cannot change a setting without editing YAML on the host."
+    gap: >-
+      Settings can be changed by TYPING but not seen as a SET, and no change leaves an
+      audit trail a customer could read.
+    gap_was_MEASURABLY_FALSE_as_written_2026_09_11: >-
+      It said "the customer cannot change a setting without editing YAML on the host".
+      `/config set` exists and predates this item: it validates the key, refuses
+      sensitive fields, writes via `save_yaml`, and then RE-READS the file to confirm the
+      write persisted before claiming success (F-81). `/config list` and `/config get`
+      sit beside it.
+      SECOND FALSE GAP IN THIS SERIES after A05.4's, and the same shape both times: the
+      gap says THE CAPABILITY DOES NOT EXIST when the truth is THE CAPABILITY IS NOT
+      REACHABLE AS A SET, OR FROM A BROWSER. Those imply different work — one rebuilds a
+      working tool, the other presents it.
+      What survives as real content: 213 leaf settings fields exist and only 94 declare
+      `hot_reload` at all (68 True, 26 False), so for 119 of them nobody can say whether
+      a change takes effect without a restart.
+    gap_check: >-
+      python3 -c "import ast,pathlib; t=ast.parse(pathlib.Path('src/stackowl/control_plane/server.py').read_text()); routes=[a.value for n in ast.walk(t) if isinstance(n,ast.Call) and getattr(n.func,'attr','').startswith('add_') for a in n.args if isinstance(a,ast.Constant) and isinstance(a.value,str)]; print('REFUTED a control-plane route serves settings: '+str(routes) if any('config' in r or 'setting' in r for r in routes) else 'HOLDS routes are '+str(routes)+' — settings are viewable as a set from no surface')"
     evidence: >-
       Operator requirement, 2026-09-11 — "control platform". Settings already
       carry hot_reload metadata, so the read side of this exists; what is missing
@@ -49711,6 +49941,11 @@ items:
     gap: >-
       Cron jobs are invisible to anyone who is not AT A CHAT PROMPT, and there is no
       view of them as a set.
+    gap_check: >-
+      uv run python -c "from stackowl.tools.scheduling.cronjob import CronjobTool as C;
+      e=C().manifest.parameters['properties']['action']['enum'];
+      print(('HOLDS' if 'list' in e else 'REFUTED') + f' cronjob declares {sorted(e)} —
+      every verb, reachable only from a chat prompt')" 2>/dev/null | tail -1
     gap_was_CORRECTED_2026_09_11_the_original_was_measurably_false: >-
       It read "cron jobs are invisible unless the operator queries the database by
       hand", and that is not true. `tools/scheduling/cronjob.py` declares EIGHT actions
@@ -49736,8 +49971,20 @@ items:
     wave: 2
     order: 126
     gap: >-
-      The customer cannot see what has been remembered about them, which is the
-      one store whose contents they have the strongest claim to read.
+      CURATED memory is searchable by typing. The 237 facts in `staged_facts` are
+      reachable from no surface at all, and `committed_facts` — the store a reader would
+      expect — holds ZERO rows.
+    gap_was_OVERSTATED_and_the_precise_version_is_WORSE_2026_09_11: >-
+      It said the customer "cannot see what has been remembered". `/memory search` exists
+      and works — against CURATED memory, and its own docstring says why that is not the
+      whole story: "the fact store this used to search is empty". MEASURED:
+      `committed_facts` **0 rows**, `staged_facts` **237**.
+      So the true gap is sharper than the written one. A command that answers "nothing"
+      about 237 facts that exist is worse than a missing command, because it reads as an
+      answer — this record's own "an empty table is a QUESTION, not an answer" shape, on
+      the one store the customer has the strongest claim to.
+    gap_check: >-
+      python3 -c "import subprocess; o=subprocess.run(['./scripts/db_query.sh','SELECT COUNT(*) FROM committed_facts;'],capture_output=True,text=True).stdout; n=[t for t in o.split() if t.isdigit()]; print('REFUTED committed_facts holds rows — a reader would find something' if n and int(n[-1])>0 else 'HOLDS committed_facts is empty while staged_facts is not; no surface reaches the staged set')"
     evidence: >-
       Operator requirement, 2026-09-11 — "see memories". Depends on the memory
       substrate work in A06, so that the browser shows one model rather than
@@ -49754,8 +50001,25 @@ items:
     wave: 2
     order: 127
     gap: >-
-      Nothing shows work in flight. A running task, a retrying job and a wedged
-      agent are indistinguishable from outside.
+      WORK IN FLIGHT IS VISIBLE ONE ROW AT A TIME AND ONLY IF YOU ALREADY KNOW THE
+      ID. The `task_status` tool takes a REQUIRED `task_id` — "Look up the status
+      of a durable task by its exact id" — and the tool tree holds `owls_list` and
+      `skills_list` and no task list at all. So there is no query for "what is
+      running", and a running task, a retrying job and a wedged agent stay
+      indistinguishable to anyone who cannot name the row first.
+    gap_check: >-
+      uv run python -c "import pathlib;
+      from stackowl.tools.tasks.task_status import TaskStatusTool as T;
+      req=T().manifest.parameters.get('required', []);
+      listers=sorted(p.stem for p in pathlib.Path('src/stackowl/tools').rglob('*list*.py'));
+      print(('HOLDS' if 'task_id' in req and not any('task' in n for n in listers)
+      else 'REFUTED') + f' task_status requires {req}; list tools are {listers}')"
+      2>/dev/null | tail -1
+    gap_was_OVERSTATED_and_it_is_the_A05_5_shape_2026_09_11: >-
+      "Nothing shows work in flight" is false: `task_status` shows it, by id. The
+      correction is the same one A05.5 needed hours earlier — a capability that
+      exists PER ROW and not AS A SET — and stating it as absence would have had
+      the next loop rebuild a status lookup that works. See DEBT-307.
     evidence: >-
       Operator requirement, 2026-09-11 — "what agents does". Durable tasks
       already carry status and checkpoints, and the health sweep already
@@ -49791,8 +50055,17 @@ items:
     wave: 2
     order: 129
     gap: >-
-      Skills are managed by typing commands, and which agent owns which skill is
-      not visible anywhere.
+      Skills are managed by typing. Ownership IS stored and HAS a reader
+      (`owls/skill_ownership.py::read_all_skill_ownership`); no command or surface
+      presents it, so this is presentation over existing state, not new state.
+    gap_was_REFINED_2026_09_11_because_the_build_it_implies_changed: >-
+      "Not visible anywhere" is true of what a USER can see and false of the tree:
+      `read_all_skill_ownership` exists, and `/skill list` and `/skill show` sit beside it
+      without surfacing the owner. The distinction decides the work — a gap reading "not
+      visible" invites building a store; the measured one says the store is already there
+      and only the presentation is missing.
+    gap_check: >-
+      python3 -c "import pathlib; s=pathlib.Path('src/stackowl/commands/skill_command.py').read_text(); print('REFUTED a command now surfaces skill ownership' if 'ownership' in s.lower() else 'HOLDS ownership is stored and readable in code, surfaced by nothing')"
     evidence: >-
       Operator requirement, 2026-09-11 — "ability to update or install or remove
       skills". Per-owl ownership already exists (manifest skills/pinned_skills

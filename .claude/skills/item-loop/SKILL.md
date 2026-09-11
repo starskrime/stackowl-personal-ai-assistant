@@ -306,7 +306,41 @@ evidence exists, and `partial` + a `closing_check` when it does not yet.
 ```bash
 uv run python scripts/validate_check.py
 uv run python scripts/doc_check.py      # which design docs went stale
+uv run python scripts/gap_check.py      # which GAP statements reality has refuted
 ```
+
+**`gap_check.py` is the FOURTH instance of one cure, and the one furthest upstream.**
+An escalation's premise aged silently until `premise_check`; a `partial` stage's
+evidence until `closing_check`; a document's claim until `doc_check`. **An item's
+`gap` had nothing — and it is the sentence a loop reads before deciding what to
+BUILD.** MEASURED 2026-09-11 across the 25-item Agentic OS series, written in one
+sitting from the operator's phrasing: **17 gaps assert an ABSENCE, nine were checked
+against the tree, and SEVEN were wrong or overstated.** A05.2 said a setting could not be changed
+without editing YAML (`/config set` writes and then re-reads the file to confirm);
+A05.4 said cron jobs were invisible (eight verbs already shipped); A01.4 said stop
+conditions "were never built" while **ESC-170 in the same file** recorded "the budget
+stop is already on and firing — 101 stops"; and **A04.1**, a P1 item blocking two
+others, said no single agent descriptor exists — on an evidence line that greps for
+`AgentCard`, **a name I composed**, while `OwlAgentManifest` is read by 29 modules and
+migration 0118 consolidated an owl's four homes a month ago. Built as written it would
+have minted a second descriptor beside the shared one.
+
+**And the error has ONE shape, which is why it is a class and not seven mistakes.**
+NOT ONE of the seven was a capability that does not exist. Every one is a capability
+that EXISTS AND IS UNREACHABLE — as a set (settings, schedules, tasks, memory), from a
+surface other than a chat prompt, or at the level the item names rather than the level
+it was built at (A04.1 static vs runtime; A04.2 a lease on the WORK, not the agent).
+Those are different items: the first rebuilds a working tool, the second puts a door on
+one. The gaps were written from what the operator ASKED FOR and never reconciled with
+what the tree HOLDS, which is why they all fail in the same direction.
+
+It is a REPORT, never a gate: eight absence-claiming gaps still carry no check, and a
+guard failing all of them would be bypassed rather than satisfied. It also separates
+HISTORY from WORK — seven absence-claiming gaps belong to FINISHED items, and reality
+refuting those is what success looks like, so they are counted and named rather than
+listed as work. **Before building any item, run its gap_check — or write one.** A gap you cannot express as a runnable
+claim is too vague to build from, exactly as an unwritable `premise_check` means the
+premise is too vague.
 
 **`doc_check.py` is the THIRD instance of one cure.** `DOC_STANDARD` requires
 `Last verified: <date>, against commit <sha>` beside a `Source:`, which makes

@@ -164,3 +164,48 @@ def test_a_script_stem_is_matched_EXACTLY_not_by_substring() -> None:
     assert len(selected) >= 10, (
         "the negative controls above pass vacuously if nothing is selected at all"
     )
+
+
+@pytest.mark.tripwire
+def test_the_no_argument_form_sees_a_file_git_does_not_track_yet() -> None:
+    """THE BLIND SPOT, and it is the case where deriving matters most.
+
+    MEASURED 2026-09-11. A brand-new `scripts/gap_check.py` sat untracked in the
+    tree and the no-argument form answered "no changed files under src/ or
+    scripts/ — nothing to map". `git diff` does not list an untracked file, so a
+    module that has never had a test run against it was exactly the module this
+    returned SILENCE for — and silence here reads as "nothing to check".
+
+    `docs_touching.py`, written for the same purpose, carried
+    `git ls-files --others --exclude-standard` all along. Two copies of one rule,
+    and the copy that gates the test run was the wrong one.
+
+    A BEHAVIOUR TEST, not a scan of the argument list: it builds a throwaway repo
+    with one untracked file and asks what `_changed_files` returns. An assertion
+    about which git commands appear in the source would pass on a version that
+    ran them and discarded the output.
+    """
+    import subprocess
+    import tempfile
+
+    mod = _tool()
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        (root / "brand_new.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "not_python.txt").write_text("ignored\n", encoding="utf-8")
+
+        original = mod._ROOT  # noqa: SLF001
+        try:
+            mod._ROOT = root  # noqa: SLF001
+            changed = mod._changed_files()  # noqa: SLF001
+        finally:
+            mod._ROOT = original  # noqa: SLF001
+
+    assert "brand_new.py" in changed, (
+        "an untracked .py is invisible to the no-argument form — the new-module "
+        f"case returns 'nothing to map'. Got: {changed}"
+    )
+    assert "not_python.txt" not in changed, (
+        "the python-only filter was lost while adding the untracked clause"
+    )

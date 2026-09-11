@@ -60,9 +60,25 @@ _SRC = _ROOT / "src"
 
 
 def _changed_files() -> list[str]:
-    """Working-tree + staged changes against HEAD, python only."""
+    """Working-tree + staged + UNTRACKED changes against HEAD, python only.
+
+    THE UNTRACKED CLAUSE WAS MISSING UNTIL 2026-09-11, and its absence was found by
+    this script answering "no changed files under src/ or scripts/ — nothing to map"
+    about a NEW `scripts/gap_check.py` sitting in the tree. `git diff` does not list
+    an untracked file, so the one case where deriving the path matters MOST — a
+    module that has never had a test run against it — was the one case this returned
+    silence for. And silence here reads exactly like "nothing to check".
+
+    `docs_touching.py`, its sibling written for the same purpose, HAD the clause all
+    along (`git ls-files --others --exclude-standard`). Two copies of one rule, and
+    the copy that gates the test run was the wrong one.
+    """
     out: set[str] = set()
-    for args in (["git", "diff", "--name-only", "HEAD"], ["git", "diff", "--name-only", "--cached"]):
+    for args in (
+        ["git", "diff", "--name-only", "HEAD"],
+        ["git", "diff", "--name-only", "--cached"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    ):
         try:
             res = subprocess.run(args, capture_output=True, text=True, timeout=60, cwd=_ROOT)
         except Exception as exc:  # pragma: no cover — git absent
