@@ -50254,11 +50254,27 @@ items:
       is a surface and a write path with an audit trail.
     depends_on: ['A05.1']
     blocks: []
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: partial}
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: partial}
+    validated_LIVE_2026_09_11_on_0b0ab13b_after_a_full_restart: >-
+      `./start.sh`, core up at 21:15:07 on `0b0ab13b` — start time checked against the
+      commit, never a PID — then the live door:
+      **401** unauthenticated; **200** authenticated with
+      `INFO [control_plane] server.config: exit — served
+      {"principal_id":"principal-default","settings":45,"masked":7}`.
+      **THE LEAK CHECK IS THE ONE THAT MATTERS AND IT READS ZERO**: of the 38 UNMASKED
+      values, none begins `file:`/`keychain:` or contains `.secrets/`. Counted from the
+      live response with `jq`, never printed — a validate that echoes the thing it is
+      checking is its own disclosure.
+      The page cites all three API routes (`/api/v1/config`, `/api/v1/health`,
+      `/api/v1/schedules`), so the path bijection holds on the served page and not only
+      in the test.
+      `server.config` appeared ZERO times across every retained log beforehand: a new
+      literal with one emitter, so the evidence cannot be produced by the code this
+      replaced.
     closing_check: >-
-      c=$(./scripts/log_since.sh 2026-09-11 'server.config: exit — served');
-      [ "${c:-0}" -gt 0 ] && echo "CLOSEABLE $c config reads served"
-      || echo "OPEN 0 — the route has not answered on the live platform yet"
+      [ -f docs/reference-mapping/designs/A05.2.md ]
+      && echo "CLOSEABLE A05.2 has its own design document"
+      || echo "OPEN A05.2 has no document of its own; A05.9 carries the page half"
     document_is_partial_and_the_reason_is_named: >-
       A05.9 (the page) is amended and stamped; A05.2 has no design document of its own
       yet. The route's behaviour, its masking contract and its configured-not-effective
