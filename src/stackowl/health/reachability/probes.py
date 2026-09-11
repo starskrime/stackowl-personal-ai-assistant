@@ -70,6 +70,37 @@ async def _probe_output_preference_enforcement() -> ProbeResult:
     )
 
 
+@reachability_probe("control_plane.serves_by_default")
+async def _probe_control_plane_serves_by_default() -> ProbeResult:
+    """The control plane must be ON by default AND actually registered at boot.
+
+    BOTH HALVES, because each has failed alone in this tree. `webhook.enabled`
+    defaults False, so a surface can be perfectly built and reach nobody; and
+    F145 records the webhook receiver as a fully-built `SupervisedTask` with no
+    caller anywhere — registered-but-unreachable, the listener never binding.
+
+    STATIC, like every probe beside it: it reads the default config and the
+    orchestrator's own source rather than opening a socket. It deliberately does
+    NOT call `ensure_credential()`, which would MINT a token as a side effect —
+    a probe that changes the thing it measures is worse than no probe.
+    """
+    import inspect
+
+    from stackowl.config.settings import Settings
+    from stackowl.startup import orchestrator as _orch
+
+    on = bool(Settings().control_plane.enabled)
+    wired = "ControlPlaneServer(" in inspect.getsource(_orch)
+    detail = (
+        "default ON and registered at boot"
+        if on and wired
+        else f"enabled={on}, registered_in_orchestrator={wired}"
+    )
+    return ProbeResult(
+        "control_plane.serves_by_default", reachable=on and wired, detail=detail
+    )
+
+
 @reachability_probe("budget.counts_tool_calls")
 async def _probe_budget_counts_tool_calls() -> ProbeResult:
     """The step cap must count individual tool dispatches, not just ReAct rounds."""

@@ -20587,6 +20587,90 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-306
+    found: 2026-09-11
+    map_check: "A05.1's own design document NAMED both of these as deliberately-not-built. That is how they survived the loop that created them, which is the finding."
+    what: >-
+      A SURFACE NOBODY CAN LOG INTO, THAT NOTHING NOTICES GOING DARK. The control
+      plane shipped ON, bound its port and served real health data. MEASURED the next
+      morning, every one of these is **ZERO**: CLI commands mentioning it (0),
+      occurrences of `control_plane` under `src/stackowl/cli/` (0), documents saying
+      where the token lives (0), and occurrences of `control_plane` under
+      `src/stackowl/health/` (0).
+      So the operator could not reach what shipped without reading source and guessing
+      a path, and nothing anywhere would say if it stopped serving.
+    root_cause_measured: >-
+      BOTH GAPS WERE NAMED IN A05.1's DESIGN DOCUMENT, under a heading that reads "Not
+      yet built, and named so the gap is legible". Naming a gap is not closing it — and
+      a named gap reads as a DECISION to a later reader, which is precisely why neither
+      was picked up: the record said, truthfully, that someone had thought about it.
+      `health/reachability/census.py` had already written the rule this breaks, in its
+      own docstring: *"it cannot, by itself, discover a brand-new subsystem that never
+      registers — that residual gap is the one flagged; keep REQUIRED_PROBES updated
+      when a consequential default-path subsystem is added."* One was added, default
+      ON, and the set was not updated. The instrument told its own future reader exactly
+      what it could not see, and the reader was me.
+    what_else_that_same_cause_reaches: >-
+      Every "deliberately not built" note in a design document. They are honest and they
+      are load-bearing — this file's own rule is that a scope cut is only honest if it
+      leaves the measurement behind — but nothing re-reads them, so they age exactly the
+      way an escalation's premise aged before `premise_check` and a `partial` stage's
+      evidence aged before `closing_check`. No instrument is built for it here; the
+      measurement is left rather than a guess at a mechanism.
+    fix: >-
+      `stackowl control-plane` prints the address and the token, imitating
+      `stackowl health` (same `--json`, same shape). It RESOLVES and never MINTS —
+      minting would hand the operator a credential the running server does not hold, and
+      on this host, where the keyring is genuinely unusable, it would forge a different
+      wrong one every run. It asks BOTH backends in the server's own order, because
+      `store_secret` writes to keyring-or-file and does not say which. No token yet is a
+      non-zero exit, not a cheerful nothing.
+      And `control_plane.serves_by_default` joins the reachability census: default ON
+      **and** actually registered at boot. Both halves, because each has failed alone
+      here — `webhook.enabled` defaults False (a surface reaching nobody) and F145
+      records a fully-built `SupervisedTask` with no caller (registered-but-unreachable).
+      The probe is STATIC like every probe beside it and deliberately does not call
+      `ensure_credential`, which would mint: a probe that changes what it measures is
+      worse than none.
+    tests: >-
+      `tests/test_the_control_plane_can_be_reached_and_is_watched.py`, 7 tripwires. The
+      two that carry the weight: the command must not name `ensure_credential` or
+      `store_secret` at all, and the probe is proven against a CONSTRUCTED disabled
+      surface — today both halves are true, so an assertion over the live state pins
+      nothing, and the constructed case is the webhook receiver's exact shape (873 boots,
+      zero requests).
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    document_is_done_and_it_is_A05_1s: >-
+      A05.1.md's header listed both of these under "Not yet built"; that list is the
+      thing this item falsified, so the document is corrected in the same change rather
+      than left advertising a gap that is closed.
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The CLI command is verifiable by running it, and is. The PROBE's verdict reaches
+      production through the boot census, so its live evidence arrives on the next
+      restart — and the platform was restarted 12:56 this loop for DEBT-305, so driving
+      another one now would measure my own interference rather than the platform.
+    the_closing_check_first_watched_the_WRONG_EVENT: >-
+      Written as a count of `reachability census`, which returned 20 today — and the
+      ONLY source literal carrying that phrase is
+      `"[startup] reachability census: audit itself failed — skipping"`. Reading the raw
+      records rather than the count showed the 20 were a DIFFERENT line entirely, the
+      `ok` one. A check built on the first phrasing would have counted census FAILURES
+      and read them as success. Found by this file's own rule: find the `log.*` call and
+      copy its literal.
+      The corrected check is also STRICTLY BETTER, because the real line names the
+      COUNT — "5 subsystems reachable". The probe makes it SIX, so the evidence is a
+      value only the new code can produce, rather than a line the old code emitted 20
+      times today.
+      AND THE SECOND DRAFT WAS UNCHECKABLE FOR A THIRD REASON: the emitter is a `%d`
+      FORMAT STRING, so "6 subsystems reachable" appears in no source file and
+      `test_a_closing_check_looks_for_evidence_that_can_exist` — which asks the loggers
+      — would have refused it as evidence that cannot exist. Caught by running that
+      reasoning before the gate did. The shipped check therefore follows this file's own
+      prescription: `log_since.sh` takes the date bound and ONE pattern that really is a
+      substring of the literal, and the discriminating "six" goes in `jq`.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-11 'reachability census: ok'); six=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | jq -r 'select(.msg|type=="string")|select(.msg|contains("census: ok — 6 subsystems"))|.msg' 2>/dev/null | wc -l); if [ "${six:-0}" -gt 0 ]; then echo "CLOSEABLE ${six} boot census/es counted SIX reachable subsystems — it was five before this probe, so the number itself is evidence only the new code can produce"; else echo "OPEN ${n:-0} census run(s) today, none counting six — the probe is registered but has not reached a boot"; fi
   - id: DEBT-305
     found: 2026-09-11
     map_check: "No mapped item matches — evidence-led. Found by VERIFYING an `escalation_check` EXPIRED rather than believing it, which is this method's own rule and is the only reason any of it surfaced."

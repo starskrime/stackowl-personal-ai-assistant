@@ -43,6 +43,13 @@ REQUIRED_PROBES: frozenset[str] = frozenset({
     "telegram.table_formatting",
     "deliver.output_preference_enforcement",
     "budget.counts_tool_calls",
+    # Added 2026-09-11 with the control plane itself. This module's own docstring
+    # names the residual gap it closes: "it cannot, by itself, discover a
+    # brand-new subsystem that never registers — keep REQUIRED_PROBES updated
+    # when a consequential default-path subsystem is added." One was added,
+    # default ON, and nothing in `health/` watched it. MEASURED before adding:
+    # zero occurrences of `control_plane` anywhere under `src/stackowl/health/`.
+    "control_plane.serves_by_default",
 })
 
 

@@ -1392,3 +1392,72 @@ def restore(
     # 4. EXIT
     log.info("[cli] restore: exit — backup_path=%s", backup_path)
     typer.echo("✓ Restore complete")
+
+
+@app.command(name="control-plane")
+def control_plane(
+    as_json: bool = typer.Option(False, "--json", help="Emit as JSON."),
+) -> None:
+    """Print the control plane's address and access token.
+
+    WHY THIS EXISTS. The control plane shipped ON and bound its port, and the
+    operator had no way to reach it: MEASURED 2026-09-11, zero CLI commands
+    mentioned it, `control_plane` appeared nowhere under `src/stackowl/cli/`, and
+    no document said where the token lives. A dashboard nobody can log into is
+    decoration — this repo's commonest defect, shipped by me.
+
+    It RESOLVES an existing credential and never mints one. Minting here would
+    hand the operator a token the running server does not hold, and on a host
+    where the keyring is unusable (this one) it would do that every time it was
+    run. If there is no credential yet, that is a real answer and it says so.
+    """
+    import json
+    import sys
+
+    from stackowl.config.secret_resolver import SecretResolver
+    from stackowl.config.settings import Settings
+    from stackowl.control_plane.auth import SECRET_SERVICE
+    from stackowl.paths import StackowlHome
+
+    cfg = Settings().control_plane
+    url = f"http://{cfg.bind_address}:{cfg.port}"
+
+    token = ""
+    source = ""
+    # BOTH BACKENDS, in the same order the server tries them. `store_secret`
+    # writes to the keyring when it can and a 0600 file when it cannot, and does
+    # not tell its caller which — so asking only one would print "no token" while
+    # the server was happily using the other.
+    for kind, ref in (
+        ("OS keyring", f"keychain:{SECRET_SERVICE}"),
+        ("file", f"file:{StackowlHome.secrets_dir() / f'{SECRET_SERVICE}.key'}"),
+    ):
+        try:
+            resolved = SecretResolver.resolve(ref)
+        except Exception:  # noqa: BLE001 — absence is the normal case here
+            continue
+        if resolved:
+            token, source = resolved.strip(), kind
+            break
+
+    if as_json:
+        typer.echo(json.dumps({
+            "url": url,
+            "token": token or None,
+            "stored_in": source or None,
+            "reachable_from": "this machine only" if cfg.bind_address in
+                              ("127.0.0.1", "::1", "localhost") else "the network",
+        }, indent=2))
+        if not token:
+            sys.exit(1)
+        return
+
+    typer.echo(f"Control plane: {url}")
+    if cfg.bind_address in ("127.0.0.1", "::1", "localhost"):
+        typer.echo("  Reachable from this machine only (control_plane.bind_address).")
+    if not token:
+        typer.echo("  No access token yet — start the platform once and it mints one.")
+        sys.exit(1)
+    typer.echo(f"  Token ({source}): {token}")
+    typer.echo("")
+    typer.echo(f'  curl -H "Authorization: Bearer $TOKEN" {url}/api/v1/health')
