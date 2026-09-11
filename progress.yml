@@ -422,7 +422,15 @@ current:
       still closeable — and the loop now works the **Agentic OS**, defined at the
       top-level `agentic_os` key. Nineteen items seeded, ids A01.1 .. A07.1.
       `item-loop/SKILL.md` was repointed in the same change.
-    next_item: A05.1
+    next_item: A01.3
+    next_item_superseded_2026_09_11: >-
+      A05.1 was named first because seven of the eight control-plane items block on
+      it. A01.2 went ahead of it because the skill's own rule says to prefer a
+      capability that already runs, and that was right: it found 96 live refusals and
+      a false measurement in three surfaces. A01.3 follows for the same reason — the
+      budget governor MEASURES steps, time, cost and tokens and cannot stop anything,
+      and per-agent budget ENFORCEMENT exists in no self-hostable system surveyed, so
+      it is differentiation rather than catch-up. A05.1 stays next after it.
     why_that_one: >-
       Everything the operator asked for is a SURFACE — "control platform, agents,
       crons, see memories", "what agents does", "visualization of agents
