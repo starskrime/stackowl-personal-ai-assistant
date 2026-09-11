@@ -431,6 +431,22 @@ current:
       budget governor MEASURES steps, time, cost and tokens and cannot stop anything,
       and per-agent budget ENFORCEMENT exists in no self-hostable system surveyed, so
       it is differentiation rather than catch-up. A05.1 stays next after it.
+    A05_8_READ_HALF_SHIPPED_2026_09_11_and_A04_1_is_next: >-
+      A05.8's read half is live on `79cff92b`/`b550cfd6`: `GET /api/v1/skills`, 7 owls and
+      35 owned skills, with a Skill ownership table on the page. Its own `gap_check` was
+      repaired in the same change — it could never have closed, PROVEN by running it
+      against the tree carrying the route. The write half (install/update/remove) stays
+      gated on ESC-173 and ESC-129.
+      NEXT IS **A04.1**, not another A05 surface, and the reason is structural rather than
+      a preference: it is the only unblocked P1 that BLOCKS two others (A05.3 and A05.6),
+      and both of those are surfaces the operator asked for by name. Picking A05.5 or
+      A05.7 first would leave A04.1 blocking them later at the same cost.
+      READ ITS GAP BEFORE BUILDING. It is the one DEBT-307 caught being wrong on a name I
+      composed: the evidence line grepped `AgentCard`, which exists nowhere, while
+      `OwlAgentManifest` is read by 29 modules and migration 0118 consolidated an owl's
+      four homes a month ago. Built as originally written it would have minted a SECOND
+      descriptor beside the shared one. The corrected gap and a structural gap_check are
+      both on the record.
     A01_3_CLOSED_2026_09_11_refuted_by_its_own_emitter: >-
       A01.3 is `no_change_needed`: the budget stop ships ON and has fired 101 times,
       19 on 2026-09-10. We are already the exception the landscape survey describes.
