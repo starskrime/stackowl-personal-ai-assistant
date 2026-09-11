@@ -232,7 +232,14 @@ class DnaAttributor:
         # evolver LEARNS FROM. Do NOT add failure-based attribution.
         scored = _filter_scored_outcomes(outcomes)
         if len(scored) < self._min_samples:
-            log.engine.debug(
+            # INFO: this is the self-improving loop SAYING IT CANNOT ACT, and the
+            # distinction between a DECLINING attributor and a DEAD one is exactly
+            # what a reader needs. ESC-116 rests on the claim that "attribution will
+            # decline honestly until trait diversity exists" — a claim nobody could
+            # check while the decline was DEBUG and this deployment has written 0
+            # DEBUG records out of 677,108. It runs in the nightly batch, once per
+            # owl, so this is ~11 lines a night rather than per turn.
+            log.engine.info(
                 "[dna] attributor.attribute: exit — below sample threshold",
                 extra={"_fields": {
                     "owl_name": owl_name, "scored": len(scored),

@@ -8,9 +8,6 @@ from stackowl.infra.observability import log
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.manifest import OwlAgentManifest
 
-_HIGH_THRESHOLD = 0.7
-_LOW_THRESHOLD = 0.3
-
 # These are LLM-behaviour directives appended to the *system* prompt — they
 # steer how the model responds, not what surface language it uses, so they
 # stay neutral / register-only. The owl still mirrors the user's language at
@@ -141,16 +138,21 @@ class DNAPromptInjector:
             base = f"{base}\n\nBoundaries: {boundaries}"
 
         directives: list[str] = []
+        # WHICH trait acted, not just how many. A count cannot tell a reader
+        # whether the subsystem is working or whether one trait is stuck.
+        applied_traits: list[str] = []
         for trait, directive in _HIGH_DIRECTIVES:
             if lean and trait in _LEAN_SUPPRESSED_TRAITS:
                 continue
             value = float(getattr(dna, trait))
             if DIRECTIVE_LATCH.high_state(manifest.name, trait, value):
                 directives.append(directive)
+                applied_traits.append(f"{trait}:high")
         for trait, directive in _LOW_DIRECTIVES:
             value = float(getattr(dna, trait))
             if DIRECTIVE_LATCH.low_state(manifest.name, trait, value):
                 directives.append(directive)
+                applied_traits.append(f"{trait}:low")
         if not directives:
             log.engine.debug(
                 "[dna] injector.inject: exit — no modulation",
@@ -159,8 +161,30 @@ class DNAPromptInjector:
             return base
         joined = "\n- ".join(directives)
         result = f"{base}\n\nBehavioural modulation (from owl DNA):\n- {joined}"
-        log.engine.debug(
+        # INFO, AND THIS IS THE ONLY LINE IN THIS MODULE THAT IS.
+        #
+        # It is the moment DNA actually changes how an owl behaves — the entire
+        # subject of ESC-116, which asks whether this subsystem has EVER done so
+        # and recommends retiring it if not. That question was unanswerable:
+        # every log call here was DEBUG, and this deployment has written **0
+        # DEBUG records out of 677,108**. A claim resting on one of them measures
+        # the log level, not the behaviour (DEBT-303, same shape).
+        #
+        # The two quiet siblings stay quiet ON PURPOSE. `inject` runs PER TURN,
+        # and `logging_visibility.py`'s own scope note is the reason: "a per-turn
+        # tool that returns quietly is still observed — its turn has a user, a
+        # reply and a cost record." What the turn record does NOT carry is
+        # whether a directive was appended, so the ACT is promoted and the
+        # non-act is not. MEASURED 2026-09-11: 1,595 of 20,617 recorded outcomes
+        # carry a trait past the latch's enter band, so this is ~8% of turns, not
+        # every one.
+        log.engine.info(
             "[dna] injector.inject: exit — directives appended",
-            extra={"_fields": {"owl": manifest.name, "lean": lean, "directive_count": len(directives)}},
+            extra={"_fields": {
+                "owl": manifest.name,
+                "lean": lean,
+                "directive_count": len(directives),
+                "traits": sorted(applied_traits),
+            }},
         )
         return result

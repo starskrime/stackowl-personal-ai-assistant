@@ -18514,16 +18514,54 @@ current:
         behaviour changed.
     ESC_116_dna_has_never_changed_how_an_owl_behaves_should_it:
       premise_check: |
-        uv run python -c "import sqlite3,os,json;c=sqlite3.connect('file:'+os.path.expanduser('~/.stackowl/workspace/stackowl.db')+'?mode=ro',uri=True);n=0;t=0;[ (globals().__setitem__('t',t+1)) for _ in []];rows=c.execute('SELECT dna_snapshot FROM task_outcomes WHERE dna_snapshot IS NOT NULL').fetchall();out=sum(1 for (d,) in rows if any(float(v)>=0.7 or float(v)<0.3 for v in json.loads(d).values()));print(('HOLDS ' if out==0 else 'EXPIRED ')+str(out)+' of '+str(len(rows))+' outcomes outside the injector deadband')" 2>/dev/null | tail -1
+        uv run python -c "
+        import subprocess
+        n = subprocess.run(['./scripts/log_since.sh', '2026-09-11',
+                            'injector.inject: exit — directives appended'],
+                           capture_output=True, text=True).stdout.strip() or '0'
+        print(f'EXPIRED DNA has modulated {n} time(s) since the act became visible — '
+              'the premise that it never changes behaviour is refuted'
+              if int(n) > 0 else
+              'HOLDS no directive has been appended since the line went to INFO')
+        "
+      CORRECTED_2026_09_11_THE_PREMISE_WAS_FALSE_AND_THE_CHECK_WATCHED_DEAD_CONSTANTS: >-
+        THIS QUESTION ASKED YOU TO CONSIDER RETIRING A SUBSYSTEM ON A CLAIM THAT WAS NOT
+        TRUE. Left as written it would have cost you a decision built on nothing.
+        (1) IT QUOTED CONSTANTS THE CODE HAD STOPPED USING. "above 0.7 or below 0.3" is
+        `_HIGH_THRESHOLD` / `_LOW_THRESHOLD` in `dna_injector.py` — and MEASURED, those two
+        names appear NOWHERE but their own definition. The injector consults
+        `DIRECTIVE_LATCH.high_state/low_state`, whose enter bands FR-1 narrowed to
+        **0.62 / 0.38** precisely so directives would fire. The dead constants are deleted
+        in this change; the latch is the single source.
+        (2) AGAINST THE REAL BAND THE COUNT IS NOT ZERO, IT IS **1,595 of 20,617** recorded
+        outcomes — `curiosity` 1,407, `challenge_level` 1,405, `completion_drive` 1,381,
+        `precision` 214, concentrated in `rca_gatherer` (1,407) and `secretary` (188), and
+        firing on every recent day including 13 today. The old check found exactly ONE
+        outcome because it asked about a band nothing uses.
+        (3) AND NOBODY COULD HAVE NOTICED EITHER WAY. All three of the injector's log calls
+        were DEBUG, and this deployment has written **0 DEBUG records out of 677,108**. The
+        line that would prove or refute the claim had fired zero times because it COULD not
+        fire. The act is INFO now, which is what makes the corrected check above falsifiable.
+      what_made_this_possible_and_what_else_it_reaches: >-
+        `logging_visibility.py` exists to catch precisely this, and could not: it finds a
+        function LOUD on one return and quiet on another, and `inject` was quiet on ALL of
+        them, so it is invisible to an ASYMMETRY detector by construction. MEASURED across
+        the eight background packages: **49 functions log only at DEBUG, 14 of them with two
+        or more returns** — a decision nobody can observe. Reported now beside the asymmetry
+        findings, as a report and never a gate.
+        `owls` is still OUTSIDE that background set, and adding it is a separate decision
+        left with its number rather than taken quietly: it would report **12** asymmetric
+        functions needing individual judgement.
       question: >-
-        The DNA subsystem — traits, evolution, attribution, the shadow gate, the nightly
-        coordinator — has never once changed how an owl behaves. The injector only appends a
-        behavioural directive when a trait goes above 0.7 or below 0.3, and ZERO of 20,146
-        recorded turns have ever had a trait outside that band. Should DNA actually modulate
-        behaviour, or is it decoration we should stop paying for?
+        DNA IS modulating behaviour today — `rca_gatherer` and `secretary`, four traits,
+        about 8% of turns. The original question asked whether to make it do something; the
+        real one is whether you want what it is already doing. Option (a) of the three below
+        — narrow the deadband so DNA modulates within the distribution it has — WAS ALREADY
+        SHIPPED by FR-1, which is why the subsystem is live. So: keep it, tune it, or retire
+        it knowing it is no longer decoration?
       why_evidence_cannot_settle_it: >-
-        The measurement is unambiguous that DNA does nothing today and that it cannot reach the
-        thresholds that would make it do something. It cannot tell you whether you WANT your
+        The measurement now says the opposite of what this entry used to say: DNA DOES act
+        today, on two owls and four traits. It cannot tell you whether you WANT your
         owls' personalities to drift on the evidence of their own outcome scores. That is a
         product decision about your assistant's character, and every option changes text that
         goes into every system prompt.
@@ -20549,6 +20587,110 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-305
+    found: 2026-09-11
+    map_check: "No mapped item matches — evidence-led. Found by VERIFYING an `escalation_check` EXPIRED rather than believing it, which is this method's own rule and is the only reason any of it surfaced."
+    what: >-
+      AN ESCALATION ASKED THE OPERATOR TO CONSIDER RETIRING A SUBSYSTEM, ON A PREMISE THAT
+      WAS FALSE, MEASURED AGAINST CONSTANTS THE CODE HAD STOPPED USING, PROVEN BY A LOG
+      LINE THAT COULD NOT FIRE. ESC-116 said the DNA subsystem "has never once changed how
+      an owl behaves" and offered three options, one of which was deletion under RETIRED
+      MEANS DELETED — several thousand lines, a nightly coordinator, a shadow validator and
+      an attributor.
+    root_cause_measured: >-
+      THREE FAULTS, EACH SUFFICIENT ON ITS OWN.
+      (1) DEAD CONSTANTS QUOTED AS LIVE. The premise cited "above 0.7 or below 0.3", which
+      is `_HIGH_THRESHOLD`/`_LOW_THRESHOLD` in `dna_injector.py`. MEASURED: those two names
+      appear nowhere in `src/`, `tests/` or `scripts/` except their own definition. The
+      injector consults `DIRECTIVE_LATCH`, whose enter bands FR-1 narrowed to 0.62/0.38 —
+      explicitly so directives would fire under real evolution deltas.
+      (2) THE COUNT WAS AGAINST THE WRONG BAND. At 0.7/0.3 exactly ONE of 20,617 outcomes
+      qualifies. At the band the code uses: **1,595** — `curiosity` 1,407,
+      `challenge_level` 1,405, `completion_drive` 1,381, `precision` 214; `rca_gatherer`
+      1,407 and `secretary` 188; present on every recent day, 13 today.
+      (3) THE PROOF WAS UNFALSIFIABLE. All three of `inject`'s log calls were DEBUG, and
+      this deployment has written **0 DEBUG records out of 677,108**. The line that would
+      settle the subsystem's entire reason for existing had fired zero times because it
+      could not fire. DEBT-303's shape, third instance this session.
+    what_else_that_same_cause_reaches: >-
+      `logging_visibility.py` was built to catch exactly (3) and is blind to it BY
+      CONSTRUCTION: it reports a function LOUD on one return and quiet on another, and
+      `inject` is quiet on ALL of them. A fully silent function is strictly worse than an
+      asymmetric one and cannot appear in an asymmetry report.
+      MEASURED across the eight background packages: **49 functions log only at DEBUG, 14
+      of them with two or more returns** — a decision nobody can observe. That population
+      is now reported beside the asymmetry findings.
+    fix: >-
+      The ACT becomes visible: `injector.inject: exit — directives appended` goes to INFO
+      and gains the traits that fired, so a reader learns WHICH trait acted rather than a
+      count. Its two quiet siblings stay quiet deliberately — `inject` runs per turn, and
+      the gate's own scope note says a per-turn path is already observed by its turn; what
+      the turn record does not carry is whether a directive was appended, so the act is
+      promoted and the non-act is not (~8% of turns, not every one).
+      The dead 0.7/0.3 constants are DELETED — measured unreferenced first. A dead constant
+      a record quotes as live is worse than one nobody mentions.
+      `logging_visibility.py` gains a `QUIET ON EVERY PATH` report, and ESC-116 is corrected
+      in place with the real numbers and a premise_check that watches the ACT.
+    AND_THE_FIRST_VERSION_OF_THIS_FIX_COULD_NOT_HAVE_FOUND_THE_BUG: >-
+      Caught by running the patched instrument before landing it, not by review. The new
+      report was scoped to `BACKGROUND`, and `owls` was NOT in that tuple — so it printed
+      **26 silent / 6 deciding** and `dna_injector.py::inject`, the function this entire
+      item exists for, was ABSENT. A report blind to its own founding case is decoration;
+      it is the same shape caught this morning in a different instrument.
+      Unscoping it was measured and rejected: over every package it is **591 silent / 182
+      deciding**, and most are per-turn paths the gate's own scope note says are already
+      observed by their turn. So `owls` joins BACKGROUND instead — which it earns on the
+      gate's own criterion, since a nightly evolution coordinator, a shadow validator and
+      an attributor have no user attached. 26 + 23 = **49 / 14** before this change.
+      AFTER it the report reads **48 / 13**, and the difference IS the fix working:
+      `inject` left the silent set by gaining its INFO line, and moved into the asymmetry
+      report instead — where the ratchet immediately failed and demanded, in writing, why
+      its quiet branch is deliberate. That exemption is the only one in the file argued
+      from the gate's own scope note rather than from a sibling's loud line.
+    TWO_FAILURES_OF_MY_OWN_CAUGHT_BY_RUNNING_THE_GUARDS_AFTER_THE_EDIT: >-
+      Both would have shipped on a reading. (1) The ratchet went RED on
+      `dna_injector.py::inject` the moment the act became INFO — the gate correctly
+      catching the state my own fix created, and refusing it until the deliberate
+      asymmetry was stated. (2) My "this report is not a gate" assertion split the script
+      at `def fully_silent` and checked the REMAINDER, which includes `main()` — a
+      function that legitimately calls `sys.exit`. It failed on correct code, which is the
+      cry-wolf failure this programme pays for most. It reads the function's own AST body
+      now.
+      THE TWELVE ASYMMETRIC FINDINGS THAT ARRIVED WITH IT WERE TAKEN, NOT DEFERRED, and
+      judged one at a time: ELEVEN are exempted with individual reasons (per-trait
+      short-circuits whose parent carries the outcome, a read helper, idempotent boot
+      seeds, a polled probe) and ONE was PROMOTED —
+      `attributor.attribute: exit — below sample threshold`, because ESC-116 rests on the
+      claim that "attribution will decline honestly until trait diversity exists" and a
+      decline nobody can see is this item's own defect a second time. It runs once per owl
+      in the nightly batch, so ~11 lines a night.
+    what_this_deliberately_does_NOT_do: >-
+      Rewrite `docs/superpowers/plans/2026-06-06-dna-evolution-completion.md`,
+      which states the SUPERSEDED 0.70/0.60 band. That is a dated, completed implementation
+      plan — a record of what was instructed then, and this file's own rule is to fix live
+      instruction and leave the record rather than falsify history.
+      And it does NOT answer ESC-116. Whether you want your owls' personalities to drift is
+      still yours; what changed is that the question is now asked about something true.
+    tests: >-
+      `tests/audit/test_a_function_quiet_on_every_path_is_reported.py`, 4 tripwires. The
+      vacuity control builds its OWN three-function package (a silent decider that must be
+      found, a half-loud one that must not — it belongs to the asymmetry report — and a
+      function logging nothing at all, which is not the shape) rather than pinning the live
+      49, because a floor under a population this programme exists to DRAIN fails the day
+      the work succeeds. Plus: the report can never call `sys.exit` or raise; the injector's
+      act is INFO; and the dead constants stay deleted with the latch as the single source.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: done, test: done, validate: partial, document: no_change_needed}
+    cleanup_was_a_DELETION: >-
+      `_HIGH_THRESHOLD` and `_LOW_THRESHOLD`, measured unreferenced across `src/`, `tests/`
+      and `scripts/` before removal, with a tripwire that they stay gone.
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The INFO line fires when an owl whose trait is past the latch band takes a turn.
+      MEASURED, that is ~8% of turns and happened 13 times today, so the evidence arrives
+      on its own within hours of the next restart — driving a turn by hand would measure my
+      invocation rather than the platform.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-11 'injector.inject: exit — directives appended'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} turn(s) recorded DNA actually modulating a prompt — a literal only this change can emit, and the fact ESC-116 turned on"; else echo "OPEN 0 — no owl past the latch band has taken a turn since the restart"; fi
   - id: DEBT-304
     found: 2026-09-11
     map_check: "No mapped item matches — evidence-led. Found as a RED full-suite run on a tree I had shipped hours earlier, which is the only detector that could see it."

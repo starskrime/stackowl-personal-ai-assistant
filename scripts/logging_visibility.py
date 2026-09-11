@@ -56,7 +56,7 @@ LOUD: frozenset[str] = frozenset({"info", "warning", "error", "critical", "excep
 #: to list. This addition does not fix that; it pays one instance of it.
 BACKGROUND: tuple[str, ...] = (
     "scheduler", "parliament", "learning", "notifications", "objectives", "webhooks",
-    "control_plane",
+    "control_plane", "owls",
 )
 
 _SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "stackowl"
@@ -178,6 +178,57 @@ def background_findings() -> list[Finding]:
     return scan_tree(_SRC, BACKGROUND)
 
 
+def fully_silent(root: pathlib.Path, packages: tuple[str, ...] | None) -> list[tuple[str, str, int]]:
+    """Functions that log ONLY at DEBUG — quiet on EVERY path, not just one.
+
+    THE BLIND SPOT THIS REPORT EXISTS FOR, and it was found by the defect it
+    would have caught. `scan_tree` above looks for ASYMMETRY: loud on one return,
+    quiet on another. A function with NO loud return is therefore invisible to
+    it — and is strictly worse, because nothing it does is observable at all.
+
+    MEASURED 2026-09-11: `owls/dna_injector.py::inject` appends a behavioural
+    directive to an owl's system prompt — the one event that answers whether the
+    whole DNA subsystem has ever changed how an owl behaves — and all three of its
+    log calls were DEBUG. ESC-116 asked the operator to decide whether to RETIRE
+    that subsystem on the claim that it "has never once changed how an owl
+    behaves", and the line that would prove or refute it had fired zero times
+    because it could not fire. The claim was unfalsifiable, and the guard built to
+    catch exactly that shape could not see it.
+
+    A REPORT, never a gate: 49 functions match across the background set, and a
+    guard that fails 49 correct-looking things gets bypassed rather than
+    satisfied — the same reason `doc_check` is not a tripwire. The count is what
+    makes the class drainable.
+    """
+    out: list[tuple[str, str, int]] = []
+    for path in sorted(root.rglob("*.py")):
+        rel_parts = path.relative_to(root).parts
+        if packages is not None and rel_parts[0] not in packages:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            levels = [
+                n.func.attr
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Attribute)
+                and isinstance(n.func.value.value, ast.Name)
+                and n.func.value.value.id == "log"
+            ]
+            if not levels or any(lv in LOUD for lv in levels):
+                continue
+            returns = sum(1 for n in ast.walk(fn) if isinstance(n, ast.Return))
+            rel = str(path.relative_to(root.parent.parent))
+            out.append((f"{rel}::{fn.name}", "", returns))
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--all", action="store_true",
@@ -201,6 +252,17 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{f.path}:{f.lineno} {f.func}()  loud_returns={f.loud}")
         for lineno, msg in f.quiet:
             print(f"        DEBUG@{lineno}  {msg}")
+
+    silent = fully_silent(_SRC, packages)
+    deciding = [s for s in silent if s[2] >= 2]
+    print()
+    print(f"QUIET ON EVERY PATH — {scope}")
+    print(f"  {len(silent)} function(s) log ONLY at DEBUG, so nothing they do is "
+          f"observable; {len(deciding)} of them have two or more returns, i.e. they "
+          f"make a DECISION nobody can see.")
+    print("  The report above finds ASYMMETRY and is blind to these by construction.")
+    for key, _unused, returns in deciding:
+        print(f"        {returns} returns   {key}")
     return 0
 
 

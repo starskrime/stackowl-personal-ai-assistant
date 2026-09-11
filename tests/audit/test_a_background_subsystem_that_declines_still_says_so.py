@@ -62,6 +62,55 @@ def _load_report():
 #: allowlist nobody prunes is how a document goes on advertising a flag that was
 #: deleted eight days earlier.
 _ACCEPTED: dict[str, str] = {
+    # --- owls, added with the package on 2026-09-11 (DEBT-305) ---
+    # The package joined because `dna_injector.py::inject` — the one event that
+    # answers whether DNA has ever changed an owl's behaviour — was quiet on
+    # EVERY path, and a report scoped away from `owls` could not have named it.
+    # Of the 12 asymmetric functions that arrived with it, ELEVEN are exempted
+    # here with individual reasons and ONE was promoted instead
+    # (`attributor.attribute`'s decline, which ESC-116 depends on being visible).
+    # THE GATE CAUGHT THE STATE MY OWN FIX CREATED, and demanded the reason in
+    # writing — which is the point of it. Promoting the ACT to INFO (DEBT-305)
+    # made `inject` asymmetric: loud when a directive is appended, DEBUG when
+    # none is. That asymmetry is DELIBERATE and is the only one in this file
+    # argued from the gate's own scope note: `inject` runs PER TURN, and the note
+    # says "a per-turn tool that returns quietly is still observed — its turn has
+    # a user, a reply and a cost record." What the turn record does NOT carry is
+    # whether a directive was appended, so the act is loud and the non-act is not.
+    # MEASURED: the act is ~8% of turns (1,595 of 20,617 recorded outcomes);
+    # promoting the other 92% would bury the signal this item exists to create.
+    "src/stackowl/owls/dna_injector.py::inject":
+        "per-turn; the ACT is INFO and the non-act is the 92% case — the turn's "
+        "own record observes the turn, it just never said whether DNA modulated it",
+    "src/stackowl/owls/dna_attribution.py::_attribute_one_trait":
+        "per-trait short-circuits inside one attribution run; the parent "
+        "`attribute` carries the outcome, and 7 traits x 11 owls a night would "
+        "bury it",
+    "src/stackowl/owls/dna_authored.py::read_authored_dna":
+        "a read, not a decision to act — the same reason `undelivered_outbox."
+        "list_pending` is exempt",
+    "src/stackowl/owls/evolution.py::validate":
+        "the shadow gate's loud paths carry the verdict, including the "
+        "'NOT a cold start' sentence DEBT-293 added",
+    "src/stackowl/owls/evolution.py::_apply_decay":
+        "'nothing to decay' is the steady state on most nights",
+    "src/stackowl/owls/evolution.py::_try_attribution":
+        "a wrapper; `attributor.attribute` logs the outcome, now at INFO",
+    "src/stackowl/owls/evolution.py::_owl_skill_success_rate":
+        "arithmetic over executed skills; the caller records what it decided",
+    "src/stackowl/owls/evolution.py::_llm_fallback":
+        "`coordinator.evolve_one: exit` is INFO and carries the per-owl outcome "
+        "and stuck reasons (DEBT-290)",
+    "src/stackowl/owls/registry.py::health_check":
+        "polled health probe; the caller records the verdict — same as "
+        "`notifications/router.py::health`",
+    "src/stackowl/owls/session_registry.py::clear_session":
+        "a per-call lookup miss, not a subsystem declining to act",
+    "src/stackowl/owls/skill_ownership.py::owl_drive_thresholds":
+        "a computation; its caller acts and says so",
+    "src/stackowl/owls/store.py::seed_from":
+        "idempotent boot seed; 'already populated' is the steady state after the "
+        "first boot, as with the scheduler's seeds above",
     # --- webhooks, added with the package on 2026-09-11 (DEBT-303) ---
     # ALL FOUR ARE THE SAME SHAPE, AND NONE IS THE INVERSION THIS GATE HUNTS: the
     # function's OUTCOME is already at INFO, and the DEBUG line is the 4-point exit
