@@ -87,14 +87,29 @@ class StoreDeclaration:
     #: Overrides the class reason where a store needs its own. Used sparingly:
     #: if every entry needs one, the classes are wrong.
     note: str = ""
+    #: WHY AN INSERT-TIME CLOCK IS NEVERTHELESS RIGHT HERE.
+    #:
+    #: A store with a silence window must be dated by a column its writer moves on
+    #: EVERY write. When the writer UPSERTS, a repeat write advances only the
+    #: columns in its `DO UPDATE SET` — so a clock outside that set stops moving
+    #: while the store keeps being written, and the sweep reports a healthy writer
+    #: as a stopped one. `tool_heuristics` did exactly that: 149 ERROR sweeps on
+    #: 2026-09-10 for a miner that had run, and worked, that morning.
+    #:
+    #: Leave this empty and the clock must be in the SET.
+    #: `test_a_store_is_dated_by_a_column_its_writer_moves` fails otherwise — and
+    #: fails on a STALE reason too, so an exemption cannot outlive its cause.
+    clock_is_insert_time_because: str = ""
 
 
-def _hot(table: str, clock: str) -> StoreDeclaration:
-    return StoreDeclaration(table, Cadence.HOT, clock)
+def _hot(table: str, clock: str, note: str = "", *,
+         insert_time_because: str = "") -> StoreDeclaration:
+    return StoreDeclaration(table, Cadence.HOT, clock, note, insert_time_because)
 
 
-def _periodic(table: str, clock: str, note: str = "") -> StoreDeclaration:
-    return StoreDeclaration(table, Cadence.PERIODIC, clock, note)
+def _periodic(table: str, clock: str, note: str = "", *,
+              insert_time_because: str = "") -> StoreDeclaration:
+    return StoreDeclaration(table, Cadence.PERIODIC, clock, note, insert_time_because)
 
 
 def _on_demand(table: str, clock: str | None = None, note: str = "") -> StoreDeclaration:
@@ -134,23 +149,68 @@ DECLARATIONS: tuple[StoreDeclaration, ...] = (
     _hot("cost_records", "recorded_at"),
     _hot("messages", "created_at"),
     _hot("message_ledger", "created_at"),
-    _hot("conversations", "started_at"),
+    # THE ONE WINDOWED STORE DELIBERATELY DATED BY AN INSERT-TIME COLUMN, and it
+    # says so rather than being skipped. `conversations` has no `updated_at`: its
+    # only time columns are `started_at` and `ended_at`, and the upsert advances
+    # `message_count` alone. The cadence question for this store is "are new
+    # conversations still starting", which `started_at` answers exactly — dating
+    # it by message traffic would ask a question `messages` already answers.
+    _hot("conversations", "started_at", insert_time_because=(
+        "no update clock exists — the only time columns are started_at and "
+        "ended_at, and the upsert advances message_count alone. The cadence "
+        "question here IS 'are new conversations starting', which started_at "
+        "answers; message traffic is already measured by the `messages` store."
+    )),
     _hot("sessions", "created_at"),
     _hot("audit_log", "timestamp"),
     _hot("turn_decisions", "created_at"),
     _hot("side_effect_ledger", "created_at"),
     _hot("reflections", "created_at"),
-    _hot("lessons", "created_at"),
+    # `created_at` STAYS, ON A RECORDED DECISION THAT THIS SWEEP ALMOST OVERRODE.
+    # `test_a_running_job_is_not_a_silent_store` states the boundary in its own
+    # docstring — "NOT A GENERAL COLUMN SWEEP … message_ledger and
+    # delivery_attempts … were within SECONDS of each other when measured, so
+    # neither can produce this failure … the defect here is specific to a table
+    # whose rows are created rarely and written often". MEASURED 2026-09-10
+    # against that criterion: lessons is 5,907 rows with a created-to-updated gap
+    # of **0.00h**, alongside message_ledger at 0.01h and delivery_attempts at
+    # 0.00h — the leave-alone shape, not the jobs shape (tool_heuristics 168.00h,
+    # skills 15.27h). Re-dating it would be the churn that decision refused.
+    _hot("lessons", "created_at", insert_time_because=(
+        "rows are created constantly — 5,907 of them — so created_at and "
+        "updated_at are within 0.00h of each other and this store cannot go "
+        "silent while it is being written. The same shape as message_ledger "
+        "(0.01h) and delivery_attempts (0.00h), which an earlier decision "
+        "deliberately left alone as churn; the jobs shape is a table created "
+        "RARELY and written OFTEN, which this is not."
+    )),
     _hot("notification_log", "created_at"),
     _hot("delivery_attempts", "created_at"),
     _hot("approach_rating_pending", "created_at"),
 
     # --- PERIODIC: a scheduled job or an occasional path ----------------------
     _periodic("learning_artifacts", "created_at"),
-    _periodic("skills", "loaded_at"),
+    # `updated_at`, not `loaded_at` — the same shape as `tool_heuristics` above,
+    # found by the same scan and fixed before it could alarm. `SkillStore`'s upsert
+    # advances ten columns and `loaded_at` is not one of them, so re-loading an
+    # existing skill leaves the clock where it was: MEASURED 2026-09-10, loaded_at
+    # 0.65 days old against an updated_at of 0.01 days, on a boot minutes earlier.
+    # The max would have frozen at whenever the newest skill was FIRST added and
+    # alarmed seven days later, reporting a live loader as a dead one.
+    _periodic("skills", "updated_at"),
     _periodic("skill_audit", "ts"),
     _periodic("skill_ownership", "attached_at"),
-    _periodic("tool_heuristics", "created_at"),
+    # `updated_at`, NOT `created_at` — and this is the SECOND table to need this
+    # correction, which is why the QUESTION is now a test rather than a comment.
+    # MEASURED 2026-09-10: created_at was 7.59 days old while updated_at was 0.59
+    # days old, and the sweep reported UNHEALTHY at ERROR **149 times that day**
+    # for a writer that had run, and worked, at 10:00 UTC. `tool_outcome_miner`
+    # UPSERTS — 35 rows every morning, all 14 runs `completed`, `store.upsert:
+    # stored` 35 times a day — and once its key space saturated on 09-03 every
+    # write took the `DO UPDATE SET` branch, which does not name `created_at`.
+    # A store dated by a column its writer stops moving goes silent while it is
+    # being written, which is the exact inverse of what this registry measures.
+    _periodic("tool_heuristics", "updated_at"),
     _periodic("undelivered_outbox", "created_at"),
     # retry_queue's declaration stood HERE and is gone with the table (migration
     # 0135, 2026-09-03). It is worth a line of history: this registry declared it

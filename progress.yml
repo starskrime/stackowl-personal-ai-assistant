@@ -21189,6 +21189,189 @@ known_debt:
       frozenset/list spelling of allowed_user_ids), where `tool_count_cap` used to be a
       third - so live measurement is no longer blind here. 1,091 tests passed across the
       109 files the instrument selected.
+  - id: DEBT-300
+    found: 2026-09-10
+    map_check: "No mapped item matches — evidence-led. Reached by ranking the alarm channel and finding it held exactly ONE current message."
+    what: >-
+      **THE LOUDEST LIVE ERROR IN THE CORPUS IS A HEALTHY WRITER BEING REPORTED AS A
+      STOPPED ONE.** `retired_log_messages.py` holds exactly one CURRENT message —
+      `[scheduler] health_sweep.execute: UNHEALTHY subsystems detected`, 971 records —
+      and a by-day breakdown put **149 of them on 2026-09-10 alone**, naming
+      `store_cadence` degraded on `tool_heuristics`.
+      The store is fine. MEASURED: `tool_outcome_miner` has run every morning for
+      fourteen days, all fourteen `completed`, `[heuristic] store.upsert: stored`
+      **35 times a day**, the newest run 2026-09-10T10:00:05Z. Its `created_at` is
+      7.59 days old and its `updated_at` is 0.59 — because the miner UPSERTS, and once
+      its key space saturated on 09-03 every write took the `ON CONFLICT ... DO UPDATE
+      SET` branch, which does not name `created_at`.
+    root_cause_measured: >-
+      A STORE DECLARED WITH A SILENCE WINDOW WAS DATED BY A COLUMN ITS OWN WRITER DOES
+      NOT MOVE. The registry's own docstring calls `clock` "the column that dates a
+      write"; for an upserted store `created_at` dates the FIRST write and nothing
+      after it, so the store goes silent to the check while it is still being written.
+      The check then reports a working subsystem as a stopped one, at ERROR, on every
+      tick.
+    AND_THIS_EXACT_DEFECT_WAS_FIXED_ONCE_ALREADY_ON_THE_LINE_ABOVE_IT: >-
+      This is the part worth keeping. The registry ALREADY carries the repair, as a
+      comment on `jobs` four lines up: "`last_run_at`, NOT `created_at` ... MEASURED
+      2026-09-04: created_at was 1.2 days old while last_run_at was 22 SECONDS old, and
+      the sweep reported UNHEALTHY 31 times in one boot — a perfectly running scheduler
+      alarming because nobody had scheduled a NEW job that day."
+      Same defect, same symptom, same alarm, five weeks apart. The repair went into the
+      ONE TABLE THAT HAD THE SYMPTOM, and the QUESTION behind it — *does the writer move
+      the column the check reads?* — was never asked of the other 53 declarations.
+      **A diagnosis written as a comment on the row it explains is a WHAT fix wearing a
+      WHY fix's prose.** It reads exactly like a root-cause note and protects exactly
+      one row.
+    what_else_that_same_cause_reaches_MEASURED_not_guessed: >-
+      Only the 29 declarations with a silence WINDOW can alarm — `StoreCadenceContributor`
+      skips any whose `max_silence_days` is None, so ON_DEMAND/SEED/UNMEASURABLE/RETIRED
+      clocks are never compared (`owls` is the worked case: created_at 7.8d against
+      updated_at 0.96d, and correct to leave alone because nothing reads it).
+      Of those 29: 6 have their clock inside their own `DO UPDATE SET`, 19 are written by
+      a plain INSERT where an insert-time clock is right, and **4 did not**:
+      `tool_heuristics` (ALARMING NOW), `skills` (`loaded_at` is not in its ten-column
+      SET — it would have frozen at whenever the newest skill was FIRST added and
+      alarmed seven days later; measured 0.67d vs 0.03d, a 15.27h gap and widening),
+      `lessons` and `conversations` — the last two correctly keeping an insert-time
+      clock, for reasons now written down rather than assumed.
+    fix: >-
+      `tool_heuristics` and `skills` are re-dated to `updated_at` — the column their
+      writers actually move — each with the measurement beside it.
+      `conversations` KEEPS `started_at` and now says why: it has no update clock at all
+      (its only time columns are `started_at` and `ended_at`, and the upsert advances
+      `message_count` alone), and "are new conversations starting" is exactly the
+      question `started_at` answers. `lessons` keeps `created_at` too, on a recorded
+      decision — see the next key. Both exemptions are a new REQUIRED-WHEN-USED field,
+      `StoreDeclaration.clock_is_insert_time_because`, so an insert-time clock is a
+      decision a reader can see rather than an accident of which column came to hand.
+    A_RECORDED_DECISION_CONTRADICTED_THIS_SWEEP_AND_THE_DECISION_WON_ON_ONE_TABLE: >-
+      Deriving the targeted path surfaced `tests/health/test_a_running_job_is_not_a_silent_store.py`
+      — the `jobs` fix's own guard — whose docstring states a boundary this item was
+      about to cross: **"NOT A GENERAL COLUMN SWEEP. Two other hot stores also declare
+      `created_at` while carrying a fresher `updated_at` — `message_ledger` and
+      `delivery_attempts` — and both were within SECONDS of each other when measured, so
+      neither can produce this failure. They are left alone deliberately: changing them
+      would be churn, and the defect here is specific to a table whose rows are created
+      RARELY and written OFTEN."**
+      I had drafted `lessons` as a third re-dating. MEASURED against that criterion
+      rather than argued: created-to-updated GAP is **tool_heuristics 168.00h, skills
+      15.27h, lessons 0.00h, message_ledger 0.01h, delivery_attempts 0.00h**. `lessons`
+      (5,907 rows, created constantly) sits with the two tables the decision NAMES as
+      leave-alone, not with the two that are created rarely and written often. So it
+      keeps `created_at`, with the decision quoted beside it.
+      **AND THE RULE AND THE DECISION TURN OUT TO AGREE, which is why this is not a
+      fudge.** The scan never even flags `message_ledger` or `delivery_attempts` — both
+      are written by a plain INSERT, so their clock advances on every write. The rule
+      does not force a COLUMN CHANGE; it forces an ANSWER, and where the honest answer is
+      "insert-time is right here", the answer is recorded instead of the column being
+      churned. That is the WHY-fix the earlier WHAT-fix could not be: the criterion the
+      jobs docstring states is now asked of all 29 windowed stores instead of being
+      remembered by whoever reads that one file.
+    the_rule_is_DERIVED_from_the_writers_own_SQL_and_needs_no_allowlist: >-
+      `scripts/store_clock_audit.py` reads the `INSERT ... ON CONFLICT ... DO UPDATE SET`
+      of each declared store out of `src/` and classifies it: clock in the SET, plain
+      INSERT, clock NOT moved, or writer unknown. That is the same move DEBT-298 made
+      with `action_severity` — a rule expressed in the platform's own vocabulary cannot
+      rot into a preference, and there is no list to maintain.
+      FAIL-OPEN CONTROL, which DEBT-299 paid for one week ago: a windowed store whose
+      writer the scan cannot find is reported as UNKNOWN, never skipped. MEASURED: that
+      set is EMPTY. The two windowed stores with no literal `INSERT INTO <table>` —
+      `side_effect_ledger` and `learning_artifacts` — both write through an
+      `OwnedRepository` subclass declaring `_table`, and that base builds
+      `INSERT INTO {table} (...) VALUES (...)` with no `ON CONFLICT` in the module, so
+      they are insert-only by construction.
+    WHAT_THIS_FIX_SILENCES_AND_WHAT_IT_DOES_NOT_counted_rather_than_implied: >-
+      **147 of the 149 sweeps on 2026-09-10 named store_cadence and NOTHING ELSE** — an
+      empty `down` and a `degraded` of exactly `["store_cadence"]` — so this fix silences
+      every one of them. The other two that day were genuine multi-subsystem events.
+      Across the whole 971: 247 are store_cadence-only and **724 are other subsystems**,
+      `telegram_receive` (270 degraded) and `provider:NeraAiRaw` (279 down / 133 degraded)
+      being the bulk. This item does not touch those and does not claim to.
+    TWO_MEASUREMENTS_DELIBERATELY_SCOPED_OUT_and_left_here_with_their_numbers: >-
+      A scope cut is only honest if it leaves the measurement behind — DEBT-298 did that
+      and DEBT-299 was the item it made possible, so this repeats it rather than
+      re-deriving it later.
+      (1) **670 of 971 of these ERROR records have an EMPTY `down` list.** The sweep says
+      "UNHEALTHY subsystems detected" at ERROR when nothing is down and something is
+      merely degraded. That may be correct — the contributor's own docstring argues
+      DEGRADED-not-DOWN deliberately, "reporting down for something that does not stop the
+      platform is how an operator learns to ignore the health surface" — so the question
+      is whether the LEVEL should follow that same reasoning. It is a judgement about an
+      operator-facing surface, not a defect this measurement establishes.
+      (2) **970 of 971 carry `remedies: []`.** `HealthStatus.remedy` is defaulted to None
+      ON PURPOSE and `status.py` says why in eleven lines: "None is a real answer and the
+      common one … a field that is always populated is a field readers learn to skim".
+      That is a recorded decision, and this loop does not reopen it — noted only so the
+      next reader does not re-measure it as a finding. 11 of 35 constructions carry one;
+      the ones that do are the EXCEPTION paths (`remedy_for(exc)`), the ones that do not
+      are the measurement paths.
+    tests: >-
+      `tests/health/test_a_store_is_dated_by_a_column_its_writer_moves.py`, 5 tripwires:
+      the rule; the STALE-EXEMPTION mirror (a stated reason whose writer no longer needs
+      one must be deleted, and a reason on a store with no window is decoration); the
+      fail-open control (the unknown set must be empty, by name); a vacuity control (the
+      scan must still find >= 5 moved and >= 15 insert-only, and must classify exactly
+      as many stores as there are windowed declarations); and a SYNTHETIC-TREE
+      discrimination test, which is the one DEBT-299 taught. Once the four offenders are
+      fixed, today's tree cannot tell a working rule from one that always answers
+      "insert-only" — so the rule is pinned against a tree built to make the two
+      disagree.
+    what_it_costs_the_gate_MEASURED_not_assumed: >-
+      One `audit()` scans every non-migration module under `src/stackowl` in **0.58s**,
+      and the five calls this test file makes cost **2.44s** in total — negligible against
+      a ~4.5 minute gate. Recorded because this repo has already paid for a gate duration
+      that stood still while the gate doubled: every loop that ships a guard adds to that
+      number and nothing updates it unless the loop does.
+    FIVE_MUTATIONS_AND_THE_FIFTH_GOT_AWAY_which_is_the_one_worth_recording: >-
+      Restored from file copies each time, tree re-run green after (36 passed on the
+      derived path). Caught: putting `tool_heuristics` back on `created_at` (the live
+      defect); deleting the `conversations` exemption reason; planting a STALE exemption
+      on a store that does not need one; and making the scan blind to `DO UPDATE SET`
+      (3 tests red at once, including the synthetic-tree one).
+      **THE FIFTH SURVIVED: collapsing `unknown` into `insert_only` — "cannot tell"
+      silently read as "nothing to worry about" — passed all five tests.** Today's real
+      tree has an EMPTY unknown set, so that branch is never taken and no assertion about
+      the real tree can reach it. That is DEBT-299's accident, one week later and one
+      level in: I had written the fail-open control as an assertion about WHAT IS IN the
+      hole, and a hole that is currently empty is invisible to every such assertion.
+      The synthetic tree now carries a fourth store with NO writer at all, and the
+      mutation fails by name. **A guard over a currently-empty population is pinned only
+      by a population you construct** — the real tree cannot do it, and mutation testing
+      is the only thing that says so.
+    proven_off_tree_against_the_LIVE_database_while_the_full_suite_held_the_real_tree: >-
+      The real silence computation, run against the live DB with both registries:
+      OLD -> `tool_heuristics SILENT 7.60d > 7.0d`; NEW -> no store is silent. And the
+      audit: BEFORE 4 unexplained (`conversations`, `lessons`, `skills`,
+      `tool_heuristics`), AFTER 1 classified `not_moved` and it carries a stated reason,
+      so 0 unexplained — 29 of 29 windowed declarations classified, 0 unknown, both runs.
+      No store reported FORMAT-UNREADABLE, which is the thing a re-dating can quietly
+      break: `lessons.updated_at` is TEXT ISO and `skills`/`tool_heuristics` are REAL
+      epochs, and `_as_epoch` reads both.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    document_is_no_change_needed_and_that_was_CHECKED: >-
+      `docs_touching.py` reports that none of the three changed paths is declared as the
+      `Source` of any design document. Recorded because "no document" is a measurement
+      here, not an omission.
+    validate_is_PARTIAL_and_the_reason_is_named: >-
+      The sweep runs on its own schedule; this closes on its first tick after the
+      restart, which is minutes away rather than days, but has not happened yet.
+    AND_THE_FIRST_CLOSING_CHECK_I_WROTE_WAS_THE_TRAP_THIS_FILE_ALREADY_RECORDS: >-
+      I drafted it as an ABSENCE — "no further UNHEALTHY sweep naming store_cadence
+      since 2026-09-11" — which is the defect DEBT-285 paid for two loops ago: a
+      date-bounded window that contains PRE-FIX records can never go empty, so the check
+      reads OPEN forever and the reader takes that for "not yet". Two such records
+      already sat in today's window, at 00:03 and 00:09.
+      The cure was already in the tree and only had to be looked for. The contributor's
+      HEALTHY branch logs `[health] store_cadence: ok — no store past its declared
+      cadence` at INFO — promoted there by an earlier loop for exactly this reason — so
+      the evidence can be POSITIVE. MEASURED before adopting it: 104 occurrences on
+      2026-09-10 and **ZERO since 2026-09-11**, because with the old registry
+      `tool_heuristics` is silent and that branch is unreachable. Emittable, bounded,
+      and satisfiable only by the fixed code, which is all three of the things this
+      programme keeps getting wrong one at a time.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-11 'store_cadence: ok — no store past its declared cadence'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} sweep(s) now report every store within its declared cadence — the literal existed 0 times today because tool_heuristics made that branch unreachable"; else echo "OPEN 0 — the sweep has not yet found every store within cadence on the fixed code"; fi
   - id: DEBT-299
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led, and it is the hole DEBT-298 measured and named in its own record one loop earlier rather than a new discovery."
