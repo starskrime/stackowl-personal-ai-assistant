@@ -48911,3 +48911,152 @@ items:
       that cannot override a dangerous verdict.
     depends_on: ['A03.2']
     blocks: []
+
+  # --- A06 MEMORY — seeded 2026-09-11 from a read of the reference platform's
+  # memory subsystem at snapshot 689b51bef, plus its public material. The operator
+  # named this "their king functionality". The finding is that the king is SMALL:
+  # 2,200 chars of MEMORY.md + 1,375 of USER.md is the ENTIRE persistent budget,
+  # ~1,300 tokens, unchanged in seven months. There is NO retrieval, NO vector
+  # store, NO decay and NO eviction. What makes it work is the prompt economics
+  # around it, and that is the part worth taking.
+  - id: A06.1
+    title: Freeze the memory snapshot for the life of a session
+    domain: A06
+    verdict: MISSING
+    track: adopt
+    priority: P0
+    wave: 2
+    order: 131
+    gap: >-
+      Memory that is re-read or re-rendered mid-session rewrites the prompt
+      prefix, so every turn pays full price for a store that rarely changes.
+    evidence: >-
+      The reference platform captures memory ONCE at session start and never
+      re-renders it (tools/memory_tool.py:686-694). Measured in their own commit
+      b06e99930: a per-turn re-derived block produced 66.6% cumulative cache hits
+      against 83.3% frozen. Their AGENTS.md makes it law — "per-conversation
+      prompt caching is sacred … the one exception is context compression" — and
+      a later commit names dynamic injection as needing "a separate design call".
+      A poisoned entry is blocked in the SNAPSHOT only, so live state still shows
+      the user the raw text they need to delete.
+    depends_on: []
+    blocks: ['A06.2']
+
+  - id: A06.2
+    title: Put memory last in the prompt, behind the cache breakpoint
+    domain: A06
+    verdict: MISSING
+    track: adopt
+    priority: P0
+    wave: 2
+    order: 132
+    gap: >-
+      If memory sits early in the system prompt, editing one line invalidates
+      everything after it — including the identity and guidance that never change.
+    evidence: >-
+      Three tiers (agent/system_prompt.py:149-166): stable (identity, guidance,
+      skills index) / context (project files) / volatile (memory, date). A cache
+      breakpoint at the end of the STABLE tier (agent/prompt_caching.py:83-115),
+      so a memory change invalidates only the suffix and the identity prefix stays
+      cacheable ACROSS sessions. Highest leverage per line of change in the whole
+      study. Even the date line is date-only for the same reason.
+    depends_on: ['A06.1']
+    blocks: []
+
+  - id: A06.3
+    title: A hard ceiling the model is made to clear itself
+    domain: A06
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 2
+    order: 133
+    gap: >-
+      An append-only store poisons its reader. Automatic eviction picks wrong and
+      silently; unbounded growth is worse.
+    evidence: >-
+      MEASURED — their entire persistent budget is 3,575 chars (2,200 MEMORY.md +
+      1,375 USER.md), chars not tokens because "char counts are model-independent",
+      and unchanged since the founding commit seven months ago. There is NO decay,
+      NO eviction, NO summarisation and NO semantic dedup. The ceiling REFUSES the
+      write and the refusal carries the full inventory plus a consolidation
+      instruction, so the model is the garbage collector and the store stays
+      human-readable. The rendered block header carries live usage ("67% —
+      1,474/2,200"), which is how the model knows to consolidate. Their batch
+      applies all-or-nothing and checks the budget only against the FINAL state, so
+      one call can free space and add — measured 7 calls down to 1.
+    depends_on: ['A06.1']
+    blocks: []
+
+  - id: A06.4
+    title: Curation on a background fork that reuses the warm prefix
+    domain: A06
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 3
+    order: 134
+    gap: >-
+      Agent-curated memory is only affordable if curation does not pay for a cold
+      prompt every time it runs.
+    evidence: >-
+      Every 10 user turns they fork an agent that replays the conversation with one
+      short prompt, inheriting the parent's cached system prompt and pinning the
+      session id so the request hits the warm prefix — $0.331 to $0.035 per review,
+      about 89%. The tool whitelist is enforced at RUNTIME rather than in the schema,
+      because the cache key includes tools and tools sit before system.
+      TAKE THE GUARD WITH IT: the fork sets _persist_disabled, because sharing a
+      session id let it write its own harness prompt into the user's transcript,
+      and the agent then read that back as a standing instruction and "became the
+      curator, refusing the actual task".
+    depends_on: ['A06.1']
+    blocks: []
+
+  - id: A06.5
+    title: Key memory by owner, not by filesystem path
+    domain: A06
+    verdict: MISSING
+    track: build
+    priority: P0
+    wave: 2
+    order: 135
+    gap: >-
+      A per-install memory file cannot serve more than one customer, and the
+      control plane the operator asked for is a customer surface.
+    evidence: >-
+      THIS IS WHERE WE MUST NOT COPY THEM. Their MEMORY.md and USER.md are one pair
+      per home directory, so a gateway serving twenty people shares one USER.md and
+      their docs are silent about it — which is coherent only because they are
+      single-user BY DESIGN ("Hermes is an agent for one person"). We are
+      owner-scoped everywhere else; memory keyed by path would be the one store
+      that is not. Their own review of the shape says it plainly: any platform with
+      real tenants needs the memory key in the store, not the filesystem path.
+    depends_on: []
+    blocks: ['A05.5']
+
+  - id: A06.6
+    title: A read failure must never look like an empty store
+    domain: A06
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 2
+    order: 136
+    gap: >-
+      On a read-modify-write path, degrading an error to an empty list destroys
+      the store and reports success.
+    evidence: >-
+      Their single most expensive defect class, and it recurred four ways. A
+      transient read failure degraded to [] and WIPED MEMORY.md while returning
+      success (0c4c8f95e, with a dated repro: 3 entries in, add() returns
+      success=True, 1 entry out). The same shape produced zero FTS hits on a
+      corrupt index, same-session amnesia, and a silently disabled tokenizer. Their
+      cure is one signature change — return (entries, read_ok) instead of entries —
+      and it is the difference between four of their worst bugs and none of them.
+      A THIRD DEFECT OF THIS SHAPE IS STILL LIVE AND UNDOCUMENTED there: cross-
+      profile session_search opens the database read-only, the read-only branch
+      returns before schema init, the FTS-enabled flag therefore stays False, and
+      the search silently returns nothing while rendering "No matching sessions
+      found."
+    depends_on: []
+    blocks: []
