@@ -313,6 +313,7 @@ def main() -> int:
     )
     _report_rot_clock(items)
     _report_prose_promises(data)
+    _report_unanchored_log_checks(data)
     if closeable:
         print(
             "\nThese have the evidence they were waiting for. Re-read the item, confirm "
@@ -353,6 +354,99 @@ def _report_prose_promises(data: dict) -> None:
     for record, field, text in promises:
         print(f"  {record:<46} {field.split('.')[-1][:26]:<26} {text[:60]}")
 
+
+def _report_unanchored_log_checks(data: dict) -> None:
+    r"""Name every check that counts RAW LINES matching a log message.
+
+    `log_since.sh` ends in `grep -ah -- "$pattern" | wc -l`, so it counts LINES, not
+    records whose MESSAGE matches. A JSON log line holds far more than its message,
+    and this platform writes analysis of its own logs INTO its logs.
+
+    MEASURED 2026-09-11: the raw-line count for `[budget] gate: cap reached` is
+    **116** and the `.msg` count is **101** — a 13% over-count, 15 records, every one
+    an RCA verdict from 2026-08-29..31 QUOTING the cap line inside a
+    `response_snippet` while discussing it. The platform counted its own commentary
+    as events.
+
+    THE CURE IS ALREADY IN THE CORPUS: two live checks anchor as
+    `"msg": "\[curated\] …"`, and CLAUDE.md states the rule outright. Nothing
+    enforced it. `retired_log_messages.py` is immune because it parses each line and
+    reads `rec.get("msg")` — the instrument the LOOP is told to use was the one
+    without the guard.
+
+    WHY THIS IS A REPORT AND NOT A GATE, and the number is the reason. Asking the
+    loggers rather than guessing the shape finds **51** checks naming a message
+    without anchoring — and NONE of them is inflated today (each was re-measured raw
+    versus `.msg` and matched exactly). A tripwire failing 51 correct checks is how a
+    gate gets bypassed rather than satisfied, which `doc_check.py` already records
+    for staleness. This names them so the set can be drained; it becomes a gate when
+    it reaches zero.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from progress_lint import entries_with_closing_checks
+    except Exception:  # noqa: BLE001 — a reporting aid must never fail the run
+        return
+    quoted = re.compile(r"""log_since\.sh\s+\S+\s+(?:'([^']+)'|"([^"]+)")""")
+    literals = _emitted_message_literals()
+    if not literals:
+        return
+    offenders: list[str] = []
+    for ident, check in entries_with_closing_checks(data):
+        code = "\n".join(
+            ln for ln in str(check).splitlines() if not ln.lstrip().startswith("#")
+        )
+        for single, double in quoted.findall(code):
+            pat = single or double
+            if '"msg"' in pat:
+                continue
+            bare = pat.replace("\\", "")
+            if any(bare in lit for lit in literals):
+                offenders.append(f"{ident}: {bare[:58]}")
+    if not offenders:
+        print(
+            "\nLOG CHECKS ANCHORED ON THE MESSAGE — all of them. This report can "
+            "become a gate; see its docstring."
+        )
+        return
+    print(
+        f"\nCOUNTS RAW LINES, NOT MESSAGES — {len(offenders)} check(s) grep a log "
+        "message without anchoring on the `msg` field, so a record that merely "
+        "QUOTES the message is counted as an occurrence. None is inflated today; "
+        "one message in the corpus proves it can happen (13%, 15 records). Anchor "
+        'as `"msg": "\\[prefix\\] the message`:'
+    )
+    for o in offenders[:12]:
+        print(f"    {o}")
+    if len(offenders) > 12:
+        print(f"    … and {len(offenders) - 12} more")
+
+
+def _emitted_message_literals() -> list[str]:
+    """Every message literal the tree can emit at INFO or above."""
+    import ast
+
+    src = Path(__file__).resolve().parent.parent / "src" / "stackowl"
+    out: list[str] = []
+    for path in src.rglob("*.py"):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and node.args):
+                continue
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute) and fn.attr in _LOUD_LEVELS):
+                continue
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                out.append(first.value)
+    return out
+
+
+#: Production runs at INFO; a DEBUG-only literal is not evidence of anything here.
+_LOUD_LEVELS = frozenset({"info", "warning", "error", "critical"})
 
 if __name__ == "__main__":
     sys.exit(main())

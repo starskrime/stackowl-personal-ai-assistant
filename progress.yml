@@ -422,7 +422,7 @@ current:
       still closeable — and the loop now works the **Agentic OS**, defined at the
       top-level `agentic_os` key. Nineteen items seeded, ids A01.1 .. A07.1.
       `item-loop/SKILL.md` was repointed in the same change.
-    next_item: A01.3
+    next_item: A05.1
     next_item_superseded_2026_09_11: >-
       A05.1 was named first because seven of the eight control-plane items block on
       it. A01.2 went ahead of it because the skill's own rule says to prefer a
@@ -431,6 +431,11 @@ current:
       budget governor MEASURES steps, time, cost and tokens and cannot stop anything,
       and per-agent budget ENFORCEMENT exists in no self-hostable system surveyed, so
       it is differentiation rather than catch-up. A05.1 stays next after it.
+    A01_3_CLOSED_2026_09_11_refuted_by_its_own_emitter: >-
+      A01.3 is `no_change_needed`: the budget stop ships ON and has fired 101 times,
+      19 on 2026-09-10. We are already the exception the landscape survey describes.
+      What is warn-only is the TOOL-LOOP guard, removed by operator decision — queued
+      as ESC-170 rather than reconciled. So A05.1 is next after all.
     why_that_one: >-
       Everything the operator asked for is a SURFACE — "control platform, agents,
       crons, see memories", "what agents does", "visualization of agents
@@ -15603,6 +15608,35 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_170_should_the_tool_loop_hard_stop_come_back:
+      question: >-
+        A01.3 asked for "a budget hard stop that ships ON" and the budget stop is
+        already on and firing — 101 stops, 19 on 2026-09-10. The thing that is
+        warn-only is the TOOL-LOOP guard in `pipeline/tool_guardrails.py`, whose
+        block/halt machinery you removed on 2026-08-30. Do you want it back, as an
+        opt-in circuit breaker for the autonomous lane only?
+      why_evidence_cannot_settle_it: >-
+        The removal was YOUR decision and the module records your reasoning: "a wrong
+        halt truncates real work … a genuine loop is instead bounded by the existing
+        turn iteration cap (DEFAULT_TURN_MAX_STEPS = 20), so 'warn only' is bounded,
+        not unbounded. It is in git if the decision is ever revisited." Re-adding it
+        would contradict a recorded decision, which this loop is forbidden to do on
+        its own. Evidence can say the warnings fire; it cannot say whether a halt is
+        worth the risk of truncating real work.
+      panel_recommendation: >-
+        NOT YET, and narrowly if ever. The measured containment is already real: the
+        20-step turn cap stopped 46 turns and the token ceiling 55 more, so a runaway
+        loop is bounded today without the halt. If it returns, scope it to the
+        autonomous lane — where there is no human to read a warning — rather than to
+        every turn, which is the shape the removal note itself suggests.
+      blocked_until_answered: "Nothing. A01.3 closed as no_change_needed on the budget stop."
+      premise_check: |-
+        uv run python -c "
+        import pathlib
+        s = pathlib.Path('src/stackowl/pipeline/tool_guardrails.py').read_text()
+        print('HOLDS still warn-only' if 'block/halt were removed' in s
+              else 'EXPIRED the halt machinery is back')
+        "
     ESC_21_D04_1_the_items_verdict:
       resolution: RE-SCOPE. Close the divergences in place; drop the plugin surface.
       answer: RE-SCOPE. Close the divergences in place; drop the plugin surface.
@@ -48682,9 +48716,8 @@ items:
     wave: 1
     order: 114
     gap: >-
-      The governor measures steps, time, cost and tokens and cannot stop
-      anything. The previous hard stop was deleted because nothing ever set its
-      flag.
+      REFUTED 2026-09-11, by reading the emitter instead of the memo. The budget
+      hard stop SHIPS ON AND FIRES.
     evidence: >-
       MEASURED 2026-09-11 — BudgetGovernor (15 modules), BudgetBreach (9) and
       make_budget_callback (3) are all shipped. pipeline/tool_guardrails.py:30-38
@@ -48696,8 +48729,32 @@ items:
       self-hostable system that could plausibly have it — Letta, OpenClaw, Vercel
       Eve, LangGraph, goose, Mastra, OpenHands, E2B, Temporal — ALL track cost and
       NONE refuses a turn for being over budget. The only hard ceilings are hosted
-      products or the LLM gateway. We already measure all four dimensions; shipping
-      the refusal puts us first rather than level.
+      products or the LLM gateway.
+      **AND WE ARE ALREADY THE EXCEPTION — the refusal is shipped.** MEASURED
+      2026-09-11 with the emitter's own literal `[budget] gate: cap reached —
+      stopping`: **101 real stops**, 55 on `tokens` and 46 on `steps`, **19 on
+      2026-09-10 alone**, newest `cap: tokens, limit: 500000, actual: 519741`.
+      `_resolve_token_ceiling` applies a ceiling to EVERY turn and a default
+      backstop covers owls that set no caps, so "all-None caps -> a no-op governor"
+      never describes a real turn. The governor RAISES `BudgetBreach`; it does not
+      merely measure.
+      MY SEEDED EVIDENCE CONFLATED TWO MECHANISMS. What was deleted on 2026-08-30
+      is `tool_guardrails.py`'s LOOP hard stop, not the budget governor — and it was
+      removed BY OPERATOR DECISION after an audit, with the reasoning recorded in
+      the module: "a wrong halt truncates real work … a genuine loop is instead
+      bounded by the existing turn iteration cap (DEFAULT_TURN_MAX_STEPS = 20), so
+      'warn only' is bounded, not unbounded. It is in git if the decision is ever
+      revisited."
+      Restoring it is therefore a decision only the operator can make; queued rather
+      than taken. This is the SECOND item running whose seeded evidence came from a
+      memo rather than an emitter — see A01.2 — and both were written by me.
+    stages: {brainstorm: done, architect: no_change_needed, implement: no_change_needed, cleanup: no_change_needed, test: no_change_needed, validate: done, document: no_change_needed}
+    notes: "No code changed; the evidence is in `validated_live_2026_09_11…` below."
+    validated_live_2026_09_11_the_stop_has_fired_101_times: >-
+      No code changed and none is needed: the capability this item asked for is live
+      and has stopped 101 turns. The validate is `done` on the emitter's own literal,
+      counted by `.msg` rather than by raw line — see DEBT-301, which is why that
+      distinction is now a reported one.
     depends_on: []
     blocks: []
 
@@ -49152,3 +49209,66 @@ items:
       found."
     depends_on: []
     blocks: []
+
+  - id: DEBT-301
+    found: 2026-09-11
+    map_check: "No mapped item matches — found while measuring A01.3, by counting a log message two ways and getting two answers."
+    what: >-
+      **THE CORPUS CONTAINS PROSE ABOUT THE CORPUS, AND THE TOOL THE LOOP IS TOLD TO
+      USE COUNTS IT.** `log_since.sh` ends in `grep -ah -- "$pattern" | wc -l`, so it
+      counts LINES that match, not records whose MESSAGE matches. A JSON log line
+      holds far more than its message, and this platform writes analysis of its own
+      logs INTO its logs.
+      MEASURED over every retained log: `[budget] gate: cap reached` counts **116**
+      by raw line and **101** by `.msg` — a **13% over-count**, 15 records, every one
+      an RCA verdict from 2026-08-29..31 QUOTING the cap line inside a
+      `response_snippet` while arguing about it. The platform counted its own
+      commentary as events.
+    root_cause_measured: >-
+      ONE INSTRUMENT CORRECT, ITS SIBLING NOT — and the wrong one is the one the
+      skill mandates. `retired_log_messages.py` parses each line and reads
+      `rec.get("msg")`, so it is immune. `log_since.sh` greps the raw line, and every
+      `closing_check` in the record goes through it: 75 invocations across 151
+      checks. CLAUDE.md already states the rule — "Log greps: the field is
+      `"msg": "` WITH A SPACE after the colon" — and two live checks already anchor
+      that way. Nothing enforced it, which is the shape every cure here has needed.
+    AND_THE_GUARD_FOR_THIS_FAMILY_HAD_A_HOLE_SHAPED_LIKE_THE_AWKWARD_CASES: >-
+      `test_a_closing_check_looks_for_evidence_that_can_exist.py` extracted
+      `log_since.sh` patterns with `'([^']+)'` — SINGLE QUOTES ONLY. A log message
+      containing an apostrophe cannot be single-quoted in shell, so its author
+      reaches for double quotes and the check becomes invisible to EVERY rule in that
+      file. MEASURED: 63 patterns seen, **2 unseen** — and one of the two is A01.2's,
+      written by me the previous day, matching `presented set narrowed to the owl's
+      own bounds`. A guard blind to the awkward case is blind to the case most likely
+      to be wrong. That is the half fixed as a GATE.
+    fix: >-
+      Extraction now reads both quote styles, from one source, with a vacuity control
+      that the live record still contains an apostrophe-bearing pattern — otherwise
+      the fix would be pinned only by its own fixture.
+      The ANCHORING rule ships as a REPORT in `validate_check.py`, which the skill
+      already tells the loop to run at the start of every loop.
+    why_the_anchoring_rule_is_a_REPORT_and_not_a_GATE_with_the_number: >-
+      Asking the LOGGERS rather than guessing the shape — a pattern that is a
+      substring of a literal the tree can emit NAMES a message — finds **51** checks
+      counting raw lines, not 7 as a shape-guess suggested. **None of the 51 is
+      inflated today**: each was re-measured raw-versus-`.msg` and every one matched
+      exactly. A tripwire failing 51 correct checks is how a gate gets bypassed
+      rather than satisfied, which `doc_check.py` already records for staleness. The
+      report names them so the set can be drained, and says in its own docstring that
+      it becomes a gate at zero.
+    two_instrument_errors_of_my_own_on_the_way_both_caught_before_they_landed: >-
+      The first shape-guess ("starts with `[` or contains `] `") missed A01.2's own
+      pattern, which is the TAIL of a message and carries no prefix — so the
+      detection now asks the loggers instead. And my raw-versus-`.msg` comparison
+      first used `jq test($p; "x")`; the `x` flag is EXTENDED mode and ignores
+      whitespace in the pattern, so every multi-word message returned `msg=0` and the
+      seven live checks looked catastrophically inflated. They are not. A literal
+      `contains($p)` gives raw == msg for all seven.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
+    notes: "The evidence is in `validated_live_2026_09_11…` below."
+    validated_live_2026_09_11_the_report_names_51: >-
+      `validate_check.py` run on the live record prints "COUNTS RAW LINES, NOT
+      MESSAGES — 51 check(s)" and names twelve with the rest summarised, and the
+      26 tests in the repaired guard file pass. Both are properties of this change
+      alone: the report did not exist before it, and the double-quote extraction is
+      what makes A01.2's check visible to the file at all.

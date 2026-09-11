@@ -120,6 +120,21 @@ def _logged_literals() -> tuple[tuple[str, str], ...]:
     return logged_literals()
 
 
+#: A `log_since.sh` pattern in EITHER quote style. Single quotes only was the first
+#: version, and it left a hole shaped exactly like the awkward cases: a message
+#: containing an apostrophe — `"presented set narrowed to the owl's own bounds"` —
+#: CANNOT be single-quoted in shell, so the author reaches for double quotes and the
+#: check becomes invisible to every guard in this file. MEASURED 2026-09-11: 63
+#: patterns single-quoted and seen, 2 double-quoted and unseen, one of them written
+#: the previous day by the loop that also wrote this guard's sibling rules.
+_QUOTED = re.compile(r"""log_since\.sh\s+\S+\s+(?:'([^']+)'|"([^"]+)")""")
+
+
+def _quoted_patterns(code: str) -> list[str]:
+    """Every `log_since.sh` pattern in *code*, whichever quote style was used."""
+    return [single or double for single, double in _QUOTED.findall(code)]
+
+
 def _log_patterns(check: str) -> list[str]:
     """The log patterns a closing check greps for, with regex escaping removed.
 
@@ -129,7 +144,7 @@ def _log_patterns(check: str) -> list[str]:
     code = "\n".join(
         ln for ln in check.splitlines() if not ln.lstrip().startswith("#")
     )
-    pats = re.findall(r"log_since\.sh\s+\S+\s+'([^']+)'", code)
+    pats = _quoted_patterns(code)
     return [p.replace("\\[", "[").replace("\\]", "]").replace("\\", "") for p in pats]
 
 
@@ -144,7 +159,7 @@ def _raw_log_patterns(check: str) -> list[str]:
     code = "\n".join(
         ln for ln in check.splitlines() if not ln.lstrip().startswith("#")
     )
-    return re.findall(r"log_since\.sh\s+\S+\s+'([^']+)'", code)
+    return _quoted_patterns(code)
 
 
 def _log_bounds(check: str) -> list[str]:
@@ -714,3 +729,47 @@ class TestNoCheckBoundsAtAFutureDate:
         bounds = [b for _i, c in _checks() for b in _log_bounds(c)]
 
         assert len(bounds) >= 4, f"only parsed {len(bounds)} date bounds"
+
+
+class TestBothQuoteStylesAreRead:
+    r"""The hole this file had, and it was shaped exactly like the awkward cases.
+
+    `_raw_log_patterns` read only SINGLE-quoted `log_since.sh` patterns. A log
+    message containing an apostrophe — `presented set narrowed to the owl's own
+    bounds` — CANNOT be single-quoted in shell, so its author reaches for double
+    quotes, and the check then escaped every rule in this file.
+
+    MEASURED 2026-09-11 across the live record: 63 patterns single-quoted and seen,
+    **2 double-quoted and unseen**, one of them written the previous day by the loop
+    that also wrote this file's sibling rules. A guard blind to the awkward case is
+    blind to the case most likely to be wrong.
+    """
+
+    @pytest.mark.tripwire
+    def test_a_double_quoted_pattern_is_extracted(self) -> None:
+        code = (
+            """n=$(./scripts/log_since.sh 2026-09-11 "the owl's own bounds"); """
+            """m=$(./scripts/log_since.sh 2026-09-11 'plain pattern')"""
+        )
+
+        assert _quoted_patterns(code) == ["the owl's own bounds", "plain pattern"], (
+            "the extraction no longer reads both quote styles, so a check whose "
+            "message contains an apostrophe escapes every rule in this file"
+        )
+
+    @pytest.mark.tripwire
+    def test_the_live_record_still_contains_a_double_quoted_check(self) -> None:
+        """VACUITY CONTROL. Without a real one in the record, the fix above is
+        pinned only by its own fixture — and the population it exists for could
+        vanish without anyone noticing the guard had stopped mattering."""
+        doubles = [
+            (i, p)
+            for i, c in _checks()
+            for p in _raw_log_patterns(c)
+            if "'" in p  # an apostrophe forces the double-quoted form
+        ]
+        assert doubles, (
+            "no check in the record uses a pattern containing an apostrophe any "
+            "more — re-read this guard rather than deleting it: the hole it closed "
+            "reopens the moment one is written again"
+        )
