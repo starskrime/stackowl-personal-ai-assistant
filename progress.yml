@@ -60,6 +60,103 @@ program:
       - "Autonomy beyond scheduled jobs — give it a goal and forget it"
       - "Learns continuously from every conversation"
 
+# ---------------------------------------------------------------------------
+# THE CURRENT PROGRAMME. `program:` above describes the reference-mapping port,
+# which is finished as a programme: 102 of 112 items complete, the other ten
+# `validate`-only and still closeable. Its record is kept because the items and
+# their evidence are still read; it is no longer what a loop picks up.
+# ---------------------------------------------------------------------------
+agentic_os:
+  name: "StackOwl Agentic OS"
+  stated_by: Bakir
+  date: 2026-09-11
+  item_prefix: A
+  what: >-
+    A self-hosted operating system for many specialised, persistent agents: a
+    kernel that owns their lifecycle, per-agent skills, capabilities, budgets and
+    isolation; a customer-facing control plane; and a memory substrate worth
+    keeping. Not a chatbot with plugins.
+  operator_requirements_verbatim_2026_09_11:
+    - "the web dashboard where customer control platform, agents, crons, see memories"
+    - "customer should also have ability what agents does, visualization of agents interactions"
+    - "ability to update or install or remove skills, ability to update agents, crons and etc"
+    - "we need to learn more from hermes about persistent memory — it is their king functionality"
+  what_the_reference_platform_is_still_good_for: >-
+    MEASURED 2026-09-11 against its source: it has NO signed authorization grant,
+    NO per-agent runtime budget, NO sandboxing of plugin code and NO agent kernel
+    (one AIAgent is constructed per turn; nothing owns a pool). On those four it
+    is not evidence. It IS the best available source on persistent memory and on
+    the control plane — a working dashboard, profile-as-home-directory isolation,
+    and a dashboard auth stack that fails closed on an unidentifiable peer.
+  the_record_was_the_thing_most_wrong: >-
+    The arc shipped further than its own record remembered. The June architecture
+    memo's vocabulary (EnvelopeGuard, Ed25519, SecretBroker) appears nowhere in
+    src/; the implementation plans' vocabulary is live across dozens of modules —
+    creation_ceiling in 25 modules and 31 test files, compute_effective_bounds and
+    check_effective_bounds wired at the dispatch seam, task_envelope persisted by
+    migration 0049, BudgetGovernor and BudgetBreach shipped, PreflightPlanner and
+    ToolProposer shipped. Searching the memo's words produced a confident, wrong
+    "never built". Grep the plans, not the memo.
+  landscape_measured_2026_09_11:
+    positioning: >-
+      THE REFERENCE PLATFORM NEVER CALLS ITSELF AN OS. Swept every first-party
+      surface — README, 436 docs pages, the landing site, all 32 release notes:
+      ZERO self-referential uses of "operating system", "agentic OS" or "AI OS".
+      Their words are "the agent that grows with you", "the only agent with a
+      built-in learning loop", "one agent, one memory, every surface", and a
+      co-founder says "harness". Every OS framing in circulation is third-party.
+      So the Agentic OS is OUR position to take, not a race we are behind in.
+    they_are_single_user_BY_DESIGN: >-
+      "Hermes is an agent for one person. The credentials, the memory, the sessions
+      and the cron jobs all belong to that person." A request for multi-profile
+      gateway serving for an enterprise deployment was closed not_planned. Their
+      tenancy is a Kanban --tenant tag that namespaces data only. OUR owner-scoped
+      multi-tenancy has no counterpart there, and the dashboard the operator wants
+      is a CUSTOMER surface — so on this axis they are not a reference at all.
+    per_agent_budget_enforcement_EXISTS_NOWHERE: >-
+      THE SHARPEST FINDING, and it makes A01.3 differentiation rather than catch-up.
+      Surveyed Letta, OpenClaw, Vercel Eve, LangGraph, goose, Mastra, OpenHands, E2B
+      and Temporal: every one TRACKS cost and NONE refuses a turn because an agent is
+      over budget. The only hard ceilings are hosted (managed-agent products) or live
+      in the LLM gateway rather than the kernel. We already have a governor that
+      measures all four dimensions; what is missing is the refusal.
+    capability_enforcement_IS_solved_prior_art: >-
+      OpenClaw's chain is the shape to copy for A01.1/A01.2: profile -> provider
+      profile -> global policy -> provider policy -> agent policy -> agent provider
+      policy -> sandbox -> subagent, where each level can only FURTHER RESTRICT and
+      POLICY IS APPLIED BEFORE THE MODEL CALL, so a removed tool's schema never
+      reaches the model. Ours denies at dispatch, AFTER the model has already chosen
+      the tool — which is why the deny path has fired zero times and the model is
+      shown tools it may not use. Filter the presented set, do not only refuse the call.
+    SKILL_md_won: >-
+      Letta, OpenHands, OpenClaw, Vercel Eve, goose and ~47 shipping clients all read
+      SKILL.md, now an open standard alongside AGENTS.md at the Linux Foundation. A
+      catalogue that does not read it is an island. We already use the format; A07.1
+      must not invent a second one.
+    the_market_gap_is_exactly_our_hardest_requirement: >-
+      The licensing pattern is structural, not incidental: core library permissive,
+      control plane commercial, and the gated piece is ALWAYS the multi-tenant half.
+      Mastra gates auth/ee and agent-builder/ee (multi-tenant identity, and agents
+      authoring agents). OpenHands-Cloud is a 30-days-per-year trial licence.
+      LangGraph's self-hosted platform needs a licence key and phones home. Only
+      OpenClaw and Vercel Eve carry no commercial layer under the multi-tenant piece.
+      A self-hosted, owner-scoped control plane is an unoccupied position.
+    closest_fit_to_read_before_building: >-
+      Vercel Eve — Apache-2.0, self-hosts with no managed dependency, sessions ->
+      turns -> steps as durable checkpoints, every agent in its own sandbox in a
+      separate security context, and work PARKS on human approval or OAuth WITHOUT
+      HOLDING COMPUTE. That last property is our out-of-envelope park-and-notify,
+      already shipped by someone else in a licence we can read.
+    a_june_assumption_that_is_now_FALSE: >-
+      Letta was cited in June as the reference for evolving memory. The Python server
+      repo was ARCHIVED 2026-08-16; the current artifact is a ~12-week-old v0.x
+      TypeScript rewrite, and the E2B/Modal tool sandboxing everyone cites belongs to
+      the retired branch. Do not plan against it without re-checking.
+  unfinished_plans_on_the_tree:
+    - docs/superpowers/plans/2026-06-04-authorization-envelope.md
+    - docs/superpowers/plans/2026-06-05-preflight-planner.md
+    - docs/superpowers/plans/2026-06-05-budget-governor.md
+
 teacher:
   name: hermes-agent
   origin: NousResearch/hermes-agent
@@ -315,6 +412,41 @@ deployment:
 # CURRENT POSITION
 # ---------------------------------------------------------------------------
 current:
+  PROGRAMME_SWITCHED_2026_09_11_the_loop_now_works_the_agentic_os:
+    what: >-
+      Bakir switched the programme. The reference-mapping port is finished as a
+      programme — 102 of 112 items complete, the remaining ten `validate`-only and
+      still closeable — and the loop now works the **Agentic OS**, defined at the
+      top-level `agentic_os` key. Nineteen items seeded, ids A01.1 .. A07.1.
+      `item-loop/SKILL.md` was repointed in the same change.
+    next_item: A05.1
+    why_that_one: >-
+      Everything the operator asked for is a SURFACE — "control platform, agents,
+      crons, see memories", "what agents does", "visualization of agents
+      interactions", "install or remove skills" — and seven of the eight control
+      plane items block on A05.1's shell and auth. It is also the one item with a
+      design worth copying wholesale rather than inventing: loopback-peer check
+      failing closed on an unidentifiable peer, constant-time token comparison,
+      single-use WebSocket tickets, and a Host/Origin recheck ON THE SOCKET because
+      HTTP middleware does not run for WebSocket upgrades. That last detail is not
+      a nicety — it is CVSS 8.7 GHSA-4pqm-j46f-795x against the reference platform,
+      which is how the design came to be shaped that way.
+    AND_THE_LOOPS_FIRST_COMMAND_WAS_ANSWERING_ALL_CLEAR_TO_EVERYTHING: >-
+      Found while proving the new items were reachable. `map_check.py` built its
+      search terms from ARGV ELEMENTS, so the quoted form SKILL.md mandates —
+      `map_check.py "<what you are about to build>"` — became ONE term, and
+      "the entire sentence" is never a substring of a title. MEASURED: bare words
+      returned ten matches, the quoted phrase returned "The ground is clear".
+      Every loop that followed the documented invocation got a false all-clear from
+      the one tool built to stop work being rebuilt — the tool that exists because
+      D09.3 was built from scratch after the map already had it.
+      A SECOND DEFECT WAS HIDING BEHIND IT: the result sort keyed on `item["wave"]`
+      and N01 carries `wave: None`, so any mixed result set raised TypeError. It
+      could not fire while the search matched nothing. Fixing the first exposed it
+      on the first realistic query.
+      Both fixed, both mutation-proven, and the guard had to be fixed too — its
+      first version re-implemented the term-splitting inside the test, so both
+      mutations passed. A guard that re-implements what it guards is testing itself.
   DEBT216_2026_09_08_a_broken_premise_check_was_about_to_drop_a_live_question_from_his_queue:
     map_check: >-
       No mapped item — "The ground is clear." Found by running `escalation_check` at the
@@ -48392,3 +48524,390 @@ items:
       Recorded 2026-08-10 during D08.1's grilling session. No design work done
       deliberately: the brainstorm should start from Bakir's own framing above,
       not from a paraphrase written while another item was still open.
+
+  # =========================================================================
+  # AGENTIC OS — programme defined at top-level key `agentic_os`. Seeded
+  # 2026-09-11. Every `evidence` line below was MEASURED on 2197bffe that day;
+  # nothing here is inferred from the June architecture memo, which was wrong
+  # about what shipped.
+  # =========================================================================
+
+  - id: A01.1
+    title: Enforce the four bounds axes that are modelled and dead
+    domain: A01
+    verdict: PARTIAL
+    track: build
+    priority: P0
+    wave: 1
+    order: 112
+    gap: >-
+      BoundsSpec closes five axes — tools, filesystem, network, data, caps — and
+      exactly one is enforced. A bound nothing reads is a promise the platform
+      cannot keep.
+    evidence: >-
+      MEASURED 2026-09-11 — authz/enforcement.py:29 reads
+      ENFORCED_AXES = frozenset({"tools"}). The module docstring records that
+      nothing in src/ reads BoundsSpec.network. Divergence on an unenforced axis
+      is refused at construction, so the current state fails closed rather than
+      pretending; that is why this is PARTIAL and not a defect.
+    design_note_from_the_landscape: >-
+      Copy the monotonic chain: each level may only FURTHER RESTRICT, and the policy
+      is applied BEFORE the model call so a removed tool's schema never reaches the
+      model. Ours refuses at dispatch, after the model has already chosen — which is
+      both why the deny path has never fired and why the model is shown tools it may
+      not use. Filtering the presented set is the fix; refusing the call is the
+      backstop.
+    depends_on: []
+    blocks: ['A01.2']
+
+  - id: A01.2
+    title: Prove the deny path can fire
+    domain: A01
+    verdict: PARTIAL
+    track: build
+    priority: P0
+    wave: 1
+    order: 113
+    gap: >-
+      Effective bounds are computed on every dispatch and have never once refused
+      anything. Either there has been nothing to refuse, or the guard cannot
+      refuse — and only one of those is acceptable.
+    evidence: >-
+      MEASURED 2026-09-11 over every retained log — "effective bounds" appears
+      684 times, "bounds: DENY" ZERO times, ever. `plan: envelope set` fires ~5x
+      a day (57 total, newest 2026-09-10T22:00:17Z), so envelopes are being
+      produced continuously. This is the vacuity question the programme's own
+      rules demand asking of any guard.
+    depends_on: ['A01.1']
+    blocks: []
+
+  - id: A01.3
+    title: A budget hard stop that ships ON
+    domain: A01
+    verdict: PARTIAL
+    track: build
+    priority: P1
+    wave: 1
+    order: 114
+    gap: >-
+      The governor measures steps, time, cost and tokens and cannot stop
+      anything. The previous hard stop was deleted because nothing ever set its
+      flag.
+    evidence: >-
+      MEASURED 2026-09-11 — BudgetGovernor (15 modules), BudgetBreach (9) and
+      make_budget_callback (3) are all shipped. pipeline/tool_guardrails.py:30-38
+      records the 2026-08-30 deletion: hard_stop_enabled had no setter anywhere
+      and three block/halt branches were unreachable. The reference platform has
+      the same defect — hard_stop_enabled defaults False there too — so this is
+      an inherited default, not a local slip.
+      AND THIS IS DIFFERENTIATION, NOT CATCH-UP. Surveyed 2026-09-11 across every
+      self-hostable system that could plausibly have it — Letta, OpenClaw, Vercel
+      Eve, LangGraph, goose, Mastra, OpenHands, E2B, Temporal — ALL track cost and
+      NONE refuses a turn for being over budget. The only hard ceilings are hosted
+      products or the LLM gateway. We already measure all four dimensions; shipping
+      the refusal puts us first rather than level.
+    depends_on: []
+    blocks: []
+
+  - id: A01.4
+    title: Stop-policy — budget, time, N failures, explicit
+    domain: A01
+    verdict: MISSING
+    track: build
+    priority: P2
+    wave: 3
+    order: 115
+    gap: >-
+      An agent runs until something external kills it. The operator asked for
+      stop conditions in June and they were never built.
+    evidence: >-
+      MEASURED 2026-09-11 — zero hits for StopPolicy or stop_policy in src/. It
+      survives as four forward-reference comments naming E2-S5 in authz/bounds.py
+      and pipeline/budget/governor.py.
+    depends_on: ['A01.3']
+    blocks: []
+
+  - id: A02.1
+    title: Scoped secret resolution that fails closed
+    domain: A02
+    verdict: MISSING
+    track: adopt
+    priority: P1
+    wave: 3
+    order: 116
+    gap: >-
+      Secrets resolve from process-wide config. Any code in the process — a
+      skill, a plugin, a hook — reads whatever the agent can read, and every
+      subprocess inherits the environment.
+    evidence: >-
+      MEASURED 2026-09-11 — no src/stackowl/secrets/; config/secret_resolver.py
+      resolves config values rather than brokering scoped ones. The reference
+      platform ships this in 235 lines (agent/secret_scope.py): a contextvar that
+      RAISES on an unscoped read when multiplexing is active. Take the shape and
+      its known failure — their delegation path omits copy_context(), so the
+      scope never reaches a delegated child.
+    depends_on: []
+    blocks: []
+
+  - id: A02.2
+    title: Credentialed egress proxy — the sandbox never holds a real secret
+    domain: A02
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 3
+    order: 117
+    gap: >-
+      Confined code that needs the network needs a credential, and today that
+      means giving it one.
+    evidence: >-
+      MEASURED 2026-09-11 — the June architecture specified host-as-sole-
+      credentialed-proxy and it was never built. The reference platform HAS built
+      it (agent/proxy_sources/iron_proxy.py): a TLS-intercepting default-deny
+      egress firewall that swaps opaque proxy tokens for real credentials at the
+      boundary, so leaking a token is useless. It ships disabled and is wired into
+      one backend of six — a design to lift, not code to copy.
+    depends_on: ['A02.1']
+    blocks: []
+
+  - id: A03.1
+    title: Confined execution as the default for model-authored code
+    domain: A03
+    verdict: PARTIAL
+    track: build
+    priority: P1
+    wave: 3
+    order: 118
+    gap: >-
+      The safe path is blocked and the unsafe one is open — confined runs are
+      always-ask and the autonomous lane has no human, while unconfined shell
+      runs freely.
+    evidence: >-
+      ESC-150 is ANSWERED (2026-09-05): auto-grant any confined run and notify
+      the operator each time, network included. MEASURED at the time: confined
+      execution refused 27 of 28 attempts; unconfined shell ran 205 times and
+      launched an interpreter 33 detected times, logged "not gated". A 20-module
+      sandbox package (bwrap, docker, seccomp, cgroup) already exists.
+    depends_on: []
+    blocks: []
+
+  - id: A03.2
+    title: A gate for skill and plugin sidecar code
+    domain: A03
+    verdict: PARTIAL
+    track: build
+    priority: P2
+    wave: 4
+    order: 119
+    gap: >-
+      Skill-bundled tools are refused outright rather than contained, so the
+      catalogue can only ever ship recipes.
+    evidence: >-
+      MEASURED 2026-09-11 — skills/loader.py:310-412 imports tools/ only from
+      _TRUSTED_EXTENSION_SOURCES and otherwise logs "REFUSING to execute skill
+      tool". The existing sandbox package does not gate this path. Blocked on
+      ESC-129, which is the hinge for the whole catalogue.
+    depends_on: ['A03.1']
+    blocks: ['A07.1']
+
+  - id: A04.1
+    title: An agent card as the one source for list, route and status
+    domain: A04
+    verdict: MISSING
+    track: build
+    priority: P1
+    wave: 2
+    order: 120
+    gap: >-
+      There is no single descriptor an agent can be listed from, routed by, or
+      reported on — so every surface that needs one derives its own.
+    evidence: >-
+      MEASURED 2026-09-11 — zero files matching AgentCard or agent_card in src/.
+      The control-plane items below all need this; building it once is what stops
+      the dashboard inventing a second answer.
+    depends_on: []
+    blocks: ['A05.3', 'A05.6']
+
+  - id: A04.2
+    title: Activation lease — an agent is durable, its instance is not
+    domain: A04
+    verdict: MISSING
+    track: build
+    priority: P2
+    wave: 4
+    order: 121
+    gap: >-
+      Agents are always-available only in the sense that anything can construct
+      one; nothing owns their lifetime, so nothing can say what is running.
+    evidence: >-
+      MEASURED 2026-09-11 — no pool, no lease, no activation record. The
+      reference platform has the same shape and is worse: AIAgent is constructed
+      fresh per turn at three call sites. Its Kanban board is the one place it
+      solved this, with a claim lock, claim expiry, worker pid and heartbeat on
+      the task row.
+    depends_on: ['A04.1']
+    blocks: []
+
+  - id: A05.1
+    title: Control plane shell and an auth stack that fails closed
+    domain: A05
+    verdict: MISSING
+    track: adopt
+    priority: P0
+    wave: 1
+    order: 122
+    gap: >-
+      There is no surface through which a customer can see or steer the
+      platform. Everything is a terminal command.
+    evidence: >-
+      Operator requirement, 2026-09-11. The reference platform's design is worth
+      taking wholesale: a loopback-peer check that fails closed on an
+      unidentifiable peer, hmac.compare_digest token comparison, single-use
+      WebSocket tickets, and a Host/Origin recheck on the socket because HTTP
+      middleware does not run for WebSocket routes.
+    depends_on: []
+    blocks: ['A05.2', 'A05.3', 'A05.4', 'A05.5', 'A05.6', 'A05.7', 'A05.8']
+
+  - id: A05.2
+    title: Platform control — config, providers, restart
+    domain: A05
+    verdict: MISSING
+    track: build
+    priority: P1
+    wave: 1
+    order: 123
+    gap: "The customer cannot change a setting without editing YAML on the host."
+    evidence: >-
+      Operator requirement, 2026-09-11 — "control platform". Settings already
+      carry hot_reload metadata, so the read side of this exists; what is missing
+      is a surface and a write path with an audit trail.
+    depends_on: ['A05.1']
+    blocks: []
+
+  - id: A05.3
+    title: Agents — list, create, update, remove, and set what each may do
+    domain: A05
+    verdict: MISSING
+    track: build
+    priority: P0
+    wave: 1
+    order: 124
+    gap: >-
+      Owls can only be created and edited by talking to the platform, and their
+      bounds and skills cannot be seen at all.
+    evidence: >-
+      Operator requirement, 2026-09-11 — "ability to update agents". The manifest
+      already carries skills and pinned_skills, and BoundsSpec already models the
+      five axes, so this surface is presentation over existing state rather than
+      a new data model.
+    depends_on: ['A05.1', 'A04.1']
+    blocks: []
+
+  - id: A05.4
+    title: Schedules — list, create, update, remove, run now
+    domain: A05
+    verdict: MISSING
+    track: build
+    priority: P1
+    wave: 1
+    order: 125
+    gap: "Cron jobs are invisible unless the operator queries the database by hand."
+    evidence: >-
+      Operator requirement, 2026-09-11 — "crons … ability to update crons". The
+      jobs table already carries schedule, enabled, last_run_at, next_run_at,
+      failure_count and last_error; job_runs holds the history.
+    depends_on: ['A05.1']
+    blocks: []
+
+  - id: A05.5
+    title: Memory browser — see what the platform remembers
+    domain: A05
+    verdict: MISSING
+    track: build
+    priority: P1
+    wave: 2
+    order: 126
+    gap: >-
+      The customer cannot see what has been remembered about them, which is the
+      one store whose contents they have the strongest claim to read.
+    evidence: >-
+      Operator requirement, 2026-09-11 — "see memories". Depends on the memory
+      substrate work in A06, so that the browser shows one model rather than
+      whichever store it happened to query.
+    depends_on: ['A05.1']
+    blocks: []
+
+  - id: A05.6
+    title: Live activity — what each agent is doing right now
+    domain: A05
+    verdict: MISSING
+    track: build
+    priority: P1
+    wave: 2
+    order: 127
+    gap: >-
+      Nothing shows work in flight. A running task, a retrying job and a wedged
+      agent are indistinguishable from outside.
+    evidence: >-
+      Operator requirement, 2026-09-11 — "what agents does". Durable tasks
+      already carry status and checkpoints, and the health sweep already
+      aggregates subsystem state; this is a reader for state that exists.
+    depends_on: ['A05.1', 'A04.1']
+    blocks: []
+
+  - id: A05.7
+    title: Visualise how agents interact
+    domain: A05
+    verdict: MISSING
+    track: build
+    priority: P2
+    wave: 2
+    order: 128
+    gap: >-
+      Delegation, parliament and owl-to-owl messages happen inside mailboxes
+      nobody can watch, so multi-agent behaviour can only be reconstructed from
+      logs after the fact.
+    evidence: >-
+      Operator requirement, 2026-09-11 — "visualization of agents interactions".
+      The edges already exist as data: a2a delegation records, parliament
+      sessions, and task rows carrying a parent.
+    depends_on: ['A05.6']
+    blocks: []
+
+  - id: A05.8
+    title: Skills — install, update, remove from the control plane
+    domain: A05
+    verdict: MISSING
+    track: build
+    priority: P1
+    wave: 2
+    order: 129
+    gap: >-
+      Skills are managed by typing commands, and which agent owns which skill is
+      not visible anywhere.
+    evidence: >-
+      Operator requirement, 2026-09-11 — "ability to update or install or remove
+      skills". Per-owl ownership already exists (manifest skills/pinned_skills
+      plus the owner-scoped skill_ownership table); the install path is what
+      ESC-129 gates.
+    depends_on: ['A05.1']
+    blocks: []
+
+  - id: A07.1
+    title: A skill hub with analysis before install, not after
+    domain: A07
+    verdict: MISSING
+    track: adopt
+    priority: P2
+    wave: 4
+    order: 130
+    gap: >-
+      There is no distribution path. Installed skills are refused executable code
+      because nothing scans them, so the catalogue can only carry text.
+    evidence: >-
+      Blocked on ESC-129, whose panel recommendation is declarative-only until a
+      hub exists. The reference platform HAS the missing half and it is worth
+      copying: fetch to quarantine, scan, a trust x verdict matrix, and a --force
+      that cannot override a dangerous verdict.
+    depends_on: ['A03.2']
+    blocks: []

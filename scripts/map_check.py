@@ -62,22 +62,51 @@ def _score(item: dict, terms: list[str]) -> int:
     return sum(1 for t in terms if t in hay)
 
 
+def terms_from(argv: list[str]) -> list[str]:
+    """Search terms from a command line — WORDS, never argv elements.
+
+    A term is a WORD. An argv element may be a whole quoted phrase, and
+    `"the entire phrase" in haystack` is essentially never true. MEASURED
+    2026-09-11: `map_check.py skill curator decay` returned ten matches and
+    `map_check.py "skill curator decay"` returned "The ground is clear" — and the
+    quoted form is the one `item-loop/SKILL.md` instructs every loop to use, so
+    the tool built to stop work being rebuilt had been answering all-clear to its
+    only caller. Its own docstring carried both forms as if they were equivalent.
+    """
+    return [w for t in argv for w in t.lower().split() if w]
+
+
+def search(argv: list[str], data: dict | None = None) -> list[tuple[int, dict]]:
+    """(score, item) for every match, best first. THE one search path.
+
+    Exposed rather than inlined into `main` so a test can exercise what the
+    command actually does. The first guard written for this reimplemented the
+    term-splitting inside the test, so reverting the real thing changed nothing
+    the test could see and both mutations passed — a fixture that cannot show the
+    bug proves nothing.
+    """
+    terms = terms_from(argv)
+    data = data if data is not None else yaml.safe_load(_PROGRESS.read_text())
+    scored = [(s, i) for i in data["items"] if (s := _score(i, terms))]
+    # `wave` may be absent or null — N01 carries `wave: None` and has since it was
+    # added, so sorting a mixed result set raised TypeError. That crash was LATENT
+    # behind the argv defect above: the documented invocation never matched
+    # anything, so this sort never ran on more than zero items. One hid the other.
+    scored.sort(key=lambda si: (-si[0], si[1].get("wave") or 99, si[1]["id"]))
+    return scored
+
+
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__)
         return 0
-    terms = [t.lower() for t in argv if t.strip()]
+    terms = terms_from(argv)
     data = yaml.safe_load(_PROGRESS.read_text())
-
-    scored = [
-        (s, i) for i in data["items"]
-        if (s := _score(i, terms))
-    ]
+    scored = search(argv, data)
     if not scored:
         print(f"No mapped item matches {terms}. The ground is clear.")
         return 0
 
-    scored.sort(key=lambda si: (-si[0], si[1]["wave"], si[1]["id"]))
     print(f"{len(scored)} mapped item(s) match {terms} — read before building:\n")
     for score, item in scored[:10]:
         state = _state(item)

@@ -1,12 +1,60 @@
 ---
 name: item-loop
-description: Drive one reference-mapping item through all seven stages autonomously, with a six-lens panel answering the brainstorm instead of the operator. Use for "work the next item", "continue the programme", or from /loop.
-argument-hint: "An item ID (e.g. D08.2), or nothing to take the one in progress.yml `current`"
+description: Drive one Agentic OS item through all seven stages autonomously, with a six-lens panel answering the brainstorm instead of the operator. Use for "work the next item", "continue the programme", or from /loop.
+argument-hint: "An item ID (e.g. A05.3), or nothing to take the one in progress.yml `current`"
 ---
 
 Work **one** item to done. Never two. The programme's state of record is `progress.yml`;
 its method is `docs/reference-mapping/PROCESS.md`; every document obeys
 `docs/reference-mapping/DOC_STANDARD.md`. Read `current` before anything else.
+
+## THE PROGRAMME IS NOW THE AGENTIC OS
+
+**Bakir, 2026-09-11.** The reference-mapping port is finished as a programme —
+102 of its 112 items are complete and the remaining ten are all `validate`-only,
+waiting on live evidence rather than on code. Those ten stay closeable; nothing
+about them changes. **They are no longer what a loop picks up.**
+
+The programme is the **Agentic OS**: a self-hosted kernel for many specialised,
+persistent agents, with per-agent skills, capabilities, budgets and isolation, a
+customer-facing control plane, and a memory substrate worth keeping. Its items
+carry an `A` prefix (`A01.1` … ). Everything else in this file is unchanged: the
+seven stages, the panel, the escalation queue, the evidence rules and every
+landmine below were paid for and still apply.
+
+**WHAT AN ITEM IS HAS CHANGED, AND THAT CHANGES THE PANEL.** A port item asked
+*what does the reference platform do here, and should we adopt it?* An Agentic OS
+item asks *what capability is missing, and what is the smallest complete thing
+that ships it ON?* So:
+
+* **The reference platform is no longer the default evidence source.** MEASURED
+  2026-09-11 against its source: it has **no signed authorization grant, no
+  per-agent runtime budget, no sandboxing of plugin code, and no agent kernel** —
+  `AIAgent` is constructed once per turn and nothing owns a pool of live agents.
+  On those four, citing it proves nothing. It remains the best source on two
+  subjects, and the Measurement lens should reach for it there: **persistent
+  memory** (the operator's stated reason for studying it at all) and the **control
+  plane** (a working dashboard, a profile-as-home-directory isolation model, and a
+  `dashboard_auth` stack that fails closed on an unidentifiable peer).
+* **Our own tree is the primary evidence.** The arc shipped further than its own
+  record remembers, and the record is the thing most likely to be wrong: the June
+  architecture memo's vocabulary (`EnvelopeGuard`, Ed25519) appears nowhere, while
+  the implementation plans' vocabulary (`creation_ceiling`, `compute_effective_
+  bounds`, `task_envelope`, `BudgetGovernor`) is live across dozens of modules.
+  **Grep for the plan's words, not the memo's** — searching the wrong vocabulary
+  is what produced a confident, wrong "never built" on 2026-09-11.
+* **A capability that already runs and has never acted is the richest seam.**
+  Effective bounds were computed **684** times in the retained logs and denied
+  **zero** times. That is either a guard with nothing to refuse or a guard that
+  cannot refuse, and only one of those is acceptable. Prefer items of that shape
+  over new construction.
+
+**The three plans that were written and never finished** are on the tree and are
+the starting evidence for the authority items:
+`docs/superpowers/plans/2026-06-04-authorization-envelope.md`,
+`2026-06-05-preflight-planner.md`, `2026-06-05-budget-governor.md`. Read the
+Definition of Done section before assuming any of them is outstanding — most of
+each one shipped.
 
 ## The rule above all others — WHY, not WHAT
 
