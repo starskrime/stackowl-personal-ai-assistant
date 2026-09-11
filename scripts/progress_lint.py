@@ -517,7 +517,22 @@ def unevidenced_validate_problems(data: dict[str, Any]) -> list[str]:
         ident = str(item.get("id", ""))
         prefix = ident.replace(".", "_")
         has_record = any(k == prefix or k.startswith(f"{prefix}_") for k in keys)
-        if has_record or any(item.get(f) for f in _EVIDENCE_FIELDS):
+        # AND A `validate…` KEY, by the SAME predicate the other evidence rule in
+        # this file uses. MEASURED 2026-09-11: this check and
+        # `entries_with_an_unevidenced_done_validate` disagreed about ONE record —
+        # A01.2, closed on a live INFO line verified against the raw logs, carrying
+        # `validated_2026_09_11_…`. That key satisfies the shape-based rule (and the
+        # ratchet test built on it) and was invisible to `_EVIDENCE_FIELDS`, a set
+        # hand-listed before the convention existed.
+        # Two rules for one fact, one of them hand-listed, is this repo's named
+        # defect — and it is the SAME correction made to the sibling rule the day
+        # before. Widening was measured first rather than assumed: it excuses
+        # exactly A01.2 and changes no other item's verdict.
+        if (
+            has_record
+            or any(item.get(f) for f in _EVIDENCE_FIELDS)
+            or any(_names_its_evidence(k) for k in item)
+        ):
             continue
         problems.append(
             f"{ident}: {' and '.join(f'{s}: done' for s in claimed)} with no "

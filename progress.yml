@@ -18513,16 +18513,33 @@ current:
         Nothing else. The dead duplicate setting was removed independently; no suppression
         behaviour changed.
     ESC_116_dna_has_never_changed_how_an_owl_behaves_should_it:
+      AND_THAT_REPLACEMENT_CHECK_WAS_ALSO_WRONG_which_is_the_THIRD_instance: >-
+        Corrected 2026-09-11, the loop after writing it. The replacement asked whether
+        DNA had modulated since the act became visible — and it had, twenty times, so it
+        printed EXPIRED. But that fact is already WRITTEN INTO THIS RECORD above; the
+        check was confirming something settled, not asking whether the QUESTION was
+        answered, so it would have reported EXPIRED on every future loop while the
+        question stayed open. A check that cannot go back to HOLDS is a permanent nag.
+        THIRD INSTANCE OF ONE SHAPE, all mine: ESC-172 tested whether a BLOCKER had
+        cleared, the first version here tested a FACT ALREADY RECORDED, and DEBT-216 is
+        the original. The rule each one breaks is the same — a premise_check must expire
+        only on an ANSWER, or on the question becoming moot.
+        The check below does that: the question is keep / tune / retire, so it expires
+        when the subsystem is GONE (retired) or when the latch bands MOVE from the
+        0.62/0.38 the answer would change (tuned), and holds while neither has happened.
       premise_check: |
         uv run python -c "
-        import subprocess
-        n = subprocess.run(['./scripts/log_since.sh', '2026-09-11',
-                            'injector.inject: exit — directives appended'],
-                           capture_output=True, text=True).stdout.strip() or '0'
-        print(f'EXPIRED DNA has modulated {n} time(s) since the act became visible — '
-              'the premise that it never changes behaviour is refuted'
-              if int(n) > 0 else
-              'HOLDS no directive has been appended since the line went to INFO')
+        import pathlib
+        inj = pathlib.Path('src/stackowl/owls/dna_injector.py')
+        latch = pathlib.Path('src/stackowl/owls/directive_latch.py')
+        if not inj.exists():
+            print('EXPIRED the DNA injector is gone — retired, which is one of the three answers')
+        else:
+            t = latch.read_text()
+            tuned = 'HIGH_ENTER = 0.62' not in t or 'LOW_ENTER = 0.38' not in t
+            print('EXPIRED the latch bands moved — tuned, which is one of the three answers'
+                  if tuned else
+                  'HOLDS the injector is live at the 0.62/0.38 bands; keep/tune/retire is unanswered')
         "
       CORRECTED_2026_09_11_THE_PREMISE_WAS_FALSE_AND_THE_CHECK_WATCHED_DEAD_CONSTANTS: >-
         THIS QUESTION ASKED YOU TO CONSIDER RETIRING A SUBSYSTEM ON A CLAIM THAT WAS NOT
@@ -20657,7 +20674,7 @@ known_debt:
       the channel table because it registers no `ChannelAdapter` and carries no turns —
       not a date bump, and nobody would have found it by remembering.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
     document_is_done_and_it_is_A05_1s: >-
       A05.1.md's header listed both of these under "Not yet built"; that list is the
       thing this item falsified, so the document is corrected in the same change rather
@@ -20686,8 +20703,14 @@ known_debt:
       reasoning before the gate did. The shipped check therefore follows this file's own
       prescription: `log_since.sh` takes the date bound and ONE pattern that really is a
       substring of the literal, and the discriminating "six" goes in `jq`.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-11 'reachability census: ok'); six=$(cat ~/.stackowl/logs/stackowl*.jsonl 2>/dev/null | jq -r 'select(.msg|type=="string")|select(.msg|contains("census: ok — 6 subsystems"))|.msg' 2>/dev/null | wc -l); if [ "${six:-0}" -gt 0 ]; then echo "CLOSEABLE ${six} boot census/es counted SIX reachable subsystems — it was five before this probe, so the number itself is evidence only the new code can produce"; else echo "OPEN ${n:-0} census run(s) today, none counting six — the probe is registered but has not reached a boot"; fi
+    validated_2026_09_11_the_boot_census_counted_SIX: >-
+      `[startup] reachability census: ok — 6 subsystems reachable` at 14:00:15, against
+      `— 5 subsystems reachable` at 12:55:35 and 12:55:50 on the same day. The NUMBER is
+      the evidence: five is what every boot before this probe reported, so six cannot be
+      produced by the code it replaced. It also proves the probe reached the BOOT PATH
+      rather than merely the registry, which is the half a registration test cannot show.
+      The 14:00 boot was CodeWatcher re-execing the core after the commit, not a restart
+      I drove — so the evidence is the platform's, not my invocation's.
   - id: DEBT-305
     found: 2026-09-11
     map_check: "No mapped item matches — evidence-led. Found by VERIFYING an `escalation_check` EXPIRED rather than believing it, which is this method's own rule and is the only reason any of it surfaced."
@@ -20781,7 +20804,7 @@ known_debt:
       the work succeeds. Plus: the report can never call `sys.exit` or raise; the injector's
       act is INFO; and the dead constants stay deleted with the latch as the single source.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: done, test: done, validate: partial, document: no_change_needed}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: done, test: done, validate: done, document: no_change_needed}
     cleanup_was_a_DELETION: >-
       `_HIGH_THRESHOLD` and `_LOW_THRESHOLD`, measured unreferenced across `src/`, `tests/`
       and `scripts/` before removal, with a tripwire that they stay gone.
@@ -20790,8 +20813,18 @@ known_debt:
       MEASURED, that is ~8% of turns and happened 13 times today, so the evidence arrives
       on its own within hours of the next restart — driving a turn by hand would measure my
       invocation rather than the platform.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-11 'injector.inject: exit — directives appended'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} turn(s) recorded DNA actually modulating a prompt — a literal only this change can emit, and the fact ESC-116 turned on"; else echo "OPEN 0 — no owl past the latch band has taken a turn since the restart"; fi
+    validated_2026_09_11_DNA_modulated_a_live_prompt_TWENTY_times: >-
+      TWENTY INFO records, counted by `.msg`, newest 14:38:54:
+      `[dna] injector.inject: exit — directives appended`, `owl: secretary`,
+      `traits: ["precision:high"]`. So the subsystem ESC-116 proposed RETIRING on the
+      claim that it "has never once changed how an owl behaves" changed one twenty times
+      in a single afternoon, naming the trait each time.
+      AND THE OWL IS NOT THE ONE I EXPECTED. The pre-fix measurement put `rca_gatherer`
+      at 1,407 crossings and `secretary` at 188, so I would have predicted rca_gatherer.
+      Every one of the twenty is `secretary` — because crossings are counted over
+      RECORDED OUTCOMES and these are LIVE TURNS, and which owl takes turns this
+      afternoon is a different question from which owl has historically crossed. The
+      fix is proven either way; the prediction was not.
   - id: DEBT-304
     found: 2026-09-11
     map_check: "No mapped item matches — evidence-led. Found as a RED full-suite run on a tree I had shipped hours earlier, which is the only detector that could see it."
@@ -22753,14 +22786,18 @@ known_debt:
       1; demoting the announcement to DEBUG fails 1; passing a declared-reset field to the
       child fails 1.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
     validate_is_PARTIAL_and_the_reason_is_named: >-
       The new line fires only when a task is RESHAPED, which needs a real task to fail its
       way to the decompose gate — the corpus shows that happening in bursts rather than
       daily. Driving it by hand would mean forcing a task to overspend, which measures my
       forcing rather than the platform.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-10 'the split RESET the cumulative token budget'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} split(s) now state what they did to the budget — a literal only the new code emits, against a reset that was true and invisible"; else echo "OPEN 0 — no task has been reshaped on the fixed code yet"; fi
+    validated_2026_09_11_a_split_stated_what_it_did_to_the_budget: >-
+      ONE INFO record, 14:22:50, and it is worth quoting because the number is the point:
+      `[loop] the split RESET the cumulative token budget — 10 child(ren) each start at 0,
+      against a parent that had reached 500580`. Before this item that reset was TRUE and
+      INVISIBLE — half a million tokens of accumulated budget discarded with no line
+      saying so. The literal cannot be produced by the code it replaced.
   - id: DEBT-293
     found: 2026-09-10
     map_check: "No mapped item matches — evidence-led. Four candidate seams were measured and REFUTED before this one; the refutations are recorded below because they are most of the loop's work."
@@ -29473,16 +29510,13 @@ known_debt:
       1979.40s (rc=0), header commit=3615af7f dirty_files=0, "SUITE TREE STILL" - the sixth
       consecutive green and the only detector that could have caught a scheduler change
       polluting another package.
-    closing_check: |-
-      # Keyed on "recurring occurrence RETAINED" - a message this item INTRODUCED.
-      # The old code emitted only "RE-ARMED to next slot" on this branch, so a
-      # single hit proves the NEW path ran (DEBT-138's rule). NOT keyed on the
-      # re-arm line, which fired 17 times BEFORE the fix and would close on the
-      # defect itself.
-      n=$(./scripts/log_since.sh --all 'recurring occurrence RETAINED')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n recurring occurrence(s) kept an early retry" || echo "OPEN 0 recurring jobs have exhausted retries on a transient failure since the fix; the code IS live-evidenced"
+    validated_2026_09_11_a_recurring_occurrence_kept_its_early_retry: >-
+      ONE INFO record, 14:37:00, `[scheduler] goal_execution-ee1bdd4c: recurring
+      occurrence RETAINED — early retry before the next slot`. The record's own check
+      explains why it is keyed here and NOT on the re-arm line: that one fired 17 times
+      BEFORE the fix and would have closed on the defect itself.
     stages:
-      validate: partial
+      validate: done
     found: 2026-09-06
     what: >-
       A RECURRING JOB THAT FAILED ON A TRANSIENT OUTAGE LOST THE WHOLE OCCURRENCE. When the
@@ -45692,20 +45726,23 @@ items:
       total, restricted to records AFTER 2026-08-29T09:29:56. Until that has a non-zero
       denominator, the FTS improvement is unevidenced in production.
   - id: D11.3
-    closing_check: |-
-      # NOT DATE-SCOPED, AND THAT IS EARNED — corrected 2026-09-09. This comment used
-      # to claim a ship-date bound (2026-09-05) while the command below it
-      # passes `--all`, so it warned against exactly what it then did. MEASURED: `git
-      # log -S` shows the string was introduced by the shipping commit `4f437303`, and
-      # the retained logs hold ZERO occurrences at any date, so history cannot satisfy
-      # this check and a date bound would only narrow a window that is already safe.
-      # An unbounded count IS satisfied by history in general — that is the D07.2
-      # case, where a check reported CLOSEABLE on hits seven days older than its own
-      # fix — and it is not this check's hazard, because there are no such hits.
-      # log_since.sh also carries the grep -a fix (the logs hold
-      # null bytes) and warns when the window is truncated by rotation.
-      n=$(./scripts/log_since.sh --all 'session_search: bookends rendered')
-      [ "$n" -gt 0 ] && echo "CLOSEABLE $n x discover hit framed across every retained log (the line cannot predate 2026-09-05; 4f437303 introduced it)" || echo "OPEN 0 x discover hit framed across every retained log - the INFO line only exists from 2026-09-05, so this was unclosable by construction before then"
+    validated_2026_09_11_five_bookend_frames_on_live_discover_hits: >-
+      FIVE INFO records, counted by `.msg` and equal to the raw line count, newest
+      14:47:45: `session_search: bookends rendered — framed a discover hit`, emitted by
+      `tools/knowledge/session_search.py:335`. This item exists because its evidence used
+      to be a frame rendered as TEXT TO THE MODEL and logged nowhere — unclosable by
+      construction — so an INFO line was added to make the claim one reality could
+      settle. It has now settled it.
+    the_checks_MESSAGE_named_a_different_PHRASE_from_its_PATTERN: >-
+      Worth recording because it cost a verification. The check greps
+      `session_search: bookends rendered`; its CLOSEABLE text reads "5 x discover hit
+      framed". Both describe the same event — the literal ends "framed a discover hit" —
+      but the message PARAPHRASES rather than quoting, so grepping the words the report
+      printed returns ZERO and the instrument looks broken. Reading the check settled it.
+      This is the mirror of the hazard already recorded as "watch the branch that emits
+      the line, not the event the prose names": there the prose was right and the pattern
+      wrong; here the pattern is right and the prose is a paraphrase. One cure either
+      way — quote the emitter's literal in the MESSAGE as well as the grep.
     title: "Session-search shapes"
     domain: D11
     verdict: PARITY
@@ -45724,7 +45761,7 @@ items:
       implement:  done
       cleanup:    no_change_needed
       test:       done
-      validate:   partial   # no bookend emitted in production yet — needs a discover with a hit
+      validate:   done   # 5 bookend frames emitted 2026-09-11, newest 14:47:45
       document:   done
     doc: "docs/reference-mapping/designs/D11.3.md"
     doc_last_verified: "2026-09-04"
@@ -49219,7 +49256,7 @@ items:
       capability-profile branch no owl exercises; and a call-site guard that the
       narrowing is invoked UNCONDITIONALLY, since the old `if restrict_to is None`
       form is exactly how the ban path escaped it.
-    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: no_change_needed}
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: done, document: no_change_needed}
     validate_is_PARTIAL_and_the_check_is_POSITIVE_on_purpose: >-
       The obvious check — "denials fall to zero" — is an ABSENCE inside a window
       that already holds 96 pre-fix records, which this programme has paid for
@@ -49229,8 +49266,11 @@ items:
       `restrict_to` was None, so a non-None restriction being CHANGED by the owl's
       bounds was impossible before. It needs a retry or an envelope on one of the
       four bounded owls, which happened 59 times in the retained window.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-11 "presented set narrowed to the owl's own bounds"); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} turn(s) had the presented set narrowed back inside the owl's bounds — a line the old code could not emit, because it only narrowed when nothing else restricted"; else echo "OPEN 0 — no bounded owl has taken a retry or envelope turn on the fixed code yet (96 refusals in the retained window, 59 of them retries)"; fi
+    validated_2026_09_11_the_presented_set_was_narrowed_on_a_live_turn: >-
+      ONE INFO record, 14:36:19, `[pipeline] execute: presented set narrowed to the owl's
+      own bounds`. That literal is emitted only by this item's fix; the code it replaced
+      narrowed ONLY when nothing else restricted, so a turn carrying a ban or an envelope
+      could not have produced it. Counted by `.msg`, not by raw line.
     depends_on: ['A01.1']
     blocks: []
 
