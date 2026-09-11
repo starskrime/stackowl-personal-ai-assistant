@@ -76,6 +76,58 @@ def terms_from(argv: list[str]) -> list[str]:
     return [w for t in argv for w in t.lower().split() if w]
 
 
+def _discriminating(terms: list[str], items: list[dict]) -> list[str]:
+    """Drop the terms that carry no information about WHICH item you want.
+
+    WHY THIS IS DERIVED AND NOT A WORD LIST. Hard-coded stopword lists are banned
+    here — the platform is multilingual and a list of English articles is wrong the
+    first time someone searches in another language. Inverse document frequency is
+    the same idea computed from the corpus, so it holds in any language and adapts as
+    the map grows.
+
+    AND THE CUT COMES FROM THE QUERY, NOT FROM A CONSTANT. A term is dropped when its
+    IDF is below the MEAN IDF of the query's own matching terms — purely relative, so
+    there is no threshold to justify and none to re-tune as the map changes. The
+    first attempt used a fixed "more than half the map" and did nothing at all: `the`
+    matches 50 of 137 items, which is 36%, comfortably under any such line. A number
+    that sounds principled is not one.
+
+    MEASURED 2026-09-11, on a regression I shipped the previous day. Splitting an
+    argv element into WORDS fixed a real defect — a quoted phrase had matched
+    nothing, ever — and traded it for the opposite one. "warn when the webhook
+    receiver is bound to loopback but has configured sources" returned **81 items**
+    at a top score of 4, and three of those four hits were `the` (50 items), `is`
+    (48) and `to` (44), while the terms carrying the meaning matched almost nothing:
+    `webhook` 1, `configured` 1, `loopback` 0. The ranking was noise.
+
+    EVERY DROPPED TERM IS REPORTED by `main`: a search that silently changes the
+    question is the instrument error this file exists to prevent.
+
+    THE FILTER CANNOT SILENCE A QUERY, and it needs no guard to say so. The cut is
+    the MEAN of the matching terms' IDFs, so at least one term always sits at or
+    above it — dropping everything is arithmetically impossible. A defensive
+    "if everything was dropped, keep the originals" branch was written here and
+    DELETED: mutation testing removed it and every test still passed, which is what
+    unreachable code looks like from the outside. The one real silence risk is a
+    query of entirely absent words, and that returns nothing for the honest reason
+    that nothing matches.
+    """
+    import math
+
+    if not items or len(terms) < 2:
+        return terms
+    hits = {t: sum(1 for i in items if _score(i, [t])) for t in terms}
+    matching = {t: n for t, n in hits.items() if n}
+    if len(matching) < 2:
+        return terms
+    idf = {t: math.log(len(items) / n) for t, n in matching.items()}
+    cut = sum(idf.values()) / len(idf)
+    kept = [t for t in terms if t not in matching or idf[t] >= cut]
+    dropped = [(t, hits[t] / len(items)) for t in terms if t in matching and idf[t] < cut]
+    _discriminating.dropped = dropped  # type: ignore[attr-defined]
+    return kept
+
+
 def search(argv: list[str], data: dict | None = None) -> list[tuple[int, dict]]:
     """(score, item) for every match, best first. THE one search path.
 
@@ -87,6 +139,7 @@ def search(argv: list[str], data: dict | None = None) -> list[tuple[int, dict]]:
     """
     terms = terms_from(argv)
     data = data if data is not None else yaml.safe_load(_PROGRESS.read_text())
+    terms = _discriminating(terms, data["items"])
     scored = [(s, i) for i in data["items"] if (s := _score(i, terms))]
     # `wave` may be absent or null — N01 carries `wave: None` and has since it was
     # added, so sorting a mixed result set raised TypeError. That crash was LATENT
@@ -107,6 +160,13 @@ def main(argv: list[str]) -> int:
         print(f"No mapped item matches {terms}. The ground is clear.")
         return 0
 
+    dropped = getattr(_discriminating, "dropped", [])
+    if dropped:
+        print(
+            "  (ignored, too common in this map to discriminate: "
+            + ", ".join(f"{t!r} in {share:.0%} of items" for t, share in dropped)
+            + ")"
+        )
     print(f"{len(scored)} mapped item(s) match {terms} — read before building:\n")
     for score, item in scored[:10]:
         state = _state(item)

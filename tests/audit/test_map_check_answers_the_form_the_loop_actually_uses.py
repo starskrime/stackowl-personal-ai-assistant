@@ -125,3 +125,60 @@ def test_the_skill_still_tells_the_loop_to_run_it() -> None:
         "nothing invokes map_check.py — the duplicate-work check it exists to be "
         "would never run"
     )
+
+
+@pytest.mark.tripwire
+def test_a_word_matching_most_of_the_map_does_not_drown_the_ones_that_matter() -> None:
+    """The regression the argv fix traded for, and its cure.
+
+    Splitting an argv element into WORDS fixed a real defect — a quoted phrase had
+    matched nothing, ever. It traded it for the opposite one. MEASURED 2026-09-11:
+    "warn when the webhook receiver is bound to loopback but has configured sources"
+    returned **81** items at a top score of 4, and three of those four hits were
+    `the` (50 of 137 items), `is` (48) and `to` (44), while the terms carrying the
+    meaning matched almost nothing — `webhook` 1, `configured` 1, `loopback` 0.
+
+    THE CUT IS RELATIVE, NOT A CONSTANT. A term is dropped when its IDF is below the
+    mean IDF of the query's own matching terms. The first attempt used a fixed "more
+    than half the map" and did nothing at all, because `the` matches 36% — a number
+    that sounds principled is not one. A hard-coded stopword list is banned here for
+    a separate and better reason: it is wrong the first time someone searches in
+    another language.
+    """
+    noisy = "warn when the webhook receiver is bound to loopback but has configured sources"
+    found = _ids([noisy])
+
+    assert len(found) <= 20, (
+        f"{len(found)} items match a natural-language query — the common words are "
+        "drowning the specific ones, which is the same as matching nothing"
+    )
+
+    # The founding example from map_check's own docstring must still come top.
+    ranked = map_check.search(["skill curator decay"])
+    assert ranked, "the founding example matches nothing at all"
+    assert ranked[0][1]["id"] == "D09.3", (
+        "D09.3 'Skill curator' is the item this whole script exists to have found; "
+        f"it is no longer the top match — got {ranked[0][1]['id']}"
+    )
+
+
+@pytest.mark.tripwire
+def test_a_vague_query_still_answers_rather_than_going_silent() -> None:
+    """Never return nothing because every term was common. Silence reads as "the
+    ground is clear", which is the false all-clear this file's first rule exists to
+    prevent.
+
+    TWO PROPERTIES, and neither needs a defensive branch. A single term skips the
+    filter entirely — there is nothing to compare it against — and a multi-word query
+    of common words still keeps whichever sit at or above the mean, because the mean
+    of a set always has a member at or above it. A guard for "everything was dropped"
+    was written and deleted: mutation testing removed it and nothing failed.
+    """
+    assert _ids(["the"]), (
+        "a single common word now matches nothing — the filter has turned a noisy "
+        "answer into a false all-clear, which is worse"
+    )
+    assert _ids(["the is to"]), (
+        "a query of nothing but common words went silent — the cut is the MEAN of "
+        "those terms' IDFs, so at least one must survive it"
+    )

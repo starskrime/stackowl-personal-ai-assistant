@@ -79,6 +79,28 @@ class WebhookEvent(BaseModel):
     received_at: str
 
 
+def _is_loopback(address: str) -> bool:
+    """Is *address* one nothing outside this host can reach?
+
+    `ipaddress` answers this for every form — 127.x.x.x, ::1, and the mapped
+    ``::ffff:127.0.0.1`` — rather than the string compare against "127.0.0.1" that
+    would miss "127.0.1.1" and "localhost". An unparseable address is treated as
+    REACHABLE, so a hostname this cannot resolve never produces a false alarm: the
+    cost of a wrong warning is an operator chasing a configuration that is fine.
+    """
+    import ipaddress
+
+    text = address.strip()
+    if not text or text in {"0.0.0.0", "::", "*"}:  # noqa: S104 — recognising, not binding
+        return False
+    if text == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(text).is_loopback
+    except ValueError:
+        return False
+
+
 class WebhookReceiver(SupervisedTask):
     """HTTP server that receives, validates, and enqueues webhook events."""
 
@@ -103,6 +125,56 @@ class WebhookReceiver(SupervisedTask):
     @property
     def task_id(self) -> str:
         return "webhook_receiver"
+
+    def _warn_if_configured_but_unreachable(self) -> None:
+        """Say so when sources are configured that nothing outside this host can reach.
+
+        LISTENING IS NOT REACHABLE, and until now the receiver only ever reported its
+        own success. MEASURED 2026-09-11 over every retained log, counted by `.msg`:
+        `receiver.run: entry` **871** times, `receiver.run: exit — listening` **871**
+        times, and `receiver.handle` — the line a served request emits — **ZERO**.
+        The server has bound a port on 871 boots and has never answered a request.
+
+        It is not idle by accident. The operator configured two real sources in
+        `~/.stackowl/stackowl.yaml`, `mygithub` and `acme`, each with a secret file on
+        disk — against a receiver bound to `127.0.0.1`. A webhook sender cannot reach
+        loopback. Checked rather than assumed: no tunnel process, no reverse-proxy
+        config naming the port, and nothing but loopback listening on it.
+
+        So the zero is not "no traffic yet", it is "no traffic is possible as
+        configured" — the ambiguous-zero this codebase names as its most expensive
+        reading error, and the platform had no way to tell the two apart because it
+        never said which one it was in.
+
+        WHAT THIS DOES NOT DO: change the bind. Exposing the port is a security
+        posture decision and belongs to the operator; this only makes the silence
+        audible. WARNING, not INFO — production runs at INFO and a configuration that
+        cannot work is not routine news.
+        """
+        bind = str(self._settings.webhook.bind_address or "")
+        enabled = sorted(
+            name
+            for name, src in (self._settings.webhook.sources or {}).items()
+            if getattr(src, "enabled", False)
+        )
+        if not enabled or not _is_loopback(bind):
+            return
+        log.webhook.warning(
+            "[webhook] receiver.run: configured sources cannot be reached — the "
+            "receiver is bound to loopback",
+            extra={
+                "_fields": {
+                    "bind": bind,
+                    "port": self._settings.webhook.port,
+                    "unreachable_sources": enabled,
+                    "remedy": (
+                        "point the sender at a reverse proxy or tunnel that forwards "
+                        f"to {bind}:{self._settings.webhook.port}, or set "
+                        "webhook.bind_address to an address the sender can reach"
+                    ),
+                }
+            },
+        )
 
     async def run(self) -> None:
         TestModeGuard.assert_not_test_mode("webhook_receiver.bind")
@@ -145,6 +217,7 @@ class WebhookReceiver(SupervisedTask):
             "[webhook] receiver.run: exit — listening",
             extra={"_fields": {"port": self._settings.webhook.port}},
         )
+        self._warn_if_configured_but_unreachable()
 
         # F145 follow-up (2026-07-08) — Supervisor._run_with_backoff calls
         # task.run() in a loop FOREVER regardless of whether the previous call

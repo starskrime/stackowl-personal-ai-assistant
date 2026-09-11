@@ -49272,3 +49272,85 @@ items:
       26 tests in the repaired guard file pass. Both are properties of this change
       alone: the report did not exist before it, and the double-quote extraction is
       what makes A01.2's check visible to the file at all.
+
+  - id: DEBT-302
+    found: 2026-09-11
+    map_check: "81 items matched a natural-language query and every top hit was a stopword — which became this record's other half."
+    what: >-
+      **871 BOOTS BOUND A PORT. ZERO REQUESTS WERE EVER SERVED, AND NOTHING SAID
+      WHY.** MEASURED over every retained log, counted by `.msg` per DEBT-301:
+      `[webhook] receiver.run: entry` **871**, `receiver.run: exit — listening`
+      **871**, and `receiver.handle` — the line a served request emits — **ZERO**.
+      It is not idle by accident. The operator configured two real sources in
+      `~/.stackowl/stackowl.yaml`, `mygithub` and `acme`, each with a secret file on
+      disk — against a receiver bound to `127.0.0.1`. A webhook sender cannot reach
+      loopback.
+    checked_rather_than_assumed: >-
+      "Unreachable" is a strong claim, so it was measured: no tunnel process (and the
+      `pgrep` matched only its own command line, the self-match this repo already
+      records, so the honest reading is NONE), no nginx/caddy/apache config naming
+      8766, and `ss` shows `127.0.0.1:8766` with nothing external on it.
+    root_cause_measured: >-
+      LISTENING IS NOT REACHABLE, and the receiver only ever reported its own
+      success. So the zero was never ambiguous — it only looked it. This codebase
+      names the ambiguous zero as its most expensive reading error: 0 means either
+      "not yet" or "never possible", and the platform had no way to tell a reader
+      which it was in. The guide star asks what notices when something degrades
+      silently; here nothing did, for 871 boots.
+    fix: >-
+      On every successful bind, if the address is loopback AND any source is enabled,
+      a WARNING names the sources that cannot be reached and the remedy. Loopback is
+      decided by `ipaddress`, not a string compare — `127.0.1.1` and the IPv4-mapped
+      `::ffff:127.0.0.1` are real bind addresses a compare misses. An UNPARSEABLE
+      address is treated as REACHABLE so an unresolvable hostname never cries wolf.
+      IT DOES NOT CHANGE THE BIND: exposing the port is a security-posture decision
+      and belongs to the operator. A guard pins that scope.
+    AND_THE_LOOPS_OWN_FIRST_COMMAND_HAD_A_REGRESSION_I_SHIPPED_YESTERDAY: >-
+      Running `map_check.py` on this item returned **81 of 137 items** at a top score
+      of 4 — and three of those four hits were `the` (50 items), `is` (48) and `to`
+      (44), while the terms carrying the meaning matched almost nothing: `webhook` 1,
+      `configured` 1, `loopback` 0. The previous loop fixed a real defect (a quoted
+      phrase had matched NOTHING, ever) by splitting argv into words, and traded it
+      for the opposite one. `_score`'s own docstring had named the hazard in advance:
+      "return half the map for any common word, which is the same as returning
+      nothing."
+      Cured by inverse document frequency computed over the map itself — hard-coded
+      stopword lists are banned here, and a list of English articles is wrong the
+      first time someone searches in another language. THE CUT IS RELATIVE: a term is
+      dropped when its IDF is below the MEAN IDF of the query's own matching terms,
+      so there is no constant to justify. A first attempt used a fixed "more than
+      half the map" and did nothing at all, because `the` matches 36%.
+      After: that query returns 11, "skill curator decay" returns 2 with **D09.3
+      top** — the item this whole script exists to have found — and "what is each
+      agent doing now" returns 12 with A05.6 top.
+    AND_MUTATION_TESTING_FOUND_DEAD_CODE_IN_MY_OWN_FIX: >-
+      A defensive "if every term would be dropped, keep the originals" branch was
+      written into the filter. Removing it broke nothing, because the cut is the MEAN
+      of the matching terms' IDFs and at least one member of a set always sits at or
+      above its mean — the branch was arithmetically unreachable. Deleted rather than
+      kept, and the vacuity test widened to the multi-word case that would have
+      exercised it.
+    tests: >-
+      `tests/test_a_listening_receiver_says_when_nothing_can_reach_it.py`, 16
+      tripwires: five loopback forms recognised, four reachable ones not, three
+      unparseable ones failing towards silence; the live shape warning and NAMING its
+      sources at WARNING with a remedy; two controls that a reachable bind and a
+      loopback bind with no enabled source both say nothing; and a scope guard that
+      the warning never writes the bind. Plus two added to the map_check guard: a
+      natural-language query must not drown in common words, and a query of common
+      words must not go silent.
+      It uses the repo's `capture_logs` fixture rather than `caplog` — a recorded
+      distinction: `configure_logging` sets `propagate = False`, so a caplog
+      assertion passes alone and fails in any session that configured logging first.
+      FOUR MUTATIONS, restored from file copies with the tree re-run green: never
+      warn fails 1; string-compare loopback fails 3 (on the mapped address, which is
+      the whole reason `ipaddress` is used); removing the IDF filter fails 1; and
+      removing the unreachable branch failed NOTHING, which is how it was found.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: done, test: done, validate: done, document: no_change_needed}
+    notes: "The evidence is in `validated_live_2026_09_11…` below."
+    validated_live_2026_09_11_the_871_boot_silence_ended: >-
+      LIVE, and verified rather than believed. CodeWatcher exec-replaced the core at
+      06:50:36 on the applied code, and the receiver emitted the warning at 06:48:01
+      and 06:50:56 — WARNING, naming `unreachable_sources: ["acme", "mygithub"]`,
+      carrying the remedy verbatim. No earlier code could emit that literal, and the
+      receiver had bound 871 times without ever saying it. The 872nd boot said it.
