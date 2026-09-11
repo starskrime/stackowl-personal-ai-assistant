@@ -4566,6 +4566,10 @@ class StartupOrchestrator:
             control_plane = ControlPlaneServer(
                 self._settings,
                 health=scheduler_components.health_aggregator,
+                # The LIVE scheduler — the same object the cron tool drives, so
+                # the control plane and a chat turn can never disagree about
+                # what is scheduled (A05.4).
+                scheduler=scheduler_components.scheduler,
             )
             scheduler_components.supervisor.register(control_plane)
             log.info(

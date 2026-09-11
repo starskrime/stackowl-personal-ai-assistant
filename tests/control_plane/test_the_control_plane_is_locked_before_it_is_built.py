@@ -22,7 +22,6 @@ from stackowl.control_plane.auth import (
     ALL_SEVERITIES,
     READ,
     UNAUTHORIZED_BODY,
-    ControlPrincipal,
     CredentialUnavailable,
     authenticate,
     check_origin,
@@ -163,7 +162,16 @@ class TestI2AuthenticationIsNotMiddleware:
     @pytest.mark.tripwire
     def test_every_route_handler_calls_authenticate(self) -> None:
         """Derived from the router registrations rather than a hand-list, so a
-        route added later cannot quietly skip the check."""
+        route added later cannot quietly skip the check.
+
+        IT FOLLOWS THE DELEGATION NOW, and that is the whole change A05.4 made
+        here. Until the second route, each handler called `authenticate` itself
+        and this walked for that literal. The three checks — origin, token, READ
+        — then moved into `_guard`, because two routes each doing them inline is
+        two copies of one rule and the second copy is where one of the three gets
+        forgotten. The INVARIANT is unchanged: authentication reaches every
+        registered route. Only the hop count did.
+        """
         from stackowl.control_plane import server as server_mod
 
         src = textwrap.dedent(inspect.getsource(server_mod.ControlPlaneServer))
@@ -179,18 +187,28 @@ class TestI2AuthenticationIsNotMiddleware:
         }
         assert handlers, "no routes found — this guard has gone blind"
 
+        defs = {
+            n.name: n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef)
+        }
         for name in handlers:
-            fn = next(
-                (n for n in ast.walk(tree)
-                 if isinstance(n, ast.AsyncFunctionDef) and n.name == name),
-                None,
-            )
+            fn = defs.get(name)
             assert fn is not None, f"route handler {name!r} not found"
-            body = ast.unparse(fn)
-            assert "authenticate(" in body, (
-                f"route handler {name!r} never calls authenticate() — a route "
-                "that skips the check is how a surface becomes open"
+            assert "self._guard(" in ast.unparse(fn), (
+                f"route handler {name!r} never reaches the guard — a route that "
+                "skips the check is how a surface becomes open"
             )
+
+        # And the hop actually authenticates. Without this the chain above could
+        # be satisfied by a `_guard` that had quietly stopped checking anything,
+        # which is a worse failure than the one the delegation replaced.
+        guard = defs.get("_guard")
+        assert guard is not None, "the guard every handler delegates to is gone"
+        assert "authenticate(" in ast.unparse(guard), (
+            "`_guard` no longer calls authenticate() — every route now delegates "
+            "its token check to a function that does not make one"
+        )
 
 
 class TestI3AnUnknownCredentialIsRefused:
@@ -349,15 +367,81 @@ class TestOriginIsCheckedBeforeTheToken:
     def test_order_is_origin_then_token(self) -> None:
         """ORDERING IS BEHAVIOUR. A browser request from another origin may carry
         a valid credential, so checking the token first authenticates an attack
-        before rejecting it."""
+        before rejecting it.
+
+        READS `_guard`, NOT `_handle_health`. Until A05.4 this asserted the
+        ordering inside one named handler, which was true and pinned the wrong
+        thing: a SECOND route with no origin check at all would have passed it
+        untouched. The decision lives in one place now and
+        `test_every_registered_route_goes_through_the_guard` is what makes that
+        one place cover all of them.
+        """
         from stackowl.control_plane import server as server_mod
 
         src = textwrap.dedent(
-            inspect.getsource(server_mod.ControlPlaneServer._handle_health)
+            inspect.getsource(server_mod.ControlPlaneServer._guard)
         )
         assert src.index("check_origin(") < src.index("authenticate("), (
             "the token is checked before the origin — reverse them"
         )
+
+    @pytest.mark.tripwire
+    def test_no_route_handler_performs_ITS_OWN_auth(self) -> None:
+        """The half `test_every_route_handler_calls_authenticate` cannot see.
+
+        THAT test already swept every registered route — A05.1 built it derived
+        from the router, not hand-listed — and it asks whether the check is
+        REACHED. This asks whether it is reached ONLY THROUGH THE ONE PLACE.
+
+        The distinction earns its keep because the auth decision is THREE checks
+        — origin, token, READ — and a handler can satisfy the first test while
+        doing two of the three itself. With one route they sat inline honestly;
+        the second route is exactly when that becomes two copies of one rule.
+
+        What was genuinely pinned to ONE HANDLER BY NAME was the ORIGIN ORDERING:
+        `test_order_is_origin_then_token` read `_handle_health`'s source, so a
+        second route checking the token first — or not checking the origin at all
+        — would have passed it untouched. That test now reads `_guard`, and this
+        one makes it cover every route by forbidding a handler its own copy.
+        """
+        import ast
+
+        from stackowl.control_plane import server as server_mod
+
+        cls = ast.parse(
+            textwrap.dedent(inspect.getsource(server_mod.ControlPlaneServer))
+        ).body[0]
+        methods = {
+            n.name: n
+            for n in ast.walk(cls)
+            if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef)
+        }
+
+        registered: set[str] = set()
+        for node in ast.walk(methods["run"]):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr.startswith("add_")
+                and len(node.args) == 2
+                and isinstance(node.args[1], ast.Attribute)
+            ):
+                registered.add(node.args[1].attr)
+
+        assert len(registered) >= 2, (
+            f"only {sorted(registered)} route handler(s) found — this sweep "
+            "passes vacuously on one route, which is the state it was written "
+            "to leave behind"
+        )
+
+        for handler in sorted(registered):
+            body = textwrap.dedent(ast.unparse(methods[handler]))
+            for inline in ("check_origin(", "authenticate(", ".may("):
+                assert inline not in body, (
+                    f"{handler} performs `{inline}` itself. The decision belongs "
+                    "in `_guard`, or the next route will carry two of the three "
+                    "checks and look finished"
+                )
 
     @pytest.mark.tripwire
     def test_a_request_with_no_origin_is_allowed(self) -> None:

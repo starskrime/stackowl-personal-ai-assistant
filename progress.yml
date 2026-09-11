@@ -15608,6 +15608,53 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_173_one_token_grants_read_and_write_may_the_control_plane_WRITE:
+      question: >-
+        A05.4 ships `GET /api/v1/schedules` — the schedules as a set, behind the door
+        A05.1 built. The rest of the item is create, update, remove and run-now, and
+        those are WRITES. Today every holder of the control-plane token is granted
+        `ALL_SEVERITIES`, so "see my schedules" and "delete my schedules" would be one
+        permission. Do the write verbs ship on the single token, or does a narrower
+        credential class come first?
+      why_evidence_cannot_settle_it: >-
+        The code is unambiguous and the question is not about the code. It is risk
+        appetite on a CUSTOMER-FACING surface: a read-only dashboard token that leaks is
+        an information disclosure; the same token with writes can pause the morning
+        brief, delete a job, or fire one on demand. Which of those is acceptable for the
+        product he is building is his call, not a measurement.
+      measured_2026_09_11: >-
+        Exactly ONE `granted=` assignment exists anywhere under
+        `src/stackowl/control_plane/` — `auth.py:241`, `granted=ALL_SEVERITIES`. The
+        `granted` SET is real machinery with one value: A05.1's own document records that
+        it is a set rather than a boolean precisely so a narrower credential can arrive
+        without every handler changing. The handlers are already written against it —
+        `_guard` asks `principal.may(READ)`, so a WRITE route asking `may(WRITE)` needs
+        no new plumbing, only a second credential that does not carry it.
+      recommendation: >-
+        A SECOND CREDENTIAL CLASS FIRST, and it is cheap because the seam exists. Mint a
+        read-only token alongside the full one; `authenticate` returns
+        `granted=frozenset({READ})` for it. The read routes then work with the token a
+        customer can paste into a dashboard, and the write verbs require the one that
+        stays on the host. Shipping writes on the single token is not reversible in the
+        way code is — every copy of that token that has been pasted anywhere becomes a
+        write credential retroactively.
+      what_is_blocked: >-
+        The WRITE half of A05.4 (create / update / remove / run-now), and the same half
+        of A05.2, A05.3 and A05.8. The READ half of all four is unblocked and A05.4's
+        ships here.
+      premise_check: |
+        n=$(/usr/bin/grep -c 'granted=ALL_SEVERITIES' src/stackowl/control_plane/auth.py)
+        o=$(/usr/bin/grep -rn 'granted=' src/stackowl/control_plane/ --include='*.py' | wc -l)
+        if [ "$n" = 1 ] && [ "$o" = 1 ]; then
+          echo "HOLDS every control-plane principal is granted ALL_SEVERITIES — one assignment, no narrower class exists"
+        else
+          echo "EXPIRED $o granted= assignment(s) in control_plane, $n of them ALL_SEVERITIES — a narrower credential class now exists"
+        fi
+      the_check_expires_on_the_ANSWER_not_on_a_blocker: >-
+        It watches the thing the answer would CHANGE — the set of credential classes —
+        rather than whether some other item finished. ESC-172 got that wrong by mirroring
+        a blocking condition, and DEBT-216 is the original instance: a premise_check must
+        expire only when the question has been answered or has become moot.
     ESC_171_an_http_transport_in_this_tree_FAILS_OPEN_may_it_stop:
       question: >-
         `mcp/server.py::_sse_auth_ok` reads `if not expected_token: return True`. With
@@ -49961,6 +50008,87 @@ items:
       failure_count and last_error; job_runs holds the history.
     depends_on: ['A05.1']
     blocks: []
+    doc: docs/reference-mapping/designs/A05.4.md
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    closing_check: >-
+      c=$(./scripts/log_since.sh 2026-09-11 'server.schedules: exit — served');
+      [ "${c:-0}" -gt 0 ] && echo "CLOSEABLE $c served responses from the new route"
+      || echo "OPEN 0 — the route has not answered on the live platform yet"
+    the_gate_refused_the_FIRST_version_of_this_check_and_was_right: >-
+      It grepped `stackowl*.jsonl` directly, and
+      `test_no_closing_check_greps_the_logs_unbounded` requires every log-reading check to
+      route through `log_since.sh` — a STRUCTURAL rule, because that script takes the date
+      as a REQUIRED argument and that is what makes the window impossible to forget. My
+      version was bounded in a different way (a literal that cannot predate the change) and
+      it does not matter: a rule re-derived per check is the one that gets skipped.
+      CLAUDE.md records this same guard refusing the same shape on 2026-09-10 with the same
+      conclusion — comply with the structural form rather than arguing the instance is safe.
+    the_check_names_evidence_only_the_NEW_code_can_write: >-
+      `server.schedules` appears ZERO times across every retained log, measured before the
+      change. It is a brand-new message literal with exactly one emitter, so a non-zero
+      count cannot be produced by the code this replaced — the shape this programme's
+      method asks for, rather than a pre-existing line firing again. The route also
+      returned **404** on the live platform minutes before the change while
+      `/api/v1/health` returned 200 on the same token, so its absence was measured from
+      both sides.
+    scope_SHIPPED_the_READ_half_and_the_reason_is_measured: >-
+      `GET /api/v1/schedules` lists every job as a set, behind A05.1's auth. Create,
+      update, remove and run-now are NOT built, and that is a decision rather than a
+      stopping point: **`authenticate` grants `ALL_SEVERITIES` to every holder of the
+      token.** MEASURED 2026-09-11 — exactly ONE `granted=` assignment exists anywhere
+      under `src/stackowl/control_plane/`, and it is that one. So a write route would be
+      authorised by the same single credential as a read, and "see my schedules" and
+      "delete my schedules" would be one permission. Queued as ESC-173; the read half is
+      complete on its own and closes the half of the gap that was true.
+    THE_ITEMS_REAL_WORK_WAS_THE_GUARD_NOT_THE_ROUTE: >-
+      With ONE route, the origin check, the token check and the READ check sat inline in
+      `_handle_health` and that was honest. The SECOND route is exactly when that becomes
+      two copies of one rule — and when a handler can be written that performs two of the
+      three checks and looks finished.
+      **AND THE DERIVED TEST PATH CORRECTED MY OWN ACCOUNT OF THIS, WHICH IS THE BEST
+      THING THAT HAPPENED IN THE ITEM.** I had written — in the record, the commit
+      message and the document — that the existing guard test "pinned ONE HANDLER BY
+      NAME", as though authentication itself were unswept. Running the derived path
+      failed `TestI2AuthenticationIsNotMiddleware::test_every_route_handler_calls_
+      authenticate`, a test I had not read: **A05.1 ALREADY swept every registered route
+      for the token check, derived from the router rather than hand-listed.** So the true
+      prior state is narrower and the claim was too broad: authentication was swept;
+      only the ORIGIN ORDERING was pinned to one handler, in
+      `test_order_is_origin_then_token`, which read `_handle_health`'s source — so a
+      second route checking the token first, or not checking the origin at all, would
+      have passed it untouched. Corrected everywhere before shipping. A broad claim about
+      my own work is exactly the kind this programme's rule about unmeasured claims
+      exists to stop, and only running the tests caught it.
+      The existing sweep now FOLLOWS THE DELEGATION — each handler reaches `_guard`, and
+      `_guard` calls `authenticate` — so its invariant is unchanged and only the hop
+      count moved. The new test takes the half it cannot see: **no handler performs
+      `check_origin`, `authenticate` or `.may(` ITSELF**, which is what stops a future
+      route satisfying the sweep while doing two of the three checks inline.
+      Both mutation-proven: a route that authenticates itself instead of delegating fails
+      FOUR tests (including the behaviour tests for cross-origin and for a principal
+      without READ), and a `_guard` that stops calling `authenticate` fails FIVE.
+    one_reader_never_two: >-
+      The route calls `JobScheduler.list_jobs()` on the LIVE scheduler injected from
+      `SchedulerComponents` — the same method `cronjob.py`'s own `list` action calls — and
+      issues no SQL. A test asserts the whole `control_plane` module contains no SELECT,
+      INSERT, UPDATE or DELETE. Two readers of one table is how a dashboard and a chat
+      turn come to disagree about what is scheduled, and the disagreement is
+      indistinguishable from a bug in either.
+    tenancy_measured_not_assumed: >-
+      `jobs` carries NO `owner_id` column — asked of the live schema, not inferred:
+      job_id, handler_name, schedule, idempotency_key, last_run_at, next_run_at, status,
+      retry_count, created_at, failure_count, last_error, enabled, replay_missed,
+      primary_channel, params, target_channels, target_addresses, retry_at,
+      circuit_broken_at, claimed_at. So there is no per-owner predicate to apply and none
+      is implied by its absence. The document says so explicitly, and says that if the
+      table ever gains one this route gains the predicate in the same change.
+    what_the_payload_carries_and_why: >-
+      `failure_count` and `last_error` are in the response deliberately. A list that shows
+      a job EXISTS but not that it has been FAILING is the A05.5 shape — a surface that
+      answers and leaves the reader worse off than silence. And an unwired scheduler
+      returns 503 + `wired: false`, never `[]`: a read failure that looks like an empty
+      store is its own mapped item (A06.6).
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A05.5
     title: Memory browser — see what the platform remembers
