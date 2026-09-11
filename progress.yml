@@ -20651,6 +20651,104 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-308
+    found: 2026-09-11
+    map_check: >-
+      NO MATCH, and the no-match IS the finding.
+      `map_check.py "a web page a customer opens in a browser to see the platform"`
+      returned ELEVEN items and not one of them BUILDS a page. Every A05 item says
+      *make X reachable*; none says *draw it*. So this is evidence-led work recorded
+      here rather than a mapped item.
+    what: >-
+      THE OPERATOR ASKED "What happened with agentic os dashboard? Where we are in
+      progress?" — and the honest answer was that nothing renders. MEASURED before
+      building: `src/stackowl/control_plane/` contained ZERO `text/html`, `add_static`
+      or template references. Two JSON routes existed behind a bearer token, reachable
+      only by typing `curl`.
+    root_cause_measured: >-
+      **A05.1's gap says "there is no surface through which a customer can see or steer
+      the platform. Everything is a terminal command." Every one of its stages reads
+      `done`.** What it shipped is a JSON API behind a bearer token — still a terminal
+      command, typed into `curl` instead of into `stackowl`. The item built the DOOR and
+      its gap claimed the SURFACE, and nothing compared the two.
+      THIS IS DEBT-307's DEFECT WEARING ITS OTHER FACE. There, a gap overstated an
+      ABSENCE and would have had a loop rebuild something that works. Here, a COMPLETION
+      overstates a PRESENCE and had eight later items queue up behind a surface that
+      cannot be opened. `gap_check.py` deliberately files a finished item's gap as
+      HISTORY, on the reasoning that reality refuting it is what success looks like —
+      correct for the seven it was built for, and blind to this one, because A05.1's gap
+      is NOT refuted. It is still true.
+    fix: >-
+      `GET /` serves a self-contained page that renders the two routes that already
+      exist. No framework, no CDN, no build step: the platform is self-hosted by
+      requirement and a page that pulls a framework from someone else's server is blank
+      on a box with no egress.
+    the_page_is_the_ONE_route_with_no_credential_and_that_is_mechanical: >-
+      A browser cannot put an `Authorization` header on a top-level navigation. A page
+      served only to an authenticated caller could never be opened by the person it
+      exists for — which is precisely the state A05.1 shipped while its record said the
+      surface was done.
+      It is safe because it CARRIES NOTHING, and both halves are enforced rather than
+      promised: `INDEX_HTML` is a module constant with no interpolation (a test parses
+      the AST and fails on an f-string), and the handler reads ZERO instance attributes
+      (measured: `[]`). Every byte of data the rendered page shows arrives from `fetch()`
+      calls the browser makes afterwards, each through `_guard`.
+    and_the_exemption_is_STRUCTURAL_not_an_allowlist: >-
+      A05.4's sweep requires every registered handler to reach `_guard`. Rather than
+      naming this route as an exception, the sweep now allows an unguarded handler ONLY
+      if it touches no `self.` attribute at all — a property of the code, not a promise,
+      and the thing that stops the exemption widening into "the index route may do
+      whatever it likes". A companion assertion fails if NO route is guarded, so the
+      carve-out cannot swallow the rule it came from.
+    what_else_that_same_cause_reaches_AND_IT_IS_A_GUARD_NOT_A_NOTE: >-
+      Six more A05 surfaces are written as "make X reachable" with nothing that renders
+      them. Each would land as JSON, read as done, and leave the dashboard unchanged —
+      which is exactly how A05.1 got here.
+      The first draft of this record said the rule was "recorded rather than fixed,
+      because it is a standing rule and not a defect in one item". That is the sentence
+      this programme has paid for most: a rule that must be REMEMBERED is the one that
+      gets skipped. It is now checkable, so it is checked.
+      **`test_every_api_route_is_rendered_somewhere_on_the_page` pairs with
+      `test_it_renders_both_existing_surfaces_and_invents_no_endpoint` to make a
+      BIJECTION**: every registered `/api/` path must appear in the page, and every path
+      the page fetches must be a registered route. Both sides are derived from `run()`'s
+      own route table rather than from a list, so neither can rot into a floor.
+      MUTATION-PROVEN off-tree: adding a third route (`/api/v1/agents`) with no table on
+      the page makes it fail by name — `['/api/v1/agents']` — while today's two routes
+      pass. The next surface cannot ship invisible.
+    token_handling: >-
+      `sessionStorage`, never a cookie: a cookie is sent automatically on every request
+      to this origin, which is how a dashboard acquires a CSRF problem it did not need.
+      The page attaches `Authorization: Bearer` explicitly. `last_error` and every other
+      stored string reaches the DOM through `textContent`; a test fails on `innerHTML`,
+      because a failing job's error message is untrusted markup by the time it gets here.
+    AND_MY_GUARD_MATCHED_ITS_OWN_COMMENT_THE_FIFTH_TIME_TODAY: >-
+      `test_untrusted_strings_are_never_written_as_markup` read
+      `assert "innerHTML" not in INDEX_HTML` and failed on the page's OWN COMMENT —
+      `// textContent everywhere, never innerHTML` — the line promising not to do the
+      thing. FIFTH instance in one day of a guard of mine matching PROSE instead of
+      CODE: `hard_stop` in a docstring recording its deletion, `config` in an import
+      line, `minted` in a comment, `store_secret` in an explanation, and now this.
+      The cure is the same every time and it is now reflexive: ask a STRUCTURAL
+      question. A comment can say the word; only an ASSIGNMENT can write markup, so
+      the guard searches for `.innerHTML =`, `.outerHTML =`, `insertAdjacentHTML(`
+      and `document.write(`. MUTATION-PROVEN: changing one `textContent` assignment
+      to `innerHTML` fails it, and restoring from a file copy goes green again.
+      It was caught by RUNNING the applied tests, not by the off-tree proof — the
+      scratchpad rehearsal could not import the unpatched server, so this was the
+      first execution of the file.
+    A_HOMOGLYPH_WAS_CAUGHT_BY_SWEEPING_NOT_BY_READING: >-
+      The first draft of the CSS contained `--bad:#e08\u0431 7e` — a CYRILLIC be inside a
+      hex colour, invisible to review and silently breaking the colour. Found by listing
+      every non-ASCII codepoint in the constant, which left only the three intended
+      typographic characters. Any generated markup deserves that sweep.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    closing_check: >-
+      c=$(./scripts/log_since.sh 2026-09-11 'server.index: exit — page served');
+      [ "${c:-0}" -gt 0 ] && echo "CLOSEABLE $c page loads served"
+      || echo "OPEN 0 — the page has not been served on the live platform yet"
+    doc: docs/reference-mapping/designs/A05.9.md
   - id: DEBT-307
     found: 2026-09-11
     map_check: "A05.2 — and the item could not be built, because its gap statement turned out to be false. That is the finding."
@@ -49735,6 +49833,20 @@ items:
     gap: >-
       There is no surface through which a customer can see or steer the
       platform. Everything is a terminal command.
+    gap_check: >-
+      uv run python -c "import pathlib;
+      d=pathlib.Path('src/stackowl/control_plane');
+      html=[f.name for f in d.rglob('*.py') if 'text/html' in f.read_text()];
+      print(('HOLDS no rendered surface exists' if not html
+      else 'REFUTED a page is served by ' + str(html)))" 2>/dev/null | tail -1
+    gap_was_NOT_closed_by_this_item_and_the_record_said_it_was: >-
+      MEASURED 2026-09-11, after the operator asked what had happened to the dashboard.
+      A05.1 shipped the door — the auth decision, the shell and one route — and its gap
+      claims the SURFACE. What existed was a JSON API behind a bearer token: still a
+      terminal command, typed into `curl`. The stages are correct as a record of what
+      A05.1 built; the gap is what overreached, and nothing compared the two because
+      `gap_check` files a FINISHED item's gap as history. See DEBT-308, which builds the
+      page and adds the check above — it reads REFUTED now, which is the honest state.
     stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
     implement_2026_09_11_the_surface_ships_ON_and_refuses_before_it_serves_wrong: >-
       `control_plane/auth.py` and `control_plane/server.py`, a settings section, a

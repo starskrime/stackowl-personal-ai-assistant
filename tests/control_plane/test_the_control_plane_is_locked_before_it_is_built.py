@@ -192,13 +192,39 @@ class TestI2AuthenticationIsNotMiddleware:
             for n in ast.walk(tree)
             if isinstance(n, ast.AsyncFunctionDef | ast.FunctionDef)
         }
+        guarded = 0
         for name in handlers:
             fn = defs.get(name)
             assert fn is not None, f"route handler {name!r} not found"
-            assert "self._guard(" in ast.unparse(fn), (
-                f"route handler {name!r} never reaches the guard — a route that "
-                "skips the check is how a surface becomes open"
+            body = ast.unparse(fn)
+            if "self._guard(" in body:
+                guarded += 1
+                continue
+
+            # THE ONE EXEMPTION, AND IT IS STRUCTURAL RATHER THAN A NAME.
+            # A browser cannot put an `Authorization` header on a top-level
+            # navigation, so the page itself must be servable without one — a
+            # dashboard nobody can open is the state A05.1 shipped while its
+            # record said the surface was done. An unguarded route is therefore
+            # allowed only if it CANNOT reach platform state: no instance
+            # attribute at all. That is a property of the code, not a promise,
+            # and it is what stops the exemption widening into "the index route
+            # may do whatever it likes".
+            touched = sorted({
+                n.attr for n in ast.walk(fn)
+                if isinstance(n, ast.Attribute)
+                and isinstance(n.value, ast.Name) and n.value.id == "self"
+            })
+            assert not touched, (
+                f"route handler {name!r} skips the guard AND reads {touched} off "
+                "the server. An unauthenticated route may serve a constant and "
+                "nothing else — the moment it reads state it needs the guard"
             )
+
+        assert guarded, (
+            "no route goes through the guard at all — the exemption above has "
+            "swallowed the rule it was carved out of"
+        )
 
         # And the hop actually authenticates. Without this the chain above could
         # be satisfied by a `_guard` that had quietly stopped checking anything,
@@ -428,7 +454,7 @@ class TestOriginIsCheckedBeforeTheToken:
             ):
                 registered.add(node.args[1].attr)
 
-        assert len(registered) >= 2, (
+        assert len(registered) >= 3, (
             f"only {sorted(registered)} route handler(s) found — this sweep "
             "passes vacuously on one route, which is the state it was written "
             "to leave behind"

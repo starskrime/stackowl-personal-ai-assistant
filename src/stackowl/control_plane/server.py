@@ -40,6 +40,7 @@ from stackowl.control_plane.auth import (
     ensure_credential,
     is_loopback,
 )
+from stackowl.control_plane.page import INDEX_HTML
 from stackowl.infra.observability import log
 
 if TYPE_CHECKING:
@@ -120,6 +121,7 @@ class ControlPlaneServer(SupervisedTask):
             raise
 
         app = web.Application()
+        app.router.add_get("/", self._handle_index)
         app.router.add_get("/api/v1/health", self._handle_health)
         app.router.add_get("/api/v1/schedules", self._handle_schedules)
 
@@ -270,6 +272,26 @@ class ControlPlaneServer(SupervisedTask):
             return None, web.Response(status=403, text=UNAUTHORIZED_BODY)
 
         return principal, None
+
+    async def _handle_index(self, request: Any) -> Any:
+        """`GET /` — the page. THE ONE ROUTE WITH NO CREDENTIAL CHECK.
+
+        A browser cannot put an `Authorization` header on a top-level
+        navigation, so a page served only to an authenticated caller could never
+        be opened — the dashboard would exist and be unreachable, which is the
+        state A05.1 actually shipped while its record said the surface was done.
+
+        IT IS SAFE FOR ONE REASON, AND THE REASON IS ENFORCED RATHER THAN
+        PROMISED: the response is a module-level CONSTANT with no interpolation,
+        so it cannot carry platform state even by accident. This handler reads
+        no settings, no health, no scheduler — a tripwire walks its body and
+        fails if it ever does. Every byte of data the rendered page shows
+        arrives from `fetch()` calls the browser makes afterwards, and each of
+        those goes through `_guard` like everything else.
+        """
+        web = _web()
+        log.control_plane.info("[control_plane] server.index: exit — page served")
+        return web.Response(text=INDEX_HTML, content_type="text/html")
 
     async def _handle_schedules(self, request: Any) -> Any:
         """`GET /api/v1/schedules` — every scheduled job, as a SET.
