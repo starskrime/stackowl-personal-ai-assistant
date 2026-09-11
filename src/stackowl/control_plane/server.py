@@ -49,9 +49,11 @@ from stackowl.control_plane.auth import (
 )
 from stackowl.control_plane.page import INDEX_HTML
 from stackowl.infra.observability import log
+from stackowl.owls.skill_ownership import read_all_skill_ownership
 
 if TYPE_CHECKING:
     from stackowl.config.settings import Settings
+    from stackowl.db.pool import DbPool
     from stackowl.health.aggregator import HealthAggregator
     from stackowl.scheduler.scheduler import JobScheduler
 
@@ -74,12 +76,14 @@ class ControlPlaneServer(SupervisedTask):
         *,
         health: HealthAggregator | None = None,
         scheduler: JobScheduler | None = None,
+        db: DbPool | None = None,
     ) -> None:
         log.control_plane.info(
             "[control_plane] server.init: entry",
             extra={"_fields": {
                 "has_health": health is not None,
                 "has_scheduler": scheduler is not None,
+                "has_db": db is not None,
             }},
         )
         self._settings = settings
@@ -88,6 +92,10 @@ class ControlPlaneServer(SupervisedTask):
         #: is the one reader the cron tool already uses, and a second reader of
         #: the same table is the defect this tree finds most often.
         self._scheduler = scheduler
+        #: The LIVE pool, injected — `read_all_skill_ownership` is the reader the
+        #: gap itself names, and a second query over `skill_ownership` would be a
+        #: second answer to one question.
+        self._db = db
         self._token: str = ""
         self._runner: Any = None
         self._site: Any = None
@@ -132,6 +140,7 @@ class ControlPlaneServer(SupervisedTask):
         app.router.add_get("/api/v1/health", self._handle_health)
         app.router.add_get("/api/v1/schedules", self._handle_schedules)
         app.router.add_get("/api/v1/config", self._handle_config)
+        app.router.add_get("/api/v1/skills", self._handle_skills)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -371,6 +380,64 @@ class ControlPlaneServer(SupervisedTask):
             extra={"_fields": {
                 "principal_id": principal.principal_id,
                 "schedules": len(jobs),
+                "duration_ms": duration_ms,
+            }},
+        )
+        return web.json_response(payload)
+
+    async def _handle_skills(self, request: Any) -> Any:
+        """`GET /api/v1/skills` — which owl owns which skill.
+
+        THE GAP NAMED ITS OWN READER, so this uses it.
+        `owls/skill_ownership.py::read_all_skill_ownership` already returns
+        `owl_name -> [skill names]`, owner-scoped. A05.8's gap says the state is
+        stored and has a reader and that "no command or surface presents it" —
+        so the work is presentation, and a second query over `skill_ownership`
+        would be a second answer to one question.
+
+        MEASURED 2026-09-11 before building: **35 ownership rows across SEVEN
+        owls** (verifier 12, secretary 9, scout 4, rca_gatherer 4, jobmarket 3,
+        mailbutler 2, hypothesis 1) against 46 skills — and
+        `commands/skill_command.py` mentions ownership NOWHERE. Its only
+        `owner` matches are GitHub URL parsing (`owner/repo`).
+
+        SCOPED TO OWNERSHIP, NOT THE CATALOGUE. Listing every skill's metadata
+        would need the skill STORE injected as well, and the store has no
+        list-all — `skills_list.py` unions `list_for_source` across sources and
+        says so in its own docstring. That is a second item; this closes the
+        half the gap actually measured.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.skills: entry")
+
+        principal, refusal = self._guard(request, "skills")
+        if principal is None:
+            return refusal
+
+        if self._db is None:
+            log.control_plane.warning(
+                "[control_plane] server.skills: exit — no db wired, so there is "
+                "nothing to report",
+                extra={"_fields": {"principal_id": principal.principal_id}},
+            )
+            return web.json_response({"owls": [], "wired": False}, status=503)
+
+        owned = await read_all_skill_ownership(self._db)
+        payload = {
+            "wired": True,
+            "owls": [
+                {"owl": owl, "skills": sorted(skills), "count": len(skills)}
+                for owl, skills in sorted(owned.items())
+            ],
+        }
+        duration_ms = (_time.monotonic() - t0) * 1000
+        log.control_plane.info(
+            "[control_plane] server.skills: exit — served",
+            extra={"_fields": {
+                "principal_id": principal.principal_id,
+                "owls": len(owned),
+                "owned_skills": sum(len(v) for v in owned.values()),
                 "duration_ms": duration_ms,
             }},
         )

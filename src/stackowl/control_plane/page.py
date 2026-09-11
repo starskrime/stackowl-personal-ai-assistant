@@ -132,6 +132,16 @@ INDEX_HTML: Final = """<!doctype html>
        Credentials read <code>***</code>.</p>
   </section>
 
+  <section id="skills" hidden>
+    <h2>Skill ownership</h2>
+    <div class="wrap"><table>
+      <thead><tr><th>Owl</th><th>Skills</th><th>Owned</th></tr></thead>
+      <tbody id="skillrows"></tbody>
+    </table></div>
+    <p class="note">Which owl owns which skill. An owl with none does not appear —
+       ownership is recorded per pair, not per owl.</p>
+  </section>
+
   <p class="note" id="status"></p>
 </main>
 <script>
@@ -166,6 +176,12 @@ INDEX_HTML: Final = """<!doctype html>
     return fetch(path, { headers: { "Authorization": "Bearer " + token } })
       .then(function (r) {
         if (r.status === 401 || r.status === 403) { throw new Error("refused (" + r.status + ")"); }
+        // 503 + `wired: false` is the platform CONFESSING it cannot look, which
+        // is a different answer from "you have nothing" and is the whole reason
+        // the handlers return it. Throwing here made that payload unreachable by
+        // any browser: the renderers' `if (!payload.wired)` branches could never
+        // run. A write with no reader, one protocol out.
+        if (r.status === 503) { return r.json(); }
         if (!r.ok) { throw new Error("HTTP " + r.status); }
         return r.json();
       });
@@ -239,24 +255,63 @@ INDEX_HTML: Final = """<!doctype html>
     $("config").hidden = false;
   }
 
+  function renderSkills(payload) {
+    var body = $("skillrows");
+    body.textContent = "";
+    if (!payload.wired) {
+      var r = document.createElement("tr");
+      cell(r, "no db wired", "mut");
+      body.appendChild(r);
+    } else {
+      (payload.owls || []).forEach(function (o) {
+        var row = document.createElement("tr");
+        cell(row, o.owl);
+        cell(row, (o.skills || []).join(", "), "mut");
+        cell(row, o.count, "num");
+        body.appendChild(row);
+      });
+    }
+    $("skills").hidden = false;
+  }
+
+  // ONE ROUTE'S OUTCOME IS NOT THE PAGE'S OUTCOME. `Promise.all` made every
+  // endpoint a single point of failure for the whole dashboard: one 503 and all
+  // four tables vanished behind `HTTP 503`, which reads as a dead platform
+  // rather than as one unwired subsystem. It gets strictly worse as A05.5/6/7
+  // add routes, so the shape is fixed here rather than the instance.
+  var PANELS = [
+    { id: "health",    path: "/api/v1/health",    render: renderHealth },
+    { id: "schedules", path: "/api/v1/schedules", render: renderSchedules },
+    { id: "config",    path: "/api/v1/config",    render: renderConfig },
+    { id: "skills",    path: "/api/v1/skills",    render: renderSkills }
+  ];
+
   function load(token) {
     say("loading…");
-    Promise.all([get("/api/v1/health", token), get("/api/v1/schedules", token),
-                 get("/api/v1/config", token)])
-      .then(function (r) {
-        renderHealth(r[0]);
-        renderSchedules(r[1]);
-        renderConfig(r[2]);
-        var n = (r[1].schedules || []).length;
-        var c = (r[2].settings || []).length;
-        say(n + " schedule" + (n === 1 ? "" : "s") + " · " + c + " setting" +
-            (c === 1 ? "" : "s") + " · read at " + new Date().toLocaleTimeString());
-      })
-      .catch(function (e) {
-        $("health").hidden = true;
-        $("schedules").hidden = true;
-        $("config").hidden = true;
-        say(String(e.message || e));
+    Promise.allSettled(PANELS.map(function (p) { return get(p.path, token); }))
+      .then(function (results) {
+        var failed = [];
+        results.forEach(function (res, i) {
+          var panel = PANELS[i];
+          if (res.status === "fulfilled") {
+            panel.render(res.value);
+          } else {
+            $(panel.id).hidden = true;
+            failed.push(panel.id + ": " + String(res.reason && res.reason.message
+                                                 || res.reason));
+          }
+        });
+        var ok = results.filter(function (r) { return r.status === "fulfilled"; });
+        if (!ok.length) { say(failed.join(" · ")); return; }
+        var sched = results[1].status === "fulfilled"
+          ? (results[1].value.schedules || []).length : null;
+        var cfg = results[2].status === "fulfilled"
+          ? (results[2].value.settings || []).length : null;
+        var parts = [];
+        if (sched !== null) { parts.push(sched + " schedule" + (sched === 1 ? "" : "s")); }
+        if (cfg !== null) { parts.push(cfg + " setting" + (cfg === 1 ? "" : "s")); }
+        parts.push("read at " + new Date().toLocaleTimeString());
+        say(parts.concat(failed).join(" · "));
       });
   }
 
@@ -271,8 +326,14 @@ INDEX_HTML: Final = """<!doctype html>
   $("forget").addEventListener("click", function () {
     try { sessionStorage.removeItem(KEY); } catch (e) { /* nothing to clear */ }
     $("token").value = "";
-    $("health").hidden = true;
-    $("schedules").hidden = true;
+    // FROM `PANELS`, never a list written here. This handler hid `health` and
+    // `schedules` and nothing else, so after A05.2 "forget the token" left the
+    // SETTINGS table on screen — every key the operator has configured, still
+    // rendered, on a shared or walked-past display. A05.8 would have added a
+    // fourth. The page enumerated its own sections by hand in three places and
+    // A05.2 remembered one of them, which is why the enumeration is gone rather
+    // than corrected.
+    PANELS.forEach(function (p) { $(p.id).hidden = true; });
     say("token forgotten");
   });
 

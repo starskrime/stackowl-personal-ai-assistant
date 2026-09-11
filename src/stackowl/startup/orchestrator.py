@@ -4570,6 +4570,9 @@ class StartupOrchestrator:
                 # the control plane and a chat turn can never disagree about
                 # what is scheduled (A05.4).
                 scheduler=scheduler_components.scheduler,
+                # The LIVE pool — `read_all_skill_ownership` is owner-scoped and
+                # is the reader A05.8's gap names (A05.8).
+                db=db_pool,
             )
             scheduler_components.supervisor.register(control_plane)
             log.info(

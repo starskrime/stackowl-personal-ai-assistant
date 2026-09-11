@@ -50530,7 +50530,26 @@ items:
       visible" invites building a store; the measured one says the store is already there
       and only the presentation is missing.
     gap_check: >-
-      python3 -c "import pathlib; s=pathlib.Path('src/stackowl/commands/skill_command.py').read_text(); print('REFUTED a command now surfaces skill ownership' if 'ownership' in s.lower() else 'HOLDS ownership is stored and readable in code, surfaced by nothing')"
+      python3 -c "import pathlib; r='read_all_skill_ownership'; s=sorted(str(p) for p in pathlib.Path('src/stackowl').rglob('*.py') if len(p.parts)>2 and p.parts[2] in ('commands','control_plane') and r in p.read_text(encoding='utf-8')); print('REFUTED a surface now reads '+r+': '+', '.join(s) if s else 'HOLDS '+r+' is called only by internal consumers; no commands/ or control_plane/ module reads it, so ownership reaches no operator')"
+    gap_check_was_UNCLOSEABLE_BY_THIS_ITEMS_OWN_WORK_repaired_2026_09_11: >-
+      It grepped `src/stackowl/commands/skill_command.py` for the word "ownership", and
+      the gap says "no command **or surface**". PROVEN rather than argued: run against
+      the tree that carries the new control-plane route, the old check still printed
+      HOLDS. An item whose check cannot be refuted by the item shipping is a dead end in
+      exactly the sense `progress_lint` refuses for a `partial` stage — and it would have
+      read HOLDS forever, inviting a later loop to rebuild what had just been built.
+      THE CAUSE IS NARROWER THAN "WRITTEN CARELESSLY": the gap NAMED ITS OWN READER
+      (`owls/skill_ownership.py::read_all_skill_ownership`) and the check ignored it,
+      asking about a CONTAINER (one file) instead of the RELATION (does anything
+      presentational reach that reader?). The new one walks `commands/` and
+      `control_plane/` for callers of the named symbol, so it is refuted by a surface
+      appearing anywhere, and cannot be flipped by a comment that merely says the word.
+      MEASURED BEFORE GENERALISING: of the ten `gap_check`s in this file, TWO pin a
+      literal file path, and the other (A05.2) pins the file its own gap names and is
+      correct. Four internal consumers call the reader today
+      (`learning/failure_outcome_miner.py`, `pipeline/delivery_gate.py`,
+      `scheduler/handlers/incident_escalation.py`) and not one is a surface. ONE
+      INSTANCE, NOT A CLASS — no guard built, no sweep queued.
     evidence: >-
       Operator requirement, 2026-09-11 — "ability to update or install or remove
       skills". Per-owl ownership already exists (manifest skills/pinned_skills
@@ -50538,6 +50557,115 @@ items:
       ESC-129 gates.
     depends_on: ['A05.1']
     blocks: []
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: partial}
+    implement_2026_09_11_the_READ_half: >-
+      `GET /api/v1/skills` returns which owl owns which skill, owner-scoped, and the page
+      grows a Skill ownership table. It reads through
+      `owls/skill_ownership.py::read_all_skill_ownership` — the reader the gap itself
+      names — so this is presentation over existing state, and a second SELECT over
+      `skill_ownership` would be a second answer to one question. The test asserts that
+      behaviourally: the fake pool records every query and the route must issue exactly
+      ONE.
+      MEASURED BEFORE BUILDING: **35 ownership rows across SEVEN owls** — verifier 12,
+      secretary 9, scout 4, rca_gatherer 4, jobmarket 3, mailbutler 2, hypothesis 1 —
+      against 46 skills, and `commands/skill_command.py` mentions ownership NOWHERE
+      (its three `owner` matches are GitHub URL parsing, `owner/repo`).
+      SCOPED TO OWNERSHIP, NOT THE CATALOGUE, and the reason is measured rather than an
+      appetite call: listing every skill's metadata needs the skill STORE injected as
+      well, and the store has no list-all — `skills_list.py` unions `list_for_source`
+      across sources and says so in its own docstring. That is a second item; this closes
+      the half the gap actually measured. `db_pool` was already in scope at the
+      orchestrator's construction site, so the read half needed no new plumbing.
+      THE FAKE POOL ASSERTS THE OWNER PREDICATE SURVIVES. A single-principal install
+      makes a scoped and an unscoped SELECT indistinguishable in their results, which is
+      how an unscoped one survives review (DEBT-292) — so the assertion lives inside the
+      double, where a tenancy regression fails the test that exercises the route rather
+      than a tripwire that may not be derived.
+    a_STALE_SECOND_COPY_of_the_bijection_rule_was_DELETED_and_the_near_miss_is_the_lesson: >-
+      I read `test_it_renders_both_existing_surfaces_and_invents_no_endpoint`, saw only
+      the page -> server direction derived, and concluded the server -> page direction had
+      never been built. IT HAD:
+      `test_every_api_route_is_rendered_somewhere_on_the_page` sits in the same file, one
+      class further down, fully derived from the route table, and it would have caught
+      this very item shipping a route with no panel — DISCRIMINATION-PROVEN off-tree
+      against both pages before I found it. I was one apply away from shipping a THIRD
+      copy of a guard that already existed.
+      WHAT THE SAME READING DID FIND IS REAL, and it is the opposite of what I set out to
+      build: the first method held a HAND-WRITTEN half of that rule,
+      `for path in ("/api/v1/health", "/api/v1/schedules")`, which A05.2 did not grow when
+      `/api/v1/config` shipped. Stale, and never load-bearing — the derived guard already
+      covered every path it named, strictly. So it is DELETED, not corrected: a list kept
+      beside the guard that abolishes lists is two-copies-of-one-rule wearing the costume
+      of the cure, and syncing it leaves the trap armed for the next route.
+      THE CAUSE OF THE NEAR MISS IS NOT "READ MORE CAREFULLY". A grep for the behaviour
+      lands on the first test whose NAME sounds like it, and in this file the weaker copy
+      sorts first. The check that actually settled it was reading the whole module's
+      `def test_` list — which is cheap, and is what `tests_touching.py` gives for files
+      rather than for methods.
+    and_EXECUTING_the_page_found_TWO_defects_source_reading_could_not: >-
+      The new route answers 503 `{"wired": false}` when no db is injected, which is the
+      confess-rather-than-return-empty design A05.5's gap is about. Checking that a
+      BROWSER could actually receive it found that no browser ever could — and then a
+      second defect beside it.
+      ONE: `get()` threw on any non-ok status and `load()` used `Promise.all`, so a 503
+      from ONE route rejected the chain, the `catch` hid every section, and the page read
+      `HTTP 503` with nothing on it. MEASURED by running the real `<script>` under a stub
+      DOM — `visible sections: (none)`. One unwired subsystem rendered as a dead platform,
+      and the `if (!payload.wired)` branches in `renderConfig`/`renderSkills` could never
+      execute: a write with no reader, one protocol further out.
+      TWO: the "forget token" handler hid `health` and `schedules` and nothing else, so
+      after A05.2 the SETTINGS table stayed on screen — every configured key, still
+      rendered, after the operator asked the page to forget. MEASURED the same way:
+      `visible after forget: config,skills`.
+      THE CAUSE IS ONE THING: the page enumerated its own sections BY HAND in three places
+      — the fetch list, the catch list and the forget list — so a new route meant
+      remembering three edits and A05.2 remembered one. `PANELS` is the single
+      enumeration now and all three read from it, which is the same repair as deleting the
+      bijection guard's hand-written tuple, in JavaScript.
+      AND THE GUARD IS A NEW KIND FOR THIS PAGE. Every other check here reads the source,
+      which is right for "does it contain an f-string" and useless for "what does a viewer
+      see when one endpoint is down". `tests/control_plane/test_one_dead_route_does_not_blank_the_dashboard.py`
+      EXECUTES the script under a stub DOM and a stub `fetch`, with a healthy-platform
+      vacuity control beside it. Discrimination-proven both ways before landing.
+    the_WRITE_half_is_not_built_and_TWO_things_gate_it: >-
+      Install/update/remove over HTTP stay unbuilt for A05.2's measured reason — exactly
+      one `granted=` assignment exists under `src/stackowl/control_plane/` and it is
+      `ALL_SEVERITIES`, so "see who owns what" and "install a skill" would be one
+      permission (ESC-173) — and for ESC-129, whose panel recommendation is
+      declarative-only until a scanning hub exists (A07.1).
+    validated_LIVE_2026_09_11_after_a_full_restart_core_up_at_22_38_27: >-
+      `./start.sh`, core up at 22:38:27 — start time checked against the change on disk,
+      never a PID — then the live door. **401** unauthenticated; **401** with a VALID
+      token and a foreign `Origin`; **200** authenticated, returning
+      `{"wired": true, "owls": 7}` totalling **35** owned skills — the same 7 and 35
+      measured from the database before the route was written, which is what makes it a
+      check rather than a screenshot.
+      `INFO [control_plane] server.skills: exit — served
+      {"principal_id":"principal-default","owls":7,"owned_skills":35}` and, from the
+      cross-origin attempt, `server.skills: exit — refused, cross-origin`. **That literal
+      appears ZERO times across every retained dated log before today** — a new message
+      with exactly one emitter, so the evidence cannot be produced by the code this
+      replaced.
+      The served page cites all FOUR API routes (`/api/v1/config`, `/api/v1/health`,
+      `/api/v1/schedules`, `/api/v1/skills`), so the path bijection holds on the page a
+      browser actually receives and not only in the test, and the leak check over the
+      rendered page reads **0** for `job_id"`, `morning_brief`, `principal-default` and
+      an owl name.
+      NOT VALIDATED LIVE, and named rather than implied: the 503 `wired: false` path. The
+      db is wired on this box, so the branch cannot be reached here. It is covered by the
+      executed-page test, which stubs the response.
+    closing_check: >-
+      [ -f docs/reference-mapping/designs/A05.8.md ]
+      && echo "CLOSEABLE A05.8 has its own design document"
+      || echo "OPEN A05.8 has no document of its own; A05.9 carries the page half"
+    document_is_partial_and_the_reason_is_named: >-
+      A05.9 (the page) is amended and stamped; A05.8 has no design document of its own
+      yet. The route's behaviour and its deliberate ownership-not-catalogue scope live in
+      the handler docstring and in A05.9's Skill ownership note, which is where a reader
+      of either surface meets them. A document for A05.8 belongs with the WRITE half,
+      when there is an install/update/remove lifecycle to describe rather than one read
+      route.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A07.1
     title: A skill hub with analysis before install, not after

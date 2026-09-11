@@ -84,15 +84,23 @@ class TestThePageIsServed:
         assert "<title>StackOwl control plane</title>" in res.text
 
     @pytest.mark.tripwire
-    async def test_it_renders_both_existing_surfaces_and_invents_no_endpoint(self) -> None:
+    async def test_the_page_invents_no_endpoint(self) -> None:
         """The page must read what is ALREADY built, not imply routes that do not
         exist. A dashboard calling a 404 shows an error and reads as broken
-        platform rather than as absent feature."""
+        platform rather than as absent feature.
+
+        THE OTHER DIRECTION IS NOT HERE and must not be duplicated here:
+        `test_every_api_route_is_rendered_somewhere_on_the_page` derives it from
+        the route table. This method used to assert a WEAKER, HAND-WRITTEN half
+        of it — `for path in ("/api/v1/health", "/api/v1/schedules")` — which
+        A05.2 did not grow when `/api/v1/config` shipped. It was stale on the day
+        A05.8 read it, and it was never load-bearing: the derived guard already
+        covered every path it named, strictly. A list kept beside the guard that
+        abolishes lists is the two-copies-of-one-rule shape wearing the costume
+        of the cure, so it is DELETED rather than corrected.
+        """
         res = await _server()._handle_index(_Req())  # noqa: SLF001
         page = res.text
-
-        for path in ("/api/v1/health", "/api/v1/schedules"):
-            assert path in page, f"the page never fetches {path}"
 
         # Every `/api/...` string the page mentions must be a route the server
         # registers. Derived from the server, not a list written here.
@@ -297,6 +305,20 @@ def test_the_page_reads_no_field_a_route_does_not_emit() -> None:
     THE LOOP VARIABLES ARE DERIVED, not listed. A future render function using a
     different name would silently escape a hard-coded `s.`/`j.` scan, which is
     the going-blind failure this repo names as worse than no guard at all.
+
+    AND THEY ARE DERIVED FROM THE PAYLOAD LOOPS ONLY, corrected in A05.8. The
+    first version took EVERY `forEach(function (x))` in the page, on the
+    assumption that every such loop iterates rows from a route. A05.8 added
+    `PANELS.forEach(function (p) { $(p.id).hidden = true; })` — a loop over the
+    page's own section list — and the guard reported `p.id` as a field no route
+    emits. It was right about the text and wrong about the subject: an internal
+    array is not a payload, and a guard that fails on correct work is the one
+    that gets bypassed rather than satisfied.
+    The discriminator was already written in the page and only had to be read:
+    a payload loop's receiver is literally `(payload.<key> || [])`. So the four
+    render loops are matched by SHAPE and the page's internal loops are invisible
+    to this guard by construction, rather than by an exemption anybody has to
+    maintain.
     """
     from stackowl.control_plane import server as mod
 
@@ -313,10 +335,13 @@ def test_the_page_reads_no_field_a_route_does_not_emit() -> None:
                 }
     assert emitted, "no handler payload keys found — this guard has gone blind"
 
-    loop_vars = set(re.findall(r"forEach\(function \((\w+)\)", INDEX_HTML))
+    loop_vars = set(re.findall(
+        r"\(payload\.\w+ \|\| \[\]\)\.forEach\(function \((\w+)\)", INDEX_HTML
+    ))
     assert loop_vars, (
-        "no `forEach(function (x)` render loop found — the page stopped rendering "
-        "rows this way and this guard can no longer see the field reads"
+        "no `(payload.x || []).forEach(function (v)` render loop found — the page "
+        "stopped rendering rows this way and this guard can no longer see the "
+        "field reads"
     )
 
     reads: set[str] = set()
