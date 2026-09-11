@@ -49172,7 +49172,7 @@ items:
     gap: >-
       There is no surface through which a customer can see or steer the
       platform. Everything is a terminal command.
-    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: done}
     implement_2026_09_11_the_surface_ships_ON_and_refuses_before_it_serves_wrong: >-
       `control_plane/auth.py` and `control_plane/server.py`, a settings section, a
       logger channel, the orchestrator registration and 38 tests. `enabled` defaults
@@ -49214,12 +49214,42 @@ items:
       when no token is configured) fails 2; registering aiohttp middlewares fails 2;
       and the two credential-backend mutations are covered by the pair above. The
       restore was re-run each time and returned 38 passed.
-    validate_is_PARTIAL_and_the_reason_is_named: >-
-      The server binds on the next core start, and the platform was NOT restarted in
-      this loop: a restart while a full suite and a 150-file targeted run were in flight
-      would measure my own interference. The evidence arrives on the next boot.
-    closing_check: >-
-      n=$(./scripts/log_since.sh 2026-09-11 'control_plane] server.run: exit — listening'); if [ "${n:-0}" -gt 0 ]; then echo "CLOSEABLE ${n} boot(s) bound the control plane — a literal only this item's code emits"; else echo "OPEN 0 — the core has not restarted on the new code yet"; fi
+    AND_CLOSING_IT_FALSELY_CLOSED_SOMEONE_ELSES_VALIDATE_FOR_A_FEW_MINUTES: >-
+      Recorded because it is the exact shape this method warns about and I did it
+      anyway, hours after shipping a guard about scripted edits. The script that
+      flipped this item's stage used a bare `s.replace(old, new, 1)` with NO uniqueness
+      assertion, so it hit the FIRST matching stages line in a 3.7MB file — **DEBT-299's**
+      — and marked a `partial` validate `done`. I then fixed A05.1 separately by line
+      number and the mistake was invisible in both diffs I looked at.
+      WHAT CAUGHT IT was not review: `progress_lint`'s unevidenced count moved 26 -> 27,
+      and chasing that one number found it. A false `validate: done` is the single worst
+      thing to write into this record, because `done` is the word that stops anybody
+      looking again. Reverted; the count is back to 26 and `validate_check` reads
+      `checked 26, CLOSEABLE 0`.
+      The rule already existed — name both ends and assert the span — and the ONLY
+      reason this was recoverable is that a guard published a number that changed.
+    validated_2026_09_11_LIVE_and_the_first_boot_vindicated_the_bug_fix: >-
+      Restarted at 10:15:48 once no run was in flight. FIVE INFO/WARNING records, all
+      literals only this item's code emits: `server.run: entry` (bind 127.0.0.1:8787),
+      `auth.ensure_credential: entry`, then the pair that matters, then
+      `server.run: exit — listening` and the loopback WARNING carrying its remedy.
+      **THE KEYRING GENUINELY FAILS ON THIS BOX, AND THE LOG SAYS SO:**
+      `no stored credential under this backend — trying the next`, `ref_kind: keychain`,
+      `reason: keychain:stackowl-control-plane — keyring lookup failed: Failed to unlock
+      the collection!` — followed by `exit — existing credential resolved`,
+      `ref_kind: file`. That is the bug this item's own design document predicted and
+      the first draft still had, refuted in production on the first boot: the keyring
+      path fails for real here, so a keyring-only resolver would have minted a fresh
+      token and silently invalidated the operator's.
+      AUTH PROVEN END TO END against the live port: no credential -> **401**, wrong
+      credential -> **401**, correct credential -> **200** with a real body.
+      AND THE ROUTE BEATS THE TERMINAL BY MEASUREMENT, not by argument: the control
+      plane served **15** subsystems — including `resilience`, `store_cadence`,
+      `prefix_growth`, `unattributed_spend` and `task_liveness` — while
+      `stackowl health` in the CLI process served **5**. `cli/app.py`'s own comment
+      holds `ResilienceContributor` for "a future in-process /health slash command";
+      that seat is now filled, which is a built-but-not-wired capability closed rather
+      than a new one added.
     doc: docs/reference-mapping/designs/A05.1.md
     architect_2026_09_11_the_scope_the_panel_refuted_is_the_one_the_document_fixes: >-
       The document names the rung (EXTEND EXISTING CODE, the highest, and it is genuinely
