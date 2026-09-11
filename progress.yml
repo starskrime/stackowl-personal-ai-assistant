@@ -20639,6 +20639,23 @@ known_debt:
       surface — today both halves are true, so an assertion over the live state pins
       nothing, and the constructed case is the webhook receiver's exact shape (873 boots,
       zero requests).
+    AND_THE_FIFTH_SURFACE_REPORT_FIRED_AFTER_THE_COMMIT_FOR_THE_SECOND_LOOP_RUNNING: >-
+      Worth recording because it is a DISCIPLINE defect, not a tool one. The report added
+      yesterday prints inside the gate, and the gate is chained to the commit by `$?` — by
+      construction, correctly. So the report's finding scrolls past AS THE COMMIT
+      SUCCEEDS, and I read it afterwards both times. Yesterday it named D01.1; today
+      D13.1 and D14.4.
+      The tool is right and the ordering is mine: `docs_touching.py` must be run BEFORE
+      staging, not read after the gate. Nothing in the gate can fix that without making
+      the report a gate, which it must never be (49 live matches; a guard that fails
+      reasonable work gets bypassed).
+      AND TODAY IT PAID FOR ITSELF PROPERLY. D13.1 is "Surfaces — how many there are",
+      it enumerates SIX and mentions the control plane ZERO times, and its own line 10
+      states the invalidation condition: *"This document counts SURFACES, and only one
+      being added, removed or renamed can move [the count]."* One was added the previous
+      day. That is a genuine content correction — a seventh surface, deliberately NOT in
+      the channel table because it registers no `ChannelAdapter` and carries no turns —
+      not a date bump, and nobody would have found it by remembering.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
     stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: no_change_needed, test: done, validate: partial, document: done}
     document_is_done_and_it_is_A05_1s: >-
