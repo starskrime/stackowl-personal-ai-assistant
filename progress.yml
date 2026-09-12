@@ -431,6 +431,22 @@ current:
       budget governor MEASURES steps, time, cost and tokens and cannot stop anything,
       and per-agent budget ENFORCEMENT exists in no self-hostable system surveyed, so
       it is differentiation rather than catch-up. A05.1 stays next after it.
+    A05_6_SHIPPED_2026_09_12_and_A05_3_is_next: >-
+      A05.6 is done on `fc81b9c3`/`2008c659`: `GET /api/v1/tasks`, a Work-in-flight panel,
+      and `blocked` — the column that separates "the loop declines this, rightly" from
+      "the loop is stuck". Live: 82 unfinished rows, all five pending reporting
+      `terminal_parent`. The loop's SQL eligibility predicate is now ONE string
+      (`store.CLAIMABLE_WHERE`) shared by the engine and the surface.
+      NEXT IS **A05.3** — owls over the control plane. It is the last A05 READ surface
+      whose dependencies are met (A05.1 and A04.1, both shipped), and A04.1's
+      `read_owl_activity` is the reader it needs: per-owl `in_flight`, `pending`,
+      `last_seen_at`, `recent_turns`. A05.5 and A05.7 follow, and A05.7 depends on A05.6
+      which is now done.
+      **READ A05.3's GAP AND ITS gap_check BEFORE BUILDING.** Six of ten gap_checks have
+      now been re-shaped from cure to capability, and A05.3's has NOT been examined. Its
+      gap also says owls "cannot be created and edited" except by talking — check that
+      against `owl_build`, which has create/edit/retire verbs, before building anything:
+      that is the exact shape of the eight gaps this series has already had wrong.
     A04_1_SHIPPED_2026_09_12_and_A05_6_is_next_because_A04_1_unblocked_it: >-
       A04.1 is done on `fbcad7d3`: `owls/activity.py::read_owl_activity` gives the shared
       card its runtime half as a DERIVED reader, `owls_list` renders it, and a health
