@@ -15804,6 +15804,56 @@ current:
         s=pathlib.Path('src/stackowl/mcp/server.py').read_text()
         print('HOLDS still fails open' if 'if not expected_token:' in s and 'return True' in s.split('if not expected_token:')[1][:40] else 'EXPIRED branch changed')
         "
+    ESC_175_installability_needs_a_secure_context_and_this_platform_has_no_TLS:
+      question: >-
+        "Looks like an app, not a website" is partly gated on TRANSPORT rather than
+        design, and I got this wrong to your face before checking it. Do you want a
+        self-signed CA and `https://<host>:8443`, or do you accept a home-screen
+        SHORTCUT rather than an installed app?
+      what_I_told_you_and_why_it_was_WRONG: >-
+        After shipping A05.10 I said "on your phone, Add to Home Screen gives you a
+        standalone app with the owl mark and no browser chrome". **On Android that is
+        false.** Chrome requires a SECURE CONTEXT to install a web app, and
+        `http://192.168.1.176:8787` is not one — RFC 1918 private ranges are not in the
+        trustworthy-origin list. The manifest A05.10 added parses correctly and CANNOT
+        drive an install over plain HTTP; the operator gets a shortcut that opens an
+        ordinary Chrome tab with full browser UI.
+        VERIFIED IN THE TREE rather than taken from the research: **zero** matches for
+        tls/ssl/cert/https in `config/control_plane_settings.py`, **zero** for
+        `ssl_context`/`certfile`/`keyfile` anywhere in `control_plane/`, and
+        `web.TCPSite(runner, cfg.bind_address, cfg.port)` is constructed with no SSL
+        argument. There is no way to serve HTTPS today.
+      why_evidence_cannot_settle_it: >-
+        Both answers are defensible and the cost falls on YOU, not on the code. A
+        self-signed CA means a one-time certificate-trust step on every device you use,
+        and buys real installability plus an encrypted channel — which matters
+        independently, because the bearer token currently crosses the LAN in clear text
+        (the open half of ESC-172's original panel dissent). Accepting a shortcut costs
+        nothing and leaves the app-ness half-delivered on Android.
+        iOS IS GENUINELY UNKNOWN and no amount of reading settles it: Safari removed
+        installability requirements in 2026 and no secure-context gate exists in WebKit's
+        manifest pipeline, but that lives in Safari's closed UI layer. **One device test
+        by you answers it**, which is why it is not worth building anything against.
+      panel_recommendation: >-
+        Ship the self-signed path as an OPT-IN, not a default: a `control_plane.tls`
+        block that, when set, serves HTTPS and otherwise changes nothing. A default that
+        demands a trust step on first use would break "works out of the box", which is
+        the instruction that produced DEBT-312 in the first place. Then the operator
+        opts in when he wants installability, and the honest limitation is stated in the
+        field description rather than discovered.
+      blocked_until_answered: >-
+        NOTHING in A05.10 step B — the five-destination shell, record rows, the synthesis
+        layer and every measured fix below are all transport-independent and proceed. Only
+        the INSTALLED-APP claim is blocked, and it is now stated honestly rather than
+        asserted.
+      premise_check: |
+        uv run python -c "
+        import pathlib
+        s = pathlib.Path('src/stackowl/config/control_plane_settings.py').read_text().lower()
+        print('EXPIRED the control plane can serve TLS now'
+              if any(k in s for k in ('tls', 'ssl', 'certfile', 'https'))
+              else 'HOLDS plain HTTP only — no secure context, so Android cannot install it')
+        "
     ESC_172_does_the_control_plane_bind_where_a_customer_can_reach_it:
       RESOLVED_2026_09_12_ANSWERED_by_Bakir_EVERY_INTERFACE_BY_DEFAULT: >-
         His words: *"Make it always available in all interfaces by default in platform.
@@ -51832,6 +51882,37 @@ items:
       two IDENTICAL paths different, because one wrapped after `6.9` and the other before
       `L10.6`. Canonicalised by separating command letters — NOT by stripping whitespace,
       which would fuse `M3.5 2` into `M3.52` and could call two DIFFERENT paths equal.
+    step_B_is_MEASURED_rather_than_styled_research_landed_2026_09_12: >-
+      The research half of the party returned after step A shipped and re-measured
+      against it, so these are facts about the CURRENT tree rather than the one it
+      started reading:
+      **`down` AND "COULD NOT MEASURE" ARE THE SAME COLOUR.** `health/aggregator.py`
+      coerces a double timeout to `status="down"`, and its OWN comment calls that case
+      "the one `down` with no exception behind it … most likely to be about the HOST
+      rather than the subsystem". The distinction survives in `message` and dies in
+      `status` — the field a glyph reads. That is a TYPE change (`Literal` gains a fourth
+      member), not a CSS one, and it is the highest-value non-cosmetic fix found.
+      **`lessons` HOLDS 5,964 ROWS AND THE ROUTE RETURNS 50 — 0.8%** — with no search and
+      no pagination, while `SqliteLessonsStore.search` already exists and is not wired to
+      the route. Built-but-not-wired, on the surface that most justifies having a
+      dashboard at all. Six of eight routes have no row cap and NO route accepts any
+      query parameter (zero matches for `request.query|offset|cursor|page` in
+      `server.py`).
+      **THE FIRST SCREEN BLOCKS ON THE SLOWEST PROBE.** Measured from the logs, n=47:
+      median 158ms, p90 3,186ms, and `health` has a **hard floor of 612ms** across 14
+      samples — never once faster — with a structural worst case of 15s (5s timeout x 2
+      retries). A blocking hero rollup would sit behind that.
+      **AND NO ROLLUP EXISTS ANYWHERE**: `/api/v1/health` returns 15 flat rows and a grep
+      for `overall|rollup|worst` across the page returns 0. It is computable in a few
+      lines precisely because `health/status.py`'s `Literal["ok","degraded","down"]` is
+      ONE vocabulary with uniform polarity — the condition a generic rollup normally
+      fails on.
+    the_research_ALSO_reached_the_delegation_defect_independently: >-
+      It found that chat-initiated delegations leave no durable row, from
+      `interactions.py`'s own docstring — the same defect A05.7 recorded from the other
+      direction. Worth stating because it changes what step B should NOT conclude: a
+      design built on 17 edges may be designing around a measurement artefact rather than
+      a small graph. The edge count is a floor, not the population.
     what_step_A_deliberately_does_NOT_do: >-
       No JS restructure, so every behavioural tripwire keeps testing what it was written
       to test. Still outstanding and named rather than implied: the five-destination
