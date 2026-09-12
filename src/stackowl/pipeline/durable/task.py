@@ -38,6 +38,45 @@ TaskStatus = Literal[
     "pending", "running", "recovering", "parked", "completed", "failed", "dead_letter"
 ]
 
+#: WHICH OF THOSE SEVEN MEAN THE LOOP IS FINISHED WITH THE ROW — named here,
+#: beside the vocabulary, because every reader that hand-listed them wrote the
+#: SAME two words and left the third out.
+#:
+#: MEASURED 2026-09-12, and it was a live defect on the operator's dashboard:
+#: `durable/activity.py` — the reader behind `GET /api/v1/tasks` — filtered
+#: `status NOT IN ('completed', 'failed')`, so the Work panel served **82 rows
+#: where 5 are live**. Seventy-two of the seventy-seven `dead_letter` rows were
+#: created on **2026-08-20**, twenty-three days earlier, in one batch. That
+#: module's own docstring says a set view "whose first screen is last month's
+#: failures answers the wrong question", and it was serving exactly that; its
+#: `DEFAULT_LIMIT` comment says "the live population is small (5 today)" beside a
+#: read returning 82.
+#:
+#: THE CAUSE IS THE WORD'S AGE, NOT CARELESSNESS. `dead_letter` arrived with
+#: migration 0119, after `completed`/`failed` had been the terminal pair for
+#: months, so anyone writing the set from memory writes two. `store.py`'s own
+#: `_ACTIVE_TASK_STATUSES` comment STILL says "Everything else (``completed``,
+#: ``failed``) is terminal" — prose with the same blind spot, beside a tuple that
+#: is correct only because it is a complement rather than a list.
+#:
+#: Both halves are declared and `test_the_task_lifecycle_is_a_TOTAL_partition`
+#: refuses any status that is in neither or in both, so an eighth word cannot be
+#: added without someone deciding, in writing, whether the loop is done with it.
+#: Deliberately NOT derived one from the other: a complement would give a new
+#: status a silent default, and the two defaults fail in opposite directions —
+#: defaulting to terminal HIDES live work from the only surface that shows it.
+LIVE_TASK_STATUSES: tuple[TaskStatus, ...] = (
+    "pending", "running", "recovering", "parked",
+)
+
+#: `parked` is NOT here, and that is the distinction this file already drew:
+#: "suspended awaiting an external signal" is unfinished work waiting on a human,
+#: which is precisely what a sweep must not sever. `store.any_active_task_for_lane`
+#: and `owls/activity.py` both record the same decision from their own side.
+TERMINAL_TASK_STATUSES: tuple[TaskStatus, ...] = (
+    "completed", "failed", "dead_letter",
+)
+
 #: A task never retried more times than this unless its row says otherwise.
 #: Bakir, 2026-08-17: "each task we may have around thirty limit to try. And this
 #: thirty can be in configuration" — so it is a per-row column with this default,

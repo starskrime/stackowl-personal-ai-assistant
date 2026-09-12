@@ -20894,6 +20894,114 @@ known_debt:
       work. The patch ASSERTS the skill still requires the gate before writing, so it
       cannot quietly remove its own enforcement. A05.10 was added as a real item with a
       measured gap; its `gap_check` reads HOLDS.
+  - id: DEBT-315
+    title: The Work panel served 82 rows where 5 were live, because "terminal" is one word older than the readers that list it
+    raised: 2026-09-12
+    found_by: >-
+      Measuring the live payloads before designing A05.10's synthesis layer. The rule
+      this programme applies to every count — break the window down by DAY before
+      believing it is current — turned the headline fact into its opposite.
+    the_symptom_and_the_number_that_refuted_it: >-
+      `GET /api/v1/tasks` returned **82 rows, 77 of them `dead_letter`**. Read as
+      today's state that is a platform whose work is 94% dead. By day it is nothing of
+      the kind: **72 of the 77 were created on 2026-08-20**, twenty-three days earlier,
+      in ONE batch; 3 more on 08-29, 1 on 08-18, 1 on 09-11. Today, 2026-09-12: 8
+      completed, 0 dead-lettered. Yesterday: 53 completed, 1.
+      So the panel was not reporting a crisis, it was reporting August — and colouring
+      it would have been the invented alarm this route's own docstring exists to
+      prevent ("a surface that cannot say so INVENTS AN ALARM, which is worse than the
+      silence it replaces").
+    the_cause_is_that_the_WORD_IS_YOUNGER_THAN_THE_READERS: >-
+      `dead_letter` arrived with migration 0119, after `completed`/`failed` had been the
+      terminal pair for months. So everyone who writes the terminal set from memory
+      writes TWO words, and FOUR live instances did:
+      (1) `durable/activity.py`'s set SQL — `NOT IN ('completed', 'failed')`, the defect;
+      (2) the same file's `unseen_other_owner` SQL — the DENOMINATOR, which would then
+      have counted other owners' dead letters against a set that drops mine;
+      (3) `store._ACTIVE_TASK_STATUSES`'s comment — "Everything else (`completed`,
+      `failed`) is terminal", right tuple and wrong rationale, correct only because it
+      is a COMPLEMENT rather than a list, which is precisely what a reader cannot see;
+      (4) the page's own note to the operator — "completed and failed rows are history",
+      which described the filter accurately and the intent wrongly.
+    THREE_OF_THE_FILES_INVOLVED_ALREADY_SAID_THE_ANSWER: >-
+      This is not a subtle defect, it is an unnamed one. `activity.py`'s module
+      docstring says a set view "whose first screen is last month's failures answers the
+      wrong question" — and it was serving exactly that. Its `DEFAULT_LIMIT` comment
+      says "the live population is small (5 today)" beside a read returning 82.
+      `_handle_tasks`'s docstring, written the same morning, says "MEASURED 2026-09-12:
+      five `secretary` rows sit `pending`" — describing a panel of five while the route
+      served eighty-two. Every one of those sentences is correct; none of them is a
+      predicate, so nothing enforced them.
+    what_shipped: >-
+      `LIVE_TASK_STATUSES` and `TERMINAL_TASK_STATUSES` declared once in
+      `durable/task.py`, beside the `TaskStatus` Literal they partition, and asked by
+      the readers instead of re-listed. `store._ACTIVE_TASK_STATUSES` is now an alias of
+      the live set rather than a fourth tuple.
+      **Both halves are declared, NEITHER is derived from the other**, and that is a
+      decision rather than duplication: a complement would give an eighth status a
+      silent default, and the two defaults fail in opposite directions — defaulting to
+      terminal HIDES live work from the only surface that shows it.
+      NET EFFECT, measured on the live database: the Work panel goes **82 rows -> 5**,
+      and those five are exactly the `secretary` rows the route's docstring describes.
+    and_the_ROWS_DO_NOT_VANISH_because_that_would_trade_an_alarm_for_an_omission: >-
+      `dead_letter` is the one ending this platform promises never to prune —
+      `task_loop_settings` calls it "the one record" of work that ended without
+      succeeding — and it WAS in this view. So the count leaves the SET and enters the
+      GAPS, in the idiom this route already uses for `truncated` and
+      `unseen_other_owner`: `dead_lettered` plus `newest_dead_letter_at`.
+      **The recency is the half that matters.** A bare "77 dead-lettered" reads as a
+      crisis; "77 dead-lettered, newest 2026-09-11" reads as the history it is, and that
+      difference IS the defect. A count without a date would have replaced a false
+      alarm with a quieter one.
+    the_test_that_should_have_caught_it_agreed_with_it_BY_CONSTRUCTION: >-
+      `test_finished_work_is_excluded_and_user_content_is_EXCERPTED` seeds `completed`
+      and `failed` — the SAME two words as the filter it checks. It could never have
+      disagreed, and it would have gone on passing forever. Superseded by a test that
+      seeds ONE ROW PER DECLARED STATUS from `get_args(TaskStatus)` and asserts the
+      returned set equals `LIVE_TASK_STATUSES`, so the assertion is about the PARTITION
+      rather than about the three words that are terminal today. Same cure as DEBT-300
+      and DEBT-314: a guard over a hand-named population is pinned only by one you
+      CONSTRUCT.
+    what_was_measured_and_deliberately_NOT_changed: >-
+      Two predicates spell `NOT IN ('completed','failed','dead_letter','parked')` —
+      `store.py:1455` and the rationale in `owls/activity.py` — and they are RIGHT,
+      because they ask a different question: unfinished AND not waiting on a human.
+      `parked` is live, not terminal: `store` records that "a parked task is waiting on
+      a human or an approval, which is precisely the work a 4 AM sweep must not sever",
+      and `owls/activity.py` records the same decision from its own side. Conflating
+      them into the new constant would have been the tidier change and the wrong one.
+    and_TWO_test_doubles_had_to_be_repaired_rather_than_patched: >-
+      The control plane's fake db answered `{"n": 3}` to ANY statement containing
+      `COUNT(*)`, so the new `COUNT(*) AS n, MAX(updated_at) AS newest` raised
+      `KeyError: 'newest'` against a double that could not have been right — a real
+      sqlite answers with every alias it was given. Adding `"newest": None` to the
+      canned row would have left the next aggregate to rediscover it, so the double
+      derives its shape from the statement's own `AS` aliases now.
+      AND MY OWN NEW GUARD MATCHED MY OWN PROSE — the FIFTH instance of that class this
+      session, after the owner-scope detector, the done-validate check, `_MARKUP_IDS`
+      and `test_NEITHER_new_handler_reads_instance_state`. It read LINES, so the three
+      comments this change added to explain the two-word predicate were themselves
+      offenders. It asks the AST now: `#` comments are not in the tree at all and a
+      docstring is the one string constant that opens a body, so what remains is a
+      string some statement actually uses. Both halves carry a control.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: done, test: done, validate: done, document: no_change_needed}
+    validated_LIVE_2026_09_12_13_11_after_start_sh: >-
+      Restarted; queried the RUNNING route over the network with a real token, not read
+      off disk. `GET /api/v1/tasks` returns **5 tasks**, all `pending`, all
+      `terminal_parent`, and they are byte-for-byte the five `secretary` rows
+      `_handle_tasks`'s docstring describes — against **82** before the change.
+      `dead_lettered: 77`, `newest_dead_letter_at: 2026-09-11T15:09:11.731007+00:00`,
+      `unseen_other_owner: 0`, `truncated: false`.
+      The INFO line carries both halves — `[tasks] activity.read: exit — served`
+      `{"unfinished": 5, "blocked_pending": 5, "dead_lettered": 77}` at 13:11:59Z — so
+      the count is readable from the journal and not only from the page. The served page
+      carries the `tasknote` element and the corrected operator sentence.
+    the_mutations_that_prove_the_guards: >-
+      Four, each restored from a file copy and re-run green: the two-word predicate
+      restored -> the structural scan, the vocabulary walk and the gap test all fail;
+      a status dropped from LIVE -> the partition and the walk fail; a status in BOTH
+      halves -> the same two fail; the dead-letter date replaced by None -> the
+      counted-and-dated test fails. 16 pass on restore.
   - id: DEBT-314
     title: The health vocabulary had five copies and no name, so the platform could not say "I could not measure it"
     raised: 2026-09-12

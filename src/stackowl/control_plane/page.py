@@ -383,7 +383,11 @@ INDEX_HTML: Final = """<!doctype html>
                    <th>Attempts</th><th>Next run</th><th>Last error</th></tr></thead>
         <tbody id="taskrows"></tbody>
       </table></div>
-      <p class="note">UNFINISHED work only — completed and failed rows are history.
+      <p class="note" id="tasknote"></p>
+      <p class="note">LIVE work only — a row the loop has finished with is not here.
+         This sentence used to say "completed and failed", naming two of the three
+         endings, and the filter under it named the same two: 82 rows were served
+         where 5 were live.
          <strong>Blocked</strong> says why a pending row is not moving:
          <code>terminal_parent</code> means its parent finished, so the loop will
          never run it, and that is correct rather than stuck. <code>none</code>
@@ -822,6 +826,20 @@ INDEX_HTML: Final = """<!doctype html>
         body.appendChild(row);
       });
     }
+    // THE DENOMINATOR, in the idiom this page already uses for edges. A set
+    // view that silently drops rows is the omission that replaces the alarm;
+    // the RECENCY is the half that matters, because "77 dead-lettered" reads as
+    // a crisis and "77, newest 2026-09-11" reads as the history it is.
+    var tparts = [(payload.tasks || []).length + " live"];
+    if (payload.dead_lettered) {
+      tparts.push(payload.dead_lettered + " dead-lettered, not shown (newest " +
+                  (payload.newest_dead_letter_at || "unknown").slice(0, 19) + ")");
+    }
+    if (payload.truncated) { tparts.push("TRUNCATED — more live rows than this page shows"); }
+    if (payload.unseen_other_owner) {
+      tparts.push(payload.unseen_other_owner + " belong to another owner");
+    }
+    $("tasknote").textContent = tparts.join(" · ");
     $("tasks").hidden = false;
   }
 

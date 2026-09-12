@@ -1055,6 +1055,14 @@ class ControlPlaneServer(SupervisedTask):
             "wired": True,
             "unseen_other_owner": gaps.unseen_other_owner,
             "truncated": gaps.truncated,
+            # WHAT THE TERMINAL FILTER TOOK OUT. Until 2026-09-12 this route
+            # served dead-lettered rows inside `tasks` — 82 rows where 5 were
+            # live, 72 of them created in one batch 23 days earlier. Removing
+            # them from the SET without reporting the COUNT would trade a false
+            # alarm for a silent omission, and `dead_letter` is the one ending
+            # this platform promises never to prune.
+            "dead_lettered": gaps.dead_lettered,
+            "newest_dead_letter_at": gaps.newest_dead_letter_at,
             "tasks": [
                 {
                     "task_id": t.task_id,

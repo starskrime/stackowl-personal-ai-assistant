@@ -49,6 +49,7 @@ from typing import Literal
 
 from stackowl.db.pool import DbPool
 from stackowl.infra.observability import log
+from stackowl.pipeline.durable.task import TERMINAL_TASK_STATUSES
 
 #: Why a pending row is not moving. `none` means the loop may take it now.
 BlockedReason = Literal[
@@ -59,6 +60,12 @@ BlockedReason = Literal[
 #: a goal is what somebody typed and `last_error` can carry a model's reply — so
 #: the set view shows enough to recognise a row and never the whole thing.
 _EXCERPT = 160
+
+#: Bound placeholders for the terminal set, so the STATUSES stay parameters and
+#: never reach the statement as text. Built from the tuple, so adding a terminal
+#: status cannot leave the placeholder count behind — the failure that shape
+#: produces is a silent `sqlite3.ProgrammingError` at runtime, not at review.
+_TERMINAL_MARKS = ", ".join("?" * len(TERMINAL_TASK_STATUSES))
 
 #: Bounded by construction. `pending` is a status the loop DRAINS, so the live
 #: population is small (5 today); the cap exists so a stuck loop cannot turn this
@@ -103,6 +110,21 @@ class TaskActivityGaps:
 
     unseen_other_owner: int
     truncated: bool
+
+    #: WHAT THE TERMINAL FILTER TOOK OUT, so removing it from the set does not
+    #: remove it from the operator's knowledge.
+    #:
+    #: `completed` and `failed` were never in this view and nobody expects them.
+    #: `dead_letter` WAS — 77 of them, 72 created in one batch on 2026-08-20 —
+    #: and it is the one ending this platform promises never to prune:
+    #: `task_loop_settings` calls it "the one record" of work that ended without
+    #: succeeding. So the count and its RECENCY are reported rather than the rows.
+    #:
+    #: The recency is the half that matters. "77 dead-lettered" reads as a crisis;
+    #: "77 dead-lettered, newest 2026-09-11" reads as history with a date on it,
+    #: and the difference is exactly the false impression the unfiltered list gave.
+    dead_lettered: int
+    newest_dead_letter_at: str | None
 
 
 def _as_int(value: object) -> int:
@@ -167,19 +189,43 @@ async def read_task_activity(
         "(SELECT p.status FROM tasks p WHERE p.owner_id = tasks.owner_id "
         "   AND p.task_id = tasks.parent_task_id) AS parent_status "
         "FROM tasks WHERE owner_id = ? "
-        "AND status NOT IN ('completed', 'failed') "
+        # ASKS THE VOCABULARY. This read `NOT IN ('completed', 'failed')` and
+        # served 82 rows where 5 were live — 72 of the 77 `dead_letter` rows it
+        # carried were created on 2026-08-20, twenty-three days earlier, in one
+        # batch. The docstring above calls that 'last month's failures' and says
+        # it answers the wrong question; the filter simply named two of the three
+        # terminal words, because `dead_letter` arrived after the other two.
+        f"AND status NOT IN ({_TERMINAL_MARKS}) "
         "ORDER BY updated_at DESC LIMIT ?",
-        (owner_id, now_iso, owner_id, owner_id, int(limit) + 1),
+        (owner_id, now_iso, owner_id, owner_id, *TERMINAL_TASK_STATUSES,
+         int(limit) + 1),
     )
     truncated = len(rows) > limit
     rows = rows[:limit]
 
+    # THE SAME PREDICATE AS THE SET ABOVE, and it has to be. This counted
+    # `NOT IN ('completed', 'failed')` while the set excluded three statuses, so
+    # 'unseen' would have counted other owners' dead letters against a set that
+    # drops mine — a denominator measuring a different population from its
+    # numerator, which is the error this file's own gaps docstring exists for.
     unseen_rows = await db.fetch_all(
-        "SELECT COUNT(*) AS n FROM tasks WHERE owner_id <> ? "
-        "AND status NOT IN ('completed', 'failed')",
-        (owner_id,),
+        f"SELECT COUNT(*) AS n FROM tasks WHERE owner_id <> ? "
+        f"AND status NOT IN ({_TERMINAL_MARKS})",
+        (owner_id, *TERMINAL_TASK_STATUSES),
     )
     unseen = int(unseen_rows[0]["n"]) if unseen_rows else 0
+
+    # WHAT THE FILTER TOOK OUT, counted rather than shown. One statement, owner
+    # scoped in the statement, and it asks for the NEWEST as well as the count —
+    # a bare 77 reads as a crisis and `77, newest three weeks ago` reads as the
+    # history it is. That difference is the whole defect this change repairs.
+    dead_rows = await db.fetch_all(
+        "SELECT COUNT(*) AS n, MAX(updated_at) AS newest FROM tasks "
+        "WHERE owner_id = ? AND status = 'dead_letter'",
+        (owner_id,),
+    )
+    dead_n = int(dead_rows[0]["n"] or 0) if dead_rows else 0
+    dead_newest = str(dead_rows[0]["newest"]) if dead_rows and dead_rows[0]["newest"] else None
 
     # THE DEPENDENCY HALF, RESOLVED BY READING ONLY. `CLAIMABLE_WHERE` is the SQL
     # half of the loop's predicate and stops here: `claimable()` finishes in
@@ -217,7 +263,12 @@ async def read_task_activity(
             )
         )
 
-    gaps = TaskActivityGaps(unseen_other_owner=unseen, truncated=truncated)
+    gaps = TaskActivityGaps(
+        unseen_other_owner=unseen,
+        truncated=truncated,
+        dead_lettered=dead_n,
+        newest_dead_letter_at=dead_newest,
+    )
     blocked_now = sum(1 for a in out if a.blocked != "none" and a.status == "pending")
     duration_ms = (time.monotonic() - t0) * 1000
     log.tasks.info(
@@ -228,6 +279,7 @@ async def read_task_activity(
             "blocked_pending": blocked_now,
             "unseen_other_owner": unseen,
             "truncated": truncated,
+            "dead_lettered": dead_n,
             "duration_ms": duration_ms,
         }},
     )

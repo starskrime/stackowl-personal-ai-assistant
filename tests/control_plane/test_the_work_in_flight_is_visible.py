@@ -10,6 +10,7 @@ and that it confesses rather than returning an empty list when it cannot look.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import pytest
@@ -36,7 +37,17 @@ class _Db:
         assert "owner_id" in sql, f"a statement lost its owner predicate: {sql}"
         self.seen.append(sql)
         if "COUNT(*)" in sql:
-            return [{"n": 3}]
+            # ANSWERS WHAT THE STATEMENT ASKED FOR, by its own aliases.
+            #
+            # This returned a fixed `{"n": 3}` for ANY aggregate, so the moment
+            # DEBT-315 added `COUNT(*) AS n, MAX(updated_at) AS newest` the reader
+            # raised `KeyError: 'newest'` against a double that could not have
+            # been right — a real sqlite answers with every alias it was given.
+            # Patching the canned row would have left the next aggregate to
+            # rediscover this, so the double derives its shape instead.
+            aliases = re.findall(r"\bAS\s+(\w+)", sql)
+            row: dict[str, Any] = {a: (3 if a == "n" else None) for a in aliases}
+            return [row or {"n": 3}]
         return self._rows
 
 

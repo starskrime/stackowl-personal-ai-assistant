@@ -29,7 +29,12 @@ from stackowl.pipeline.durable.failure_class import (
     permanent_classes,
     wants_reshaping,
 )
-from stackowl.pipeline.durable.task import DEFAULT_MAX_ATTEMPTS, DurableTask, TaskStatus
+from stackowl.pipeline.durable.task import (
+    DEFAULT_MAX_ATTEMPTS,
+    LIVE_TASK_STATUSES,
+    DurableTask,
+    TaskStatus,
+)
 from stackowl.tenancy import DEFAULT_PRINCIPAL_ID, OwnedRepository
 
 _SELECT_FIELDS = (
@@ -2104,12 +2109,18 @@ def _row_to_task(row: dict[str, Any]) -> DurableTask:
     )
 
 
-#: Statuses that mean a task is still in flight. Everything else
-#: (``completed``, ``failed``) is terminal and releases the lane.
+#: Statuses that mean a task is still in flight — ASKED, not re-listed.
+#:
+#: The sentence that used to be here said everything else was
+#: ``completed``/``failed``, omitting ``dead_letter``: right tuple, wrong
+#: rationale, and the same two-word blind spot that made the control plane's
+#: Work panel serve 82 rows where 5 were live (2026-09-12). This tuple was only
+#: ever correct because it is the COMPLEMENT of terminal rather than a list of
+#: it, which is exactly the thing a reader cannot see.
 #:
 #: ``parked`` counts: a parked task is waiting on a human or an approval, which is
 #: precisely the work a 4 AM sweep must not sever. It is suspended, not finished.
-_ACTIVE_TASK_STATUSES: tuple[str, ...] = ("pending", "running", "recovering", "parked")
+_ACTIVE_TASK_STATUSES: tuple[str, ...] = LIVE_TASK_STATUSES
 
 
 async def any_active_task_for_lane(db: DbPool, session_key: str) -> bool:
