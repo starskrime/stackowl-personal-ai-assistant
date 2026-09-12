@@ -146,6 +146,23 @@ INDEX_HTML: Final = """<!doctype html>
        ownership is recorded per pair, not per owl.</p>
   </section>
 
+  <section id="memory" hidden>
+    <h2>Memory</h2>
+    <div class="wrap"><table>
+      <thead><tr><th>About</th><th>Remembered</th><th>Durability</th></tr></thead>
+      <tbody id="curatedrows"></tbody>
+    </table></div>
+    <p class="note">What the platform has been told to remember, from
+       <code>~/.stackowl/memory</code> — the same notes <code>/memory search</code>
+       reads. <code>user</code> is about you; the rest are per-owl working notes.</p>
+    <h2>Learned from doing the work</h2>
+    <div class="wrap"><table>
+      <thead><tr><th>Kind</th><th>Lesson</th><th>When</th></tr></thead>
+      <tbody id="lessonrows"></tbody>
+    </table></div>
+    <p class="note" id="memorynote"></p>
+  </section>
+
   <section id="agents" hidden>
     <h2>Agents</h2>
     <div class="wrap"><table>
@@ -320,8 +337,54 @@ INDEX_HTML: Final = """<!doctype html>
     { id: "config",    path: "/api/v1/config",    render: renderConfig },
     { id: "skills",    path: "/api/v1/skills",    render: renderSkills },
     { id: "tasks",     path: "/api/v1/tasks",     render: renderTasks },
-    { id: "agents",    path: "/api/v1/agents",    render: renderAgents }
+    { id: "agents",    path: "/api/v1/agents",    render: renderAgents },
+    { id: "memory",    path: "/api/v1/memory",    render: renderMemory }
   ];
+
+  function renderMemory(payload) {
+    var cur = $("curatedrows");
+    var les = $("lessonrows");
+    cur.textContent = "";
+    les.textContent = "";
+    if (!payload.wired) {
+      var r = document.createElement("tr");
+      cell(r, "no db wired", "mut");
+      cur.appendChild(r);
+      $("memory").hidden = false;
+      return;
+    }
+    (payload.curated || []).forEach(function (t) {
+      (t.entries || []).forEach(function (e) {
+        var row = document.createElement("tr");
+        cell(row, t.target, t.target === "user" ? "" : "mut");
+        cell(row, e.text);
+        cell(row, e.durability, "mut");
+        cur.appendChild(row);
+      });
+    });
+    (payload.lessons || []).forEach(function (l) {
+      var row = document.createElement("tr");
+      cell(row, l.source_type, "mut");
+      cell(row, l.content);
+      cell(row, l.created_at, "mut");
+      les.appendChild(row);
+    });
+    // THE DENOMINATOR IS THE POINT. The lessons table is a WINDOW onto 5,964
+    // rows; without the totals beside it a reader takes fifty for all of them.
+    // And each other store says what KIND it is, because `staged_facts` is
+    // short-term conversation history and rendering it as "memories" would
+    // present a transcript as knowledge.
+    var parts = [];
+    var total = payload.total || 0;
+    parts.push("showing " + (payload.lessons || []).length + " of " + total +
+               " lessons (" + JSON.stringify(payload.counts_by_source || {}) + ")");
+    (payload.other_stores || []).forEach(function (st) {
+      parts.push(st.store + ": " + (st.rows === null ? "unreadable" : st.rows) +
+                 " — " + st.kind);
+    });
+    $("memorynote").textContent = parts.join(" · ");
+    $("memory").hidden = false;
+  }
 
   function renderAgents(payload) {
     var body = $("agentrows");

@@ -65,6 +65,12 @@ if TYPE_CHECKING:
 
 from stackowl.supervisor.supervisor import SupervisedTask
 
+#: How many lessons the memory browser shows at once. The corpus is 5,964 rows
+#: and grows on every turn, so the page is a WINDOW onto it — the counts beside
+#: it are what stop that window reading as the whole.
+_MEMORY_PAGE = 50
+
+
 #: How far back `recent_turns` looks on the agents route — the same three days
 #: `owls_list` uses, so the two surfaces cannot report different activity for the
 #: same owl. MEASURED 2026-09-11: eight of eleven owls have at least one outcome
@@ -156,6 +162,7 @@ class ControlPlaneServer(SupervisedTask):
         app.router.add_get("/api/v1/tasks", self._handle_tasks)
         app.router.add_get("/api/v1/agents", self._handle_agents)
         app.router.add_post("/api/v1/login", self._handle_login)
+        app.router.add_get("/api/v1/memory", self._handle_memory)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -510,6 +517,126 @@ class ControlPlaneServer(SupervisedTask):
                 "principal_id": principal.principal_id,
                 "owls": len(owned),
                 "owned_skills": sum(len(v) for v in owned.values()),
+                "duration_ms": duration_ms,
+            }},
+        )
+        return web.json_response(payload)
+
+    async def _handle_memory(self, request: Any) -> Any:
+        """`GET /api/v1/memory` — what the platform has actually learned.
+
+        **A05.5's GAP NAMED THE WRONG STORE, and that is the whole finding.** It
+        said "the 237 facts in `staged_facts` are reachable from no surface" and
+        that `committed_facts` "holds ZERO rows". Both are true and neither is
+        the answer:
+
+        * `committed_facts` is RETIRED, not broken — 0 rows since migration 0112,
+          and `pipeline/state.py` records that its promotion path is "dead on
+          both ends". A browser over it would show an empty retired table.
+        * `staged_facts` is SHORT-TERM CONVERSATION HISTORY. The same comment
+          calls those rows "ONLY short-term history … the mirror that lets the
+          agent know what it already told him". Rendering 237 of them under the
+          heading "what the platform remembers about you" would MISREPRESENT a
+          transcript as knowledge.
+        * `lessons` holds **5,964 rows** — 5,689 reflections, 218 skill, 57
+          tool-heuristic — written continuously, newest twenty minutes before
+          this route existed, and reachable from NO command and NO route.
+
+        So the memory an operator is owed is the lessons corpus, and the other
+        stores appear as COUNTS with their nature stated rather than as rows
+        pretending to be memory. A surface that shows the wrong store confidently
+        is worse than one that shows nothing.
+
+        IT EXTENDS THE EXISTING STORE. `LessonsStore` already had `search` (which
+        needs a `query_embedding`) and `count`, and nothing between them —
+        `recent()` is the browse primitive added beside them, because an operator
+        asking "what do you remember" has no query to embed and should not have
+        to guess one.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.memory: entry")
+
+        principal, refusal = self._guard(request, "memory")
+        if principal is None:
+            return refusal
+
+        if self._db is None:
+            log.control_plane.warning(
+                "[control_plane] server.memory: exit — no db wired, so there is "
+                "nothing to report",
+                extra={"_fields": {"principal_id": principal.principal_id}},
+            )
+            return web.json_response({"lessons": [], "wired": False}, status=503)
+
+        from stackowl.learning.lessons_store import SqliteLessonsStore
+
+        store = SqliteLessonsStore(self._db)
+        lessons = await store.recent(limit=_MEMORY_PAGE)
+        by_source = await store.counts_by_source()
+        from stackowl.memory.activity import (
+            read_curated_entries,
+            read_other_memory_counts,
+        )
+
+        other = await read_other_memory_counts(
+            self._db, owner_id=principal.principal_id
+        )
+        curated = read_curated_entries()
+
+        payload = {
+            "wired": True,
+            # CURATED FIRST, because it is what the operator means. `/memory
+            # search` already reads these and nothing shows them as a SET —
+            # MEASURED: 19 files, 64 entries, of which USER.md's 7 are about the
+            # person and the rest are per-owl notes. This is the smallest and the
+            # most load-bearing of the five stores.
+            #
+            # EVERY KEY BELOW IS WRITTEN HERE, not returned ready-made by a
+            # helper. The field-bijection guard walks the `_handle_*` methods for
+            # the keys a route emits, so a payload assembled in a store module is
+            # invisible to it — eight fields were, measured off-tree before this
+            # landed. Every other route on this dashboard declares its shape in
+            # the handler and this keeps that true.
+            "curated": [
+                {
+                    "target": t.target,
+                    "entries": [
+                        {"text": e.text, "durability": e.durability}
+                        for e in t.entries
+                    ],
+                }
+                for t in curated
+            ],
+            "lessons": [
+                {
+                    "lesson_id": r.lesson_id,
+                    "source_type": r.source_type,
+                    "source_ref": r.source_ref,
+                    "content": r.content,
+                    "created_at": r.created_at,
+                }
+                for r in lessons
+            ],
+            "counts_by_source": by_source,
+            "total": sum(by_source.values()),
+            # NAMED, NOT MERGED. Each of these is a different KIND of remembering
+            # and the page says which is which; adding them into one "memories"
+            # number is how a transcript gets counted as knowledge.
+            "other_stores": [
+                {"store": o.store, "kind": o.kind, "rows": o.rows, "note": o.note}
+                for o in other
+            ],
+        }
+
+        duration_ms = (_time.monotonic() - t0) * 1000
+        log.control_plane.info(
+            "[control_plane] server.memory: exit — served",
+            extra={"_fields": {
+                "principal_id": principal.principal_id,
+                "curated_entries": sum(len(t.entries) for t in curated),
+                "shown": len(lessons),
+                "total_lessons": sum(by_source.values()),
                 "duration_ms": duration_ms,
             }},
         )

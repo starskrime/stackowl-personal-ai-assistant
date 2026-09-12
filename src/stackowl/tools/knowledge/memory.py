@@ -18,7 +18,8 @@ X4 forbids, and the model already knows this one.
 Search remains a single action-dispatching read over the tri-store substrate
 (``MemoryBridge``: LanceDB vectors + Kuzu graph + SQLite FTS5). It is a thin
 wrapper: every write routes through the shared provenance chokepoints in
-:mod:`stackowl.commands.memory_helpers` (``remember_fact`` / ``forget_fact``) so
+:mod:`stackowl.commands.memory_helpers` (``forget_fact``; the remember half went
+with ``FactPromoter`` in D08.2) so
 the slash command and this tool share ONE code path, and reads route through
 ``MemoryBridge.recall`` so cross-source vector+FTS hybrid recall is handled by
 the bridge — NO Python-side aggregation glue ([[feedback_use_existing_infrastructure]]).

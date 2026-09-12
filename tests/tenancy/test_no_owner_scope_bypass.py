@@ -272,9 +272,11 @@ _KNOWN_UNSCOPED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
         # TODO(Epic 9 multi-user): owner-scope cost_records purge in cost_command
         ("commands/cost_command.py", "cost_records"),
         # TODO(Epic 9 multi-user): owner-scope memory-stat reads in memory_command
-        # TODO(Epic 9 multi-user): owner-scope memory-stat reads in memory_helpers
-        ("commands/memory_helpers.py", "committed_facts"),
-        ("commands/memory_helpers.py", "staged_facts"),
+        # `memory_helpers` REMOVED from this allowlist 2026-09-12 (A05.5). Its two
+        # entries existed for `_STATS_SQL` and `fetch_all_committed_for_reindex`,
+        # both deleted: zero callers anywhere in `src/` or `tests/`, over a store
+        # migration 0112 retired to 0 rows. An allowlist entry outliving the read
+        # it excused is the residue this file's own history records.
         # TODO(Epic 9 multi-user): owner-scope owl DNA reset in owls_command
         ("commands/owls_command.py", "owl_dna"),
         # ("commands/owls_command.py", "dna_checkpoints") REMOVED 2026-09-01 —

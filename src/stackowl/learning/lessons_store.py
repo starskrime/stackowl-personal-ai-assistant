@@ -60,6 +60,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -90,6 +91,34 @@ ON CONFLICT(lesson_id) DO UPDATE SET
 #: constructions. COUNT alone would miss an in-place revision — lesson_id is
 #: "<source>:<source_ref>", so a re-mined lesson upserts the same row.
 _STAMP_SQL = "SELECT COUNT(*) AS n, COALESCE(MAX(updated_at), '') AS mx FROM lessons"
+
+#: How much of a lesson a BROWSER shows. A lesson is model-authored prose about a
+#: real turn — long enough to be worth reading, long enough that fifty of them
+#: unabridged is a wall rather than a view.
+_BROWSE_EXCERPT = 300
+
+
+def _excerpt(text: str) -> str:
+    return text if len(text) <= _BROWSE_EXCERPT else text[: _BROWSE_EXCERPT - 1] + "…"
+
+
+@dataclass(frozen=True)
+class LessonRow:
+    """One lesson, for a BROWSER — typed rather than a dict shaped for the wire.
+
+    A store that returned JSON-ready dicts would put the wire contract here,
+    where no reader of the surface will look for it, and where the control
+    plane's field-bijection guard cannot see it: that guard walks the `_handle_*`
+    methods for the keys a route emits, so a payload assembled in a store module
+    is invisible to it. Every other route on this dashboard declares its shape in
+    the handler; this keeps that true.
+    """
+
+    lesson_id: str
+    source_type: str
+    source_ref: str | None
+    content: str
+    created_at: str
 
 _SELECT_ALL_SQL = (
     "SELECT lesson_id, source_type, source_ref, content, embedding, metadata "
@@ -467,6 +496,69 @@ class SqliteLessonsStore:
         rows = await self._db.fetch_all("SELECT COUNT(*) AS n FROM lessons", ())
         return int(rows[0]["n"])
 
+    async def counts_by_source(self) -> dict[str, int]:
+        """How many lessons of each `source_type`. MEASURED 2026-09-12: reflection
+        5,689, skill 218, tool_heuristic 57 — so a browser that showed only the
+        newest page would imply the corpus is one kind when it is three."""
+        rows = await self._db.fetch_all(
+            "SELECT source_type, COUNT(*) AS n FROM lessons GROUP BY source_type", ()
+        )
+        return {str(r["source_type"]): int(r["n"]) for r in rows}
+
+    async def recent(
+        self, *, limit: int = 50, source_filter: str | None = None
+    ) -> list[LessonRow]:
+        """The newest lessons, for BROWSING rather than recall.
+
+        THE STORE HAD `search` AND `count` AND NOTHING BETWEEN THEM. `search`
+        takes a `query_embedding`, which is the right primitive for a turn asking
+        "what do I know about X" and the wrong one for an operator asking "what
+        do you remember at all" — that person has no query, and requiring one
+        would make them guess at their own platform's memory.
+        So this is the browse primitive, added beside search rather than as a
+        second store: same table, same module, one more question it can answer.
+
+        `source_filter` is BOUND, never interpolated — the same reason `search`
+        gives: a filter that silently matched everything would show tiers the
+        caller did not ask for, and here that is the difference between "your
+        reflections" and everything the platform has ever learned.
+        """
+        t0 = time.monotonic()
+        log.memory.info(
+            "[learning] lessons_store.recent: entry",
+            extra={"_fields": {"limit": limit, "source_filter": source_filter}},
+        )
+        where = "WHERE source_type = ?" if source_filter else ""
+        params: tuple[object, ...] = (
+            (source_filter, int(limit)) if source_filter else (int(limit),)
+        )
+        rows = await self._db.fetch_all(
+            "SELECT lesson_id, source_type, source_ref, content, created_at "  # noqa: S608
+            f"FROM lessons {where} ORDER BY created_at DESC LIMIT ?",
+            params,
+        )
+        out = [
+            LessonRow(
+                lesson_id=str(r["lesson_id"]),
+                source_type=str(r["source_type"]),
+                source_ref=(str(r["source_ref"]) if r["source_ref"] else None),
+                # EXCERPTED. A lesson is model-authored prose about a real turn and
+                # can run long; a browser shows enough to recognise one.
+                content=_excerpt(str(r["content"] or "")),
+                created_at=str(r["created_at"]),
+            )
+            for r in rows
+        ]
+        log.memory.info(
+            "[learning] lessons_store.recent: exit — served",
+            extra={"_fields": {
+                "rows": len(out),
+                "source_filter": source_filter,
+                "duration_ms": (time.monotonic() - t0) * 1000,
+            }},
+        )
+        return out
+
     async def _corpus(self) -> dict[int, tuple[list[dict[str, object]], np.ndarray]]:
         """The corpus GROUPED BY embedding dimension, cached in-process.
 
@@ -562,7 +654,7 @@ class SqliteLessonsStore:
         return parsed if isinstance(parsed, dict) else {}
 
 
-__all__ = ["SqliteLessonsStore", "unpack_embedding"]
+__all__ = ["LessonRow", "SqliteLessonsStore", "unpack_embedding"]
 
 
 #: The break in the live quality distribution: 7 lessons at 0.5, 216 at 0.6.

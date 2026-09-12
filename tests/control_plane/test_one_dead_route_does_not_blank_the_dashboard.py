@@ -44,7 +44,16 @@ import pytest
 
 from stackowl.control_plane.page import INDEX_HTML
 
-_SECTIONS = ("health", "schedules", "config", "skills", "tasks", "agents")
+#: DERIVED FROM THE PAGE, never listed. The page declares its panels TWICE by
+#: construction — once as a `<section id=… hidden>` element and once in the
+#: `PANELS` array — and `test_the_panel_list_is_written_ONCE` below is the
+#: bijection between those two. A third copy HERE is the very defect this file
+#: exists to pin: the harness carried two hand-written route lists and A05.6
+#: made both of them wrong, and this constant was the third, which A05.5's
+#: `memory` panel would have made wrong in its turn. `<section id="gate">` is
+#: deliberately NOT hidden — it is the sign-in gate, not a panel — so the
+#: `hidden` attribute is exactly what separates the two kinds of section.
+_SECTIONS = tuple(re.findall(r'<section id="(\w+)" hidden>', INDEX_HTML))
 
 _HARNESS = r"""
 const fs = require("fs");
@@ -131,6 +140,10 @@ def test_a_healthy_platform_renders_every_section(tmp_path: Path) -> None:
     page renders nothing under this harness at all."""
     out = _run(tmp_path, 200)
 
+    assert _SECTIONS, (
+        "no `<section id=… hidden>` was found in the page — `_SECTIONS` is now "
+        "derived, so an empty one makes every assertion here vacuously true"
+    )
     assert out["after_load"] == list(_SECTIONS), (
         f"a fully healthy platform did not render every section: {out}"
     )

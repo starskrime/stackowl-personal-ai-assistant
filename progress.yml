@@ -431,6 +431,25 @@ current:
       budget governor MEASURES steps, time, cost and tokens and cannot stop anything,
       and per-agent budget ENFORCEMENT exists in no self-hostable system surveyed, so
       it is differentiation rather than catch-up. A05.1 stays next after it.
+    A05_5_SHIPPED_2026_09_12_and_A05_7_IS_NEXT_WITH_NO_GAP_CHECK: >-
+      A05.5 is done and pushed: `GET /api/v1/memory` plus a Memory panel — 19 curated
+      targets / 64 entries, 50 lessons against a 5,964 denominator, three other stores
+      counted with their kind stated and no merged total. Validated live 05:04:55.
+      **THE REMAINING A05 SURFACE IS A05.7** (agent interactions), and `gap_check` names
+      it as one of SEVEN absence-claiming gaps that still carry no check — alongside
+      D10.5, A03.1, A03.2, A07.1, A06.2 and A06.5. Seven of the first nine gaps examined
+      in this series were wrong, every one in the same direction (a capability that EXISTS
+      and is UNREACHABLE, not one that is missing), so A05.7's gap is to be re-derived
+      from the tree BEFORE anything is built from it. Its wording — "delegation,
+      parliament and owl-to-owl messages happen inside mailboxes nobody can watch" — has
+      exactly the shape of the six that were overstated.
+      TWO THINGS THIS LOOP LEFT MEASURED RATHER THAN FIXED, so the loop that decides has
+      the number instead of re-measuring: **21 f-string SQL statements in `src/` name
+      their relation dynamically** and are therefore invisible to the owner-scope detector
+      (most benign — `tenancy/owned_repository.py` IS the scoping layer), and
+      **`docs_touching.py` reads declared `Source:` headers only, so it is silent about 35
+      of 84 documents** — which is how D18.2's stale claim had to be found by grepping a
+      filename.
     A05_3_SHIPPED_2026_09_12_and_A05_5_is_next_but_READ_ITS_GAP_FIRST: >-
       A05.3 is done on `4e7fa32a`: `GET /api/v1/agents`, an Agents panel, and `unbounded`
       computed by the enforcement path's own `effective_bounds` fold. Live: 11 agents,
@@ -20747,6 +20766,68 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-311
+    title: The example config emitted a credential VALUE, and the guard held by accident
+    raised: 2026-09-12
+    found_by: >-
+      The 70th full suite, RED on `dfe04ede` — `1 failed, 13147 passed, 17 skipped in
+      2643.71s` (rc=1), `SUITE TREE STILL`. One failure,
+      `tests/test_the_example_config_cannot_go_stale.py::test_no_secret_value_reaches_the_artifact`:
+      `a credential-shaped default reached the example: ['control_plane.password = admin']`.
+      Mine, from DEBT-310, shipped four hours earlier.
+    why_the_gate_could_not_see_it: >-
+      That file carries FOUR tests and only TWO have `@pytest.mark.tripwire`. The secret
+      check was not one of them, and the file sits DIRECTLY in `tests/`, so no
+      `tests/<package>` path reaches it either. A 0.18-second assertion was therefore
+      reachable only by a 44-minute run. Nothing recorded a reason for the omission — the
+      two marked tests are the two written first — so it reads as an oversight rather than
+      a decision, and it is marked now.
+    the_root_cause_is_a_GUARD_OVER_AN_EMPTY_POPULATION: >-
+      NOT "someone set a password default". The generator emits **every** default verbatim,
+      while the artifact's own header has said *"Secrets do NOT belong in this file. Store
+      a REFERENCE instead"* since D18.2. The rule lived in PROSE and nothing enforced it,
+      so "no secret reaches the artifact" was true by luck: MEASURED 2026-09-12, **13 of
+      the 215 emitted fields are credential-named and TWELVE defaulted to `""`**. The
+      thirteenth was always going to break it, and the operator asked for `admin`/`admin`
+      by name — so the default is not the defect.
+      This is DEBT-300's lesson eight days on, and DEBT-299's before it: a guard over a
+      population that is currently empty is pinned by nothing. Both were about a
+      CONSTRUCTED population being the only way to pin a rule, and this one had neither a
+      rule nor a construction.
+    what_shipped: >-
+      `gen_config_example.py` MASKS a credential-shaped field, emitting the reference form
+      the header prescribes — `password: keychain:stackowl-control-plane-password` — with
+      the field's own description comment still stating what it is and what it defaults to.
+      `is_credential_name` decides, the SAME predicate the log redactor asks and the one
+      DEBT-309 reduced four vocabularies to.
+      IT IMPROVES THE TWELVE, NOT ONLY THE THIRTEENTH: `bot_token: ""` taught an operator
+      nothing about how to supply a credential, and each now shows its own reference.
+      All 13 masked, the artifact still loads (`Settings(**data)`), the generator is still
+      byte-deterministic.
+    and_the_TEST_carried_a_fourth_copy_of_the_vocabulary: >-
+      Its walk asked `any(w in name for w in ("key", "token", "secret", "password"))` — a
+      hand-written word list, inside the guard, for the question DEBT-309 spent an entire
+      item collapsing to one predicate. It asks `is_credential_name` now, so a field that
+      starts being treated as a credential anywhere is treated as one here without a
+      second edit.
+      AND THE ASSERTION IS STRONGER, NOT WEAKER: "non-empty" passed the twelve `""` lines;
+      "starts with `keychain:` or `file:`" fails those too. A floor of 13 keys guards
+      against the walk going blind.
+    mutation_proven_both_directions: >-
+      Disabling the mask in the generator -> 2 failed (the byte-comparison guard and the
+      new constructed-population control), restored -> 5 passed. Putting the literal
+      `password: admin` back into the checked-in artifact -> `test_no_secret_value_...`
+      failed, restored -> 5 passed. **The secret check did NOT fire on the first
+      mutation**, and that is correct rather than a weakness: it reads the ARTIFACT, so it
+      pins the DATA, and only `test_the_masking_fires_on_a_CONSTRUCTED_secret` pins the
+      RULE — DEBT-299's finding, applied deliberately this time instead of discovered.
+    fifth_surface: >-
+      D18.2 said the generator "emits every field with its default", which this makes false
+      for 13 fields. Corrected in the same change. `docs_touching.py` could NOT name it —
+      it reads declared `Source:` headers and D18.2 declares none of the changed paths —
+      so this one was found by grepping for the artifact's filename. The tool says
+      truthfully that 35 of 84 documents declare no Source and it cannot speak for them;
+      this is what that gap costs.
   - id: DEBT-310
     title: A login page for the dashboard, credentials from config
     raised: 2026-09-12
@@ -50939,6 +51020,167 @@ items:
       whichever store it happened to query.
     depends_on: ['A05.1']
     blocks: []
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: partial}
+    brainstorm_2026_09_12_THE_GAP_NAMED_THE_WRONG_STORE_THREE_TIMES: >-
+      Its `gap_check` was ALREADY REFUTED when this loop opened — `commands/memory_helpers.py`
+      queries `staged_facts` — so the sentence was re-derived from the tree before anything
+      was built. Every clause points somewhere other than the answer.
+      `committed_facts` is RETIRED, not broken: 0 rows since migration 0112, and
+      `pipeline/state.py` records its promotion path as "dead on both ends". A browser over
+      it renders an empty retired table.
+      `staged_facts` is SHORT-TERM CONVERSATION HISTORY — 178 raw turns, 57 rolling
+      summaries, 2 agent_self. The same comment calls those rows "ONLY short-term history …
+      the mirror that lets the agent know what it already told him". Rendering them under
+      "what the platform remembers about you" would present a TRANSCRIPT AS KNOWLEDGE. And
+      they are not unreachable: the model's `memory` tool searches them. They are
+      unreachable BY A PERSON, which is a different sentence and a different fix.
+      CURATED MEMORY IS FILES, NOT A TABLE — `~/.stackowl/memory/*.md`, read by
+      `CuratedMemory`. MEASURED: **19 files, 64 entries, 22,321 chars**, of which `USER.md`
+      holds 7 (the first being "Bakir prefers root-cause fixes over patches."). That is
+      what the operator means by "see memories", and `/memory search` already reads it.
+      AND THE GAP NEVER MENTIONS `lessons` AT ALL: **5,964 rows** — 5,689 reflection, 218
+      skill, 57 tool_heuristic — spanning 2026-08-15 to twenty minutes before this route
+      existed, and reachable from NO command and NO route. It is the largest thing the
+      platform has learned and the gap is silent about it.
+    the_ROOT_CAUSE_is_that_the_gap_was_WRITTEN_FROM_DEAD_CODE: >-
+      `memory_helpers._STATS_SQL` counts exactly the two stores the gap names —
+      `staged_facts` and `committed_facts` — and it has ZERO callers. So do
+      `collect_stats`, `format_stats`, `format_search_hits`,
+      `fetch_all_committed_for_reindex` and `RememberSourceType`: **145 lines of the 359**,
+      all of it the command-layer machinery for a memory model migration 0112 retired.
+      That is WHY the gap is wrong rather than a restatement that it is. The most readable
+      description of "how memory works here" was a module describing a store with no
+      writer, and a sentence written from it inherits its world. Nothing marked it dead;
+      `git` holds the old code, the tree held it too.
+      DELETED — code, the two stranded owner-scope allowlist entries (both existed for
+      `_STATS_SQL` and the dead reindex read), and the one prose site that stated a
+      DELETED function as current (`tools/knowledge/memory.py` cited `remember_fact`,
+      which does not exist and went with `FactPromoter` in D08.2). The OTHER three
+      `remember_fact` mentions are RECORDS of that retirement — "`remember_fact` stood
+      here and went with FactPromoter" — and correcting a record to match today is
+      falsifying history, which is the boundary CLAUDE.md draws.
+    implement_2026_09_12: >-
+      `GET /api/v1/memory` returns the curated entries FIRST (per target, so "what you
+      remember about me" and "what you remember about working as scout" stay distinct),
+      then recent lessons with `counts_by_source` beside them, then every other store
+      COUNTED and LABELLED BY KIND. A test pins that no merged `memories` number exists:
+      adding a transcript to curated notes and calling the sum knowledge is the one thing
+      this surface must not do.
+      IT EXTENDS THE EXISTING STORE RATHER THAN ADDING ONE. `SqliteLessonsStore` had `search`
+      (which requires a `query_embedding`) and `count`, and NOTHING BETWEEN THEM —
+      `recent()` is the browse primitive, because an operator asking "what do you
+      remember" has no query to embed and should not have to guess one at their own
+      platform's memory. `counts_by_source()` sits beside it so a 50-row window cannot
+      read as the whole 5,964.
+      The curated half reads through `CuratedMemory`, the same object `/memory search`
+      uses — a second parser of those files would be two answers to one question, and they
+      would drift the first time the format changed.
+    and_THE_FIELD_BIJECTION_GUARD_CAUGHT_A_DESIGN_SMELL_off_tree: >-
+      Checking it before applying reported **EIGHT unemitted fields** — `content`,
+      `created_at`, `entries`, `kind`, `rows`, `source_type`, `store`, `target`. The guard
+      walks the `_handle_*` methods for the keys a route emits, and my payload rows came
+      ready-made from `SqliteLessonsStore.recent`, `read_curated_entries` and
+      `read_other_memory_counts`. So the guard could not see them.
+      IT WAS RIGHT, AND NOT ONLY ABOUT ITSELF. Every other route on this dashboard
+      declares its wire shape in the handler, which is where a reader of the surface looks
+      for the contract; a store returning JSON-ready dicts had quietly moved that contract
+      into a module nobody reading the API would open. The three helpers now return TYPED
+      rows (`LessonRow`, `StoreCount`, `CuratedTarget`) and the handler writes every
+      key. Re-checked: **41 field reads, ZERO unemitted**.
+      AND THE SAME CHECK SURFACED A LOOP-VARIABLE COLLISION. `s` is already the SETTINGS
+      row variable from A05.2, and the store loop reused it — the guard unions every read
+      under a name, so a settings field and a store field would have vouched for each
+      other and neither would be pinned. Renamed to `st`.
+      THE PROBE THEN FAILED FOR ITS OWN REASON, third distinct harness artefact in three
+      loops: `@dataclass` resolves its owner through `sys.modules[cls.__module__]`, so
+      exec'ing the patched store into a module object that was never registered raises
+      `'NoneType' object has no attribute '__dict__'` — which reads exactly like a
+      malformed dataclass. One line, and all four properties pass again.
+    test_THREE_MUTATIONS_all_caught_proven_off_tree: >-
+      The browse primitive was proven against an in-memory fixture before the tree came
+      free, by loading the PATCHED `lessons_store` source as a module rather than editing
+      the real one — the spans applied to a copy, `exec`'d with its real imports. Four
+      properties: newest-first, excerpted content, the bound source filter, and the
+      per-source counts. Each mutation applied to the scratch span, run, restored FROM A
+      FILE COPY with a final green re-run: newest-first inverted (4 oks -> 2), the source
+      filter ignored (-> 2), content no longer excerpted (-> 3). Restored: 4.
+      AND THE HARNESS FAILED FOR ITS OWN REASON FIRST, which this file keeps recording in
+      new disguises: `PYTHONPATH=. uv run python - < probe.py` reported
+      `ModuleNotFoundError: No module named 'numpy'` — the store imports numpy at module
+      scope and my `PYTHONPATH=.` shadowed the project's resolution. Dropping it ran
+      clean. A missing dependency reads exactly like a broken module.
+    and_THE_OWNER_SCOPE_GUARD_IS_BLIND_TO_A_DYNAMIC_TABLE_NAME_2026_09_12: >-
+      The three stores this route COUNTS beside the lessons — `staged_facts`,
+      `committed_facts`, `learning_artifacts` — are all owner-governed, and the first
+      draft read them with `f"SELECT COUNT(*) AS n FROM {table}"` in a loop over table
+      names. `tests/tenancy/test_no_owner_scope_bypass.py` finds a bypass by walking
+      `ast.Constant` string literals, so a relation name arriving as an INTERPOLATION is
+      invisible to it: the constant part is `"SELECT COUNT(*) AS n FROM "`, which names
+      no table. The guard could not have refused it — in the same change that DELETES two
+      of that guard's allowlist entries, i.e. while apparently tightening.
+      PROVEN BY CONTROL, NOT ASSERTED: `OwnerScopeDetector().scan_source` over the
+      rejected draft (`x = f"SELECT COUNT(*) AS n FROM {table}"`) returns **[]**, and over
+      the same statement written as a literal returns a `Violation(table='staged_facts')`.
+      The patched `server.py` returns [] because there is nothing left to find — all three
+      statements are literals the detector reads, and all three carry `owner_id`.
+      AND THE LIVE DATA COULD NOT HAVE CAUGHT IT EITHER. MEASURED: 237 / 0 / 700 rows,
+      and **every row in all three belongs to `principal-default`**, so a scoped and an
+      unscoped count are the same number on this box — DEBT-292's lesson ("a
+      single-principal install makes a scoped and an unscoped DELETE indistinguishable")
+      on a READ. Pinned by a CONSTRUCTED two-owner population, not by live data.
+      FIXED STRUCTURALLY rather than argued safe: three statements written out in full,
+      each naming its table as a literal and carrying `WHERE owner_id = ?`. `lessons` is
+      the one memory store with no `owner_id` column at all — measured against
+      `_OWNER_GOVERNED_TABLES`, not assumed — which is why it alone is read unscoped.
+      THE BLIND SPOT IS MEASURED AND LEFT WITH ITS DENOMINATOR rather than gated: **21
+      f-string statements in `src/` name their relation dynamically**, and most are
+      benign — `tenancy/owned_repository.py` IS the owner-scoping layer and builds its
+      predicate dynamically by design, two are log messages containing the word UPDATE.
+      A guard failing all 21 would be bypassed rather than satisfied, which is the
+      recorded reason `doc_check` and `gap_check` are reports. The number is here so the
+      loop that decides has it, instead of re-measuring.
+    validated_LIVE_2026_09_12_05_04_55_after_start_sh: >-
+      Restarted with `./start.sh` (core up 05:01:00, after the change), then `GET
+      /api/v1/memory` three ways: **401** with no credential, **401** with a valid bearer
+      token from `Origin: http://evil.example`, **200** authorised.
+      THE PAYLOAD MATCHES THE DATABASE, checked rather than eyeballed: the route reports
+      `total 5964` and `counts_by_source {reflection 5689, skill 218, tool_heuristic 57}`,
+      and `SELECT source_type, COUNT(*) FROM lessons GROUP BY source_type` returns exactly
+      those three numbers. 50 lessons shown against that denominator. Curated: **19
+      targets, 64 entries**, of which `user` holds **7**, the first being "Bakir prefers
+      root-cause fixes over patches." Other stores counted with their kind stated —
+      staged_facts 237 `short-term history`, committed_facts 0 `retired`,
+      learning_artifacts 700 — and NO merged total anywhere in the payload.
+      EVIDENCE ONLY THE NEW CODE COULD PRODUCE: `[control_plane] server.memory: exit —
+      served` and `[learning] lessons_store.recent: exit — served`, both INFO, both with
+      **0 occurrences across every retained log before this boot** (counted on the
+      `stackowl*.jsonl` glob). `server.memory` carries `curated_entries 64, shown 50,
+      total_lessons 5964`.
+    and_TWO_GUARDS_REFUSED_THE_FIRST_SHAPE_and_both_improved_it: >-
+      `test_the_server_module_issues_no_sql_of_its_own` refused three SQL literals in
+      `control_plane/server.py` — "it must read through the component that owns the
+      table". Right, and it is A05.4's own rule: the reader moved to
+      `src/stackowl/memory/activity.py`, which is the shape `owls/activity.py` (A04.1) and
+      `pipeline/durable/activity.py` (A05.6) already have, so `StoreCount` and
+      `CuratedTarget` are public there and the handler still writes every wire key.
+      AND `LessonsStore` WAS A NAME I INVENTED — the class is `SqliteLessonsStore`. The
+      off-tree probe `exec`'d the PATCHED SOURCE and never resolved the import, so the
+      error was structurally invisible to it and only the real path could raise it. Third
+      instance of this exact shape in the record: the class name invented in DEBT-290 and
+      the `bounds: DENY` literal invented in A01.2. **A proof built on a copy of the
+      source cannot check a name the source does not resolve.**
+    closing_check: >-
+      [ -f docs/reference-mapping/designs/A05.5.md ]
+      && echo "CLOSEABLE A05.5 has its own design document"
+      || echo "OPEN A05.5 has no document of its own; which store is which lives in the
+      route docstring and in SqliteLessonsStore.recent"
+    document_is_partial_and_the_reason_is_named: >-
+      The contract that matters — WHICH STORE IS WHICH, and why a merged count would be a
+      lie — lives in `_handle_memory`'s docstring and on `SqliteLessonsStore.recent`, where
+      anyone changing either will be standing. A document for A05.5 belongs with the WRITE
+      half (forget a memory, edit a note over HTTP), which ESC-173 gates, when there is a
+      lifecycle to describe rather than one read route.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A05.6
     title: Live activity — what each agent is doing right now
