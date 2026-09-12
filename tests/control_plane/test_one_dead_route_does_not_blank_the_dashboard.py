@@ -55,6 +55,25 @@ from stackowl.control_plane.page import INDEX_HTML
 #: `hidden` attribute is exactly what separates the two kinds of section.
 _SECTIONS = tuple(re.findall(r'<section id="(\w+)" hidden>', INDEX_HTML))
 
+#: Every id the MARKUP actually declares. The stub DOM answers `null` for
+#: anything else, which is what a browser does and what this harness used not to
+#: do — see the note above `global.document`.
+#:
+#: THE `<script>` AND `<style>` BLOCKS ARE STRIPPED FIRST, and that is not tidiness
+#: — the first version of this scanned the whole page and the mutation test PASSED
+#: with the bug restored. The only `id="token"` anywhere in `page.py` is inside the
+#: COMMENT explaining that `id="token"` appears zero times, so the explanation of
+#: the defect seeded the very id that made the defect invisible. Third instance of
+#: a guard matching PROSE in one session, and the sharpest: an id declared inside
+#: JavaScript is not a DOM element, so only markup may answer this question.
+def _markup_ids(page: str) -> set[str]:
+    body = re.sub(r"<script>.*?</script>", "", page, flags=re.S)
+    body = re.sub(r"<style>.*?</style>", "", body, flags=re.S)
+    return set(re.findall(r'id="(\w+)"', body))
+
+
+_MARKUP_IDS = _markup_ids(INDEX_HTML)
+
 _HARNESS = r"""
 const fs = require("fs");
 function mkEl(id) {
@@ -65,9 +84,21 @@ function mkEl(id) {
     addEventListener(k, f) { this._listeners[k] = f; },
   };
 }
+// THE STUB USED TO AUTO-CREATE ANY ID IT WAS ASKED FOR, and that is why this
+// file — the one guard that EXECUTES the page — could not see a dead resume
+// path for two days. `$("token")` referred to an element DEBT-310 had deleted;
+// in a browser it returns null and throws, and here it quietly minted one. A
+// fixture that cannot show the bug is one of the six recurring shapes this repo
+// names, and it was sitting inside the test written to catch exactly this class.
+// The ids are now seeded from the REAL markup and anything else returns null,
+// so the page is executed against the DOM it actually ships with.
+const KNOWN = new Set(JSON.parse(process.argv[5]));
 const els = {};
 global.document = {
-  getElementById: (id) => (els[id] = els[id] || mkEl(id)),
+  getElementById: (id) => {
+    if (!KNOWN.has(id)) { return null; }
+    return (els[id] = els[id] || mkEl(id));
+  },
   createElement: (t) => mkEl("<" + t + ">"),
 };
 global.location = { origin: "http://127.0.0.1:8787" };
@@ -127,7 +158,8 @@ def _run(tmp_path: Path, skills_status: int) -> dict[str, object]:
     harness.write_text(textwrap.dedent(_HARNESS), encoding="utf-8")
 
     proc = subprocess.run(
-        [node, str(harness), str(script), str(skills_status), json.dumps(list(_SECTIONS))],
+        [node, str(harness), str(script), str(skills_status),
+         json.dumps(list(_SECTIONS)), json.dumps(sorted(_MARKUP_IDS))],
         capture_output=True, text=True, timeout=60,
     )
     assert proc.returncode == 0, f"the page threw: {proc.stderr[-2000:]}"
@@ -174,6 +206,36 @@ def test_forgetting_the_token_hides_EVERY_section(tmp_path: Path) -> None:
 
     assert out["after_forget"] == [], (
         f"these sections survived 'forget token': {out['after_forget']}"
+    )
+
+
+@pytest.mark.tripwire
+def test_a_RETURNING_tab_resumes_without_signing_in_again(tmp_path: Path) -> None:
+    """The session is kept for the tab — and for two days it was not.
+
+    `page.py` read `$("token").value = stored` before calling `load(stored)`.
+    DEBT-310 replaced the token input with the username/password form, so
+    `id="token"` has appeared ZERO times in the markup since: `$()` returned
+    null, `.value =` threw, the IIFE died, and the returning visitor got a blank
+    page with no status line. Fresh sign-in kept working because that path calls
+    `load(body.token)` directly, so the broken half was the one nobody exercises
+    twice in a row.
+
+    THE HARNESS IS WHY NO TEST SAW IT. Its `getElementById` auto-created any id
+    it was asked for, so the one guard that EXECUTES this page invented the very
+    element the page had lost. It answers `null` for anything the markup does not
+    declare now, which is what a browser does — and that alone turns the three
+    tests above into regression detectors for this whole class.
+
+    This test states the property in its own right: the harness seeds
+    `sessionStorage` with a token, so a run that renders every section IS the
+    resume path working.
+    """
+    out = _run(tmp_path, 200)
+
+    assert out["after_load"] == list(_SECTIONS), (
+        "a tab holding a stored session did not resume — the page reached for an "
+        f"element the markup does not declare: {out}"
     )
 
 

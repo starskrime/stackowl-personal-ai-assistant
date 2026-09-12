@@ -588,10 +588,18 @@ INDEX_HTML: Final = """<!doctype html>
     say("token forgotten");
   });
 
+  // THE RESUME PATH, AND IT WAS DEAD. This read `$("token").value = stored`
+  // before calling `load` — and DEBT-310 replaced the token input with the
+  // username/password form, so `id="token"` has appeared ZERO times in the
+  // markup since. `$()` returned null, `.value =` threw a TypeError, the IIFE
+  // died, and `load(stored)` never ran: a returning tab that already held a
+  // session rendered NOTHING and said nothing about why. Fresh sign-in survived
+  // because that path calls `load(body.token)` directly, which is exactly why it
+  // went unnoticed — the half that broke is the half nobody exercises twice.
   var stored = null;
   try { stored = sessionStorage.getItem(KEY); } catch (e) { stored = null; }
-  if (stored) { $("token").value = stored; load(stored); }
-  else { say("enter the token to read the platform"); }
+  if (stored) { load(stored); }
+  else { say("sign in to read the platform"); }
 })();
 </script>
 </body>

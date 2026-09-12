@@ -51677,6 +51677,56 @@ items:
       route.
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
+  - id: A05.10
+    title: The control plane a customer would show someone — and an app on a phone
+    domain: A05
+    verdict: MISSING
+    track: build
+    priority: P1
+    wave: 2
+    order: 129
+    gap: >-
+      The eight read surfaces are correct and the page that renders them has almost no
+      design layer: MEASURED 2026-09-12, **2,307 bytes of CSS against 15,558 of JS** in a
+      22,980-byte page, **8 CSS custom properties against 16 distinct hex colours** (so
+      half the palette bypasses its own token system), **ONE media query** for the whole
+      responsive story, and **9 `<table>` elements with ZERO inline SVG** — every surface
+      is a table and there is no iconography, no chart, no hierarchy.
+      AND ON A PHONE IT IS A DOCUMENT RATHER THAN AN APP, which is measurable rather than
+      aesthetic: **no manifest, no `theme-color`, no web-app-capable meta and no app
+      icon**. Those four absences ARE the difference — they are why it cannot be
+      installed, has no icon on a home screen, and keeps browser chrome. `viewport` and
+      `prefers-color-scheme` ARE present, so the gap is not "nobody thought about
+      mobile"; it is that there is no design system and no app shell.
+      `prefers-reduced-motion` is absent too, so any animation added today would be
+      unconditional.
+    gap_check: >-
+      uv run python -c "from stackowl.control_plane.page import INDEX_HTML as H; missing=[n for n,t in (('manifest','rel=\"manifest\"'),('theme-color','theme-color'),('app-icon','apple-touch-icon'),('reduced-motion','prefers-reduced-motion')) if t not in H]; print(('HOLDS the page is a document, not an app shell — missing: '+', '.join(missing)) if missing else 'REFUTED the page declares an app shell')" 2>/dev/null | tail -1
+    evidence: >-
+      Operator, 2026-09-12, verbatim: "Dashboard not an enterprice level and modern on
+      hitech view. Start the bmad desing to work on desing also make it mobile optimized
+      looks like app bit an website. Update item loop skill to finish this and fix bugs.
+      This task needs research as well so use bmad party."
+      He also asked for RESEARCH by name, so the BMAD party is part of the method here
+      rather than an optional extra.
+    the_constraints_are_TRIPWIRE_ENFORCED_and_shape_every_design_choice: >-
+      Read these before designing anything, because each one has already failed once:
+      ONE self-contained page — **no external request of any kind**, since it is served
+      from a Python constant over plain HTTP on a LAN and an outbound reference is a
+      BROKEN page, not a slow one (measured: 0 external refs today). Inline SVG and
+      CSS-drawn marks only, no web fonts, no CDN, no image host.
+      `PANELS` stays the SINGLE enumeration — fetch, error-hide and forget-sweep all
+      derive from it, and `test_the_panel_list_is_written_ONCE` exists because a second
+      list went stale twice.
+      The route/page BIJECTION holds both ways: every registered `/api/` route is
+      rendered and the page fetches nothing unregistered.
+      One dead route must not blank the page, and "forget token" must hide EVERY panel.
+      `test_one_dead_route_does_not_blank_the_dashboard` EXECUTES the real `<script>`
+      under a stub DOM with node — whatever ships must still run headless.
+      No vendor or competitor names in `src/`: research may name them, the source may not.
+    depends_on: ['A05.7']
+    blocks: []
+
   - id: A07.1
     title: A skill hub with analysis before install, not after
     domain: A07

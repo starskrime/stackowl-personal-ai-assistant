@@ -65,6 +65,50 @@ the starting evidence for the authority items:
 Definition of Done section before assuming any of them is outstanding — most of
 each one shipped.
 
+## THE DASHBOARD IS THE PRODUCT'S FACE — FINISH IT, AND KEEP FIXING BUGS
+
+**Bakir, 2026-09-12:** *"Dashboard not an enterprice level and modern on hitech
+view. Start the bmad desing to work on desing also make it mobile optimized looks
+like app bit an website. Update item loop skill to finish this and fix bugs. This
+task needs research as well so use bmad party."*
+
+Two standing instructions. **Until the first is done they outrank item order** —
+a loop does not move on to the next `A` item while the dashboard still looks like
+a wireframe.
+
+**1. `A05.10` — the control plane a customer would show someone.** The eight read
+surfaces exist and are correct; what they LOOK like is now the gap. The bar is
+his words: **enterprise, modern, hi-tech, and on a phone it must feel like an APP,
+not a website.** It is a mapped item like any other — seven stages, a `gap_check`,
+evidence — and it carries one extra rule: **use the BMAD party, because he asked
+for research.** Dispatch `bmad-agent-ux-designer`, `bmad-agent-analyst`,
+`bmad-agent-architect` and `bmad-cis-agent-presentation-master` in parallel and
+make their disagreement the finding, exactly as the six-lens panel already works.
+
+**The constraints are not negotiable and every one of them is enforced by a
+tripwire**, so read them before designing anything:
+* ONE self-contained page. **No external request of any kind** — no CDN, no web
+  font, no image host. It is served from a Python constant over plain HTTP on a
+  LAN, so an outbound reference is a broken page, not a slow one. Inline SVG and
+  CSS-drawn marks only.
+* `PANELS` stays the SINGLE enumeration. Fetch, error-hide and forget-sweep all
+  derive from it; a second list is the defect this repo has already paid for
+  twice (`test_the_panel_list_is_written_ONCE`).
+* The route/page BIJECTION holds both ways — every registered `/api/` route is
+  rendered, and the page fetches nothing that is not registered.
+* One dead route must not blank the page, and "forget token" must hide EVERY
+  panel. `test_one_dead_route_does_not_blank_the_dashboard` executes the real
+  `<script>` under a stub DOM: **whatever you build must still run headless.**
+* No vendor or competitor names in `src/`. Research may name them; the source
+  may not.
+
+**2. FIXING BUGS IS ITEM-SHAPED WORK, NOT AN INTERRUPTION.** He asked for it in
+the same breath as the redesign, and this file already has the machinery: a live
+defect becomes a `known_debt` record with what was measured and what was chosen,
+and it gets the same evidence discipline as a mapped item. Pre-existing red, a
+warning in the live log, an operator report — each is a legitimate thing for a
+loop to finish. **The rule above all others still governs**: fix why it happened.
+
 ## The rule above all others — WHY, not WHAT
 
 **Bakir, 2026-08-31, mandatory and outranking every other rule in this skill:
