@@ -61,6 +61,7 @@ from stackowl.owls.activity import read_owl_activity
 from stackowl.owls.skill_ownership import read_all_skill_ownership
 from stackowl.owls.store import OwlStore
 from stackowl.pipeline.durable.activity import read_task_activity
+from stackowl.scheduler.run_history import read_run_history
 
 if TYPE_CHECKING:
     from stackowl.config.settings import Settings
@@ -500,6 +501,22 @@ class ControlPlaneServer(SupervisedTask):
             return web.json_response({"schedules": [], "wired": False}, status=503)
 
         jobs = await self._scheduler.list_jobs()
+
+        # WHAT THEY ACTUALLY DID, from the table that had 22,647 rows and no
+        # reader. `list_jobs()` answers what is DEFINED; `job_runs` answers what
+        # HAPPENED, and until 2026-09-12 nothing joined the two — so 170 jobs
+        # rendered identically and the 131 that had not run in a day looked
+        # exactly like the 38 that had.
+        #
+        # THE JOIN IS HERE, IN PYTHON, ON PURPOSE. `jobs` has exactly one reader
+        # (`list_jobs`) and `job_runs` now has exactly one (`read_run_history`);
+        # a SQL join would have given one of them a second, which this route's
+        # own docstring calls "how two answers to one question get born".
+        history: dict[str, Any] = {}
+        runs_gaps = None
+        if self._db is not None:
+            history, runs_gaps = await read_run_history(self._db)
+
         payload = {
             "wired": True,
             # failure_count and last_error are NOT decoration. A list that shows
@@ -520,16 +537,60 @@ class ControlPlaneServer(SupervisedTask):
                     "next_run_at": j.next_run_at,
                     "failure_count": j.failure_count,
                     "last_error": j.last_error,
+                    # NAMED WITHOUT THE WINDOW, because `window_hours` is emitted
+                    # once beside them. `runs_24h` would put the same fact in two
+                    # places and make changing the window a rename across three
+                    # surfaces — the two-copies-of-one-rule shape this tree finds
+                    # more often than any other.
+                    #
+                    # `None` is a REAL answer and is not the same as zero: it
+                    # means this read could not see the history at all (no db
+                    # wired), while `0` means the job did not run inside the
+                    # window. A surface that renders both as "0 runs" reports an
+                    # unwired reader as an idle scheduler.
+                    "runs": (
+                        history[j.job_id].runs if j.job_id in history
+                        else (0 if runs_gaps is not None else None)
+                    ),
+                    "failures": (
+                        history[j.job_id].failures if j.job_id in history
+                        else (0 if runs_gaps is not None else None)
+                    ),
+                    "typical_ms": (
+                        history[j.job_id].typical_ms if j.job_id in history else None
+                    ),
+                    "last_ran_at": (
+                        history[j.job_id].last_ran_at if j.job_id in history else None
+                    ),
                 }
                 for j in jobs
             ],
         }
+        if runs_gaps is not None:
+            silent = sum(
+                1 for j in jobs if j.enabled and j.job_id not in history
+            )
+            payload["window_hours"] = runs_gaps.window_hours
+            payload["retention_days"] = runs_gaps.retention_days
+            # THE HORIZON, so a zero is never ambiguous. `db_reclaim` prunes at
+            # `retention_days`, so "no runs" means the job was idle only while
+            # the window sits inside this timestamp; past it, it means nobody can
+            # tell any more.
+            payload["horizon_at"] = runs_gaps.horizon_at
+            payload["runs"] = runs_gaps.total_runs
+            payload["failures"] = runs_gaps.total_failures
+            payload["silent_enabled_jobs"] = silent
         duration_ms = (_time.monotonic() - t0) * 1000
         log.control_plane.info(
             "[control_plane] server.schedules: exit — served",
             extra={"_fields": {
                 "principal_id": principal.principal_id,
                 "schedules": len(jobs),
+                "runs": runs_gaps.total_runs if runs_gaps else None,
+                "silent_enabled_jobs": (
+                    sum(1 for j in jobs if j.enabled and j.job_id not in history)
+                    if runs_gaps else None
+                ),
                 "duration_ms": duration_ms,
             }},
         )

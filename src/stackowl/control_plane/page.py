@@ -665,20 +665,56 @@ INDEX_HTML: Final = """<!doctype html>
   }
 
   function renderSchedules(p) {
+    var win = p.window_hours ? p.window_hours + "h" : "window";
     fill("schedulerows", p.schedules, function (host, job) {
-      var kind = job.status === "failed" ? "down" : (job.enabled ? "ok" : "unknown");
-      strip(host, kind, job.job_id, job.handler + " · " + job.schedule,
-            dash(job.next_run_at).slice(0, 16), job.enabled ? "next" : "disabled",
+      // THE HATCH IS FOR AN ENABLED JOB THAT NOTHING MEASURED RUNNING, and that
+      // is exactly what the hatch means everywhere else on this page: absence,
+      // never failure. MEASURED 2026-09-12 the moment `job_runs` got its first
+      // reader — 131 of 169 enabled jobs had not run in a day, and until then
+      // they rendered identically to the 38 that had.
+      //
+      // A DISABLED JOB IS NOT HATCHED. Disabled is a measured, deliberate state;
+      // drawing it as unsurveyed would report a decision as a gap.
+      var kind = "ok";
+      if (job.status === "failed") { kind = "down"; }
+      else if (job.enabled && job.runs === 0) { kind = "unknown"; }
+
+      var metric = job.runs === null || job.runs === undefined
+        ? dash(job.next_run_at).slice(0, 16)
+        : job.runs;
+      var unit = job.runs === null || job.runs === undefined
+        ? (job.enabled ? "next" : "disabled")
+        : (job.enabled ? "runs/" + win : "disabled");
+
+      strip(host, kind, job.job_id, job.handler + " · " + job.schedule, metric, unit,
             [["job", job.job_id], ["handler", job.handler], ["schedule", job.schedule],
              ["status", job.status], ["enabled", String(job.enabled)],
+             ["runs in " + win, job.runs], ["failures in " + win, job.failures],
+             ["typical duration", job.typical_ms === null ? null : job.typical_ms + " ms"],
+             ["last run recorded", job.last_ran_at],
              ["next run", job.next_run_at], ["last run", job.last_run_at],
-             ["failures", job.failure_count], ["last error", job.last_error]]);
+             ["failure count", job.failure_count], ["last error", job.last_error]]);
     }, "no jobs scheduled");
+
     var rows = p.schedules || [];
-    var off = rows.filter(function (j) { return !j.enabled; }).length;
-    var bad = rows.filter(function (j) { return j.status === "failed"; }).length;
-    $("schedulenote").textContent = rows.length + " jobs · " + off + " disabled · "
-      + bad + " failed. Status is the last RUN's, not an outcome over time.";
+    var off = rows.filter(function (job) { return !job.enabled; }).length;
+    var parts = [rows.length + " jobs", off + " disabled"];
+    if (p.runs !== null && p.runs !== undefined) {
+      parts.push(p.runs + " runs in " + win);
+      parts.push(p.failures + " did not complete");
+      // THE NUMBER THIS PANEL EXISTS FOR. Three quarters of the enabled jobs had
+      // not run in a day, and nothing said so.
+      parts.push(p.silent_enabled_jobs + " of " + (rows.length - off)
+                 + " enabled jobs silent");
+      // AND THE HORIZON, so a zero is never ambiguous: `db_reclaim` prunes the
+      // run history, so "no runs" means idle only while the window sits inside
+      // what is still kept.
+      parts.push("history kept " + p.retention_days + "d, since "
+                 + dash(p.horizon_at).slice(0, 10));
+    } else {
+      parts.push("no run history available — this read could not reach it");
+    }
+    $("schedulenote").textContent = parts.join(" · ");
     $("schedules").hidden = false;
   }
 

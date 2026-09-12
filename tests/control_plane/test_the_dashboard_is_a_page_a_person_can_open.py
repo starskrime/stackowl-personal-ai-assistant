@@ -365,7 +365,14 @@ def test_the_page_reads_no_field_a_route_does_not_emit() -> None:
 
     reads: set[str] = set()
     for var in loop_vars:
-        reads |= set(re.findall(rf"\b{re.escape(var)}\.([a-z_]+)", INDEX_HTML))
+        # `[a-z0-9_]+`, NOT `[a-z_]+`. MEASURED 2026-09-12: of 99 keys the
+        # handlers emit, none contained a digit — so the old class had never
+        # met a field it would truncate, and the first one would have been
+        # reported as a MISMATCH rather than seen: `job.runs_24h` reads as the
+        # field `runs_`, which no route emits. A guard that cries wolf on
+        # correct work is the failure this repo keeps paying for, and this one
+        # was latent rather than absent.
+        reads |= set(re.findall(rf"\b{re.escape(var)}\.([a-z0-9_]+)", INDEX_HTML))
     assert reads, f"loop variables {sorted(loop_vars)} read no fields at all"
 
     unknown = sorted(reads - emitted)
