@@ -140,15 +140,54 @@ class TestTheHeadDeclaresAnApp:
 
 class TestTheDesignSystemIsAsystem:
     @pytest.mark.tripwire
-    def test_the_dark_palette_is_defined_in_ALL_THREE_viewer_states(self) -> None:
-        """A viewer has three: an explicit choice stamps `data-theme`, and the
-        DEFAULT setting stamps nothing at all. A palette defined only under
-        `[data-theme]` never applies to the common case."""
-        assert ":root {" in INDEX_HTML, "no unconditional light palette"
-        assert "prefers-color-scheme: dark" in INDEX_HTML
-        assert ':root[data-theme="dark"]' in INDEX_HTML, (
-            "an explicit dark choice would not beat a light OS"
+    def test_no_colour_is_defined_ONLY_inside_a_conditional_block(self) -> None:
+        """A viewer has three states: an explicit choice stamps `data-theme`, and
+        the DEFAULT setting stamps nothing at all. So the defect this guards is a
+        token that exists only under `[data-theme]` or only inside a media query
+        — it never applies to the common case, and the page renders one theme's
+        text on the other theme's ground.
+
+        RETARGETED 2026-09-12 FROM THE MECHANISM TO THE PROPERTY. It used to
+        require `:root[data-theme="dark"]` literally, which is the right
+        assertion for a page carrying two palettes and the wrong one for a page
+        that deliberately carries a single visual world. A single-world design
+        satisfies the property by construction — every token on the bare `:root`,
+        nothing conditional — and the old assertion would have failed it while
+        passing a two-palette page that left one token stranded in a media query.
+        This version cannot be satisfied by either mistake.
+        """
+        import re
+
+        style = re.search(r"<style>(.*?)</style>", INDEX_HTML, re.S)
+        assert style, "the page has no inline stylesheet"
+        css = style.group(1)
+
+        base = re.search(r":root \{(.*?)\}", css, re.S)
+        assert base, "no unconditional `:root` block — nothing defines the default state"
+        declared = set(re.findall(r"(--[\w-]+)\s*:", base.group(1)))
+        used = set(re.findall(r"var\((--[\w-]+)\)", css))
+
+        stranded = sorted(used - declared)
+        assert not stranded, (
+            f"these tokens are used but never defined unconditionally: {stranded} — "
+            "a viewer on the default 'system' setting has no value for them"
         )
+        assert "prefers-color-scheme" in INDEX_HTML, (
+            "the page never mentions the viewer's scheme, so it cannot have made "
+            "a decision about it either way"
+        )
+
+    def test_the_token_scan_can_actually_fail(self) -> None:
+        """The control. Without it, "nothing stranded" cannot be told apart from
+        a regex that matches no tokens at all."""
+        import re
+
+        css = ":root { --a:#fff; }\n@media x { :root { --b:#000; } }\n"
+        css += "p { color:var(--a); border-color:var(--b); }"
+        base = re.search(r":root \{(.*?)\}", css, re.S)
+        declared = set(re.findall(r"(--[\w-]+)\s*:", base.group(1)))
+        used = set(re.findall(r"var\((--[\w-]+)\)", css))
+        assert sorted(used - declared) == ["--b"], "the scan no longer finds a stranded token"
 
     @pytest.mark.tripwire
     def test_reduced_motion_is_respected(self) -> None:

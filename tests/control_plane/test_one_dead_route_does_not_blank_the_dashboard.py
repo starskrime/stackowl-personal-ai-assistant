@@ -165,10 +165,16 @@ setTimeout(() => {
     b._listeners.click();
     per_destination.push({ clicked: b.textContent, shown: shown(), active: active() });
   });
+  // THE BRIEF, read off the DOM. It is a fold over payloads already fetched —
+  // no route of its own — so it is also where "did each payload reach its own
+  // panel?" becomes observable.
+  const tiles = (els.brieftiles ? els.brieftiles.children : [])
+    .map((t) => t.children.map((c) => c.textContent).join("|"));
+
   const status = els.status.textContent;
   els.forget._listeners.click();
   console.log(JSON.stringify({
-    after_load, nav, on_load, per_destination, status,
+    after_load, nav, on_load, per_destination, status, tiles,
     after_forget: visible(), shown_after_forget: shown(),
     rail_hidden_after_forget: els.rail ? els.rail.hidden : null,
   }));
@@ -380,22 +386,37 @@ def test_forgetting_the_token_takes_the_SHELL_too(tmp_path: Path) -> None:
 
 
 @pytest.mark.tripwire
-def test_the_status_line_reads_its_counts_BY_ID(tmp_path: Path) -> None:
+def test_each_payload_reaches_its_OWN_panel(tmp_path: Path) -> None:
     """`results[1]` and `results[2]` were an index into `PANELS`.
 
     That was correct only while the array stayed in the order it was first
-    written in, and grouping the panels into destinations reordered it. The
-    harness now answers `/schedules` with three and `/config` with two, so a
-    positional read reports the wrong one instead of an identical zero — which
-    is the only reason this can be asserted at all.
+    written in, and every regrouping since has reordered it. The harness answers
+    `/schedules` with three rows and `/config` with two, so a positional read
+    reports the wrong one instead of an identical zero — which is the only reason
+    this can be asserted at all.
+
+    RETARGETED 2026-09-12 WITH THE REBUILD. The figures used to land in the
+    status line; they land in the brief tiles now, and the status line carries
+    only failures. The PROPERTY is unchanged and is asserted twice over: the
+    rendered tile must show the schedules payload's count, and no payload may be
+    reached by a numeric index at all.
     """
     out = _run(tmp_path, 200)
 
-    assert "3 schedules" in str(out["status"]), (
-        f"the status line did not read the schedules payload: {out['status']!r}"
+    joined = " ".join(out["tiles"])
+    assert out["tiles"], f"the brief rendered no tiles: {out}"
+    assert "3" in joined, (
+        f"no tile carries the schedules payload's three rows — a payload reached "
+        f"the wrong panel: {out['tiles']}"
     )
-    assert "2 settings" in str(out["status"]), (
-        f"the status line did not read the config payload: {out['status']!r}"
+
+    match = re.search(r"<script>(.*?)</script>", INDEX_HTML, re.S)
+    assert match
+    positional = re.findall(r"results\[\d+\]", match.group(1))
+    assert not positional, (
+        f"a payload is read by its POSITION in PANELS: {positional} — that is "
+        "correct only until somebody regroups the panels, and every regrouping "
+        "so far has reordered them"
     )
 
 

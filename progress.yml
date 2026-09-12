@@ -52186,6 +52186,82 @@ items:
       would hand the executing guard a FRAGMENT if a second block ever appeared, and every
       test in that file would go green having run nothing. One assertion —
       `INDEX_HTML.count("<script>") == 1` — retires it. Naming a hazard is not closing one.
+    REBUILT_FROM_SCRATCH_2026_09_12_on_his_second_verdict: >-
+      Bakir, verbatim: *"Agentic os dahboard is bad. Redo it from scrach. Like jarvish
+      style. Also make it look like mobile app not a website. Do the research to come
+      with good prompt for this project according his features and come with good desing
+      and implement it."* Steps A and B1 were incremental improvements to a page he had
+      already rejected; this replaces `INDEX_HTML` entirely.
+    the_party_he_asked_for_and_the_DISAGREEMENT_that_settled_the_design: >-
+      Four agents in parallel — UX, visual identity, architecture, requirements. UX said
+      the first screen should be the four alarming numbers (7 unbounded, 77 dead-lettered,
+      1 failed job, delegations stale since 08-24). The analyst said those are the WRONG
+      headline and the real gap is that **no route carries a time axis**.
+      MEASURED, and the analyst is right: `health_sweep` reported UNHEALTHY **49 times on
+      2026-09-12, 114 on 09-11 and 149 on 09-10**, while `/api/v1/health` reads **15/15
+      ok**. Same fact, opposite answer, ten minutes apart. So the brief carries the
+      figures AND a caption saying they are a snapshot — a number with no time axis
+      beside it is not a verdict.
+    the_pattern_that_replaced_ten_tables_STRIP_then_SHEET: >-
+      Every row on every surface is a fixed 52px instrument strip — a 2px rail, an
+      identity, one metric — and a tap opens ONE detail sheet shared by all ten lists,
+      structured fields first and long text last. List height is now `rows x 52px`,
+      INDEPENDENT of how wide the record is.
+      That is what the measurement demanded. MEASURED before: rendered as tables the same
+      payloads are **45,728px on a phone — fifty-four screens** — and one `memory/curated`
+      row is **1,691px by itself** because a single field holds 2,308 characters. The
+      naive cure (stack every cell as label/value) was MEASURED AND REFUTED by the party:
+      a 13-column agent row becomes ~800px of stacked labels. Promote three fields, defer
+      the rest. VERIFIED on live payloads: 391 strips across eight surfaces, zero empty
+      states, and the destination you land on is one screen.
+    the_visual_system_and_the_one_rule_it_turns_on: >-
+      Seven tokens on a #06080B ground; panels have NO fill, surfaces are drawn with
+      hairlines that bleed to the viewport edge. **`ok` carries no colour at all** — a
+      green field trains the eye to scan for the exception and then the exception is
+      invisible. The rail is the only element permitted colour and it carries state by
+      SEGMENTATION as well as hue: solid measured, a 45-degree hatch for `unknown`
+      (absence, never failure), and a DASHED rail for an unbounded authority — a broken
+      boundary drawn broken, so seven of eleven is unskimmable at zero saturation.
+      The governing rule, and it is the reason nothing pulses: **no pixel may imply a
+      measurement it cannot cite.** The one element allowed the live hue is the freshness
+      readout, and it prints the timestamp it derives from immediately beside itself.
+    what_the_rebuild_REFUSED_to_build_and_why: >-
+      The node-link graph of the 69 interaction edges — the most Jarvis-looking thing on
+      offer. MEASURED: 9 delegations have no recorded target and 15 no recoverable caller,
+      so **a third of the edges cannot be drawn** and any layout silently asserts a
+      cleaner topology than exists; and the newest delegation is **2026-08-24**, so an
+      animated graph would claim live inter-agent traffic that stopped nineteen days ago.
+      A HUD's only real claim is *this is what the system is doing now*. The gaps are
+      rendered as text instead, because the gaps ARE the finding.
+    THREE_GUARDS_WERE_RETARGETED_and_each_one_is_stated_rather_than_quietly_changed: >-
+      A from-scratch page meets a dozen tripwires, and the architect lens separated PRODUCT
+      rules (must survive any rewrite) from IMPLEMENTATION-shaped matchers. Three of the
+      second kind were retargeted to the property they were proxying, and none was
+      weakened:
+      (1) `test_the_dark_palette_is_defined_in_ALL_THREE_viewer_states` required
+      `:root[data-theme="dark"]` literally — right for a two-palette page, wrong for a
+      deliberate single visual world. It now asserts that NO token is used without an
+      unconditional definition, which fails the single-world mistake AND the two-palette
+      mistake the old one could not see. It carries a control proving the scan can fail.
+      (2) `test_the_page_reads_no_field_a_route_does_not_emit` derived its loop variables
+      from `(payload.x || []).forEach(`; the rebuild routes every list through one `fill`
+      helper. BOTH shapes are matched now — its own blind-assert is what reported the
+      change, and dropping the old pattern would make the next rewrite silent.
+      (3) `test_the_status_line_reads_its_counts_BY_ID` pinned figures that have moved
+      into the brief tiles. The property — no payload reached by a numeric index — is
+      asserted twice now: the rendered tile must carry the schedules payload's count, and
+      `results[<int>]` must appear nowhere.
+    AND_THE_GUARD_CAUGHT_A_REAL_HAZARD_IN_MY_OWN_CODE: >-
+      The field-read guard scans the whole page for `<rowvar>.<field>`, so my single-letter
+      row variables collided with unrelated locals — `t.className` read as the field
+      `class`, `sub.slice` as `slice`. It reported five fields no route emits. The guard
+      was right about the risk and the fix belongs in the page, not the matcher: every
+      renderer's row variable is now a distinct word (`sub`, `owl`, `task`, `job`,
+      `lesson`, `edge`, `cur`, `card`, `setting`).
+      A SECOND ONE was structural: the harness models `textContent` as a plain property
+      that does not aggregate children, so a tab built as `<button><u></u><span>Work</span>`
+      reads as an EMPTY label headless. The indicator is a `::before` and the tab is one
+      text node.
     what_step_A_deliberately_does_NOT_do: >-
       No JS restructure, so every behavioural tripwire keeps testing what it was written
       to test. Still outstanding and named rather than implied: the five-destination

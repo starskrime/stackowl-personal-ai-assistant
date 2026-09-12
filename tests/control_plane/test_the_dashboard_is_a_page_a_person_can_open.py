@@ -335,13 +335,32 @@ def test_the_page_reads_no_field_a_route_does_not_emit() -> None:
                 }
     assert emitted, "no handler payload keys found — this guard has gone blind"
 
+    # DERIVED FROM THE RECEIVER, and the SHAPE of the receiver changed.
+    #
+    # Until 2026-09-12 every renderer inlined `(payload.x || []).forEach(function
+    # (v)`, and that literal was the discriminator: a payload loop names its
+    # source, an internal loop over the page's own arrays does not. The rebuilt
+    # page routes every list through one `fill(<host>, <payload>.<key>, function
+    # (host, row)` helper, which is the SAME discriminator one call deeper — the
+    # second argument still names the payload key, so `PANELS.forEach(...)` is
+    # still invisible here by construction rather than by an exemption.
+    #
+    # BOTH SHAPES ARE MATCHED. The old one is kept deliberately: this guard's own
+    # blind-assert is what reported the change (it failed loudly rather than
+    # passing on nothing), and dropping the old pattern would make the next such
+    # rewrite silent again in the other direction.
     loop_vars = set(re.findall(
         r"\(payload\.\w+ \|\| \[\]\)\.forEach\(function \((\w+)\)", INDEX_HTML
     ))
+    loop_vars |= set(re.findall(
+        r"fill\(\s*\"\w+\"\s*,\s*\w+\.\w+\s*,\s*function \(\s*\w+\s*,\s*(\w+)\s*\)",
+        INDEX_HTML,
+    ))
     assert loop_vars, (
-        "no `(payload.x || []).forEach(function (v)` render loop found — the page "
-        "stopped rendering rows this way and this guard can no longer see the "
-        "field reads"
+        "no render loop found that names its payload key — neither "
+        "`(payload.x || []).forEach(function (v)` nor "
+        "`fill(\"id\", payload.x, function (host, row)` — so the page renders rows "
+        "some other way and this guard can no longer see the field reads"
     )
 
     reads: set[str] = set()
