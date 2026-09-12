@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from stackowl.authz.bounds import BoundsSpec
+from stackowl.infra.observability import log
 from stackowl.owls.dna import OwlDNA
 from stackowl.owls.trigger import TriggerSpec
 
@@ -42,10 +43,53 @@ def slugify_owl_name(display: str) -> str:
 ModelTier = Literal["fast", "standard", "powerful", "local"]
 
 
+#: Fields this model USED to declare, dropped on load so a stored manifest that
+#: still carries one does not fail `extra="forbid"`.
+#:
+#: `pinned_skills` (A05.3, 2026-09-12) — "always FULL-injected regardless of
+#: relevance", from the 2026-06-06 skill-relevance-tiering plan. The tiering it
+#: belonged to was never finished and its scoring was later REMOVED —
+#: `pipeline/steps/assemble.py` says so in its own comment — leaving the field
+#: behind: MEASURED, zero readers and zero writers anywhere in `src/`, and not
+#: one of the eleven live owls ever set it. A field that cannot do anything is
+#: an advertisement for a capability that does not exist, which is what
+#: `hard_stop_enabled` cost this tree for eight days.
+#:
+#: THE KEY IS DROPPED RATHER THAN MIGRATED, and that is the whole reason this
+#: hook exists. All ELEVEN stored manifests carry `pinned_skills` (as `[]`, from
+#: `model_dump`), and `extra="forbid"` means deleting the field without this
+#: would make every owl fail to validate on the next boot — `OwlStore.list_all`
+#: skips an unreadable row, so the platform would come up with NO owls at all.
+#: The alternative was a migration rewriting eleven documents, which is data
+#: deletion for no gain: `upsert` rewrites `manifest_json` from the model, so
+#: each row sheds the key the next time it is written, by itself.
+_RETIRED_FIELDS = ("pinned_skills",)
+
+
 class OwlAgentManifest(BaseModel):
     """Defines an owl persona — loaded from stackowl.yaml at startup."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_fields(cls, data: object) -> object:
+        """Forget a field this model no longer has, loudly enough to be counted.
+
+        Scoped to `_RETIRED_FIELDS` on purpose: a blanket `extra="ignore"` would
+        turn every typo in a manifest into a silent no-op, and `forbid` is what
+        catches those today.
+        """
+        if not isinstance(data, dict):
+            return data
+        present = [f for f in _RETIRED_FIELDS if f in data]
+        if not present:
+            return data
+        log.startup.info(
+            "[owls] manifest.load: dropping retired field(s) from a stored manifest",
+            extra={"_fields": {"fields": present, "name": data.get("name")}},
+        )
+        return {k: v for k, v in data.items() if k not in _RETIRED_FIELDS}
 
     name: str
     # Human-facing name the user speaks ("Tony") — spaces/case allowed. Empty means
@@ -67,9 +111,6 @@ class OwlAgentManifest(BaseModel):
     # for frozen-model hashability. Additive + defaulted: owls predating this
     # field load unchanged. Skill INSTRUCTION-injection is a later story.
     skills: tuple[str, ...] = ()
-    # Owl-pinned skills: always FULL-injected regardless of relevance (must be a
-    # subset of `skills`; non-owned pins are ignored at injection time). Story B.
-    pinned_skills: tuple[str, ...] = ()
     max_tokens: int = 4096
     temperature: float = 0.7
     # Raised 30->60->400 (2026-07-16): live traffic on NeraAiRaw confirmed genuine

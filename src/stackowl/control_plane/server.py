@@ -31,6 +31,7 @@ import datetime as _dt
 import time as _time
 from typing import TYPE_CHECKING, Any
 
+from stackowl.authz.bounds_guard import effective_bounds
 from stackowl.commands.config_helpers import (
     collect_sensitive,
     config_path,
@@ -50,7 +51,9 @@ from stackowl.control_plane.auth import (
 )
 from stackowl.control_plane.page import INDEX_HTML
 from stackowl.infra.observability import log
+from stackowl.owls.activity import read_owl_activity
 from stackowl.owls.skill_ownership import read_all_skill_ownership
+from stackowl.owls.store import OwlStore
 from stackowl.pipeline.durable.activity import read_task_activity
 
 if TYPE_CHECKING:
@@ -60,6 +63,12 @@ if TYPE_CHECKING:
     from stackowl.scheduler.scheduler import JobScheduler
 
 from stackowl.supervisor.supervisor import SupervisedTask
+
+#: How far back `recent_turns` looks on the agents route — the same three days
+#: `owls_list` uses, so the two surfaces cannot report different activity for the
+#: same owl. MEASURED 2026-09-11: eight of eleven owls have at least one outcome
+#: inside it and the quietest have exactly one, so it separates quiet from silent.
+_ACTIVITY_WINDOW_S = 3 * 24 * 60 * 60
 
 
 def _web() -> Any:
@@ -144,6 +153,7 @@ class ControlPlaneServer(SupervisedTask):
         app.router.add_get("/api/v1/config", self._handle_config)
         app.router.add_get("/api/v1/skills", self._handle_skills)
         app.router.add_get("/api/v1/tasks", self._handle_tasks)
+        app.router.add_get("/api/v1/agents", self._handle_agents)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -441,6 +451,120 @@ class ControlPlaneServer(SupervisedTask):
                 "principal_id": principal.principal_id,
                 "owls": len(owned),
                 "owned_skills": sum(len(v) for v in owned.values()),
+                "duration_ms": duration_ms,
+            }},
+        )
+        return web.json_response(payload)
+
+    async def _handle_agents(self, request: Any) -> Any:
+        """`GET /api/v1/agents` — every agent's card, its AUTHORITY, and its runtime.
+
+        A05.3's gap, corrected: an owl's `bounds` is rendered by no surface at
+        all. `/owls list` shows display/role/status, `/owls menu` adds the tier,
+        `owls_list` adds runtime, and the only non-write reference to
+        `manifest.bounds` in `src/` is the YAML persister. "What may this agent
+        do" has had no reader.
+
+        **IT REPORTS BOTH SKILL ANSWERS, SEPARATELY NAMED, BECAUSE THEY
+        DISAGREE.** `OwlAgentManifest.skills`'s own comment says it "records
+        ownership" — the claim `skill_ownership` also makes. MEASURED
+        2026-09-12: secretary declares **71** on its card against **9** rows in
+        the table, and only **8** of the 71 name a skill that exists;
+        rca_gatherer 31/4/1; scout 7/4/0; verifier declares 0 and owns 12.
+        Merging them would pick a side in a disagreement the platform itself
+        works around (`delivery_gate.py` reconciles "first owner wins"), and a
+        single number would be wrong for nine of eleven owls.
+
+        THE CARD COMES FROM `OwlStore`, NOT `OwlRegistry`: the registry is an
+        in-memory rebuild with no `owner_id`, so joining it to owner-scoped rows
+        would mix two populations. Same reason A04.1 took the store.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.agents: entry")
+
+        principal, refusal = self._guard(request, "agents")
+        if principal is None:
+            return refusal
+
+        if self._db is None:
+            log.control_plane.warning(
+                "[control_plane] server.agents: exit — no db wired, so there is "
+                "nothing to report",
+                extra={"_fields": {"principal_id": principal.principal_id}},
+            )
+            return web.json_response({"agents": [], "wired": False}, status=503)
+
+        manifests = await OwlStore(self._db, principal.principal_id).list_all()
+        owned = await read_all_skill_ownership(self._db)
+        activity, _gaps = await read_owl_activity(
+            self._db, manifests,
+            owner_id=principal.principal_id,
+            since_epoch=_time.time() - _ACTIVITY_WINDOW_S,
+        )
+        by_name = {a.manifest.name: a for a in activity}
+
+        payload = {
+            "wired": True,
+            "agents": [
+                {
+                    "name": m.name,
+                    "display_name": m.display,
+                    "role": m.role,
+                    "lifecycle": m.lifecycle,
+                    "model_tier": m.model_tier,
+                    "origin": m.origin,
+                    # AUTHORITY, AND `unbounded` IS THE FIELD THAT MATTERS.
+                    # `effective_bounds` is the platform's OWN fold, and its
+                    # docstring says what a null result means: "with no defined
+                    # term the result is None (genuinely unbounded)", and
+                    # `check_effective_bounds` then reads "None effective bounds
+                    # (no constraint anywhere) -> unrestricted". So this is
+                    # COMPUTED by the same function the enforcement path calls,
+                    # never inferred here — a surface that reasoned its way to
+                    # this answer could disagree with the gate that enforces it.
+                    # MEASURED 2026-09-12: SEVEN of eleven owls have neither
+                    # bounds nor ceiling and are therefore unrestricted, and the
+                    # live evidence agrees — secretary, verifier, rca_gatherer
+                    # and hypothesis are each presented the WHOLE registry (79
+                    # tools) while bounded owls see 6, 8 and 11. Of 98 bounds
+                    # refusals in the retained logs, ZERO are on an unbounded owl.
+                    "bounds": (
+                        None if m.bounds is None
+                        else m.bounds.model_dump(mode="json", exclude_none=True)
+                    ),
+                    "creation_ceiling": (
+                        None if m.creation_ceiling is None
+                        else m.creation_ceiling.model_dump(mode="json", exclude_none=True)
+                    ),
+                    "unbounded": effective_bounds(m.bounds, m.creation_ceiling) is None,
+                    "skills_on_card": len(m.skills),
+                    "skills_owned": len(owned.get(m.name, ())),
+                    "in_flight": (
+                        by_name[m.name].in_flight if m.name in by_name else 0
+                    ),
+                    "recent_turns": (
+                        by_name[m.name].recent_turns if m.name in by_name else 0
+                    ),
+                }
+                for m in manifests
+            ],
+        }
+
+        disagreeing = sum(
+            1 for m in manifests if len(m.skills) != len(owned.get(m.name, ()))
+        )
+        duration_ms = (_time.monotonic() - t0) * 1000
+        log.control_plane.info(
+            "[control_plane] server.agents: exit — served",
+            extra={"_fields": {
+                "principal_id": principal.principal_id,
+                "agents": len(manifests),
+                "unbounded": sum(
+                    1 for m in manifests
+                    if effective_bounds(m.bounds, m.creation_ceiling) is None
+                ),
+                "skill_counts_disagree": disagreeing,
                 "duration_ms": duration_ms,
             }},
         )

@@ -142,6 +142,23 @@ INDEX_HTML: Final = """<!doctype html>
        ownership is recorded per pair, not per owl.</p>
   </section>
 
+  <section id="agents" hidden>
+    <h2>Agents</h2>
+    <div class="wrap"><table>
+      <thead><tr><th>Agent</th><th>Role</th><th>Tier</th><th>Authority</th>
+                 <th>Skills (card / owned)</th><th>In flight</th><th>Turns/3d</th></tr></thead>
+      <tbody id="agentrows"></tbody>
+    </table></div>
+    <p class="note"><strong>Authority</strong> is computed by the same
+       <code>effective_bounds</code> fold the enforcement path uses.
+       <code>unbounded</code> does not mean "default" — the function's own
+       docstring calls it <em>genuinely unbounded</em>, and the gate then reads
+       it as unrestricted. An unbounded agent may use every tool on the platform.
+       <strong>Skills</strong> shows two numbers because there are two answers:
+       what the agent's card declares, and what the ownership table records. They
+       disagree today, and merging them would hide that.</p>
+  </section>
+
   <section id="tasks" hidden>
     <h2>Work in flight</h2>
     <div class="wrap"><table>
@@ -298,8 +315,45 @@ INDEX_HTML: Final = """<!doctype html>
     { id: "schedules", path: "/api/v1/schedules", render: renderSchedules },
     { id: "config",    path: "/api/v1/config",    render: renderConfig },
     { id: "skills",    path: "/api/v1/skills",    render: renderSkills },
-    { id: "tasks",     path: "/api/v1/tasks",     render: renderTasks }
+    { id: "tasks",     path: "/api/v1/tasks",     render: renderTasks },
+    { id: "agents",    path: "/api/v1/agents",    render: renderAgents }
   ];
+
+  function renderAgents(payload) {
+    var body = $("agentrows");
+    body.textContent = "";
+    if (!payload.wired) {
+      var r = document.createElement("tr");
+      cell(r, "no db wired", "mut");
+      body.appendChild(r);
+    } else {
+      (payload.agents || []).forEach(function (a) {
+        var row = document.createElement("tr");
+        cell(row, a.display_name);
+        cell(row, a.role, "mut");
+        cell(row, a.model_tier, "mut");
+        // A PILL HERE IS CORRECT, unlike on `blocked`: this IS a verdict about
+        // authority, and "unbounded" is the one an operator must not skim past.
+        if (a.unbounded) {
+          pill(row, "unbounded", "bad");
+        } else {
+          pill(row, boundSummary(a.bounds), "ok");
+        }
+        cell(row, a.skills_on_card + " / " + a.skills_owned,
+             a.skills_on_card === a.skills_owned ? "mut" : "warn");
+        cell(row, a.in_flight, "num");
+        cell(row, a.recent_turns, "num");
+        body.appendChild(row);
+      });
+    }
+    $("agents").hidden = false;
+  }
+
+  function boundSummary(bounds) {
+    if (!bounds) { return "bounded"; }
+    var tools = bounds.tools;
+    return tools ? tools.length + " tools" : "bounded";
+  }
 
   function blockedKind(blocked) {
     if (blocked === "none") { return "ok"; }

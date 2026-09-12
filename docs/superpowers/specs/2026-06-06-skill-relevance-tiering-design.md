@@ -7,7 +7,16 @@
 > Adds a relevance floor (budget is a ceiling, not a target), cross-turn hysteresis (stickiness),
 > and owl-pinned always-FULL skills. Pressure-tested by party-mode (Winston/Murat/Dr. Quinn/Amelia).
 
-**Status:** Design approved (2026-06-06); pending spec re-review
+**Status:** Design approved (2026-06-06); pending spec re-review.
+**PARTLY RETIRED 2026-09-12 (A05.3), and this line is the correction rather than a
+rewrite — the design below is a faithful record of what was decided in June and is
+left standing as one.** What actually happened: the relevance SCORING this design is
+built on was later REMOVED (`pipeline/steps/assemble.py` says so in its own comment),
+and `OwlAgentManifest.pinned_skills` — Task 1, the field the "always FULL" rung needed
+— survived the removal with **zero readers and zero writers anywhere in `src/`**, never
+set by any of the eleven live owls. It is DELETED; `manifest._RETIRED_FIELDS` drops the
+key on load so the eleven stored manifests that still carry it keep loading. Anyone
+reviving this design should treat the field as unbuilt, not as present.
 **Builds on:** S2 skill instruction-injection ([[project_owl_builder_arc]] — `SkillInstructionInjector`, the `<skill_reference trust="untrusted">` fence + `_neutralize`, the cached `summary` field, skill-tool coupling); the classify-step semantic recall (`skill_store.semantic_recall`, embedding registry in pipeline services).
 **Phase-2 arc:** A owl_build (shipped) → **B (this)** → C DNA-evolution completion → D delegation hardening → E memory-promotion governance.
 

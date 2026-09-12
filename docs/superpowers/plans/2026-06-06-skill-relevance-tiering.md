@@ -35,6 +35,13 @@
 
 ### Task 1: Add `pinned_skills` to `OwlAgentManifest`
 
+> **RETIRED 2026-09-12 (A05.3).** This task shipped and the rest of the plan did not.
+> The field ended with zero readers and zero writers in `src/` and was never set by any
+> owl, so it advertised a capability that did not exist — the shape `hard_stop_enabled`
+> cost this tree eight days. Deleted; `manifest._RETIRED_FIELDS` drops the key on load
+> so stored manifests keep validating. The task text below is left as the record of what
+> was planned.
+
 **Files:**
 - Modify: `src/stackowl/owls/manifest.py` (after the `skills` field at `:37`)
 - Test: `tests/owls/test_manifest_pinned_skills.py` (create)

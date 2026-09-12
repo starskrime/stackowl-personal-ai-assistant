@@ -50532,8 +50532,31 @@ items:
     wave: 1
     order: 124
     gap: >-
-      Owls can only be created and edited by talking to the platform, and their
-      bounds and skills cannot be seen at all.
+      An owl's AUTHORITY is visible from nowhere. `bounds` is rendered by no surface —
+      `/owls list` shows display/role/status, `/owls menu` adds the tier, `owls_list`
+      adds runtime, and the only non-write reference to `manifest.bounds` in `src/` is
+      the YAML persister. So "what may this agent do" has no reader. Mutation is
+      reachable (`owl_build` has create/edit/retire/rename/pause/resume/grant; `/owls`
+      has list/create/edit/remove/menu/dna) but only from a chat prompt or a model tool.
+    gap_was_HALF_WRONG_and_A05_8_refuted_the_other_half_2026_09_12: >-
+      It read "Owls can only be created and edited by talking to the platform, and their
+      bounds and skills cannot be seen at all." The SKILLS half is false: A05.8 shipped
+      `GET /api/v1/skills` the day before, which renders owl -> skill ownership from
+      `skill_ownership`. Left as written, this item would have rebuilt a surface that had
+      existed for a day. NINTH wrong gap in this series and the same direction every time.
+      AND CORRECTING IT SURFACED SOMETHING THE GAP MISSES ENTIRELY: the card and the table
+      are TWO ANSWERS to "which skills does this owl own", and they disagree.
+      `OwlAgentManifest.skills`'s own comment says it "records ownership", which is the
+      claim `skill_ownership` makes. MEASURED — card-declared / table rows / card names
+      that EXIST in `skills`: secretary **71 / 9 / 8**, rca_gatherer **31 / 4 / 1**, scout
+      **7 / 4 / 0**, jobmarket 3 / 3 / 3, verifier **0 / 12 / 0**, hypothesis 0 / 1 / 0,
+      mailbutler 0 / 2 / 0. So **101 of 112 card-declared names refer to skills that do
+      not exist**, and `pipeline/steps/assemble.py:260` feeds that list into skill
+      injection on every turn. `delivery_gate.py:2087` already knows the two stores are
+      separate and reconciles them "first owner wins" — the disagreement is old enough to
+      have a workaround.
+    gap_check: >-
+      uv run python -c "import ast,pathlib; t=ast.parse(pathlib.Path('src/stackowl/control_plane/server.py').read_text()); routes=[a.value for n in ast.walk(t) if isinstance(n,ast.Call) and getattr(n.func,'attr','').startswith('add_') for a in n.args if isinstance(a,ast.Constant) and isinstance(a.value,str)]; agents=[r for r in routes if 'agent' in r or 'owl' in r]; readers=sorted(str(p) for p in pathlib.Path('src/stackowl').rglob('*.py') if len(p.parts)>2 and p.parts[2] in ('commands','control_plane') and '.bounds' in p.read_text(encoding='utf-8') and 'entry[' not in p.read_text(encoding='utf-8')); print(('REFUTED an agent surface serves bounds: '+str(agents or readers)) if (agents or readers) else 'HOLDS no control-plane route and no command renders an owl bounds; authority is visible from nowhere')" 2>/dev/null | tail -1
     evidence: >-
       Operator requirement, 2026-09-11 — "ability to update agents". The manifest
       already carries skills and pinned_skills, and BoundsSpec already models the
@@ -50541,6 +50564,144 @@ items:
       a new data model.
     depends_on: ['A05.1', 'A04.1']
     blocks: []
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: partial}
+    brainstorm_2026_09_12_THE_MEASUREMENT_CHANGED_THE_ITEM: >-
+      The gap's SKILLS half was already false — A05.8 shipped `GET /api/v1/skills` the day
+      before — so built as written this item would have rebuilt a one-day-old surface. The
+      BOUNDS half survived and got much sharper.
+      **SEVEN OF ELEVEN OWLS ARE UNRESTRICTED AND NOTHING SAYS SO.** archivist, hypothesis,
+      librarian, rca_gatherer, scout, secretary and verifier carry neither `bounds` nor
+      `creation_ceiling`. That is not "default": `effective_bounds`' own docstring says
+      "with no defined term the result is None (genuinely unbounded)", and
+      `check_effective_bounds` reads "None effective bounds (no constraint anywhere) ->
+      unrestricted". THE LIVE EVIDENCE AGREES — secretary, verifier, rca_gatherer and
+      hypothesis are each presented the WHOLE registry (**79 tools**) while bounded owls
+      see **6, 8 and 11** — and of **98 bounds refusals** in the retained logs, **ZERO are
+      on an unbounded owl**. The refusals all land on owls that HAVE bounds.
+      SO THE ITEM IS `unbounded`, NOT "a list of agents". An agent surface that rendered
+      an empty bounds list would read as "restricted to nothing" — the exact inversion of
+      the truth, on the one axis where being wrong matters most.
+    and_the_CONCRETE_form_of_that_is_worse_than_the_abstract_one: >-
+      "Unbounded" is abstract; the gate was asked a real question instead. Driving
+      `check_effective_bounds(effective_bounds(m.bounds, m.creation_ceiling), "shell")`
+      over all eleven LIVE manifests: **TEN OF ELEVEN AGENTS MAY RUN `shell`.** The seven
+      unbounded ones by having no constraint at all, and jobmarket, mailbutler and
+      syshealth because `shell` is inside the bounds they DO declare. Exactly one —
+      `english_tutor`, whose four tools are read_file/memory/tool_search/tool_describe —
+      is refused.
+      That is the sentence the surface exists to make available, and no one could have
+      obtained it before this item: it takes the manifests, the fold and the gate, and
+      until now nothing put the three together outside the enforcement path itself.
+    implement_2026_09_12: >-
+      `GET /api/v1/agents` returns each owl's card, its authority and its runtime, and the
+      page grows an Agents panel in the same change because the bijection guard requires
+      it. The card comes from `OwlStore` (owner-scoped, DB-backed), not `OwlRegistry` (an
+      in-memory rebuild with no `owner_id`) — the same reason A04.1 took the store.
+      **`unbounded` IS COMPUTED BY THE ENFORCEMENT PATH'S OWN FUNCTION.** The route calls
+      `effective_bounds(m.bounds, m.creation_ceiling)` and reports whether it is None. A
+      surface that reasoned its way to this answer — "bounds is None, so unbounded" —
+      would have been WRONG for an owl carrying only a ceiling, and a test pins exactly
+      that case. On authority, a surface that disagrees with the gate is worse than none.
+      IT IS A PILL, deliberately, where A05.6's `blocked` is muted text: `blocked:
+      terminal_parent` is the loop behaving correctly and must not look like a fault,
+      while `unbounded` IS the verdict an operator must not skim past.
+    the_TWO_SKILL_COUNTS_STAY_TWO_because_the_stores_DISAGREE: >-
+      `OwlAgentManifest.skills`'s own comment says it "records ownership" — the claim
+      `skill_ownership` makes. MEASURED, card-declared / table rows / card names that EXIST
+      in `skills`: secretary **71 / 9 / 8**, rca_gatherer **31 / 4 / 1**, scout **7 / 4 /
+      0**, jobmarket 3/3/3, verifier **0 / 12 / 0**. So **100 of 112 card-declared names
+      refer to skills that do not exist**, and five runtime readers consume that list —
+      `assemble.py:260` (prompt block), `execute.py:1582` (presented pins),
+      `classify.py:956` (suppression), `delivery_gate.py:2095` (attribution),
+      `evolution.py:899` (DNA signal).
+      ROOT CAUSE, MEASURED RATHER THAN GUESSED: `/owls edit --skills a,b,c`
+      (`owls_helpers.py:258`) splits on commas into a tuple and NOTHING checks the skill
+      exists; and `scheduler/handlers/orphan_reconciliation.py:103`'s `_RULES` reconciles
+      `skill_ownership.skill_name -> skills` but NOT `owls.manifest_json.skills`. Hence
+      **zero** orphan ownership rows against a hundred phantom card names — the sweeper is
+      one rule short. NOT FIXED HERE, and named rather than quietly carried: repairing it
+      means deciding whether a phantom name is dropped or kept as history, which changes
+      what five runtime readers see. The surface reports both numbers so the disagreement
+      is visible to whoever decides.
+    cleanup_pinned_skills_IS_RETIRED_SO_IT_IS_DELETED: >-
+      Declared at `manifest.py:72` as "always FULL-injected regardless of relevance", from
+      the 2026-06-06 skill-relevance-tiering plan. MEASURED: **zero readers and zero
+      writers anywhere in `src/`**, and not one of the eleven owls ever set it. The tiering
+      it belonged to was never finished and its scoring was later REMOVED — which
+      `pipeline/steps/assemble.py` records in its own comment. `hard_stop_enabled`'s shape,
+      and the rule is mandatory.
+      **AND DELETING IT NAIVELY WOULD HAVE BRICKED THE ROSTER.** All ELEVEN stored
+      manifests carry `pinned_skills` as `[]` (pydantic's `model_dump` writes every field)
+      and the model is `extra="forbid"` — so removing the field alone makes every owl fail
+      validation on the next boot, and `OwlStore.list_all` SKIPS an unreadable row. The
+      platform would come up with NO owls, logging eleven errors nobody reads until
+      somebody asks why the assistant has no assistants.
+      So the key is DROPPED ON LOAD rather than migrated: no data is deleted, and `upsert`
+      rewrites `manifest_json` from the model, so each row sheds the key by itself the
+      next time it is written. The drop is scoped to a named `_RETIRED_FIELDS` tuple, not
+      a blanket `extra="ignore"` — `forbid` is what catches a typo in a manifest today, and
+      a test pins that an unknown field is still refused.
+    and_THE_FIFTH_SURFACE_FOR_A_RETIREMENT_IS_TWO_JUNE_DOCUMENTS: >-
+      `pinned_skills` is named in `docs/superpowers/specs/2026-06-06-skill-relevance-tiering-design.md`
+      (three times, including the field's full contract) and in that spec's plan as Task 1.
+      Both are RECORDS of what was decided in June, so neither is rewritten — the boundary
+      CLAUDE.md draws is live instruction versus record, and falsifying a plan to match
+      today is the worse error. Each gains a dated retirement note at the top of the claim
+      instead, saying the field is unbuilt rather than present, so a future session
+      reviving the design does not re-add it from a document that reads as current.
+      This is the surface `d8b8ba81` missed when D05.7 advertised `hard_stop_enabled` for
+      eight days after the code was deleted.
+    and_A_SCRIPTED_EDIT_UNMEASURED_TWO_DOCUMENTS_by_its_WHITESPACE: >-
+      Both document amendments replaced a captured span with a heredoc, and a heredoc ends
+      in a newline while the captured span did NOT. That inserted a BLANK LINE after the
+      Status paragraph in A05.1 and A05.9 — which splits a markdown blockquote in two, so
+      `doc_check` stopped seeing the header as one block and both documents went
+      UNMEASURABLE. The prose read perfectly; the structure was broken.
+      THE SPAN RULE WAS FOLLOWED AND DID NOT CATCH IT. `assert old in s` then `replace`
+      cannot split a sentence, and it did not — I read the replacement back and it was
+      correct. What I did not read back was what the whitespace did to the text AROUND it,
+      which is a different property and the one that mattered.
+      IT WAS CAUGHT BY COMPARING THE INSTRUMENT'S COUNT TO THE PREVIOUS RUN: 52 measurable
+      became 50, and unmeasurable 35 became 37. Nothing failed, nothing was stale, and a
+      two-document drop in a count of fifty reads as noise unless you happen to know
+      yesterday's number. Re-run to 52 / 35 / STALE 0 after rejoining the blockquotes.
+      **A count is the only thing that could have seen this** — the same lesson DEBT-282
+      records for `Reviewed:` stamps, where nine of them moved only four documents and the
+      COUNT is what exposed it.
+    validated_LIVE_2026_09_12_core_up_at_02_51_56: >-
+      `./start.sh`, core up at 02:51:56 — start time checked against the change on disk,
+      never a PID — then the live door. **401** unauthenticated; **401** with a VALID token
+      and a foreign `Origin`; **200** returning **11 agents, SEVEN unbounded** and naming
+      them: archivist, hypothesis, librarian, rca_gatherer, scout, secretary, verifier.
+      Identical to the seven measured from the database before the route existed, which is
+      what makes it a check rather than a screenshot.
+      `INFO [control_plane] server.agents: exit — served
+      {"principal_id":"principal-default","agents":11,"unbounded":7,"skill_counts_disagree":6}`.
+      That literal appears ZERO times across every retained dated log before today — a new
+      message with one emitter, so the evidence cannot be produced by the code it replaced.
+      SIX owls disagree about their own skills on the live surface: hypothesis 0/1,
+      mailbutler 0/2, rca_gatherer 31/4, scout 7/4, secretary 71/9, verifier 0/12.
+      **AND THE RETIREMENT'S ONE HAZARD WAS PROVEN HARMLESS ON THE LIVE PLATFORM, not
+      argued.** The drop fired at boot — `INFO [owls] manifest.load: dropping retired
+      field(s) from a stored manifest {"fields":["pinned_skills"],"name":"verifier"}` — and
+      `INFO [owls] store.list_all: exit {"rows":11,"loaded":11}` says every owl still
+      loaded. Without the drop that line would have read `loaded: 0`, and the platform
+      would have come up with no assistants.
+      The served page cites all SIX API routes, so the path bijection holds on the page a
+      browser receives and not only in the test.
+    closing_check: >-
+      [ -f docs/reference-mapping/designs/A05.3.md ]
+      && echo "CLOSEABLE A05.3 has its own design document"
+      || echo "OPEN A05.3 has no document of its own; the authority contract lives in the
+      route docstring and on manifest._RETIRED_FIELDS"
+    document_is_partial_and_the_reason_is_named: >-
+      The two contracts that matter — why `unbounded` is computed by the enforcement
+      path's own fold rather than inferred, and why a retired manifest field is dropped on
+      load rather than migrated — live in `_handle_agents`'s docstring and on
+      `manifest._RETIRED_FIELDS`, which is where anyone changing either will be standing.
+      A document for A05.3 belongs with the WRITE half (create/update/remove over HTTP),
+      which ESC-173 gates, when there is a lifecycle to describe rather than one read route.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A05.4
     title: Schedules — list, create, update, remove, run now

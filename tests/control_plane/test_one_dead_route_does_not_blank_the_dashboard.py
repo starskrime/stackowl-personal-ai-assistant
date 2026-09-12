@@ -44,7 +44,7 @@ import pytest
 
 from stackowl.control_plane.page import INDEX_HTML
 
-_SECTIONS = ("health", "schedules", "config", "skills", "tasks")
+_SECTIONS = ("health", "schedules", "config", "skills", "tasks", "agents")
 
 _HARNESS = r"""
 const fs = require("fs");
