@@ -225,14 +225,17 @@ Duplicate keys silently swallow whole records. This has already happened.
   construction, not by reading. Targeted paths are chosen by what the change
   looks related to, and a CROSS-CUTTING guard never looks related to anything — which
   is how an unscoped `task_outcomes` read and three stale allowlist entries both
-  shipped. The gate takes **~4.5 minutes** (MEASURED across FIVE runs on 2026-09-08:
-  `284/284/284/286/290 passed, 2 skipped` in 256.8s-265.9s. This line read **~2
-  minutes** from a 2026-09-06 reading of `138 passed` in 105.88s, and it was ~40s
-  before that — so the gate has DOUBLED in two days and roughly sextupled overall,
-  while the number stood still. A stale duration is why a gate gets skipped, and this
-  one grows by construction: the marker is the source, so every loop that ships a
-  guard adds to it and nothing updates the figure. Read it off your own run rather
-  than trusting this sentence) and runs everything
+  shipped. The gate takes **~9 to 10 minutes** (MEASURED across THREE runs on
+  2026-09-12: `748 passed, 2 skipped, 12428 deselected` in **551.04s, 552.24s and
+  595.66s**. The history of this one number is the argument for re-reading it: ~40s,
+  then `138 passed` in 105.88s on 2026-09-06, then `284/284/284/286/290 passed` in
+  256.8-265.9s on 2026-09-08, then `667 passed` in 551.07s on 2026-09-11, now 748 —
+  roughly FIFTEENFOLD, and wrong LOW here every single time, which is the dangerous
+  direction: a gate budgeted at 4.5 minutes and taking 10 is a gate someone kills.
+  The COUNT grew 667 -> 748 in one day while the DURATION held. A stale duration is why
+  a gate gets skipped, and this one grows by construction: the marker is the source, so
+  every loop that ships a guard adds to it and nothing updates the figure. Read it off
+  your own run rather than trusting this sentence) and runs everything
   marked `@pytest.mark.tripwire`
   plus `progress_lint` and both baselines.
 
