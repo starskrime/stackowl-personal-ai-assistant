@@ -431,6 +431,24 @@ current:
       budget governor MEASURES steps, time, cost and tokens and cannot stop anything,
       and per-agent budget ENFORCEMENT exists in no self-hostable system surveyed, so
       it is differentiation rather than catch-up. A05.1 stays next after it.
+    A04_1_SHIPPED_2026_09_12_and_A05_6_is_next_because_A04_1_unblocked_it: >-
+      A04.1 is done on `fbcad7d3`: `owls/activity.py::read_owl_activity` gives the shared
+      card its runtime half as a DERIVED reader, `owls_list` renders it, and a health
+      branch that could never fire is deleted. Live: `in_flight_total: 1` caught
+      `secretary` mid-turn, twice.
+      NEXT IS **A05.6** — live activity as a set — and A04.1 is why it is now small: it
+      depended on A05.1 (shipped) and A04.1 (shipped), and the reader it needs already
+      exists and is owner-scoped, grouped and mutation-proven. A05.3 also unblocked, but
+      A05.6 first: its gap is the one `task_status` measurably cannot answer (a REQUIRED
+      `task_id`), and the control-plane route is presentation over `read_owl_activity`.
+      READ THE CURE-SHAPED gap_check FINDING ON A04.1 BEFORE WRITING ANOTHER CHECK. Five
+      of ten were cure-shaped; three were repaired this loop. A05.6's own check looks
+      sound (it asks about `task_status`'s required params and the set of list tools), but
+      it was not re-derived — check it against the capability, not against the cure.
+      AND A05.5's GAP IS MEASURABLY WRONG, found by repairing its check: it says the
+      staged set is reachable from no surface, and `commands/memory_helpers.py` SELECTs
+      from `staged_facts` today. That is the EIGHTH wrong gap in this series. Whoever
+      takes A05.5 must rewrite the gap before building from it.
     A05_8_READ_HALF_SHIPPED_2026_09_11_and_A04_1_is_next: >-
       A05.8's read half is live on `79cff92b`/`b550cfd6`: `GET /api/v1/skills`, 7 owls and
       35 owned skills, with a Skill ownership table on the page. Its own `gap_check` was
