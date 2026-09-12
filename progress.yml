@@ -15624,6 +15624,36 @@ current:
       purge emptied (151 audit rows, 128 recoverable names) remain unrecoverable — their
       bodies were never snapshotted because the purge did not go through the store.
   ESCALATIONS:
+    ESC_174_two_P0_items_are_unblocked_while_the_loop_works_a_P1_series:
+      question: >-
+        The loop is working the A05 control-plane series (P1, wave 1-2) and A04.1 (P1)
+        because each unblocks the next. TWO P0 items are unblocked and untouched:
+        **A06.5** — memory is keyed by FILESYSTEM PATH, so a per-install memory file
+        cannot serve a second customer, and it blocks A05.5 — and **A06.1** — freeze the
+        memory snapshot for the life of a session, which blocks A06.2. A06.5 in
+        particular is a hard ceiling on the whole customer-facing programme the A05
+        series exists to build: every surface we ship is single-tenant underneath it.
+        Do the P0 memory items go first, or does the control plane finish?
+      why_evidence_cannot_settle_it: >-
+        Both readings are defensible from the tree and the disagreement is about
+        SEQUENCING VALUE, not fact. Finishing A05 gives the operator something he asked
+        for by name and can see today; taking A06.5 first avoids building four more
+        surfaces on a foundation that cannot serve a second customer. Evidence can say
+        what each costs, never which he wants first.
+      raised_by: >-
+        The A04.1 panel, 2026-09-11 — the Killer-functionality lens named it twice, in
+        its first answer and again after a factual correction, which is why it is queued
+        rather than noted. It is not contradicting the recorded reason A04.1 is next
+        (that it blocks A05.3 and A05.6); it is asking whether that series is the right
+        series right now.
+      panel_recommendation: >-
+        Finish the A05 read surfaces already in flight (A05.3, A05.5, A05.6 are small now
+        that A04.1's reader exists), then take A06.5 BEFORE any write surface — a write
+        surface built over path-keyed memory is the expensive one to unpick.
+      blocked_until_answered: >-
+        Nothing. The loop continues on the A05 series; this only changes what comes after.
+      premise_check: >-
+        python3 -c "import yaml; d=yaml.safe_load(open('progress.yml')); m={i['id']: i for i in d['items']}; open_p0=[k for k in ('A06.5','A06.1') if not m[k].get('stages')]; print(('HOLDS ' + ', '.join(open_p0) + ' still unstarted P0') if open_p0 else 'EXPIRED both P0 memory items have been started')"
     ESC_173_one_token_grants_read_and_write_may_the_control_plane_WRITE:
       question: >-
         A05.4 ships `GET /api/v1/schedules` — the schedules as a set, behind the door
@@ -49904,14 +49934,7 @@ items:
       on the card, which is the half A05.6 needs and the only third of the original
       claim that survived.
     gap_check: >-
-      uv run python -c "import subprocess;
-      from stackowl.owls.manifest import OwlAgentManifest as M;
-      n=len(subprocess.run(['grep','-rl','--include=*.py','OwlAgentManifest','src/'],
-      capture_output=True,text=True).stdout.split());
-      r={'status','last_run_at','running','pid','activity','state','last_seen'} & set(M.model_fields);
-      print(('HOLDS' if not r and n > 1 else 'REFUTED') + f' one descriptor of
-      {len(M.model_fields)} static fields read by {n} modules; runtime fields {sorted(r)}')"
-      2>/dev/null | tail -1
+      uv run python -c "import pathlib,subprocess; from stackowl.owls.manifest import OwlAgentManifest as M; n=len(subprocess.run(['grep','-rl','--include=*.py','OwlAgentManifest','src/'],capture_output=True,text=True).stdout.split()); r={'status','last_run_at','running','pid','activity','state','last_seen'} & set(M.model_fields); reader=[str(p) for p in pathlib.Path('src/stackowl').rglob('*.py') if 'def read_owl_activity' in p.read_text(encoding='utf-8')]; print(('REFUTED a runtime reader exists: '+', '.join(reader)) if reader and not r else ('REFUTED runtime state was put ON the card: '+str(sorted(r))) if r else f'HOLDS one descriptor of {len(M.model_fields)} static fields read by {n} modules, and NOTHING reads runtime state beside it')" 2>/dev/null | tail -1
     gap_was_WRONG_and_its_evidence_line_is_the_reason_2026_09_11: >-
       The gap said "there is no single descriptor an agent can be listed from,
       routed by, or reported on — so every surface that needs one derives its own",
@@ -49935,6 +49958,179 @@ items:
       binaries; neither note covers the two disagreeing on the SET.
     depends_on: []
     blocks: ['A05.3', 'A05.6']
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: done, test: done, validate: done, document: partial}
+    brainstorm_the_PANELS_DISAGREEMENT_IS_THE_DESIGN_2026_09_11: >-
+      Two lenses contradicted each other and the contradiction is the whole answer, so it
+      is recorded rather than averaged. KILLER said build over `tasks` — it alone carries
+      `status`, `lease_expires_at` and `attempt_count`, and a view over `task_outcomes`
+      would be a lagging quality report. STABILITY said a `tasks`-only view reports SEVEN
+      OF ELEVEN agents as idle forever, because their work is all in `task_outcomes`.
+      BOTH ARE RIGHT ABOUT THEIR OWN STORE, and they answer different questions:
+      `tasks` answers NOW; `task_outcomes` has **no status column at all** — every row is
+      terminal, captured at end-of-pipeline — so 19,900 rows cannot say what is happening
+      now, at any volume. The reader therefore returns the two facts SEPARATELY NAMED and
+      SEPARATELY SOURCED, with deliberately no fused `status` enum: one enum spanning a
+      live table and a history table would reach `/api/v1` JSON and could never be split
+      back out.
+      FUTURE-PROOF then refuted a premise I had supplied, which is the loop's sharpest
+      finding. I told the panel "7 of 11 owls have never run a task" (measured on
+      `tasks`), then CORRECTED myself mid-flight to "all 11 have run work, so a
+      tasks-only view is wrong" (measured on `task_outcomes`). Both readings were wrong.
+      `enqueue_turn_task` has exactly ONE call site — `startup/orchestrator.py` — and the
+      comment above it says why: only the gateway owl route reaches `deliver.py`, which
+      COMPLETES the row, so "enqueuing a command or parliament turn would create a task
+      nothing ever closes, and the loop would dutifully re-drive it". `rca_gatherer`,
+      `hypothesis` and `verifier` are parliament/RCA stages running INSIDE another owl's
+      turn. 3,240 outcomes and ZERO tasks is the TRUTH, not a gap — and a reader that
+      unioned the stores to make all eleven look busy would have MANUFACTURED COVERAGE,
+      presenting history as liveness. That is this tree's "message asserting a cause
+      nobody checked" family, shipped as a product surface.
+    implement_2026_09_11_a_DERIVED_reader_never_a_column_on_the_card: >-
+      `owls/activity.py::read_owl_activity` returns each owl's SHARED manifest BY
+      REFERENCE beside `in_flight`/`pending` (from `tasks`), `recent_turns`/`last_seen_at`
+      (from `task_outcomes`) and `live_activation: None` — A04.2's hole, NAMED rather than
+      filled, because an agent wedged mid-turn inside another owl's turn holds no task row
+      and has no durable home at all.
+      MEASURED BEFORE BUILDING: `tasks.owl_name` is written on all 849 populated rows and
+      is a query predicate in **ZERO** SQL statements anywhere in `src/` — written
+      everywhere, read nowhere, on precisely the column this item needs. Defect shape #1.
+      DERIVED, NEVER DENORMALISED. `owls`' scalar columns are a DERIVED INDEX written only
+      by `upsert` in the same statement as `manifest_json`, "so an index column can never
+      disagree with the document it indexes" (`owls/store.py`). A `last_task_at` column
+      there would have a second writer on a hot path and be erased by the next boot seed —
+      defect shapes 4 and 6 at once.
+      TWO GROUPED QUERIES, NEVER ONE PER OWL: there is no index on `tasks(owl_name)` (the
+      live ones are owner, status, parent, session, claimable, lease-expiry) over a table
+      holding 16.8 MB of `checkpoint_blob`, while `task_outcomes` IS indexed
+      `(owner_id, owl_name, captured_at)` for exactly this read. Both statements scope
+      `owner_id` in the statement — a JOIN scoping one side would PASS
+      `test_no_owner_scope_bypass`, which clears a statement when `owner_id` appears
+      anywhere in it, so the fence cannot see that bug and this shape cannot express it.
+      CONSUMED, not shelved: `owls_list` — the LIST surface named in this item's own title
+      — now renders `in-flight`, `pending` and `turns/3d` per owl, degrading to
+      configuration-only (at INFO) when no db is wired. A reader with no consumer is
+      decoration, which is what KILLER objected to; A05.3 and A05.6 are the next two.
+    cleanup_a_HEALTH_BRANCH_THAT_COULD_NEVER_FIRE_is_DELETED: >-
+      `OwlRegistry.health_check` computed its `degraded` list as
+      `max_concurrent_requests <= 0` against a field declared `Field(default=1, ge=1)`.
+      VERIFIED BY CONSTRUCTION rather than by reading: pydantic refuses 0 and -1, and
+      `model_construct` — the one route that bypasses validation — appears NOWHERE in
+      `src/`. So the contributor could only ever return `ok`, or `down` when Secretary is
+      missing, and a reader of the health report had no way to know the middle rung was
+      unreachable. Nothing in `tests/` or `docs/` asserted it; grep for its two literals
+      returns only the two lines being deleted.
+      DELETED RATHER THAN REPAIRED, and nothing replaces it there: a real degraded signal
+      needs live per-agent state, and `OwlRegistry` is synchronous and holds no `DbPool` —
+      giving it one puts a database in the dependency graph of all 29 modules that import
+      the descriptor.
+    gaps_are_COUNTED_because_they_are_not_small: >-
+      MEASURED on the live database through the reader itself: **324 task rows name an owl
+      that no longer exists** (Brain 110, sysfup 119, headhunter 79, sysdesign 16 — all
+      terminal, all last written 2026-08-13..15) and **76 owner-scoped rows carry no
+      `owl_name` at all**. An INNER JOIN would have hidden 58% of the table behind a total
+      that looks plausible, and `owl_name` has no FK in any migration. `ActivityGaps`
+      carries all three counts and `owls_list` logs them at INFO when non-zero, so a
+      surface built on this reader can say what it could not see.
+    test_EIGHT_MUTATIONS_all_caught_proven_off_tree_before_the_tree_was_free: >-
+      The guards were proven, not just the fix — a dry run shows the fix works and says
+      nothing about whether the tests would notice it breaking. Each mutation was applied
+      to a scratch copy, run, and restored FROM A FILE COPY with a final green re-run:
+      laundering outcome history into `in_flight` (1 failed), a per-owl N+1 loop (1), the
+      owner predicate dropped from the outcome read (**6** — the fake pool asserts it on
+      every call, which is the right blast radius for a tenancy regression), `parked`
+      counted as in-flight (1), a fused `status` field appearing (1), the manifest COPIED
+      rather than shared (1), the time bound dropped from the outcome read (1), and
+      orphans silently dropped instead of counted — INNER JOIN behaviour (1). Restored:
+      8 passed.
+      AND THE FIRST OFF-TREE RUN WAS RED FOR ITS OWN REASONS, which is the trap this
+      programme records: six tests failed with "async def functions are not natively
+      supported" because running with `--rootdir` outside the repo loses
+      `asyncio_mode = "auto"` from `pyproject.toml`. That reads identically to "the fix is
+      missing". `-o asyncio_mode=auto` and all eight pass.
+    and_THE_TOOLS_OWN_DESCRIPTION_IS_A_SURFACE: >-
+      `owls_list`'s `description` is what the MODEL reads to decide whether to call it,
+      and it advertised "name, role, lifecycle, model tier, and schedule if scheduled" —
+      configuration only. Left alone, the tool would have returned runtime facts no caller
+      knew to ask for: the fifth-surface rule applied INSIDE a tool, where the document is
+      the description string itself. Both it and the module docstring are corrected in the
+      same change.
+      AND THE SCRIPTED EDIT FOR IT BROKE ON ITS OWN QUOTING, which is the span rule one
+      level out: the replacement text contains a `"""` docstring, and building it as a
+      Python triple-quoted string inside a shell heredoc produced an unterminated literal.
+      The cure is the same shape as `assert old in s` — put EACH SIDE of the span in its
+      own file and read them, so no quoting layer can reinterpret the text being matched.
+    validated_LIVE_2026_09_12_and_the_evidence_PROVES_the_two_store_split: >-
+      `./start.sh`, core up at 00:05:03 — start time checked against the change on disk,
+      never a PID — then the tool driven through a REAL turn with `scripts/dev_ingress.py`,
+      twice.
+      `INFO [owls] activity.read: exit — served
+      {"owls":11,"in_flight_total":1,"pending_total":5,"unattributed_tasks":73,
+      "orphaned_tasks":324,"orphaned_outcomes":0}` at 00:05:48, and again at 00:06:07.
+      That literal appears ZERO times across every retained dated log before today — a new
+      message with one emitter, so the evidence cannot be produced by the code this
+      replaced. `owls_list.execute: exit {"success":true,"count":11}` beside it, and the
+      gaps line `work that attaches to no configured owl` fired at INFO with all three
+      counts.
+      **`in_flight_total: 1` IS THE ITEM'S WHOLE CLAIM, AND IT WAS VERIFIED RATHER THAN
+      ASSUMED.** Off-tree minutes earlier it was 0, and querying `tasks` for
+      `status IN ('running','recovering')` NOW returns nothing. Neither is a contradiction:
+      task `2ee97136…` (secretary, my own first ingress) was created 00:05:34 and completed
+      00:05:59, and the reader looked at 00:05:48 — inside that window. The second reading
+      caught `7ef4d502…`, created 00:05:59 and completed 00:06:14, at 00:06:07. Both rows
+      are `completed` now.
+      **A reader over `task_outcomes` could not have produced either number**, because an
+      outcome row only exists after the turn ends. The live platform demonstrated the
+      design's central distinction in the act of being asked.
+      NOT VALIDATED LIVE, and named rather than implied: the no-db degradation path. A
+      `db_pool` is always wired on this box, so `_activity`'s empty-map branch cannot be
+      reached here; it is covered by the existing `owls_list` tests, which construct
+      `StepServices` without one.
+    a_CURE_SHAPED_gap_check_is_a_CLASS_measured_2026_09_12_and_this_item_walked_into_it: >-
+      A04.1's own gap_check reported HOLDS on the tree that CLOSES it, and it was right to:
+      it asked whether the CARD had grown runtime fields, and the panel measured that
+      putting them there is defect shapes 4 and 6. So the check demanded the wrong cure,
+      and no correct fix could ever refute it.
+      THAT IS THE SECOND INSTANCE IN TWO LOOPS — A05.8's check watched one command file
+      while its gap said "no command OR SURFACE" — so it is a CLASS, not an instance, and
+      it was SWEPT rather than assumed. Of the ten gap_checks, FIVE were cure-shaped:
+      A05.8 (fixed last loop), A04.1, A04.2, A05.5, and A01.4.
+      THE SHAPE: a gap_check that tests for THE CURE THE GAP'S WORDING IMPLIES rather than
+      for THE CAPABILITY THE GAP SAYS IS MISSING. It fails in ONE direction — it can only
+      report HOLDS after correct work that took a different and often better route — which
+      makes it worse than no check at all, because it invites a later loop to rebuild what
+      already exists, in the shape the check demands. A04.2's was the sharpest: it asked
+      whether the `owls` ROW had gained a lease column, which is precisely the denormalisation
+      this item measured as wrong.
+      THREE ARE REPAIRED HERE, each re-asked as a capability. A04.1 -> does a runtime reader
+      exist beside the card (REFUTED). A04.2 -> does anything lease or activate the AGENT,
+      by any mechanism (HOLDS, correctly). A05.5 -> does any command or control-plane
+      module QUERY `staged_facts` (REFUTED).
+      A01.4 IS LEFT ALONE AND THE REASON IS NAMED, not deferred out of convenience: its
+      check asks whether `hard_stop` is a settings field again, and re-asking it as a
+      capability needs a measurement of what a non-budget stop would LOOK like — which I
+      have not taken. Rewriting it from a guess is exactly how the original seven wrong
+      gaps were written. ESC-170 already records that the operator removed that stop
+      deliberately, so the item is gated on him regardless.
+      AND A05.5's REPAIR IMMEDIATELY REFUTED ITS OWN GAP — the eighth wrong gap in this
+      series. It says the staged set is "reachable from no surface at all";
+      `commands/memory_helpers.py` SELECTs from `staged_facts` today. VERIFIED BEFORE
+      BELIEVING IT, per this file's own rule: the first version of the repaired check
+      matched the bare word and reported TWO files, one of which was a DOCSTRING in
+      `staged_helpers.py` saying the store "only ever reads staged_facts" — a prose match,
+      the fifth this programme has recorded. Tightened to require FROM/JOIN/INTO/UPDATE and
+      it reports the one real querier.
+    closing_check: >-
+      [ -f docs/reference-mapping/designs/A04.1.md ]
+      && echo "CLOSEABLE A04.1 has its own design document"
+      || echo "OPEN A04.1 has no document of its own; the reader's contract lives in its
+      module docstring and A05.3 is the first surface that will need one"
+    document_is_partial_and_the_reason_is_named: >-
+      The reader's whole contract — the two-store split, why there is no fused status, why
+      `live_activation` is None, why it is derived and not a column — lives in
+      `owls/activity.py`'s module docstring, which is where anyone changing it will be
+      standing. A design document for A04.1 belongs with A05.3, the first SURFACE that
+      renders this, when there is a rendering contract to describe rather than one reader.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A04.2
     title: Activation lease — an agent is durable, its instance is not
@@ -49953,13 +50149,7 @@ items:
       answer. The work is to EXTEND that lease to the agent, never to mint a
       second one.
     gap_check: >-
-      o=$(./scripts/db_query.sh "SELECT group_concat(name) FROM pragma_table_info('owls')"
-      2>/dev/null | tail -1);
-      t=$(./scripts/db_query.sh "SELECT group_concat(name) FROM pragma_table_info('tasks')
-      WHERE name LIKE 'lease%'" 2>/dev/null | tail -1);
-      case "$o" in *lease*|*activ*) echo "REFUTED owls carries $o";;
-      *) echo "HOLDS the durable lease is on the WORK (tasks: $t) and the owls row carries
-      none ($o)";; esac
+      uv run python -c "import pathlib; hits=sorted(str(p) for p in pathlib.Path('src/stackowl').rglob('*.py') if any(k in p.read_text(encoding='utf-8') for k in ('agent_activation','owl_activation','agent_lease','owl_lease'))); print(('REFUTED an agent-level activation/lease now exists: '+', '.join(hits)) if hits else 'HOLDS the durable lease is on the WORK (tasks.lease_owner + lease_expires_at) and NOTHING leases or activates the AGENT — asked as a capability, because A04.1 measured that putting runtime state on the owls ROW is defect shapes 4 and 6, so the right cure may well add no column at all')" 2>/dev/null | tail -1
     gap_was_WRONG_ON_ITS_EVIDENCE_LINE_2026_09_11: >-
       It read "no pool, no lease, no activation record". THE LEASE EXISTS —
       migration 0053 added `tasks.lease_owner`, 0119 added `lease_expires_at` and
@@ -50465,7 +50655,7 @@ items:
       answer — this record's own "an empty table is a QUESTION, not an answer" shape, on
       the one store the customer has the strongest claim to.
     gap_check: >-
-      python3 -c "import subprocess; o=subprocess.run(['./scripts/db_query.sh','SELECT COUNT(*) FROM committed_facts;'],capture_output=True,text=True).stdout; n=[t for t in o.split() if t.isdigit()]; print('REFUTED committed_facts holds rows — a reader would find something' if n and int(n[-1])>0 else 'HOLDS committed_facts is empty while staged_facts is not; no surface reaches the staged set')"
+      uv run python -c "import pathlib,re; s=sorted(str(p) for p in pathlib.Path('src/stackowl').rglob('*.py') if len(p.parts)>2 and p.parts[2] in ('commands','control_plane') and re.search(r'(FROM|JOIN|INTO|UPDATE)\s+staged_facts', p.read_text(encoding='utf-8'), re.I)); print(('REFUTED a surface QUERIES the staged set: '+', '.join(s)) if s else 'HOLDS no command and no control-plane route queries staged_facts')" 2>/dev/null | tail -1
     evidence: >-
       Operator requirement, 2026-09-11 — "see memories". Depends on the memory
       substrate work in A06, so that the browser shows one model rather than

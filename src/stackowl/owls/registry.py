@@ -335,18 +335,21 @@ class OwlRegistry:
                 latency_ms=0,
             )
 
-        degraded: list[str] = [name for name, manifest in self._owls.items() if manifest.max_concurrent_requests <= 0]
-        if degraded:
-            log.startup.warning(
-                "[owls] registry.health_check: degraded owls detected",
-                extra={"_fields": {"owls": degraded}},
-            )
-            return HealthStatus(
-                name=self.contributor_name,
-                status="degraded",
-                message=f"Owls with non-positive concurrency: {', '.join(sorted(degraded))}",
-                latency_ms=0,
-            )
+        # THE `degraded` BRANCH THAT STOOD HERE COULD NEVER FIRE, and it is
+        # deleted rather than repaired (A04.1). It computed
+        # `max_concurrent_requests <= 0` against a field declared
+        # `Field(default=1, ge=1)` — VERIFIED by construction: pydantic refuses 0
+        # and -1, and `model_construct`, which would bypass validation, is used
+        # nowhere in `src/`. So this contributor could only ever return `ok`, or
+        # `down` when Secretary is missing, and a reader of the health report had
+        # no way to know the middle rung was unreachable.
+        #
+        # Nothing replaces it HERE on purpose. A real degraded signal needs live
+        # per-agent state, which this class cannot see: `OwlRegistry` is
+        # synchronous and holds no `DbPool`, and putting one in its constructor
+        # would add a database to the dependency graph of all 29 modules that
+        # import the descriptor. `owls/activity.py` is where that reading lives,
+        # and A04.2 is the item that gives an idle agent a liveness answer at all.
 
         log.startup.debug(
             "[owls] registry.health_check: exit",
