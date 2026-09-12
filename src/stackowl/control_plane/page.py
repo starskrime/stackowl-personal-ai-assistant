@@ -142,6 +142,20 @@ INDEX_HTML: Final = """<!doctype html>
        ownership is recorded per pair, not per owl.</p>
   </section>
 
+  <section id="tasks" hidden>
+    <h2>Work in flight</h2>
+    <div class="wrap"><table>
+      <thead><tr><th>Task</th><th>Owl</th><th>Status</th><th>Blocked</th>
+                 <th>Attempts</th><th>Next run</th><th>Last error</th></tr></thead>
+      <tbody id="taskrows"></tbody>
+    </table></div>
+    <p class="note">UNFINISHED work only — completed and failed rows are history.
+       <strong>Blocked</strong> says why a pending row is not moving:
+       <code>terminal_parent</code> means its parent finished, so the loop will
+       never run it, and that is correct rather than stuck. <code>none</code>
+       means the loop may take it now.</p>
+  </section>
+
   <p class="note" id="status"></p>
 </main>
 <script>
@@ -283,8 +297,45 @@ INDEX_HTML: Final = """<!doctype html>
     { id: "health",    path: "/api/v1/health",    render: renderHealth },
     { id: "schedules", path: "/api/v1/schedules", render: renderSchedules },
     { id: "config",    path: "/api/v1/config",    render: renderConfig },
-    { id: "skills",    path: "/api/v1/skills",    render: renderSkills }
+    { id: "skills",    path: "/api/v1/skills",    render: renderSkills },
+    { id: "tasks",     path: "/api/v1/tasks",     render: renderTasks }
   ];
+
+  function blockedKind(blocked) {
+    if (blocked === "none") { return "ok"; }
+    if (blocked === "terminal_parent" || blocked === "superseded") { return "mut"; }
+    return "warn";
+  }
+
+  function renderTasks(payload) {
+    var body = $("taskrows");
+    body.textContent = "";
+    if (!payload.wired) {
+      var r = document.createElement("tr");
+      cell(r, "no db wired", "mut");
+      body.appendChild(r);
+    } else if (!(payload.tasks || []).length) {
+      var e = document.createElement("tr");
+      cell(e, "no unfinished work", "mut");
+      body.appendChild(e);
+    } else {
+      (payload.tasks || []).forEach(function (t) {
+        var row = document.createElement("tr");
+        cell(row, t.task_id);
+        cell(row, t.owl_name, "mut");
+        cell(row, t.status);
+        // NOT a pill: `blocked` is not a health verdict. `terminal_parent` is
+        // the loop behaving correctly, and colouring it like a fault is the
+        // invented alarm this whole column exists to prevent.
+        cell(row, t.blocked, blockedKind(t.blocked));
+        cell(row, t.attempt_count + "/" + t.max_attempts, "num");
+        cell(row, t.next_attempt_at, "mut");
+        cell(row, t.last_error, "mut");
+        body.appendChild(row);
+      });
+    }
+    $("tasks").hidden = false;
+  }
 
   function load(token) {
     say("loading…");

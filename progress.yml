@@ -50697,13 +50697,7 @@ items:
       running", and a running task, a retrying job and a wedged agent stay
       indistinguishable to anyone who cannot name the row first.
     gap_check: >-
-      uv run python -c "import pathlib;
-      from stackowl.tools.tasks.task_status import TaskStatusTool as T;
-      req=T().manifest.parameters.get('required', []);
-      listers=sorted(p.stem for p in pathlib.Path('src/stackowl/tools').rglob('*list*.py'));
-      print(('HOLDS' if 'task_id' in req and not any('task' in n for n in listers)
-      else 'REFUTED') + f' task_status requires {req}; list tools are {listers}')"
-      2>/dev/null | tail -1
+      uv run python -c "import ast,pathlib; from stackowl.tools.tasks.task_status import TaskStatusTool as T; req=T().manifest.parameters.get('required', []); t=ast.parse(pathlib.Path('src/stackowl/control_plane/server.py').read_text()); routes=[a.value for n in ast.walk(t) if isinstance(n,ast.Call) and getattr(n.func,'attr','').startswith('add_') for a in n.args if isinstance(a,ast.Constant) and isinstance(a.value,str)]; setwise=[r for r in routes if 'task' in r or 'activity' in r]; print(('REFUTED work in flight is readable as a SET: '+str(setwise)) if setwise else f'HOLDS task_status still requires {req} and no control-plane route serves work as a set (routes are {sorted(routes)}) — asked about REACHABILITY AS A SET, not about whether a list TOOL exists, because this item depends on A05.1 and the cure is a surface')" 2>/dev/null | tail -1
     gap_was_OVERSTATED_and_it_is_the_A05_5_shape_2026_09_11: >-
       "Nothing shows work in flight" is false: `task_status` shows it, by id. The
       correction is the same one A05.5 needed hours earlier — a capability that
@@ -50715,6 +50709,137 @@ items:
       aggregates subsystem state; this is a reader for state that exists.
     depends_on: ['A05.1', 'A04.1']
     blocks: []
+    stages: {brainstorm: done, architect: done, implement: done, cleanup: no_change_needed, test: done, validate: done, document: partial}
+    brainstorm_2026_09_12_the_ITEM_IS_THE_REASON_COLUMN_not_the_list: >-
+      MEASURED FIRST, and it changed what got built. Five `secretary` rows sit `pending`
+      with `next_attempt_at` TEN HOURS in the past, `last_error` set, attempt 1-2 of 30,
+      no lease. That is the exact silhouette of a wedged loop, and a set view showing
+      status alone would have reported one — the operator restarts, sees the same five,
+      and escalates a platform that is CORRECT.
+      It is correct: every one is a sub-task whose PARENT is terminal (`completed` x4,
+      `dead_letter` x1), and `claimable()` deliberately excludes a child of a terminal
+      parent. Verified by running the predicate read-only against the live database:
+      **the loop would claim NOTHING right now**, and all five report `eligible=0` with
+      `parent=completed`/`dead_letter`.
+      So A05.6's deliverable is not "a list of tasks" — it is `blocked`, the column that
+      separates "the loop will not take this, correctly" from "the loop is stuck". A
+      surface that INVENTS AN ALARM is worse than the silence it replaces.
+      AND THE JOBS HALF WAS ALREADY SHIPPED: `/api/v1/schedules` (A05.4) returns every
+      job with status, next run, failure count and last error. The gap names three things
+      ("a running task, a retrying job and a wedged agent"); two of the three already had
+      surfaces, so the item is smaller than its sentence.
+    the_FIRST_DESIGN_WAS_DISQUALIFIED_BY_READING_THE_CODE: >-
+      It called `DurableTaskStore.claimable()` and marked everything absent from the
+      result as blocked. **`claimable()` WRITES.** Its `_deps_satisfied` helper issues
+      `UPDATE ... SET status='dead_letter'` when a dependency has failed, and logs a
+      WARNING. A `GET /api/v1/tasks` calling it would let a READ-only principal
+      dead-letter tasks by refreshing a dashboard — an authority defect shipped as a
+      convenience, which is the shape ESC-173 is already open about one level up.
+      The cure splits the predicate by what it COSTS rather than by what it means: the
+      SQL half becomes `store.CLAIMABLE_WHERE`, consumed by BOTH `claimable()` and the
+      reader, so status, supersession, backoff and the terminal-parent rule cannot drift
+      between what the surface says and what the loop does. The write-capable dependency
+      half stays in `_deps_satisfied`; a row with unmet deps is reported
+      `waiting_on_dependency` from a READ of `depends_on` and never resolved.
+      THE RATIONALE MOVED WITH THE SQL. The 15-line comment explaining the terminal-parent
+      rule (and the August incident that earned it) now lives on the constant. Leaving it
+      in `claimable()` would have orphaned a comment explaining code that is no longer
+      there — the fifth-surface rule applied INSIDE one file, which no sweep of files can
+      see.
+    implement_2026_09_12: >-
+      `pipeline/durable/activity.py::read_task_activity` returns UNFINISHED work only —
+      `completed` and `failed` are history, and 1,129 of 1,211 rows are one or the other,
+      so a set view opening on last month's failures answers the wrong question. One
+      statement, explicit columns, owner-scoped IN the statement, `LIMIT`+1 to detect
+      truncation, and `goal`/`last_error` EXCERPTED because both are user content.
+      NEVER `store.list()`: it goes through `_fetch_owned`, which is literally `SELECT *`
+      with no LIMIT, over a table holding **15.8 MB of `checkpoint_blob` across 1,211
+      rows** (largest single blob 591 KB) — pulled over and discarded, since `DurableTask`
+      has no such field. A test pins that this module contains neither `SELECT *` nor
+      `checkpoint_blob`.
+      `GET /api/v1/tasks` presents it and the page grows a "Work in flight" panel in the
+      same change, because the bijection guard requires it. `blocked` is rendered as plain
+      text with a muted class, NOT a pill: `terminal_parent` is the loop behaving
+      correctly, and colouring it like a fault is the invented alarm this column exists to
+      prevent.
+      IT SAYS WHAT IT CANNOT SEE. Only **896 of 1,211** rows carry `principal-default` —
+      126 carry a raw numeric owner and the rest synthetic `owl:<name>:recovery:<id>`
+      owners — so an owner-scoped read is missing a quarter of the table. The payload
+      carries `unseen_other_owner` and `truncated`.
+    test_FIVE_MUTATIONS_all_caught_proven_off_tree_before_the_tree_was_free: >-
+      Proven against a hand-built fixture carrying every branch — including the dependency
+      case the live database cannot reach — with the loop's own SQL evaluated
+      independently as the agreement oracle. Each mutation applied to a scratch copy, run,
+      and restored FROM A FILE COPY with a final green re-run:
+      stopping at the SQL half (needs_it -> `none`, AGREE FAIL — the exact blind spot);
+      terminal parent reported as ordinary backoff (child -> `backoff`, and AGREE still ok,
+      which is the right separation: mislabelling a reason does not change the runnable
+      SET, so a different test has to catch it); finished work included (AGREE FAIL);
+      owner scope dropped; user content no longer excerpted. Restored: all ten checks ok.
+      AND THE PROBE HARNESS FAILED FOR ITS OWN REASONS TWICE before it ran, which is the
+      trap this file records under a different name. `uv run python <abs-path-outside-the-
+      project>` reports `No module named 'stackowl'` while the same code fed on STDIN
+      resolves fine — the project root is detected from the invocation, not the cwd. And
+      the store shadow must be registered AFTER importing the reader, because the reader
+      imports the store lazily inside the function; registered first, it breaks the real
+      package. Both read exactly like "the reader is broken".
+    and_MY_OWN_AGREEMENT_GUARD_HAD_A_BLIND_SPOT_I_found_by_asking_what_it_could_not_see: >-
+      The first reader returned `none` as soon as `CLAIMABLE_WHERE` said yes. That is
+      WRONG: the SQL is only half the loop's predicate, and `claimable()` then asks
+      `_deps_satisfied`, so a row can satisfy the SQL and still be skipped. The surface
+      would have said "the loop may take this now" about a row the loop will not touch —
+      a disagreement on a surface whose entire job is explaining what the loop is doing.
+      MEASURED: **four rows carry `depends_on` and ZERO of them are pending.** So the
+      branch is unreachable on live data, my agreement test would have passed BY ACCIDENT,
+      and no assertion over the real tree could have told the two behaviours apart. That
+      is DEBT-300's lesson exactly — a guard over a currently-empty population is pinned
+      only by a population you CONSTRUCT — and it is the second time this programme has
+      paid for it.
+      Fixed by resolving the dependency half READ-ONLY (one statement for the whole page,
+      never per row) and pinned by
+      `test_a_row_whose_DEPENDENCY_is_unmet_agrees_with_the_loop`, which builds the
+      population the database does not have.
+    and_the_gap_check_WAS_CURE_SHAPED_the_class_A04_1_measured: >-
+      It asked whether a list TOOL named `*task*` existed. This item depends on A05.1, so
+      the cure is a control-plane ROUTE — shipping it would have left the check reading
+      HOLDS forever, exactly as A05.8's and A04.1's did. Re-asked as a capability: does
+      any control-plane route serve work as a set? That is the sixth of ten re-shaped, and
+      the handoff from the previous loop is what made it get checked at all.
+    validated_LIVE_2026_09_12_core_up_at_01_25_19: >-
+      `./start.sh`, core up at 01:25:19 — start time checked against the change on disk,
+      never a PID — then the live door. **401** unauthenticated; **401** with a VALID token
+      and a foreign `Origin`; **200** returning
+      `{"wired":true,"unseen_other_owner":0,"truncated":false}` over **82** unfinished rows,
+      **and all five pending rows reporting `blocked: terminal_parent`**. That is the
+      item's whole claim, on the live platform: the same five rows that look like a
+      ten-hour stall are labelled correct rather than alarming.
+      `INFO [tasks] activity.read: exit — served
+      {"owner_id":"principal-default","unfinished":82,"blocked_pending":5,
+      "unseen_other_owner":0,"truncated":false}` and
+      `INFO [control_plane] server.tasks: exit — served`. **Both literals appear ZERO
+      times across every retained dated log before today** — new messages with one emitter
+      each, so the evidence cannot be produced by the code this replaced.
+      **THE ZERO WAS VERIFIED, NOT ASSUMED.** `unseen_other_owner: 0` looked wrong against
+      the 315 rows measured outside `principal-default` hours earlier. It is right: every
+      one of those is TERMINAL, and this reader shows unfinished work only, so there is
+      genuinely nothing hidden. `SELECT COUNT(*) ... WHERE owner_id <> 'principal-default'
+      AND status NOT IN ('completed','failed')` returns 0. A gap counter that reported 315
+      here would have been the invented alarm one field over.
+      The served page cites all FIVE API routes and the leak grep over the rendered page
+      reads **0** for `job_id"`, `morning_brief`, `principal-default` and a live task id.
+    closing_check: >-
+      [ -f docs/reference-mapping/designs/A05.6.md ]
+      && echo "CLOSEABLE A05.6 has its own design document"
+      || echo "OPEN A05.6 has no document of its own; the reader's contract and the
+      blocked-reason rationale live in its module docstring and on store.CLAIMABLE_WHERE"
+    document_is_partial_and_the_reason_is_named: >-
+      The contract that matters — why `blocked` exists, why `claimable()` cannot be called
+      from a GET, and why the SQL half of the predicate is shared while the dependency
+      half is not — lives in `pipeline/durable/activity.py`'s module docstring and on
+      `store.CLAIMABLE_WHERE`, which is where anyone changing either will be standing. A
+      document for A05.6 belongs with the WRITE half (cancel, retry-now), when there is a
+      lifecycle to describe rather than one read route.
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A05.7
     title: Visualise how agents interact

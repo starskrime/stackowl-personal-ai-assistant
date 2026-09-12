@@ -44,7 +44,7 @@ import pytest
 
 from stackowl.control_plane.page import INDEX_HTML
 
-_SECTIONS = ("health", "schedules", "config", "skills")
+_SECTIONS = ("health", "schedules", "config", "skills", "tasks")
 
 _HARNESS = r"""
 const fs = require("fs");
@@ -68,22 +68,32 @@ global.sessionStorage = {
   setItem(k, v) { this._s[k] = v; },
   removeItem(k) { delete this._s[k]; },
 };
+// GENERIC BY ROUTE, never a hand-written map. The first version listed the four
+// routes that existed when it was written, so A05.6's fifth route made both
+// tests fail with `status: undefined` — the stub, not the page. That is the same
+// hand-written-list defect this file's own `test_the_panel_list_is_written_ONCE`
+// exists to prevent, reproduced inside the harness that proves it. Every path
+// answers 200 with an empty payload of every shape the renderers read; only the
+// route under test carries the status being probed.
 const SKILLS_STATUS = Number(process.argv[3]);
-const STATUS = { "/api/v1/health": 200, "/api/v1/schedules": 200,
-                 "/api/v1/config": 200, "/api/v1/skills": SKILLS_STATUS };
-const BODY = {
-  "/api/v1/health": { subsystems: [] },
-  "/api/v1/schedules": { schedules: [] },
-  "/api/v1/config": { settings: [], wired: true },
-  "/api/v1/skills": SKILLS_STATUS === 200
-    ? { owls: [], wired: true } : { owls: [], wired: false },
+const PROBED = "/api/v1/skills";
+const EMPTY = { subsystems: [], schedules: [], settings: [], owls: [], tasks: [],
+                wired: true };
+global.fetch = (path) => {
+  const status = path === PROBED ? SKILLS_STATUS : 200;
+  const body = path === PROBED && status !== 200
+    ? Object.assign({}, EMPTY, { wired: false }) : EMPTY;
+  return Promise.resolve({
+    status, ok: status >= 200 && status < 300,
+    json: () => Promise.resolve(body),
+  });
 };
-global.fetch = (path) => Promise.resolve({
-  status: STATUS[path], ok: STATUS[path] >= 200 && STATUS[path] < 300,
-  json: () => Promise.resolve(BODY[path]),
-});
 eval(fs.readFileSync(process.argv[2], "utf8"));
-const NAMES = ["health", "schedules", "config", "skills"];
+// SECOND hand-written list in this harness, and it hid behind the first: with
+// the fetch stub fixed, the page rendered `tasks` correctly and the harness
+// still reported four sections, because it only looked at four. Passed in from
+// the test, which derives it from `_SECTIONS`.
+const NAMES = JSON.parse(process.argv[4]);
 const visible = () => NAMES.filter((id) => els[id] && els[id].hidden === false);
 setTimeout(() => {
   const after_load = visible();
@@ -108,7 +118,7 @@ def _run(tmp_path: Path, skills_status: int) -> dict[str, object]:
     harness.write_text(textwrap.dedent(_HARNESS), encoding="utf-8")
 
     proc = subprocess.run(
-        [node, str(harness), str(script), str(skills_status)],
+        [node, str(harness), str(script), str(skills_status), json.dumps(list(_SECTIONS))],
         capture_output=True, text=True, timeout=60,
     )
     assert proc.returncode == 0, f"the page threw: {proc.stderr[-2000:]}"

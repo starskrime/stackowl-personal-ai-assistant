@@ -44,6 +44,46 @@ _SELECT_FIELDS = (
 # fetched and the checkpoint_blob column is read off it).
 _CHECKPOINT_BLOB_FIELD = "checkpoint_blob"
 
+#: WHICH ROWS THE LOOP MAY RUN — the SQL half, in ONE place (A05.6).
+#:
+#: Binds three parameters in order: ``owner_id``, the current timestamp, and
+#: ``owner_id`` again for the parent lookup. It is a fragment, not a statement:
+#: ``claimable()`` runs it, and ``pipeline/durable/activity.py`` evaluates it per
+#: row inside a ``CASE`` so a read-only surface can say WHY a row is not moving
+#: without re-implementing the rule. A surface that re-derived this would be two
+#: copies of the predicate the loop's correctness rests on, and the copy nobody
+#: runs is the one that goes stale.
+#:
+#: THE DEPENDENCY HALF IS DELIBERATELY NOT HERE. ``claimable()`` finishes the job
+#: in Python via ``_deps_satisfied``, which DEAD-LETTERS a row whose dependency
+#: failed — a WRITE. Folding that in would make this fragment unsafe to evaluate
+#: on a GET, which is the whole reason the split exists.
+#:
+#: A SUB-TASK DIES WITH ITS PARENT. Measured live 2026-08-19: child-a49e8ce9…
+#: ("list the owls so I can check for a name collision before minting
+#: 'mailbutler'") sat at attempt 13 of 30 while its parent 43be4591 had been
+#: completed and DELIVERED hours earlier. The loop was spending a model call
+#: every few minutes re-checking a name collision for an owl that already
+#: existed, with 17 attempts still to burn — and logging `mark_attempt_failed:
+#: row not found` each pass, because a loop-born task has no retry-queue row for
+#: the actuator's bookkeeping.
+#:
+#: A sub-task exists to serve its parent: once that parent is terminal the child
+#: has no destination, no achievement and nobody waiting. Same principle as
+#: `_deps_satisfied` (never run what cannot help), applied upward instead of
+#: sideways. A child of a RUNNING parent is the ordinary fan-out and is untouched.
+#: MEASURED 2026-09-12: this clause is why five `secretary` rows sit `pending`
+#: with a ten-hour-old `next_attempt_at` and are CORRECT, not wedged.
+CLAIMABLE_WHERE = (
+    "owner_id = ? AND status = 'pending' "
+    "AND COALESCE(superseded, 0) = 0 "
+    "AND (next_attempt_at IS NULL OR next_attempt_at <= ?) "
+    "AND (parent_task_id IS NULL OR NOT EXISTS ("
+    "  SELECT 1 FROM tasks p WHERE p.owner_id = ? "
+    "  AND p.task_id = tasks.parent_task_id "
+    "  AND p.status IN ('completed', 'dead_letter'))) "
+)
+
 
 # =============================================================================
 # THE ONE LOOP (migration 0119) — Bakir's loop+graph architecture, 2026-08-17.
@@ -1179,28 +1219,7 @@ class DurableTaskStore(OwnedRepository):
             # would hide the omission.
             "position, verified, estimated_complexity, decomposition_depth, "
             "worktree_path, story_branch "
-            f"FROM {self._table} WHERE owner_id = ? AND status = 'pending' "  # noqa: S608
-            "AND COALESCE(superseded, 0) = 0 "
-            "AND (next_attempt_at IS NULL OR next_attempt_at <= ?) "
-            # A SUB-TASK DIES WITH ITS PARENT. Measured live 2026-08-19:
-            # child-a49e8ce9… ("list the owls so I can check for a name collision
-            # before minting 'mailbutler'") sat at attempt 13 of 30 while its
-            # parent 43be4591 had been completed and DELIVERED hours earlier. The
-            # loop was spending a model call every few minutes re-checking a name
-            # collision for an owl that already existed, with 17 attempts still to
-            # burn — and logging `mark_attempt_failed: row not found` each pass,
-            # because a loop-born task has no retry-queue row for the actuator's
-            # bookkeeping.
-            #
-            # A sub-task exists to serve its parent: once that parent is terminal
-            # the child has no destination, no achievement and nobody waiting. Same
-            # principle as `_deps_satisfied` (never run what cannot help), applied
-            # upward instead of sideways. A child of a RUNNING parent is the
-            # ordinary fan-out and is untouched.
-            "AND (parent_task_id IS NULL OR NOT EXISTS ("
-            f"  SELECT 1 FROM {self._table} p WHERE p.owner_id = ? "
-            "  AND p.task_id = tasks.parent_task_id "
-            "  AND p.status IN ('completed', 'dead_letter'))) "
+            f"FROM {self._table} WHERE {CLAIMABLE_WHERE} "  # noqa: S608
             "ORDER BY created_at LIMIT ?",
             (self._owner_id, stamp, self._owner_id, int(limit)),
         )

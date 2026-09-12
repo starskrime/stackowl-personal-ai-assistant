@@ -27,6 +27,7 @@ They share a library and :mod:`stackowl.control_plane.auth`. Nothing else.
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
 import time as _time
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +51,7 @@ from stackowl.control_plane.auth import (
 from stackowl.control_plane.page import INDEX_HTML
 from stackowl.infra.observability import log
 from stackowl.owls.skill_ownership import read_all_skill_ownership
+from stackowl.pipeline.durable.activity import read_task_activity
 
 if TYPE_CHECKING:
     from stackowl.config.settings import Settings
@@ -141,6 +143,7 @@ class ControlPlaneServer(SupervisedTask):
         app.router.add_get("/api/v1/schedules", self._handle_schedules)
         app.router.add_get("/api/v1/config", self._handle_config)
         app.router.add_get("/api/v1/skills", self._handle_skills)
+        app.router.add_get("/api/v1/tasks", self._handle_tasks)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -438,6 +441,77 @@ class ControlPlaneServer(SupervisedTask):
                 "principal_id": principal.principal_id,
                 "owls": len(owned),
                 "owned_skills": sum(len(v) for v in owned.values()),
+                "duration_ms": duration_ms,
+            }},
+        )
+        return web.json_response(payload)
+
+    async def _handle_tasks(self, request: Any) -> Any:
+        """`GET /api/v1/tasks` — unfinished work as a SET, with a reason per row.
+
+        A05.6's gap is that work is visible ONE ROW AT A TIME and only to
+        somebody who already knows the id. The JOBS half shipped with A05.4
+        (`/api/v1/schedules`); this is the TASKS half.
+
+        IT CARRIES `blocked`, AND THAT IS THE POINT. MEASURED 2026-09-12: five
+        `secretary` rows sit `pending` with `next_attempt_at` ten hours in the
+        past and a `last_error` set. Rendered as status alone that is a wedged
+        platform, and the operator's next move is a restart that changes
+        nothing. Every one is a sub-task of a TERMINAL parent, which the loop
+        deliberately will not run. A surface that cannot say so invents an
+        alarm — worse than the silence it replaces.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.tasks: entry")
+
+        principal, refusal = self._guard(request, "tasks")
+        if principal is None:
+            return refusal
+
+        if self._db is None:
+            log.control_plane.warning(
+                "[control_plane] server.tasks: exit — no db wired, so there is "
+                "nothing to report",
+                extra={"_fields": {"principal_id": principal.principal_id}},
+            )
+            return web.json_response({"tasks": [], "wired": False}, status=503)
+
+        rows, gaps = await read_task_activity(
+            self._db,
+            owner_id=principal.principal_id,
+            now_iso=_dt.datetime.now(_dt.UTC).isoformat(),
+        )
+        payload = {
+            "wired": True,
+            "unseen_other_owner": gaps.unseen_other_owner,
+            "truncated": gaps.truncated,
+            "tasks": [
+                {
+                    "task_id": t.task_id,
+                    "owl_name": t.owl_name,
+                    "status": t.status,
+                    "blocked": t.blocked,
+                    "attempt_count": t.attempt_count,
+                    "max_attempts": t.max_attempts,
+                    "next_attempt_at": t.next_attempt_at,
+                    "goal": t.goal,
+                    "last_error": t.last_error,
+                }
+                for t in rows
+            ],
+        }
+
+        duration_ms = (_time.monotonic() - t0) * 1000
+        log.control_plane.info(
+            "[control_plane] server.tasks: exit — served",
+            extra={"_fields": {
+                "principal_id": principal.principal_id,
+                "unfinished": len(rows),
+                "blocked_pending": sum(
+                    1 for t in rows if t.status == "pending" and t.blocked != "none"
+                ),
+                "unseen_other_owner": gaps.unseen_other_owner,
                 "duration_ms": duration_ms,
             }},
         )
