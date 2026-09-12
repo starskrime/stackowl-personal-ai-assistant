@@ -507,11 +507,43 @@ class TestOriginIsCheckedBeforeTheToken:
     def test_a_request_with_no_origin_is_allowed(self) -> None:
         """curl and native clients set no Origin; the header only means anything
         when a browser sets it."""
-        assert check_origin(None, None, "127.0.0.1:8787") is True
+        assert check_origin(None, None) is True
 
     @pytest.mark.tripwire
     def test_a_foreign_origin_is_refused(self) -> None:
-        assert check_origin("http://evil.example", "127.0.0.1:8787", "127.0.0.1:8787") is False
+        assert check_origin("http://evil.example", "127.0.0.1:8787") is False
+
+    @pytest.mark.tripwire
+    def test_a_browser_ON_A_LAN_ADDRESS_is_allowed_while_the_bind_is_a_WILDCARD(
+        self,
+    ) -> None:
+        """THE REGRESSION THIS CONTRACT CHANGE EXISTS TO PREVENT.
+
+        `check_origin` used to compare against `f"{bind_address}:{port}"`. On
+        loopback that is exactly what a browser sends, so it worked and every
+        test was green. The operator answered ESC-172 on 2026-09-12 — bind every
+        interface by default, work out of the box — and `0.0.0.0:8787` is a
+        string NO browser ever sends: a person opening
+        `http://192.168.1.50:8787` sends that as their Host, it would not have
+        matched, and the dashboard would have refused EVERY request while the
+        loopback tests stayed green.
+        """
+        assert check_origin("http://192.168.1.50:8787", "192.168.1.50:8787") is True
+        assert check_origin("http://stackowl.local:8787", "stackowl.local:8787") is True
+
+    @pytest.mark.tripwire
+    def test_a_SUFFIX_of_the_host_is_not_the_host(self) -> None:
+        """The comparison is exact. `origin.endswith(host)` admitted
+        `http://evil-127.0.0.1:8787`; hard to exploit and still a suffix test
+        standing in for an equality test, which is weaker on a LAN address than
+        it ever was on loopback."""
+        assert check_origin("http://evil-192.168.1.50:8787", "192.168.1.50:8787") is False
+
+    @pytest.mark.tripwire
+    def test_a_browser_that_sends_an_origin_and_NO_host_is_refused(self) -> None:
+        """Nothing to compare against. Allowing it would make the check
+        skippable by omitting a header."""
+        assert check_origin("http://192.168.1.50:8787", None) is False
 
 
 class TestTheLoopbackPredicate:

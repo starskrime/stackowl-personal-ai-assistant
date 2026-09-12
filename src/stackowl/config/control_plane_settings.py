@@ -25,12 +25,18 @@ class ControlPlaneSettings(BaseModel):
         json_schema_extra={"hot_reload": False},
     )
     bind_address: str = Field(
-        default="127.0.0.1",
+        default="0.0.0.0",  # noqa: S104 — every interface, deliberately; see below
         description=(
-            "IP the control plane binds to. Loopback by default, which means it "
-            "is reachable only from this machine — see ESC-172. Widening it is "
-            "one setting, and the platform warns at WARNING when the bind cannot "
-            "serve the operator it is configured for."
+            "IP the control plane binds to. EVERY INTERFACE by default, so a "
+            "customer who clones this repo and runs it reaches the dashboard "
+            "from their own browser without editing any configuration. Narrow "
+            "it to 127.0.0.1 to make the dashboard reachable only from the "
+            "machine it runs on; the platform warns at WARNING when the bind "
+            "cannot serve the operator it is configured for. "
+            "THE LOGIN IS WHAT STANDS IN FRONT OF IT: change "
+            "control_plane.username and control_plane.password from their "
+            "admin/admin defaults, which the platform warns about at every boot "
+            "and the dashboard banners after every sign-in."
         ),
         json_schema_extra={"hot_reload": False},
     )

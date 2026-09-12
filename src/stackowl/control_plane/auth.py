@@ -172,7 +172,7 @@ def is_loopback(address: str) -> bool:
         return False
 
 
-def check_origin(origin: str | None, host: str | None, expected_host: str) -> bool:
+def check_origin(origin: str | None, host: str | None) -> bool:
     """Whether a browser-originated request may be served.
 
     Checked BEFORE the token, and the order is behaviour: a browser-driven
@@ -181,12 +181,39 @@ def check_origin(origin: str | None, host: str | None, expected_host: str) -> bo
 
     A request with NO `Origin` is allowed — that is a curl or a native client,
     not a browser, and the header is only meaningful when a browser sets it.
+
+    **THE COMPARISON IS AGAINST THE REQUEST'S OWN `Host`, NOT THE CONFIGURED
+    BIND, AND THAT IS WHAT MAKES A WILDCARD BIND POSSIBLE.** This used to take an
+    `expected_host` built as `f"{bind_address}:{port}"`. On loopback that is the
+    same string a browser sends, so it worked and looked right. The moment the
+    bind became `0.0.0.0` — one setting, and now the DEFAULT so the dashboard is
+    reachable out of the box — every real request would have been refused:
+    a browser at `http://192.168.1.50:8787` sends `Host: 192.168.1.50:8787`,
+    which is not `0.0.0.0:8787`. The dashboard would have 401'd everyone while
+    every test on loopback stayed green.
+    The rule was always "the Origin the browser reports must match the host the
+    browser actually connected to", and the request carries both. Nothing is lost
+    by dropping the config: a browser cannot be made to send a forged `Host` to a
+    different server, which is the only thing this check defends against.
+
+    **AND THE COMPARISON IS EXACT RATHER THAN A SUFFIX.** The old form ended
+    `origin.endswith(expected_host)`, so `http://evil-127.0.0.1:8787` satisfied
+    it. That was hard to exploit (it needs a registrable name ending in the
+    literal authority) and it was still a suffix test standing in for an equality
+    test, which on a LAN address is a weaker accident than it was on loopback.
+    An Origin is `scheme "://" host [":" port]` and nothing else, so the
+    authority can simply be compared.
     """
     if origin is None:
         return True
-    if host is not None and host != expected_host:
+    if not host:
+        # A browser sent an Origin and no Host. Not a shape any real client
+        # produces, and there is nothing to compare against — refuse.
         return False
-    return origin.endswith(expected_host)
+    _, sep, authority = origin.partition("://")
+    if not sep:
+        return False
+    return authority == host
 
 
 def authenticate(

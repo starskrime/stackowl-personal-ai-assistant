@@ -50,6 +50,11 @@ from stackowl.control_plane.auth import (
     ensure_credential,
     is_loopback,
 )
+from stackowl.control_plane.login_guard import (
+    MAX_FAILURES,
+    WINDOW_SECONDS,
+    LoginAttempts,
+)
 from stackowl.control_plane.page import INDEX_HTML
 from stackowl.infra.observability import log
 from stackowl.owls.activity import read_owl_activity
@@ -115,6 +120,11 @@ class ControlPlaneServer(SupervisedTask):
         #: second answer to one question.
         self._db = db
         self._token: str = ""
+        #: Failed sign-ins per source. Bounded on purpose — its key is
+        #: attacker-controlled, so an uncapped map is the denial of service it
+        #: exists to prevent. Per-SERVER rather than global: a test builds its
+        #: own instance and cannot be poisoned by another test's failures.
+        self._login_attempts = LoginAttempts()
         self._runner: Any = None
         self._site: Any = None
         self._stop_event: asyncio.Event | None = None
@@ -163,6 +173,7 @@ class ControlPlaneServer(SupervisedTask):
         app.router.add_get("/api/v1/agents", self._handle_agents)
         app.router.add_post("/api/v1/login", self._handle_login)
         app.router.add_get("/api/v1/memory", self._handle_memory)
+        app.router.add_get("/api/v1/interactions", self._handle_interactions)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -218,14 +229,22 @@ class ControlPlaneServer(SupervisedTask):
         cfg = self._settings.control_plane
         if not cfg.credentials_are_default:
             return
-        loopback = cfg.bind_address in ("127.0.0.1", "localhost", "::1")
+        # ASKS THE PREDICATE. This was a three-element string compare while
+        # `is_loopback` sat two functions away in the same package — two copies
+        # of one rule, and the copy here was the weaker one: it misses `127.0.1.1`
+        # and the IPv4-mapped `::ffff:127.0.0.1`, both real bind addresses, and
+        # would have called each of them network-reachable. That inverts the very
+        # field it feeds. Found while answering ESC-172, fixed in the same change.
+        loopback = is_loopback(cfg.bind_address)
         log.control_plane.warning(
             "[control_plane] server.run: the dashboard login is still the "
             "DEFAULT admin/admin",
             extra={"_fields": {
                 "bind": cfg.bind_address,
-                # The pair is what matters. Default credentials on loopback are
-                # a note; default credentials on 0.0.0.0 are an open door.
+                # The pair is what matters, and since 2026-09-12 the default bind
+                # is EVERY INTERFACE — so this is now normally true, and the
+                # remedy below is the one thing standing between a fresh install
+                # and an open dashboard.
                 "reachable_off_this_machine": not loopback,
                 "remedy": "set control_plane.username and "
                           "control_plane.password in stackowl.yaml",
@@ -268,8 +287,14 @@ class ControlPlaneServer(SupervisedTask):
         here: the operator sees a started platform and an unreachable dashboard
         with no line connecting the two.
 
-        It does NOT change the bind. That is a security-posture decision and it
-        belongs to the operator (ESC-172); this makes the silence audible.
+        ESC-172 IS ANSWERED, so this no longer fires on a default install. The
+        operator's decision, 2026-09-12: *"Make it always available in all
+        interfaces by default in platform. So when customer runs it it will work
+        out of box."* `bind_address` therefore defaults to `0.0.0.0` and a
+        customer who clones and runs reaches the dashboard from their own
+        browser. This warning stays for the operator who NARROWS the bind back
+        to loopback and then wonders why the page will not open — the silence it
+        was built to break is still possible, it is just no longer the default.
         """
         cfg = self._settings.control_plane
         if not is_loopback(cfg.bind_address):
@@ -294,6 +319,20 @@ class ControlPlaneServer(SupervisedTask):
         """The uniform refusal. Invariant I5."""
         return web.Response(status=UNAUTHORIZED_STATUS, text=UNAUTHORIZED_BODY)
 
+    @staticmethod
+    def _request_source(request: Any) -> str:
+        """Who is knocking, for the login counter only.
+
+        `request.remote` — the peer the socket is actually connected to — and
+        deliberately NOT `X-Forwarded-For`. That header is set by the client
+        unless a trusted proxy overwrites it, so honouring it here would let an
+        attacker reset their own counter by inventing a new value per request,
+        which is worse than having no counter at all. If this platform ever
+        sits behind a real reverse proxy, the trusted-proxy list is the thing to
+        add; guessing is not.
+        """
+        return str(getattr(request, "remote", None) or "unknown")
+
     def _origin_ok(self, request: Any, route: str) -> Any | None:
         """The ORIGIN half of the auth decision, in ONE place.
 
@@ -312,11 +351,15 @@ class ControlPlaneServer(SupervisedTask):
 
         Returns a refusal response, or ``None`` when the origin is acceptable.
         """
-        cfg = self._settings.control_plane
+        # THE REQUEST CARRIES BOTH HALVES. This used to build an `expected_host`
+        # from `bind_address:port`, which is the same string a browser sends ONLY
+        # on loopback. With the bind now defaulting to every interface, a browser
+        # at `http://192.168.1.50:8787` sends that as its Host and would have been
+        # refused against `0.0.0.0:8787` — every request, while every loopback
+        # test stayed green. See `check_origin`.
         if check_origin(
             request.headers.get("Origin"),
             request.headers.get("Host"),
-            f"{cfg.bind_address}:{cfg.port}",
         ):
             return None
         log.control_plane.warning(
@@ -642,6 +685,87 @@ class ControlPlaneServer(SupervisedTask):
         )
         return web.json_response(payload)
 
+    async def _handle_interactions(self, request: Any) -> Any:
+        """`GET /api/v1/interactions` — the edges between agents, as a set.
+
+        **A05.7's gap named the wrong mechanism.** It said delegation, parliament
+        and owl-to-owl messages "happen inside mailboxes nobody can watch". The
+        a2a mailbox IS an in-memory `asyncio.Queue` whose 14 log calls are DEBUG
+        against zero DEBUG records — so that clause is true and it is about the
+        message HOP, not the edge. The EDGE is durably recorded in two stores,
+        and the actual gap is that no command and no route has ever read either:
+        `tasks.parent_task_id` (52 rows, all same-owl decomposition, current) and
+        `side_effect_ledger` `tool_name='delegate_task'` (17 rows carrying
+        `to_owl` and an outcome).
+
+        IT REPORTS BOTH KINDS SEPARATELY AND NEVER SUMS THEM. 52 of the 52
+        `tasks` edges are an owl decomposing its OWN work; presenting that beside
+        cross-owl delegation as one "interactions" count would report a busy
+        multi-agent platform that is one owl talking to itself.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.interactions: entry")
+
+        principal, refusal = self._guard(request, "interactions")
+        if principal is None:
+            return refusal
+
+        if self._db is None:
+            log.control_plane.warning(
+                "[control_plane] server.interactions: exit — no db wired, so "
+                "there is nothing to report",
+                extra={"_fields": {"principal_id": principal.principal_id}},
+            )
+            return web.json_response({"edges": [], "wired": False}, status=503)
+
+        from stackowl.pipeline.durable.interactions import read_agent_interactions
+
+        edges, gaps = await read_agent_interactions(
+            self._db, owner_id=principal.principal_id
+        )
+
+        payload = {
+            "wired": True,
+            # EVERY KEY WRITTEN HERE, never returned ready-made by the reader:
+            # the field-bijection guard walks `_handle_*` for the keys a route
+            # emits, and A05.5 measured eight fields going invisible when a
+            # helper assembled the payload instead.
+            "edges": [
+                {
+                    "kind": e.kind,
+                    "from_owl": e.from_owl,
+                    "to_owl": e.to_owl,
+                    "outcome": e.outcome,
+                    "at": e.at,
+                    "ref": e.ref,
+                    "detail": e.detail,
+                }
+                for e in edges
+            ],
+            "gaps": {
+                "unseen_other_owner": gaps.unseen_other_owner,
+                "truncated": gaps.truncated,
+                "delegations_without_a_target": gaps.delegations_without_a_target,
+                "delegations_without_a_caller": gaps.delegations_without_a_caller,
+                "newest_delegation_recorded": gaps.newest_delegation_recorded,
+                "parliament_sessions": gaps.parliament_sessions,
+            },
+        }
+
+        duration_ms = (_time.monotonic() - t0) * 1000
+        log.control_plane.info(
+            "[control_plane] server.interactions: exit — served",
+            extra={"_fields": {
+                "principal_id": principal.principal_id,
+                "edges": len(edges),
+                "delegation_edges": sum(1 for e in edges if e.kind == "delegation"),
+                "parliament_sessions": gaps.parliament_sessions,
+                "duration_ms": duration_ms,
+            }},
+        )
+        return web.json_response(payload)
+
     async def _handle_login(self, request: Any) -> Any:
         """`POST /api/v1/login` — exchange username+password for the bearer token.
 
@@ -673,6 +797,28 @@ class ControlPlaneServer(SupervisedTask):
         if refusal is not None:
             return refusal
 
+        # THE BRAKE, and it arrives with the widened bind rather than after it.
+        # DEBT-310 shipped this route naming "no rate limit" as the thing that
+        # "becomes real the moment ESC-172 is answered 'widen the bind'". It was
+        # answered on 2026-09-12, so the brake is in the same change. It REFUSES
+        # rather than sleeping: a handler that waits holds a worker, which hands
+        # an attacker an amplifier instead of a limit.
+        source = self._request_source(request)
+        if self._login_attempts.is_refused(source):
+            log.control_plane.warning(
+                "[control_plane] server.login: exit — refused, too many failed "
+                "attempts from this source",
+                extra={"_fields": {
+                    "source": source,
+                    "window_seconds": WINDOW_SECONDS,
+                    "max_failures": MAX_FAILURES,
+                }},
+            )
+            return web.json_response(
+                {"error": "too many failed attempts — wait and try again"},
+                status=429,
+            )
+
         try:
             body = await request.json()
         except Exception as exc:  # noqa: BLE001 — B5, never silent
@@ -689,10 +835,13 @@ class ControlPlaneServer(SupervisedTask):
         pass_ok = _hmac.compare_digest(presented_pass, cfg.password)
         if not (user_ok and pass_ok):
             duration_ms = (_time.monotonic() - t0) * 1000
+            failures = self._login_attempts.record_failure(source)
             log.control_plane.warning(
                 "[control_plane] server.login: exit — refused, credentials did "
                 "not match",
                 extra={"_fields": {
+                    "source": source,
+                    "failures_in_window": failures,
                     # The USERNAME is not logged. A failed login is often a typo
                     # in the password, and a log line carrying the attempted
                     # username turns the journal into a place credentials leak.
@@ -703,6 +852,9 @@ class ControlPlaneServer(SupervisedTask):
             )
             return web.json_response({"error": "invalid credentials"}, status=401)
 
+        # A person who gets it right on the ninth attempt must not be one typo
+        # away from a lockout an hour later.
+        self._login_attempts.record_success(source)
         duration_ms = (_time.monotonic() - t0) * 1000
         log.control_plane.info(
             "[control_plane] server.login: exit — granted",
