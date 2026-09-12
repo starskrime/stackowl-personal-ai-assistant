@@ -20788,6 +20788,62 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-313
+    title: The returning-visitor path was dead, and the fixture that proves it could not see it
+    raised: 2026-09-12
+    found_by: >-
+      The BMAD party the operator asked for on 2026-09-12 ("This task needs research as
+      well so use bmad party"), reading `page.py` for A05.10. **TWO agents reached it
+      independently from different directions** — the UX spec and the structural review —
+      before it was verified here rather than believed.
+    what: >-
+      `page.py` read `$("token").value = stored` before `load(stored)`. DEBT-310 replaced
+      the token input with the username/password form, so `id="token"` has appeared ZERO
+      times in the markup since: `$()` returned null, `.value =` threw a TypeError, the
+      IIFE died, and `load(stored)` never ran. A returning tab holding a session rendered
+      a BLANK PAGE with no status line.
+      It survived a restart, a live validate and a full suite because FRESH SIGN-IN is a
+      different path — it calls `load(body.token)` directly. The broken half is the one
+      nobody exercises twice in a row.
+    the_cause_is_the_FIXTURE_not_the_line: >-
+      `test_one_dead_route_does_not_blank_the_dashboard.py` is the one guard that
+      EXECUTES this page, and its stub DOM read
+      `getElementById: (id) => (els[id] = els[id] || mkEl(id))` — it AUTO-CREATED any id
+      it was asked for. The test written to catch this class invented the very element
+      the page had lost. "A fixture that cannot show the bug proves nothing" is one of
+      the six recurring shapes this repo names, and it was sitting inside the guard for
+      it. The stub answers `null` for anything the markup does not declare now, which is
+      what a browser does — and that alone turns the three existing tests into regression
+      detectors for the whole class.
+    and_the_FIRST_fix_did_not_work_because_my_own_comment_defeated_it: >-
+      **The mutation PASSED — 5 green with the bug restored.** `_MARKUP_IDS` scanned the
+      WHOLE page, and the only `id="token"` anywhere in `page.py` is inside the COMMENT
+      explaining that `id="token"` appears zero times. The explanation of the defect
+      re-seeded the id that made the defect invisible.
+      THIRD INSTANCE OF A GUARD MATCHING PROSE IN ONE SESSION — after the owner-scope
+      detector matching `InteractionGaps`'s docstring (A05.7) and
+      `test_a_done_validate_names_its_evidence` matching a literal prefix (DEBT-303) —
+      and the sharpest, because the prose was written to document the very bug. Ids come
+      from MARKUP ONLY now, `<script>` and `<style>` stripped: an id declared inside
+      JavaScript is not a DOM element, so only markup may answer that question.
+      MUTATION-PROVEN AFTER THE CORRECTION: an id the markup does not declare turns **4
+      of the 5 tests red**, and all 5 restore green.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: done, test: done, validate: done, document: no_change_needed}
+    validated_LIVE_2026_09_12_06_46_25_after_start_sh: >-
+      Restarted; core up 06:46:25 on the fixed tree. The page SERVED by the live server
+      carries `if (stored) { load(stored); }` — fetched over the network from
+      `http://192.168.1.176:8787/` and grepped, not read off disk. The single remaining
+      `id="token"` in the response is the comment that documents the defect, which is
+      exactly the string the guard now ignores.
+      Boot lines confirm the tree: `[control_plane] server.run: exit — listening`
+      `{"bind": "0.0.0.0", "port": 8787}`.
+    also_in_this_change_at_the_operators_direct_instruction: >-
+      "Update item loop skill to finish this and fix bugs." `item-loop/SKILL.md` gains two
+      standing instructions ABOVE item order — A05.10 (the redesign, BMAD party required
+      because he asked for research by name) and bug-fixing as legitimate item-shaped
+      work. The patch ASSERTS the skill still requires the gate before writing, so it
+      cannot quietly remove its own enforcement. A05.10 was added as a real item with a
+      measured gap; its `gap_check` reads HOLDS.
   - id: DEBT-312
     title: The dashboard ships reachable — and the brake DEBT-310 named arrives with it
     raised: 2026-09-12
