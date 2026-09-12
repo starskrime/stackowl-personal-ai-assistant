@@ -16,6 +16,13 @@
 #   some_api_key: "ANTHROPIC_API_KEY"             # an environment variable name
 # See src/stackowl/config/secret_resolver.py.
 #
+# So every credential-shaped field below shows that REFERENCE FORM rather than its
+# default — the one place in this file where the value is not the default. The
+# field's own comment still says what it is and what it defaults to. This used to
+# be true by accident (no credential field HAD a non-empty default) and is now
+# enforced by the generator, which asks the same `is_credential_name` the log
+# redactor asks.
+#
 # Environment variables are for bootstrap, host-specific and terminal-convention
 # settings only — see tests/test_a_new_env_var_has_to_justify_itself.py for the
 # taxonomy. Everything behavioural belongs here.
@@ -266,10 +273,10 @@ control_plane:
   # Username for the dashboard login form. Operator-set; defaults to `admin`. The form exchanges these for the bearer token the API routes already use — it does not add a second way to authenticate.
   username: admin
   # Password for the dashboard login form. Defaults to `admin` by operator request. Sensitive: auto-redacted wherever configuration is rendered, because `flatten` takes the LEAF key and `is_credential_name` flags `password` — verified, not assumed. THE PLATFORM WARNS WHILE THIS IS STILL THE DEFAULT: a default credential is only as safe as the bind, and `bind_address` is one setting away from a network (ESC-172).
-  password: admin
+  password: keychain:stackowl-control-plane-password
 
 discord_channel:
-  bot_token: ''
+  bot_token: keychain:stackowl-discord-channel-bot-token
   allowed_user_ids: []
   guild_id: null
   socket_mode: true
@@ -277,17 +284,17 @@ discord_channel:
   enabled: false
 
 slack_channel:
-  bot_token: ''
-  signing_secret: ''
+  bot_token: keychain:stackowl-slack-channel-bot-token
+  signing_secret: keychain:stackowl-slack-channel-signing-secret
   allowed_user_ids: []
   socket_mode: true
-  app_token: ''
+  app_token: keychain:stackowl-slack-channel-app-token
 
 telegram_channel:
-  bot_token: ''
+  bot_token: keychain:stackowl-telegram-channel-bot-token
   allowed_user_ids: []
   webhook_url: null
-  webhook_secret: ''
+  webhook_secret: keychain:stackowl-telegram-channel-webhook-secret
   socket_mode: false
   suppress_evolution_events: false
   quiet_hours:
@@ -326,7 +333,7 @@ mcp_server:
   # When False (default), ANY consequential tool (e.g. send_message, skill_manage) is denied across the MCP boundary — the headless MCP server has no interactive consent channel, so a consequential tool would run ungated for an external client. Set True only when the MCP client is fully trusted to invoke consequential actions without consent.
   allow_consequential: false
   # FX-06 — shared-secret token required from SSE clients as 'Authorization: Bearer <token>'. The SSE transport binds to a real network host:port with no other gate (no interactive consent channel exists for an external client), so an unset token means ANY client that can reach the port has the exposed tool surface. None (default) leaves the transport unauthenticated for backward compatibility with existing configs — a loud warning is logged on start_sse either way. Sensitive: auto-redacted in logs by the *token key-pattern.
-  auth_token: null
+  auth_token: keychain:stackowl-mcp-server-auth-token
 
 browser:
   headless_mode: virtual
@@ -366,7 +373,7 @@ governance:
   # Days to keep audit_log rows before the decay pass prunes them. Deletion records are held far longer — see DELETION_RETENTION_DAYS.
   audit_retention_days: 14
   # HMAC-SHA256 key used to sign audit log exports. Empty = unsigned.
-  audit_export_key: ''
+  audit_export_key: keychain:stackowl-governance-audit-export-key
   # Auto-merge Dependabot security PRs on the same day they open.
   same_day_security_prs: true
 
@@ -374,7 +381,7 @@ web_search:
   # Base URL of a self-hosted SearXNG instance (e.g. 'http://localhost:8080'). Empty disables the SearXNG provider. Network-free availability check.
   searxng_base_url: ''
   # Secret REFERENCE for the Brave Search API key — an env-var name, 'keychain:<service>', or 'file:<path>' (resolved at use, never the raw secret). Empty disables the Brave provider. Network-free availability check.
-  brave_api_key: ''
+  brave_api_key: keychain:stackowl-web-search-brave-api-key
 
 tts:
   # TTS engine selection. 'piper' = local OSS engine only. 'auto' = local first, then the cloud fallback IF it is enabled + configured.
@@ -386,7 +393,7 @@ tts:
   # Opt-in switch for the cloud TTS fallback. False (default) = local engine only; the text never leaves the machine.
   cloud_enabled: false
   # Secret REFERENCE for the cloud TTS endpoint key — an env-var name, 'keychain:<service>', or 'file:<path>' (resolved at use, never the raw secret). Empty disables the cloud fallback regardless of cloud_enabled.
-  cloud_api_key: ''
+  cloud_api_key: keychain:stackowl-tts-cloud-api-key
   # Base URL of the OpenAI-compatible speech endpoint for the cloud fallback. Point this at a self-hosted endpoint to keep audio on-prem.
   cloud_base_url: https://api.openai.com/v1
   # Default voice id for the cloud fallback.
@@ -406,7 +413,7 @@ transcription:
   # Opt-in switch for a future cloud STT fallback. False (default) = local engine only; the audio never leaves the machine. (Placeholder: no cloud STT backend ships yet.)
   cloud_enabled: false
   # Secret REFERENCE for a future cloud STT endpoint key — an env-var name, 'keychain:<service>', or 'file:<path>' (resolved at use, never the raw secret). Empty disables the cloud fallback. (Placeholder.)
-  cloud_api_key: ''
+  cloud_api_key: keychain:stackowl-transcription-cloud-api-key
 
 image:
   # Image engine selection. 'auto' = probe → local SDXL if viable, else the cloud fallback IF enabled + configured. 'local' = local-only (never cloud). 'cloud' = cloud-only (skip the local probe).
@@ -418,7 +425,7 @@ image:
   # Opt-in switch for the cloud image fallback. False (default) = local only; the prompt never leaves the machine.
   cloud_enabled: false
   # Secret REFERENCE for the cloud image endpoint key — an env-var name, 'keychain:<service>', or 'file:<path>' (resolved at use, never the raw secret). Empty disables the cloud fallback regardless of cloud_enabled.
-  cloud_api_key: ''
+  cloud_api_key: keychain:stackowl-image-cloud-api-key
   # Base URL of the OpenAI-compatible image endpoint for the cloud fallback. Point this at a self-hosted endpoint to keep prompts on-prem.
   cloud_base_url: https://api.openai.com/v1
   # Model id sent to the cloud image endpoint.

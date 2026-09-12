@@ -33,6 +33,7 @@ import yaml
 from pydantic import BaseModel
 
 from stackowl.config.settings import Settings
+from stackowl.infra.observability import is_credential_name
 
 _ARTIFACT = Path(__file__).resolve().parents[1] / "docs" / "stackowl.yaml.example"
 
@@ -54,6 +55,13 @@ _HEADER = """\
 #   some_api_key: "file:/run/secrets/anthropic"   # a file, whitespace stripped
 #   some_api_key: "ANTHROPIC_API_KEY"             # an environment variable name
 # See src/stackowl/config/secret_resolver.py.
+#
+# So every credential-shaped field below shows that REFERENCE FORM rather than its
+# default — the one place in this file where the value is not the default. The
+# field's own comment still says what it is and what it defaults to. This used to
+# be true by accident (no credential field HAD a non-empty default) and is now
+# enforced by the generator, which asks the same `is_credential_name` the log
+# redactor asks.
 #
 # Environment variables are for bootstrap, host-specific and terminal-convention
 # settings only — see tests/test_a_new_env_var_has_to_justify_itself.py for the
@@ -131,7 +139,20 @@ def _scalar(value: Any) -> str:
     return dumped.removesuffix("\n...").strip()
 
 
-def _emit(model: type[BaseModel], indent: int, out: list[str]) -> None:
+def secret_placeholder(path: str) -> str:
+    """The reference form this file's own header prescribes, for one field.
+
+    Specific rather than generic (`keychain:stackowl-control-plane-password`, not
+    `keychain:REPLACE-ME`) because the operator copies this line: a placeholder
+    naming the field is a keychain entry they can create, and a generic one is a
+    second thing to work out.
+    """
+    return "keychain:stackowl-" + path.replace(".", "-").replace("_", "-")
+
+
+def _emit(
+    model: type[BaseModel], indent: int, out: list[str], path: str = ""
+) -> None:
     pad = " " * indent
     for name, field in model.model_fields.items():
         annotation = field.annotation
@@ -139,12 +160,26 @@ def _emit(model: type[BaseModel], indent: int, out: list[str]) -> None:
             if field.description:
                 out.append(f"{pad}# {field.description}")
             out.append(f"{pad}{name}:")
-            _emit(annotation, indent + 2, out)
+            _emit(annotation, indent + 2, out, f"{path}{name}.")
             out.append("")
             continue
         if field.description:
             for line in str(field.description).splitlines():
                 out.append(f"{pad}# {line.strip()}")
+        # A CREDENTIAL NEVER SHOWS ITS DEFAULT. The header three screens up has
+        # said "secrets do NOT belong in this file" since D18.2, and nothing
+        # enforced it — every default is emitted verbatim, so the rule held only
+        # because no credential-named field HAPPENED to have a non-empty default.
+        # MEASURED 2026-09-12: 13 of the 215 emitted fields are credential-named
+        # and twelve of them defaulted to "" — a guard over a population that was
+        # empty by luck. DEBT-310 added `control_plane.password = "admin"` at the
+        # operator's request and the thirteenth broke it, 44 minutes into a full
+        # run, because the check is not a tripwire.
+        # It also improves the twelve: `bot_token: ""` taught nothing about the
+        # reference form, and now each one shows its own.
+        if is_credential_name(name):
+            out.append(f"{pad}{name}: {_scalar(secret_placeholder(path + name))}")
+            continue
         try:
             default = field.get_default(call_default_factory=True)
         except Exception:  # pragma: no cover - a default that cannot be built
