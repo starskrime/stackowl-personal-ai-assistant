@@ -453,9 +453,16 @@ INDEX_HTML: Final = """<!doctype html>
       });
   }
 
+  // THE FOURTH READER OF THE HEALTH VOCABULARY, and the only one outside Python.
+  // `unknown` (DEBT-314 — nothing measured the subsystem) already rendered as "warn"
+  // through the fall-through, which is the RIGHT answer arrived at by accident: the
+  // other three readers fell through too, and two of them fell through to the WRONG
+  // answer. Named here so the next word added to HealthState gets a decision rather
+  // than whatever the last line happens to say.
   function healthKind(status) {
     if (status === "healthy" || status === "ok") { return "ok"; }
     if (status === "down" || status === "unhealthy" || status === "failed") { return "bad"; }
+    if (status === "unknown") { return "warn"; }
     return "warn";
   }
 

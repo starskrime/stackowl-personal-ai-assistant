@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Literal
 
 import httpx
 
 from stackowl.config.provider import ProviderConfig
 from stackowl.config.secret_resolver import SecretResolver
 from stackowl.exceptions import ConfigurationError, StartupError
+from stackowl.health.status import HealthState
 from stackowl.infra.resilience import jittered
 
 log = logging.getLogger("stackowl.startup")
@@ -38,7 +38,7 @@ class ProviderResult:
     #: The rule, so the next branch inherits it: cannot be reached, or has no
     #: usable credential, means it cannot serve — DOWN. Reachable but returning
     #: 5xx means it answered and may recover on the next call — DEGRADED.
-    status: Literal["ok", "degraded", "down"]
+    status: HealthState
     latency_ms: float
     reason: str | None
 

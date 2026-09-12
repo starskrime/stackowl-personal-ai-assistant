@@ -148,10 +148,14 @@ def test_a_double_timeout_says_the_host_is_a_suspect() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _unhealthy_sites_in_except_blocks() -> list[tuple[str, int, bool]]:
-    """(file, line, asks_remedy_for) for every unhealthy HealthStatus in an except."""
+def _unhealthy_sites_in_except_blocks(root: Path = _SRC) -> list[tuple[str, int, bool]]:
+    """(file, line, asks_remedy_for) for every unhealthy HealthStatus in an except.
+
+    Takes a ROOT so the vacuity control below can point it at a tree it built
+    itself. See `test_the_scan_can_actually_fail` for why that matters.
+    """
     found: list[tuple[str, int, bool]] = []
-    for path in sorted(_SRC.rglob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except SyntaxError:  # pragma: no cover — the syntax gate catches these first
@@ -178,7 +182,7 @@ def _unhealthy_sites_in_except_blocks() -> list[tuple[str, int, bool]]:
                 isinstance(remedy, ast.Call)
                 and getattr(remedy.func, "id", "") == "remedy_for"
             )
-            found.append((str(path.relative_to(_SRC)), node.lineno, asks))
+            found.append((str(path.relative_to(root)), node.lineno, asks))
     return found
 
 
@@ -203,15 +207,63 @@ def test_every_arrived_failure_asks_the_one_place_that_decides() -> None:
 
 
 @pytest.mark.tripwire
-def test_the_scan_can_actually_fail() -> None:
+def test_the_scan_can_actually_fail(tmp_path: Path) -> None:
     """VACUITY CONTROL. The guard above passes trivially if the walk finds no
     `except`-nested sites, or if `HealthStatus` is renamed and the name match goes
-    dead. This pins the population it is measuring."""
-    sites = _unhealthy_sites_in_except_blocks()
-    assert len(sites) >= 10, (
-        f"only {len(sites)} arrived-failure sites found; the walk measured 10 on "
-        "2026-09-10 and it can only be this low if the scan stopped working"
+    dead. This proves the walk still extracts, against a population it BUILDS.
+
+    IT USED TO SAY ``>= 10``, AND THAT FLOOR FAILED ON CORRECT WORK. On 2026-09-12
+    the aggregator's double-timeout branch stopped saying ``down`` — it says
+    ``unknown``, because a probe that did not answer has reported nothing about the
+    subsystem — and the live count fell 10 -> 9. The control went red for a change
+    that improved the very honesty it exists to protect.
+
+    This is the SECOND instance of one shape in this tree, and the first was already
+    diagnosed: `test_the_sweep_sees_a_real_population` counted bracketed
+    `closing_check` patterns in the live record and demanded three, then went red
+    when the programme closed two of them. A floor under a population the work
+    EXISTS TO CHANGE fails the day the work succeeds, and lowering it only defers
+    that — 10 becomes 9 becomes 8.
+
+    So the extraction is proven against two synthetic modules written here, where
+    the expected answer is known exactly, and the live tree only has to be
+    non-empty. The live number is still worth printing, and it is not an assertion.
+    """
+    planted = tmp_path / "planted"
+    planted.mkdir()
+    (planted / "asks.py").write_text(
+        "def probe():\n"
+        "    try:\n"
+        "        go()\n"
+        "    except Exception as exc:\n"
+        '        return HealthStatus(name="x", status="down", message=str(exc),\n'
+        "                            remedy=remedy_for(exc), latency_ms=1.0)\n",
+        encoding="utf-8",
     )
+    (planted / "silent.py").write_text(
+        "def probe():\n"
+        "    try:\n"
+        "        go()\n"
+        "    except Exception as exc:\n"
+        '        return HealthStatus(name="x", status="degraded", message=str(exc),\n'
+        "                            remedy=None, latency_ms=1.0)\n",
+        encoding="utf-8",
+    )
+    # and one the walk must NOT pick up: unhealthy, but not inside an except.
+    (planted / "not_an_except.py").write_text(
+        "def probe():\n"
+        '    return HealthStatus(name="x", status="down", message="m",\n'
+        "                        remedy=None, latency_ms=1.0)\n",
+        encoding="utf-8",
+    )
+    found = _unhealthy_sites_in_except_blocks(planted)
+    assert sorted((f, asks) for f, _ln, asks in found) == [
+        ("asks.py", True),
+        ("silent.py", False),
+    ], f"the walk no longer extracts what it is built to extract: {found}"
+
+    sites = _unhealthy_sites_in_except_blocks()
+    assert sites, "the scan found nothing in src/ — the walk went blind on the real tree"
     source = ast.parse(
         (_SRC / "health" / "aggregator.py").read_text(encoding="utf-8")
     )

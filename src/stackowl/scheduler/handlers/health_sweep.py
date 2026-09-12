@@ -21,6 +21,11 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol
 
+from stackowl.health.status import (
+    HEALTHY_STATES,
+    LIVENESS_FAILING_STATES,
+    WARNING_STATES,
+)
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.scheduler.base import JobHandler
@@ -57,7 +62,7 @@ def clear_degraded_if_a_provider_is_back(
             return False
         healthy = [
             s for s in statuses
-            if s.name.startswith("provider:") and s.status == "ok"
+            if s.name.startswith("provider:") and s.status in HEALTHY_STATES
         ]
         if not healthy:
             return False
@@ -350,8 +355,8 @@ class HealthSweepHandler(JobHandler):
             )
         clear_degraded_if_a_provider_is_back(statuses, self._live_services)
 
-        down = [s for s in statuses if s.status == "down"]
-        degraded = [s for s in statuses if s.status == "degraded"]
+        down = [s for s in statuses if s.status in LIVENESS_FAILING_STATES]
+        degraded = [s for s in statuses if s.status in WARNING_STATES]
         duration_ms = (time.monotonic() - t0) * 1000
 
         # 2. DECISION — all healthy → quiet exit; unhealthy → LOUD log + alert.
@@ -384,8 +389,8 @@ class HealthSweepHandler(JobHandler):
         attempted = await self._heal_and_verify(job, down, degraded)
         if attempted:
             statuses = await self._aggregator.collect()
-            down = [s for s in statuses if s.status == "down"]
-            degraded = [s for s in statuses if s.status == "degraded"]
+            down = [s for s in statuses if s.status in LIVENESS_FAILING_STATES]
+            degraded = [s for s in statuses if s.status in WARNING_STATES]
             duration_ms = (time.monotonic() - t0) * 1000
             still_unhealthy = {s.name for s in (*down, *degraded)}
             healed = attempted - still_unhealthy  # recycled AND re-verified ok
@@ -638,10 +643,15 @@ def _compose_alert(
     other line would teach the reader to stop seeing it.
     """
     parts: list[str] = ["⚠ StackOwl health sweep found unhealthy subsystems:"]
+    # THE WORD COMES FROM THE STATUS, NOT FROM THE BUCKET IT LANDED IN. These two
+    # lines used to hardcode "down" and "degraded", which was true only while the
+    # vocabulary had exactly those two unhealthy words — the moment `unknown` joined
+    # the warning bucket, the alert would have told an operator a subsystem was
+    # DEGRADED when nothing had managed to measure it at all.
     for s in down:
-        parts.append(f"  ✗ {s.name}: down — {s.message or 'no detail'}{_fix(s)}")
+        parts.append(f"  ✗ {s.name}: {s.status} — {s.message or 'no detail'}{_fix(s)}")
     for s in degraded:
-        parts.append(f"  ⚠ {s.name}: degraded — {s.message or 'no detail'}{_fix(s)}")
+        parts.append(f"  ⚠ {s.name}: {s.status} — {s.message or 'no detail'}{_fix(s)}")
     return "\n".join(parts)
 
 

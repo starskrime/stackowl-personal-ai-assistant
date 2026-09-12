@@ -25,7 +25,7 @@ WHY NOTHING CAUGHT IT. The sweep already re-collects before alerting, but only
 becomes a critical page.
 
 THE LIE IS IN THE INSTRUMENT, WHICH IS WHERE IT HAS TO BE FIXED. The aggregator's
-timeout branch returns ``status="down"``. A probe that did not answer in five
+timeout branch returned ``status="down"``. A probe that did not answer in five
 seconds has told us nothing about the subsystem — only about the probe. Damping
 the alarm would hide a real outage just as effectively; re-probing distinguishes
 them, because a genuinely dead subsystem fails the second attempt too.
@@ -33,6 +33,15 @@ them, because a genuinely dead subsystem fails the second attempt too.
 AND IT IS NOT ONLY NOISE. ``is_live()`` returns False on any ``down`` and is the
 systemd watchdog gate (F-85) — so a single slow probe was, in principle, an
 argument for killing the process.
+
+2026-09-12 — THE SENTENCE ABOVE WAS RIGHT AND THE FIX IT SHIPPED WAS HALF OF ONE.
+"a genuinely dead subsystem fails the second attempt too" is true, and so does a
+host too busy to schedule the coroutine, so a DOUBLE timeout still did not
+distinguish them — it only lowered the rate. The second half is at the bottom of
+this file: a non-answer is now ``unknown`` when something ELSE also failed to
+answer the same sweep, and ``down`` when it was the lone outlier. See DEBT-314 and
+``aggregator._corroborate_non_answers`` for the 40-timeout measurement that decided
+which case is which.
 """
 
 from __future__ import annotations
@@ -258,3 +267,91 @@ async def test_a_reprobe_that_answers_INSIDE_the_first_window_does_NOT_say_so(
     assert [
         r for r in caplog.records if "answered on the re-probe after" in r.getMessage()
     ], "the ordinary success line lost its duration"
+
+
+# --------------------------------------------------------------------------- #
+# Corroboration — what a non-answer MEANT, decided by the rest of the sweep
+#
+# The re-probe above separates a slow probe from a dead subsystem, and it leaves
+# one case unseparated: a probe that misses BOTH windows because the HOST was too
+# busy to schedule it. Until 2026-09-12 that was reported `down` like any other,
+# which is the same lie one level along — a verdict about a subsystem, built from
+# a measurement of the box.
+#
+# MEASURED 2026-09-12, joining every double timeout in the retained logs to its own
+# sweep's `collect: exit` line — 40 timeouts in 29 sweeps:
+#
+#     1 timeout, and it was the ONLY non-ok subsystem  ....  24 sweeps
+#     1 timeout, 1 other non-ok subsystem              ....   5 sweeps
+#     2 / 4 / 5 timeouts together                      ....   3 sweeps  (11 timeouts)
+#
+# So 24 of 40 fired while fourteen other contributors answered inside the same
+# window — a busy box does not answer fourteen probes and drop one. Calling ALL
+# forty `unknown`, which is what this change first set out to do, would have
+# retired the detection of the exact failure `is_live` exists for.
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_LONE_non_answer_is_still_down() -> None:
+    """24 of the 40 measured cases, and the recorded decision this must not break.
+
+    A subsystem that misses both windows while everything else answers is the
+    outlier, and the sweep is evidence about it. `test_a_subsystem_that_is_REALLY_
+    gone_is_still_reported_down` above pins the same rule at one contributor.
+    """
+    agg = HealthAggregator()
+    agg.register(_Probe("provider_registry", ["hang", "hang"]))
+    for i in range(3):
+        agg.register(_Probe(f"answers_{i}", ["ok"]))
+
+    statuses = await agg.collect()
+    by_name = {s.name: s for s in statuses}
+
+    assert by_name["provider_registry"].status == "down"
+    assert "only subsystem that did not answer" in (by_name["provider_registry"].message or "")
+    assert await agg.is_live() is False
+
+
+async def test_TWO_non_answers_in_one_sweep_are_UNKNOWN_not_down() -> None:
+    """11 of the 40, in three sweeps. Nothing measured these subsystems.
+
+    The live shape: on 2026-09-10 five contributors missed both windows in one
+    sweep and the platform paged an operator about five simultaneous outages. The
+    box was loaded; nothing was broken.
+    """
+    agg = HealthAggregator()
+    agg.register(_Probe("provider_registry", ["hang", "hang"]))
+    agg.register(_Probe("store_cadence", ["hang", "hang"]))
+    agg.register(_Probe("answers", ["ok"]))
+
+    statuses = await agg.collect()
+    unanswered = [s for s in statuses if s.status == "unknown"]
+
+    assert sorted(s.name for s in unanswered) == ["provider_registry", "store_cadence"]
+    assert all("timed out twice" in (s.message or "") for s in unanswered)
+
+
+async def test_an_UNCORROBORATED_sweep_does_not_kill_the_process() -> None:
+    """THE POINT OF THE STATE, and the half `is_live` had to be taught.
+
+    A restart is the worst possible response to a loaded box, because the restart
+    is itself load. `unknown` is deliberately absent from LIVENESS_FAILING_STATES.
+    """
+    agg = HealthAggregator()
+    agg.register(_Probe("provider_registry", ["hang", "hang"]))
+    agg.register(_Probe("store_cadence", ["hang", "hang"]))
+
+    assert await agg.is_live() is True
+
+
+async def test_the_operator_is_still_told_about_an_unmeasured_subsystem() -> None:
+    """Quiet is NOT the alternative to a false outage.
+
+    `unknown` sits in WARNING_STATES, so the sweep still alerts — it just stops
+    calling it an outage. A state in no bucket would be counted HEALTHY by
+    `health_sweep`, silently, which is the failure this whole change guards.
+    """
+    from stackowl.health.status import LIVENESS_FAILING_STATES, WARNING_STATES
+
+    assert "unknown" in WARNING_STATES
+    assert "unknown" not in LIVENESS_FAILING_STATES

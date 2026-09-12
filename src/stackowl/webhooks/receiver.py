@@ -16,12 +16,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time as _time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
 
 from stackowl.config.settings import Settings
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.health.status import HealthState
 from stackowl.infra.clock import Clock, WallClock
 from stackowl.infra.observability import log
 from stackowl.memory.bridge import HealthReport
@@ -293,7 +294,7 @@ class WebhookReceiver(SupervisedTask):
 
     async def health(self) -> HealthReport:
         log.webhook.debug("[webhook] receiver.health: entry")
-        status: Literal["ok", "degraded", "down"] = "ok" if self._bound else "down"
+        status: HealthState = "ok" if self._bound else "down"
         return HealthReport(
             name="webhook.receiver",
             status=status,

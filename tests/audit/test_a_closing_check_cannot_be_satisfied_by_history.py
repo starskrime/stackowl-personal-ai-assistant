@@ -45,6 +45,10 @@ from validate_check import _UV_NOISE  # noqa: E402
 from validate_check import verdict_of as _verdict_of  # noqa: E402
 _SCRIPT = _ROOT / "scripts" / "log_since.sh"
 
+#: `log_since.sh` prints a COUNT. Any pipe into a line counter reads 1 regardless of
+#: what matched, so the check it feeds can only ever report CLOSEABLE.
+_LINE_COUNTED_LOG_SINCE = re.compile(r"log_since\.sh[^|\n]*\|\s*wc\s+-l")
+
 
 def _oldest_retained() -> str:
     """The date the retained log window opens, read from the FILES, not the setting."""
@@ -194,6 +198,54 @@ class TestEveryLiveCheckUsesIt:
             "these closing checks read the logs without a ship-date bound, so they can "
             f"report CLOSEABLE on evidence older than the change: {offenders}"
         )
+
+    @pytest.mark.tripwire
+    def test_no_check_pipes_log_since_into_a_line_count(self) -> None:
+        """`log_since.sh` RETURNS A COUNT. Piping it to `wc -l` always yields 1.
+
+        MEASURED 2026-09-12, on a check I had just written and was one commit from
+        shipping: `n=$(./scripts/log_since.sh <date> <pattern> | wc -l)` printed
+        CLOSEABLE against ZERO matching records, because `wc -l` counted the script's
+        own single line of output. A check that can only ever say CLOSEABLE is worse
+        than no check — it closes a stage nobody looked at again.
+
+        SECOND INSTANCE OF ONE SHAPE, and that is why this is structural rather than
+        one corrected string. The first was the third argument: a check read
+        `log_since.sh <date> <pattern> <word>` as a conjunction when the third
+        parameter EXCLUDES, and reported CLOSEABLE on 60 boots before the fix had run
+        once. Both are the same mistake — assuming a signature instead of reading one
+        — and both fail in the direction that closes work.
+
+        The population it guards is EMPTY today, deliberately: this is a form that can
+        never be correct, not a count of offenders. `test_the_line_count_would_really_
+        have_lied` below is its control, so "no offenders" cannot mean "the regex
+        matches nothing".
+        """
+        data = yaml.safe_load((_ROOT / "progress.yml").read_text(encoding="utf-8"))
+        offenders: list[str] = []
+        for ident, raw in _record_checks(data):
+            check = _command_only(raw)
+            if _LINE_COUNTED_LOG_SINCE.search(check):
+                offenders.append(ident)
+        assert not offenders, (
+            "these checks pipe `log_since.sh` into `wc -l`; it already returns a count, "
+            f"so the pipe makes them read 1 forever and report CLOSEABLE on nothing: {offenders}"
+        )
+
+    def test_the_line_count_would_really_have_lied(self, logs: Path) -> None:
+        """The control, run against the REAL script rather than asserted.
+
+        A pattern that matches nothing must still make the piped form print 1, or the
+        guard above is defending against something that does not happen.
+        """
+        out = _run(logs, "2026-09-12", "a-string-no-record-has-ever-contained")
+        assert out.stdout.strip() == "0", out.stdout
+        assert len(out.stdout.strip().splitlines()) == 1, (
+            "log_since.sh stopped returning exactly one line, so `| wc -l` may no "
+            "longer read 1 and the guard above needs re-deriving"
+        )
+        assert _LINE_COUNTED_LOG_SINCE.search("x=$(./scripts/log_since.sh 2026-09-12 'p' | wc -l)")
+        assert not _LINE_COUNTED_LOG_SINCE.search("x=$(./scripts/log_since.sh 2026-09-12 'p')")
 
     @pytest.mark.tripwire
     def test_every_log_since_call_names_a_real_date_or_earns_all(self) -> None:

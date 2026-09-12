@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from stackowl.config.test_mode import TestModeGuard
+from stackowl.health.status import HealthState
 from stackowl.infra.observability import log
 from stackowl.memory.bridge import HealthReport
 from stackowl.notifications.router_helpers import (
@@ -260,7 +261,7 @@ class NotificationRouter:
                 details={"error": str(exc)},
             )
         depth = int(rows[0]["n"]) if rows else 0
-        status: Literal["ok", "degraded", "down"] = (
+        status: HealthState = (
             "degraded" if depth > _QUEUE_DEGRADED_THRESHOLD else "ok"
         )
         log.notifications.debug(

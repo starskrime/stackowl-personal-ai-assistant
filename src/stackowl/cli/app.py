@@ -306,6 +306,7 @@ def health(
         McpHealthContributor,
         ProviderContributor,
     )
+    from stackowl.health.status import HEALTHY_STATES, LIVENESS_FAILING_STATES
     from stackowl.mcp.probe import McpLivenessProbe
     from stackowl.startup.fs_probe import _data_dir, _log_dir
 
@@ -357,7 +358,13 @@ def health(
         typer.echo(json.dumps(payload, indent=2))
     else:
         for s in statuses:
-            icon = "✓" if s.status == "ok" else ("⚠" if s.status == "degraded" else "✗")
+            # DERIVED FROM THE PARTITION, not a second icon table: the partition
+            # in `health.status` is total, so this expression is total, and a
+            # state added later cannot silently inherit the outage cross.
+            icon = (
+                "✓" if s.status in HEALTHY_STATES
+                else ("✗" if s.status in LIVENESS_FAILING_STATES else "⚠")
+            )
             msg = f"  {s.message}" if s.message else ""
             typer.echo(f"{icon}  {s.name:<30} {s.status:<10} {s.latency_ms:>6.0f}ms{msg}")
             # D14.4 — the "how to fix it" half. Indented under its own line so the

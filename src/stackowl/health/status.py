@@ -9,11 +9,60 @@ from typing import Literal, Protocol
 
 from stackowl.exceptions import CircuitOpenError
 
+#: THE SUBSYSTEM VOCABULARY, AND IT HAD FIVE COPIES AND NO NAME.
+#:
+#: MEASURED 2026-09-12: `Literal["ok", "degraded", "down"]` was written out
+#: independently in `health/status.py`, `memory/bridge.py`, `webhooks/receiver.py`,
+#: `notifications/router.py` and `startup/provider_probe.py`. The `HealthStatus`
+#: DATACLASS is imported by a dozen modules; the vocabulary INSIDE it was not
+#: importable at all, so every new reporter re-typed it.
+#:
+#: That is why this platform could not say "I could not measure it". Adding a state
+#: was never a design problem — it was a five-file edit that the next reporter would
+#: have made six, which is the two-copies-of-one-rule shape this tree finds more
+#: often than any other. Naming it is what makes the vocabulary extensible.
+#:
+#: `unknown` MEANS NOTHING MEASURED IT — never that the subsystem is fine and never
+#: that it is dead. It is deliberately NARROW: `aggregator._corroborate_non_answers`
+#: only lets a non-answer keep this word when something ELSE also failed to answer
+#: the same sweep, because MEASURED over every retained log, 24 of 40 double
+#: timeouts fired while fourteen other contributors answered inside the same window.
+#: A lone non-answer is evidence about the subsystem and stays `down`.
+HealthState = Literal["ok", "degraded", "down", "unknown"]
+
+#: AND THE VOCABULARY ALONE IS NOT ENOUGH — EVERY READER STILL HAS TO CLASSIFY IT.
+#:
+#: A state that no consumer matches does not raise; it falls through whatever branch
+#: happens to be last, silently. MEASURED on the tree as it stood: of the four places
+#: that read a `HealthStatus.status`, adding a fourth word would have given
+#: `health_sweep` a subsystem that is neither `down` nor `degraded` and therefore
+#: counted HEALTHY, and the CLI an `✗` for something nothing had measured. Neither
+#: would have failed a test. That is the same defect as the five copies, one level up:
+#: the PARTITION was implicit, so extending it was a silent edit.
+#:
+#: So the three groups are declared here beside the vocabulary, they must cover it
+#: exactly, and `test_the_health_vocabulary_has_ONE_home` fails on any state that is
+#: in none of them or in two. A new state cannot be added without deciding, in
+#: writing, whether it kills the process.
+HEALTHY_STATES: tuple[HealthState, ...] = ("ok",)
+
+#: Worth telling an operator about; NOT worth killing the process over.
+WARNING_STATES: tuple[HealthState, ...] = ("degraded", "unknown")
+
+#: The only states that trip liveness. `unknown` is deliberately NOT here, and the
+#: reason is the corroboration rule rather than a guess about causes: by the time a
+#: status reaches this word, SEVERAL contributors have failed to answer the same
+#: sweep, which is the shape of a loaded host — exactly the load under which a
+#: restart loop does the most damage. A lone non-answer never gets here; it is
+#: promoted to `down` and still kills the process, as it always did.
+LIVENESS_FAILING_STATES: tuple[HealthState, ...] = ("down",)
+
 
 @dataclass(frozen=True)
 class HealthStatus:
     name: str
-    status: Literal["ok", "degraded", "down"]
+    status: HealthState
+
     message: str | None
     latency_ms: float
     #: WHAT TO DO ABOUT IT — the other half of a diagnosis (D14.4).

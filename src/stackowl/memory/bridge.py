@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
+from stackowl.health.status import HealthState
 from stackowl.infra.observability import log
 from stackowl.memory.trust import Trust
 
@@ -18,7 +19,7 @@ class HealthReport:
     """Result of a :meth:`MemoryBridge.health` probe."""
 
     name: str
-    status: Literal["ok", "degraded", "down"]
+    status: HealthState
     details: dict[str, Any] = field(default_factory=dict)
     latency_ms: float = 0.0
 

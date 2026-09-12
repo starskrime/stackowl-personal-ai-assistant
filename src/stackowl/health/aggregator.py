@@ -5,8 +5,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 
-from stackowl.health.status import HealthContributor, HealthStatus, remedy_for
+from stackowl.health.status import (
+    HEALTHY_STATES,
+    LIVENESS_FAILING_STATES,
+    HealthContributor,
+    HealthStatus,
+    remedy_for,
+)
 
 log = logging.getLogger("stackowl.health")
 
@@ -64,24 +71,38 @@ class HealthAggregator:
         log.debug("[health] aggregator.collect: entry — contributors=%d", len(self._contributors))
         tasks = [self._run_contributor(c) for c in self._contributors]
         results = await asyncio.gather(*tasks)
-        result_list = list(results)
-        ok = sum(1 for r in result_list if r.status == "ok")
+        result_list = _corroborate_non_answers(list(results))
+        ok = sum(1 for r in result_list if r.status in HEALTHY_STATES)
         log.info("[health] aggregator.collect: exit — ok=%d total=%d", ok, len(result_list))
         return result_list
 
     async def is_live(self) -> bool:
         """Liveness verdict for the systemd watchdog gate (F-85).
 
-        Returns ``False`` only when a contributor reports ``"down"`` — a genuinely
-        broken critical subsystem (e.g. the DB pool wedged, the data dir
-        unwritable). ``"degraded"`` does NOT trip liveness: a degraded subsystem is
-        still serving, and killing the process over it would be a false restart.
+        Returns ``False`` only for a state in :data:`LIVENESS_FAILING_STATES` —
+        today just ``"down"``, a genuinely broken critical subsystem (e.g. the DB
+        pool wedged, the data dir unwritable). ``"degraded"`` does NOT trip
+        liveness: a degraded subsystem is still serving, and killing the process
+        over it would be a false restart.
+
+        AND NEITHER DOES ``"unknown"``, which by `_corroborate_non_answers` can
+        only mean that SEVERAL contributors failed to answer the same sweep. That
+        is the shape of a loaded host, and a restart under load is the worst
+        possible response to load. A lone non-answer is still ``down`` and still
+        trips this, so the wedged pool named above is detected exactly as before —
+        which was the whole point of corroborating rather than re-labelling.
+
+        Asked of the constant rather than compared to a literal, because the
+        partition it belongs to is declared once in `health.status`. Four readers
+        classified this vocabulary independently until 2026-09-12, which is how a
+        fourth state could be added without any of them noticing.
+
         With NO contributors registered the process is considered live (fail-open),
         so this is safe to wire before contributors exist."""
         if not self._contributors:
             return True
         statuses = await self.collect()
-        down = [s.name for s in statuses if s.status == "down"]
+        down = [s.name for s in statuses if s.status in LIVENESS_FAILING_STATES]
         if down:
             log.warning("[health] aggregator.is_live: DOWN subsystems=%s", down)
             return False
@@ -136,20 +157,22 @@ class HealthAggregator:
             latency_ms = (time.monotonic() - t0) * 1000
             log.warning(
                 "[health] aggregator: %s timed out TWICE (%.0fs then %.0fs) after "
-                "%.0fms — down",
+                "%.0fms — no answer; the sweep decides what that meant",
                 name, _CONTRIBUTOR_TIMEOUT, _CONTRIBUTOR_RETRY_TIMEOUT, latency_ms,
             )
             return HealthStatus(
                 name=name,
-                status="down",
+                # A NON-ANSWER, NOT A VERDICT — `collect` decides, because only
+                # `collect` can see whether anything ELSE answered. See
+                # `_corroborate_non_answers`.
+                status="unknown",
                 message=(
                     f"health check timed out twice "
                     f"(>{_CONTRIBUTOR_TIMEOUT:.0f}s, then >{_CONTRIBUTOR_RETRY_TIMEOUT:.0f}s)"
                 ),
-                # A double timeout is the one `down` with no exception behind it, and
-                # it is also the one most likely to be about the HOST rather than the
-                # subsystem. Passing the TimeoutError says that out loud instead of
-                # leaving a reader to infer an outage from a non-answer.
+                # A double timeout is the one verdict with no exception behind it.
+                # Passing the TimeoutError says that out loud instead of leaving a
+                # reader to infer an outage from a non-answer.
                 remedy=remedy_for(TimeoutError()),
                 latency_ms=latency_ms,
             )
@@ -194,3 +217,67 @@ class HealthAggregator:
                 name, reprobe_ms, status.status,
             )
         return status
+
+
+def _corroborate_non_answers(results: list[HealthStatus]) -> list[HealthStatus]:
+    """Decide what a double timeout MEANT, using the rest of the sweep as the control.
+
+    A contributor that times out twice has said nothing about itself. Until
+    2026-09-12 the aggregator called that ``down`` anyway — the one verdict in the
+    whole class with no exception behind it — and the comment beside it already
+    admitted the case was "most likely about the HOST rather than the subsystem".
+
+    THE COMMENT WAS WRONG, AND SO WAS THE FIX I FIRST WROTE FOR IT. MEASURED
+    2026-09-12 over every retained log, joining each double timeout to its own
+    sweep's ``collect: exit`` line — 40 double timeouts in 29 sweeps:
+
+    ====================================  =======
+    shape                                 sweeps
+    ====================================  =======
+    1 timeout, and it was the ONLY non-ok      24
+    1 timeout, 1 other non-ok subsystem         5
+    2 timeouts together                         1
+    4 timeouts together                         1
+    5 timeouts together                         1
+    ====================================  =======
+
+    So 24 of 40 fired while FOURTEEN OTHER CONTRIBUTORS ANSWERED INSIDE THE SAME
+    WINDOW. A busy host does not answer fourteen probes and drop one: that is
+    evidence about the subsystem, and ``down`` is the right word for it. Changing
+    all forty to ``unknown`` — which is what this fix set out to do — would have
+    silently retired the detection of the exact failure ``is_live`` exists for, a
+    wedged pool that HANGS rather than raises, in the name of a tidier vocabulary.
+
+    Eleven fired in three sweeps alongside other timeouts. Nothing measured those
+    subsystems, and calling them down is the false outage this is for.
+
+    So the rule is CORROBORATION, stated once: a non-answer stays ``unknown`` only
+    when something else also failed to answer in the same collection. A lone
+    non-answer is promoted to ``down`` — including the degenerate case of a single
+    registered contributor, where there is no control to corroborate against and the
+    conservative reading (the one that can still trip the watchdog) is kept.
+    """
+    unanswered = [r for r in results if r.status == "unknown"]
+    if len(unanswered) >= 2:
+        # INFO, not debug: this is the branch that DECLINES to call something down,
+        # and a subsystem quietly excused from the outage count is exactly the kind
+        # of decision a reader needs to see. Production runs at INFO.
+        log.info(
+            "[health] aggregator: %d contributors did not answer in the same sweep "
+            "— reporting them UNKNOWN rather than down, subsystems=%s",
+            len(unanswered), sorted(r.name for r in unanswered),
+        )
+        return results
+    return [
+        replace(
+            r,
+            status="down",
+            message=(
+                f"{r.message} — and it was the only subsystem that did not answer, "
+                f"so the sweep is evidence about it rather than about the host"
+            ),
+        )
+        if r.status == "unknown"
+        else r
+        for r in results
+    ]

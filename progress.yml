@@ -20894,6 +20894,116 @@ known_debt:
       work. The patch ASSERTS the skill still requires the gate before writing, so it
       cannot quietly remove its own enforcement. A05.10 was added as a real item with a
       measured gap; its `gap_check` reads HOLDS.
+  - id: DEBT-314
+    title: The health vocabulary had five copies and no name, so the platform could not say "I could not measure it"
+    raised: 2026-09-12
+    found_by: >-
+      Reading `health/aggregator.py` for A05.10's health surface. The double-timeout
+      branch returns `status="down"` while the comment directly beneath it says the case
+      is "most likely to be about the HOST rather than the subsystem" — the code
+      contradicting its own stated reasoning, in the same five lines.
+    the_symptom: >-
+      A contributor that misses BOTH probe windows is reported as an outage. MEASURED
+      2026-09-12 over every retained log: 40 double timeouts, 25 of them
+      `provider:NeraAiRaw`. Each one pages an operator at critical, and each one is an
+      argument for the systemd watchdog to kill the process.
+    the_cause_is_that_the_VOCABULARY_HAD_NO_HOME: >-
+      `Literal["ok", "degraded", "down"]` was written out INDEPENDENTLY in five modules —
+      `health/status.py`, `memory/bridge.py`, `webhooks/receiver.py`,
+      `notifications/router.py`, `startup/provider_probe.py` — with no shared name. The
+      `HealthStatus` DATACLASS is imported by a dozen modules; the vocabulary inside it
+      was not importable at all, so every new reporter re-typed it.
+      So "the probe did not answer" was never a design problem. It was a five-file edit
+      that the next reporter would have made six, and the aggregator picked the least
+      wrong of three words instead. Two-copies-of-one-rule, at five copies.
+    and_the_five_copies_were_the_SMALLER_half: >-
+      The PARTITION — which states are healthy, which warrant telling someone, which
+      justify killing the process — was implicit in FOUR separate readers: `is_live`
+      compared to `"down"`; `health_sweep` built two buckets from `"down"` and
+      `"degraded"`; `cli health` used a two-branch ternary falling through to the outage
+      cross; the dashboard's `healthKind` falls through to `warn`.
+      NONE of them raises on a word it does not know. MEASURED before building: a fourth
+      state would have given `health_sweep` a subsystem that is neither `down` nor
+      `degraded` and therefore counted HEALTHY, silently, and the CLI a `✗` for something
+      nothing had measured. No test would have failed. Extending an implicit partition is
+      an invisible edit, which is why the fix is a TOTAL partition and not a fourth word.
+    THE_PREMISE_I_STARTED_WITH_WAS_REFUTED_BY_ITS_OWN_MEASUREMENT: >-
+      I set out to make all 40 double timeouts `unknown`, on the aggregator's own comment
+      that a non-answer is "most likely about the HOST". Joining each double timeout to
+      its own sweep's `collect: exit` line killed that — 40 timeouts across 29 sweeps:
+      **24 fired while they were the ONLY non-ok subsystem**, 5 alone beside one other
+      non-ok, and 11 in three sweeps of 2, 4 and 5 together.
+      A busy box does not answer fourteen probes and drop one. Twenty-four of forty are
+      evidence ABOUT THE SUBSYSTEM, and `down` is the right word for them. Shipping the
+      version I first wrote would have retired the detection of the exact failure
+      `is_live` exists for — a wedged pool that HANGS rather than raises — in the name of
+      a tidier vocabulary, and TWO existing tests encoded that decision and would have had
+      to be edited to let it through. That is the tell I acted on rather than argued with.
+    what_shipped: >-
+      `HealthState` named once in `health/status.py`, with `unknown` added, and the four
+      re-typed copies replaced by imports. Beside it a TOTAL partition —
+      `HEALTHY_STATES` / `WARNING_STATES` / `LIVENESS_FAILING_STATES` — which every reader
+      now asks instead of comparing to a bare word.
+      `_corroborate_non_answers` decides what a non-answer MEANT, in `collect`, because
+      only `collect` can see whether anything else answered: a non-answer keeps `unknown`
+      only when something ELSE also failed to answer the same sweep; a lone one is
+      promoted to `down` with a message saying why. `unknown` is in `WARNING_STATES` (the
+      operator is still told) and deliberately NOT in `LIVENESS_FAILING_STATES` (a restart
+      is the worst possible response to a loaded box).
+      NET BEHAVIOUR CHANGE, against the measured corpus: 11 of 40 stop being reported as
+      outages and stop being an argument for a restart; the other 29 are unchanged.
+    the_guard_is_built_from_the_vocabulary_not_from_todays_data: >-
+      `test_the_health_vocabulary_has_ONE_home.py` — five tripwires. An AST sweep for a
+      `Literal` containing both `ok` and `down` outside the home (matched by MEMBERSHIP,
+      so a copy that adds or reorders a word is still caught), its own vacuity control
+      that the home still declares one, the partition walked from `get_args(HealthState)`
+      so a state added later fails until somebody classifies it in writing, a scan
+      refusing any reader that compares a status to a bare state word, and a drive of the
+      real bucketing over EVERY state the vocabulary holds.
+      The one exemption is `_corroborate_non_answers` — a classifier cannot ask the
+      classification it produces — and the guard asserts that exemption is still REAL, so
+      it cannot rot into an allowlist entry for a function nobody kept.
+    and_a_SECOND_vacuity_control_of_the_shape_CLAUDE_md_already_names: >-
+      `test_the_scan_can_actually_fail` demanded `len(sites) >= 10` against the LIVE tree,
+      and this change took it to 9 — because the double-timeout site stopped saying
+      `down`. The control went red for a change that improved the exact honesty it exists
+      to protect. Second instance of the shape recorded for the 49th suite run
+      (`test_the_sweep_sees_a_real_population`, a floor under the population the programme
+      exists to reduce), and cured the same way: the extraction is now proven against two
+      synthetic modules written by the test, where the expected answer is known exactly,
+      and the live tree only has to be non-empty. Lowering a floor only defers it — 10
+      becomes 9 becomes 8.
+    and_my_own_closing_check_read_CLOSEABLE_on_ZERO_evidence: >-
+      Caught by running it before believing it, which is this programme's own rule and
+      the only reason it did not ship. `log_since.sh` RETURNS A COUNT; I piped it into
+      `wc -l`, which counted the script's single line of output. It printed
+      "CLOSEABLE — 1 non-answer reached the new verdict path, 1 corroborated as UNKNOWN"
+      against ZERO matching records, and would have said so forever — closing a stage
+      nobody would look at again.
+      SECOND INSTANCE OF ONE SHAPE. The first was `log_since.sh`'s THIRD argument, read
+      as a conjunction when it EXCLUDES, which reported CLOSEABLE on 60 boots before
+      that fix had run once. Both are assuming a signature rather than reading one, and
+      both fail in the direction that CLOSES work. SWEPT: mine were the only two live
+      uses of the piped form, so it is a form and not a population —
+      `test_no_check_pipes_log_since_into_a_line_count` refuses it structurally, with a
+      control that runs the real script to prove the pipe really would read 1.
+    stages: {brainstorm: done, architect: no_change_needed, implement: done, cleanup: done, test: done, validate: partial, document: done}
+    doc: docs/reference-mapping/designs/D14.4.md
+    validate_is_PARTIAL_and_here_is_exactly_which_half: >-
+      LIVE on the new tree — core up 2026-09-12T09:58:47Z, control plane listening, and
+      `[health] aggregator.collect: exit — ok=15 total=15` at 10:00:48Z. That line's `ok`
+      count is now computed from `HEALTHY_STATES`, so the sweep ran through the new
+      partition on real contributors.
+      WHAT IT DOES NOT YET EVIDENCE: the corroboration branch needs a double timeout to
+      fire, and all 15 answered. 40 fired in the 15 retained days before this, so the
+      wait is days rather than weeks — but a `done` here would be a claim about a branch
+      no live record has reached.
+    closing_check: >-
+      n=$(./scripts/log_since.sh 2026-09-12 'the sweep decides what that meant');
+      c=$(./scripts/log_since.sh 2026-09-12 'reporting them UNKNOWN rather than down');
+      if [ "$n" -gt 0 ]; then echo "CLOSEABLE — $n non-answer(s) reached the new verdict
+      path, $c corroborated as UNKNOWN"; else echo "OPEN — no double timeout since the fix
+      shipped; 40 fired in the 15 retained days before it"; fi
   - id: DEBT-312
     title: The dashboard ships reachable — and the brake DEBT-310 named arrives with it
     raised: 2026-09-12
