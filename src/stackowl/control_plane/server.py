@@ -55,7 +55,7 @@ from stackowl.control_plane.login_guard import (
     WINDOW_SECONDS,
     LoginAttempts,
 )
-from stackowl.control_plane.page import INDEX_HTML
+from stackowl.control_plane.page import ICON_SVG, INDEX_HTML, MANIFEST_JSON
 from stackowl.infra.observability import log
 from stackowl.owls.activity import read_owl_activity
 from stackowl.owls.skill_ownership import read_all_skill_ownership
@@ -165,6 +165,8 @@ class ControlPlaneServer(SupervisedTask):
 
         app = web.Application()
         app.router.add_get("/", self._handle_index)
+        app.router.add_get("/manifest.webmanifest", self._handle_manifest)
+        app.router.add_get("/icon.svg", self._handle_icon)
         app.router.add_get("/api/v1/health", self._handle_health)
         app.router.add_get("/api/v1/schedules", self._handle_schedules)
         app.router.add_get("/api/v1/config", self._handle_config)
@@ -411,6 +413,32 @@ class ControlPlaneServer(SupervisedTask):
             return None, web.Response(status=403, text=UNAUTHORIZED_BODY)
 
         return principal, None
+
+    async def _handle_manifest(self, request: Any) -> Any:
+        """`GET /manifest.webmanifest` — what makes this installable.
+
+        A browser REFUSES a `data:` manifest, so the "no external request"
+        constraint is met by serving it from this door rather than by inlining
+        it. It is not an `/api/` path, so the route/page bijection — which
+        filters on that prefix — is untouched.
+
+        NO INSTANCE STATE, DELIBERATELY, and that is what earns the unguarded
+        exemption: a browser fetches a manifest before anyone has signed in, so
+        it cannot present a credential. `start_url` is RELATIVE for the same
+        reason — putting the configured port in here would need
+        `self._settings` and forfeit the structural carve-out.
+        """
+        return _web().Response(
+            text=MANIFEST_JSON, content_type="application/manifest+json"
+        )
+
+    async def _handle_icon(self, request: Any) -> Any:
+        """`GET /icon.svg` — the mark, for a tab and a home screen.
+
+        Unguarded for the same structural reason as the manifest, and it
+        discloses nothing: a shape and two colours. Reads no instance state.
+        """
+        return _web().Response(text=ICON_SVG, content_type="image/svg+xml")
 
     async def _handle_index(self, request: Any) -> Any:
         """`GET /` — the page. THE ONE ROUTE WITH NO CREDENTIAL CHECK.

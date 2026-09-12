@@ -38,57 +38,262 @@ from typing import Final
 
 #: The entire page. A CONSTANT, never an f-string — see the module docstring and
 #: `test_the_page_cannot_carry_platform_data`.
+#: The installable-app declaration, and the mark, as CONSTANTS.
+#:
+#: THEY MUST BE SAME-ORIGIN ROUTES RATHER THAN `data:` URIs — a browser refuses a
+#: `data:` manifest, so "no external request" is satisfied by serving them from
+#: this door rather than by inlining them. Neither is an `/api/` path, so the
+#: route/page bijection (which filters on `/api/`) is untouched.
+#:
+#: AND NEITHER HANDLER MAY READ INSTANCE STATE. `test_every_route_handler_calls_
+#: authenticate` allows an unguarded route only if it CANNOT reach platform state
+#: — no instance attribute at all — which is why `start_url` is RELATIVE: putting
+#: the configured port in here would make the manifest need `self._settings` and
+#: forfeit the exemption. A browser fetches a manifest before anyone signs in, so
+#: unguarded is the only workable answer, and relative is what makes it safe.
+MANIFEST_JSON: Final = """{
+  "name": "StackOwl control plane",
+  "short_name": "StackOwl",
+  "description": "Mission control for a self-hosted kernel of persistent agents.",
+  "display": "standalone",
+  "start_url": "/",
+  "scope": "/",
+  "background_color": "#0b0e12",
+  "theme_color": "#0b0e12",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml",
+      "purpose": "any maskable" }
+  ]
+}
+"""
+
+#: The same path the header renders, on its own ground so a home-screen icon has
+#: an opaque tile rather than a transparent one.
+ICON_SVG: Final = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<rect width="24" height="24" rx="4" fill="#0b0e12"/>
+<path fill="#f4f1ea" fill-rule="evenodd" transform="translate(2.4 2.4) scale(0.8)"
+ d="M3.5 2H20.5A1.5 1.5 0 0 1 22 3.5V7.5A1.5 1.5 0 0 1 20.5 9H13.4L12 6.9L10.6 9H3.5
+    A1.5 1.5 0 0 1 2 7.5V3.5A1.5 1.5 0 0 1 3.5 2Z
+    M9 3.6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 1 0 0-3.8Z
+    M15 3.6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 1 0 0-3.8Z
+    M3.5 10.5H20.5A1.5 1.5 0 0 1 22 12V14A1.5 1.5 0 0 1 20.5 15.5H3.5
+    A1.5 1.5 0 0 1 2 14V12A1.5 1.5 0 0 1 3.5 10.5Z
+    M6.5 17H17.5A1.5 1.5 0 0 1 19 18.5V20.5A1.5 1.5 0 0 1 17.5 22H6.5
+    A1.5 1.5 0 0 1 5 20.5V18.5A1.5 1.5 0 0 1 6.5 17Z"/>
+</svg>
+"""
+
+
 INDEX_HTML: Final = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f2f4f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b0e12" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="StackOwl">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
 <title>StackOwl control plane</title>
 <style>
-  :root { color-scheme: light dark; --bg:#fbfaf8; --fg:#1b1a18; --mut:#6b665f;
-          --line:#e2ddd5; --card:#ffffff; --ok:#2f6f4f; --warn:#8a6d1f; --bad:#9c3128; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#16151a; --fg:#eceaf0; --mut:#9d98a6; --line:#2e2b36; --card:#1e1d24;
-            --ok:#6fcf97; --warn:#e3c268; --bad:#e0887e; }
+  /* SUBSTRATE — the colour law: chrome is monochrome, saturation is a VERDICT.
+     A kernel supervising agents that act unwatched is the one product where an
+     invented alarm is a real defect, so the palette is built so the page cannot
+     colour something it has not judged. Every generic console does the reverse
+     and sprays one brand hue across nav, headers and buttons until saturation
+     carries no information at all. */
+  :root {
+    color-scheme: light dark;
+    --bg:#f2f4f7; --panel:#ffffff; --sunk:#e9ecf1; --raised:#ffffff;
+    --line:#d9dee6; --line-2:#c2cad6;
+    --fg:#0f141a; --fg-dim:#4f5b6b; --fg-mute:#78859a;
+    --brand:#1b1f26;
+    --ok:#0b6b4e; --warn:#8a5a09; --bad:#b02a20; --idle:#78859a;
+    --ok-tint:#e6f6ef; --warn-tint:#fdf2dc; --bad-tint:#fce8ee; --idle-tint:#eceff4;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Menlo,Consolas,monospace;
+    --ui:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --notch:10px;
+    --chamfer:polygon(var(--notch) 0,100% 0,100% calc(100% - var(--notch)),
+              calc(100% - var(--notch)) 100%,0 100%,0 var(--notch));
+    --dur:200ms; --ease:cubic-bezier(.32,.72,0,1);
   }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 ui-sans-serif,
-         system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  header { padding:22px 24px 14px; border-bottom:1px solid var(--line);
-           display:flex; align-items:baseline; gap:14px; flex-wrap:wrap; }
-  h1 { font-size:17px; margin:0; letter-spacing:-.01em; }
-  .sub { color:var(--mut); font-size:13px; }
-  main { padding:22px 24px 48px; max-width:1100px; }
-  section { margin-bottom:34px; }
-  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em;
-       color:var(--mut); margin:0 0 12px; font-weight:600; }
-  table { width:100%; border-collapse:collapse; font-size:14px; }
-  th { text-align:left; font-weight:600; color:var(--mut); font-size:12px;
-       text-transform:uppercase; letter-spacing:.05em; padding:0 12px 8px 0; }
-  td { padding:9px 12px 9px 0; border-top:1px solid var(--line);
-       vertical-align:top; }
-  td.num { font-variant-numeric: tabular-nums; }
-  .wrap { overflow-x:auto; }
-  .pill { display:inline-block; padding:1px 8px; border-radius:999px;
-          font-size:12px; border:1px solid var(--line); }
-  .ok   { color:var(--ok);   border-color:var(--ok); }
-  .warn { color:var(--warn); border-color:var(--warn); }
-  .bad  { color:var(--bad);  border-color:var(--bad); }
-  .mut  { color:var(--mut); }
-  form { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  input { font:inherit; padding:7px 10px; border:1px solid var(--line);
-          border-radius:7px; background:var(--card); color:var(--fg); min-width:340px; }
-  button { font:inherit; padding:7px 14px; border:1px solid var(--line);
-           border-radius:7px; background:var(--card); color:var(--fg); cursor:pointer; }
-  button:hover { border-color:var(--mut); }
-  code { font:13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .note { color:var(--mut); font-size:13px; margin:10px 0 0; }
+  /* Dark is redefined TWICE and never defines a colour for the first time: the
+     viewer has three states, and the un-stamped "system" one is the common case. */
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg:#0b0e12; --panel:#161c24; --sunk:#10151b; --raised:#1d2530;
+    --line:#232c38; --line-2:#313d4c;
+    --fg:#dfe6ee; --fg-dim:#97a3b2; --fg-mute:#5f6c7c;
+    --brand:#f4f1ea;
+    --ok:#2fd39a; --warn:#e8a33d; --bad:#f05a4f; --idle:#5f6c7c;
+    --ok-tint:#0f2a20; --warn-tint:#2b2310; --bad-tint:#2e1520; --idle-tint:#1b202b;
+  } }
+  :root[data-theme="dark"] {
+    --bg:#0b0e12; --panel:#161c24; --sunk:#10151b; --raised:#1d2530;
+    --line:#232c38; --line-2:#313d4c;
+    --fg:#dfe6ee; --fg-dim:#97a3b2; --fg-mute:#5f6c7c;
+    --brand:#f4f1ea;
+    --ok:#2fd39a; --warn:#e8a33d; --bad:#f05a4f; --idle:#5f6c7c;
+    --ok-tint:#0f2a20; --warn-tint:#2b2310; --bad-tint:#2e1520; --idle-tint:#1b202b;
+  }
+
+  *,*::before,*::after { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; -webkit-tap-highlight-color:transparent; }
+  body {
+    margin:0; min-height:100dvh; font:400 15px/1.5 var(--ui);
+    color:var(--fg); background:var(--bg);
+    /* Anodize. Pure CSS, no image, invisible until you look for it. */
+    background-image:repeating-linear-gradient(180deg,
+      rgba(127,127,127,.022) 0 1px, transparent 1px 3px);
+    padding-bottom:env(safe-area-inset-bottom);
+  }
+  /* EVERY numeral is tabular. The cheapest single change that makes a console
+     read as engineered rather than typed. */
+  body { font-variant-numeric:tabular-nums; }
+
+  header {
+    position:sticky; top:0; z-index:5;
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    padding:calc(env(safe-area-inset-top) + 14px) 20px 14px;
+    background:var(--panel); border-bottom:1px solid var(--line-2);
+  }
+  .mark { width:26px; height:26px; flex:none; color:var(--brand); }
+  .wordmark { font:600 15px/1 var(--mono); letter-spacing:.14em; }
+  .wordmark b { color:var(--brand); font-weight:600; }
+  .wordmark span { color:var(--fg-mute); }
+  .kicker { font:600 10px/1 var(--mono); letter-spacing:.24em;
+            color:var(--fg-mute); text-transform:uppercase; margin-top:5px; }
+  .brandblock { display:flex; flex-direction:column; }
+  .origin { margin-left:auto; font:500 12px/1 var(--mono); color:var(--fg-dim);
+            background:var(--sunk); border:1px solid var(--line);
+            border-radius:999px; padding:6px 10px; }
+
+  main { padding:20px; display:flex; flex-direction:column; gap:20px;
+         max-width:1180px; margin:0 auto; }
+
+  /* A panel is CHAMFERED, not rounded. One 45-degree cut, asymmetric, machined —
+     and nothing like the uniform 12px radius with an accent bar that every
+     generated dashboard ships. The border rides a 1px parent because a border
+     cannot follow clip-path. */
+  section {
+    position:relative; background:var(--panel); clip-path:var(--chamfer);
+    padding:18px 20px 20px;
+    /* An INSET shadow, not a border: a border cannot follow `clip-path`, and the
+       usual cure is a 1px parent wrapping every panel in a second div. An inset
+       shadow is painted INSIDE the element, so the clip trims it and the edge
+       follows the chamfer exactly — nine sections keep their markup unchanged. */
+    box-shadow:inset 0 0 0 1px var(--line);
+  }
+  @supports not (clip-path: polygon(0 0)) {
+    section { border:1px solid var(--line); border-radius:2px; box-shadow:none; }
+  }
+  h2 { font:600 13px/1 var(--mono); letter-spacing:.12em; text-transform:uppercase;
+       color:var(--fg-dim); margin:0 0 14px; display:flex; align-items:center; gap:10px; }
+  h2::before { content:""; width:14px; height:1px; background:var(--line-2); flex:none; }
+
+  .wrap { overflow-x:auto; -webkit-overflow-scrolling:touch;
+          overscroll-behavior-x:contain; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th { font:600 11px/1.3 var(--mono); letter-spacing:.06em; text-transform:uppercase;
+       color:var(--fg-mute); text-align:left; padding:0 14px 8px 0;
+       border-bottom:1px solid var(--line-2); white-space:nowrap; }
+  td { padding:9px 14px 9px 0; border-top:1px solid var(--line);
+       vertical-align:top; max-width:38ch; overflow-wrap:anywhere; }
+  tbody tr:hover td { background:var(--sunk); }
+  /* Identifiers are machine words and read as mono; prose never does. */
+  td:first-child { font:500 13px/1.45 var(--mono); color:var(--fg); white-space:nowrap; }
+  .mut { color:var(--fg-mute); }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  code { font:500 12px/1.4 var(--mono); background:var(--sunk);
+         border:1px solid var(--line); border-radius:4px; padding:1px 5px; }
+
+  .note { margin:14px 0 0; padding-left:12px; border-left:2px solid var(--line-2);
+          font-size:12.5px; color:var(--fg-dim); max-width:78ch; }
+
+  form { display:flex; flex-direction:column; gap:12px; max-width:360px; }
+  input {
+    /* 16px is a FLOOR, not a preference: anything smaller makes iOS Safari zoom
+       on focus, and that zoom is the loudest possible "this is a web page". */
+    font:400 16px/1.2 var(--ui); height:48px; padding:0 14px;
+    color:var(--fg); background:var(--sunk);
+    border:1px solid var(--line); border-radius:10px;
+  }
+  input:focus-visible { outline:2px solid var(--fg-dim); outline-offset:2px;
+                        border-color:var(--fg-dim); }
+  button {
+    font:600 15px/1 var(--ui); height:48px; padding:0 18px; cursor:pointer;
+    color:var(--bg); background:var(--fg); border:1px solid var(--fg);
+    border-radius:10px; touch-action:manipulation;
+  }
+  button#forget { color:var(--fg-dim); background:transparent; border-color:var(--line-2); }
+  button:active { transform:translateY(1px); }
+  button:focus-visible { outline:2px solid var(--fg-dim); outline-offset:2px; }
+
+  #status { padding:0 20px 24px; font:500 12px/1.6 var(--mono); color:var(--fg-mute);
+            max-width:1180px; margin:0 auto; }
+
+  /* THE SEAM. One pulse along a panel's top edge when ITS payload lands — eight
+     independent fetches, eight arrivals, staggered by real network timing and
+     never repeating. An animation that is telling the truth about the
+     architecture rather than decorating it. */
+  section::before {
+    content:""; position:absolute; inset:0 0 auto 0; height:1px; opacity:0;
+    background:linear-gradient(90deg,transparent 0,var(--fg-dim) 38%,transparent 72%);
+    transform:translateX(-100%); pointer-events:none;
+  }
+  section:not([hidden])::before { animation:seam .62s var(--ease) both; }
+  @keyframes seam {
+    0% { transform:translateX(-100%); opacity:0 }
+    14% { opacity:1 }
+    100% { transform:translateX(100%); opacity:0 }
+  }
+
+  @media (max-width:640px) {
+    :root { --notch:6px; }
+    main { padding:14px; gap:14px; }
+    section { padding:14px 14px 16px; }
+    header { padding:calc(env(safe-area-inset-top) + 12px) 14px 12px; }
+    .origin { margin-left:0; order:3; width:100%; text-align:center; }
+    td { max-width:26ch; }
+    #status { padding:0 14px 20px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,*::before,*::after { animation-duration:.01ms !important;
+                           transition-duration:.01ms !important; }
+    section:not([hidden])::before { animation:none; transform:none;
+                                    opacity:.5; background:var(--line-2); }
+  }
 </style>
 </head>
 <body>
 <header>
-  <h1>StackOwl control plane</h1>
-  <span class="sub" id="where"></span>
+  <!-- THE MARK. Three stacked plates; the top one has two punched holes and a
+       notch bitten out of its lower edge. At 26px your eye snaps the holes and
+       the notch into a face; at a glance it is a stack of layers. It changes
+       meaning with scale, which is the product: many agents, one watching thing.
+       One path, currentColor, no gradient — it works as a favicon and a nav
+       glyph, and it never turns red, because a logo that changes colour is
+       asserting a verdict. -->
+  <svg class="mark" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"
+       aria-hidden="true">
+    <path d="M3.5 2H20.5A1.5 1.5 0 0 1 22 3.5V7.5A1.5 1.5 0 0 1 20.5 9H13.4L12 6.9
+             L10.6 9H3.5A1.5 1.5 0 0 1 2 7.5V3.5A1.5 1.5 0 0 1 3.5 2Z
+             M9 3.6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 1 0 0-3.8Z
+             M15 3.6a1.9 1.9 0 1 0 0 3.8 1.9 1.9 0 1 0 0-3.8Z
+             M3.5 10.5H20.5A1.5 1.5 0 0 1 22 12V14A1.5 1.5 0 0 1 20.5 15.5H3.5
+             A1.5 1.5 0 0 1 2 14V12A1.5 1.5 0 0 1 3.5 10.5Z
+             M6.5 17H17.5A1.5 1.5 0 0 1 19 18.5V20.5A1.5 1.5 0 0 1 17.5 22H6.5
+             A1.5 1.5 0 0 1 5 20.5V18.5A1.5 1.5 0 0 1 6.5 17Z"/>
+  </svg>
+  <span class="brandblock">
+    <span class="wordmark"><span>STACK</span><b>OWL</b></span>
+    <span class="kicker">Control plane</span>
+  </span>
+  <span class="origin" id="where"></span>
 </header>
 <main>
   <section id="gate">

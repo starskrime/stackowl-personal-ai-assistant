@@ -51782,6 +51782,67 @@ items:
       No vendor or competitor names in `src/`: research may name them, the source may not.
     depends_on: ['A05.7']
     blocks: []
+    stages: {brainstorm: done, architect: done, implement: partial, cleanup: done, test: done, validate: partial, document: partial}
+    brainstorm_2026_09_12_BY_BMAD_PARTY_as_he_asked: >-
+      Four agents in parallel — UX, research, architecture, visual identity. **TWO of
+      them independently found a LIVE BUG** while reading the page (the dead
+      returning-visitor path, now DEBT-313), which is the strongest argument for the
+      research he asked for: neither was looking for it.
+      THE ONE DISAGREEMENT WAS SETTLED BY MEASUREMENT RATHER THAN AVERAGED. Visual
+      identity specified the responsive-table trick (`display:block` +
+      `td::before{content:attr(data-label)}`); UX called it "a table falling over" and
+      "the exact impression the operator is complaining about". MEASURED against the LIVE
+      payloads: **agents has 13 columns with `bounds` and `creation_ceiling` at 262
+      characters**, tasks 9 columns with `goal`/`last_error` at 160, schedules **165
+      rows** x 9. A label:value stack for one agent row is 13 lines, several of them 262
+      characters — roughly 800px for ONE ROW on a phone. The table trick is refuted; the
+      record-row design stands. That work is step B.
+    implement_step_A_2026_09_12_the_design_system_the_mark_and_the_app_shell: >-
+      SUBSTRATE, and its governing rule comes from the product: **chrome is monochrome,
+      saturation is a VERDICT.** A kernel supervising agents that act unwatched is the one
+      product where an invented alarm is a real defect, so the palette is built so the
+      page cannot colour something it has not judged.
+      MEASURED BEFORE AND AFTER: page 22,980 -> 31,759 bytes; **CSS 2,307 -> 8,619**;
+      **tokens 8 -> 24** against 16 hex colours before, so the palette no longer bypasses
+      its own system; media queries 1 -> 3; **inline SVG 0 -> 1**.
+      `/manifest.webmanifest` and `/icon.svg` are ROUTES, which is forced rather than
+      chosen — a browser REFUSES a `data:` manifest. Neither is an `/api/` path so the
+      bijection is untouched, and **neither handler reads instance state**, which is what
+      earns the unguarded exemption a pre-sign-in fetch depends on. `start_url` is
+      RELATIVE for that reason: the configured port would need `self._settings`.
+    and_the_CHAMFER_needed_no_wrapper_which_kept_nine_sections_untouched: >-
+      A border cannot follow `clip-path`, and the usual cure is a 1px parent wrapping
+      every panel in a second div — nine markup changes, and the `<section id=… hidden>`
+      regex that three guards depend on sits right there. An `inset` box-shadow is painted
+      INSIDE the element, so the clip trims it and the edge follows the chamfer exactly.
+      Zero markup changes for the panels.
+      MY OWN ASSERTION CAUGHT ME TWICE on the way: it refused the edit while a `> .in`
+      selector survived, and both times it was right — I had rewritten four and missed a
+      fifth in the mobile media block.
+    the_FOURTH_prose_match_in_one_session_and_now_it_is_a_class: >-
+      `test_NEITHER_new_handler_reads_instance_state` FAILED ON CORRECT CODE because the
+      docstring it reads explains that an absolute `start_url` "would need
+      `self._settings`". After the owner-scope detector matching an `InteractionGaps`
+      docstring (A05.7), the done-validate check matching a literal prefix (DEBT-303), and
+      `_MARKUP_IDS` seeding itself from a comment about the very id it was hunting
+      (DEBT-313) — **this is four in one session, and the cure has been the same every
+      time: strip the prose, or describe the thing rather than writing it.** The guard
+      strips docstrings via AST now.
+      A SECOND GUARD WAS WRONG THE OTHER WAY: comparing the two copies of the mark called
+      two IDENTICAL paths different, because one wrapped after `6.9` and the other before
+      `L10.6`. Canonicalised by separating command letters — NOT by stripping whitespace,
+      which would fuse `M3.5 2` into `M3.52` and could call two DIFFERENT paths equal.
+    what_step_A_deliberately_does_NOT_do: >-
+      No JS restructure, so every behavioural tripwire keeps testing what it was written
+      to test. Still outstanding and named rather than implied: the five-destination
+      shell, record rows with a detail surface (the 13-column measurement above is its
+      brief), the synthesis layer above the records (**43 columns across 8 tables on
+      first paint, and no verdict**), and the page's own going-blind mode — the
+      `<script>` extraction regex is NON-GREEDY, so a second `<script>` block would make
+      the one executing guard silently check a fragment.
+    closing_check: >-
+      uv run python -c "from stackowl.control_plane.page import INDEX_HTML as H; import re; print('CLOSEABLE the shell renders records rather than tables' if 'data-label' in H or 'recordrow' in H else 'OPEN step B (record rows, five destinations, synthesis layer) is not built')" 2>/dev/null | tail -1
+    baselines: "ruff src/ 35, mypy 65 — both at baseline."
 
   - id: A07.1
     title: A skill hub with analysis before install, not after
