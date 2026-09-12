@@ -263,6 +263,10 @@ control_plane:
   bind_address: 127.0.0.1
   # TCP port the control plane listens on.
   port: 8787
+  # Username for the dashboard login form. Operator-set; defaults to `admin`. The form exchanges these for the bearer token the API routes already use — it does not add a second way to authenticate.
+  username: admin
+  # Password for the dashboard login form. Defaults to `admin` by operator request. Sensitive: auto-redacted wherever configuration is rendered, because `flatten` takes the LEAF key and `is_credential_name` flags `password` — verified, not assumed. THE PLATFORM WARNS WHILE THIS IS STILL THE DEFAULT: a default credential is only as safe as the bind, and `bind_address` is one setting away from a network (ESC-172).
+  password: admin
 
 discord_channel:
   bot_token: ''

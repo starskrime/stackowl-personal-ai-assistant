@@ -20747,6 +20747,72 @@ upcoming:
       the 414 synchronous searches are measured, the saving is not.
 
 known_debt:
+  - id: DEBT-310
+    title: A login page for the dashboard, credentials from config
+    raised: 2026-09-12
+    source: >-
+      Operator, directly: "Build a login page for that dahsboars and let it get username
+      and password from stackowl config. Default credentials should be admin/admin."
+    what_shipped: >-
+      `POST /api/v1/login` exchanges username+password for the bearer token the API routes
+      already use, and the page's Credential panel becomes a Sign-in form. New settings
+      `control_plane.username` / `control_plane.password`, defaulting to `admin`/`admin` as
+      asked.
+      **IT IS NOT A SECOND AUTHENTICATOR.** One `_guard`, one token, one `authenticate` —
+      login is the HUMAN way to obtain the credential that already existed, so a person
+      fills a form instead of running a CLI command and pasting a secret. That is the
+      "never a second engine" rule applied to authority rather than to work.
+    the_asymmetry_is_the_security_argument: >-
+      Login is the one route that CANNOT go through `_guard`, because `_guard` demands the
+      credential login exists to hand out. It keeps the ORIGIN check and drops only the
+      bearer check — without the origin check any page on the internet could POST here
+      from a browser that can reach loopback and read the token out of the reply. VERIFIED
+      LIVE: correct credentials from `Origin: http://evil.example` return **401**.
+      Both fields are compared with `hmac.compare_digest` and BOTH ARE ALWAYS COMPARED —
+      returning early on an unknown username makes the response time a username oracle. A
+      test pins that the two results are combined after both have run.
+    and_TWO_GUARDS_REFUSED_IT_FIRST_which_is_how_it_got_the_right_shape: >-
+      `test_every_route_handler_calls_authenticate` allows an unguarded route only if it
+      touches NO instance state — login reads config and the token, so it failed, rightly.
+      `test_no_route_handler_performs_ITS_OWN_auth` then refused `check_origin(` inline,
+      with the reason "a route carrying two of the three checks looks finished".
+      THE SECOND REFUSAL IS THE ONE THAT IMPROVED THE DESIGN. The first draft carved an
+      exemption; the guard's actual objection was DUPLICATION, so the origin check was
+      EXTRACTED into `_origin_ok` and both `_guard` and login now ask the same method.
+      There is one copy of the origin rule, the guard's rule is satisfied rather than
+      exempted, and the ordering guard follows the extraction with a second assertion that
+      the shared method still calls `check_origin` — otherwise the indirection could point
+      at nothing.
+    the_default_is_ANNOUNCED_rather_than_assumed_safe: >-
+      `admin`/`admin` ships by request. A default credential is only as dangerous as the
+      bind, and `bind_address` is ONE setting away from a network — which is what ESC-172
+      is open about. So the platform says so: `WARNING [control_plane] server.run: the
+      dashboard login is still the DEFAULT admin/admin {"bind":"127.0.0.1",
+      "reachable_off_this_machine":false,...}` at boot, VERIFIED LIVE 2026-09-12 03:41:29,
+      with the bind logged BESIDE the default because the pair is what matters. And every
+      successful sign-in returns `default_credentials` to the PAGE, which renders a banner
+      — a warning only an operator who greps the journal can see is the DEBUG-evidence
+      failure wearing a different level.
+      THE PASSWORD IS MASKED WHEREVER CONFIGURATION IS RENDERED, and this was VERIFIED
+      rather than assumed after a false alarm: `is_credential_name('control_plane.password')`
+      is False, which looked like DEBT-309 all over again — but `flatten` takes the LEAF
+      key (`prefix.rsplit('.', 1)[-1]`), so the real call is `is_credential_name('password')`
+      and that is True. A test asserts it through `flatten` itself rather than through the
+      predicate, so it cannot be satisfied by the shape I got wrong.
+    map_check_was_run_LATE_and_the_answer_is_recorded_either_way: >-
+      The skill says run it before building; the operator asked for a specific thing and I
+      built it. Run afterwards it returns 11 loose matches, the closest being A02.1 (scoped
+      secret resolution, P1, untouched) and A05.2. NEITHER covers this: A02.1 is about
+      secrets resolving process-wide to any code in the process, and A05.2 is the config
+      SURFACE. No mapped item asks for a dashboard login, so this is evidence-led work and
+      belongs here.
+    not_done_and_named: >-
+      NO RATE LIMIT. A login endpoint invites brute force and there is no shared throttle
+      in this tree to extend — the only backoff machinery is the supervisor's and the
+      durable store's, both about retrying work rather than refusing callers. On loopback
+      with a 43-character token behind it the exposure is this machine only. It becomes
+      real the moment ESC-172 is answered "widen the bind", and it is named here so that
+      answer carries this with it rather than discovering it afterwards.
   - id: DEBT-309
     found: 2026-09-11
     map_check: >-

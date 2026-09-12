@@ -92,15 +92,19 @@ INDEX_HTML: Final = """<!doctype html>
 </header>
 <main>
   <section id="gate">
-    <h2>Credential</h2>
-    <form id="tokenform">
-      <input id="token" type="password" placeholder="control-plane token"
-             autocomplete="off" spellcheck="false">
-      <button type="submit">Open</button>
-      <button type="button" id="forget">Forget</button>
+    <h2>Sign in</h2>
+    <form id="loginform">
+      <input id="username" type="text" placeholder="username"
+             autocomplete="username" spellcheck="false">
+      <input id="password" type="password" placeholder="password"
+             autocomplete="current-password" spellcheck="false">
+      <button type="submit">Sign in</button>
+      <button type="button" id="forget">Sign out</button>
     </form>
-    <p class="note">Run <code>stackowl control-plane</code> on the host to print it.
-       It is kept for this tab only and never written to a cookie.</p>
+    <p class="note" id="defaultwarn" hidden></p>
+    <p class="note">Set <code>control_plane.username</code> and
+       <code>control_plane.password</code> in <code>stackowl.yaml</code>. The
+       session is kept for this tab only and never written to a cookie.</p>
   </section>
 
   <section id="health" hidden>
@@ -420,17 +424,45 @@ INDEX_HTML: Final = """<!doctype html>
       });
   }
 
-  $("tokenform").addEventListener("submit", function (ev) {
+  // The password NEVER goes to sessionStorage — only the token the server hands
+  // back does. A page that remembered the password would put a reusable
+  // credential where any script on this origin can read it, to save one typing.
+  $("loginform").addEventListener("submit", function (ev) {
     ev.preventDefault();
-    var t = $("token").value.trim();
-    if (!t) { say("no token entered"); return; }
-    try { sessionStorage.setItem(KEY, t); } catch (e) { /* private mode: memory only */ }
-    load(t);
+    var u = $("username").value;
+    var p = $("password").value;
+    if (!u || !p) { say("enter a username and password"); return; }
+    say("signing in…");
+    fetch("/api/v1/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: u, password: p })
+    }).then(function (r) {
+      if (r.status === 401) { throw new Error("invalid credentials"); }
+      if (!r.ok) { throw new Error("HTTP " + r.status); }
+      return r.json();
+    }).then(function (body) {
+      $("password").value = "";
+      if (body.default_credentials) {
+        var w = $("defaultwarn");
+        w.textContent = "You are signed in with the DEFAULT credentials " +
+          "(admin/admin). Anyone who can reach this address can sign in. " +
+          "Set control_plane.username and control_plane.password.";
+        w.className = "note bad";
+        w.hidden = false;
+      }
+      try { sessionStorage.setItem(KEY, body.token); } catch (e) { /* memory only */ }
+      load(body.token);
+    }).catch(function (e) {
+      say(String(e.message || e));
+    });
   });
 
   $("forget").addEventListener("click", function () {
     try { sessionStorage.removeItem(KEY); } catch (e) { /* nothing to clear */ }
-    $("token").value = "";
+    $("username").value = "";
+    $("password").value = "";
+    $("defaultwarn").hidden = true;
     // FROM `PANELS`, never a list written here. This handler hid `health` and
     // `schedules` and nothing else, so after A05.2 "forget the token" left the
     // SETTINGS table on screen — every key the operator has configured, still

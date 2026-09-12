@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import hmac as _hmac
 import time as _time
 from typing import TYPE_CHECKING, Any
 
@@ -154,6 +155,7 @@ class ControlPlaneServer(SupervisedTask):
         app.router.add_get("/api/v1/skills", self._handle_skills)
         app.router.add_get("/api/v1/tasks", self._handle_tasks)
         app.router.add_get("/api/v1/agents", self._handle_agents)
+        app.router.add_post("/api/v1/login", self._handle_login)
 
         runner = web.AppRunner(app)
         await runner.setup()
@@ -175,6 +177,7 @@ class ControlPlaneServer(SupervisedTask):
             extra={"_fields": {"bind": cfg.bind_address, "port": cfg.port}},
         )
         self._warn_if_unreachable()
+        self._warn_if_default_credentials()
 
         # Block forever. Returning here after a successful bind makes the
         # supervisor treat the bind as "the task finished" and re-invoke run(),
@@ -188,6 +191,39 @@ class ControlPlaneServer(SupervisedTask):
             await self._stop_event.wait()
         finally:
             await self.stop()
+
+    def _warn_if_default_credentials(self) -> None:
+        """Say it at boot while the login is still admin/admin.
+
+        A default credential is only as dangerous as the bind, and the bind is
+        ONE SETTING away from a network — which is exactly what ESC-172 is open
+        about. So the pairing is what gets logged: an operator who widens the
+        bind and greps for this line finds it, and the message names the remedy
+        rather than the problem.
+
+        WARNING, not INFO, and the level is the point: production runs at INFO
+        and this deployment has written ZERO debug records in 677,108, so a
+        DEBUG line here would be a warning nobody could ever read. It is also
+        reported to the PAGE on every successful sign-in, because the person who
+        can fix it is the one looking at the dashboard, not the one reading the
+        journal.
+        """
+        cfg = self._settings.control_plane
+        if not cfg.credentials_are_default:
+            return
+        loopback = cfg.bind_address in ("127.0.0.1", "localhost", "::1")
+        log.control_plane.warning(
+            "[control_plane] server.run: the dashboard login is still the "
+            "DEFAULT admin/admin",
+            extra={"_fields": {
+                "bind": cfg.bind_address,
+                # The pair is what matters. Default credentials on loopback are
+                # a note; default credentials on 0.0.0.0 are an open door.
+                "reachable_off_this_machine": not loopback,
+                "remedy": "set control_plane.username and "
+                          "control_plane.password in stackowl.yaml",
+            }},
+        )
 
     async def stop(self) -> None:
         """Release the port. Safe to call when never started."""
@@ -251,6 +287,37 @@ class ControlPlaneServer(SupervisedTask):
         """The uniform refusal. Invariant I5."""
         return web.Response(status=UNAUTHORIZED_STATUS, text=UNAUTHORIZED_BODY)
 
+    def _origin_ok(self, request: Any, route: str) -> Any | None:
+        """The ORIGIN half of the auth decision, in ONE place.
+
+        Extracted when the login route arrived. `_guard` is the whole decision
+        for a data route — origin, token, READ — but login cannot take the token
+        half, because handing the token out is what login is FOR. It still must
+        not be callable cross-origin: without that, any page on the internet
+        could POST to it from a browser that can reach loopback and read the
+        token out of the reply.
+
+        So the check is shared rather than copied. `test_no_route_handler_
+        performs_ITS_OWN_auth` forbids `check_origin(` inside a handler for a
+        good reason — a route carrying two of the three checks looks finished —
+        and that rule is satisfied here rather than exempted: there is exactly
+        one copy of the origin rule and both callers ask it.
+
+        Returns a refusal response, or ``None`` when the origin is acceptable.
+        """
+        cfg = self._settings.control_plane
+        if check_origin(
+            request.headers.get("Origin"),
+            request.headers.get("Host"),
+            f"{cfg.bind_address}:{cfg.port}",
+        ):
+            return None
+        log.control_plane.warning(
+            f"[control_plane] server.{route}: exit — refused, cross-origin",
+            extra={"_fields": {"origin": request.headers.get("Origin")}},
+        )
+        return self._reject(_web())
+
     def _guard(self, request: Any, route: str) -> tuple[Any | None, Any | None]:
         """The auth decision, ONCE. Returns ``(principal, None)`` or ``(None, response)``.
 
@@ -273,18 +340,10 @@ class ControlPlaneServer(SupervisedTask):
         it.
         """
         web = _web()
-        cfg = self._settings.control_plane
 
-        if not check_origin(
-            request.headers.get("Origin"),
-            request.headers.get("Host"),
-            f"{cfg.bind_address}:{cfg.port}",
-        ):
-            log.control_plane.warning(
-                f"[control_plane] server.{route}: exit — refused, cross-origin",
-                extra={"_fields": {"origin": request.headers.get("Origin")}},
-            )
-            return None, self._reject(web)
+        refusal = self._origin_ok(request, route)
+        if refusal is not None:
+            return None, refusal
 
         principal = authenticate(request.headers.get("Authorization"), self._token)
         if principal is None:
@@ -455,6 +514,85 @@ class ControlPlaneServer(SupervisedTask):
             }},
         )
         return web.json_response(payload)
+
+    async def _handle_login(self, request: Any) -> Any:
+        """`POST /api/v1/login` — exchange username+password for the bearer token.
+
+        **IT DOES NOT ADD A SECOND WAY TO AUTHENTICATE.** The API routes keep
+        the one credential they have always had; this is the HUMAN way to obtain
+        it, so a person opens a login form instead of running a CLI command and
+        pasting a secret. One authenticator, one `_guard`, one token — the
+        "never a second engine" rule applied to authority.
+
+        IT IS THE ONE ROUTE THAT MUST NOT GO THROUGH `_guard`, because `_guard`
+        demands the credential this route exists to hand out. It keeps the
+        ORIGIN check — without it any page on the internet could POST here from
+        a browser that can reach loopback and read the token out of the reply —
+        and drops only the bearer check. That asymmetry is the whole security
+        argument and is pinned by a test.
+
+        BOTH FIELDS ARE COMPARED IN CONSTANT TIME, AND BOTH ARE ALWAYS COMPARED.
+        Returning early on an unknown username makes the response time a
+        username oracle; `hmac.compare_digest` on each, with the results
+        combined afterwards, keeps a wrong username and a wrong password
+        indistinguishable from outside.
+        """
+        web = _web()
+        t0 = _time.monotonic()
+        log.control_plane.info("[control_plane] server.login: entry")
+        cfg = self._settings.control_plane
+
+        refusal = self._origin_ok(request, "login")
+        if refusal is not None:
+            return refusal
+
+        try:
+            body = await request.json()
+        except Exception as exc:  # noqa: BLE001 — B5, never silent
+            log.control_plane.warning(
+                "[control_plane] server.login: exit — refused, unreadable body",
+                exc_info=exc,
+            )
+            return web.json_response({"error": "expected a JSON body"}, status=400)
+
+        presented_user = str((body or {}).get("username") or "")
+        presented_pass = str((body or {}).get("password") or "")
+
+        user_ok = _hmac.compare_digest(presented_user, cfg.username)
+        pass_ok = _hmac.compare_digest(presented_pass, cfg.password)
+        if not (user_ok and pass_ok):
+            duration_ms = (_time.monotonic() - t0) * 1000
+            log.control_plane.warning(
+                "[control_plane] server.login: exit — refused, credentials did "
+                "not match",
+                extra={"_fields": {
+                    # The USERNAME is not logged. A failed login is often a typo
+                    # in the password, and a log line carrying the attempted
+                    # username turns the journal into a place credentials leak.
+                    "duration_ms": duration_ms,
+                    "remedy": "set control_plane.username and "
+                              "control_plane.password in stackowl.yaml",
+                }},
+            )
+            return web.json_response({"error": "invalid credentials"}, status=401)
+
+        duration_ms = (_time.monotonic() - t0) * 1000
+        log.control_plane.info(
+            "[control_plane] server.login: exit — granted",
+            extra={"_fields": {
+                "username": cfg.username,
+                "default_credentials": cfg.credentials_are_default,
+                "duration_ms": duration_ms,
+            }},
+        )
+        return web.json_response({
+            "token": self._token,
+            # THE PAGE IS TOLD, not just the log. A warning only an operator who
+            # greps the journal can see is the DEBUG-evidence failure wearing a
+            # different level — the person who can fix this is the one looking
+            # at the dashboard.
+            "default_credentials": cfg.credentials_are_default,
+        })
 
     async def _handle_agents(self, request: Any) -> Any:
         """`GET /api/v1/agents` — every agent's card, its AUTHORITY, and its runtime.

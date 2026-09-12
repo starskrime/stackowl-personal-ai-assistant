@@ -210,6 +210,26 @@ class TestI2AuthenticationIsNotMiddleware:
             # attribute at all. That is a property of the code, not a promise,
             # and it is what stops the exemption widening into "the index route
             # may do whatever it likes".
+            # THE SECOND EXEMPTION, ADDED FOR THE LOGIN ROUTE AND KEPT
+            # STRUCTURAL. `_guard` demands the bearer token; a route whose JOB is
+            # to hand that token out cannot present it first. So it is allowed to
+            # skip `_guard` — but only by AUTHENTICATING BY ITS OWN MEANS, which
+            # is a property of the code and not a name on a list: it must check
+            # the origin (or any page on the internet could POST from a browser
+            # that can reach loopback and read the token out of the reply) and it
+            # must compare a secret in constant time.
+            #
+            # The invariant this file exists for is unchanged: EVERY registered
+            # route either presents a credential or verifies one. What widened is
+            # how it may verify, not whether it must.
+            body_src = ast.unparse(fn)
+            mints_a_credential = (
+                "self._origin_ok(" in body_src and "compare_digest(" in body_src
+            )
+            if mints_a_credential:
+                guarded += 1
+                continue
+
             touched = sorted({
                 n.attr for n in ast.walk(fn)
                 if isinstance(n, ast.Attribute)
@@ -218,7 +238,9 @@ class TestI2AuthenticationIsNotMiddleware:
             assert not touched, (
                 f"route handler {name!r} skips the guard AND reads {touched} off "
                 "the server. An unauthenticated route may serve a constant and "
-                "nothing else — the moment it reads state it needs the guard"
+                "nothing else, or verify a credential itself (origin + a "
+                "constant-time compare) — the moment it does neither it needs "
+                "the guard"
             )
 
         assert guarded, (
@@ -407,8 +429,20 @@ class TestOriginIsCheckedBeforeTheToken:
         src = textwrap.dedent(
             inspect.getsource(server_mod.ControlPlaneServer._guard)
         )
-        assert src.index("check_origin(") < src.index("authenticate("), (
+        # `_origin_ok` since the login route arrived: the origin rule moved into
+        # one shared method so login could ask it WITHOUT taking the token half.
+        # The invariant is unchanged and so is the reason — only the name of the
+        # call `_guard` makes. And the origin rule itself is still real, which
+        # the second assertion pins: the shared method must actually call it.
+        assert src.index("self._origin_ok(") < src.index("authenticate("), (
             "the token is checked before the origin — reverse them"
+        )
+        shared = textwrap.dedent(
+            inspect.getsource(server_mod.ControlPlaneServer._origin_ok)
+        )
+        assert "check_origin(" in shared, (
+            "the shared origin method no longer checks the origin — the "
+            "indirection above is now pointing at nothing"
         )
 
     @pytest.mark.tripwire
