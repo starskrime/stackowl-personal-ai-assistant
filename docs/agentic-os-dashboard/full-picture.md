@@ -1,6 +1,6 @@
 # The StackOwl Bridge: the full picture
 
-**For** Boss, to approve. **Date** 2026-09-12. **Status:** decision document; nothing is built. Product decisions come from Q1–Q51 and L1–L4 (§12). Anything else is marked *proposal*, *finding* or *open question*.
+**For** Boss. **Approved** by Boss on 2026-09-12. **Date** 2026-09-12. **Status:** approved decision document; nothing is built. Product decisions come from Q1–Q52 and L1–L4 (§12). Anything else is marked *proposal*, *finding* or *open question*.
 
 **Sources:** [01] `docs/research/agentic-os-dashboard/01-agentic-os-and-jarvis-interface.md`, [02] `…/02-platform-surface-inventory.md`, [03] `…/03-voice-conversation-spike.md`. Counts from [02] are a live snapshot of this box on 2026-09-12.
 
@@ -94,7 +94,7 @@ Replays the bridge from recorded events at any speed. *Finding:* there is no eve
 
 **Long tasks.** Every tier gives a non-spoken acknowledgement within ~300 ms, measured from the moment end of turn is detected, not from the last spoken syllable: the owl mark switches to "thinking" and the soft acknowledgement sound plays. The spoken "on it" follows as fast as the hardware allows, under a second on GPU and Mac (Q39). After that Owl speaks only at meaningful milestones. Speaking over Owl pauses its speech, never the task by itself; Owl's understanding decides whether the words stop or steer the task or correct the transcript (Q40), and so whether the paused speech is dropped or resumed (Q47, Q50). *Findings:* progress chunks carry only step name, index and total, too little for a meaningful milestone [02 §5.2]; the `stop` and `steer` frames exist but are never sent [02 §4.2].
 
-**Orders, approvals and irreversible actions.** Voice can request anything (Q16). The owner's own spoken order for a reversible action runs at once, with undo and no read-back (Q35). When Owl or a crew member asks the owner for something, Owl reads back exactly what will happen before a spoken "yes" counts (Q36). An irreversible action needs that read-back plus an on-screen tap (Q16). Q49 sets this split. Owl acts irreversibly on its own only where the owner set it up beforehand (§4). *Finding:* the platform has no "irreversible" class, only always-ask consent categories and a `destructive` flag on command actions [02 §4.1, §4.3].
+**Orders, approvals and irreversible actions.** Voice can request anything (Q16). The owner's own spoken order for a reversible action runs at once, with undo and no read-back (Q35). When Owl or a crew member asks the owner for something, Owl reads back exactly what will happen before a spoken "yes" counts (Q36). An irreversible action needs that read-back plus an on-screen tap (Q16). Q49 sets this split. Owl acts irreversibly on its own only where the owner set it up beforehand (§4). *Finding:* the platform has no "irreversible" class, only always-ask consent categories and a `destructive` flag on command actions [02 §4.1, §4.3]. If a transcript was misheard and the order already ran, the owner's correction makes Owl undo that action automatically, show the undo on its card, and then carry out what the owner actually said (Q52).
 
 **Proactive speech.** Only about things that would notify the owner anyway, only while the dashboard is open, always mutable. The opening briefing is not proactive speech (Q37).
 
@@ -275,6 +275,7 @@ The optional wake-word and full-duplex spikes (S10, S11) are dropped by Q7 and Q
 | Q49 | Voice orders vs voice approvals | Owner's own order for a reversible action runs at once, with undo, no read-back; a request from Owl or crew needs read-back before a spoken yes counts; irreversible needs read-back + tap |
 | Q50 | Paused speech after a correction | Drops the paused speech, applies the correction, answers the corrected sentence fresh; never continues an answer to words the owner did not say |
 | Q51 | Two classes of sound | Ambient cues: very soft texture for ordinary events; never repeat, duck under Owl's voice, silent when the phone is backgrounded, switchable off on their own. Needs-you alert: the only attention-grabbing sound, the accent colour's sound twin. Ambient cues never compete with it (principle 2); the Q39 acknowledgement sound is feedback, in neither class |
+| Q52 | Misheard order that already ran | A correction ("no, I said…") automatically undoes the reversible action the misheard sentence triggered, shows it on the card, then does what the owner actually said |
 
 **Current-dashboard login (L1–L4)** (approved; a separate fix in progress that implements Q29):
 - **L1:** a fresh install proves ownership with a one-time setup code, printed in the platform's terminal and sent to the owner's Telegram (the single allowed Telegram user; with none or several, the terminal/CLI only), plus a new password. No `admin/admin`; no token is issued for a publicly known password. The bridge reuses this setup code for its first passkey (Q41).
