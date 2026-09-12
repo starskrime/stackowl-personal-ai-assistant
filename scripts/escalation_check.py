@@ -238,7 +238,7 @@ def main() -> int:
         k: v for k, v in esc.items()
         if isinstance(v, dict) and not v.get("resolution")
     }
-    checked = expired = 0
+    checked = expired = closed = 0
     unverifiable: list[str] = []
 
     print(f"open escalations: {len(openq)} of {len(esc)}\n")
@@ -257,12 +257,34 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 — a check may not break the sweep
             verdict = f"(check failed: {exc})"
         if verdict.startswith("EXPIRED"):
-            expired += 1
-            print(f"  EXPIRED  {key}\n           {verdict}")
+            # EXPIRED-AND-CLOSED IS HISTORY; EXPIRED-AND-OPEN IS WORK, and this
+            # reported them as one number. MEASURED 2026-09-12: ESC-172 was
+            # answered by the operator, recorded and SHIPPED, and its
+            # premise_check correctly returns EXPIRED forever — so it would have
+            # sat in the loud bucket on every future loop. That is exactly the
+            # cost this file's own docstring names: "a question that is no longer
+            # a question still costs him the time to decide it is not one." An
+            # answered escalation carries a `RESOLVED_…` key, the convention the
+            # ones settled before this already use, so the distinction is READ
+            # from the record rather than remembered.
+            if any(k.startswith("RESOLVED") for k in body):
+                closed += 1
+                print(f"  settled  {key}  [{verdict[:60]}]")
+            else:
+                expired += 1
+                print(f"  EXPIRED  {key}\n           {verdict}")
         else:
             print(f"  holds    {key}  [{verdict[:60]}]")
 
-    print(f"\nchecked {checked}, EXPIRED {expired}, no premise_check {len(unverifiable)}")
+    print(
+        f"\nchecked {checked}, EXPIRED {expired}, settled {closed}, "
+        f"no premise_check {len(unverifiable)}"
+    )
+    if closed:
+        print(
+            "  `settled` = the premise EXPIRED and the record carries a RESOLVED "
+            "key: answered and shipped, kept so the answer stays findable."
+        )
 
     _sweep_recorded_claims((data.get("current") or {}))
 

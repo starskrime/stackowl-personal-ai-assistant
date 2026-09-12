@@ -15805,7 +15805,7 @@ current:
         print('HOLDS still fails open' if 'if not expected_token:' in s and 'return True' in s.split('if not expected_token:')[1][:40] else 'EXPIRED branch changed')
         "
     ESC_172_does_the_control_plane_bind_where_a_customer_can_reach_it:
-      ANSWERED_2026_09_12_by_Bakir_EVERY_INTERFACE_BY_DEFAULT: >-
+      RESOLVED_2026_09_12_ANSWERED_by_Bakir_EVERY_INTERFACE_BY_DEFAULT: >-
         His words: *"Make it always available in all interfaces by default in platform.
         So when customer runs it it will work out of box."* So `bind_address` defaults to
         `0.0.0.0`, the panel's Ease-of-use dissent is the one that shipped, and its
@@ -51840,6 +51840,18 @@ items:
       first paint, and no verdict**), and the page's own going-blind mode — the
       `<script>` extraction regex is NON-GREEDY, so a second `<script>` block would make
       the one executing guard silently check a fragment.
+    validated_LIVE_2026_09_12_07_13_after_start_sh: >-
+      Restarted and checked against the RUNNING SERVER over the network from
+      `http://192.168.1.176:8787`, not read off disk. `/` **200** `text/html` 31,807b;
+      `/manifest.webmanifest` **200** `application/manifest+json`, serving
+      `display: standalone`, `start_url: /`, `theme_color #0b0e12`, one icon;
+      `/icon.svg` **200** `image/svg+xml`. Both new routes answer with NO credential,
+      which is what a browser needs before anyone signs in.
+      Every declaration present exactly once in the served page — `viewport-fit=cover`,
+      `rel="manifest"`, `apple-mobile-web-app-capable`, `apple-touch-icon`,
+      `prefers-reduced-motion`, the inline mark — and **`theme-color` exactly TWICE**,
+      one per colour scheme, with four `clip-path` rules carrying the chamfer.
+      `gap_check` independently flipped **HOLDS -> REFUTED**.
     closing_check: >-
       uv run python -c "from stackowl.control_plane.page import INDEX_HTML as H; import re; print('CLOSEABLE the shell renders records rather than tables' if 'data-label' in H or 'recordrow' in H else 'OPEN step B (record rows, five destinations, synthesis layer) is not built')" 2>/dev/null | tail -1
     baselines: "ruff src/ 35, mypy 65 — both at baseline."
