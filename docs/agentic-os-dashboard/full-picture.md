@@ -50,7 +50,7 @@ Before closing he opens the flight recorder in Archives and replays last night a
 
 The live ship: the crew and what each owl is doing, missions in flight, scheduled jobs approaching their due time (projection, not just state [01 §4.3 rule 8]), comms traffic arriving from channels, and engineering health. Every mover opens its record. The visual grammar is the mockup's job.
 
-*Finding:* none of this exists as a stream today. Tool and model calls, task claims, job runs, consent, health changes, heals, memory writes, delegation hops and deliveries are logged or stored as rows, never evented [02 §3.1]. The bridge must also show the ship as it is: 133 of 170 enabled jobs silent in 24 h, 77 dead-lettered tasks, delegation stopped since 2026-08-24. That is why the last rebuild refused an animated graph (`169d30f8`) [02 hard fact 10]. A quiet or failing ship must look quiet or failing.
+*Finding:* none of this exists as a stream today. Tool and model calls, task claims, job runs, consent, health changes, heals, memory writes, delegation hops and deliveries are logged or stored as rows, never evented [02 §3.1]. The bridge must also show the ship as it is: a scheduler that lists 169 enabled jobs although 136 of them are one-shot `rollover_summary` jobs that completed but were never switched off (status `completed`, `enabled=1`, next run stuck in the past), and 33 live schedules, 77 dead-lettered tasks, delegation stopped since 2026-08-24. That is why the last rebuild refused an animated graph (`169d30f8`) [02 hard fact 10]. A quiet or failing ship must look quiet or failing.
 
 ### 3.2 The six stations
 

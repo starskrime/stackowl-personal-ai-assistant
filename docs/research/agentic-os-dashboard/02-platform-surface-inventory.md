@@ -20,7 +20,7 @@ Where two sweeps disagreed, the claim was checked and the wrong one is corrected
    - 15/15 health subsystems ok (a snapshot that took 0.63 s)
    - 11 owls, 7 of them unbounded
    - 5 live tasks, with 77 dead-lettered not shown
-   - 170 jobs, 3,174 runs in 24 h, and **133 enabled jobs silent**
+   - 170 jobs, 3,174 runs in 24 h, and **133 enabled jobs silent** (*corrected 2026-09-12:* 136 of the 169 enabled jobs are one-shot `rollover_summary` jobs that completed but were never switched off (status `completed`, `enabled=1`, next run stuck in the past) and only the 33 others are live schedules — verified against the `jobs` table 2026-09-12)
    - 5,968 lessons
    - 69 interaction edges, with the newest delegation on 2026-08-24
    - 45 settings, 7 of them masked
@@ -127,7 +127,7 @@ That commit deliberately **refused** a node-link graph of agent interactions. It
 | GET | `/api/v1/agents` | `_guard` | `OwlStore.list_all`, `read_all_skill_ownership`, `read_owl_activity`, `effective_bounds` (`server.py:1004-1046`) | 11 owls, 7 unbounded |
 | GET | `/api/v1/skills` | `_guard` | `read_all_skill_ownership` | 7 owning owls |
 | GET | `/api/v1/tasks` | `_guard` | `read_task_activity` (unfinished only) | 5 live, 77 dead-lettered |
-| GET | `/api/v1/schedules` | `_guard` | `JobScheduler.list_jobs()` + `read_run_history` | 170 jobs, 3,174 runs/24 h, 133 enabled silent, 59 KB |
+| GET | `/api/v1/schedules` | `_guard` | `JobScheduler.list_jobs()` + `read_run_history` | 170 jobs, 3,174 runs/24 h, 133 enabled silent (*corrected:* 136 are completed one-shot jobs still enabled; 33 live), 59 KB |
 | GET | `/api/v1/memory` | `_guard` | `SqliteLessonsStore.recent(50)`, `counts_by_source`, `read_other_memory_counts`, `read_curated_entries` | 5,968 lessons, 19 curated targets, 50 KB |
 | GET | `/api/v1/interactions` | `_guard` | `read_agent_interactions` | 69 edges, 9 without target, 15 without caller |
 | GET | `/api/v1/config` | `_guard` | `config_path`/`load_yaml`/`collect_sensitive`/`flatten` (the `/config` command's helpers) | 45 keys, 7 masked |
@@ -436,7 +436,7 @@ A search finds no `text/event-stream`, `EventSourceResponse`, `WebSocketResponse
 
    "No CDN, no framework, no build step" is also a stated self-hosting requirement (`page.py:29-32`).
 9. **Snapshots are not verdicts.** The 2026-09-12 rebuild measured the health route reading 15/15 ok while the sweep logged unhealthy 49 times that day. Every current route lacks a time axis.
-10. **Some "alive" imagery would be false today.** Delegation traffic stopped 2026-08-24, 9 of 69 edges have no target, 133 of 170 enabled jobs did not run in 24 h, and 77 tasks are dead-lettered. A UI that animates "activity" must derive it from measured events, or it will depict a platform that is not there. This is the explicit reason `169d30f8` refused a node-link graph.
+10. **Some "alive" imagery would be false today.** Delegation traffic stopped 2026-08-24, 9 of 69 edges have no target, 133 of 170 enabled jobs did not run in 24 h (*corrected 2026-09-12:* 136 of the 169 enabled jobs are one-shot `rollover_summary` jobs that completed but were never switched off (status `completed`, `enabled=1`, next run stuck in the past) and only the 33 others are live schedules — verified against the `jobs` table 2026-09-12), and 77 tasks are dead-lettered. A UI that animates "activity" must derive it from measured events, or it will depict a platform that is not there. This is the explicit reason `169d30f8` refused a node-link graph.
 11. **Only two response-chunk kinds exist** (`answer`, `progress`), and progress carries only step name/index/total.
 12. **Plain HTTP on a LAN** means no microphone, no service worker, no push and no install prompt in mobile browsers.
 13. **The box is a 7.4 GiB Jetson already running whisper, piper, a headless browser and the platform.** Server-side work for the UI (fan-out, rendering, audio) competes with the agents for the same memory.
