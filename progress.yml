@@ -431,6 +431,22 @@ current:
       budget governor MEASURES steps, time, cost and tokens and cannot stop anything,
       and per-agent budget ENFORCEMENT exists in no self-hostable system surveyed, so
       it is differentiation rather than catch-up. A05.1 stays next after it.
+    A05_3_SHIPPED_2026_09_12_and_A05_5_is_next_but_READ_ITS_GAP_FIRST: >-
+      A05.3 is done on `4e7fa32a`: `GET /api/v1/agents`, an Agents panel, and `unbounded`
+      computed by the enforcement path's own `effective_bounds` fold. Live: 11 agents,
+      SEVEN unbounded, six disagreeing about their own skills. `pinned_skills` retired and
+      deleted, with the key dropped on load so the roster survived — proven by
+      `store.list_all: exit {"rows":11,"loaded":11}` after the restart.
+      **THE BIGGEST FINDING IS NOT THE SURFACE.** Ten of eleven agents may run `shell`;
+      only `english_tutor` is refused. That is measured against the real gate, and it is a
+      product fact the operator should see — A05.3 makes it visible for the first time but
+      does not change it. Narrowing those bounds is a DECISION, not a defect fix.
+      NEXT IS **A05.5** (memory browser), the last A05 read surface besides A05.7 —
+      **AND ITS GAP IS ALREADY KNOWN TO BE WRONG.** Repairing its gap_check on 2026-09-12
+      refuted it: the gap says the staged set is "reachable from no surface at all" and
+      `commands/memory_helpers.py` SELECTs from `staged_facts` today. That was the eighth
+      wrong gap; A05.3's was the ninth. REWRITE THE GAP BEFORE BUILDING, and expect the
+      real remainder to be narrower than the sentence.
     A05_6_SHIPPED_2026_09_12_and_A05_3_is_next: >-
       A05.6 is done on `fc81b9c3`/`2008c659`: `GET /api/v1/tasks`, a Work-in-flight panel,
       and `blocked` — the column that separates "the loop declines this, rightly" from
